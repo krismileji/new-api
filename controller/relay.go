@@ -32,6 +32,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const maxInputContextTokens = 272000
+
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	switch info.RelayMode {
@@ -121,6 +123,28 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
+	}
+	if !strings.HasPrefix(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		bodyStorage, err := common.GetBodyStorage(c)
+		if err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
+			return
+		}
+		body, err := bodyStorage.Bytes()
+		if err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
+			return
+		}
+		contextTokens := service.CountTextToken(string(body), relayInfo.OriginModelName)
+		if contextTokens > maxInputContextTokens {
+			newAPIError = types.NewErrorWithStatusCode(
+				fmt.Errorf("input context length %d exceeds the maximum allowed context length of %d tokens", contextTokens, maxInputContextTokens),
+				types.ErrorCodeInvalidRequest,
+				http.StatusBadRequest,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		}
 	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
