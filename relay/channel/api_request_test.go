@@ -10,7 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	appconstant "github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -200,11 +202,93 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
 }
 
-func TestDoRequestRejectsOversizedFinalInputWithoutCallingUpstream(t *testing.T) {
+func TestDoRequestRejectsOversizedFinalOpenAIInputWithoutCallingUpstream(t *testing.T) {
 	if !service.InputContextLimitEnabled() {
 		t.Skip("ENABLE_272K_CONTEXT_LIMIT is disabled")
 	}
 	gin.SetMode(gin.TestMode)
+
+	for _, testCase := range []struct {
+		name        string
+		path        string
+		requestPath string
+		body        []byte
+		relayMode   int
+		relayFormat types.RelayFormat
+		finalFormat types.RelayFormat
+	}{
+		{
+			name:        "direct responses request",
+			path:        "/v1/responses",
+			requestPath: "/v1/responses",
+			body:        []byte(`{"model":"gpt-5.5","input":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}`),
+			relayMode:   relayconstant.RelayModeResponses,
+			relayFormat: types.RelayFormatOpenAIResponses,
+			finalFormat: types.RelayFormatOpenAIResponses,
+		},
+		{
+			name:        "converted claude request after retry",
+			path:        "/v1/chat/completions",
+			requestPath: "/v1/messages?beta=true",
+			body:        []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}]}`),
+			relayFormat: types.RelayFormatClaude,
+			finalFormat: types.RelayFormatClaude,
+		},
+		{
+			name:        "converted gemini request",
+			path:        "/v1/chat/completions",
+			requestPath: "/v1beta/models/gemini-test:generateContent",
+			body:        []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}]}`),
+			relayMode:   relayconstant.RelayModeGemini,
+			relayFormat: types.RelayFormatGemini,
+			finalFormat: types.RelayFormatGemini,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var upstreamCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamCalls.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			req, err := http.NewRequest(http.MethodPost, server.URL+testCase.path, bytes.NewReader(testCase.body))
+			require.NoError(t, err)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{
+				RelayFormat:             testCase.relayFormat,
+				RelayMode:               testCase.relayMode,
+				RequestURLPath:          testCase.requestPath,
+				FinalRequestRelayFormat: testCase.finalFormat,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType: appconstant.ChannelTypeOpenAI,
+				},
+			}
+
+			resp, err := doRequest(ctx, req, info)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var apiErr *types.NewAPIError
+			require.True(t, errors.As(err, &apiErr))
+			assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
+			assert.Equal(t, http.StatusOK, apiErr.StatusCode)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.Zero(t, upstreamCalls.Load())
+
+			restoredBody, readErr := io.ReadAll(req.Body)
+			require.NoError(t, readErr)
+			assert.Equal(t, testCase.body, restoredBody)
+		})
+	}
+}
+
+func TestDoRequestAllowsOversizedInputForNonOpenAIChannel(t *testing.T) {
+	if !service.InputContextLimitEnabled() {
+		t.Skip("ENABLE_272K_CONTEXT_LIMIT is disabled")
+	}
+	gin.SetMode(gin.TestMode)
+	service.InitHttpClient()
 	var upstreamCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls.Add(1)
@@ -212,30 +296,68 @@ func TestDoRequestRejectsOversizedFinalInputWithoutCallingUpstream(t *testing.T)
 	}))
 	defer server.Close()
 
-	body := []byte(`{"model":"gpt-5.5","input":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}`)
-	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(body))
+	body := []byte(`{"model":"gemini-test","input":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}`)
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/responses", bytes.NewReader(body))
 	require.NoError(t, err)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	info := &relaycommon.RelayInfo{
 		RelayFormat:             types.RelayFormatOpenAIResponses,
 		FinalRequestRelayFormat: types.RelayFormatOpenAIResponses,
-		ChannelMeta:             &relaycommon.ChannelMeta{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: appconstant.ChannelTypeGemini,
+		},
 	}
 
 	resp, err := doRequest(ctx, req, info)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var apiErr *types.NewAPIError
-	require.True(t, errors.As(err, &apiErr))
-	assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
-	assert.Equal(t, http.StatusOK, apiErr.StatusCode)
-	assert.True(t, types.IsSkipRetryError(apiErr))
-	assert.Zero(t, upstreamCalls.Load())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.EqualValues(t, 1, upstreamCalls.Load())
+}
 
-	restoredBody, readErr := io.ReadAll(req.Body)
-	require.NoError(t, readErr)
-	assert.Equal(t, body, restoredBody)
+func TestDoRequestAllowsOversizedGeminiEmbeddingForOpenAIChannel(t *testing.T) {
+	if !service.InputContextLimitEnabled() {
+		t.Skip("ENABLE_272K_CONTEXT_LIMIT is disabled")
+	}
+	gin.SetMode(gin.TestMode)
+	service.InitHttpClient()
+	var upstreamCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	body := []byte(`{"content":{"parts":[{"text":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}]}}`)
+	for _, testCase := range []struct {
+		path      string
+		relayMode int
+	}{
+		{path: "/v1beta/models/gemini-test:embedContent", relayMode: relayconstant.RelayModeGemini},
+		{path: "/v1/engines/gemini-test/embeddings", relayMode: relayconstant.RelayModeEmbeddings},
+	} {
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/chat/completions", bytes.NewReader(body))
+		require.NoError(t, err)
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, testCase.path, nil)
+		info := &relaycommon.RelayInfo{
+			RelayFormat:    types.RelayFormatGemini,
+			RelayMode:      testCase.relayMode,
+			RequestURLPath: testCase.path,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType: appconstant.ChannelTypeOpenAI,
+			},
+		}
+
+		resp, err := doRequest(ctx, req, info)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
+	assert.EqualValues(t, 2, upstreamCalls.Load())
 }
 
 func TestDoRequestPreservesAllowedFinalInput(t *testing.T) {
@@ -254,14 +376,16 @@ func TestDoRequestPreservesAllowedFinalInput(t *testing.T) {
 	defer server.Close()
 
 	body := []byte(`{"model":"gpt-5.5","input":"hello","previous_response_id":"resp_123"}`)
-	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/v1/responses", bytes.NewReader(body))
 	require.NoError(t, err)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	info := &relaycommon.RelayInfo{
 		RelayFormat:             types.RelayFormatOpenAIResponses,
 		FinalRequestRelayFormat: types.RelayFormatOpenAIResponses,
-		ChannelMeta:             &relaycommon.ChannelMeta{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: appconstant.ChannelTypeOpenAI,
+		},
 	}
 
 	resp, err := doRequest(ctx, req, info)

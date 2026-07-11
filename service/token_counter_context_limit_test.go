@@ -5,36 +5,11 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/types"
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestEstimateRequestTokenForContextLimitUsesSemanticText(t *testing.T) {
-	context, _ := gin.CreateTestContext(nil)
-	info := &relaycommon.RelayInfo{}
-
-	for _, testCase := range []struct {
-		name string
-		want int
-	}{
-		{name: "at limit", want: MaxInputContextTokens},
-		{name: "over limit", want: MaxInputContextTokens + 1},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			meta := &types.TokenCountMeta{
-				CombineText: strings.Repeat("a", testCase.want),
-				TokenType:   types.TokenTypeTextNumber,
-			}
-
-			got, err := EstimateRequestTokenForContextLimit(context, meta, info)
-			require.NoError(t, err)
-			assert.Equal(t, testCase.want, got)
-		})
-	}
-}
 
 func TestOpenAIContextLimitRejectsCompleteJSON(t *testing.T) {
 	setInputContextLimitForTest(t, true)
@@ -95,22 +70,37 @@ func TestOpenAIContextLimitAllowsUncountableState(t *testing.T) {
 	}
 }
 
-func TestInputContextLimitFormatsAreOpenAIOnly(t *testing.T) {
-	for _, format := range []types.RelayFormat{
-		types.RelayFormatOpenAI,
-		types.RelayFormatOpenAIResponses,
-		types.RelayFormatOpenAIResponsesCompaction,
+func TestShouldEnforceInputContextLimitUsesOpenAIChannelAndTextEndpoint(t *testing.T) {
+	setInputContextLimitForTest(t, true)
+
+	for _, path := range []string{
+		"/v1/chat/completions",
+		"/v1/completions",
+		"/v1/responses",
+		"/v1/responses/compact",
+		"/proxy/openai/v1/responses",
+		"/v1/responses/",
+		"/v1/responses?store=false",
 	} {
-		assert.True(t, IsInputContextLimitFormat(format), format)
+		assert.True(t, ShouldEnforceInputContextLimit(constant.ChannelTypeOpenAI, path), path)
 	}
-	for _, format := range []types.RelayFormat{
-		types.RelayFormatClaude,
-		types.RelayFormatGemini,
-		types.RelayFormatOpenAIRealtime,
-		types.RelayFormatEmbedding,
-		types.RelayFormatRerank,
+	for _, path := range []string{
+		"/v1/moderations",
+		"/v1/realtime",
+		"/v1/images/generations",
+		"/v1/audio/speech",
+		"/v1/embeddings",
+		"/v1/messages",
+		"/v1beta/models/gemini-test:generateContent",
 	} {
-		assert.False(t, IsInputContextLimitFormat(format), format)
+		assert.False(t, ShouldEnforceInputContextLimit(constant.ChannelTypeOpenAI, path), path)
+	}
+	for _, channelType := range []int{
+		constant.ChannelTypeAnthropic,
+		constant.ChannelTypeGemini,
+		constant.ChannelTypeAws,
+	} {
+		assert.False(t, ShouldEnforceInputContextLimit(channelType, "/v1/responses"), channelType)
 	}
 }
 
@@ -121,6 +111,7 @@ func TestInputContextLimitCanBeDisabled(t *testing.T) {
 	assert.Zero(t, tokens)
 	assert.Nil(t, apiErr)
 	assert.Nil(t, EnforceInputContextTokenLimit(MaxInputContextTokens+1))
+	assert.False(t, ShouldEnforceInputContextLimit(constant.ChannelTypeOpenAI, "/v1/responses"))
 }
 
 func TestInputContextTokenLimitBoundary(t *testing.T) {

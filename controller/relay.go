@@ -123,7 +123,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
-	enforceInputContextLimit := service.InputContextLimitEnabled() && service.IsInputContextLimitFormat(relayFormat)
+	enforceInputContextLimit := service.ShouldEnforceInputContextLimit(
+		common.GetContextKeyInt(c, constant.ContextKeyChannelType),
+		relayInfo.RequestURLPath,
+	)
 	if enforceInputContextLimit {
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
@@ -152,7 +155,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
-	needCountToken := constant.CountToken || enforceInputContextLimit
+	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
 	if needSensitiveCheck || needCountToken {
@@ -175,16 +178,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 		return
 	}
-	contextTokens := tokens
-	if enforceInputContextLimit && !constant.CountToken {
-		contextTokens, err = service.EstimateRequestTokenForContextLimit(c, meta, relayInfo)
-		if err != nil {
-			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
-			return
-		}
-	}
-	if enforceInputContextLimit {
-		if contextErr := service.EnforceInputContextTokenLimit(contextTokens); contextErr != nil {
+	if enforceInputContextLimit && constant.CountToken {
+		if contextErr := service.EnforceInputContextTokenLimit(tokens); contextErr != nil {
 			newAPIError = contextErr
 			return
 		}

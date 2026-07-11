@@ -38,6 +38,7 @@ func TestRelayRejectsOversizedResponsesInputBeforeChannelSelection(t *testing.T)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	common.SetContextKey(ctx, constant.ContextKeyOriginalModel, "gpt-5.5")
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
 	defer common.CleanupBodyStorage(ctx)
 
 	Relay(ctx, types.RelayFormatOpenAIResponses)

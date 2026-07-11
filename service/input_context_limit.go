@@ -3,9 +3,11 @@ package service
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/tiktoken-go/tokenizer"
 	"github.com/tiktoken-go/tokenizer/codec"
@@ -24,15 +26,16 @@ func InputContextLimitEnabled() bool {
 	return enableInputContextLimit
 }
 
-func IsInputContextLimitFormat(format types.RelayFormat) bool {
-	switch format {
-	case types.RelayFormatOpenAI,
-		types.RelayFormatOpenAIResponses,
-		types.RelayFormatOpenAIResponsesCompaction:
-		return true
-	default:
+func ShouldEnforceInputContextLimit(channelType int, requestPath string) bool {
+	if !InputContextLimitEnabled() || channelType != constant.ChannelTypeOpenAI {
 		return false
 	}
+	path, _, _ := strings.Cut(requestPath, "?")
+	path = strings.TrimSuffix(path, "/")
+	return strings.HasSuffix(path, "/chat/completions") ||
+		strings.HasSuffix(path, "/completions") ||
+		strings.HasSuffix(path, "/responses") ||
+		strings.HasSuffix(path, "/responses/compact")
 }
 
 // EnforceInputContextLimit checks the complete JSON body. It deliberately uses

@@ -530,8 +530,21 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 
 func enforceOutboundInputContextLimit(req *http.Request, info *common.RelayInfo) error {
-	if !service.InputContextLimitEnabled() || info == nil || req == nil || req.Body == nil ||
-		!service.IsInputContextLimitFormat(info.RelayFormat) {
+	if info == nil || info.ChannelMeta == nil || req == nil || req.URL == nil || req.Body == nil {
+		return nil
+	}
+	// Gemini embedding requests can use the OpenAI adaptor's chat URL without
+	// becoming text-generation context requests.
+	if info.RelayFormat == types.RelayFormatGemini {
+		originalPath, _, _ := strings.Cut(strings.ToLower(info.RequestURLPath), "?")
+		originalPath = strings.TrimSuffix(originalPath, "/")
+		if strings.HasSuffix(originalPath, "/embeddings") ||
+			strings.HasSuffix(originalPath, ":embedcontent") ||
+			strings.HasSuffix(originalPath, ":batchembedcontents") {
+			return nil
+		}
+	}
+	if !service.ShouldEnforceInputContextLimit(info.ChannelType, req.URL.Path) {
 		return nil
 	}
 
