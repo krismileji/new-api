@@ -140,7 +140,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = types.NewErrorWithStatusCode(
 				fmt.Errorf("input context length %d exceeds the maximum allowed context length of %d tokens", contextTokens, maxInputContextTokens),
 				types.ErrorCodeInvalidRequest,
-				http.StatusBadRequest,
+				http.StatusOK,
 				types.ErrOptionWithSkipRetry(),
 			)
 			return
