@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -87,6 +89,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	}
 	if a.request == nil {
 		return nil, types.NewError(errors.New("request is nil"), types.ErrorCodeInvalidRequest)
+	}
+	requestBody, marshalErr := common.Marshal(a.request)
+	if marshalErr != nil {
+		return nil, types.NewError(marshalErr, types.ErrorCodeBadRequestBody, types.ErrOptionWithSkipRetry())
+	}
+	if _, contextErr := service.EnforceInputContextLimit(requestBody, info.GetFinalRequestRelayFormat()); contextErr != nil {
+		return nil, contextErr
 	}
 	if info.IsStream {
 		usage, err = xunfeiStreamHandler(c, *a.request, splits[0], splits[1], splits[2])

@@ -33,10 +33,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const maxInputContextTokens = 272000
-
-var enable272KContextLimit = common.GetEnvOrDefaultBool("ENABLE_272K_CONTEXT_LIMIT", true)
-
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	switch info.RelayMode {
@@ -127,6 +123,33 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	if service.InputContextLimitEnabled() {
+		if relayFormat == types.RelayFormatOpenAIRealtime {
+			newAPIError = types.NewErrorWithStatusCode(
+				errors.New("realtime requests are disabled while the 272K input context limit is enabled because their context cannot be determined before connecting upstream"),
+				types.ErrorCodeInvalidRequest,
+				http.StatusOK,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		}
+		if service.IsInputContextLimitFormat(relayFormat) {
+			bodyStorage, bodyErr := common.GetBodyStorage(c)
+			if bodyErr != nil {
+				newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+				return
+			}
+			body, bodyErr := bodyStorage.Bytes()
+			if bodyErr != nil {
+				newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+				return
+			}
+			if _, contextErr := service.EnforceInputContextLimit(body, relayFormat); contextErr != nil {
+				newAPIError = contextErr
+				return
+			}
+		}
+	}
 	if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
 		if _, enabled := ratio_setting.GetImageRatio(relayInfo.OriginModelName); !enabled {
 			newAPIError = types.NewErrorWithStatusCode(
@@ -139,7 +162,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
-	needCountToken := constant.CountToken || enable272KContextLimit
+	needCountToken := constant.CountToken || service.InputContextLimitEnabled()
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
 	if needSensitiveCheck || needCountToken {
@@ -163,20 +186,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	contextTokens := tokens
-	if enable272KContextLimit && !constant.CountToken {
+	if service.InputContextLimitEnabled() && !constant.CountToken {
 		contextTokens, err = service.EstimateRequestTokenForContextLimit(c, meta, relayInfo)
 		if err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 			return
 		}
 	}
-	if enable272KContextLimit && contextTokens > maxInputContextTokens {
-		newAPIError = types.NewErrorWithStatusCode(
-			fmt.Errorf("input context length %d exceeds the maximum allowed context length of %d tokens", contextTokens, maxInputContextTokens),
-			types.ErrorCodeInvalidRequest,
-			http.StatusOK,
-			types.ErrOptionWithSkipRetry(),
-		)
+	if contextErr := service.EnforceInputContextTokenLimit(contextTokens); contextErr != nil {
+		newAPIError = contextErr
 		return
 	}
 

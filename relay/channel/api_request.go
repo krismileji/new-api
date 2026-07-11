@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -475,6 +476,10 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	if err := enforceOutboundInputContextLimit(req, info); err != nil {
+		return nil, err
+	}
+
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {
@@ -522,6 +527,33 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
+}
+
+func enforceOutboundInputContextLimit(req *http.Request, info *common.RelayInfo) error {
+	if !service.InputContextLimitEnabled() || info == nil || req == nil || req.Body == nil ||
+		!service.IsInputContextLimitFormat(info.RelayFormat) {
+		return nil
+	}
+
+	body, err := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	restoreBody := func() io.ReadCloser {
+		return io.NopCloser(bytes.NewReader(body))
+	}
+	req.Body = restoreBody()
+	req.GetBody = func() (io.ReadCloser, error) {
+		return restoreBody(), nil
+	}
+	req.ContentLength = int64(len(body))
+	if err != nil {
+		return types.NewError(fmt.Errorf("read final upstream request body: %w", err), types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	_, apiErr := service.EnforceInputContextLimit(body, info.GetFinalRequestRelayFormat())
+	if apiErr != nil {
+		return apiErr
+	}
+	return nil
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

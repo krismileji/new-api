@@ -1,12 +1,20 @@
 package channel
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,4 +198,76 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestDoRequestRejectsOversizedFinalInputWithoutCallingUpstream(t *testing.T) {
+	if !service.InputContextLimitEnabled() {
+		t.Skip("ENABLE_272K_CONTEXT_LIMIT is disabled")
+	}
+	gin.SetMode(gin.TestMode)
+	var upstreamCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"gpt-5.5","input":"` + strings.Repeat("x ", service.MaxInputContextTokens+1024) + `"}`)
+	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(body))
+	require.NoError(t, err)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatOpenAIResponses,
+		FinalRequestRelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta:             &relaycommon.ChannelMeta{},
+	}
+
+	resp, err := doRequest(ctx, req, info)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var apiErr *types.NewAPIError
+	require.True(t, errors.As(err, &apiErr))
+	assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusOK, apiErr.StatusCode)
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.Zero(t, upstreamCalls.Load())
+
+	restoredBody, readErr := io.ReadAll(req.Body)
+	require.NoError(t, readErr)
+	assert.Equal(t, body, restoredBody)
+}
+
+func TestDoRequestPreservesAllowedFinalInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.InitHttpClient()
+	receivedBody := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		receivedBody <- body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(body))
+	require.NoError(t, err)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatOpenAIResponses,
+		FinalRequestRelayFormat: types.RelayFormatOpenAIResponses,
+		ChannelMeta:             &relaycommon.ChannelMeta{},
+	}
+
+	resp, err := doRequest(ctx, req, info)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, body, <-receivedBody)
 }
