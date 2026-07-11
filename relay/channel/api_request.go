@@ -549,7 +549,7 @@ func enforceOutboundInputContextLimit(req *http.Request, info *common.RelayInfo)
 		return types.NewError(fmt.Errorf("read final upstream request body: %w", err), types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 	}
 
-	_, apiErr := service.EnforceInputContextLimit(body, info.GetFinalRequestRelayFormat())
+	_, apiErr := service.EnforceInputContextLimit(body)
 	if apiErr != nil {
 		return apiErr
 	}

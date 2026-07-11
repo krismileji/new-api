@@ -133,9 +133,6 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 		if err != nil {
 			return nil, types.NewError(errors.Wrap(err, "marshal nova request"), types.ErrorCodeBadResponseBody)
 		}
-		if _, inputErr := service.EnforceInputContextLimit(reqBody, info.GetFinalRequestRelayFormat()); inputErr != nil {
-			return nil, inputErr
-		}
 		awsReq.Body = reqBody
 		a.AwsReq = awsReq
 		return nil, nil
@@ -155,9 +152,6 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			if err != nil {
 				return nil, types.NewError(errors.Wrap(err, "marshal aws request fail"), types.ErrorCodeBadRequestBody)
 			}
-			if _, inputErr := service.EnforceInputContextLimit(awsReq.Body, info.GetFinalRequestRelayFormat()); inputErr != nil {
-				return nil, inputErr
-			}
 			a.AwsReq = awsReq
 			return nil, nil
 		} else {
@@ -169,9 +163,6 @@ func doAwsClientRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor,
 			awsReq.Body, err = buildAwsRequestBody(c, info, awsClaudeReq)
 			if err != nil {
 				return nil, types.NewError(errors.Wrap(err, "marshal aws request fail"), types.ErrorCodeBadRequestBody)
-			}
-			if _, inputErr := service.EnforceInputContextLimit(awsReq.Body, info.GetFinalRequestRelayFormat()); inputErr != nil {
-				return nil, inputErr
 			}
 			a.AwsReq = awsReq
 			return nil, nil

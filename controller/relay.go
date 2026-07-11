@@ -123,31 +123,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
-	if service.InputContextLimitEnabled() {
-		if relayFormat == types.RelayFormatOpenAIRealtime {
-			newAPIError = types.NewErrorWithStatusCode(
-				errors.New("realtime requests are disabled while the 272K input context limit is enabled because their context cannot be determined before connecting upstream"),
-				types.ErrorCodeInvalidRequest,
-				http.StatusOK,
-				types.ErrOptionWithSkipRetry(),
-			)
+	enforceInputContextLimit := service.InputContextLimitEnabled() && service.IsInputContextLimitFormat(relayFormat)
+	if enforceInputContextLimit {
+		bodyStorage, bodyErr := common.GetBodyStorage(c)
+		if bodyErr != nil {
+			newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 			return
 		}
-		if service.IsInputContextLimitFormat(relayFormat) {
-			bodyStorage, bodyErr := common.GetBodyStorage(c)
-			if bodyErr != nil {
-				newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-				return
-			}
-			body, bodyErr := bodyStorage.Bytes()
-			if bodyErr != nil {
-				newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-				return
-			}
-			if _, contextErr := service.EnforceInputContextLimit(body, relayFormat); contextErr != nil {
-				newAPIError = contextErr
-				return
-			}
+		body, bodyErr := bodyStorage.Bytes()
+		if bodyErr != nil {
+			newAPIError = types.NewError(bodyErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			return
+		}
+		if _, contextErr := service.EnforceInputContextLimit(body); contextErr != nil {
+			newAPIError = contextErr
+			return
 		}
 	}
 	if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
@@ -162,7 +152,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
-	needCountToken := constant.CountToken || service.InputContextLimitEnabled()
+	needCountToken := constant.CountToken || enforceInputContextLimit
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
 	if needSensitiveCheck || needCountToken {
@@ -186,16 +176,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	contextTokens := tokens
-	if service.InputContextLimitEnabled() && !constant.CountToken {
+	if enforceInputContextLimit && !constant.CountToken {
 		contextTokens, err = service.EstimateRequestTokenForContextLimit(c, meta, relayInfo)
 		if err != nil {
 			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 			return
 		}
 	}
-	if contextErr := service.EnforceInputContextTokenLimit(contextTokens); contextErr != nil {
-		newAPIError = contextErr
-		return
+	if enforceInputContextLimit {
+		if contextErr := service.EnforceInputContextTokenLimit(contextTokens); contextErr != nil {
+			newAPIError = contextErr
+			return
+		}
 	}
 
 	relayInfo.SetEstimatePromptTokens(tokens)

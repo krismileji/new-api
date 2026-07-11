@@ -890,13 +890,6 @@ func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	var texts = make([]string, 0)
 
 	if r.Input != nil {
-		// Responses input contains many top-level item types (tool outputs,
-		// reasoning, shell calls, and future extension items). Keep the full
-		// JSON in the token source so an unknown item cannot disappear from the
-		// context estimate.
-		texts = append(texts, string(r.Input))
-
-		// Media parsing remains useful for the separate image/file token estimate.
 		inputs := r.ParseInput()
 		for _, input := range inputs {
 			if input.Type == "input_image" {
@@ -914,6 +907,8 @@ func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 						Source:   types.NewFileSourceFromData(input.FileUrl, ""),
 					})
 				}
+			} else {
+				texts = append(texts, input.Text)
 			}
 		}
 	}

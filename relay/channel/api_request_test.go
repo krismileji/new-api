@@ -253,7 +253,7 @@ func TestDoRequestPreservesAllowedFinalInput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	body := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	body := []byte(`{"model":"gpt-5.5","input":"hello","previous_response_id":"resp_123"}`)
 	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(body))
 	require.NoError(t, err)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
