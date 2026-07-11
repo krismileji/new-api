@@ -35,6 +35,8 @@ import (
 
 const maxInputContextTokens = 272000
 
+var enable272KContextLimit = common.GetEnvOrDefaultBool("ENABLE_272K_CONTEXT_LIMIT", true)
+
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	switch info.RelayMode {
@@ -136,31 +138,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 	}
-	if !strings.HasPrefix(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-		bodyStorage, err := common.GetBodyStorage(c)
-		if err != nil {
-			newAPIError = types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
-			return
-		}
-		body, err := bodyStorage.Bytes()
-		if err != nil {
-			newAPIError = types.NewError(err, types.ErrorCodeReadRequestBodyFailed)
-			return
-		}
-		contextTokens := service.CountTextToken(string(body), relayInfo.OriginModelName)
-		if contextTokens > maxInputContextTokens {
-			newAPIError = types.NewErrorWithStatusCode(
-				fmt.Errorf("input context length %d exceeds the maximum allowed context length of %d tokens", contextTokens, maxInputContextTokens),
-				types.ErrorCodeInvalidRequest,
-				http.StatusOK,
-				types.ErrOptionWithSkipRetry(),
-			)
-			return
-		}
-	}
-
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
-	needCountToken := constant.CountToken
+	needCountToken := constant.CountToken || enable272KContextLimit
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
 	if needSensitiveCheck || needCountToken {
@@ -181,6 +160,23 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
+		return
+	}
+	contextTokens := tokens
+	if enable272KContextLimit && !constant.CountToken {
+		contextTokens, err = service.EstimateRequestTokenForContextLimit(c, meta, relayInfo)
+		if err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
+			return
+		}
+	}
+	if enable272KContextLimit && contextTokens > maxInputContextTokens {
+		newAPIError = types.NewErrorWithStatusCode(
+			fmt.Errorf("input context length %d exceeds the maximum allowed context length of %d tokens", contextTokens, maxInputContextTokens),
+			types.ErrorCodeInvalidRequest,
+			http.StatusOK,
+			types.ErrOptionWithSkipRetry(),
+		)
 		return
 	}
 
