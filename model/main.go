@@ -300,6 +300,8 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&ChannelRatioMonitor{},
+		&ChannelRatioHistory{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -310,6 +312,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := InitializeExternalIdentityClaims(); err != nil {
+		return err
+	}
+	if err := dropLegacyChannelSmartScheduleGroupColumn(); err != nil {
 		return err
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
@@ -363,6 +368,8 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+		{&ChannelRatioMonitor{}, "ChannelRatioMonitor"},
+		{&ChannelRatioHistory{}, "ChannelRatioHistory"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -393,6 +400,9 @@ func migrateDBFast() error {
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
 	}
+	if err := dropLegacyChannelSmartScheduleGroupColumn(); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -404,6 +414,24 @@ func migrateDBFast() error {
 	}
 	common.SysLog("database migrated")
 	return nil
+}
+
+// SQLite needs the removed field in the migration schema while GORM rebuilds
+// the table for DropColumn. This type is not part of the runtime data model.
+type channelRatioMonitorLegacyScheduleGroup struct {
+	SmartScheduleGroup string `gorm:"type:varchar(64)"`
+}
+
+func (channelRatioMonitorLegacyScheduleGroup) TableName() string {
+	return "channel_ratio_monitors"
+}
+
+func dropLegacyChannelSmartScheduleGroupColumn() error {
+	legacyModel := &channelRatioMonitorLegacyScheduleGroup{}
+	if !DB.Migrator().HasTable(legacyModel) || !DB.Migrator().HasColumn(legacyModel, "SmartScheduleGroup") {
+		return nil
+	}
+	return DB.Migrator().DropColumn(legacyModel, "SmartScheduleGroup")
 }
 
 func migrateLOGDB() error {
@@ -418,8 +446,13 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
+	if err := LOG_DB.Exec(clickHouseLogRetryAttemptColumnSQL).Error; err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
 }
+
+const clickHouseLogRetryAttemptColumnSQL = "ALTER TABLE logs ADD COLUMN IF NOT EXISTS is_retry_attempt UInt8 DEFAULT 0"
 
 func clickHouseLogTTLDays() int {
 	ttlDays := common.GetEnvOrDefault("LOG_SQL_CLICKHOUSE_TTL_DAYS", 0)
@@ -460,6 +493,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	completion_tokens Int32 DEFAULT 0,
 	use_time Int32 DEFAULT 0,
 	is_stream UInt8 DEFAULT 0,
+	is_retry_attempt UInt8 DEFAULT 0,
 	channel_id Int32 DEFAULT 0,
 	token_id Int32 DEFAULT 0,
 	`+"`group`"+` String DEFAULT '',

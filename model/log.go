@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +71,7 @@ type Log struct {
 	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
 	UseTime           int    `json:"use_time" gorm:"default:0"`
 	IsStream          bool   `json:"is_stream"`
+	IsRetryAttempt    bool   `json:"-"`
 	ChannelId         int    `json:"channel" gorm:"index"`
 	ChannelName       string `json:"channel_name" gorm:"->"`
 	TokenId           int    `json:"token_id" gorm:"default:0;index"`
@@ -118,6 +120,31 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].ChannelName = ""
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
+		if logs[i].Type == LogTypeError {
+			statusCode := 0
+			if otherMap != nil {
+				switch value := otherMap["status_code"].(type) {
+				case int:
+					statusCode = value
+				case int64:
+					statusCode = int(value)
+				case float64:
+					statusCode = int(value)
+				case string:
+					statusCode, _ = strconv.Atoi(strings.TrimSpace(value))
+				}
+			}
+			if statusCode == 0 && strings.HasPrefix(logs[i].Content, "status_code=") {
+				value := strings.TrimPrefix(logs[i].Content, "status_code=")
+				if end := strings.IndexAny(value, ", \t\r\n"); end >= 0 {
+					value = value[:end]
+				}
+				statusCode, _ = strconv.Atoi(value)
+			}
+			if statusCode >= 100 && statusCode <= 599 {
+				logs[i].Content = fmt.Sprintf("status_code=%d", statusCode)
+			}
+		}
 		if otherMap != nil {
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
@@ -131,12 +158,16 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	assignDisplayLogIds(logs, startIdx)
 }
 
+func userVisibleLogs(tx *gorm.DB) *gorm.DB {
+	return tx.Where("(logs.is_retry_attempt = ? OR logs.is_retry_attempt IS NULL)", false)
+}
+
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	order := "id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("")
 	}
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
+	err = userVisibleLogs(LOG_DB.Model(&Log{})).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -280,7 +311,7 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 }
 
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
-	isStream bool, group string, other map[string]interface{}) {
+	isStream bool, group string, other map[string]interface{}, isRetryAttempt bool) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
@@ -308,6 +339,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		TokenId:          tokenId,
 		UseTime:          useTimeSeconds,
 		IsStream:         isStream,
+		IsRetryAttempt:   isRetryAttempt,
 		Group:            group,
 		Ip: func() string {
 			if needRecordIp {
@@ -564,9 +596,9 @@ const logSearchCountLimit = 10000
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
+		tx = userVisibleLogs(LOG_DB).Where("logs.user_id = ?", userId)
 	} else {
-		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
+		tx = userVisibleLogs(LOG_DB).Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
