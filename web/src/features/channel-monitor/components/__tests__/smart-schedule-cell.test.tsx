@@ -102,13 +102,15 @@ describe('channel monitor smart schedule cell status', () => {
     assert.doesNotMatch(markup, /得分 28\.8/)
   })
 
-  test('keeps a useful skipped reason for a participating channel', () => {
-    const markup = renderCell({
-      last_schedule_status: 'skipped',
-      last_schedule_error: '渠道不支持已配置的基准模型',
-    })
+  test('does not render a third status row for any schedule state', () => {
+    for (const status of ['', 'skipped', 'failed'] as const) {
+      const markup = renderCell({
+        last_schedule_status: status,
+        last_schedule_error: '渠道不支持已配置的基准模型',
+      })
 
-    assert.match(markup, /已跳过/)
-    assert.match(markup, /渠道不支持已配置的基准模型/)
+      assert.doesNotMatch(markup, /等待首次调度|已跳过|失败/)
+      assert.doesNotMatch(markup, /渠道不支持已配置的基准模型/)
+    }
   })
 })

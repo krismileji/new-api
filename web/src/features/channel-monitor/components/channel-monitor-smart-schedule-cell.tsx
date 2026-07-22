@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 
 import {
   AlertDialog,
@@ -28,7 +28,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 
@@ -45,39 +44,6 @@ export function ChannelMonitorSmartScheduleCell(
 ) {
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false)
   const participating = !props.channel.smart_schedule_excluded
-
-  let statusContent: ReactNode = null
-  if (participating) {
-    if (props.channel.last_schedule_status === '') {
-      statusContent = (
-        <span className='text-muted-foreground text-xs'>等待首次调度</span>
-      )
-    } else if (props.channel.last_schedule_status === 'skipped') {
-      statusContent = (
-        <div className='flex min-w-0 items-center gap-1.5 text-xs'>
-          <Badge variant='outline'>已跳过</Badge>
-          <span
-            className='text-muted-foreground truncate'
-            title={props.channel.last_schedule_error}
-          >
-            {props.channel.last_schedule_error || '暂不满足调度条件'}
-          </span>
-        </div>
-      )
-    } else if (props.channel.last_schedule_status === 'failed') {
-      statusContent = (
-        <div className='flex min-w-0 items-center gap-1.5 text-xs'>
-          <Badge variant='destructive'>失败</Badge>
-          <span
-            className='text-destructive truncate'
-            title={props.channel.last_schedule_error}
-          >
-            {props.channel.last_schedule_error || '更新优先级或权重失败'}
-          </span>
-        </div>
-      )
-    }
-  }
 
   return (
     <div className='flex w-full min-w-0 flex-col items-start gap-2'>
@@ -113,8 +79,6 @@ export function ChannelMonitorSmartScheduleCell(
           </span>
         ) : null}
       </div>
-
-      {statusContent}
 
       <AlertDialog
         open={resetConfirmationOpen}
