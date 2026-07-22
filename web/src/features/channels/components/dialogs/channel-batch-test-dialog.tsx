@@ -73,9 +73,19 @@ import {
   handleTestChannel,
 } from '../../lib'
 import type { Channel } from '../../types'
+import {
+  type BatchTestChannelOption,
+  createBatchTestChannelOption,
+  getChannelsSupportingModels,
+  getSelectableChannelIds,
+  getSelectableModelNames,
+  retainCompatibleChannelIds,
+} from './channel-batch-test-selection'
 
 type BatchTestChannel = Pick<Channel, 'id' | 'name' | 'status'> &
-  Partial<Pick<Channel, 'models'>>
+  Partial<Pick<Channel, 'models' | 'remark'>> & {
+    channel_remark?: string | null
+  }
 
 type ChannelBatchTestDialogProps = {
   open: boolean
@@ -351,37 +361,35 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
 
   const channels = props.channels ?? channelsQuery.data ?? EMPTY_CHANNELS
   const pricedModels = pricedModelsQuery.data ?? EMPTY_PRICED_MODELS
+  const selectableModels = useMemo(
+    () => getSelectableModelNames(pricedModels, channels),
+    [channels, pricedModels]
+  )
+  const compatibleChannels = useMemo(
+    () => getChannelsSupportingModels(channels, selectedModels),
+    [channels, selectedModels]
+  )
   const channelOptions = useMemo(
     () =>
-      channels.map((channel) => ({
-        value: String(channel.id),
-        label: `#${channel.id} ${channel.name}`,
-      })),
-    [channels]
+      compatibleChannels.map((channel) =>
+        createBatchTestChannelOption(channel)
+      ),
+    [compatibleChannels]
   )
   const selectedChannels = useMemo(() => {
     const selectedIds = new Set(
       selectedChannelIds.map((channelId) => Number(channelId))
     )
-    return channels.filter((channel) => selectedIds.has(channel.id))
-  }, [channels, selectedChannelIds])
+    return compatibleChannels.filter((channel) => selectedIds.has(channel.id))
+  }, [compatibleChannels, selectedChannelIds])
+  const activeSelectedChannelIds = useMemo(
+    () => selectedChannels.map((channel) => String(channel.id)),
+    [selectedChannels]
+  )
   const repeatChannel = isRepeatMode ? selectedChannels[0] : undefined
-  const repeatModelNames = useMemo(() => {
-    if (!repeatChannel) return EMPTY_PRICED_MODELS
-    if (typeof repeatChannel.models !== 'string') return pricedModels
-
-    const configuredModels = new Set(
-      repeatChannel.models
-        .split(',')
-        .map((model) => model.trim())
-        .filter(Boolean)
-    )
-    return pricedModels.filter((model) => configuredModels.has(model))
-  }, [pricedModels, repeatChannel])
-  const selectableModels = isRepeatMode ? repeatModelNames : pricedModels
   const modelOptions = useMemo(
-    () => pricedModels.map((model) => ({ value: model, label: model })),
-    [pricedModels]
+    () => selectableModels.map((model) => ({ value: model, label: model })),
+    [selectableModels]
   )
   const repeatConcurrency = parseBoundedInteger(
     repeatConcurrencyInput,
@@ -479,6 +487,17 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     setProgress(null)
   }
 
+  const handleSelectedModelsChange = (models: string[]) => {
+    setSelectedModels(models)
+    setSelectedChannelIds((current) =>
+      retainCompatibleChannelIds(
+        current,
+        getChannelsSupportingModels(channels, models)
+      )
+    )
+    clearResults()
+  }
+
   const resetDialog = () => {
     stopRequestedRef.current = true
     setTestMode('batch')
@@ -515,8 +534,8 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     if (tasks.length === 0) {
       toast.error(
         isRepeatMode
-          ? '请选择一个渠道和一个该渠道支持的已定价模型'
-          : '请至少选择一个渠道和一个已定价模型'
+          ? '请先选择一个已定价模型，再选择一个支持该模型的渠道'
+          : '请先选择已定价模型，再选择至少一个支持所选模型的渠道'
       )
       return
     }
@@ -666,22 +685,24 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   )
 
   let dialogDescription =
-    '选择渠道和已设置价格的模型，批量验证上游连通性。每个渠道都会测试每个已选模型。'
+    '先选择已定价模型，再从支持全部所选模型的渠道中选择测试目标。'
   if (repeatModeEnabled) {
     dialogDescription =
-      '可批量验证多个渠道，也可固定一个渠道和模型进行并发循环测试。测试会真实请求上游。'
+      '先选择模型和支持该模型的渠道，再进行批量测试或并发循环测试。测试会真实请求上游。'
   } else if (isSingleModel) {
-    dialogDescription =
-      '选择多个渠道和一个已设置价格的模型，批量验证上游连通性。'
+    dialogDescription = '先选择一个已定价模型，再批量验证支持该模型的渠道。'
   }
 
-  let modelDescription = `仅显示已设置价格的模型，共 ${pricedModels.length} 个。`
-  if (isRepeatMode) {
-    modelDescription = repeatChannel
-      ? `仅显示该渠道支持且已设置价格的模型，共 ${selectableModels.length} 个。`
-      : '请先选择渠道，再选择该渠道支持的模型。'
-  } else if (isSingleModel) {
-    modelDescription = `仅显示已设置价格的模型，共 ${pricedModels.length} 个，每次只能选择一个。`
+  let modelDescription = `仅显示已定价且至少有一个渠道配置的模型，共 ${selectableModels.length} 个。`
+  if (isSingleModel) {
+    modelDescription = `仅显示已定价且至少有一个渠道配置的模型，共 ${selectableModels.length} 个，每次只能选择一个。`
+  }
+
+  let channelDescription = '请先选择模型，再选择支持所选模型的渠道。'
+  if (selectedModels.length > 0 && isRepeatMode) {
+    channelDescription = `共 ${compatibleChannels.length} 个渠道支持所选模型，只能选择一个测试目标。`
+  } else if (selectedModels.length > 0) {
+    channelDescription = `共 ${compatibleChannels.length} 个渠道支持所选模型，当前选择 ${selectedChannels.length} 个。`
   }
 
   let testPlanTitle = `将执行 ${tasks.length} 个测试组合`
@@ -754,6 +775,85 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
       <FieldGroup className='grid gap-4 lg:grid-cols-2'>
         <Field>
           <div className='flex items-center justify-between gap-3'>
+            <FieldLabel htmlFor='batch-test-models'>
+              {isSingleModel ? '选择模型' : '选择已定价模型'}
+            </FieldLabel>
+            {!isSingleModel && (
+              <div className='flex items-center gap-1'>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='xs'
+                  onClick={() => {
+                    handleSelectedModelsChange(selectableModels)
+                  }}
+                  disabled={isTesting || selectableModels.length === 0}
+                >
+                  全选
+                </Button>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='xs'
+                  onClick={() => {
+                    handleSelectedModelsChange([])
+                  }}
+                  disabled={isTesting || selectedModels.length === 0}
+                >
+                  清空
+                </Button>
+              </div>
+            )}
+          </div>
+          {optionsLoading && <Skeleton className='h-9 w-full' />}
+          {!optionsLoading && isSingleModel && (
+            <Combobox
+              items={selectableModels}
+              value={selectedModels[0] ?? null}
+              onValueChange={(value) => {
+                handleSelectedModelsChange(value ? [value] : [])
+              }}
+              disabled={isTesting || Boolean(loadError)}
+            >
+              <ComboboxInput
+                id='batch-test-models'
+                className='w-full'
+                placeholder='搜索并选择模型'
+                showClear={selectedModels.length > 0}
+                disabled={isTesting || Boolean(loadError)}
+              />
+              <ComboboxContent>
+                <ComboboxList>
+                  <ComboboxCollection>
+                    {(model: string) => (
+                      <ComboboxItem key={model} value={model}>
+                        <span className='truncate font-mono'>{model}</span>
+                      </ComboboxItem>
+                    )}
+                  </ComboboxCollection>
+                </ComboboxList>
+                <ComboboxEmpty>没有渠道配置已定价模型</ComboboxEmpty>
+              </ComboboxContent>
+            </Combobox>
+          )}
+          {!optionsLoading && !isSingleModel && (
+            <MultiSelect
+              id='batch-test-models'
+              options={modelOptions}
+              selected={selectedModels}
+              onChange={handleSelectedModelsChange}
+              placeholder='搜索并选择模型'
+              emptyText='没有渠道配置已定价模型'
+              disabled={isTesting || Boolean(loadError)}
+              renderSelectedSummary={(values) => `已选 ${values.length} 个模型`}
+              copyChipOnClick
+            />
+          )}
+          <FieldDescription>{modelDescription}</FieldDescription>
+        </Field>
+
+        <Field>
+          <div className='flex items-center justify-between gap-3'>
             <FieldLabel htmlFor='batch-test-channels'>选择渠道</FieldLabel>
             {!isRepeatMode && (
               <div className='flex items-center gap-1'>
@@ -763,17 +863,14 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
                   size='xs'
                   onClick={() => {
                     setSelectedChannelIds(
-                      channels
-                        .filter(
-                          (channel) =>
-                            props.selectAllMode === 'all' ||
-                            channel.status === 1
-                        )
-                        .map((channel) => String(channel.id))
+                      getSelectableChannelIds(
+                        compatibleChannels,
+                        props.selectAllMode
+                      )
                     )
                     clearResults()
                   }}
-                  disabled={isTesting || channels.length === 0}
+                  disabled={isTesting || compatibleChannels.length === 0}
                 >
                   {props.selectAllMode === 'all' ? '全选' : '全选启用渠道'}
                 </Button>
@@ -785,7 +882,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
                     setSelectedChannelIds([])
                     clearResults()
                   }}
-                  disabled={isTesting || selectedChannelIds.length === 0}
+                  disabled={isTesting || activeSelectedChannelIds.length === 0}
                 >
                   清空
                 </Button>
@@ -800,34 +897,55 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
               itemToStringValue={(option) => option.value}
               value={
                 channelOptions.find(
-                  (option) => option.value === selectedChannelIds[0]
+                  (option) => option.value === activeSelectedChannelIds[0]
                 ) ?? null
               }
               onValueChange={(option) => {
                 setSelectedChannelIds(option ? [option.value] : [])
-                setSelectedModels([])
                 clearResults()
               }}
-              disabled={isTesting || Boolean(channelLoadError)}
+              disabled={
+                isTesting ||
+                Boolean(channelLoadError) ||
+                selectedModels.length === 0
+              }
             >
               <ComboboxInput
                 id='batch-test-channels'
                 className='w-full'
-                placeholder='搜索并选择一个渠道'
-                showClear={selectedChannelIds.length > 0}
-                disabled={isTesting || Boolean(channelLoadError)}
+                placeholder={
+                  selectedModels.length > 0
+                    ? '搜索并选择支持所选模型的渠道'
+                    : '请先选择模型'
+                }
+                showClear={activeSelectedChannelIds.length > 0}
+                disabled={
+                  isTesting ||
+                  Boolean(channelLoadError) ||
+                  selectedModels.length === 0
+                }
               />
               <ComboboxContent>
                 <ComboboxList>
                   <ComboboxCollection>
-                    {(option: { value: string; label: string }) => (
+                    {(option: BatchTestChannelOption) => (
                       <ComboboxItem key={option.value} value={option}>
-                        <span className='truncate'>{option.label}</span>
+                        <div className='min-w-0 flex-1'>
+                          <div className='truncate'>{option.channelLabel}</div>
+                          {option.remark && (
+                            <div
+                              className='text-muted-foreground truncate text-xs'
+                              title={option.remark}
+                            >
+                              备注：{option.remark}
+                            </div>
+                          )}
+                        </div>
                       </ComboboxItem>
                     )}
                   </ComboboxCollection>
                 </ComboboxList>
-                <ComboboxEmpty>没有匹配的渠道</ComboboxEmpty>
+                <ComboboxEmpty>没有渠道配置所选模型</ComboboxEmpty>
               </ComboboxContent>
             </Combobox>
           )}
@@ -835,119 +953,30 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             <MultiSelect
               id='batch-test-channels'
               options={channelOptions}
-              selected={selectedChannelIds}
+              selected={activeSelectedChannelIds}
               onChange={(values) => {
                 setSelectedChannelIds(values)
                 clearResults()
               }}
-              placeholder='搜索并选择渠道'
-              emptyText='没有匹配的渠道'
-              disabled={isTesting || Boolean(channelLoadError)}
+              placeholder={
+                selectedModels.length > 0
+                  ? '搜索并选择支持所选模型的渠道'
+                  : '请先选择模型'
+              }
+              emptyText={
+                selectedModels.length > 0
+                  ? '没有渠道配置所选模型'
+                  : '请先选择模型'
+              }
+              disabled={
+                isTesting ||
+                Boolean(channelLoadError) ||
+                selectedModels.length === 0
+              }
               renderSelectedSummary={(values) => `已选 ${values.length} 个渠道`}
             />
           )}
-          <FieldDescription>
-            {isRepeatMode
-              ? `共 ${channels.length} 个渠道，只能选择一个测试目标。`
-              : `共 ${channels.length} 个渠道，当前选择 ${selectedChannelIds.length} 个。`}
-          </FieldDescription>
-        </Field>
-
-        <Field>
-          <div className='flex items-center justify-between gap-3'>
-            <FieldLabel htmlFor='batch-test-models'>
-              {isSingleModel ? '选择模型' : '选择已定价模型'}
-            </FieldLabel>
-            {!isSingleModel && (
-              <div className='flex items-center gap-1'>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='xs'
-                  onClick={() => {
-                    setSelectedModels(pricedModels)
-                    clearResults()
-                  }}
-                  disabled={isTesting || pricedModels.length === 0}
-                >
-                  全选
-                </Button>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='xs'
-                  onClick={() => {
-                    setSelectedModels([])
-                    clearResults()
-                  }}
-                  disabled={isTesting || selectedModels.length === 0}
-                >
-                  清空
-                </Button>
-              </div>
-            )}
-          </div>
-          {pricedModelsQuery.isLoading && <Skeleton className='h-9 w-full' />}
-          {!pricedModelsQuery.isLoading && isSingleModel && (
-            <Combobox
-              items={selectableModels}
-              value={selectedModels[0] ?? null}
-              onValueChange={(value) => {
-                setSelectedModels(value ? [value] : [])
-                clearResults()
-              }}
-              disabled={
-                isTesting ||
-                Boolean(pricedModelsQuery.error) ||
-                (isRepeatMode && !repeatChannel)
-              }
-            >
-              <ComboboxInput
-                id='batch-test-models'
-                className='w-full'
-                placeholder='搜索并选择模型'
-                showClear={selectedModels.length > 0}
-                disabled={
-                  isTesting ||
-                  Boolean(pricedModelsQuery.error) ||
-                  (isRepeatMode && !repeatChannel)
-                }
-              />
-              <ComboboxContent>
-                <ComboboxList>
-                  <ComboboxCollection>
-                    {(model: string) => (
-                      <ComboboxItem key={model} value={model}>
-                        <span className='truncate font-mono'>{model}</span>
-                      </ComboboxItem>
-                    )}
-                  </ComboboxCollection>
-                </ComboboxList>
-                <ComboboxEmpty>
-                  {isRepeatMode
-                    ? '该渠道没有已设置价格的模型'
-                    : '没有已设置价格的模型'}
-                </ComboboxEmpty>
-              </ComboboxContent>
-            </Combobox>
-          )}
-          {!pricedModelsQuery.isLoading && !isSingleModel && (
-            <MultiSelect
-              id='batch-test-models'
-              options={modelOptions}
-              selected={selectedModels}
-              onChange={(values) => {
-                setSelectedModels(values)
-                clearResults()
-              }}
-              placeholder='搜索并选择模型'
-              emptyText='没有已设置价格的模型'
-              disabled={isTesting || Boolean(pricedModelsQuery.error)}
-              renderSelectedSummary={(values) => `已选 ${values.length} 个模型`}
-              copyChipOnClick
-            />
-          )}
-          <FieldDescription>{modelDescription}</FieldDescription>
+          <FieldDescription>{channelDescription}</FieldDescription>
         </Field>
       </FieldGroup>
 
