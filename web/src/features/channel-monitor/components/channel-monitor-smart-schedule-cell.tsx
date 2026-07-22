@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import {
   AlertDialog,
@@ -31,7 +31,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { formatTimestampToDate } from '@/lib/format'
 
 import type { ChannelMonitorItem } from '../types'
 
@@ -47,47 +46,37 @@ export function ChannelMonitorSmartScheduleCell(
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false)
   const participating = !props.channel.smart_schedule_excluded
 
-  let statusContent = (
-    <span className='text-muted-foreground text-xs'>等待首次调度</span>
-  )
-  if (props.channel.last_schedule_status === 'succeeded') {
-    statusContent = (
-      <div className='flex flex-wrap items-center gap-1.5 text-xs'>
-        <Badge variant='secondary'>已调度</Badge>
-        {props.channel.last_schedule_score != null && (
-          <span className='tabular-nums'>
-            得分 {(props.channel.last_schedule_score * 100).toFixed(1)}
+  let statusContent: ReactNode = null
+  if (participating) {
+    if (props.channel.last_schedule_status === '') {
+      statusContent = (
+        <span className='text-muted-foreground text-xs'>等待首次调度</span>
+      )
+    } else if (props.channel.last_schedule_status === 'skipped') {
+      statusContent = (
+        <div className='flex min-w-0 items-center gap-1.5 text-xs'>
+          <Badge variant='outline'>已跳过</Badge>
+          <span
+            className='text-muted-foreground truncate'
+            title={props.channel.last_schedule_error}
+          >
+            {props.channel.last_schedule_error || '暂不满足调度条件'}
           </span>
-        )}
-        <span className='text-muted-foreground'>
-          {formatTimestampToDate(props.channel.last_schedule_time)}
-        </span>
-      </div>
-    )
-  } else if (props.channel.last_schedule_status === 'skipped') {
-    statusContent = (
-      <div className='flex min-w-0 items-center gap-1.5 text-xs'>
-        <Badge variant='outline'>已跳过</Badge>
-        <span
-          className='text-muted-foreground truncate'
-          title={props.channel.last_schedule_error}
-        >
-          {props.channel.last_schedule_error || '暂不满足调度条件'}
-        </span>
-      </div>
-    )
-  } else if (props.channel.last_schedule_status === 'failed') {
-    statusContent = (
-      <div className='flex min-w-0 items-center gap-1.5 text-xs'>
-        <Badge variant='destructive'>失败</Badge>
-        <span
-          className='text-destructive truncate'
-          title={props.channel.last_schedule_error}
-        >
-          {props.channel.last_schedule_error || '更新优先级或权重失败'}
-        </span>
-      </div>
-    )
+        </div>
+      )
+    } else if (props.channel.last_schedule_status === 'failed') {
+      statusContent = (
+        <div className='flex min-w-0 items-center gap-1.5 text-xs'>
+          <Badge variant='destructive'>失败</Badge>
+          <span
+            className='text-destructive truncate'
+            title={props.channel.last_schedule_error}
+          >
+            {props.channel.last_schedule_error || '更新优先级或权重失败'}
+          </span>
+        </div>
+      )
+    }
   }
 
   return (
@@ -118,6 +107,11 @@ export function ChannelMonitorSmartScheduleCell(
           />
           <span className='text-xs'>参与调度</span>
         </div>
+        {participating && props.channel.last_schedule_score != null ? (
+          <span className='text-xs tabular-nums'>
+            得分 {(props.channel.last_schedule_score * 100).toFixed(1)}
+          </span>
+        ) : null}
       </div>
 
       {statusContent}
