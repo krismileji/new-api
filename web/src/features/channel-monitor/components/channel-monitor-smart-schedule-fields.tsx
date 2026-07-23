@@ -208,7 +208,7 @@ export function ChannelMonitorSmartScheduleFields(
             <div className='flex flex-col gap-1'>
               <FormLabel>稳定性保护</FormLabel>
               <FormDescription>
-                只负责准入、降级和恢复，不参与调度得分
+                参与综合调度得分，同时负责准入、降级和恢复
               </FormDescription>
             </div>
             <FormControl>
@@ -575,7 +575,8 @@ export function ChannelMonitorSmartScheduleFields(
       <Alert>
         <AlertTitle>调度规则</AlertTitle>
         <AlertDescription>
-          调度得分只使用已选择的调度指标。稳定性按成功调用数 ÷（成功调用数 +
+          调度得分使用已选择的调度指标；开启稳定性后，成功率以 20%
+          参与综合得分。稳定性按成功调用数 ÷（成功调用数 +
           渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
           0、权重
           0，冷却到期后恢复原设置并只用新样本试放。指标样本不足的渠道使用优先级
