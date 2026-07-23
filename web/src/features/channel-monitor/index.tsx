@@ -216,6 +216,10 @@ export function ChannelMonitor() {
     useState<ChannelMonitorSettingsSection>('monitor')
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
   const [costHistoryOpen, setCostHistoryOpen] = useState(false)
+  const [costHistoryChannel, setCostHistoryChannel] = useState<{
+    id: number
+    name: string
+  } | null>(null)
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -593,6 +597,13 @@ export function ChannelMonitor() {
     (channel) => channel.upstream?.type === 'custom'
   ).length
 
+  const openCostHistory = (channel?: ChannelMonitorItem) => {
+    setCostHistoryChannel(
+      channel ? { id: channel.id, name: channel.name } : null
+    )
+    setCostHistoryOpen(true)
+  }
+
   let pageContent: ReactNode
   if (query.isLoading) {
     pageContent = <ChannelMonitorSkeleton />
@@ -618,11 +629,21 @@ export function ChannelMonitor() {
           <MonitorStatCard
             label='今日累计成本'
             value={
-              costQuery.isLoading ? (
-                <Skeleton className='h-7 w-24' />
-              ) : (
-                formatChannelMonitorCost(costOverview?.today_cost_cny)
-              )
+              <Button
+                type='button'
+                variant='link'
+                size='default'
+                onClick={() => openCostHistory()}
+                disabled={costQuery.isLoading}
+                aria-label='查看每日成本'
+                className='h-auto p-0 text-2xl font-semibold tabular-nums'
+              >
+                {costQuery.isLoading ? (
+                  <Skeleton className='h-7 w-24' />
+                ) : (
+                  formatChannelMonitorCost(costOverview?.today_cost_cny)
+                )}
+              </Button>
             }
             description={costDescription}
             icon={MoneyBag02Icon}
@@ -869,6 +890,7 @@ export function ChannelMonitor() {
               onViewHistory={(channel) =>
                 setChannelDialog({ channelId: channel.id, type: 'history' })
               }
+              onOpenCostHistory={openCostHistory}
               onOpenSuccessDetail={(channel) =>
                 setSuccessDetailTarget({
                   scope: 'channel',
@@ -1144,7 +1166,14 @@ export function ChannelMonitor() {
         <Suspense fallback={null}>
           <LazyChannelMonitorCostHistoryDialog
             open
-            onOpenChange={setCostHistoryOpen}
+            channelId={costHistoryChannel?.id}
+            channelName={costHistoryChannel?.name}
+            onOpenChange={(open) => {
+              setCostHistoryOpen(open)
+              if (!open) {
+                setCostHistoryChannel(null)
+              }
+            }}
           />
         </Suspense>
       )}

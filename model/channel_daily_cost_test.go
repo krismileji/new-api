@@ -44,3 +44,44 @@ func TestChannelDailyCostUpsertUsesBeijingDayAndOneRowPerChannel(t *testing.T) {
 	assert.Equal(t, 1, rows[1].ChannelId)
 	assert.Equal(t, 2, rows[2].ChannelId)
 }
+
+func TestGetChannelDailyCostDayTotalsAggregatesOnlyRequestedRange(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-totals.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayOne := time.Date(2026, 7, 20, 16, 0, 0, 0, time.UTC).Unix()
+	dayTwo := dayOne + channelDailyCostDaySeconds
+	dayThree := dayTwo + channelDailyCostDaySeconds
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, dayOne, 100, 1, 0))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 2, dayOne, 50, 1, 1))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, dayTwo, 200, 1, 0))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, dayThree, 300, 1, 0))
+
+	totals, err := GetChannelDailyCostDayTotals(context.Background(), dayOne, dayThree, 0)
+	require.NoError(t, err)
+	require.Len(t, totals, 2)
+	assert.Equal(t, dayOne, totals[0].DayStart)
+	assert.Equal(t, int64(150), totals[0].CostNanoCNY)
+	assert.Equal(t, int64(1), totals[0].UnresolvedCount)
+	assert.Equal(t, dayTwo, totals[1].DayStart)
+	assert.Equal(t, int64(200), totals[1].CostNanoCNY)
+
+	channelTotals, err := GetChannelDailyCostDayTotals(context.Background(), dayOne, dayThree, 2)
+	require.NoError(t, err)
+	require.Len(t, channelTotals, 1)
+	assert.Equal(t, int64(50), channelTotals[0].CostNanoCNY)
+
+	pageTotals, err := GetChannelDailyCostDayTotalsPage(context.Background(), dayOne, dayThree, 0, 1)
+	require.NoError(t, err)
+	require.Len(t, pageTotals, 1)
+	assert.Equal(t, dayOne, pageTotals[0].DayStart)
+}

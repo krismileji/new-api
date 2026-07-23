@@ -25,7 +25,7 @@ import { I18nextProvider } from 'react-i18next'
 
 import { formatTimestampToDate } from '@/lib/format'
 
-import { formatChannelMonitorCost } from '../../lib/format'
+import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
 import type { ChannelMonitorItem } from '../../types'
 import { ChannelMonitorChannelView } from '../channel-monitor-channel-view'
 
@@ -119,6 +119,7 @@ function renderView(channel: ChannelMonitorItem) {
         onEditGroups={noop}
         onConfigureUpstream={noop}
         onViewHistory={noop}
+        onOpenCostHistory={noop}
         onOpenSuccessDetail={noop}
         onUpdateSmartSchedule={noop}
         smartScheduleEnabled={false}
@@ -133,6 +134,10 @@ function renderView(channel: ChannelMonitorItem) {
 
 function getTableCells(markup: string) {
   return markup.match(/<td\b[\s\S]*?<\/td>/g) ?? []
+}
+
+function getTableHeaders(markup: string) {
+  return markup.match(/<th\b[\s\S]*?<\/th>/g) ?? []
 }
 
 describe('channel monitor channel view timestamps', () => {
@@ -155,6 +160,30 @@ describe('channel monitor channel view timestamps', () => {
     )
     assert.ok(cells[3]?.includes('上游分组：default'))
     assert.equal(cells[3]?.includes(channel.updated_by_username), false)
+  })
+
+  test('places upstream refresh actions before their metric text with compact spacing', () => {
+    const channel = createChannel()
+    const markup = renderView(channel)
+    const cells = getTableCells(markup)
+    const headers = getTableHeaders(markup)
+    const balanceCell = cells[1] ?? ''
+    const ratioCell = cells[3] ?? ''
+
+    assert.ok(
+      balanceCell.indexOf('aria-label="更新上游余额"') <
+        balanceCell.indexOf('42.5')
+    )
+    assert.ok(
+      ratioCell.indexOf('aria-label="更新上游倍率"') <
+        ratioCell.indexOf(formatMonitorRatio(channel.cost_ratio))
+    )
+    assert.match(balanceCell, /grid-cols-\[24px_minmax\(0,1fr\)\]/)
+    assert.match(ratioCell, /grid-cols-\[24px_minmax\(0,1fr\)\]/)
+    assert.match(balanceCell, /col-start-2/)
+    assert.match(ratioCell, /col-start-2/)
+    assert.ok(headers[1]?.includes('pl-[34px]'))
+    assert.ok(headers[3]?.includes('pl-[34px]'))
   })
 
   test('does not show conversion or sync status details in the ratio cell', () => {
@@ -233,6 +262,8 @@ describe('channel monitor channel view timestamps', () => {
 
     assert.ok(cells[2]?.includes(formatChannelMonitorCost(1.23456)))
     assert.equal(cells[2]?.includes('不完整'), false)
+    assert.match(cells[2] ?? '', /<button\b/)
+    assert.ok(cells[2]?.includes('查看渠道 测试渠道 的今日成本详情'))
   })
 
   test('shows an explicit state when cost conversion is not configured', () => {
@@ -241,6 +272,8 @@ describe('channel monitor channel view timestamps', () => {
     )
 
     assert.ok(cells[2]?.includes('未配置'))
+    assert.match(cells[2] ?? '', /<button\b/)
+    assert.ok(cells[2]?.includes('查看渠道 测试渠道 的今日成本详情'))
   })
 
   test('keeps zero visible and marks totals with unresolved settlements', () => {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,10 +29,14 @@ const (
 )
 
 type channelDailyCostSnapshot struct {
-	ChannelId    int
-	CostRatioCNY float64
-	QuotaPerUnit float64
-	Configured   bool
+	ChannelId      int
+	CostRatioCNY   float64
+	QuotaPerUnit   float64
+	Configured     bool
+	APIKeyId       int
+	APIKeyName     string
+	KeyFingerprint string
+	KeyDisplay     string
 }
 
 type channelDailyCostSnapshotCacheEntry struct {
@@ -49,6 +54,7 @@ func CaptureChannelDailyCostSnapshot(ctx *gin.Context, channelId int) {
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("读取渠道 #%d 成本配置失败: %s", channelId, err.Error()))
 	}
+	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	ctx.Set(channelDailyCostSnapshotContextKey, snapshot)
 }
 
@@ -119,11 +125,14 @@ func channelDailyCostSnapshotFromContext(ctx *gin.Context, channelId int) channe
 	if ctx != nil {
 		if value, exists := ctx.Get(channelDailyCostSnapshotContextKey); exists {
 			if snapshot, ok := value.(channelDailyCostSnapshot); ok && snapshot.ChannelId == channelId {
+				snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
+				ctx.Set(channelDailyCostSnapshotContextKey, snapshot)
 				return snapshot
 			}
 		}
 	}
 	snapshot, err := getChannelDailyCostSnapshot(channelId)
+	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	if err != nil {
 		if ctx != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("读取渠道 #%d 成本配置失败: %s", channelId, err.Error()))
@@ -136,6 +145,31 @@ func channelDailyCostSnapshotFromContext(ctx *gin.Context, channelId int) channe
 	return snapshot
 }
 
+func channelDailyCostSnapshotWithCurrentKey(ctx *gin.Context, snapshot channelDailyCostSnapshot) channelDailyCostSnapshot {
+	if ctx == nil {
+		return snapshot
+	}
+	snapshot.APIKeyId = ctx.GetInt("token_id")
+	snapshot.APIKeyName = strings.TrimSpace(ctx.GetString("token_name"))
+	if snapshot.APIKeyId > 0 && snapshot.APIKeyName == "" {
+		if token, err := model.GetTokenById(snapshot.APIKeyId); err == nil {
+			snapshot.APIKeyName = strings.TrimSpace(token.Name)
+		}
+	}
+	value, exists := common.GetContextKey(ctx, constant.ContextKeyChannelKey)
+	if !exists {
+		snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, "")
+		return snapshot
+	}
+	key, ok := value.(string)
+	if !ok {
+		snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, "")
+		return snapshot
+	}
+	snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, key)
+	return snapshot
+}
+
 // recordChannelDailyCostFromQuota records a successful upstream settlement.
 // quotaBeforeGroup must exclude the local user/group multiplier.
 func recordChannelDailyCostFromQuota(ctx *gin.Context, channelId int, quotaBeforeGroup float64) {
@@ -144,7 +178,8 @@ func recordChannelDailyCostFromQuota(ctx *gin.Context, channelId int, quotaBefor
 }
 
 func recordChannelDailyCostUnresolved(ctx *gin.Context, channelId int) {
-	recordChannelDailyCostEvent(ctx, channelId, 0, 0, 1)
+	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
+	recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 }
 
 func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bool {
@@ -158,8 +193,9 @@ func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bo
 }
 
 func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) {
+	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	if !snapshot.Configured || math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
-		recordChannelDailyCostUnresolved(ctx, snapshot.ChannelId)
+		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
 
@@ -169,22 +205,22 @@ func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyC
 		Mul(decimal.NewFromInt(model.ChannelDailyCostNanoPerCNY)).
 		Round(0)
 	if costNano.IsNegative() || costNano.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
-		recordChannelDailyCostUnresolved(ctx, snapshot.ChannelId)
+		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
-	recordChannelDailyCostEvent(ctx, snapshot.ChannelId, costNano.IntPart(), 1, 0)
+	recordChannelDailyCostEvent(ctx, snapshot, costNano.IntPart(), 1, 0)
 }
 
-func recordChannelDailyCostEvent(ctx *gin.Context, channelId int, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) {
-	if channelId <= 0 {
+func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnapshot, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) {
+	if snapshot.ChannelId <= 0 {
 		return
 	}
 	dbContext := context.Background()
 	if ctx != nil && ctx.Request != nil {
 		dbContext = context.WithoutCancel(ctx.Request.Context())
 	}
-	if err := model.AddChannelDailyCost(dbContext, channelId, common.GetTimestamp(), costNanoCNY, settledDelta, unresolvedDelta); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败: %s", channelId, err.Error()))
+	if err := model.AddChannelDailyCostWithAPIKeyAndToken(dbContext, snapshot.ChannelId, common.GetTimestamp(), costNanoCNY, settledDelta, unresolvedDelta, snapshot.APIKeyId, snapshot.APIKeyName, snapshot.KeyFingerprint, snapshot.KeyDisplay); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败: %s", snapshot.ChannelId, err.Error()))
 	}
 }
 

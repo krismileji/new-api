@@ -33,7 +33,7 @@ func setupChannelDailyCostServiceTest(t *testing.T) *gorm.DB {
 	model.DB = db
 	common.QuotaPerUnit = 500_000
 	ResetChannelDailyCostSnapshotCache()
-	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}, &model.ChannelDailyCost{}))
+	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}, &model.ChannelDailyCost{}, &model.ChannelDailyAPIKeyCost{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.QuotaPerUnit = originalQuotaPerUnit
@@ -222,4 +222,57 @@ func TestChannelDailyCostPersistsAfterRequestCancellation(t *testing.T) {
 	require.NoError(t, db.First(&cost, "channel_id = ?", 6).Error)
 	assert.Equal(t, int64(1_000_000_000), cost.CostNanoCNY)
 	assert.Equal(t, int64(1), cost.SettledCount)
+}
+
+func TestChannelDailyCostAttributesSettlementsToTheSelectedAPIKey(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 8, 0.2)
+
+	firstContext := newChannelDailyCostTestContext()
+	firstContext.Set("token_id", 11)
+	firstContext.Set("token_name", "生产 Key")
+	common.SetContextKey(firstContext, constant.ContextKeyChannelKey, "sk-selected-alpha")
+	CaptureChannelDailyCostSnapshot(firstContext, 8)
+	recordChannelDailyCostFromQuota(firstContext, 8, 500_000)
+
+	secondContext := newChannelDailyCostTestContext()
+	secondContext.Set("token_id", 12)
+	secondContext.Set("token_name", "备用 Key")
+	common.SetContextKey(secondContext, constant.ContextKeyChannelKey, "sk-selected-beta")
+	CaptureChannelDailyCostSnapshot(secondContext, 8)
+	recordChannelDailyCostFromQuota(secondContext, 8, 500_000)
+
+	var total model.ChannelDailyCost
+	require.NoError(t, db.First(&total, "channel_id = ?", 8).Error)
+	assert.Equal(t, int64(2), total.SettledCount)
+	var keyRows []model.ChannelDailyAPIKeyCost
+	require.NoError(t, db.Order("api_key_id ASC").Find(&keyRows).Error)
+	require.Len(t, keyRows, 2)
+	assert.Equal(t, int64(1), keyRows[0].SettledCount)
+	assert.Equal(t, int64(1), keyRows[1].SettledCount)
+	assert.Equal(t, 11, keyRows[0].APIKeyId)
+	assert.Equal(t, "生产 Key", keyRows[0].APIKeyName)
+	assert.Equal(t, 12, keyRows[1].APIKeyId)
+	assert.Equal(t, "备用 Key", keyRows[1].APIKeyName)
+	assert.Equal(t, total.CostNanoCNY, keyRows[0].CostNanoCNY+keyRows[1].CostNanoCNY)
+	assert.NotContains(t, keyRows[0].KeyDisplay, "sk-selected")
+	assert.NotContains(t, keyRows[1].KeyDisplay, "sk-selected")
+}
+
+func TestChannelDailyCostResolvesTokenNameWhenContextOnlyHasTheID(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&model.Token{Id: 29, UserId: 1, Key: "inbound-key", Name: "从令牌表解析的名称"}).Error)
+	createChannelDailyCostMonitor(t, db, 9, 0.2)
+
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set("token_id", 29)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "sk-selected")
+	CaptureChannelDailyCostSnapshot(ctx, 9)
+	recordChannelDailyCostFromQuota(ctx, 9, 500_000)
+
+	var row model.ChannelDailyAPIKeyCost
+	require.NoError(t, db.First(&row).Error)
+	assert.Equal(t, 29, row.APIKeyId)
+	assert.Equal(t, "从令牌表解析的名称", row.APIKeyName)
 }

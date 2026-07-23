@@ -135,6 +135,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelRatioMonitor{},
 		&model.ChannelRatioHistory{},
 		&model.ChannelDailyCost{},
+		&model.ChannelDailyAPIKeyCost{},
 		&model.SystemTask{},
 	))
 

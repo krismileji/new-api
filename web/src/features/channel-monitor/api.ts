@@ -67,12 +67,18 @@ export async function getChannelMonitorOverview() {
   return ensureChannelMonitorSuccess(response.data)
 }
 
-export async function getChannelMonitorCostOverview(days: number) {
+export async function getChannelMonitorCostOverview(
+  days: number,
+  channelId?: number,
+  page = 1
+) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorCostOverview>
   >(
     '/api/channel_monitor/cost',
-    channelMonitorRequestConfig({ params: { days } })
+    channelMonitorRequestConfig({
+      params: { days, channel_id: channelId, page },
+    })
   )
   return ensureChannelMonitorSuccess(response.data)
 }

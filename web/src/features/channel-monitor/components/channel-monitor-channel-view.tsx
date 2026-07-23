@@ -91,6 +91,7 @@ type ChannelMonitorChannelViewProps = {
   onEditGroups: (channel: ChannelMonitorItem) => void
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
   onViewHistory: (channel: ChannelMonitorItem) => void
+  onOpenCostHistory: (channel: ChannelMonitorItem) => void
   onOpenSuccessDetail: (channel: ChannelMonitorItem) => void
   onUpdateSmartSchedule: (
     channel: ChannelMonitorItem,
@@ -271,27 +272,39 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   )
 }
 
-function ChannelTodayCostCell(props: { channel: ChannelMonitorItem }) {
+function ChannelTodayCostCell(props: {
+  channel: ChannelMonitorItem
+  onOpenCostHistory: (channel: ChannelMonitorItem) => void
+}) {
+  let costTitle: string | undefined
   if (!props.channel.today_cost_configured) {
-    return <span className='text-muted-foreground text-xs'>未配置</span>
+    costTitle = '查看每日成本详情'
+  } else if (props.channel.today_cost_unresolved_count > 0) {
+    costTitle = `今日有 ${props.channel.today_cost_unresolved_count} 次成本未确认`
   }
 
   return (
-    <div
-      className='flex min-w-0 flex-col items-start gap-0.5'
-      title={
-        props.channel.today_cost_unresolved_count > 0
-          ? `今日有 ${props.channel.today_cost_unresolved_count} 次成本未确认`
-          : undefined
-      }
+    <Button
+      type='button'
+      variant='link'
+      onClick={() => props.onOpenCostHistory(props.channel)}
+      aria-label={`查看渠道 ${props.channel.name} 的今日成本详情`}
+      className='h-auto max-w-full min-w-0 justify-start p-0 text-left font-normal'
+      title={costTitle}
     >
-      <span className='font-mono font-semibold tabular-nums'>
-        {formatChannelMonitorCost(props.channel.today_cost_cny)}
-      </span>
-      {!props.channel.today_cost_complete ? (
-        <span className='text-warning text-xs'>不完整</span>
-      ) : null}
-    </div>
+      {!props.channel.today_cost_configured ? (
+        <span className='text-muted-foreground text-xs'>未配置</span>
+      ) : (
+        <span className='flex min-w-0 flex-col items-start gap-0.5'>
+          <span className='font-mono font-semibold tabular-nums'>
+            {formatChannelMonitorCost(props.channel.today_cost_cny)}
+          </span>
+          {!props.channel.today_cost_complete ? (
+            <span className='text-warning text-xs'>不完整</span>
+          ) : null}
+        </span>
+      )}
+    </Button>
   )
 }
 
@@ -332,9 +345,9 @@ export function ChannelMonitorChannelView(
         <TableHeader>
           <TableRow className='[&_th]:text-left'>
             <TableHead>渠道</TableHead>
-            <TableHead>上游余额</TableHead>
+            <TableHead className='pl-[34px]'>上游余额</TableHead>
             <TableHead>今日成本</TableHead>
-            <TableHead>成本倍率</TableHead>
+            <TableHead className='pl-[34px]'>成本倍率</TableHead>
             <TableHead>倍率更新状态</TableHead>
             <TableHead>关联分组</TableHead>
             <TableHead>性能（{props.performanceRangeLabel}）</TableHead>
@@ -406,10 +419,7 @@ export function ChannelMonitorChannelView(
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <div className='flex w-full min-w-0 items-start gap-1'>
-                    <div className='min-w-0 flex-1'>
-                      <ChannelUpstreamBalanceCell channel={channel} />
-                    </div>
+                  <div className='grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-start gap-x-0.5'>
                     {channel.upstream?.balance_sync_enabled ? (
                       <ChannelActionButton
                         label='更新上游余额'
@@ -427,14 +437,37 @@ export function ChannelMonitorChannelView(
                         size='icon-xs'
                       />
                     ) : null}
+                    <div className='col-start-2 min-w-0'>
+                      <ChannelUpstreamBalanceCell channel={channel} />
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <ChannelTodayCostCell channel={channel} />
+                  <ChannelTodayCostCell
+                    channel={channel}
+                    onOpenCostHistory={props.onOpenCostHistory}
+                  />
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <div className='flex w-full min-w-0 items-start gap-1'>
-                    <div className='min-w-0 flex-1'>
+                  <div className='grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-start gap-x-0.5'>
+                    {channel.upstream?.ratio_sync_enabled ? (
+                      <ChannelActionButton
+                        label='更新上游倍率'
+                        icon={Refresh01Icon}
+                        onClick={() => props.onFetchUpstreamRatio(channel)}
+                        disabled={
+                          props.fetchingBalanceChannelId !== null ||
+                          props.fetchingRatioChannelId !== null
+                        }
+                        loading={
+                          props.fetchingRatioChannelId === channel.id ||
+                          refreshingMetricsTogether
+                        }
+                        className='shrink-0'
+                        size='icon-xs'
+                      />
+                    ) : null}
+                    <div className='col-start-2 min-w-0'>
                       <div className='flex min-w-0 items-center gap-2 whitespace-nowrap'>
                         <span className='font-mono text-base font-semibold'>
                           {formatMonitorRatio(channel.cost_ratio)}
@@ -457,23 +490,6 @@ export function ChannelMonitorChannelView(
                         </span>
                       ) : null}
                     </div>
-                    {channel.upstream?.ratio_sync_enabled ? (
-                      <ChannelActionButton
-                        label='更新上游倍率'
-                        icon={Refresh01Icon}
-                        onClick={() => props.onFetchUpstreamRatio(channel)}
-                        disabled={
-                          props.fetchingBalanceChannelId !== null ||
-                          props.fetchingRatioChannelId !== null
-                        }
-                        loading={
-                          props.fetchingRatioChannelId === channel.id ||
-                          refreshingMetricsTogether
-                        }
-                        className='shrink-0'
-                        size='icon-xs'
-                      />
-                    ) : null}
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>

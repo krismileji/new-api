@@ -244,6 +244,25 @@ export type ChannelMonitorCostChannel = {
   unresolved_count: number
 }
 
+export type ChannelMonitorCostAPIKey = {
+  id: number
+  api_key_id: number
+  api_key_name: string
+  api_key: string
+  cost_cny: number
+  settled_count: number
+  unresolved_count: number
+  channels: ChannelMonitorCostAPIKeyChannel[]
+}
+
+export type ChannelMonitorCostAPIKeyChannel = {
+  channel_id: number
+  channel_name: string
+  cost_cny: number
+  settled_count: number
+  unresolved_count: number
+}
+
 export type ChannelMonitorCostCoverage = {
   included_channel_count: number
   unresolved_channel_count: number
@@ -258,7 +277,13 @@ export type ChannelMonitorCostOverview = {
   total_cost_cny: number
   coverage: ChannelMonitorCostCoverage
   items: ChannelMonitorCostDay[]
+  chart_items: ChannelMonitorCostDay[]
+  item_total: number
+  item_page: number
+  item_page_size: number
+  item_page_count: number
   channels: ChannelMonitorCostChannel[]
+  api_keys: ChannelMonitorCostAPIKey[]
 }
 
 export type ChannelMonitorPerformanceRangeMinutes = number
