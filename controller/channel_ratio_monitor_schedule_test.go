@@ -476,6 +476,88 @@ func TestPlanChannelSmartScheduleSingleMetricBiasesBestChannel(t *testing.T) {
 	}
 }
 
+func TestPlanChannelSmartScheduleRatioBalancesPerformanceGuardrails(t *testing.T) {
+	ratioCheap := 1.0
+	ratioExpensive := 1.01
+	firstTokenSlow := 900.0
+	firstTokenFast := 100.0
+	tpsSlow := 10.0
+	tpsFast := 30.0
+	plan := planChannelSmartSchedule([]channelSmartScheduleCandidate{
+		{
+			ChannelId:             1,
+			CurrentPriority:       80,
+			CurrentWeight:         10,
+			Ratio:                 &ratioCheap,
+			FirstTokenMs:          &firstTokenSlow,
+			FirstTokenSampleCount: 5,
+			TPS:                   &tpsSlow,
+			TPSSampleCount:        5,
+		},
+		{
+			ChannelId:             2,
+			CurrentPriority:       80,
+			CurrentWeight:         10,
+			Ratio:                 &ratioExpensive,
+			FirstTokenMs:          &firstTokenFast,
+			FirstTokenSampleCount: 5,
+			TPS:                   &tpsFast,
+			TPSSampleCount:        5,
+		},
+	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, 5, false)
+
+	require.Len(t, plan.Items, 2)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.InDelta(t, 0.7, items[1].Score, 1e-9)
+	assert.InDelta(t, 0.3, items[2].Score, 1e-9)
+	assert.Equal(t, uint(40), items[1].TargetWeight)
+	assert.Equal(t, uint(10), items[2].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleRatioIgnoresInsufficientPerformanceSamples(t *testing.T) {
+	ratioCheap := 1.0
+	ratioExpensive := 2.0
+	firstTokenSlow := 900.0
+	firstTokenFast := 100.0
+	tpsSlow := 10.0
+	tpsFast := 30.0
+	plan := planChannelSmartSchedule([]channelSmartScheduleCandidate{
+		{
+			ChannelId:             1,
+			CurrentPriority:       80,
+			CurrentWeight:         10,
+			Ratio:                 &ratioCheap,
+			FirstTokenMs:          &firstTokenSlow,
+			FirstTokenSampleCount: 4,
+			TPS:                   &tpsSlow,
+			TPSSampleCount:        4,
+		},
+		{
+			ChannelId:             2,
+			CurrentPriority:       80,
+			CurrentWeight:         10,
+			Ratio:                 &ratioExpensive,
+			FirstTokenMs:          &firstTokenFast,
+			FirstTokenSampleCount: 5,
+			TPS:                   &tpsFast,
+			TPSSampleCount:        5,
+		},
+	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, 5, false)
+
+	require.Len(t, plan.Items, 2)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.InDelta(t, 1, items[1].Score, 1e-9)
+	assert.InDelta(t, 0, items[2].Score, 1e-9)
+	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(10), items[2].TargetWeight)
+}
+
 func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
 	ratio := 1.0
 	firstToken := 1000.0
@@ -504,7 +586,7 @@ func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
 	assert.Equal(t, "首字样本不足（4/5）", plan.Skipped[2])
 }
 
-func TestPlanChannelSmartScheduleSmartIgnoresStabilityScore(t *testing.T) {
+func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T) {
 	ratioLow := 1.0
 	ratioHigh := 2.0
 	firstTokenFast := 300.0
@@ -556,10 +638,10 @@ func TestPlanChannelSmartScheduleSmartIgnoresStabilityScore(t *testing.T) {
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, uint(70), items[1].TargetWeight)
-	assert.Equal(t, uint(40), items[2].TargetWeight)
+	assert.Equal(t, uint(50), items[2].TargetWeight)
 }
 
-func TestPlanChannelSmartScheduleUsesSelectedStrategyWithoutStabilityScore(t *testing.T) {
+func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testing.T) {
 	ratio := 1.0
 	stableRate := 0.99
 	unstableRate := 0.80
@@ -574,7 +656,7 @@ func TestPlanChannelSmartScheduleUsesSelectedStrategyWithoutStabilityScore(t *te
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, uint(100), items[1].TargetWeight)
-	assert.Equal(t, uint(100), items[2].TargetWeight)
+	assert.Equal(t, uint(90), items[2].TargetWeight)
 
 	plan = planChannelSmartSchedule([]channelSmartScheduleCandidate{
 		{ChannelId: 3, Ratio: &ratio},

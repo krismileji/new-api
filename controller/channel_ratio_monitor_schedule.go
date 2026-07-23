@@ -26,6 +26,9 @@ const (
 	channelMonitorSmartScheduleMaxWeightChange                   = 20
 	channelMonitorSmartScheduleSingleMetricMaxWeightChange       = 30
 	channelMonitorSmartScheduleSingleMetricWeightExponent        = 3.0
+	channelMonitorSmartScheduleRatioPrimaryScoreWeight           = 0.7
+	channelMonitorSmartScheduleRatioSecondaryScoreWeight         = 0.3
+	channelMonitorSmartScheduleStabilityScoreWeight              = 0.2
 	channelMonitorSmartScheduleBaselinePriority            int64 = 80
 	channelMonitorSmartScheduleDegradedPriority            int64 = 0
 	channelMonitorSmartScheduleDegradedWeight              uint  = 0
@@ -258,7 +261,8 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		}
 		channelCacheDirty = len(channelIds) > 0
 	}
-	needsPerformance := settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyFirstToken ||
+	needsPerformance := settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio ||
+		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyFirstToken ||
 		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyTPS ||
 		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart
 	needsRatio := settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio ||
@@ -920,18 +924,22 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 		ratioMin, ratioMax := math.Inf(1), math.Inf(-1)
 		firstTokenMin, firstTokenMax := math.Inf(1), math.Inf(-1)
 		tpsMin, tpsMax := math.Inf(1), math.Inf(-1)
+		firstTokenAvailableCount := 0
+		tpsAvailableCount := 0
 		for _, candidate := range scheduleCohort.Candidates {
 			if candidate.Ratio != nil {
 				ratioMin = math.Min(ratioMin, *candidate.Ratio)
 				ratioMax = math.Max(ratioMax, *candidate.Ratio)
 			}
-			if candidate.FirstTokenMs != nil {
+			if candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples {
 				firstTokenMin = math.Min(firstTokenMin, *candidate.FirstTokenMs)
 				firstTokenMax = math.Max(firstTokenMax, *candidate.FirstTokenMs)
+				firstTokenAvailableCount++
 			}
-			if candidate.TPS != nil {
+			if candidate.TPS != nil && candidate.TPSSampleCount >= minSamples {
 				tpsMin = math.Min(tpsMin, *candidate.TPS)
 				tpsMax = math.Max(tpsMax, *candidate.TPS)
+				tpsAvailableCount++
 			}
 		}
 
@@ -949,25 +957,51 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 			if candidate.TPS != nil {
 				tpsScore = channelSmartScheduleHigherIsBetterScore(*candidate.TPS, tpsMin, tpsMax)
 			}
-			scoreTotal := 0.0
-			scoreCount := 0
+			primaryScore := 0.0
+			secondaryScores := make([]float64, 0, 2)
 			switch strategy {
 			case channelMonitorSmartScheduleStrategyRatio:
-				scoreTotal = ratioScore
-				scoreCount = 1
+				primaryScore = ratioScore
+				if candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples && firstTokenAvailableCount >= 2 {
+					secondaryScores = append(secondaryScores, firstTokenScore)
+				}
+				if candidate.TPS != nil && candidate.TPSSampleCount >= minSamples && tpsAvailableCount >= 2 {
+					secondaryScores = append(secondaryScores, tpsScore)
+				}
 			case channelMonitorSmartScheduleStrategyFirstToken:
-				scoreTotal = firstTokenScore
-				scoreCount = 1
+				primaryScore = firstTokenScore
 			case channelMonitorSmartScheduleStrategyTPS:
-				scoreTotal = tpsScore
-				scoreCount = 1
+				primaryScore = tpsScore
 			case channelMonitorSmartScheduleStrategySmart:
-				scoreTotal = ratioScore + firstTokenScore + tpsScore
-				scoreCount = 3
+				primaryScore = (ratioScore + firstTokenScore + tpsScore) / 3
 			default:
 				continue
 			}
-			score := scoreTotal / float64(scoreCount)
+			score := primaryScore
+			if strategy == channelMonitorSmartScheduleStrategyRatio && len(secondaryScores) > 0 {
+				secondaryScore := 0.0
+				for _, value := range secondaryScores {
+					secondaryScore += value
+				}
+				secondaryScore /= float64(len(secondaryScores))
+				// Keep the selected metric dominant while using available
+				// performance metrics to prevent a poor-quality cheap channel
+				// from taking nearly all traffic.
+				score = channelMonitorSmartScheduleRatioPrimaryScoreWeight*primaryScore +
+					channelMonitorSmartScheduleRatioSecondaryScoreWeight*secondaryScore
+			}
+			// Stability remains a hard admission gate, and also softens the
+			// score for channels that pass the gate with a lower success rate.
+			if stabilityEnabled && candidate.Stability != nil && candidate.StabilitySampleCount >= int64(minSamples) {
+				stabilityScore := *candidate.Stability
+				if stabilityScore < 0 {
+					stabilityScore = 0
+				} else if stabilityScore > 1 {
+					stabilityScore = 1
+				}
+				score = (1-channelMonitorSmartScheduleStabilityScoreWeight)*score +
+					channelMonitorSmartScheduleStabilityScoreWeight*stabilityScore
+			}
 			weightScore := score
 			if singleMetricStrategy {
 				// An explicitly selected single metric represents a deliberate
