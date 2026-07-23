@@ -231,6 +231,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
+	recordAudioChannelDailyCost(ctx, relayInfo, quotaInfo, totalTokens, !common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), tieredOk, tieredResult)
 
 	logModel := modelName
 	if extraContent != "" {
@@ -354,6 +355,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
+	recordAudioChannelDailyCost(ctx, relayInfo, quotaInfo, totalTokens, channelDailyCostUsageIsAuthoritative(ctx, usage), tieredOk, tieredResult)
 
 	logModel := relayInfo.OriginModelName
 	if extraContent != "" {

@@ -493,6 +493,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
+	_, pointerUsage := usageA.(*dto.Usage)
+	_, valueUsage := usageA.(dto.Usage)
+	service.RecordChannelTestDailyCost(c, info, quota, tieredResult, usage, pointerUsage || valueUsage)
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0

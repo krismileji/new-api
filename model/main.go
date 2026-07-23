@@ -302,6 +302,7 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&ChannelRatioMonitor{},
 		&ChannelRatioHistory{},
+		&ChannelDailyCost{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -370,6 +371,7 @@ func migrateDBFast() error {
 		{&SystemTaskLock{}, "SystemTaskLock"},
 		{&ChannelRatioMonitor{}, "ChannelRatioMonitor"},
 		{&ChannelRatioHistory{}, "ChannelRatioHistory"},
+		{&ChannelDailyCost{}, "ChannelDailyCost"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

@@ -100,6 +100,10 @@ export function ChannelMonitorSettingsDialog(
         props.settings.smart_schedule_performance_minutes,
       smartScheduleModels,
       smartScheduleMinSamples: props.settings.smart_schedule_min_samples,
+      smartScheduleMinSuccessRate:
+        props.settings.smart_schedule_min_success_rate,
+      smartScheduleCooldownMinutes:
+        props.settings.smart_schedule_cooldown_minutes,
       smartScheduleForceReset: false,
     },
   })
@@ -149,6 +153,8 @@ export function ChannelMonitorSettingsDialog(
       smart_schedule_model: values.smartScheduleModels[0] ?? '',
       smart_schedule_models: values.smartScheduleModels,
       smart_schedule_min_samples: values.smartScheduleMinSamples,
+      smart_schedule_min_success_rate: values.smartScheduleMinSuccessRate,
+      smart_schedule_cooldown_minutes: values.smartScheduleCooldownMinutes,
       smart_schedule_force_reset: values.smartScheduleForceReset,
     })
   })

@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 const channelMonitorCostFormatter = new Intl.NumberFormat('zh-CN', {
   style: 'currency',
   currency: 'CNY',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
 })
 
 export function formatMonitorRatio(value: number | null | undefined): string {
@@ -35,7 +35,9 @@ export function formatChannelMonitorCost(
   value: number | null | undefined
 ): string {
   if (value == null || !Number.isFinite(value)) return '-'
-  return channelMonitorCostFormatter.format(Math.abs(value) < 0.005 ? 0 : value)
+  return channelMonitorCostFormatter.format(
+    Math.abs(value) < 0.00005 ? 0 : value
+  )
 }
 
 export function getRatioChange(

@@ -134,4 +134,14 @@ func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *tes
 	assert.Equal(t, int64(3), metrics[1].FailureCount)
 	assert.Equal(t, int64(5), metrics[1].SampleCount)
 	assert.InDelta(t, 0.4, metrics[1].SuccessRate, 0.0001)
+
+	probeMetric, err := GetChannelMonitorStabilityMetric(context.Background(), 103, ChannelMonitorSuccessFilter{
+		ChannelId: 1,
+		ModelName: "model-a",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), probeMetric.SuccessCount)
+	assert.Equal(t, int64(1), probeMetric.FailureCount)
+	assert.Equal(t, int64(1), probeMetric.SampleCount)
+	assert.Zero(t, probeMetric.SuccessRate)
 }

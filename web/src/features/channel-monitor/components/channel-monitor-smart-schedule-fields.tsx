@@ -23,7 +23,7 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo } from 'react'
-import type { UseFormReturn } from 'react-hook-form'
+import { useWatch, type UseFormReturn } from 'react-hook-form'
 
 import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -59,6 +59,7 @@ import {
 
 import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
+  MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
@@ -132,6 +133,10 @@ export function ChannelMonitorSmartScheduleFields(
     () => props.modelOptions.map((model) => ({ value: model, label: model })),
     [props.modelOptions]
   )
+  const stabilityEnabled = useWatch({
+    control: props.form.control,
+    name: 'smartScheduleStabilityEnabled',
+  })
 
   return (
     <div className='flex flex-col gap-5'>
@@ -214,6 +219,78 @@ export function ChannelMonitorSmartScheduleFields(
           </FormItem>
         )}
       />
+
+      {stabilityEnabled && (
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <FormField
+            control={props.form.control}
+            name='smartScheduleMinSuccessRate'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>最低成功率</FormLabel>
+                <FormControl>
+                  <InputGroup>
+                    <InputGroupInput
+                      type='number'
+                      min={0}
+                      max={100}
+                      step={1}
+                      inputMode='decimal'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors.smartScheduleMinSuccessRate
+                      )}
+                    />
+                    <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                  </InputGroup>
+                </FormControl>
+                <FormDescription>
+                  样本达到要求且低于该值时降为优先级 0、权重 0
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={props.form.control}
+            name='smartScheduleCooldownMinutes'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>降级时长</FormLabel>
+                <FormControl>
+                  <InputGroup>
+                    <InputGroupInput
+                      type='number'
+                      min={1}
+                      max={MAX_SMART_SCHEDULE_COOLDOWN_MINUTES}
+                      step={1}
+                      inputMode='numeric'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors.smartScheduleCooldownMinutes
+                      )}
+                    />
+                    <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+                  </InputGroup>
+                </FormControl>
+                <FormDescription>
+                  到期后恢复降级前的优先级和权重，并只统计新样本
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      )}
 
       <FormField
         control={props.form.control}
@@ -496,9 +573,10 @@ export function ChannelMonitorSmartScheduleFields(
       <Alert>
         <AlertTitle>调度规则</AlertTitle>
         <AlertDescription>
-          启用的调度指标等权计算；开启按稳定性后，还要求稳定性达到最少样本。关闭总开关后保留当前优先级和权重。稳定性按成功调用数
-          ÷（成功调用数 +
-          渠道错误数）计算，重试中的渠道错误也会计入；需要同时开启消费日志和
+          启用的调度指标等权计算。稳定性按成功调用数 ÷（成功调用数 +
+          渠道错误数）计算，重试中的渠道错误也会计入；低于最低成功率时降为优先级
+          0、权重
+          0，降级到期后恢复原设置，并只用试放产生的新样本判断是否恢复。该规则需要同时开启消费日志和
           ERROR_LOG_ENABLED。
         </AlertDescription>
       </Alert>

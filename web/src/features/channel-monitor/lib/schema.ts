@@ -37,6 +37,7 @@ export const MAX_AUTO_UPDATE_INTERVAL_MINUTES = 525_600
 export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
+export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -137,6 +138,19 @@ export function createChannelMonitorSettingsSchema() {
         .int('最少样本数必须是整数')
         .min(1, '最少样本数不能小于 1')
         .max(MAX_SMART_SCHEDULE_MIN_SAMPLES, '最少样本数不能超过 100000'),
+      smartScheduleMinSuccessRate: z.coerce
+        .number()
+        .finite('最低成功率必须是有效数字')
+        .min(0, '最低成功率不能小于 0%')
+        .max(100, '最低成功率不能超过 100%'),
+      smartScheduleCooldownMinutes: z.coerce
+        .number()
+        .int('降级时长必须是整数')
+        .min(1, '降级时长不能小于 1 分钟')
+        .max(
+          MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
+          '降级时长不能超过 525600 分钟'
+        ),
       smartScheduleForceReset: z.boolean(),
     })
     .superRefine((values, context) => {

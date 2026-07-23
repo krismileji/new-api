@@ -125,6 +125,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
+	service.ResetChannelDailyCostSnapshotCache()
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{},
 		&model.User{},
@@ -133,6 +134,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.Ability{},
 		&model.ChannelRatioMonitor{},
 		&model.ChannelRatioHistory{},
+		&model.ChannelDailyCost{},
 		&model.SystemTask{},
 	))
 
@@ -142,6 +144,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 		common.RedisEnabled = originalRedisEnabled
+		service.ResetChannelDailyCostSnapshotCache()
 		sqlDB, sqlErr := db.DB()
 		if sqlErr == nil {
 			require.NoError(t, sqlDB.Close())
@@ -260,6 +263,8 @@ func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 	assert.Equal(t, channelMonitorSmartScheduleApplyWeight, settings.SmartScheduleApplyMode)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRange, settings.SmartSchedulePerformanceMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleSamples, settings.SmartScheduleMinSamples)
+	assert.Equal(t, float64(defaultChannelMonitorSmartScheduleSuccessRate), settings.SmartScheduleMinSuccessRate)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleCooldown, settings.SmartScheduleCooldownMinutes)
 
 	handler := channelSmartScheduleTaskHandler{}
 	assert.True(t, handler.Enabled())
@@ -345,6 +350,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_models": tooManySmartScheduleModels},
 		{"smart_schedule_min_samples": 0},
 		{"smart_schedule_min_samples": maxChannelMonitorSmartScheduleMinSamples + 1},
+		{"smart_schedule_min_success_rate": -1},
+		{"smart_schedule_min_success_rate": maxChannelMonitorSmartScheduleSuccessRate + 1},
+		{"smart_schedule_cooldown_minutes": 0},
+		{"smart_schedule_cooldown_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 	}
 	for _, request := range invalidRequests {
 		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -367,6 +376,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"smart_schedule_model":               "legacy-model",
 		"smart_schedule_models":              []string{" claude-3-5-sonnet ", "gpt-4o-mini", "claude-3-5-sonnet"},
 		"smart_schedule_min_samples":         8,
+		"smart_schedule_min_success_rate":    75.5,
+		"smart_schedule_cooldown_minutes":    45,
 	}
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
 	UpdateChannelMonitorSettings(ctx)
@@ -389,6 +400,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, "claude-3-5-sonnet", response.Data.SmartScheduleModel)
 	assert.Equal(t, []string{"claude-3-5-sonnet", "gpt-4o-mini"}, response.Data.SmartScheduleModels)
 	assert.Equal(t, 8, response.Data.SmartScheduleMinSamples)
+	assert.Equal(t, 75.5, response.Data.SmartScheduleMinSuccessRate)
+	assert.Equal(t, 45, response.Data.SmartScheduleCooldownMinutes)
 
 	var option model.Option
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateIntervalOption).First(&option).Error)
@@ -420,6 +433,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleModelsOption).First(&option).Error)
 	assert.JSONEq(t, `["claude-3-5-sonnet","gpt-4o-mini"]`, option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleSuccessRateOption).First(&option).Error)
+	assert.Equal(t, "75.5", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleCooldownOption).First(&option).Error)
+	assert.Equal(t, "45", option.Value)
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"email_notification_enabled": false,
 		"notification_email":         "",
@@ -490,6 +509,45 @@ func TestEnablingChannelSmartScheduleExcludesEveryChannel(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.NoError(t, db.Where("channel_id = ?", 41).First(&configuredMonitor).Error)
 	assert.True(t, configuredMonitor.SmartScheduleExcluded)
+}
+
+func TestDisablingChannelSmartScheduleStabilityRestoresDegradedChannels(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:   "true",
+		channelMonitorSmartScheduleStabilityOption: "true",
+	})
+	priority := int64(0)
+	weight := uint(0)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 43, Name: "degraded", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a",
+		Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "vip", Model: "model-a", ChannelId: 43, Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:                   43,
+		SmartScheduleStabilityState: model.ChannelSmartScheduleStabilityDegraded,
+		SmartScheduleStabilityUntil: time.Now().Add(time.Hour).Unix(),
+		SmartScheduleSavedPriority:  90,
+		SmartScheduleSavedWeight:    35,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_stability_enabled": false,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	channel, err := model.GetChannelById(43, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(90), channel.GetPriority())
+	assert.Equal(t, 35, channel.GetWeight())
+	monitor, err := model.GetChannelRatioMonitor(43)
+	require.NoError(t, err)
+	assert.Empty(t, monitor.SmartScheduleStabilityState)
+	assert.Zero(t, monitor.SmartScheduleStabilityUntil)
 }
 
 func TestForceResetSmartScheduleQueuesOneTimeTaskAndKeepsParticipation(t *testing.T) {
@@ -624,8 +682,12 @@ func TestUpdateChannelSmartScheduleConfigResetAlwaysUpdatesPriorityAndWeight(t *
 				Weight:    weight,
 			}).Error)
 			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
-				ChannelId:             channel.Id,
-				SmartScheduleExcluded: true,
+				ChannelId:                   channel.Id,
+				SmartScheduleExcluded:       true,
+				SmartScheduleStabilityState: model.ChannelSmartScheduleStabilityDegraded,
+				SmartScheduleStabilityUntil: time.Now().Add(time.Hour).Unix(),
+				SmartScheduleSavedPriority:  100,
+				SmartScheduleSavedWeight:    80,
 			}).Error)
 
 			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/44/schedule", map[string]any{
@@ -638,18 +700,20 @@ func TestUpdateChannelSmartScheduleConfigResetAlwaysUpdatesPriorityAndWeight(t *
 
 			var storedChannel model.Channel
 			require.NoError(t, db.First(&storedChannel, "id = ?", channel.Id).Error)
-			assert.Equal(t, int64(0), storedChannel.GetPriority())
+			assert.Equal(t, channelMonitorSmartScheduleBaselinePriority, storedChannel.GetPriority())
 			assert.Equal(t, channelMonitorSmartScheduleMinWeight, storedChannel.GetWeight())
 
 			var ability model.Ability
 			require.NoError(t, db.First(&ability, "channel_id = ?", channel.Id).Error)
 			require.NotNil(t, ability.Priority)
-			assert.Equal(t, int64(0), *ability.Priority)
+			assert.Equal(t, channelMonitorSmartScheduleBaselinePriority, *ability.Priority)
 			assert.Equal(t, uint(channelMonitorSmartScheduleMinWeight), ability.Weight)
 
 			monitor, err := model.GetChannelRatioMonitor(channel.Id)
 			require.NoError(t, err)
 			assert.False(t, monitor.SmartScheduleExcluded)
+			assert.Empty(t, monitor.SmartScheduleStabilityState)
+			assert.Zero(t, monitor.SmartScheduleStabilityUntil)
 		})
 	}
 }
@@ -1715,19 +1779,24 @@ func TestFetchChannelMonitorUpstreamBalanceRecordsSnapshotAndAutoDisables(t *tes
 	assert.False(t, ability.Enabled)
 }
 
-func TestFetchChannelMonitorUpstreamRatioAutoDisablesFromRecordedBalance(t *testing.T) {
+func TestFetchChannelMonitorUpstreamRatioSkipsSeparateBalanceRequest(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	disableChannelMonitorSSRFProtection(t)
+	var ratioRequests atomic.Int32
+	var balanceRequests atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/user/self/groups":
+			ratioRequests.Add(1)
 			_, _ = w.Write([]byte(`{"success":true,"data":{"vip":{"ratio":1.25}}}`))
 		case "/api/user/self":
+			balanceRequests.Add(1)
 			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":350}}`))
 		case "/api/status":
+			balanceRequests.Add(1)
 			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
 		default:
 			http.NotFound(w, r)
@@ -1758,19 +1827,110 @@ func TestFetchChannelMonitorUpstreamRatioAutoDisablesFromRecordedBalance(t *test
 	ctx.Params = gin.Params{{Key: "id", Value: "25"}}
 	FetchChannelMonitorUpstreamRatio(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), `"balance_auto_disabled":true`)
+	assert.Contains(t, recorder.Body.String(), `"balance_auto_disabled":false`)
+	assert.Equal(t, int32(1), ratioRequests.Load())
+	assert.Zero(t, balanceRequests.Load())
 
 	monitor, err := model.GetChannelRatioMonitor(25)
 	require.NoError(t, err)
 	assert.Equal(t, 1.25, monitor.Ratio)
-	require.NotNil(t, monitor.UpstreamBalance)
-	assert.Equal(t, 3.5, *monitor.UpstreamBalance)
+	assert.Nil(t, monitor.UpstreamBalance)
 	channel, err := model.GetChannelById(25, true)
 	require.NoError(t, err)
-	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
 	var ability model.Ability
 	require.NoError(t, db.First(&ability, "channel_id = ?", 25).Error)
-	assert.False(t, ability.Enabled)
+	assert.True(t, ability.Enabled)
+}
+
+func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		handler func(*gin.Context)
+	}{
+		{name: "ratio refresh", path: "/api/channel_monitor/channel/25/upstream/fetch", handler: FetchChannelMonitorUpstreamRatio},
+		{name: "balance refresh", path: "/api/channel_monitor/channel/25/upstream/balance/fetch", handler: FetchChannelMonitorUpstreamBalance},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			useChannelMonitorOptionMap(t, map[string]string{})
+			disableChannelMonitorSSRFProtection(t)
+			var upstreamRequests atomic.Int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamRequests.Add(1)
+				assert.Equal(t, "/metrics", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"ratio":1.25,"balance":3.5}}`))
+			}))
+			defer server.Close()
+
+			customConfig, err := service.MarshalChannelMonitorCustomUpstreamConfig(service.ChannelMonitorCustomUpstreamConfig{
+				Version: 1,
+				Ratio: service.ChannelMonitorCustomMetricConfig{
+					Source: service.ChannelMonitorCustomSourceHTTP,
+					Request: &service.ChannelMonitorCustomRequestConfig{
+						Method:   http.MethodGet,
+						Path:     "/metrics",
+						BodyType: service.ChannelMonitorCustomBodyNone,
+					},
+					Result: &service.ChannelMonitorCustomResultConfig{
+						ResponseType: service.ChannelMonitorCustomResponseJSON,
+						ValuePath:    "data.ratio",
+						Multiplier:   1,
+					},
+				},
+				Balance: service.ChannelMonitorCustomMetricConfig{
+					Source: service.ChannelMonitorCustomSourceHTTP,
+					Result: &service.ChannelMonitorCustomResultConfig{
+						ResponseType: service.ChannelMonitorCustomResponseJSON,
+						ValuePath:    "data.balance",
+						Multiplier:   1,
+					},
+				},
+				BalanceReuseRatioRequest: true,
+			})
+			require.NoError(t, err)
+			require.NoError(t, db.Create(&model.Channel{
+				Id: 25, Name: "shared metrics", Key: "secret", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled,
+			}).Error)
+			require.NoError(t, db.Create(&model.Ability{
+				Group: "vip", Model: "model-a", ChannelId: 25, Enabled: true,
+			}).Error)
+			autoDisableThreshold := 4.0
+			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+				ChannelId:                   25,
+				Ratio:                       1,
+				UpstreamType:                service.CustomUpstreamType,
+				UpstreamBaseURL:             server.URL,
+				UpstreamAuthType:            service.CustomUpstreamAuthType,
+				CustomUpstreamConfig:        customConfig,
+				BalanceAutoDisableThreshold: &autoDisableThreshold,
+			}).Error)
+
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, test.path, nil)
+			ctx.Params = gin.Params{{Key: "id", Value: "25"}}
+			test.handler(ctx)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"success":true`)
+			assert.Equal(t, int32(1), upstreamRequests.Load())
+
+			monitor, err := model.GetChannelRatioMonitor(25)
+			require.NoError(t, err)
+			assert.Equal(t, 1.25, monitor.Ratio)
+			require.NotNil(t, monitor.UpstreamBalance)
+			assert.Equal(t, 3.5, *monitor.UpstreamBalance)
+			channel, err := model.GetChannelById(25, true)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+			var ability model.Ability
+			require.NoError(t, db.First(&ability, "channel_id = ?", 25).Error)
+			assert.False(t, ability.Enabled)
+		})
+	}
 }
 
 func TestManualUpstreamRefreshSkipsDisabledCapabilities(t *testing.T) {

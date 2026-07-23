@@ -501,6 +501,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	case constant.ChannelTypeCoze:
 		c.Set("bot_id", channel.Other)
 	}
+	service.CaptureChannelDailyCostSnapshot(c, channel.Id)
 	return nil
 }
 

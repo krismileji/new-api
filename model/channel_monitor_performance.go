@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -208,4 +209,28 @@ func GetChannelMonitorStabilityMetrics(ctx context.Context, startTimestamp int64
 		})
 	}
 	return metrics, nil
+}
+
+func GetChannelMonitorStabilityMetric(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) (ChannelMonitorStabilityMetric, error) {
+	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter)
+	if err != nil {
+		return ChannelMonitorStabilityMetric{}, err
+	}
+
+	counts := channelMonitorSuccessCounts{}
+	for _, row := range rows {
+		if strings.TrimSpace(row.ModelName) == "" {
+			continue
+		}
+		counts.add(row.Type, row.IsRetryAttempt != nil && *row.IsRetryAttempt, row.Count)
+	}
+	summary := counts.summary()
+	return ChannelMonitorStabilityMetric{
+		ChannelId:    filter.ChannelId,
+		ModelName:    filter.ModelName,
+		SuccessCount: summary.ActualSuccessCount,
+		FailureCount: summary.ActualFailureCount,
+		SampleCount:  summary.ActualSampleCount,
+		SuccessRate:  summary.ActualSuccessRate,
+	}, nil
 }

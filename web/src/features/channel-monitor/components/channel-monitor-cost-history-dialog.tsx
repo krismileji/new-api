@@ -88,7 +88,7 @@ export function ChannelMonitorCostHistoryDialog(
         <DialogHeader className='pr-10'>
           <DialogTitle>渠道成本</DialogTitle>
           <DialogDescription>
-            按北京时间、当前渠道成本倍率和本地分组倍率估算；消费增加、退款按发生日抵减，调整倍率后历史金额会同步变化。
+            按北京时间记录请求结算时固化的上游成本；后续配置更新不会改写历史金额。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 overflow-auto pr-1'>
@@ -206,16 +206,19 @@ function CostHistoryContent(props: {
         </EmptyHeader>
       </Empty>
     )
-  } else if (props.overview.coverage.included_channel_count === 0) {
+  } else if (
+    props.overview.coverage.included_channel_count === 0 &&
+    props.overview.coverage.unresolved_channel_count === 0
+  ) {
     content = (
       <Empty className='min-h-64 border'>
         <EmptyHeader>
           <EmptyMedia variant='icon'>
             <HugeiconsIcon icon={MoneyBag02Icon} />
           </EmptyMedia>
-          <EmptyTitle>暂无可回算的成本</EmptyTitle>
+          <EmptyTitle>暂无成本记录</EmptyTitle>
           <EmptyDescription>
-            为渠道配置充值或订阅换算并获取上游倍率后，消费日志将纳入成本统计。
+            从功能启用后的成功上游请求开始记录
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -253,7 +256,7 @@ function CostHistoryData(props: { overview: ChannelMonitorCostOverview }) {
           title: { value: (datum: { date: string }) => datum.date },
           content: [
             {
-              key: '预估成本',
+              key: '成本',
               value: (datum: { cost: number }) =>
                 formatChannelMonitorCost(datum.cost),
             },
@@ -300,15 +303,22 @@ function CostHistoryData(props: { overview: ChannelMonitorCostOverview }) {
           <TableHeader>
             <TableRow>
               <TableHead>日期</TableHead>
-              <TableHead className='text-right'>预估成本</TableHead>
+              <TableHead className='text-right'>成本</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {[...props.overview.items].reverse().map((item) => (
               <TableRow key={item.start_at}>
                 <TableCell className='font-mono'>{item.date}</TableCell>
-                <TableCell className='text-right font-mono tabular-nums'>
-                  {formatChannelMonitorCost(item.cost_cny)}
+                <TableCell className='text-right'>
+                  <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
+                    <span>{formatChannelMonitorCost(item.cost_cny)}</span>
+                    {item.unresolved_count > 0 ? (
+                      <span className='text-warning font-sans text-xs'>
+                        不完整
+                      </span>
+                    ) : null}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -321,7 +331,7 @@ function CostHistoryData(props: { overview: ChannelMonitorCostOverview }) {
             <TableHeader>
               <TableRow>
                 <TableHead>渠道</TableHead>
-                <TableHead className='text-right'>区间预估成本</TableHead>
+                <TableHead className='text-right'>区间成本</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -330,8 +340,15 @@ function CostHistoryData(props: { overview: ChannelMonitorCostOverview }) {
                   <TableCell className='max-w-72 truncate'>
                     {channel.channel_name}
                   </TableCell>
-                  <TableCell className='text-right font-mono tabular-nums'>
-                    {formatChannelMonitorCost(channel.cost_cny)}
+                  <TableCell className='text-right'>
+                    <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
+                      <span>{formatChannelMonitorCost(channel.cost_cny)}</span>
+                      {channel.unresolved_count > 0 ? (
+                        <span className='text-warning font-sans text-xs'>
+                          不完整
+                        </span>
+                      ) : null}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -346,12 +363,11 @@ function CostHistoryData(props: { overview: ChannelMonitorCostOverview }) {
 function CostCoverage(props: {
   coverage: ChannelMonitorCostOverview['coverage']
 }) {
-  const values = [`已纳入 ${props.coverage.included_channel_count} 个渠道`]
+  const values = [`已结算 ${props.coverage.included_channel_count} 个渠道`]
   if (props.coverage.unresolved_channel_count > 0) {
-    values.push(`暂无法回算 ${props.coverage.unresolved_channel_count} 个`)
-  }
-  if (props.coverage.free_group_channel_count > 0) {
-    values.push(`免费分组未纳入 ${props.coverage.free_group_channel_count} 个`)
+    values.push(
+      `${props.coverage.unresolved_channel_count} 个渠道存在未确认成本`
+    )
   }
   return (
     <div className='text-muted-foreground flex items-start gap-2 text-xs'>

@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	ChannelRatioFetchStatusSucceeded    = "succeeded"
-	ChannelRatioFetchStatusFailed       = "failed"
-	ChannelSmartScheduleStatusSucceeded = "succeeded"
-	ChannelSmartScheduleStatusSkipped   = "skipped"
-	ChannelSmartScheduleStatusFailed    = "failed"
+	ChannelRatioFetchStatusSucceeded      = "succeeded"
+	ChannelRatioFetchStatusFailed         = "failed"
+	ChannelSmartScheduleStatusSucceeded   = "succeeded"
+	ChannelSmartScheduleStatusSkipped     = "skipped"
+	ChannelSmartScheduleStatusFailed      = "failed"
+	ChannelSmartScheduleStabilityDegraded = "degraded"
+	ChannelSmartScheduleStabilityProbing  = "probing"
 )
 
 type ChannelRatioMonitor struct {
@@ -58,6 +60,11 @@ type ChannelRatioMonitor struct {
 	LastSchedulePriority        int64    `json:"last_schedule_priority" gorm:"bigint"`
 	LastScheduleWeight          uint     `json:"last_schedule_weight"`
 	LastScheduleTime            int64    `json:"last_schedule_time" gorm:"bigint;index"`
+	SmartScheduleStabilityState string   `json:"smart_schedule_stability_state" gorm:"type:varchar(16);index"`
+	SmartScheduleStabilityUntil int64    `json:"smart_schedule_stability_until" gorm:"bigint;index"`
+	SmartScheduleStabilitySince int64    `json:"smart_schedule_stability_since" gorm:"bigint"`
+	SmartScheduleSavedPriority  int64    `json:"smart_schedule_saved_priority" gorm:"bigint"`
+	SmartScheduleSavedWeight    uint     `json:"smart_schedule_saved_weight"`
 }
 
 type ChannelRatioUpstreamOptions struct {
@@ -87,6 +94,15 @@ type ChannelSmartScheduleResultUpdate struct {
 	Priority  int64
 	Weight    uint
 	Time      int64
+	Stability *ChannelSmartScheduleStabilityUpdate
+}
+
+type ChannelSmartScheduleStabilityUpdate struct {
+	State         string
+	Until         int64
+	Since         int64
+	SavedPriority int64
+	SavedWeight   uint
 }
 
 type ChannelRatioHistory struct {
@@ -190,7 +206,20 @@ func SaveChannelSmartScheduleConfig(channelId int, options ChannelSmartScheduleC
 			return findErr
 		}
 
+		if options.Excluded && monitor.SmartScheduleStabilityState != "" {
+			priority := monitor.SmartScheduleSavedPriority
+			weight := monitor.SmartScheduleSavedWeight
+			options.Priority = &priority
+			options.Weight = &weight
+		}
 		monitor.SmartScheduleExcluded = options.Excluded
+		if options.Priority != nil || options.Weight != nil {
+			monitor.SmartScheduleStabilityState = ""
+			monitor.SmartScheduleStabilityUntil = 0
+			monitor.SmartScheduleStabilitySince = 0
+			monitor.SmartScheduleSavedPriority = 0
+			monitor.SmartScheduleSavedWeight = 0
+		}
 		if err := tx.Save(&monitor).Error; err != nil {
 			return err
 		}
@@ -263,6 +292,13 @@ func SaveChannelSmartScheduleResults(results []ChannelSmartScheduleResultUpdate)
 			monitor.LastSchedulePriority = result.Priority
 			monitor.LastScheduleWeight = result.Weight
 			monitor.LastScheduleTime = updatedTime
+			if result.Stability != nil {
+				monitor.SmartScheduleStabilityState = result.Stability.State
+				monitor.SmartScheduleStabilityUntil = result.Stability.Until
+				monitor.SmartScheduleStabilitySince = result.Stability.Since
+				monitor.SmartScheduleSavedPriority = result.Stability.SavedPriority
+				monitor.SmartScheduleSavedWeight = result.Stability.SavedWeight
+			}
 			if err := tx.Save(&monitor).Error; err != nil {
 				return err
 			}
@@ -308,14 +344,14 @@ func updateChannelSmartSchedulePriorityWeightTx(tx *gorm.DB, channelId int, prio
 	return tx.Model(&Ability{}).Where("channel_id = ?", channelId).Updates(abilityUpdates).Error
 }
 
-func ResetChannelSmartSchedulePriorityWeight(channelIds []int, weight uint) error {
+func ResetChannelSmartSchedulePriorityWeight(channelIds []int, priority int64, weight uint) error {
 	if len(channelIds) == 0 {
 		return nil
 	}
 
 	const batchSize = 500
 	updates := map[string]any{
-		"priority": int64(0),
+		"priority": priority,
 		"weight":   weight,
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
@@ -331,6 +367,46 @@ func ResetChannelSmartSchedulePriorityWeight(channelIds []int, weight uint) erro
 		}
 		return nil
 	})
+}
+
+func RestoreChannelSmartScheduleStabilityStates(fallbackPriority int64, fallbackWeight uint) (int, error) {
+	var monitors []ChannelRatioMonitor
+	err := DB.Where("smart_schedule_stability_state <> ? OR smart_schedule_stability_since > ?", "", 0).
+		Find(&monitors).Error
+	if err != nil || len(monitors) == 0 {
+		return 0, err
+	}
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		for _, monitor := range monitors {
+			if monitor.SmartScheduleStabilityState != "" {
+				priority := monitor.SmartScheduleSavedPriority
+				if priority <= 0 {
+					priority = fallbackPriority
+				}
+				weight := monitor.SmartScheduleSavedWeight
+				if weight == 0 {
+					weight = fallbackWeight
+				}
+				if err := updateChannelSmartSchedulePriorityWeightTx(tx, monitor.ChannelId, &priority, &weight); err != nil {
+					return err
+				}
+			}
+			if err := tx.Model(&ChannelRatioMonitor{}).
+				Where("channel_id = ?", monitor.ChannelId).
+				Updates(map[string]any{
+					"smart_schedule_stability_state": "",
+					"smart_schedule_stability_until": 0,
+					"smart_schedule_stability_since": 0,
+					"smart_schedule_saved_priority":  0,
+					"smart_schedule_saved_weight":    0,
+				}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return len(monitors), err
 }
 
 func UpdateChannelRatioMonitor(channelId int, ratio float64, remark string, operatorId int, operatorUsername string) (monitor ChannelRatioMonitor, created bool, changed bool, err error) {

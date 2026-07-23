@@ -364,6 +364,12 @@ func TestChannelSmartScheduleConfigAndResultPersistWithoutRatioBaseline(t *testi
 			Priority:  100,
 			Weight:    80,
 			Time:      123,
+			Stability: &ChannelSmartScheduleStabilityUpdate{
+				State:         ChannelSmartScheduleStabilityDegraded,
+				Until:         456,
+				SavedPriority: 90,
+				SavedWeight:   70,
+			},
 		},
 	}))
 
@@ -376,6 +382,10 @@ func TestChannelSmartScheduleConfigAndResultPersistWithoutRatioBaseline(t *testi
 	assert.Equal(t, int64(100), monitor.LastSchedulePriority)
 	assert.Equal(t, uint(80), monitor.LastScheduleWeight)
 	assert.Equal(t, int64(123), monitor.LastScheduleTime)
+	assert.Equal(t, ChannelSmartScheduleStabilityDegraded, monitor.SmartScheduleStabilityState)
+	assert.Equal(t, int64(456), monitor.SmartScheduleStabilityUntil)
+	assert.Equal(t, int64(90), monitor.SmartScheduleSavedPriority)
+	assert.Equal(t, uint(70), monitor.SmartScheduleSavedWeight)
 }
 
 func TestDropLegacyChannelSmartScheduleGroupColumnPreservesMonitorData(t *testing.T) {
@@ -449,12 +459,70 @@ func TestChannelSmartSchedulePriorityWeightUpdatesKeepAbilitiesInSync(t *testing
 	assert.Equal(t, targetPriority, *ability.Priority)
 	assert.Equal(t, targetWeight, ability.Weight)
 
-	require.NoError(t, ResetChannelSmartSchedulePriorityWeight([]int{channel.Id}, 10))
+	require.NoError(t, ResetChannelSmartSchedulePriorityWeight([]int{channel.Id}, 80, 10))
 	require.NoError(t, DB.Where("id = ?", channel.Id).First(&storedChannel).Error)
-	assert.Equal(t, int64(0), storedChannel.GetPriority())
+	assert.Equal(t, int64(80), storedChannel.GetPriority())
 	assert.Equal(t, 10, storedChannel.GetWeight())
 	require.NoError(t, DB.Where("channel_id = ?", channel.Id).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(0), *ability.Priority)
+	assert.Equal(t, int64(80), *ability.Priority)
 	assert.Equal(t, uint(10), ability.Weight)
+}
+
+func TestRestoreChannelSmartScheduleStabilityStatesRestoresSavedOrBaselineValues(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	require.NoError(t, DB.AutoMigrate(&Ability{}))
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id IN ?", []int{34, 35}).Delete(&Ability{}).Error)
+	})
+
+	priority := int64(0)
+	weight := uint(0)
+	channels := []Channel{
+		{Id: 34, Name: "saved", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight},
+		{Id: 35, Name: "fallback", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight},
+	}
+	require.NoError(t, DB.Create(&channels).Error)
+	require.NoError(t, DB.Create(&[]Ability{
+		{Group: "vip", Model: "model-a", ChannelId: 34, Enabled: true, Priority: &priority, Weight: weight},
+		{Group: "vip", Model: "model-a", ChannelId: 35, Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, DB.Create(&[]ChannelRatioMonitor{
+		{
+			ChannelId: 34, SmartScheduleStabilityState: ChannelSmartScheduleStabilityDegraded,
+			SmartScheduleSavedPriority: 90, SmartScheduleSavedWeight: 40,
+		},
+		{
+			ChannelId: 35, SmartScheduleStabilityState: ChannelSmartScheduleStabilityProbing,
+		},
+	}).Error)
+
+	restored, err := RestoreChannelSmartScheduleStabilityStates(80, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 2, restored)
+
+	for channelId, expected := range map[int]struct {
+		priority int64
+		weight   int
+	}{
+		34: {priority: 90, weight: 40},
+		35: {priority: 80, weight: 10},
+	} {
+		var channel Channel
+		require.NoError(t, DB.First(&channel, "id = ?", channelId).Error)
+		assert.Equal(t, expected.priority, channel.GetPriority())
+		assert.Equal(t, expected.weight, channel.GetWeight())
+
+		var ability Ability
+		require.NoError(t, DB.First(&ability, "channel_id = ?", channelId).Error)
+		require.NotNil(t, ability.Priority)
+		assert.Equal(t, expected.priority, *ability.Priority)
+		assert.Equal(t, uint(expected.weight), ability.Weight)
+
+		monitor, monitorErr := GetChannelRatioMonitor(channelId)
+		require.NoError(t, monitorErr)
+		assert.Empty(t, monitor.SmartScheduleStabilityState)
+		assert.Zero(t, monitor.SmartScheduleStabilityUntil)
+		assert.Zero(t, monitor.SmartScheduleStabilitySince)
+	}
 }

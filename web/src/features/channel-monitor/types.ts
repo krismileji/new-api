@@ -44,6 +44,10 @@ export type ChannelMonitorItem = {
   upstream_balance: number | null
   last_balance_time: number
   last_balance_error: string
+  today_cost_cny: number
+  today_cost_configured: boolean
+  today_cost_complete: boolean
+  today_cost_unresolved_count: number
   smart_schedule_excluded: boolean
   last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
   last_schedule_error: string
@@ -51,6 +55,9 @@ export type ChannelMonitorItem = {
   last_schedule_priority: number
   last_schedule_weight: number
   last_schedule_time: number
+  smart_schedule_stability_state?: '' | 'degraded' | 'probing'
+  smart_schedule_stability_until?: number
+  smart_schedule_stability_since?: number
   upstream: ChannelMonitorUpstreamConfig | null
 }
 
@@ -226,12 +233,15 @@ export type ChannelMonitorCostDay = {
   date: string
   start_at: number
   cost_cny: number
+  unresolved_count: number
 }
 
 export type ChannelMonitorCostChannel = {
   channel_id: number
   channel_name: string
   cost_cny: number
+  settled_count: number
+  unresolved_count: number
 }
 
 export type ChannelMonitorCostCoverage = {
@@ -388,6 +398,8 @@ export type ChannelMonitorSettings = {
   smart_schedule_model: string
   smart_schedule_models: string[]
   smart_schedule_min_samples: number
+  smart_schedule_min_success_rate: number
+  smart_schedule_cooldown_minutes: number
   smart_schedule_force_reset_task_created?: boolean
   smart_schedule_force_reset_task_id?: string
   smart_schedule_force_reset_task_error?: string
@@ -460,6 +472,8 @@ export type ChannelMonitorTaskResult = {
   models?: string[]
   performance_minutes?: number
   min_samples?: number
+  min_success_rate?: number
+  cooldown_minutes?: number
   planned?: number
   unchanged?: number
   skipped?: number

@@ -55,6 +55,10 @@ function createChannel(overrides: Partial<ChannelMonitorItem>) {
     upstream_balance: null,
     last_balance_time: 0,
     last_balance_error: '',
+    today_cost_cny: 0,
+    today_cost_configured: false,
+    today_cost_complete: false,
+    today_cost_unresolved_count: 0,
     smart_schedule_excluded: false,
     last_schedule_status: '',
     last_schedule_error: '',
@@ -100,6 +104,25 @@ describe('channel monitor smart schedule cell status', () => {
     assert.doesNotMatch(markup, /已跳过/)
     assert.doesNotMatch(markup, /已设为不参与智能调度/)
     assert.doesNotMatch(markup, /得分 28\.8/)
+  })
+
+  test('shows low-success degradation instead of a stale score', () => {
+    const markup = renderCell({
+      smart_schedule_stability_state: 'degraded',
+      smart_schedule_stability_until: 1_752_777_845,
+      last_schedule_score: 0.288,
+    })
+
+    assert.match(markup, /低成功率降级/)
+    assert.doesNotMatch(markup, /得分 28\.8/)
+  })
+
+  test('shows when a channel is collecting probe samples', () => {
+    const markup = renderCell({
+      smart_schedule_stability_state: 'probing',
+    })
+
+    assert.match(markup, /稳定性试放/)
   })
 
   test('does not render a third status row for any schedule state', () => {

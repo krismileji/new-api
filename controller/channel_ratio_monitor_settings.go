@@ -34,6 +34,8 @@ const (
 	channelMonitorSmartScheduleModelOption             = "ChannelMonitorSmartScheduleModel"
 	channelMonitorSmartScheduleModelsOption            = "ChannelMonitorSmartScheduleModels"
 	channelMonitorSmartScheduleSamplesOption           = "ChannelMonitorSmartScheduleMinSamples"
+	channelMonitorSmartScheduleSuccessRateOption       = "ChannelMonitorSmartScheduleMinSuccessRate"
+	channelMonitorSmartScheduleCooldownOption          = "ChannelMonitorSmartScheduleCooldownMinutes"
 	channelMonitorPolicyActionNone                     = "none"
 	channelMonitorPolicyActionUpdateGroupRatio         = "update_group_ratio"
 	channelMonitorPolicyActionDisableChannel           = "disable_channel"
@@ -52,11 +54,14 @@ const (
 	maxChannelMonitorSmartScheduleModelLength          = 255
 	maxChannelMonitorSmartScheduleModelCount           = 100
 	maxChannelMonitorSmartScheduleMinSamples           = 100000
+	maxChannelMonitorSmartScheduleSuccessRate          = 100
 	defaultChannelMonitorAutoUpdateRetryCount          = 2
 	defaultChannelMonitorGroupCoefficient              = 1
 	defaultChannelMonitorSmartScheduleInterval         = 10
 	defaultChannelMonitorSmartScheduleRange            = 60
 	defaultChannelMonitorSmartScheduleSamples          = 5
+	defaultChannelMonitorSmartScheduleSuccessRate      = 80
+	defaultChannelMonitorSmartScheduleCooldown         = 30
 )
 
 type channelMonitorSettings struct {
@@ -74,6 +79,8 @@ type channelMonitorSettings struct {
 	SmartScheduleModel                 string   `json:"smart_schedule_model"`
 	SmartScheduleModels                []string `json:"smart_schedule_models"`
 	SmartScheduleMinSamples            int      `json:"smart_schedule_min_samples"`
+	SmartScheduleMinSuccessRate        float64  `json:"smart_schedule_min_success_rate"`
+	SmartScheduleCooldownMinutes       int      `json:"smart_schedule_cooldown_minutes"`
 	SmartScheduleForceResetTaskCreated *bool    `json:"smart_schedule_force_reset_task_created,omitempty"`
 	SmartScheduleForceResetTaskId      string   `json:"smart_schedule_force_reset_task_id,omitempty"`
 	SmartScheduleForceResetTaskError   string   `json:"smart_schedule_force_reset_task_error,omitempty"`
@@ -94,6 +101,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	SmartScheduleModel              *string   `json:"smart_schedule_model"`
 	SmartScheduleModels             *[]string `json:"smart_schedule_models"`
 	SmartScheduleMinSamples         *int      `json:"smart_schedule_min_samples"`
+	SmartScheduleMinSuccessRate     *float64  `json:"smart_schedule_min_success_rate"`
+	SmartScheduleCooldownMinutes    *int      `json:"smart_schedule_cooldown_minutes"`
 	SmartScheduleForceReset         *bool     `json:"smart_schedule_force_reset"`
 }
 
@@ -117,6 +126,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawSmartScheduleModel := common.OptionMap[channelMonitorSmartScheduleModelOption]
 	rawSmartScheduleModels, hasSmartScheduleModels := common.OptionMap[channelMonitorSmartScheduleModelsOption]
 	rawSmartScheduleSamples := common.OptionMap[channelMonitorSmartScheduleSamplesOption]
+	rawSmartScheduleSuccessRate := common.OptionMap[channelMonitorSmartScheduleSuccessRateOption]
+	rawSmartScheduleCooldown := common.OptionMap[channelMonitorSmartScheduleCooldownOption]
 	common.OptionMapRWMutex.RUnlock()
 
 	interval, err := strconv.Atoi(rawInterval)
@@ -159,6 +170,15 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil || smartScheduleSamples <= 0 || smartScheduleSamples > maxChannelMonitorSmartScheduleMinSamples {
 		smartScheduleSamples = defaultChannelMonitorSmartScheduleSamples
 	}
+	smartScheduleSuccessRate, err := strconv.ParseFloat(rawSmartScheduleSuccessRate, 64)
+	if err != nil || math.IsNaN(smartScheduleSuccessRate) || math.IsInf(smartScheduleSuccessRate, 0) ||
+		smartScheduleSuccessRate < 0 || smartScheduleSuccessRate > maxChannelMonitorSmartScheduleSuccessRate {
+		smartScheduleSuccessRate = defaultChannelMonitorSmartScheduleSuccessRate
+	}
+	smartScheduleCooldown, err := strconv.Atoi(rawSmartScheduleCooldown)
+	if err != nil || smartScheduleCooldown <= 0 || smartScheduleCooldown > maxChannelMonitorAutoUpdateIntervalMinutes {
+		smartScheduleCooldown = defaultChannelMonitorSmartScheduleCooldown
+	}
 	smartScheduleModels := make([]string, 0)
 	modelsConfigured := false
 	if hasSmartScheduleModels {
@@ -196,6 +216,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		SmartScheduleModel:              smartScheduleModel,
 		SmartScheduleModels:             smartScheduleModels,
 		SmartScheduleMinSamples:         smartScheduleSamples,
+		SmartScheduleMinSuccessRate:     smartScheduleSuccessRate,
+		SmartScheduleCooldownMinutes:    smartScheduleCooldown,
 	}
 }
 
@@ -421,13 +443,15 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.SmartScheduleModel == nil &&
 		request.SmartScheduleModels == nil &&
 		request.SmartScheduleMinSamples == nil &&
+		request.SmartScheduleMinSuccessRate == nil &&
+		request.SmartScheduleCooldownMinutes == nil &&
 		request.SmartScheduleForceReset == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的设置"})
 		return
 	}
 	settings := getChannelMonitorSettings()
 	smartScheduleWasEnabled := settings.SmartScheduleEnabled
-	values := make(map[string]string, 14)
+	values := make(map[string]string, 16)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -558,6 +582,25 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartScheduleMinSamples = *request.SmartScheduleMinSamples
 		values[channelMonitorSmartScheduleSamplesOption] = strconv.Itoa(settings.SmartScheduleMinSamples)
 	}
+	if request.SmartScheduleMinSuccessRate != nil &&
+		(math.IsNaN(*request.SmartScheduleMinSuccessRate) || math.IsInf(*request.SmartScheduleMinSuccessRate, 0) ||
+			*request.SmartScheduleMinSuccessRate < 0 || *request.SmartScheduleMinSuccessRate > maxChannelMonitorSmartScheduleSuccessRate) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度最低成功率必须在 0% 到 100% 之间"})
+		return
+	}
+	if request.SmartScheduleMinSuccessRate != nil {
+		settings.SmartScheduleMinSuccessRate = *request.SmartScheduleMinSuccessRate
+		values[channelMonitorSmartScheduleSuccessRateOption] = strconv.FormatFloat(settings.SmartScheduleMinSuccessRate, 'f', -1, 64)
+	}
+	if request.SmartScheduleCooldownMinutes != nil && (*request.SmartScheduleCooldownMinutes <= 0 ||
+		*request.SmartScheduleCooldownMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度降级时长必须在 1 到 525600 分钟之间"})
+		return
+	}
+	if request.SmartScheduleCooldownMinutes != nil {
+		settings.SmartScheduleCooldownMinutes = *request.SmartScheduleCooldownMinutes
+		values[channelMonitorSmartScheduleCooldownOption] = strconv.Itoa(settings.SmartScheduleCooldownMinutes)
+	}
 	forceResetSmartSchedule := request.SmartScheduleForceReset != nil && *request.SmartScheduleForceReset
 	resetSmartScheduleChannels := request.SmartScheduleEnabled != nil &&
 		*request.SmartScheduleEnabled && !smartScheduleWasEnabled && !forceResetSmartSchedule
@@ -568,6 +611,23 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		if err != nil {
 			common.ApiError(c, err)
 			return
+		}
+	}
+	restoreStabilityStates := (request.SmartScheduleEnabled != nil && !*request.SmartScheduleEnabled) ||
+		(request.SmartScheduleStabilityEnabled != nil && !*request.SmartScheduleStabilityEnabled)
+	restoredStabilityChannelCount := 0
+	if restoreStabilityStates {
+		var err error
+		restoredStabilityChannelCount, err = model.RestoreChannelSmartScheduleStabilityStates(
+			channelMonitorSmartScheduleBaselinePriority,
+			channelMonitorSmartScheduleMinWeight,
+		)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if restoredStabilityChannelCount > 0 {
+			model.InitChannelCache()
 		}
 	}
 	if err := model.UpdateOptionsBulk(values); err != nil {
@@ -607,6 +667,9 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"smart_schedule_model":               settings.SmartScheduleModel,
 		"smart_schedule_models":              settings.SmartScheduleModels,
 		"smart_schedule_min_samples":         settings.SmartScheduleMinSamples,
+		"smart_schedule_min_success_rate":    settings.SmartScheduleMinSuccessRate,
+		"smart_schedule_cooldown_minutes":    settings.SmartScheduleCooldownMinutes,
+		"smart_schedule_stability_restored":  restoredStabilityChannelCount,
 		"smart_schedule_channels_reset":      resetSmartScheduleChannels,
 		"smart_schedule_reset_channel_count": resetChannelCount,
 		"smart_schedule_force_reset":         forceResetSmartSchedule,

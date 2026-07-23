@@ -307,7 +307,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			}
 			ratioUpdated = false
 			if !monitor.UpstreamRatioSyncDisabled {
-				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, 0, "系统自动更新")
+				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, true, 0, "系统自动更新")
 				ratioUpdated = err == nil
 				if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
 					balance := *outcome.Result.Balance.Amount

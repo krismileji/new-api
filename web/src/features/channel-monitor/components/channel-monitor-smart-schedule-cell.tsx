@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { formatTimestampToDate } from '@/lib/format'
 
 import type { ChannelMonitorItem } from '../types'
 
@@ -73,9 +74,26 @@ export function ChannelMonitorSmartScheduleCell(
           />
           <span className='text-xs'>参与调度</span>
         </div>
-        {participating && props.channel.last_schedule_score != null ? (
+        {participating &&
+        !props.channel.smart_schedule_stability_state &&
+        props.channel.last_schedule_score != null ? (
           <span className='text-xs tabular-nums'>
             得分 {(props.channel.last_schedule_score * 100).toFixed(1)}
+          </span>
+        ) : null}
+        {participating &&
+        props.channel.smart_schedule_stability_state === 'degraded' ? (
+          <span className='text-destructive text-xs'>
+            低成功率降级
+            {props.channel.smart_schedule_stability_until
+              ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
+              : ''}
+          </span>
+        ) : null}
+        {participating &&
+        props.channel.smart_schedule_stability_state === 'probing' ? (
+          <span className='text-xs text-amber-600 dark:text-amber-400'>
+            稳定性试放
           </span>
         ) : null}
       </div>
@@ -89,7 +107,7 @@ export function ChannelMonitorSmartScheduleCell(
             <AlertDialogTitle>确认参与调度？</AlertDialogTitle>
             <AlertDialogDescription>
               启用“{props.channel.name}”参与智能调度将把优先级重置为
-              0、权重重置为 10。
+              80、权重重置为 10。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

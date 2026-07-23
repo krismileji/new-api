@@ -84,41 +84,48 @@ type channelMonitorUpstreamConfig struct {
 }
 
 type channelMonitorItem struct {
-	Id                    int                           `json:"id"`
-	Name                  string                        `json:"name"`
-	Type                  int                           `json:"type"`
-	Status                int                           `json:"status"`
-	Priority              int64                         `json:"priority"`
-	Weight                int                           `json:"weight"`
-	BaseURL               string                        `json:"base_url"`
-	Models                string                        `json:"models"`
-	TestModel             *string                       `json:"test_model"`
-	Groups                []string                      `json:"groups"`
-	Ratio                 *float64                      `json:"ratio"`
-	PreviousRatio         *float64                      `json:"previous_ratio"`
-	CostRatio             *float64                      `json:"cost_ratio"`
-	PreviousCostRatio     *float64                      `json:"previous_cost_ratio"`
-	ConversionFactor      *float64                      `json:"conversion_factor"`
-	Remark                string                        `json:"remark"`
-	ChannelRemark         string                        `json:"channel_remark"`
-	UpdatedTime           int64                         `json:"updated_time"`
-	UpdatedBy             int                           `json:"updated_by"`
-	UpdatedByUsername     string                        `json:"updated_by_username"`
-	LastFetchStatus       string                        `json:"last_fetch_status"`
-	LastFetchError        string                        `json:"last_fetch_error"`
-	LastFetchTime         int64                         `json:"last_fetch_time"`
-	ConsecutiveFailures   int                           `json:"consecutive_failures"`
-	UpstreamBalance       *float64                      `json:"upstream_balance"`
-	LastBalanceTime       int64                         `json:"last_balance_time"`
-	LastBalanceError      string                        `json:"last_balance_error"`
-	SmartScheduleExcluded bool                          `json:"smart_schedule_excluded"`
-	LastScheduleStatus    string                        `json:"last_schedule_status"`
-	LastScheduleError     string                        `json:"last_schedule_error"`
-	LastScheduleScore     *float64                      `json:"last_schedule_score"`
-	LastSchedulePriority  int64                         `json:"last_schedule_priority"`
-	LastScheduleWeight    uint                          `json:"last_schedule_weight"`
-	LastScheduleTime      int64                         `json:"last_schedule_time"`
-	Upstream              *channelMonitorUpstreamConfig `json:"upstream"`
+	Id                          int                           `json:"id"`
+	Name                        string                        `json:"name"`
+	Type                        int                           `json:"type"`
+	Status                      int                           `json:"status"`
+	Priority                    int64                         `json:"priority"`
+	Weight                      int                           `json:"weight"`
+	BaseURL                     string                        `json:"base_url"`
+	Models                      string                        `json:"models"`
+	TestModel                   *string                       `json:"test_model"`
+	Groups                      []string                      `json:"groups"`
+	Ratio                       *float64                      `json:"ratio"`
+	PreviousRatio               *float64                      `json:"previous_ratio"`
+	CostRatio                   *float64                      `json:"cost_ratio"`
+	PreviousCostRatio           *float64                      `json:"previous_cost_ratio"`
+	ConversionFactor            *float64                      `json:"conversion_factor"`
+	Remark                      string                        `json:"remark"`
+	ChannelRemark               string                        `json:"channel_remark"`
+	UpdatedTime                 int64                         `json:"updated_time"`
+	UpdatedBy                   int                           `json:"updated_by"`
+	UpdatedByUsername           string                        `json:"updated_by_username"`
+	LastFetchStatus             string                        `json:"last_fetch_status"`
+	LastFetchError              string                        `json:"last_fetch_error"`
+	LastFetchTime               int64                         `json:"last_fetch_time"`
+	ConsecutiveFailures         int                           `json:"consecutive_failures"`
+	UpstreamBalance             *float64                      `json:"upstream_balance"`
+	LastBalanceTime             int64                         `json:"last_balance_time"`
+	LastBalanceError            string                        `json:"last_balance_error"`
+	TodayCostCNY                float64                       `json:"today_cost_cny"`
+	TodayCostConfigured         bool                          `json:"today_cost_configured"`
+	TodayCostComplete           bool                          `json:"today_cost_complete"`
+	TodayCostUnresolvedCount    int64                         `json:"today_cost_unresolved_count"`
+	SmartScheduleExcluded       bool                          `json:"smart_schedule_excluded"`
+	LastScheduleStatus          string                        `json:"last_schedule_status"`
+	LastScheduleError           string                        `json:"last_schedule_error"`
+	LastScheduleScore           *float64                      `json:"last_schedule_score"`
+	LastSchedulePriority        int64                         `json:"last_schedule_priority"`
+	LastScheduleWeight          uint                          `json:"last_schedule_weight"`
+	LastScheduleTime            int64                         `json:"last_schedule_time"`
+	SmartScheduleStabilityState string                        `json:"smart_schedule_stability_state"`
+	SmartScheduleStabilityUntil int64                         `json:"smart_schedule_stability_until"`
+	SmartScheduleStabilitySince int64                         `json:"smart_schedule_stability_since"`
+	Upstream                    *channelMonitorUpstreamConfig `json:"upstream"`
 }
 
 func validateChannelMonitorRatio(ratio *float64) bool {
@@ -167,6 +174,18 @@ func channelMonitorCostRatioFromModel(monitor model.ChannelRatioMonitor, upstrea
 		return 0, 0, err
 	}
 	return service.CalculateChannelMonitorCostRatio(upstreamRatio, costConversion)
+}
+
+func channelMonitorCostTrackingConfigured(monitor model.ChannelRatioMonitor) bool {
+	if monitor.UpdatedTime <= 0 {
+		return false
+	}
+	costConversion, err := service.ParseChannelMonitorCostConversion(monitor.CostConversion)
+	if err != nil {
+		return false
+	}
+	_, _, err = service.CalculateChannelMonitorCostRatio(monitor.Ratio, costConversion)
+	return err == nil
 }
 
 func channelMonitorCostConversionLabel(config service.ChannelMonitorCostConversion) string {
@@ -402,10 +421,20 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	todayStart := channelMonitorCostDayStart(common.GetTimestamp())
+	todayCosts, err := model.GetChannelDailyCosts(c.Request.Context(), todayStart, todayStart+channelMonitorCostDaySeconds)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
+	}
+	todayCostByChannel := make(map[int]model.ChannelDailyCost, len(todayCosts))
+	for _, cost := range todayCosts {
+		todayCostByChannel[cost.ChannelId] = cost
 	}
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
@@ -435,7 +464,19 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			Groups:        groups,
 			ChannelRemark: channelRemark,
 		}
+		if cost, exists := todayCostByChannel[channel.Id]; exists {
+			item.TodayCostCNY = channelMonitorCostCNY(cost.CostNanoCNY)
+			item.TodayCostConfigured = cost.SettledCount > 0
+			item.TodayCostComplete = cost.UnresolvedCount == 0
+			item.TodayCostUnresolvedCount = cost.UnresolvedCount
+		}
 		if monitor, exists := monitorByChannel[channel.Id]; exists {
+			if channelMonitorCostTrackingConfigured(monitor) {
+				item.TodayCostConfigured = true
+				if item.TodayCostUnresolvedCount == 0 {
+					item.TodayCostComplete = true
+				}
+			}
 			item.LastFetchStatus = monitor.LastFetchStatus
 			item.LastFetchError = monitor.LastFetchError
 			item.LastFetchTime = monitor.LastFetchTime
@@ -450,6 +491,9 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			item.LastSchedulePriority = monitor.LastSchedulePriority
 			item.LastScheduleWeight = monitor.LastScheduleWeight
 			item.LastScheduleTime = monitor.LastScheduleTime
+			item.SmartScheduleStabilityState = monitor.SmartScheduleStabilityState
+			item.SmartScheduleStabilityUntil = monitor.SmartScheduleStabilityUntil
+			item.SmartScheduleStabilitySince = monitor.SmartScheduleStabilitySince
 			if monitor.UpdatedTime > 0 {
 				item.Ratio = &monitor.Ratio
 				item.PreviousRatio = monitor.PreviousRatio
@@ -511,7 +555,7 @@ func UpdateChannelMonitorSmartScheduleConfig(c *gin.Context) {
 	options := model.ChannelSmartScheduleConfigOptions{Excluded: *request.Excluded}
 	reset := !options.Excluded && request.Reset
 	if reset {
-		priority := int64(0)
+		priority := channelMonitorSmartScheduleBaselinePriority
 		weight := uint(channelMonitorSmartScheduleMinWeight)
 		options.Priority = &priority
 		options.Weight = &weight
@@ -679,6 +723,7 @@ func UpdateChannelMonitorRatio(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.InvalidateChannelDailyCostSnapshot(channelId)
 	recordManageAudit(c, "channel.monitor_ratio_update", map[string]interface{}{
 		"id": channelId, "ratio": *request.Ratio, "changed": changed,
 	})
@@ -851,6 +896,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.InvalidateChannelDailyCostSnapshot(channelId)
 	balanceAutoDisabled := false
 	if config.Type == service.CustomUpstreamType {
 		operatorId, operatorUsername := getChannelMonitorOperator(c)
@@ -999,7 +1045,7 @@ type channelMonitorFetchOutcome struct {
 	BalanceRecorded bool
 }
 
-func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, operatorId int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
+func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, includeSeparateBalance bool, operatorId int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
 	if monitor.UpstreamType != service.NewAPIUpstreamType && monitor.UpstreamType != service.Sub2APIUpstreamType && monitor.UpstreamType != service.CustomUpstreamType {
 		return outcome, errors.New("请先保存上游配置")
 	}
@@ -1037,11 +1083,13 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		return outcome, err
 	}
 	customConfig := service.ChannelMonitorCustomUpstreamConfig{}
+	fetchBalance := includeSeparateBalance
 	if monitor.UpstreamType == service.CustomUpstreamType {
 		customConfig, err = service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 		if err != nil {
 			return outcome, err
 		}
+		fetchBalance = fetchBalance || customConfig.BalanceReuseRatioRequest
 	}
 
 	result, fetchErr := service.FetchChannelMonitorUpstreamGroupRatio(ctx, service.ChannelMonitorUpstreamConfig{
@@ -1055,7 +1103,7 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		Password:       monitor.UpstreamPassword,
 		ChannelKeys:    channelKeys,
 		Proxy:          proxyURL,
-		SkipBalance:    monitor.UpstreamBalanceSyncDisabled,
+		SkipBalance:    monitor.UpstreamBalanceSyncDisabled || !fetchBalance,
 		CostConversion: costConversion,
 		CustomConfig:   customConfig,
 	})
@@ -1089,10 +1137,22 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	if err != nil {
 		return outcome, err
 	}
+	service.InvalidateChannelDailyCostSnapshot(monitor.ChannelId)
 	outcome.Monitor = updatedMonitor
 	outcome.Created = created
 	outcome.Changed = changed
 	return outcome, nil
+}
+
+func channelMonitorSharesRatioBalanceRequest(monitor model.ChannelRatioMonitor) (bool, error) {
+	if monitor.UpstreamType != service.CustomUpstreamType {
+		return false, nil
+	}
+	config, err := service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
+	if err != nil {
+		return false, err
+	}
+	return config.BalanceReuseRatioRequest, nil
 }
 
 func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string) (result service.ChannelMonitorUpstreamBalanceResult, err error) {
@@ -1191,7 +1251,7 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		return
 	}
 	operatorId, operatorUsername := getChannelMonitorOperator(c)
-	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, operatorId, operatorUsername)
+	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, false, operatorId, operatorUsername)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1252,10 +1312,35 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		return
 	}
 
-	result, err := fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy)
+	sharedRequest, err := channelMonitorSharesRatioBalanceRequest(monitor)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	result := service.ChannelMonitorUpstreamBalanceResult{}
+	ratioRefreshed := sharedRequest && !monitor.UpstreamRatioSyncDisabled
+	if ratioRefreshed {
+		operatorId, operatorUsername := getChannelMonitorOperator(c)
+		outcome, fetchErr := fetchAndRecordChannelMonitorUpstreamRatio(
+			c.Request.Context(),
+			monitor,
+			channel.GetKeys(),
+			channel.GetSetting().Proxy,
+			false,
+			operatorId,
+			operatorUsername,
+		)
+		if fetchErr != nil {
+			common.ApiError(c, fetchErr)
+			return
+		}
+		result = outcome.Result.Balance
+	} else {
+		result, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	balanceAutoDisabled, err := autoDisableChannelMonitorForLowBalance(monitor, channel, *result.Amount)
 	if err != nil {
@@ -1268,7 +1353,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 	}
 	recordManageAudit(c, "channel.monitor_upstream_balance_fetch", map[string]interface{}{
 		"id": channelId, "upstream_type": monitor.UpstreamType, "balance": *result.Amount,
-		"balance_auto_disabled": balanceAutoDisabled,
+		"balance_auto_disabled": balanceAutoDisabled, "ratio_refreshed": ratioRefreshed,
 	})
 	common.ApiSuccess(c, result)
 }
@@ -1348,6 +1433,7 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		common.ApiError(c, fmt.Errorf("上游令牌已切换，但记录本地倍率失败: %w", err))
 		return
 	}
+	service.InvalidateChannelDailyCostSnapshot(channelId)
 	recordManageAudit(c, "channel.monitor_upstream_group_apply", map[string]interface{}{
 		"id":                channelId,
 		"upstream_type":     monitor.UpstreamType,

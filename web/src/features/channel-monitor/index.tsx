@@ -162,6 +162,8 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   smart_schedule_model: '',
   smart_schedule_models: [],
   smart_schedule_min_samples: 5,
+  smart_schedule_min_success_rate: 80,
+  smart_schedule_cooldown_minutes: 30,
 }
 const CHANNEL_MONITOR_SORT_STORAGE_KEY = 'channel-monitor:channel-sort'
 const CHANNEL_MONITOR_PERFORMANCE_RANGE_STORAGE_KEY =
@@ -282,7 +284,7 @@ export function ChannelMonitor() {
   const balanceFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamBalance,
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
+    onSuccess: (response, channelId) => {
       const balance = response.data.amount
       toast.success(
         balance == null
@@ -292,6 +294,9 @@ export function ChannelMonitor() {
               maximumFractionDigits: 4,
             })}`
       )
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor-history', channelId],
+      })
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
@@ -569,14 +574,14 @@ export function ChannelMonitor() {
   ).length
   const costOverview = costQuery.data?.data
   let costDescription = costOverview
-    ? `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 当前倍率估算`
-    : '按北京时间和当前倍率估算'
+    ? `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 结算时固化`
+    : '按北京时间记录结算成本'
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
   } else if (costOverview?.coverage.unresolved_channel_count) {
-    costDescription = `${costOverview.coverage.unresolved_channel_count} 个有用量渠道暂无法回算`
+    costDescription = `${costOverview.coverage.unresolved_channel_count} 个渠道存在未确认成本`
   } else if (costOverview?.coverage.included_channel_count === 0) {
-    costDescription = '暂无可回算的成本数据'
+    costDescription = '暂无已记录的成本'
   }
   const newAPIChannelCount = channels.filter(
     (channel) => channel.upstream?.type === 'new_api'
@@ -1120,7 +1125,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           initialSection={settingsSection}

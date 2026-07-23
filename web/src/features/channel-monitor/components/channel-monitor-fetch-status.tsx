@@ -38,26 +38,42 @@ export function ChannelMonitorFetchStatus(
   props: ChannelMonitorFetchStatusProps
 ) {
   if (props.channel.upstream && !props.channel.upstream.ratio_sync_enabled) {
-    return <Badge variant='outline'>倍率同步已关闭</Badge>
+    return (
+      <Badge
+        variant='outline'
+        className='max-w-full truncate'
+        title='倍率同步已关闭'
+      >
+        倍率同步已关闭
+      </Badge>
+    )
   }
 
   if (props.channel.last_fetch_status === 'failed') {
     const failureCount = Math.max(1, props.channel.consecutive_failures)
+    const failureLabel = `连续失败 ${failureCount} 次`
+    const lastAttemptLabel = `最后尝试：${formatTimestampToDate(props.channel.last_fetch_time)}`
 
     return (
-      <div className='flex w-full flex-col items-start gap-1 whitespace-normal'>
-        <div className='flex flex-wrap items-center gap-2'>
-          <Badge variant='destructive'>
+      <div className='flex w-full min-w-0 flex-col items-start gap-1'>
+        <div className='flex w-full min-w-0 items-center gap-1.5'>
+          <Badge variant='destructive' className='shrink-0'>
             <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
             更新失败
           </Badge>
-          <span className='text-destructive text-xs'>
-            连续失败 {failureCount} 次
+          <span
+            className='text-destructive min-w-0 flex-1 truncate text-xs'
+            title={failureLabel}
+          >
+            {failureLabel}
           </span>
         </div>
         {props.channel.last_fetch_time > 0 && (
-          <span className='text-muted-foreground text-xs'>
-            最后尝试：{formatTimestampToDate(props.channel.last_fetch_time)}
+          <span
+            className='text-muted-foreground block w-full truncate text-xs'
+            title={lastAttemptLabel}
+          >
+            {lastAttemptLabel}
           </span>
         )}
       </div>
@@ -65,17 +81,22 @@ export function ChannelMonitorFetchStatus(
   }
 
   if (props.channel.last_fetch_status === 'succeeded') {
+    const successLabel = formatTimestampToDate(props.channel.last_fetch_time)
+
     return (
-      <div className='flex w-full flex-col items-start gap-1 whitespace-normal'>
+      <div className='flex w-full min-w-0 flex-col items-start gap-1'>
         <Badge
           variant='secondary'
-          className='bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+          className='shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
         >
           更新成功
         </Badge>
         {props.channel.last_fetch_time > 0 && (
-          <span className='text-muted-foreground text-xs'>
-            {formatTimestampToDate(props.channel.last_fetch_time)}
+          <span
+            className='text-muted-foreground block w-full truncate text-xs'
+            title={successLabel}
+          >
+            {successLabel}
           </span>
         )}
       </div>
@@ -83,7 +104,15 @@ export function ChannelMonitorFetchStatus(
   }
 
   if (props.channel.upstream) {
-    return <Badge variant='outline'>等待首次更新</Badge>
+    return (
+      <Badge
+        variant='outline'
+        className='max-w-full truncate'
+        title='等待首次更新'
+      >
+        等待首次更新
+      </Badge>
+    )
   }
 
   return <span className='text-muted-foreground text-xs'>未配置上游</span>

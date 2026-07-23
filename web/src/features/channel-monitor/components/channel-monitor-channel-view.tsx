@@ -56,7 +56,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { getChannelMonitorStatusLabel } from '../constants'
-import { formatMonitorRatio } from '../lib/format'
+import { formatChannelMonitorCost, formatMonitorRatio } from '../lib/format'
 import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
@@ -123,10 +123,36 @@ type ChannelUpstreamBalanceCellProps = {
   channel: ChannelMonitorItem
 }
 
+type ChannelMonitorUpdateMetaProps = {
+  timestamp: number
+  className?: string
+}
+
 const upstreamBalanceFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 4,
 })
+
+function ChannelMonitorUpdateMeta(props: ChannelMonitorUpdateMetaProps) {
+  if (props.timestamp <= 0) {
+    return null
+  }
+
+  const label = `更新：${formatTimestampToDate(props.timestamp)}`
+
+  return (
+    <div
+      className={cn(
+        'text-muted-foreground flex w-full min-w-0 flex-col items-start gap-0.5 text-xs leading-4',
+        props.className
+      )}
+    >
+      <span className='block w-full truncate' title={label}>
+        {label}
+      </span>
+    </div>
+  )
+}
 
 function ChannelActionButton(props: ChannelActionButtonProps) {
   return (
@@ -184,7 +210,14 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
     return <span className='text-muted-foreground'>-</span>
   }
   if (!props.channel.upstream.balance_sync_enabled) {
-    return <span className='text-muted-foreground text-xs'>余额同步已关闭</span>
+    return (
+      <span
+        className='text-muted-foreground block max-w-full truncate text-xs'
+        title='余额同步已关闭'
+      >
+        余额同步已关闭
+      </span>
+    )
   }
   if (props.channel.upstream_balance == null) {
     if (props.channel.last_balance_error) {
@@ -201,11 +234,6 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   }
 
   const titleParts: string[] = []
-  if (props.channel.last_balance_time > 0) {
-    titleParts.push(
-      `最后更新：${formatTimestampToDate(props.channel.last_balance_time)}`
-    )
-  }
   if (props.channel.last_balance_error) {
     titleParts.push(`最近更新失败：${props.channel.last_balance_error}`)
   }
@@ -221,7 +249,7 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   }
   return (
     <div
-      className='flex flex-col items-start gap-0.5'
+      className='flex w-full min-w-0 flex-col items-start gap-0.5'
       title={titleParts.join('；')}
     >
       <span
@@ -237,6 +265,31 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
       ) : null}
       {props.channel.last_balance_error ? (
         <span className='text-warning text-xs'>更新失败</span>
+      ) : null}
+      <ChannelMonitorUpdateMeta timestamp={props.channel.last_balance_time} />
+    </div>
+  )
+}
+
+function ChannelTodayCostCell(props: { channel: ChannelMonitorItem }) {
+  if (!props.channel.today_cost_configured) {
+    return <span className='text-muted-foreground text-xs'>未配置</span>
+  }
+
+  return (
+    <div
+      className='flex min-w-0 flex-col items-start gap-0.5'
+      title={
+        props.channel.today_cost_unresolved_count > 0
+          ? `今日有 ${props.channel.today_cost_unresolved_count} 次成本未确认`
+          : undefined
+      }
+    >
+      <span className='font-mono font-semibold tabular-nums'>
+        {formatChannelMonitorCost(props.channel.today_cost_cny)}
+      </span>
+      {!props.channel.today_cost_complete ? (
+        <span className='text-warning text-xs'>不完整</span>
       ) : null}
     </div>
   )
@@ -260,26 +313,27 @@ export function ChannelMonitorChannelView(
     <div className='overflow-hidden rounded-lg border'>
       <Table
         className={cn(
-          'table-fixed [&_td]:align-top [&_td]:py-3',
-          props.smartScheduleEnabled ? 'min-w-[1440px]' : 'min-w-[1200px]'
+          'table-fixed [&_td]:align-top [&_td]:overflow-hidden [&_td]:py-3',
+          props.smartScheduleEnabled ? 'min-w-[1624px]' : 'min-w-[1464px]'
         )}
       >
         <colgroup>
-          <col className={props.smartScheduleEnabled ? 'w-[7%]' : 'w-[10%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[8%]' : 'w-[9%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[12%]' : 'w-[14%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[12%]' : 'w-[14%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[13%]' : 'w-[15%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[9%]' : 'w-[10%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[9%]' : 'w-[10%]'} />
-          {props.smartScheduleEnabled ? <col className='w-[15%]' /> : null}
-          <col className={props.smartScheduleEnabled ? 'w-[8%]' : 'w-[10%]'} />
-          <col className={props.smartScheduleEnabled ? 'w-[7%]' : 'w-[8%]'} />
+          <col className='w-[160px]' />
+          <col className='w-[208px]' />
+          <col className='w-[128px]' />
+          <col className='w-[224px]' />
+          <col className='w-[200px]' />
+          <col className='w-[176px]' />
+          <col className='w-[128px]' />
+          <col className='w-[136px]' />
+          {props.smartScheduleEnabled ? <col className='w-[160px]' /> : null}
+          <col className='w-[104px]' />
         </colgroup>
         <TableHeader>
           <TableRow className='[&_th]:text-left'>
             <TableHead>渠道</TableHead>
             <TableHead>上游余额</TableHead>
+            <TableHead>今日成本</TableHead>
             <TableHead>成本倍率</TableHead>
             <TableHead>倍率更新状态</TableHead>
             <TableHead>关联分组</TableHead>
@@ -293,7 +347,6 @@ export function ChannelMonitorChannelView(
             {props.smartScheduleEnabled ? (
               <TableHead>智能调度</TableHead>
             ) : null}
-            <TableHead>更新时间</TableHead>
             <TableHead>操作</TableHead>
           </TableRow>
         </TableHeader>
@@ -302,11 +355,21 @@ export function ChannelMonitorChannelView(
             const channelEnabled = channel.status === CHANNEL_STATUS.ENABLED
             const successMetric = props.successByChannel.get(channel.id)
             const channelStatusLabel = `渠道状态：${getChannelMonitorStatusLabel(channel.status)}`
+            const refreshesMetricsTogether =
+              channel.upstream?.type === 'custom' &&
+              channel.upstream.ratio_sync_enabled &&
+              channel.upstream.balance_sync_enabled &&
+              channel.upstream.custom_config?.balance_reuse_ratio_request ===
+                true
+            const refreshingMetricsTogether =
+              refreshesMetricsTogether &&
+              (props.fetchingBalanceChannelId === channel.id ||
+                props.fetchingRatioChannelId === channel.id)
             return (
               <TableRow key={channel.id} className='[&_td]:text-left'>
                 <TableCell className='whitespace-normal'>
                   <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                    <div className='flex min-w-0 items-center gap-1.5'>
+                    <div className='flex w-full min-w-0 flex-wrap items-center gap-1.5'>
                       <span
                         className={cn(
                           'size-2 shrink-0 rounded-full',
@@ -316,11 +379,17 @@ export function ChannelMonitorChannelView(
                         aria-label={channelStatusLabel}
                         title={channelStatusLabel}
                       />
-                      <span className='min-w-0 truncate font-medium'>
+                      <span
+                        className='min-w-0 flex-1 truncate font-medium'
+                        title={channel.name}
+                      >
                         {channel.name}
                       </span>
                       {!channelEnabled && (
-                        <ChannelMonitorStatusBadge status={channel.status} />
+                        <ChannelMonitorStatusBadge
+                          status={channel.status}
+                          className='max-w-full shrink-0'
+                        />
                       )}
                     </div>
                     {channel.channel_remark && (
@@ -337,7 +406,10 @@ export function ChannelMonitorChannelView(
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <div className='flex min-w-0 items-start gap-1'>
+                  <div className='flex w-full min-w-0 items-start gap-1'>
+                    <div className='min-w-0 flex-1'>
+                      <ChannelUpstreamBalanceCell channel={channel} />
+                    </div>
                     {channel.upstream?.balance_sync_enabled ? (
                       <ChannelActionButton
                         label='更新上游余额'
@@ -347,15 +419,44 @@ export function ChannelMonitorChannelView(
                           props.fetchingBalanceChannelId !== null ||
                           props.fetchingRatioChannelId !== null
                         }
-                        loading={props.fetchingBalanceChannelId === channel.id}
+                        loading={
+                          props.fetchingBalanceChannelId === channel.id ||
+                          refreshingMetricsTogether
+                        }
+                        className='shrink-0'
                         size='icon-xs'
                       />
                     ) : null}
-                    <ChannelUpstreamBalanceCell channel={channel} />
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <div className='flex min-w-0 items-start gap-0'>
+                  <ChannelTodayCostCell channel={channel} />
+                </TableCell>
+                <TableCell className='whitespace-normal'>
+                  <div className='flex w-full min-w-0 items-start gap-1'>
+                    <div className='min-w-0 flex-1'>
+                      <div className='flex min-w-0 items-center gap-2 whitespace-nowrap'>
+                        <span className='font-mono text-base font-semibold'>
+                          {formatMonitorRatio(channel.cost_ratio)}
+                        </span>
+                        <RatioChangeBadge
+                          current={channel.cost_ratio}
+                          previous={channel.previous_cost_ratio}
+                        />
+                      </div>
+                      <ChannelMonitorUpdateMeta
+                        timestamp={channel.updated_time}
+                        className='mt-0.5'
+                      />
+                      {channel.upstream ? (
+                        <span
+                          className='text-muted-foreground mt-0.5 block w-full truncate text-xs'
+                          title={`上游分组：${channel.upstream.group}`}
+                        >
+                          上游分组：{channel.upstream.group}
+                        </span>
+                      ) : null}
+                    </div>
                     {channel.upstream?.ratio_sync_enabled ? (
                       <ChannelActionButton
                         label='更新上游倍率'
@@ -365,40 +466,14 @@ export function ChannelMonitorChannelView(
                           props.fetchingBalanceChannelId !== null ||
                           props.fetchingRatioChannelId !== null
                         }
-                        loading={props.fetchingRatioChannelId === channel.id}
+                        loading={
+                          props.fetchingRatioChannelId === channel.id ||
+                          refreshingMetricsTogether
+                        }
+                        className='shrink-0'
                         size='icon-xs'
                       />
                     ) : null}
-                    <div className='min-w-0'>
-                      <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
-                        <span className='font-mono text-base font-semibold'>
-                          {formatMonitorRatio(channel.cost_ratio)}
-                        </span>
-                        <RatioChangeBadge
-                          current={channel.cost_ratio}
-                          previous={channel.previous_cost_ratio}
-                        />
-                      </div>
-                      {channel.upstream ? (
-                        <div className='mt-0.5 flex min-w-0 flex-col gap-0.5'>
-                          {channel.conversion_factor != null &&
-                          Math.abs(channel.conversion_factor - 1) > 1e-9 ? (
-                            <span className='text-muted-foreground truncate text-xs'>
-                              上游 {formatMonitorRatio(channel.ratio)} × 换算{' '}
-                              {formatMonitorRatio(channel.conversion_factor)}
-                            </span>
-                          ) : null}
-                          <span className='text-muted-foreground truncate text-xs'>
-                            上游分组：{channel.upstream.group}
-                          </span>
-                          {!channel.upstream.ratio_sync_enabled ? (
-                            <span className='text-muted-foreground text-xs'>
-                              倍率同步已关闭
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
@@ -408,18 +483,27 @@ export function ChannelMonitorChannelView(
                   {channel.groups.length === 0 ? (
                     <span className='text-muted-foreground'>-</span>
                   ) : (
-                    <div className='flex max-w-full flex-wrap gap-1'>
+                    <div className='flex w-full min-w-0 flex-wrap gap-1'>
                       {channel.groups.map((group) => {
                         const groupRatio = props.groupRatios[group] ?? 1
                         const coefficient = props.groupCoefficients[group] ?? 1
                         return (
-                          <Badge key={group} variant='outline'>
-                            {group} ×{' '}
-                            <GroupRatioValue
-                              groupRatio={groupRatio}
-                              costRatio={channel.cost_ratio}
-                              coefficient={coefficient}
-                            />
+                          <Badge
+                            key={group}
+                            variant='outline'
+                            className='max-w-full min-w-0'
+                            title={group}
+                          >
+                            <span className='min-w-0 truncate'>{group}</span>
+                            <span className='shrink-0'>
+                              {' '}
+                              ×{' '}
+                              <GroupRatioValue
+                                groupRatio={groupRatio}
+                                costRatio={channel.cost_ratio}
+                                coefficient={coefficient}
+                              />
+                            </span>
                           </Badge>
                         )
                       })}
@@ -458,22 +542,6 @@ export function ChannelMonitorChannelView(
                     />
                   </TableCell>
                 ) : null}
-                <TableCell className='whitespace-normal'>
-                  {channel.updated_time > 0 ? (
-                    <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                      <span className='whitespace-nowrap'>
-                        {formatTimestampToDate(channel.updated_time)}
-                      </span>
-                      {channel.updated_by_username && (
-                        <span className='text-muted-foreground text-xs'>
-                          {channel.updated_by_username}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
-                </TableCell>
                 <TableCell>
                   <div className='inline-grid grid-cols-3 gap-0.5'>
                     <ChannelActionButton
