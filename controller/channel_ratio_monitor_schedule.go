@@ -18,16 +18,18 @@ import (
 )
 
 const (
-	channelMonitorSmartScheduleTaskType               = "channel_smart_schedule"
-	channelMonitorSmartScheduleMinWeight              = 10
-	channelMonitorSmartScheduleMaxWeight              = 100
-	channelMonitorSmartScheduleWeightStep             = 5
-	channelMonitorSmartScheduleMinWeightChange        = 10
-	channelMonitorSmartScheduleMaxWeightChange        = 20
-	channelMonitorSmartScheduleBaselinePriority int64 = 80
-	channelMonitorSmartScheduleDegradedPriority int64 = 0
-	channelMonitorSmartScheduleDegradedWeight   uint  = 0
-	maxChannelSmartScheduleTaskFailureDetails         = 100
+	channelMonitorSmartScheduleTaskType                          = "channel_smart_schedule"
+	channelMonitorSmartScheduleMinWeight                         = 10
+	channelMonitorSmartScheduleMaxWeight                         = 100
+	channelMonitorSmartScheduleWeightStep                        = 5
+	channelMonitorSmartScheduleMinWeightChange                   = 10
+	channelMonitorSmartScheduleMaxWeightChange                   = 20
+	channelMonitorSmartScheduleSingleMetricMaxWeightChange       = 30
+	channelMonitorSmartScheduleSingleMetricWeightExponent        = 3.0
+	channelMonitorSmartScheduleBaselinePriority            int64 = 80
+	channelMonitorSmartScheduleDegradedPriority            int64 = 0
+	channelMonitorSmartScheduleDegradedWeight              uint  = 0
+	maxChannelSmartScheduleTaskFailureDetails                    = 100
 )
 
 type channelSmartScheduleTaskHandler struct{}
@@ -875,6 +877,13 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 	if minSamples <= 0 {
 		minSamples = defaultChannelMonitorSmartScheduleSamples
 	}
+	singleMetricStrategy := strategy == channelMonitorSmartScheduleStrategyRatio ||
+		strategy == channelMonitorSmartScheduleStrategyFirstToken ||
+		strategy == channelMonitorSmartScheduleStrategyTPS
+	maxWeightChange := uint(channelMonitorSmartScheduleMaxWeightChange)
+	if singleMetricStrategy {
+		maxWeightChange = channelMonitorSmartScheduleSingleMetricMaxWeightChange
+	}
 
 	type cohort struct {
 		Candidates []channelSmartScheduleCandidate
@@ -959,14 +968,20 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 				continue
 			}
 			score := scoreTotal / float64(scoreCount)
-			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+score*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
+			weightScore := score
+			if singleMetricStrategy {
+				// An explicitly selected single metric represents a deliberate
+				// preference, so make the best channels pull ahead more sharply.
+				weightScore = math.Pow(score, channelMonitorSmartScheduleSingleMetricWeightExponent)
+			}
+			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+weightScore*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
 			if targetWeight < channelMonitorSmartScheduleMinWeight {
 				targetWeight = channelMonitorSmartScheduleMinWeight
 			} else if targetWeight > channelMonitorSmartScheduleMaxWeight {
 				targetWeight = channelMonitorSmartScheduleMaxWeight
 			}
 			if !forceReset {
-				targetWeight = channelSmartScheduleDampedWeight(candidate.CurrentWeight, targetWeight)
+				targetWeight = channelSmartScheduleDampedWeight(candidate.CurrentWeight, targetWeight, maxWeightChange)
 			}
 			targetPriority := candidate.CurrentPriority
 			if forceReset && applyMode == channelMonitorSmartScheduleApplyWeight {
@@ -1069,7 +1084,7 @@ func channelSmartScheduleHigherIsBetterScore(value float64, minimum float64, max
 	return (value - minimum) / (maximum - minimum)
 }
 
-func channelSmartScheduleDampedWeight(current uint, target uint) uint {
+func channelSmartScheduleDampedWeight(current uint, target uint, maxWeightChange uint) uint {
 	if current == 0 {
 		return target
 	}
@@ -1078,8 +1093,8 @@ func channelSmartScheduleDampedWeight(current uint, target uint) uint {
 		if difference < channelMonitorSmartScheduleMinWeightChange {
 			return current
 		}
-		if difference > channelMonitorSmartScheduleMaxWeightChange {
-			return current - channelMonitorSmartScheduleMaxWeightChange
+		if difference > maxWeightChange {
+			return current - maxWeightChange
 		}
 		return target
 	}
@@ -1087,8 +1102,8 @@ func channelSmartScheduleDampedWeight(current uint, target uint) uint {
 	if difference < channelMonitorSmartScheduleMinWeightChange {
 		return current
 	}
-	if difference > channelMonitorSmartScheduleMaxWeightChange {
-		return current + channelMonitorSmartScheduleMaxWeightChange
+	if difference > maxWeightChange {
+		return current + maxWeightChange
 	}
 	return target
 }

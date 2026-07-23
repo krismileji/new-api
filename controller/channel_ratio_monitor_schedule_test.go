@@ -59,8 +59,8 @@ func TestRunChannelSmartScheduleUsesFirstSupportedModelPerChannel(t *testing.T) 
 	require.NoError(t, err)
 	second, err := model.GetChannelById(102, false)
 	require.NoError(t, err)
-	assert.Equal(t, 30, first.GetWeight())
-	assert.Equal(t, 70, second.GetWeight())
+	assert.Equal(t, 20, first.GetWeight())
+	assert.Equal(t, 80, second.GetWeight())
 
 	unsupportedMonitor, err := model.GetChannelRatioMonitor(103)
 	require.NoError(t, err)
@@ -98,8 +98,8 @@ func TestRunChannelSmartScheduleUsesConvertedCostRatioAcrossGroups(t *testing.T)
 	require.NoError(t, err)
 	second, err := model.GetChannelById(2, false)
 	require.NoError(t, err)
-	assert.Equal(t, 30, first.GetWeight())
-	assert.Equal(t, 70, second.GetWeight())
+	assert.Equal(t, 20, first.GetWeight())
+	assert.Equal(t, 80, second.GetWeight())
 
 	firstMonitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
@@ -408,11 +408,72 @@ func TestPlanChannelSmartSchedulePriorityWeightUsesQualityTiersAndDamping(t *tes
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, int64(100), items[1].TargetPriority)
-	assert.Equal(t, uint(70), items[1].TargetWeight)
+	assert.Equal(t, uint(80), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(50), items[2].TargetWeight)
+	assert.Equal(t, uint(20), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
-	assert.Equal(t, uint(30), items[3].TargetWeight)
+	assert.Equal(t, uint(20), items[3].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleSingleMetricBiasesBestChannel(t *testing.T) {
+	ratioLow := 1.0
+	ratioMiddle := 2.0
+	ratioHigh := 3.0
+	firstTokenFast := 100.0
+	firstTokenMiddle := 200.0
+	firstTokenSlow := 300.0
+	tpsFast := 30.0
+	tpsMiddle := 20.0
+	tpsSlow := 10.0
+	tests := []struct {
+		name       string
+		strategy   string
+		candidates []channelSmartScheduleCandidate
+	}{
+		{
+			name:     "cost ratio",
+			strategy: channelMonitorSmartScheduleStrategyRatio,
+			candidates: []channelSmartScheduleCandidate{
+				{ChannelId: 1, CurrentPriority: 80, CurrentWeight: 10, Ratio: &ratioLow},
+				{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 10, Ratio: &ratioMiddle},
+				{ChannelId: 3, CurrentPriority: 80, CurrentWeight: 10, Ratio: &ratioHigh},
+			},
+		},
+		{
+			name:     "first token",
+			strategy: channelMonitorSmartScheduleStrategyFirstToken,
+			candidates: []channelSmartScheduleCandidate{
+				{ChannelId: 1, CurrentPriority: 80, CurrentWeight: 10, FirstTokenMs: &firstTokenFast, FirstTokenSampleCount: 5},
+				{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 10, FirstTokenMs: &firstTokenMiddle, FirstTokenSampleCount: 5},
+				{ChannelId: 3, CurrentPriority: 80, CurrentWeight: 10, FirstTokenMs: &firstTokenSlow, FirstTokenSampleCount: 5},
+			},
+		},
+		{
+			name:     "tps",
+			strategy: channelMonitorSmartScheduleStrategyTPS,
+			candidates: []channelSmartScheduleCandidate{
+				{ChannelId: 1, CurrentPriority: 80, CurrentWeight: 10, TPS: &tpsFast, TPSSampleCount: 5},
+				{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 10, TPS: &tpsMiddle, TPSSampleCount: 5},
+				{ChannelId: 3, CurrentPriority: 80, CurrentWeight: 10, TPS: &tpsSlow, TPSSampleCount: 5},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := planChannelSmartSchedule(tt.candidates, tt.strategy, false, channelMonitorSmartScheduleApplyWeight, 5, false)
+
+			require.Len(t, plan.Items, 3)
+			items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+			for _, item := range plan.Items {
+				items[item.ChannelId] = item
+			}
+			assert.Equal(t, uint(40), items[1].TargetWeight)
+			assert.Equal(t, uint(20), items[2].TargetWeight)
+			assert.Equal(t, uint(10), items[3].TargetWeight)
+			assert.InDelta(t, 0.5, items[2].Score, 1e-9)
+		})
+	}
 }
 
 func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
@@ -600,7 +661,7 @@ func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *test
 	assert.Equal(t, int64(100), items[1].TargetPriority)
 	assert.Equal(t, uint(100), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(55), items[2].TargetWeight)
+	assert.Equal(t, uint(20), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
 	assert.Equal(t, uint(10), items[3].TargetWeight)
 }
