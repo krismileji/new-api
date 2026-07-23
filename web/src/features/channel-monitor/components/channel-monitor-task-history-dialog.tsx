@@ -304,7 +304,7 @@ function ChannelTaskPolicyResult(props: { task: ChannelMonitorTask }) {
             ? SMART_SCHEDULE_STRATEGY_LABELS[result.strategy]
             : '智能调度'}{' '}
           · {applyModeLabel}
-          {result.stability_enabled ? ' · 按稳定性' : ''}
+          {result.stability_enabled ? ' · 稳定性保护' : ''}
           {result.force_reset ? ' · 强制重算' : ''}
         </span>
         <span

@@ -625,6 +625,28 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 			candidate.Stability = performance.Stability
 			candidate.StabilitySampleCount = performance.StabilitySampleCount
 		}
+		if reason := channelSmartScheduleCandidateSkipReason(
+			candidate,
+			settings.SmartScheduleStrategy,
+			settings.SmartScheduleStabilityEnabled,
+			settings.SmartScheduleMinSamples,
+		); reason != "" && channelSmartScheduleCandidateNeedsExploration(
+			candidate,
+			settings.SmartScheduleStrategy,
+			settings.SmartScheduleStabilityEnabled,
+			settings.SmartScheduleMinSamples,
+		) {
+			directActions = append(directActions, channelSmartScheduleDirectAction{
+				ChannelId:       channel.Id,
+				CurrentPriority: currentPriority,
+				CurrentWeight:   currentWeight,
+				TargetPriority:  channelMonitorSmartScheduleBaselinePriority,
+				TargetWeight:    channelMonitorSmartScheduleMinWeight,
+				Status:          model.ChannelSmartScheduleStatusSkipped,
+				Message:         reason + "，使用探索基线（优先级 80、权重 10）",
+			})
+			continue
+		}
 		candidates = append(candidates, candidate)
 	}
 
@@ -918,11 +940,6 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 			if candidate.TPS != nil {
 				tpsScore = channelSmartScheduleHigherIsBetterScore(*candidate.TPS, tpsMin, tpsMax)
 			}
-			stabilityScore := 0.0
-			if candidate.Stability != nil {
-				stabilityScore = channelSmartScheduleHigherIsBetterScore(*candidate.Stability, 0, 1)
-			}
-
 			scoreTotal := 0.0
 			scoreCount := 0
 			switch strategy {
@@ -940,10 +957,6 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 				scoreCount = 3
 			default:
 				continue
-			}
-			if stabilityEnabled {
-				scoreTotal += stabilityScore
-				scoreCount++
 			}
 			score := scoreTotal / float64(scoreCount)
 			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+score*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
@@ -1019,6 +1032,27 @@ func channelSmartScheduleCandidateSkipReason(candidate channelSmartScheduleCandi
 		}
 	}
 	return ""
+}
+
+func channelSmartScheduleCandidateNeedsExploration(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int) bool {
+	if minSamples <= 0 {
+		minSamples = defaultChannelMonitorSmartScheduleSamples
+	}
+	if stabilityEnabled && candidate.StabilityAvailable &&
+		(candidate.Stability == nil || candidate.StabilitySampleCount < int64(minSamples)) {
+		return true
+	}
+	if strategy == channelMonitorSmartScheduleStrategyFirstToken || strategy == channelMonitorSmartScheduleStrategySmart {
+		if candidate.FirstTokenMs == nil || candidate.FirstTokenSampleCount < minSamples {
+			return true
+		}
+	}
+	if strategy == channelMonitorSmartScheduleStrategyTPS || strategy == channelMonitorSmartScheduleStrategySmart {
+		if candidate.TPS == nil || candidate.TPSSampleCount < minSamples {
+			return true
+		}
+	}
+	return false
 }
 
 func channelSmartScheduleLowerIsBetterScore(value float64, minimum float64, maximum float64) float64 {

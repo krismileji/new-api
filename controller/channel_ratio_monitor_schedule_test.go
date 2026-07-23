@@ -443,7 +443,7 @@ func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
 	assert.Equal(t, "首字样本不足（4/5）", plan.Skipped[2])
 }
 
-func TestPlanChannelSmartScheduleSmartAddsStabilityWhenEnabled(t *testing.T) {
+func TestPlanChannelSmartScheduleSmartIgnoresStabilityScore(t *testing.T) {
 	ratioLow := 1.0
 	ratioHigh := 2.0
 	firstTokenFast := 300.0
@@ -494,11 +494,11 @@ func TestPlanChannelSmartScheduleSmartAddsStabilityWhenEnabled(t *testing.T) {
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, uint(75), items[1].TargetWeight)
-	assert.Equal(t, uint(55), items[2].TargetWeight)
+	assert.Equal(t, uint(70), items[1].TargetWeight)
+	assert.Equal(t, uint(40), items[2].TargetWeight)
 }
 
-func TestPlanChannelSmartScheduleCombinesStabilityWithSelectedStrategy(t *testing.T) {
+func TestPlanChannelSmartScheduleUsesSelectedStrategyWithoutStabilityScore(t *testing.T) {
 	ratio := 1.0
 	stableRate := 0.99
 	unstableRate := 0.80
@@ -513,7 +513,7 @@ func TestPlanChannelSmartScheduleCombinesStabilityWithSelectedStrategy(t *testin
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, uint(100), items[1].TargetWeight)
-	assert.Equal(t, uint(90), items[2].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 
 	plan = planChannelSmartSchedule([]channelSmartScheduleCandidate{
 		{ChannelId: 3, Ratio: &ratio},
@@ -529,6 +529,41 @@ func TestPlanChannelSmartScheduleCombinesStabilityWithSelectedStrategy(t *testin
 	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, 5, false)
 	require.Len(t, plan.Items, 2)
 	assert.Empty(t, plan.Skipped)
+}
+
+func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:   "true",
+		channelMonitorSmartScheduleStrategyOption:  channelMonitorSmartScheduleStrategyFirstToken,
+		channelMonitorSmartScheduleApplyModeOption: channelMonitorSmartScheduleApplyPriorityWeight,
+		channelMonitorSmartScheduleSamplesOption:   "2",
+	})
+	priorityLow := int64(20)
+	priorityHigh := int64(100)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 61, Name: "insufficient", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weight},
+		{Id: 62, Name: "measured", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityHigh, Weight: &weight},
+	}).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&[]model.Log{
+		{ChannelId: 61, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
+		{ChannelId: 62, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 62, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+	}).Error)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Updated)
+
+	channel, err := model.GetChannelById(61, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(80), channel.GetPriority())
+	assert.Equal(t, 10, channel.GetWeight())
+	monitor, err := model.GetChannelRatioMonitor(61)
+	require.NoError(t, err)
+	assert.Contains(t, monitor.LastScheduleError, "使用探索基线")
 }
 
 func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *testing.T) {

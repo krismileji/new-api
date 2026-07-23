@@ -206,14 +206,16 @@ export function ChannelMonitorSmartScheduleFields(
         render={({ field }) => (
           <FormItem className='flex items-center justify-between gap-4'>
             <div className='flex flex-col gap-1'>
-              <FormLabel>按稳定性</FormLabel>
-              <FormDescription>成功率越高，调度得分越高</FormDescription>
+              <FormLabel>稳定性保护</FormLabel>
+              <FormDescription>
+                只负责准入、降级和恢复，不参与调度得分
+              </FormDescription>
             </div>
             <FormControl>
               <Switch
                 checked={field.value}
                 onCheckedChange={field.onChange}
-                aria-label='按稳定性'
+                aria-label='稳定性保护'
               />
             </FormControl>
           </FormItem>
@@ -283,7 +285,7 @@ export function ChannelMonitorSmartScheduleFields(
                   </InputGroup>
                 </FormControl>
                 <FormDescription>
-                  到期后恢复降级前的优先级和权重，并只统计新样本
+                  到期后恢复原优先级和权重，并只用新样本试放
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -573,10 +575,11 @@ export function ChannelMonitorSmartScheduleFields(
       <Alert>
         <AlertTitle>调度规则</AlertTitle>
         <AlertDescription>
-          启用的调度指标等权计算。稳定性按成功调用数 ÷（成功调用数 +
-          渠道错误数）计算，重试中的渠道错误也会计入；低于最低成功率时降为优先级
+          调度得分只使用已选择的调度指标。稳定性按成功调用数 ÷（成功调用数 +
+          渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
           0、权重
-          0，降级到期后恢复原设置，并只用试放产生的新样本判断是否恢复。该规则需要同时开启消费日志和
+          0，冷却到期后恢复原设置并只用新样本试放。指标样本不足的渠道使用优先级
+          80、权重 10 进行探索。稳定性保护需要同时开启消费日志和
           ERROR_LOG_ENABLED。
         </AlertDescription>
       </Alert>
