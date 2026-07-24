@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Edit02Icon,
+  GaugeIcon,
   HistoryIcon,
   Layers01Icon,
   PowerOffIcon,
@@ -88,6 +89,7 @@ type ChannelMonitorChannelViewProps = {
   onToggleStatus: (channel: ChannelMonitorItem) => void
   onTestConnection: (channel: ChannelMonitorItem) => void
   onEditRatio: (channel: ChannelMonitorItem) => void
+  onEditConcurrency: (channel: ChannelMonitorItem) => void
   onEditGroups: (channel: ChannelMonitorItem) => void
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
   onViewHistory: (channel: ChannelMonitorItem) => void
@@ -327,7 +329,7 @@ export function ChannelMonitorChannelView(
       <Table
         className={cn(
           'table-fixed [&_td]:align-top [&_td]:overflow-hidden [&_td]:py-3',
-          props.smartScheduleEnabled ? 'min-w-[1624px]' : 'min-w-[1464px]'
+          props.smartScheduleEnabled ? 'min-w-[1744px]' : 'min-w-[1584px]'
         )}
       >
         <colgroup>
@@ -339,6 +341,7 @@ export function ChannelMonitorChannelView(
           <col className='w-[176px]' />
           <col className='w-[128px]' />
           <col className='w-[136px]' />
+          <col className='w-[120px]' />
           {props.smartScheduleEnabled ? <col className='w-[160px]' /> : null}
           <col className='w-[104px]' />
         </colgroup>
@@ -357,6 +360,7 @@ export function ChannelMonitorChannelView(
             >
               成功率（{props.performanceRangeLabel}）
             </TableHead>
+            <TableHead>并发限制</TableHead>
             {props.smartScheduleEnabled ? (
               <TableHead>智能调度</TableHead>
             ) : null}
@@ -546,6 +550,20 @@ export function ChannelMonitorChannelView(
                     detailLabel={`查看 ${channel.name} 的成功率明细`}
                   />
                 </TableCell>
+                <TableCell className='whitespace-normal'>
+                  {channel.concurrency_limit > 0 ? (
+                    <div className='flex min-w-0 flex-col items-start gap-0.5'>
+                      <span className='font-mono text-sm font-medium'>
+                        {channel.concurrency_active}/{channel.concurrency_limit}
+                      </span>
+                      <span className='text-muted-foreground text-xs'>
+                        当前/上限
+                      </span>
+                    </div>
+                  ) : (
+                    <span className='text-muted-foreground text-sm'>不限</span>
+                  )}
+                </TableCell>
                 {props.smartScheduleEnabled ? (
                   <TableCell className='whitespace-normal'>
                     <ChannelMonitorSmartScheduleCell
@@ -592,6 +610,11 @@ export function ChannelMonitorChannelView(
                       }
                       icon={Edit02Icon}
                       onClick={() => props.onEditRatio(channel)}
+                    />
+                    <ChannelActionButton
+                      label='设置并发限制'
+                      icon={GaugeIcon}
+                      onClick={() => props.onEditConcurrency(channel)}
                     />
                     <ChannelActionButton
                       label='更改关联分组'

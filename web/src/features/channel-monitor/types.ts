@@ -49,6 +49,8 @@ export type ChannelMonitorItem = {
   today_cost_configured: boolean
   today_cost_complete: boolean
   today_cost_unresolved_count: number
+  concurrency_limit: number
+  concurrency_active: number
   smart_schedule_excluded: boolean
   last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
   last_schedule_error: string

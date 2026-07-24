@@ -71,6 +71,8 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
     today_cost_configured: true,
     today_cost_complete: true,
     today_cost_unresolved_count: 0,
+    concurrency_limit: 0,
+    concurrency_active: 0,
     smart_schedule_excluded: false,
     last_schedule_status: '',
     last_schedule_error: '',
@@ -117,6 +119,7 @@ function renderView(channel: ChannelMonitorItem) {
         onToggleStatus={noop}
         onTestConnection={noop}
         onEditRatio={noop}
+        onEditConcurrency={noop}
         onEditGroups={noop}
         onConfigureUpstream={noop}
         onViewHistory={noop}
@@ -147,7 +150,7 @@ describe('channel monitor channel view timestamps', () => {
     const markup = renderView(channel)
     const cells = getTableCells(markup)
 
-    assert.equal(cells.length, 9)
+    assert.equal(cells.length, 10)
     assert.doesNotMatch(markup, /<th\b[^>]*>更新时间<\/th>/)
     assert.ok(markup.indexOf('上游余额') < markup.indexOf('今日成本'))
     assert.ok(markup.indexOf('今日成本') < markup.indexOf('成本倍率'))
@@ -229,7 +232,7 @@ describe('channel monitor channel view timestamps', () => {
     const ratioTimestamp = formatTimestampToDate(channel.updated_time)
     const fetchTimestamp = formatTimestampToDate(channel.last_fetch_time)
 
-    assert.equal(cells.length, 9)
+    assert.equal(cells.length, 10)
     assert.ok(cells[0]?.includes(`title="${longChannelName}"`))
     assert.ok(cells[1]?.includes(`title="更新：${balanceTimestamp}"`))
     assert.ok(cells[3]?.includes(`title="更新：${ratioTimestamp}"`))
@@ -291,6 +294,28 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[2]?.includes(formatChannelMonitorCost(0)))
     assert.ok(cells[2]?.includes('不完整'))
     assert.ok(cells[2]?.includes('今日有 2 次成本未确认'))
+  })
+
+  test('shows channel concurrency limit as active over configured limit', () => {
+    const cells = getTableCells(
+      renderView(
+        createChannel({
+          concurrency_limit: 8,
+          concurrency_active: 3,
+        })
+      )
+    )
+
+    assert.ok(cells[8]?.includes('3/8'))
+    assert.ok(cells[8]?.includes('当前/上限'))
+  })
+
+  test('shows unlimited concurrency and exposes the edit action', () => {
+    const markup = renderView(createChannel({ concurrency_limit: 0 }))
+    const cells = getTableCells(markup)
+
+    assert.ok(cells[8]?.includes('不限'))
+    assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 
   test('exposes the system disable reason from the status badge', () => {

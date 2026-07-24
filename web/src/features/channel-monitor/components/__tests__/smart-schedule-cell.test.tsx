@@ -59,6 +59,8 @@ function createChannel(overrides: Partial<ChannelMonitorItem>) {
     today_cost_configured: false,
     today_cost_complete: false,
     today_cost_unresolved_count: 0,
+    concurrency_limit: 0,
+    concurrency_active: 0,
     smart_schedule_excluded: false,
     last_schedule_status: '',
     last_schedule_error: '',

@@ -126,6 +126,8 @@ type channelMonitorItem struct {
 	SmartScheduleStabilityState string                        `json:"smart_schedule_stability_state"`
 	SmartScheduleStabilityUntil int64                         `json:"smart_schedule_stability_until"`
 	SmartScheduleStabilitySince int64                         `json:"smart_schedule_stability_since"`
+	ConcurrencyLimit            int                           `json:"concurrency_limit"`
+	ConcurrencyActive           int                           `json:"concurrency_active"`
 	Upstream                    *channelMonitorUpstreamConfig `json:"upstream"`
 }
 
@@ -440,6 +442,11 @@ func GetChannelMonitorOverview(c *gin.Context) {
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
 	channelOrder := getChannelMonitorChannelOrder(channels)
+	concurrencyByChannel, err := service.GetChannelConcurrencySnapshot(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	items := make([]channelMonitorItem, 0, len(channels))
 	for _, channel := range channels {
 		groups := channel.GetGroups()
@@ -479,6 +486,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			item.TodayCostUnresolvedCount = cost.UnresolvedCount
 		}
 		if monitor, exists := monitorByChannel[channel.Id]; exists {
+			item.ConcurrencyLimit = monitor.ConcurrencyLimit
 			if channelMonitorCostTrackingConfigured(monitor) {
 				item.TodayCostConfigured = true
 				if item.TodayCostUnresolvedCount == 0 {
@@ -522,6 +530,10 @@ func GetChannelMonitorOverview(c *gin.Context) {
 				item.UpdatedByUsername = monitor.UpdatedByUsername
 			}
 			item.Upstream = channelMonitorUpstreamFromModel(monitor)
+		}
+		if concurrencyStatus, exists := concurrencyByChannel[channel.Id]; exists {
+			item.ConcurrencyLimit = concurrencyStatus.Limit
+			item.ConcurrencyActive = concurrencyStatus.Active
 		}
 		items = append(items, item)
 	}

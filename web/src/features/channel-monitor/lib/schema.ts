@@ -35,6 +35,7 @@ export const MAX_CUSTOM_UPSTREAM_ENTRIES = 32
 export const MAX_CUSTOM_UPSTREAM_BODY_BYTES = 49_152
 export const MAX_AUTO_UPDATE_INTERVAL_MINUTES = 525_600
 export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
+export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
@@ -76,6 +77,20 @@ export function createGroupRatioSchema() {
       .finite('倍率必须是有效数字')
       .min(0, '倍率不能小于 0')
       .max(MAX_MONITOR_RATIO, '倍率不能超过 1000000'),
+  })
+}
+
+export function createChannelConcurrencyLimitSchema() {
+  return z.object({
+    concurrencyLimit: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.coerce
+        .number({ error: '并发限制必须是有效数字' })
+        .finite('并发限制必须是有效数字')
+        .int('并发限制必须是整数')
+        .min(0, '并发限制不能小于 0')
+        .max(MAX_CHANNEL_CONCURRENCY_LIMIT, '并发限制不能超过 100000')
+    ),
   })
 }
 
@@ -657,6 +672,10 @@ export type ChannelRatioFormValues = z.infer<
 
 export type GroupRatioFormValues = z.infer<
   ReturnType<typeof createGroupRatioSchema>
+>
+
+export type ChannelConcurrencyLimitFormValues = z.infer<
+  ReturnType<typeof createChannelConcurrencyLimitSchema>
 >
 
 export type ChannelMonitorSettingsFormValues = z.infer<

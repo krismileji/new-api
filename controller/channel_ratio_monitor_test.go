@@ -83,6 +83,13 @@ type channelMonitorOrderAPIResponse struct {
 	} `json:"data"`
 }
 
+type channelMonitorConcurrencyAPIResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		ConcurrencyLimit int `json:"concurrency_limit"`
+	} `json:"data"`
+}
+
 type channelMonitorTaskRunAPIResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -138,6 +145,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelDailyAPIKeyCost{},
 		&model.SystemTask{},
 	))
+	require.NoError(t, service.ReloadChannelConcurrencyLimits(context.Background()))
 
 	t.Cleanup(func() {
 		model.DB = originalDB
@@ -821,6 +829,75 @@ func TestChannelMonitorOverviewIncludesAutoDisableReason(t *testing.T) {
 	require.True(t, response.Success)
 	require.Len(t, response.Data.Channels, 1)
 	assert.Equal(t, "渠道监控：上游倍率或余额更新失败", response.Data.Channels[0].StatusReason)
+}
+
+func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     16,
+		Name:   "limited channel",
+		Key:    "secret",
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	invalidRequests := []map[string]any{
+		{},
+		{"concurrency_limit": -1},
+		{"concurrency_limit": service.MaxChannelConcurrencyLimit + 1},
+		{"concurrency_limit": 1.5},
+	}
+	for _, request := range invalidRequests {
+		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/16/concurrency", request)
+		ctx.Params = gin.Params{{Key: "id", Value: "16"}}
+		UpdateChannelMonitorConcurrencyLimit(ctx)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	}
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/16/concurrency", map[string]any{
+		"concurrency_limit": 2,
+	})
+	ctx.Params = gin.Params{{Key: "id", Value: "16"}}
+	UpdateChannelMonitorConcurrencyLimit(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var updateResponse channelMonitorConcurrencyAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &updateResponse))
+	require.True(t, updateResponse.Success)
+	assert.Equal(t, 2, updateResponse.Data.ConcurrencyLimit)
+
+	monitor, err := model.GetChannelRatioMonitor(16)
+	require.NoError(t, err)
+	assert.Equal(t, 2, monitor.ConcurrencyLimit)
+	lease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 16)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 2}, status)
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var overviewResponse channelMonitorOverviewAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &overviewResponse))
+	require.Len(t, overviewResponse.Data.Channels, 1)
+	assert.Equal(t, 2, overviewResponse.Data.Channels[0].ConcurrencyLimit)
+	assert.Equal(t, 1, overviewResponse.Data.Channels[0].ConcurrencyActive)
+	lease.Release()
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/16/concurrency", map[string]any{
+		"concurrency_limit": 0,
+	})
+	ctx.Params = gin.Params{{Key: "id", Value: "16"}}
+	UpdateChannelMonitorConcurrencyLimit(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	monitor, err = model.GetChannelRatioMonitor(16)
+	require.NoError(t, err)
+	assert.Zero(t, monitor.ConcurrencyLimit)
+
+	unlimitedLease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 16)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, service.ChannelConcurrencyStatus{}, status)
+	unlimitedLease.Release()
 }
 
 func TestUpdateChannelMonitorChannelOrderPersistsNormalizedOrder(t *testing.T) {

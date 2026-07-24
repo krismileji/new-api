@@ -65,6 +65,13 @@ type ChannelRatioMonitor struct {
 	SmartScheduleStabilitySince int64    `json:"smart_schedule_stability_since" gorm:"bigint"`
 	SmartScheduleSavedPriority  int64    `json:"smart_schedule_saved_priority" gorm:"bigint"`
 	SmartScheduleSavedWeight    uint     `json:"smart_schedule_saved_weight"`
+	ConcurrencyLimit            int      `json:"concurrency_limit"`
+	ConcurrencyRevision         int64    `json:"-" gorm:"bigint"`
+}
+
+type ChannelConcurrencyConfig struct {
+	Limit    int
+	Revision int64
 }
 
 type ChannelRatioUpstreamOptions struct {
@@ -133,6 +140,42 @@ func GetChannelRatioMonitors() ([]ChannelRatioMonitor, error) {
 func GetChannelRatioMonitor(channelId int) (ChannelRatioMonitor, error) {
 	var monitor ChannelRatioMonitor
 	err := DB.Where("channel_id = ?", channelId).First(&monitor).Error
+	return monitor, err
+}
+
+func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
+	var monitors []ChannelRatioMonitor
+	err := DB.Select("channel_id", "concurrency_limit", "concurrency_revision").
+		Where("concurrency_limit > ? OR concurrency_revision > ?", 0, 0).
+		Find(&monitors).Error
+	if err != nil {
+		return nil, err
+	}
+	configs := make(map[int]ChannelConcurrencyConfig, len(monitors))
+	for _, monitor := range monitors {
+		configs[monitor.ChannelId] = ChannelConcurrencyConfig{
+			Limit:    monitor.ConcurrencyLimit,
+			Revision: monitor.ConcurrencyRevision,
+		}
+	}
+	return configs, nil
+}
+
+func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatioMonitor, err error) {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			monitor = ChannelRatioMonitor{ChannelId: channelId}
+		} else if findErr != nil {
+			return findErr
+		}
+		if monitor.ConcurrencyRevision == math.MaxInt64 {
+			return errors.New("渠道并发配置修订号已达上限")
+		}
+		monitor.ConcurrencyLimit = limit
+		monitor.ConcurrencyRevision++
+		return tx.Save(&monitor).Error
+	})
 	return monitor, err
 }
 

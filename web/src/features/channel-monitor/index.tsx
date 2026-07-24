@@ -92,6 +92,7 @@ import {
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-task-history-dialog'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
+import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
 import { EditChannelRatioDialog } from './components/edit-channel-ratio-dialog'
 import { EditGroupChannelsDialog } from './components/edit-group-channels-dialog'
@@ -131,6 +132,7 @@ type MonitorView = 'channels' | 'groups' | 'models'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
   | 'ratio'
+  | 'concurrency'
   | 'groups'
   | 'upstream'
   | 'history'
@@ -881,6 +883,12 @@ export function ChannelMonitor() {
               onEditRatio={(channel) =>
                 setChannelDialog({ channelId: channel.id, type: 'ratio' })
               }
+              onEditConcurrency={(channel) =>
+                setChannelDialog({
+                  channelId: channel.id,
+                  type: 'concurrency',
+                })
+              }
               onEditGroups={(channel) =>
                 setChannelDialog({ channelId: channel.id, type: 'groups' })
               }
@@ -1067,6 +1075,16 @@ export function ChannelMonitor() {
 
       {dialogChannel && channelDialog?.type === 'ratio' && (
         <EditChannelRatioDialog
+          key={dialogChannel.id}
+          channel={dialogChannel}
+          open
+          onOpenChange={(open) => {
+            if (!open) setChannelDialog(null)
+          }}
+        />
+      )}
+      {dialogChannel && channelDialog?.type === 'concurrency' && (
+        <EditChannelConcurrencyLimitDialog
           key={dialogChannel.id}
           channel={dialogChannel}
           open

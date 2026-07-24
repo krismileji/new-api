@@ -198,6 +198,20 @@ export async function updateChannelMonitorRatio(request: {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export async function updateChannelMonitorConcurrencyLimit(request: {
+  channelId: number
+  concurrencyLimit: number
+}) {
+  const response = await api.put(
+    `/api/channel_monitor/channel/${request.channelId}/concurrency`,
+    {
+      concurrency_limit: request.concurrencyLimit,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
 export async function getChannelMonitorHistory(channelId: number) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelRatioHistoryPage>
