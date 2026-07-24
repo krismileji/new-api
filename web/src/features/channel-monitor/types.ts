@@ -21,6 +21,7 @@ export type ChannelMonitorItem = {
   name: string
   type: number
   status: number
+  status_reason?: string
   priority: number
   weight: number
   base_url: string

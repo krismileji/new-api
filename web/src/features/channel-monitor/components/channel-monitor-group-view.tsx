@@ -302,6 +302,7 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
                               {!channelEnabled && (
                                 <ChannelMonitorStatusBadge
                                   status={channel.status}
+                                  reason={channel.status_reason}
                                   className='shrink-0'
                                 />
                               )}

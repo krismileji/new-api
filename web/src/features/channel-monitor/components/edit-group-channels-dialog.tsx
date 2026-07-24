@@ -299,7 +299,10 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                           <span className='text-muted-foreground font-mono text-xs'>
                             ID {channel.id}
                           </span>
-                          <ChannelMonitorStatusBadge status={channel.status} />
+                          <ChannelMonitorStatusBadge
+                            status={channel.status}
+                            reason={channel.status_reason}
+                          />
                           {originalChannelIds.has(channel.id) && (
                             <Badge variant='outline'>当前成员</Badge>
                           )}

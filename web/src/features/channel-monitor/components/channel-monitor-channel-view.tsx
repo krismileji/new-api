@@ -401,6 +401,7 @@ export function ChannelMonitorChannelView(
                       {!channelEnabled && (
                         <ChannelMonitorStatusBadge
                           status={channel.status}
+                          reason={channel.status_reason}
                           className='max-w-full shrink-0'
                         />
                       )}

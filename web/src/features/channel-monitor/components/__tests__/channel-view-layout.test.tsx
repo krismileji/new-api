@@ -43,6 +43,7 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
     name: '测试渠道',
     type: 1,
     status: 1,
+    status_reason: '',
     priority: 0,
     weight: 0,
     base_url: 'https://example.com',
@@ -290,5 +291,22 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[2]?.includes(formatChannelMonitorCost(0)))
     assert.ok(cells[2]?.includes('不完整'))
     assert.ok(cells[2]?.includes('今日有 2 次成本未确认'))
+  })
+
+  test('exposes the system disable reason from the status badge', () => {
+    const markup = renderView(
+      createChannel({
+        status: 3,
+        status_reason: '渠道监控：上游倍率或余额更新失败',
+      })
+    )
+
+    assert.ok(markup.includes('系统禁用'))
+    assert.ok(
+      markup.includes(
+        'aria-label="系统禁用，原因：渠道监控：上游倍率或余额更新失败"'
+      )
+    )
+    assert.ok(markup.includes('tabindex="0"'))
   })
 })

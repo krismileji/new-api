@@ -798,6 +798,31 @@ func TestChannelMonitorOverviewIncludesLastFetchFailure(t *testing.T) {
 	assert.Equal(t, "balance refresh timeout", item.LastBalanceError)
 }
 
+func TestChannelMonitorOverviewIncludesAutoDisableReason(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	channel := model.Channel{
+		Id:     10,
+		Name:   "auto disabled",
+		Key:    "secret",
+		Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": "渠道监控：上游倍率或余额更新失败",
+	})
+	require.NoError(t, db.Create(&channel).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorOverviewAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Channels, 1)
+	assert.Equal(t, "渠道监控：上游倍率或余额更新失败", response.Data.Channels[0].StatusReason)
+}
+
 func TestUpdateChannelMonitorChannelOrderPersistsNormalizedOrder(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})

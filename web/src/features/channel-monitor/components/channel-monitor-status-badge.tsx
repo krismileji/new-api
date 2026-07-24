@@ -17,6 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Badge } from '@/components/ui/badge'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +29,7 @@ import { getChannelMonitorStatusLabel } from '../constants'
 
 type ChannelMonitorStatusBadgeProps = {
   status: number
+  reason?: string | null
   className?: string
 }
 
@@ -41,16 +47,29 @@ export function ChannelMonitorStatusBadge(
   }
 
   if (props.status === CHANNEL_STATUS.AUTO_DISABLED) {
+    const reason = props.reason?.trim() || '未记录系统禁用原因'
+
     return (
-      <Badge
-        variant='outline'
-        className={cn(
-          'border-warning/40 bg-warning/10 text-warning',
-          props.className
-        )}
-      >
-        {label}
-      </Badge>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Badge
+              variant='outline'
+              className={cn(
+                'border-warning/40 bg-warning/10 text-warning',
+                props.className
+              )}
+              tabIndex={0}
+              aria-label={`${label}，原因：${reason}`}
+            />
+          }
+        >
+          {label}
+        </TooltipTrigger>
+        <TooltipContent className='max-w-xs whitespace-normal break-words'>
+          系统禁用原因：{reason}
+        </TooltipContent>
+      </Tooltip>
     )
   }
 

@@ -221,6 +221,7 @@ export function ChannelMonitorModelPerformanceView(
                         {!channelEnabled && (
                           <ChannelMonitorStatusBadge
                             status={row.channel.status}
+                            reason={row.channel.status_reason}
                           />
                         )}
                         <span className='text-muted-foreground text-xs'>

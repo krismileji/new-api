@@ -88,6 +88,7 @@ type channelMonitorItem struct {
 	Name                        string                        `json:"name"`
 	Type                        int                           `json:"type"`
 	Status                      int                           `json:"status"`
+	StatusReason                string                        `json:"status_reason"`
 	Priority                    int64                         `json:"priority"`
 	Weight                      int                           `json:"weight"`
 	BaseURL                     string                        `json:"base_url"`
@@ -451,11 +452,18 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		if channel.Remark != nil {
 			channelRemark = strings.TrimSpace(*channel.Remark)
 		}
+		statusReason := ""
+		if channel.Status == common.ChannelStatusAutoDisabled {
+			if reason, ok := channel.GetOtherInfo()["status_reason"].(string); ok {
+				statusReason = strings.TrimSpace(reason)
+			}
+		}
 		item := channelMonitorItem{
 			Id:            channel.Id,
 			Name:          channel.Name,
 			Type:          channel.Type,
 			Status:        channel.Status,
+			StatusReason:  statusReason,
 			Priority:      channel.GetPriority(),
 			Weight:        channel.GetWeight(),
 			BaseURL:       channel.GetBaseURL(),
