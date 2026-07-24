@@ -53,8 +53,17 @@ import {
   ProgressLabel,
   ProgressValue,
 } from '@/components/ui/progress'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -107,6 +116,11 @@ type BatchTestTask = {
   iteration?: number
 }
 
+type BatchTestRequestOptions = {
+  endpointType?: string
+  stream?: boolean
+}
+
 type BatchTestStatus = 'testing' | 'success' | 'error'
 
 type BatchTestResult = BatchTestTask & {
@@ -135,6 +149,35 @@ const MAX_REPEAT_REQUESTS = 200
 const POSITIVE_INTEGER_PATTERN = /^\d+$/
 const EMPTY_CHANNELS: BatchTestChannel[] = []
 const EMPTY_PRICED_MODELS: string[] = []
+const ENDPOINT_TYPE_OPTIONS = [
+  { value: 'auto', label: '自动检测（默认）' },
+  { value: 'openai', label: 'OpenAI Chat (/v1/chat/completions)' },
+  { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
+  {
+    value: 'openai-response-compact',
+    label: 'OpenAI 响应压缩 (/v1/responses/compact)',
+  },
+  { value: 'anthropic', label: 'Anthropic Messages (/v1/messages)' },
+  {
+    value: 'gemini',
+    label: 'Gemini Generate Content (/v1beta/models/{model}:generateContent)',
+  },
+  { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
+  {
+    value: 'image-generation',
+    label: '图像生成 (/v1/images/generations)',
+  },
+  { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+]
+const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
+  'embeddings',
+  'image-generation',
+  'jina-rerank',
+  'openai-response-compact',
+])
+const endpointSelectContentClass = 'w-[460px] max-w-[calc(100vw-2rem)]'
+const endpointSelectItemClass =
+  'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
 
 async function getBatchTestChannels(): Promise<Channel[]> {
   const firstPage = await getChannels({ p: 1, page_size: CHANNEL_PAGE_SIZE })
@@ -239,7 +282,10 @@ function parseBoundedInteger(
   return parsed
 }
 
-async function runBatchTestTask(task: BatchTestTask): Promise<BatchTestResult> {
+async function runBatchTestTask(
+  task: BatchTestTask,
+  options: BatchTestRequestOptions = {}
+): Promise<BatchTestResult> {
   let result: BatchTestResult | undefined
   try {
     await handleTestChannel(
@@ -247,6 +293,8 @@ async function runBatchTestTask(task: BatchTestTask): Promise<BatchTestResult> {
       {
         channelName: task.channelName,
         testModel: task.model,
+        endpointType: options.endpointType,
+        stream: options.stream || undefined,
         silent: true,
       },
       (success, responseTime, error, errorCode) => {
@@ -331,6 +379,8 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   const [testMode, setTestMode] = useState<BatchTestMode>('batch')
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
+  const [endpointType, setEndpointType] = useState('auto')
+  const [isStreamTest, setIsStreamTest] = useState(false)
   const [repeatConcurrencyInput, setRepeatConcurrencyInput] = useState(
     DEFAULT_REPEAT_CONCURRENCY
   )
@@ -481,10 +531,30 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   const loadError = channelLoadError ?? pricedModelsQuery.error
   const channelsLoading = !usesProvidedChannels && channelsQuery.isLoading
   const optionsLoading = channelsLoading || pricedModelsQuery.isLoading
+  const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
+  const effectiveStreamTest = !streamDisabled && isStreamTest
+  const selectedEndpointLabel =
+    ENDPOINT_TYPE_OPTIONS.find((option) => option.value === endpointType)
+      ?.label ?? '自动检测（默认）'
 
   const clearResults = () => {
     setResults({})
     setProgress(null)
+  }
+
+  const handleEndpointTypeChange = (value: string | null) => {
+    if (value === null) return
+
+    setEndpointType(value)
+    if (STREAM_INCOMPATIBLE_ENDPOINTS.has(value)) {
+      setIsStreamTest(false)
+    }
+    clearResults()
+  }
+
+  const handleStreamTestChange = (checked: boolean) => {
+    setIsStreamTest(checked)
+    clearResults()
   }
 
   const handleSelectedModelsChange = (models: string[]) => {
@@ -503,6 +573,8 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     setTestMode('batch')
     setSelectedChannelIds([])
     setSelectedModels([])
+    setEndpointType('auto')
+    setIsStreamTest(false)
     setRepeatConcurrencyInput(DEFAULT_REPEAT_CONCURRENCY)
     setRepeatIterationsInput(DEFAULT_REPEAT_ITERATIONS)
     setResults({})
@@ -554,6 +626,10 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     let completed = 0
     let succeeded = 0
     let failed = 0
+    const requestOptions: BatchTestRequestOptions = {
+      endpointType: endpointType === 'auto' ? undefined : endpointType,
+      stream: effectiveStreamTest || undefined,
+    }
 
     try {
       if (isRepeatMode) {
@@ -566,7 +642,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
                 ...current,
                 [task.key]: { ...task, status: 'testing' },
               }))
-              const result = await runBatchTestTask(task)
+              const result = await runBatchTestTask(task, requestOptions)
               completed += 1
               if (result.status === 'success') succeeded += 1
               failed = completed - succeeded
@@ -600,7 +676,9 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             return next
           })
 
-          const batchResults = await Promise.all(batch.map(runBatchTestTask))
+          const batchResults = await Promise.all(
+            batch.map((task) => runBatchTestTask(task, requestOptions))
+          )
           completed += batchResults.length
           succeeded += batchResults.filter(
             (result) => result.status === 'success'
@@ -706,13 +784,14 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   }
 
   let testPlanTitle = `将执行 ${tasks.length} 个测试组合`
-  let testPlanDescription = `${selectedChannels.length} 个渠道 × ${selectedModels.length} 个模型，最多同时发起 ${BATCH_TEST_CONCURRENCY} 个请求。`
+  const testModeDescription = `端点：${selectedEndpointLabel} · ${effectiveStreamTest ? '流式' : '非流式'}`
+  let testPlanDescription = `${selectedChannels.length} 个渠道 × ${selectedModels.length} 个模型，最多同时发起 ${BATCH_TEST_CONCURRENCY} 个请求。${testModeDescription}。`
   if (isRepeatMode) {
     testPlanTitle = `将执行 ${repeatRequestCount} 次测试请求`
-    testPlanDescription = `${repeatChannel?.name} · ${selectedModels[0]}，${repeatConcurrencyInput} 个并发 × 每并发 ${repeatIterationsInput} 次循环。`
+    testPlanDescription = `${repeatChannel?.name} · ${selectedModels[0]}，${repeatConcurrencyInput} 个并发 × 每并发 ${repeatIterationsInput} 次循环。${testModeDescription}。`
   } else if (isSingleModel) {
     testPlanTitle = `将测试 ${selectedChannels.length} 个渠道`
-    testPlanDescription = `统一使用 ${selectedModels[0]} 模型，最多同时发起 ${BATCH_TEST_CONCURRENCY} 个请求。`
+    testPlanDescription = `统一使用 ${selectedModels[0]} 模型，最多同时发起 ${BATCH_TEST_CONCURRENCY} 个请求。${testModeDescription}。`
   }
 
   return (
@@ -977,6 +1056,67 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             />
           )}
           <FieldDescription>{channelDescription}</FieldDescription>
+        </Field>
+      </FieldGroup>
+
+      <FieldGroup className='grid gap-4 md:grid-cols-2'>
+        <Field>
+          <FieldLabel htmlFor='batch-test-endpoint-type'>端点类型</FieldLabel>
+          <Select
+            items={ENDPOINT_TYPE_OPTIONS}
+            value={endpointType}
+            onValueChange={handleEndpointTypeChange}
+            disabled={isTesting}
+          >
+            <SelectTrigger
+              id='batch-test-endpoint-type'
+              className='w-full min-w-0'
+            >
+              <SelectValue
+                className='min-w-0 truncate'
+                placeholder='自动检测（默认）'
+              />
+            </SelectTrigger>
+            <SelectContent
+              alignItemWithTrigger={false}
+              className={endpointSelectContentClass}
+            >
+              <SelectGroup>
+                {ENDPOINT_TYPE_OPTIONS.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    className={endpointSelectItemClass}
+                  >
+                    <span className='min-w-0 leading-snug break-words whitespace-normal'>
+                      {option.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <FieldDescription>
+            选择本次连通性测试请求使用的端点；自动检测会沿用后端默认规则。
+          </FieldDescription>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor='batch-test-stream-mode'>流式模式</FieldLabel>
+          <div className='flex h-8 items-center gap-2'>
+            <Switch
+              id='batch-test-stream-mode'
+              checked={effectiveStreamTest}
+              onCheckedChange={handleStreamTestChange}
+              disabled={isTesting || streamDisabled}
+            />
+            <span className='text-sm'>
+              {effectiveStreamTest ? '已启用' : '已关闭'}
+            </span>
+          </div>
+          <FieldDescription>
+            为本次测试请求启用流式模式；当前端点不支持时会自动关闭。
+          </FieldDescription>
         </Field>
       </FieldGroup>
 

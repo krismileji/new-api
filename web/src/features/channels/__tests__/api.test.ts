@@ -64,4 +64,36 @@ describe('channel test API', () => {
       api.defaults.adapter = originalAdapter
     }
   })
+
+  test('passes endpoint type and stream mode to channel test request', async () => {
+    const originalAdapter = api.defaults.adapter
+    let requestParams: unknown
+
+    api.defaults.adapter = (config) => {
+      requestParams = config.params
+      return Promise.resolve({
+        data: { success: true, message: '', time: 0 },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      })
+    }
+
+    try {
+      await testChannel(7, {
+        model: 'gpt-4o-mini',
+        endpoint_type: 'openai-response',
+        stream: true,
+      })
+
+      assert.deepEqual(requestParams, {
+        model: 'gpt-4o-mini',
+        endpoint_type: 'openai-response',
+        stream: true,
+      })
+    } finally {
+      api.defaults.adapter = originalAdapter
+    }
+  })
 })
