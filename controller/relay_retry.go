@@ -10,12 +10,14 @@ import (
 
 var (
 	retry400UpstreamFailedTimes = max(0, common.GetEnvOrDefault("RETRY_400_UPSTREAM_FAILED_TIMES", 1))
+	retry502Times               = max(0, common.GetEnvOrDefault("RETRY_502_TIMES", 1))
 	retry503Times               = max(0, common.GetEnvOrDefault("RETRY_503_TIMES", 1))
 	retry524Times               = max(0, common.GetEnvOrDefault("RETRY_524_TIMES", 1))
 )
 
 type relayRetryBudget struct {
 	retry400UpstreamFailedRemaining int
+	retry502Remaining               int
 	retry503Remaining               int
 	retry524Remaining               int
 }
@@ -23,6 +25,7 @@ type relayRetryBudget struct {
 func newRelayRetryBudget() relayRetryBudget {
 	return relayRetryBudget{
 		retry400UpstreamFailedRemaining: retry400UpstreamFailedTimes,
+		retry502Remaining:               retry502Times,
 		retry503Remaining:               retry503Times,
 		retry524Remaining:               retry524Times,
 	}
@@ -44,6 +47,8 @@ func prepareNextRelayAttempt(
 		switch {
 		case apiError.StatusCode == 400 && apiError.Error() == "Upstream request failed":
 			remaining = &retryBudget.retry400UpstreamFailedRemaining
+		case apiError.StatusCode == 502:
+			remaining = &retryBudget.retry502Remaining
 		case apiError.StatusCode == 503:
 			remaining = &retryBudget.retry503Remaining
 		case apiError.StatusCode == 524:

@@ -25,15 +25,18 @@ func TestPrepareNextRelayAttemptScopesDedicatedRetries(t *testing.T) {
 		want       bool
 		wantBudget relayRetryBudget
 	}{
-		{name: "400 upstream failed", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry503Remaining: 1, retry524Remaining: 1}},
+		{name: "400 upstream failed", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}},
 		{name: "400 upstream failed chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: true},
 		{name: "400 upstream failed disabled", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{}, want: false},
 		{name: "other 400", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Unsupported parameter: max_output_tokens", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: false, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}},
 		{name: "400 upstream failed image generation", relayMode: relayconstant.RelayModeImagesGenerations, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: false, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}},
-		{name: "503 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 503, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry524Remaining: 1}},
+		{name: "502 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 502, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}},
+		{name: "502 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 502, budget: relayRetryBudget{retry502Remaining: 1}, want: true},
+		{name: "502 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 502, budget: relayRetryBudget{}, want: false},
+		{name: "503 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 503, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry524Remaining: 1}},
 		{name: "503 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 503, budget: relayRetryBudget{retry503Remaining: 1}, want: true},
 		{name: "503 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 503, budget: relayRetryBudget{}, want: false},
-		{name: "524 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 524, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1}},
+		{name: "524 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 524, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1}},
 		{name: "524 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 524, budget: relayRetryBudget{retry524Remaining: 1}, want: true},
 		{name: "524 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 524, budget: relayRetryBudget{}, want: false},
 		{name: "image generation", relayMode: relayconstant.RelayModeImagesGenerations, statusCode: 503, budget: relayRetryBudget{retry503Remaining: 1}, want: false, wantBudget: relayRetryBudget{retry503Remaining: 1}},
@@ -63,6 +66,7 @@ func TestPrepareNextRelayAttemptClearsPendingAutoGroupResetForDedicatedRetries(t
 		message    string
 	}{
 		{statusCode: 400, message: "Upstream request failed"},
+		{statusCode: 502, message: "bad gateway"},
 		{statusCode: 503, message: "upstream unavailable"},
 		{statusCode: 524, message: "upstream timeout"},
 	}
@@ -72,7 +76,7 @@ func TestPrepareNextRelayAttemptClearsPendingAutoGroupResetForDedicatedRetries(t
 			retry := 2
 			retryParam := &service.RetryParam{Retry: &retry}
 			retryParam.ResetRetryNextTry()
-			budget := relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}
+			budget := relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}
 			apiErr := types.NewOpenAIError(errors.New(tt.message), types.ErrorCodeBadResponseStatusCode, tt.statusCode)
 
 			require.True(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
@@ -94,6 +98,7 @@ func TestPrepareNextRelayAttemptFallsBackToConfiguredSystemRetry(t *testing.T) {
 	common.RetryTimes = 2
 	operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{
 		{Start: 400, End: 400},
+		{Start: 502, End: 502},
 		{Start: 503, End: 503},
 		{Start: 524, End: 524},
 	}
@@ -104,6 +109,7 @@ func TestPrepareNextRelayAttemptFallsBackToConfiguredSystemRetry(t *testing.T) {
 		message    string
 	}{
 		{name: "400 upstream failed", statusCode: 400, message: "Upstream request failed"},
+		{name: "502", statusCode: 502, message: "bad gateway"},
 		{name: "503", statusCode: 503, message: "upstream unavailable"},
 		{name: "524", statusCode: 524, message: "upstream timeout"},
 	}
@@ -115,6 +121,7 @@ func TestPrepareNextRelayAttemptFallsBackToConfiguredSystemRetry(t *testing.T) {
 			retryParam := &service.RetryParam{Retry: &retry}
 			budget := relayRetryBudget{
 				retry400UpstreamFailedRemaining: 1,
+				retry502Remaining:               1,
 				retry503Remaining:               1,
 				retry524Remaining:               1,
 			}
@@ -148,10 +155,10 @@ func TestPrepareNextRelayAttemptStopsWhenSystemRetryDoesNotIncludeStatus(t *test
 	require.Zero(t, retryParam.GetRetry())
 }
 
-func TestShouldRetry502StillUsesDefaultBudget(t *testing.T) {
+func TestShouldRetry500UsesDefaultBudget(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	apiErr := types.NewOpenAIError(errors.New("bad gateway"), types.ErrorCodeBadResponseStatusCode, 502)
+	apiErr := types.NewOpenAIError(errors.New("internal server error"), types.ErrorCodeBadResponseStatusCode, 500)
 
 	require.True(t, shouldRetry(c, apiErr, 1))
 	require.False(t, shouldRetry(c, apiErr, 0))
