@@ -61,6 +61,30 @@ func TestReplaceChannelMonitorGroupMembersUpdatesChannelsAndAbilities(t *testing
 	assert.Equal(t, "backup", removedAbilities[0].Group)
 }
 
+func TestReplaceChannelMonitorGroupMembersReturnsEmptyChangeLists(t *testing.T) {
+	resetChannelMonitorGroupMembershipTables(t)
+
+	channel := Channel{
+		Id: 104, Name: "existing-member", Key: "secret",
+		Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	result, err := ReplaceChannelMonitorGroupMembers("vip", []int{104})
+	require.NoError(t, err)
+	assert.Equal(t, []int{104}, result.ChannelIds)
+	assert.NotNil(t, result.AddedChannelIds)
+	assert.Empty(t, result.AddedChannelIds)
+	assert.NotNil(t, result.RemovedChannelIds)
+	assert.Empty(t, result.RemovedChannelIds)
+
+	payload, err := common.Marshal(result)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"added_channel_ids":[]`)
+	assert.Contains(t, string(payload), `"removed_channel_ids":[]`)
+}
+
 func TestReplaceChannelMonitorGroupMembersRollsBackWhenRemovalWouldLeaveNoGroup(t *testing.T) {
 	resetChannelMonitorGroupMembershipTables(t)
 

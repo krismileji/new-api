@@ -32,7 +32,12 @@ type ChannelMonitorGroupMembershipRemoval struct {
 
 func ReplaceChannelMonitorGroupMembers(group string, channelIds []int) (ChannelMonitorGroupMembershipUpdate, error) {
 	group = strings.TrimSpace(group)
-	result := ChannelMonitorGroupMembershipUpdate{Group: group}
+	result := ChannelMonitorGroupMembershipUpdate{
+		Group:             group,
+		ChannelIds:        make([]int, 0),
+		AddedChannelIds:   make([]int, 0),
+		RemovedChannelIds: make([]int, 0),
+	}
 	if group == "" || utf8.RuneCountInString(group) > 64 || strings.ContainsAny(group, ",\r\n") {
 		return result, ErrChannelMonitorGroupInvalid
 	}

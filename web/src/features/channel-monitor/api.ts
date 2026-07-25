@@ -254,7 +254,16 @@ export async function updateChannelMonitorGroupChannels(request: {
     },
     channelMonitorRequestConfig()
   )
-  return ensureChannelMonitorSuccess(response.data)
+  const result = ensureChannelMonitorSuccess(response.data)
+  return {
+    ...result,
+    data: {
+      ...result.data,
+      channel_ids: result.data.channel_ids ?? [],
+      added_channel_ids: result.data.added_channel_ids ?? [],
+      removed_channel_ids: result.data.removed_channel_ids ?? [],
+    },
+  }
 }
 
 export async function syncChannelMonitorGroupRatio(request: {

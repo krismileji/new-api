@@ -40,11 +40,12 @@ import {
 } from '@/components/ui/input-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
-import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import { updateChannelMonitorGroupChannels } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import { formatMonitorRatio } from '../lib/format'
+import { orderGroupChannelOptions } from '../lib/group-channel-order'
 import type { ChannelMonitorItem, GroupMonitorItem } from '../types'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
@@ -68,30 +69,22 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
   const normalizedSearch = search.trim().toLocaleLowerCase()
   const visibleChannels = useMemo(
     () =>
-      [...props.channels]
-        .filter((channel) => {
+      orderGroupChannelOptions(
+        props.channels.filter((channel) => {
           if (!normalizedSearch) return true
           return (
             channel.name.toLocaleLowerCase().includes(normalizedSearch) ||
             String(channel.id).includes(normalizedSearch) ||
-            channel.groups.some((group) =>
+            (channel.channel_remark ?? '')
+              .toLocaleLowerCase()
+              .includes(normalizedSearch) ||
+            (channel.groups ?? []).some((group) =>
               group.toLocaleLowerCase().includes(normalizedSearch)
             )
           )
         })
-        .sort((leftChannel, rightChannel) => {
-          const leftIsMember = originalChannelIds.has(leftChannel.id)
-          const rightIsMember = originalChannelIds.has(rightChannel.id)
-          if (leftIsMember !== rightIsMember) return leftIsMember ? -1 : 1
-
-          const leftEnabled = leftChannel.status === CHANNEL_STATUS.ENABLED
-          const rightEnabled = rightChannel.status === CHANNEL_STATUS.ENABLED
-          if (leftEnabled !== rightEnabled) return leftEnabled ? -1 : 1
-
-          const nameOrder = leftChannel.name.localeCompare(rightChannel.name)
-          return nameOrder !== 0 ? nameOrder : leftChannel.id - rightChannel.id
-        }),
-    [normalizedSearch, originalChannelIds, props.channels]
+      ),
+    [normalizedSearch, props.channels]
   )
   const lockedRemovalChannelIds = useMemo(
     () =>
@@ -100,7 +93,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
           .filter(
             (channel) =>
               originalChannelIds.has(channel.id) &&
-              channel.groups.every(
+              (channel.groups ?? []).every(
                 (group) => !group || group === props.group.name
               )
           )
@@ -113,9 +106,10 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
       new Set(
         props.channels
           .filter((channel) => {
-            const serializedGroups = [...channel.groups, props.group.name].join(
-              ','
-            )
+            const serializedGroups = [
+              ...(channel.groups ?? []),
+              props.group.name,
+            ].join(',')
             return (
               !originalChannelIds.has(channel.id) &&
               [...serializedGroups].length > 64
@@ -137,8 +131,8 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
     mutationFn: updateChannelMonitorGroupChannels,
     onError: handleChannelMonitorMutationError,
     onSuccess: (response) => {
-      const added = response.data.added_channel_ids.length
-      const removed = response.data.removed_channel_ids.length
+      const added = response.data.added_channel_ids?.length ?? 0
+      const removed = response.data.removed_channel_ids?.length ?? 0
       toast.success(`分组渠道已更新：新增 ${added} 个，移除 ${removed} 个`)
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       queryClient.invalidateQueries({ queryKey: ['channels'] })
@@ -192,8 +186,13 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
       <DialogContent className='sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>管理分组渠道</DialogTitle>
-          <DialogDescription>
-            {props.group.name} · 这里只调整分组关联，不会删除渠道本身
+          <DialogDescription className='flex flex-col gap-0.5'>
+            <span>
+              {props.group.name} · 分组倍率{' '}
+              {formatMonitorRatio(props.group.ratio)} · 系数 ×{' '}
+              {formatMonitorRatio(props.group.coefficient)}
+            </span>
+            <span>这里只调整分组关联，不会删除渠道本身</span>
           </DialogDescription>
         </DialogHeader>
 
@@ -206,7 +205,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
               <InputGroupInput
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder='搜索渠道、ID 或分组'
+                placeholder='搜索渠道、ID、分组或备注'
                 aria-label='搜索渠道'
               />
             </InputGroup>
@@ -255,9 +254,10 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                   const tooLongToAdd = tooLongToAddChannelIds.has(channel.id)
                   const disabled =
                     mutation.isPending || removalLocked || tooLongToAdd
-                  const otherGroups = channel.groups.filter(
+                  const otherGroups = (channel.groups ?? []).filter(
                     (group) => group && group !== props.group.name
                   )
+                  const channelRemark = channel.channel_remark?.trim() || '-'
                   let membershipDescription =
                     otherGroups.length > 0
                       ? `其他分组：${otherGroups.join('、')}`
@@ -310,6 +310,22 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                         <p className={membershipDescriptionClassName}>
                           {membershipDescription}
                         </p>
+                        <div className='text-muted-foreground grid min-w-0 gap-1 text-xs sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-x-4'>
+                          <span>
+                            成本倍率{' '}
+                            <span className='text-foreground font-mono tabular-nums'>
+                              {formatMonitorRatio(channel.cost_ratio)}
+                            </span>
+                          </span>
+                          <span
+                            className='min-w-0 truncate'
+                            title={
+                              channelRemark === '-' ? undefined : channelRemark
+                            }
+                          >
+                            备注：{channelRemark}
+                          </span>
+                        </div>
                       </div>
                     </label>
                   )
