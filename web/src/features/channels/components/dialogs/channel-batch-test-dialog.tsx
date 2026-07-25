@@ -82,6 +82,7 @@ import {
   handleTestChannel,
 } from '../../lib'
 import type { Channel } from '../../types'
+import { runChannelBatchTestQueue } from './channel-batch-test-queue'
 import {
   type BatchTestChannelOption,
   createBatchTestChannelOption,
@@ -660,45 +661,32 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
           })
         )
       } else {
-        for (
-          let start = 0;
-          start < tasks.length;
-          start += BATCH_TEST_CONCURRENCY
-        ) {
-          if (stopRequestedRef.current) break
-
-          const batch = tasks.slice(start, start + BATCH_TEST_CONCURRENCY)
-          setResults((current) => {
-            const next = { ...current }
-            for (const task of batch) {
-              next[task.key] = { ...task, status: 'testing' }
-            }
-            return next
-          })
-
-          const batchResults = await Promise.all(
-            batch.map((task) => runBatchTestTask(task, requestOptions))
-          )
-          completed += batchResults.length
-          succeeded += batchResults.filter(
-            (result) => result.status === 'success'
-          ).length
-          failed = completed - succeeded
-
-          setResults((current) => {
-            const next = { ...current }
-            for (const result of batchResults) {
-              next[result.key] = result
-            }
-            return next
-          })
-          setProgress({
-            total: tasks.length,
-            completed,
-            success: succeeded,
-            failed,
-          })
-        }
+        await runChannelBatchTestQueue(tasks, {
+          concurrency: BATCH_TEST_CONCURRENCY,
+          shouldStop: () => stopRequestedRef.current,
+          onTaskStart: (task) => {
+            setResults((current) => ({
+              ...current,
+              [task.key]: { ...task, status: 'testing' },
+            }))
+          },
+          runTask: (task) => runBatchTestTask(task, requestOptions),
+          onTaskComplete: (result) => {
+            completed += 1
+            if (result.status === 'success') succeeded += 1
+            failed = completed - succeeded
+            setResults((current) => ({
+              ...current,
+              [result.key]: result,
+            }))
+            setProgress({
+              total: tasks.length,
+              completed,
+              success: succeeded,
+              failed,
+            })
+          },
+        })
       }
     } finally {
       const stopped = stopRequestedRef.current && completed < tasks.length
