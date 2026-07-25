@@ -81,22 +81,29 @@ export function ChannelMonitorSmartScheduleCell(
             得分 {(props.channel.last_schedule_score * 100).toFixed(1)}
           </span>
         ) : null}
-        {participating &&
-        props.channel.smart_schedule_stability_state === 'degraded' ? (
-          <span className='text-destructive text-xs'>
-            低成功率降级
-            {props.channel.smart_schedule_stability_until
-              ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
-              : ''}
-          </span>
-        ) : null}
-        {participating &&
-        props.channel.smart_schedule_stability_state === 'probing' ? (
-          <span className='text-xs text-amber-600 dark:text-amber-400'>
-            稳定性试放
-          </span>
-        ) : null}
       </div>
+
+      {participating &&
+      props.channel.smart_schedule_stability_state === 'degraded' ? (
+        <span
+          data-slot='smart-schedule-stability-status'
+          className='text-destructive text-xs'
+        >
+          低成功率降级
+          {props.channel.smart_schedule_stability_until
+            ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
+            : ''}
+        </span>
+      ) : null}
+      {participating &&
+      props.channel.smart_schedule_stability_state === 'probing' ? (
+        <span
+          data-slot='smart-schedule-stability-status'
+          className='text-xs text-amber-600 dark:text-amber-400'
+        >
+          稳定性试放
+        </span>
+      ) : null}
 
       <AlertDialog
         open={resetConfirmationOpen}
