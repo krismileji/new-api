@@ -645,7 +645,7 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups := service.GetRoleUsableGroups(user.Group, c.GetInt("role"))
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {
@@ -655,7 +655,7 @@ func GetUserModels(c *gin.Context) {
 		}
 	case group == "auto":
 		if _, ok := groups[group]; ok {
-			groupsToQuery = service.GetUserAutoGroup(user.Group)
+			groupsToQuery = service.GetRoleAutoGroups(user.Group, c.GetInt("role"))
 		}
 	default:
 		if _, ok := groups[group]; ok {
