@@ -3031,7 +3031,7 @@
     "Number of completions to generate": "Число генерируемых вариантов",
     "Number of images to generate": "Количество изображений",
     "Number of keys to create": "Количество ключей для создания",
-    "Number of times to retry failed requests (0-10)": "Количество повторных попыток для неудачных запросов (0-10)",
+    "Number of times to retry failed requests (0-50)": "Количество повторных попыток для неудачных запросов (0-50)",
     "Number of tokens per unit quota": "Количество токенов на единицу квоты",
     "Number of top log probabilities returned per token": "Количество top-вероятностей на токен",
     "Number of users invited": "Количество приглашенных пользователей",

@@ -3031,7 +3031,7 @@
     "Number of completions to generate": "Number of completions to generate",
     "Number of images to generate": "Number of images to generate",
     "Number of keys to create": "Number of keys to create",
-    "Number of times to retry failed requests (0-10)": "Number of times to retry failed requests (0-10)",
+    "Number of times to retry failed requests (0-50)": "Number of times to retry failed requests (0-50)",
     "Number of tokens per unit quota": "Number of tokens per unit quota",
     "Number of top log probabilities returned per token": "Number of top log probabilities returned per token",
     "Number of users invited": "Number of users invited",
