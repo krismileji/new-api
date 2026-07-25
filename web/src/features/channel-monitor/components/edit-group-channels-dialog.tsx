@@ -217,7 +217,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                 onClick={selectVisibleChannels}
                 disabled={visibleChannels.length === 0 || mutation.isPending}
               >
-                全选可见
+                全选
               </Button>
               <Button
                 type='button'
@@ -226,7 +226,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                 onClick={clearVisibleChannels}
                 disabled={visibleChannels.length === 0 || mutation.isPending}
               >
-                清除可见
+                清空
               </Button>
             </div>
           </div>
