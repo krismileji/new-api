@@ -25,6 +25,7 @@ import { api } from '@/lib/api'
 
 import {
   getChannelMonitorCostOverview,
+  getChannelMonitorTodaySuccess,
   updateChannelMonitorGroupChannels,
 } from '../api'
 
@@ -55,6 +56,30 @@ test('requests only the lightweight cost summary for the monitor dashboard', asy
     page: 1,
     summary_only: true,
   })
+})
+
+test('requests the Beijing-day success summary for the monitor dashboard', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestUrl = ''
+  const adapter: AxiosAdapter = async (config) => {
+    requestUrl = config.url ?? ''
+    return {
+      data: { success: true, message: '', data: {} },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await getChannelMonitorTodaySuccess()
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requestUrl, '/api/channel_monitor/success/today')
 })
 
 test('normalizes nullable group membership change lists from older servers', async () => {

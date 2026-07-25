@@ -77,6 +77,7 @@ import {
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
   getChannelMonitorOverview,
+  getChannelMonitorTodaySuccess,
   updateChannelMonitorSmartScheduleConfig,
   updateMonitoredChannelStatus,
 } from './api'
@@ -90,6 +91,10 @@ import {
 } from './components/channel-monitor-settings-dialog'
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-task-history-dialog'
+import { ChannelMonitorTodayCacheWriteCard } from './components/channel-monitor-today-cache-write-card'
+import { ChannelMonitorTodayCacheWriteDialog } from './components/channel-monitor-today-cache-write-dialog'
+import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
+import { ChannelMonitorTodaySuccessDialog } from './components/channel-monitor-today-success-dialog'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
@@ -223,6 +228,8 @@ export function ChannelMonitor() {
     id: number
     name: string
   } | null>(null)
+  const [todaySuccessOpen, setTodaySuccessOpen] = useState(false)
+  const [todayCacheWriteOpen, setTodayCacheWriteOpen] = useState(false)
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -269,6 +276,11 @@ export function ChannelMonitor() {
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
+    refetchInterval: 60_000,
+  })
+  const todaySuccessQuery = useQuery({
+    queryKey: ['channel-monitor', 'success', 'today'],
+    queryFn: getChannelMonitorTodaySuccess,
     refetchInterval: 60_000,
   })
   const ratioFetchMutation = useMutation({
@@ -495,6 +507,9 @@ export function ChannelMonitor() {
         final_failure_count: 0,
         final_sample_count: 0,
         final_success_rate: 0,
+        cache_hit_count: 0,
+        cache_sample_count: 0,
+        cache_hit_rate: 0,
       }
       summary.actual_success_count += metric.actual_success_count
       summary.actual_failure_count += metric.actual_failure_count
@@ -511,6 +526,12 @@ export function ChannelMonitor() {
       summary.final_success_rate =
         summary.final_sample_count > 0
           ? summary.final_success_count / summary.final_sample_count
+          : 0
+      summary.cache_hit_count += metric.cache_hit_count ?? 0
+      summary.cache_sample_count += metric.cache_sample_count ?? 0
+      summary.cache_hit_rate =
+        summary.cache_sample_count > 0
+          ? summary.cache_hit_count / summary.cache_sample_count
           : 0
       result.set(metric.channel_id, summary)
     }
@@ -620,7 +641,7 @@ export function ChannelMonitor() {
   } else {
     pageContent = (
       <div className='flex flex-col gap-4'>
-        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-6'>
           <MonitorStatCard
             label='全部渠道'
             value={channels.length}
@@ -653,6 +674,18 @@ export function ChannelMonitor() {
               icon: HistoryIcon,
               onClick: () => setCostHistoryOpen(true),
             }}
+          />
+          <ChannelMonitorTodaySuccessCard
+            result={todaySuccessQuery.data?.data}
+            isLoading={todaySuccessQuery.isLoading}
+            isError={todaySuccessQuery.isError}
+            onOpen={() => setTodaySuccessOpen(true)}
+          />
+          <ChannelMonitorTodayCacheWriteCard
+            result={todaySuccessQuery.data?.data}
+            isLoading={todaySuccessQuery.isLoading}
+            isError={todaySuccessQuery.isError}
+            onOpen={() => setTodayCacheWriteOpen(true)}
           />
           <MonitorStatCard
             label='已记录倍率'
@@ -1051,11 +1084,13 @@ export function ChannelMonitor() {
                     query.refetch()
                     performanceQuery.refetch()
                     costQuery.refetch()
+                    todaySuccessQuery.refetch()
                   }}
                   disabled={
                     query.isFetching ||
                     performanceQuery.isFetching ||
-                    costQuery.isFetching
+                    costQuery.isFetching ||
+                    todaySuccessQuery.isFetching
                   }
                   aria-label='刷新'
                 >
@@ -1180,6 +1215,30 @@ export function ChannelMonitor() {
             }}
           />
         </Suspense>
+      )}
+      {todaySuccessOpen && (
+        <ChannelMonitorTodaySuccessDialog
+          result={todaySuccessQuery.data?.data}
+          channels={channels}
+          isLoading={todaySuccessQuery.isLoading}
+          isError={todaySuccessQuery.isError}
+          isFetching={todaySuccessQuery.isFetching}
+          open
+          onOpenChange={setTodaySuccessOpen}
+          onRetry={() => todaySuccessQuery.refetch()}
+        />
+      )}
+      {todayCacheWriteOpen && (
+        <ChannelMonitorTodayCacheWriteDialog
+          result={todaySuccessQuery.data?.data}
+          channels={channels}
+          isLoading={todaySuccessQuery.isLoading}
+          isError={todaySuccessQuery.isError}
+          isFetching={todaySuccessQuery.isFetching}
+          open
+          onOpenChange={setTodayCacheWriteOpen}
+          onRetry={() => todaySuccessQuery.refetch()}
+        />
       )}
       {batchTestOpen && (
         <Suspense fallback={null}>

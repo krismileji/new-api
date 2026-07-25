@@ -26,7 +26,10 @@ import { I18nextProvider } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
-import type { ChannelMonitorItem } from '../../types'
+import type {
+  ChannelMonitorItem,
+  ChannelMonitorSuccessSummary,
+} from '../../types'
 import { ChannelMonitorChannelView } from '../channel-monitor-channel-view'
 
 const noop = () => {}
@@ -104,7 +107,8 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
 function renderView(
   channel: ChannelMonitorItem,
   groupRatios: Record<string, number> = { default: 1 },
-  groupCoefficients: Record<string, number> = { default: 1 }
+  groupCoefficients: Record<string, number> = { default: 1 },
+  successByChannel: Map<number, ChannelMonitorSuccessSummary> = new Map()
 ) {
   return renderToStaticMarkup(
     <I18nextProvider i18n={testI18n}>
@@ -113,8 +117,8 @@ function renderView(
         groupRatios={groupRatios}
         groupCoefficients={groupCoefficients}
         performanceByChannel={new Map()}
-        successByChannel={new Map()}
-        successMetricsAvailable={false}
+        successByChannel={successByChannel}
+        successMetricsAvailable={successByChannel.size > 0}
         performanceRangeLabel='24 小时'
         performanceLoading={false}
         performanceError={false}
@@ -352,6 +356,39 @@ describe('channel monitor channel view timestamps', () => {
 
     assert.ok(cells[8]?.includes('3/8'))
     assert.ok(cells[8]?.includes('当前/上限'))
+  })
+
+  test('shows cache hit rate on the third line of the success rate cell', () => {
+    const successByChannel = new Map<number, ChannelMonitorSuccessSummary>([
+      [
+        7,
+        {
+          actual_success_count: 9,
+          actual_failure_count: 1,
+          actual_sample_count: 10,
+          actual_success_rate: 0.9,
+          final_success_count: 9,
+          final_failure_count: 1,
+          final_sample_count: 10,
+          final_success_rate: 0.9,
+          cache_hit_count: 1,
+          cache_sample_count: 2,
+          cache_hit_rate: 0.5,
+        },
+      ],
+    ])
+    const cells = getTableCells(
+      renderView(
+        createChannel(),
+        { default: 1 },
+        { default: 1 },
+        successByChannel
+      )
+    )
+    const successCell = cells[7] ?? ''
+
+    assert.match(successCell, /90%[\s\S]*9 \/ 10 次[\s\S]*缓存率[\s\S]*50%/)
+    assert.ok(successCell.includes('缓存命中 1 / 2 次'))
   })
 
   test('shows unlimited concurrency and exposes the edit action', () => {

@@ -64,6 +64,7 @@ import type {
   ChannelMonitorSuccessMode,
   ChannelMonitorSuccessSummary,
 } from '../types'
+import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
 
 type ChannelMonitorSuccessDetailDialogProps = {
   target: ChannelMonitorSuccessDetailTarget
@@ -128,6 +129,49 @@ function SummaryValue(props: {
       >
         {props.value}
       </span>
+    </div>
+  )
+}
+
+export function ChannelMonitorSuccessSummaryCards(props: {
+  summary: ChannelMonitorSuccessSummary
+  mode: ChannelMonitorSuccessMode
+}) {
+  const modeSummary = getModeSummary(props.summary, props.mode)
+  const cacheRateAvailable =
+    props.summary.cache_sample_count > 0 &&
+    Number.isFinite(props.summary.cache_hit_rate)
+
+  return (
+    <div className='grid shrink-0 grid-cols-1 divide-y rounded-lg border sm:grid-cols-4 sm:divide-x sm:divide-y-0'>
+      <SummaryValue
+        label={props.mode === 'actual' ? '成功调用' : '最终成功'}
+        value={`${modeSummary.successCount} 次`}
+        valueClassName='text-success'
+      />
+      <SummaryValue
+        label={props.mode === 'actual' ? '失败调用' : '最终失败'}
+        value={`${modeSummary.failureCount} 次`}
+        valueClassName={
+          modeSummary.failureCount > 0 ? 'text-destructive' : undefined
+        }
+      />
+      <SummaryValue
+        label={props.mode === 'actual' ? '真实调用成功率' : '最终结果成功率'}
+        value={percentFormatter.format(modeSummary.successRate)}
+        valueClassName={getRateClassName(modeSummary.successRate)}
+      />
+      <SummaryValue
+        label='缓存率'
+        value={
+          cacheRateAvailable
+            ? percentFormatter.format(props.summary.cache_hit_rate)
+            : '-'
+        }
+        valueClassName={
+          cacheRateAvailable ? 'text-foreground' : 'text-muted-foreground'
+        }
+      />
     </div>
   )
 }
@@ -312,174 +356,83 @@ export function ChannelMonitorSuccessDetailDialog(
   } else {
     content = (
       <div className='flex min-h-0 flex-col gap-4 overflow-y-auto pr-1'>
-        <div className='grid shrink-0 grid-cols-1 divide-y rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
-          <SummaryValue
-            label={props.target.mode === 'actual' ? '成功调用' : '最终成功'}
-            value={`${modeSummary.successCount} 次`}
-            valueClassName='text-success'
-          />
-          <SummaryValue
-            label={props.target.mode === 'actual' ? '失败调用' : '最终失败'}
-            value={`${modeSummary.failureCount} 次`}
-            valueClassName={
-              modeSummary.failureCount > 0 ? 'text-destructive' : undefined
-            }
-          />
-          <SummaryValue
-            label={
-              props.target.mode === 'actual'
-                ? '真实调用成功率'
-                : '最终结果成功率'
-            }
-            value={percentFormatter.format(modeSummary.successRate)}
-            valueClassName={getRateClassName(modeSummary.successRate)}
-          />
-        </div>
+        <ChannelMonitorSuccessSummaryCards
+          summary={detail.summary}
+          mode={props.target.mode}
+        />
 
         {props.target.scope === 'group' ? (
-          <div className='flex flex-col gap-2'>
-            <h3 className='font-medium'>渠道明细</h3>
-            <div className='overflow-hidden rounded-lg border'>
-              <Table className='min-w-[680px]'>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>渠道</TableHead>
-                    <TableHead className='text-right'>成功</TableHead>
-                    <TableHead className='text-right'>失败</TableHead>
-                    <TableHead className='text-right'>样本</TableHead>
-                    <TableHead className='text-right'>成功率</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {groupChannelRows.map((row) => {
-                    const rowSummary = row.metric
-                      ? getModeSummary(row.metric, props.target.mode)
-                      : null
-                    const channelEnabled =
-                      row.channel?.status === CHANNEL_STATUS.ENABLED
-                    return (
-                      <TableRow key={row.channelId}>
-                        <TableCell>
-                          <div className='flex min-w-48 flex-col gap-0.5'>
-                            <div className='flex items-center gap-2'>
-                              <span className='font-medium'>
-                                {row.channel?.name ?? `渠道 #${row.channelId}`}
-                              </span>
-                              {row.channel ? (
-                                <Badge
-                                  variant={
-                                    channelEnabled ? 'secondary' : 'outline'
-                                  }
-                                >
-                                  {channelEnabled ? '已启用' : '已停用'}
-                                </Badge>
-                              ) : null}
-                            </div>
-                            <span className='text-muted-foreground text-xs'>
-                              ID {row.channelId}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className='text-right font-mono'>
-                          {rowSummary?.successCount ?? 0}
-                        </TableCell>
-                        <TableCell
-                          className={cn(
-                            'text-right font-mono',
-                            rowSummary &&
-                              rowSummary.failureCount > 0 &&
-                              'text-destructive'
-                          )}
-                        >
-                          {rowSummary?.failureCount ?? 0}
-                        </TableCell>
-                        <TableCell className='text-right font-mono'>
-                          {rowSummary?.sampleCount ?? 0}
-                        </TableCell>
-                        <TableCell
-                          className={cn(
-                            'text-right font-mono font-semibold',
-                            rowSummary && rowSummary.sampleCount > 0
-                              ? getRateClassName(rowSummary.successRate)
-                              : 'text-muted-foreground'
-                          )}
-                        >
-                          {rowSummary && rowSummary.sampleCount > 0
-                            ? percentFormatter.format(rowSummary.successRate)
-                            : '-'}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-        ) : (
-          <div className='flex flex-col gap-2'>
-            <h3 className='font-medium'>失败报错分类</h3>
-            {failureCategories.length === 0 ? (
-              <Empty className='min-h-40 rounded-lg border'>
-                <EmptyHeader>
-                  <EmptyTitle>没有失败报错</EmptyTitle>
-                  <EmptyDescription>
-                    当前统计范围内未记录失败调用
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
+          <>
+            <div className='flex flex-col gap-2'>
+              <h3 className='font-medium'>渠道明细</h3>
               <div className='overflow-hidden rounded-lg border'>
-                <Table className='min-w-[860px]'>
+                <Table className='min-w-[680px]'>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>错误分类</TableHead>
-                      <TableHead>报错示例</TableHead>
-                      <TableHead className='text-right'>失败次数</TableHead>
-                      <TableHead className='text-right'>失败占比</TableHead>
-                      <TableHead>最近发生</TableHead>
+                      <TableHead>渠道</TableHead>
+                      <TableHead className='text-right'>成功</TableHead>
+                      <TableHead className='text-right'>失败</TableHead>
+                      <TableHead className='text-right'>样本</TableHead>
+                      <TableHead className='text-right'>成功率</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {failureCategories.map((category) => {
-                      const failureCount =
-                        props.target.mode === 'final'
-                          ? category.final_count
-                          : category.actual_count
-                      const ratio = failureCount / modeSummary.failureCount
+                    {groupChannelRows.map((row) => {
+                      const rowSummary = row.metric
+                        ? getModeSummary(row.metric, props.target.mode)
+                        : null
+                      const channelEnabled =
+                        row.channel?.status === CHANNEL_STATUS.ENABLED
                       return (
-                        <TableRow
-                          key={`${category.channel_id}:${category.status_code}:${category.error_type}:${category.error_code}:${category.sample_content}`}
-                        >
+                        <TableRow key={row.channelId}>
                           <TableCell>
-                            <FailureCategoryBadges category={category} />
-                          </TableCell>
-                          <TableCell>
-                            <p
-                              className='line-clamp-2 max-w-[30rem] break-words whitespace-normal'
-                              title={category.sample_content}
-                            >
-                              {category.sample_content || '未记录错误内容'}
-                            </p>
-                          </TableCell>
-                          <TableCell className='text-right'>
-                            <div className='flex flex-col items-end gap-0.5 font-mono'>
-                              <span className='font-semibold'>
-                                {failureCount} 次
-                              </span>
-                              {category.actual_count !==
-                              category.final_count ? (
-                                <span className='text-muted-foreground text-xs'>
-                                  最终失败 {category.final_count} 次
+                            <div className='flex min-w-48 flex-col gap-0.5'>
+                              <div className='flex items-center gap-2'>
+                                <span className='font-medium'>
+                                  {row.channel?.name ??
+                                    `渠道 #${row.channelId}`}
                                 </span>
-                              ) : null}
+                                {row.channel ? (
+                                  <Badge
+                                    variant={
+                                      channelEnabled ? 'secondary' : 'outline'
+                                    }
+                                  >
+                                    {channelEnabled ? '已启用' : '已停用'}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              <span className='text-muted-foreground text-xs'>
+                                ID {row.channelId}
+                              </span>
                             </div>
                           </TableCell>
                           <TableCell className='text-right font-mono'>
-                            {percentFormatter.format(ratio)}
+                            {rowSummary?.successCount ?? 0}
                           </TableCell>
-                          <TableCell>
-                            {category.last_occurred_at > 0
-                              ? formatTimestampToDate(category.last_occurred_at)
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono',
+                              rowSummary &&
+                                rowSummary.failureCount > 0 &&
+                                'text-destructive'
+                            )}
+                          >
+                            {rowSummary?.failureCount ?? 0}
+                          </TableCell>
+                          <TableCell className='text-right font-mono'>
+                            {rowSummary?.sampleCount ?? 0}
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono font-semibold',
+                              rowSummary && rowSummary.sampleCount > 0
+                                ? getRateClassName(rowSummary.successRate)
+                                : 'text-muted-foreground'
+                            )}
+                          >
+                            {rowSummary && rowSummary.sampleCount > 0
+                              ? percentFormatter.format(rowSummary.successRate)
                               : '-'}
                           </TableCell>
                         </TableRow>
@@ -488,8 +441,93 @@ export function ChannelMonitorSuccessDetailDialog(
                   </TableBody>
                 </Table>
               </div>
-            )}
-          </div>
+            </div>
+            <ChannelMonitorSuccessAPIKeyTable
+              items={detail.api_key_items ?? []}
+            />
+          </>
+        ) : (
+          <>
+            <ChannelMonitorSuccessAPIKeyTable
+              items={detail.api_key_items ?? []}
+            />
+            <div className='flex flex-col gap-2'>
+              <h3 className='font-medium'>失败报错分类</h3>
+              {failureCategories.length === 0 ? (
+                <Empty className='min-h-40 rounded-lg border'>
+                  <EmptyHeader>
+                    <EmptyTitle>没有失败报错</EmptyTitle>
+                    <EmptyDescription>
+                      当前统计范围内未记录失败调用
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <div className='overflow-hidden rounded-lg border'>
+                  <Table className='min-w-[860px]'>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>错误分类</TableHead>
+                        <TableHead>报错示例</TableHead>
+                        <TableHead className='text-right'>失败次数</TableHead>
+                        <TableHead className='text-right'>失败占比</TableHead>
+                        <TableHead>最近发生</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {failureCategories.map((category) => {
+                        const failureCount =
+                          props.target.mode === 'final'
+                            ? category.final_count
+                            : category.actual_count
+                        const ratio = failureCount / modeSummary.failureCount
+                        return (
+                          <TableRow
+                            key={`${category.channel_id}:${category.status_code}:${category.error_type}:${category.error_code}:${category.sample_content}`}
+                          >
+                            <TableCell>
+                              <FailureCategoryBadges category={category} />
+                            </TableCell>
+                            <TableCell>
+                              <p
+                                className='line-clamp-2 max-w-[30rem] break-words whitespace-normal'
+                                title={category.sample_content}
+                              >
+                                {category.sample_content || '未记录错误内容'}
+                              </p>
+                            </TableCell>
+                            <TableCell className='text-right'>
+                              <div className='flex flex-col items-end gap-0.5 font-mono'>
+                                <span className='font-semibold'>
+                                  {failureCount} 次
+                                </span>
+                                {category.actual_count !==
+                                category.final_count ? (
+                                  <span className='text-muted-foreground text-xs'>
+                                    最终失败 {category.final_count} 次
+                                  </span>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                            <TableCell className='text-right font-mono'>
+                              {percentFormatter.format(ratio)}
+                            </TableCell>
+                            <TableCell>
+                              {category.last_occurred_at > 0
+                                ? formatTimestampToDate(
+                                    category.last_occurred_at
+                                  )
+                                : '-'}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     )

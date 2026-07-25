@@ -91,6 +91,7 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 			"scope":                     "",
 			"detail": model.ChannelMonitorSuccessDetail{
 				ChannelItems:      make([]model.ChannelMonitorChannelSuccessMetric, 0),
+				APIKeyItems:       make([]model.ChannelMonitorSuccessAPIKeyMetric, 0),
 				FailureCategories: make([]model.ChannelMonitorFailureCategory, 0),
 			},
 		})

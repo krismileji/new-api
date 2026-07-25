@@ -1,0 +1,376 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+
+import type { KeyboardEvent, ReactElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
+import { CHANNEL_STATUS } from '@/features/channels/constants'
+
+import type {
+  ChannelMonitorSuccessSummary,
+  ChannelMonitorTodaySuccessResult,
+} from '../../types'
+import { ChannelMonitorTodaySuccessCard } from '../channel-monitor-today-success-card'
+import { ChannelMonitorTodaySuccessDialogContent } from '../channel-monitor-today-success-dialog'
+
+const noop = () => {}
+
+function createSummary(
+  overrides: Partial<ChannelMonitorSuccessSummary> = {}
+): ChannelMonitorSuccessSummary {
+  return {
+    actual_success_count: 9,
+    actual_failure_count: 1,
+    actual_sample_count: 10,
+    actual_success_rate: 0.9,
+    final_success_count: 9,
+    final_failure_count: 1,
+    final_sample_count: 10,
+    final_success_rate: 0.9,
+    cache_hit_count: 1,
+    cache_sample_count: 2,
+    cache_hit_rate: 0.5,
+    ...overrides,
+  }
+}
+
+function createResult(
+  overrides: Partial<ChannelMonitorTodaySuccessResult> = {}
+): ChannelMonitorTodaySuccessResult {
+  return {
+    generated_at: 1_752_777_845,
+    day_start: 1_752_681_600,
+    success_metrics_available: true,
+    cache_write_metrics_available: true,
+    summary: createSummary(),
+    channel_items: [
+      {
+        channel_id: 7,
+        channel_name: '渠道一',
+        channel_remark: '主线路',
+        ...createSummary({
+          actual_success_count: 4,
+          actual_failure_count: 0,
+          actual_sample_count: 4,
+          actual_success_rate: 1,
+          cache_hit_count: 0,
+          cache_sample_count: 0,
+          cache_hit_rate: 0,
+        }),
+      },
+      {
+        channel_id: 8,
+        channel_name: '渠道二',
+        channel_remark: '',
+        ...createSummary({
+          actual_success_count: 3,
+          actual_failure_count: 0,
+          actual_sample_count: 3,
+          actual_success_rate: 1,
+          cache_hit_count: 1,
+          cache_sample_count: 2,
+          cache_hit_rate: 0.5,
+        }),
+      },
+      {
+        channel_id: 9,
+        channel_name: '渠道三',
+        channel_remark: '低倍率线路',
+        ...createSummary({
+          actual_success_count: 2,
+          actual_failure_count: 1,
+          actual_sample_count: 3,
+          actual_success_rate: 2 / 3,
+          cache_hit_count: 0,
+          cache_sample_count: 0,
+          cache_hit_rate: 0,
+        }),
+      },
+    ],
+    api_key_items: [
+      {
+        api_key_id: 21,
+        api_key_name: '生产 Key',
+        ...createSummary({
+          actual_success_count: 3,
+          actual_failure_count: 1,
+          actual_sample_count: 4,
+          actual_success_rate: 0.75,
+          cache_hit_count: 1,
+          cache_sample_count: 2,
+          cache_hit_rate: 0.5,
+        }),
+      },
+      {
+        api_key_id: 22,
+        api_key_name: '高成功率 Key',
+        ...createSummary({
+          actual_success_count: 3,
+          actual_failure_count: 0,
+          actual_sample_count: 3,
+          actual_success_rate: 1,
+          cache_hit_count: 0,
+          cache_sample_count: 2,
+          cache_hit_rate: 0,
+        }),
+      },
+      {
+        api_key_id: 23,
+        api_key_name: '高缓存率 Key',
+        ...createSummary({
+          actual_success_count: 3,
+          actual_failure_count: 0,
+          actual_sample_count: 3,
+          actual_success_rate: 1,
+          cache_hit_count: 2,
+          cache_sample_count: 2,
+          cache_hit_rate: 1,
+        }),
+      },
+    ],
+    cache_write_items: [],
+    ...overrides,
+  }
+}
+
+function createChannels() {
+  return [
+    {
+      id: 7,
+      name: '渠道一',
+      status: CHANNEL_STATUS.MANUAL_DISABLED,
+      status_reason: '',
+      cost_ratio: 0.2,
+      channel_remark: '主线路',
+    },
+    {
+      id: 8,
+      name: '渠道二',
+      status: CHANNEL_STATUS.ENABLED,
+      status_reason: '',
+      cost_ratio: 1.5,
+      channel_remark: '',
+    },
+    {
+      id: 9,
+      name: '渠道三',
+      status: CHANNEL_STATUS.ENABLED,
+      status_reason: '',
+      cost_ratio: 0.5,
+      channel_remark: '低倍率线路',
+    },
+  ]
+}
+
+function renderDialogContent(
+  overrides: Partial<
+    React.ComponentProps<typeof ChannelMonitorTodaySuccessDialogContent>
+  > = {}
+) {
+  return renderToStaticMarkup(
+    <ChannelMonitorTodaySuccessDialogContent
+      result={createResult()}
+      channels={createChannels()}
+      isLoading={false}
+      isError={false}
+      isFetching={false}
+      onRetry={noop}
+      {...overrides}
+    />
+  )
+}
+
+function getTableCells(markup: string) {
+  return markup.match(/<td\b[\s\S]*?<\/td>/g) ?? []
+}
+
+function getTables(markup: string) {
+  return markup.match(/<table\b[\s\S]*?<\/table>/g) ?? []
+}
+
+describe('channel monitor today success overview', () => {
+  test('exposes the whole summary card as a keyboard-focusable button', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={createResult()}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
+
+    assert.match(markup, /^<div\b/)
+    assert.ok(markup.includes('role="button"'))
+    assert.ok(markup.includes('tabindex="0"'))
+    assert.ok(markup.includes('今日成功率 / 缓存率'))
+    assert.ok(markup.includes('90%'))
+    assert.ok(markup.includes('50%'))
+    assert.ok(markup.includes('10 次请求 · 点击查看渠道和 API Key 明细'))
+    assert.ok(
+      markup.includes('aria-label="查看今日成功率和缓存率渠道及 API Key 明细')
+    )
+  })
+
+  test('opens the detail from Enter and Space keyboard activation', () => {
+    const activatedKeys: string[] = []
+    const element = ChannelMonitorTodaySuccessCard({
+      result: createResult(),
+      isLoading: false,
+      isError: false,
+      onOpen: () => activatedKeys.push('opened'),
+    }) as ReactElement<{
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void
+    }>
+
+    for (const key of ['Enter', ' ']) {
+      let defaultPrevented = false
+      element.props.onKeyDown({
+        key,
+        preventDefault: () => {
+          defaultPrevented = true
+        },
+      } as KeyboardEvent<HTMLDivElement>)
+      assert.equal(defaultPrevented, true)
+    }
+
+    assert.deepEqual(activatedKeys, ['opened', 'opened'])
+  })
+
+  test('shows a dash on the card when today has no cache samples', () => {
+    const result = createResult({
+      summary: createSummary({
+        cache_hit_count: 0,
+        cache_sample_count: 0,
+        cache_hit_rate: 0,
+      }),
+    })
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={result}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
+
+    assert.match(markup, /90%[\s\S]*>[\s\n]*-[\s\n]*<\/span>/)
+    assert.doesNotMatch(markup, />0%<\/span>/)
+  })
+
+  test('shows channel metadata and orders enabled channels by ascending cost ratio', () => {
+    const markup = renderDialogContent()
+    const tables = getTables(markup)
+    const channelCells = getTableCells(tables[0] ?? '')
+
+    assert.equal(tables.length, 2)
+    assert.ok((tables[0] ?? '').includes('备注'))
+    assert.ok((tables[0] ?? '').includes('成本倍率'))
+    assert.equal(channelCells.length, 18)
+
+    assert.ok(channelCells[0]?.includes('渠道三'))
+    assert.ok(channelCells[0]?.includes('ID 9'))
+    assert.ok(channelCells[1]?.includes('低倍率线路'))
+    assert.ok(channelCells[2]?.includes('0.5'))
+
+    assert.ok(channelCells[6]?.includes('渠道二'))
+    assert.ok(channelCells[6]?.includes('ID 8'))
+    assert.match(channelCells[7] ?? '', />-<\/span><\/td>/)
+    assert.ok(channelCells[8]?.includes('1.5'))
+    assert.ok(channelCells[10]?.includes('100%'))
+    assert.ok(channelCells[11]?.includes('50%'))
+    assert.ok(channelCells[11]?.includes('text-foreground'))
+
+    assert.ok(channelCells[12]?.includes('渠道一'))
+    assert.ok(channelCells[12]?.includes('ID 7'))
+    assert.ok(channelCells[12]?.includes('手动禁用'))
+    assert.ok(channelCells[13]?.includes('主线路'))
+    assert.ok(channelCells[14]?.includes('0.2'))
+  })
+
+  test('fits the channel detail table inside the dialog without horizontal scrolling', () => {
+    const markup = renderDialogContent()
+    const channelTable = getTables(markup)[0] ?? ''
+
+    assert.ok(markup.includes('overflow-hidden rounded-lg border'))
+    assert.ok(channelTable.includes('table-fixed'))
+    assert.ok(channelTable.includes('w-full'))
+    assert.equal(channelTable.includes('min-w-[960px]'), false)
+    assert.match(channelTable, /<th[^>]*w-\[22%\]/)
+    assert.match(channelTable, /<th[^>]*w-\[26%\]/)
+  })
+
+  test('orders API Keys by success rate then cache rate descending', () => {
+    const markup = renderDialogContent()
+    const apiKeyCells = getTableCells(getTables(markup)[1] ?? '')
+
+    assert.equal(apiKeyCells.length, 12)
+    assert.ok(apiKeyCells[0]?.includes('高缓存率 Key'))
+    assert.ok(apiKeyCells[2]?.includes('100%'))
+    assert.ok(apiKeyCells[3]?.includes('100%'))
+    assert.ok(apiKeyCells[4]?.includes('高成功率 Key'))
+    assert.ok(apiKeyCells[6]?.includes('100%'))
+    assert.ok(apiKeyCells[7]?.includes('0%'))
+    assert.ok(apiKeyCells[8]?.includes('生产 Key'))
+    assert.ok(apiKeyCells[10]?.includes('75%'))
+    assert.ok(apiKeyCells[11]?.includes('50%'))
+  })
+
+  test('shows loading placeholders while the daily summary is loading', () => {
+    const markup = renderDialogContent({ result: undefined, isLoading: true })
+
+    assert.ok(markup.includes('data-slot="skeleton"'))
+    assert.equal(markup.includes('<table'), false)
+  })
+
+  test('shows a retry action after the daily summary fails to load', () => {
+    const markup = renderDialogContent({ result: undefined, isError: true })
+
+    assert.ok(markup.includes('今日请求统计加载失败'))
+    assert.ok(markup.includes('重新加载'))
+    assert.match(markup, /<button\b/)
+  })
+
+  test('explains which logs are required when success metrics are unavailable', () => {
+    const markup = renderDialogContent({
+      result: createResult({ success_metrics_available: false }),
+    })
+
+    assert.ok(markup.includes('成功率统计不可用'))
+    assert.ok(markup.includes('需要同时开启消费日志和错误日志'))
+  })
+
+  test('shows an empty state when today has no channel requests', () => {
+    const markup = renderDialogContent({
+      result: createResult({
+        summary: createSummary({
+          actual_success_count: 0,
+          actual_failure_count: 0,
+          actual_sample_count: 0,
+          actual_success_rate: 0,
+        }),
+        channel_items: [],
+      }),
+    })
+
+    assert.ok(markup.includes('今日暂无请求数据'))
+    assert.ok(markup.includes('今日尚未记录可统计的请求'))
+  })
+})

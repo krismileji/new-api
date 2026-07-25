@@ -31,6 +31,7 @@ import type {
   ChannelMonitorSettings,
   ChannelMonitorSmartScheduleConfig,
   ChannelMonitorSuccessDetailResult,
+  ChannelMonitorTodaySuccessResult,
   ChannelMonitorTaskRunResult,
   ChannelMonitorTaskPage,
   ChannelMonitorTaskKind,
@@ -120,6 +121,13 @@ export async function getChannelMonitorSuccessDetail(request: {
       },
     })
   )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorTodaySuccess() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorTodaySuccessResult>
+  >('/api/channel_monitor/success/today', channelMonitorRequestConfig())
   return ensureChannelMonitorSuccess(response.data)
 }
 

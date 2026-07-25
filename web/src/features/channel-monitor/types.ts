@@ -320,6 +320,9 @@ export type ChannelMonitorSuccessSummary = {
   final_failure_count: number
   final_sample_count: number
   final_success_rate: number
+  cache_hit_count: number
+  cache_sample_count: number
+  cache_hit_rate: number
 }
 
 export type ChannelMonitorSuccessMetric = ChannelMonitorSuccessSummary & {
@@ -336,6 +339,36 @@ export type ChannelMonitorChannelSuccessMetric =
     channel_id: number
   }
 
+export type ChannelMonitorSuccessAPIKeyMetric = ChannelMonitorSuccessSummary & {
+  api_key_id: number
+  api_key_name: string
+}
+
+export type ChannelMonitorTodaySuccessChannelItem =
+  ChannelMonitorSuccessSummary & {
+    channel_id: number
+    channel_name: string
+    channel_remark: string
+  }
+
+export type ChannelMonitorTodayCacheWriteItem = {
+  channel_id: number
+  channel_name: string
+  channel_remark: string
+  request_count: number
+}
+
+export type ChannelMonitorTodaySuccessResult = {
+  generated_at: number
+  day_start: number
+  success_metrics_available: boolean
+  cache_write_metrics_available: boolean
+  summary: ChannelMonitorSuccessSummary
+  channel_items: ChannelMonitorTodaySuccessChannelItem[]
+  api_key_items: ChannelMonitorSuccessAPIKeyMetric[]
+  cache_write_items: ChannelMonitorTodayCacheWriteItem[]
+}
+
 export type ChannelMonitorFailureCategory = {
   channel_id: number
   status_code: number
@@ -350,6 +383,7 @@ export type ChannelMonitorFailureCategory = {
 export type ChannelMonitorSuccessDetail = {
   summary: ChannelMonitorSuccessSummary
   channel_items: ChannelMonitorChannelSuccessMetric[]
+  api_key_items: ChannelMonitorSuccessAPIKeyMetric[]
   failure_categories: ChannelMonitorFailureCategory[]
 }
 

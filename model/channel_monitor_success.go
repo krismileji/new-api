@@ -21,6 +21,9 @@ type ChannelMonitorSuccessSummary struct {
 	FinalFailureCount  int64   `json:"final_failure_count"`
 	FinalSampleCount   int64   `json:"final_sample_count"`
 	FinalSuccessRate   float64 `json:"final_success_rate"`
+	CacheHitCount      int64   `json:"cache_hit_count"`
+	CacheSampleCount   int64   `json:"cache_sample_count"`
+	CacheHitRate       float64 `json:"cache_hit_rate"`
 }
 
 type ChannelMonitorSuccessMetric struct {
@@ -39,6 +42,12 @@ type ChannelMonitorChannelSuccessMetric struct {
 	ChannelMonitorSuccessSummary
 }
 
+type ChannelMonitorSuccessAPIKeyMetric struct {
+	APIKeyId   int    `json:"api_key_id"`
+	APIKeyName string `json:"api_key_name"`
+	ChannelMonitorSuccessSummary
+}
+
 type ChannelMonitorFailureCategory struct {
 	ChannelId     int    `json:"channel_id"`
 	StatusCode    int    `json:"status_code"`
@@ -53,6 +62,7 @@ type ChannelMonitorFailureCategory struct {
 type ChannelMonitorSuccessDetail struct {
 	Summary           ChannelMonitorSuccessSummary         `json:"summary"`
 	ChannelItems      []ChannelMonitorChannelSuccessMetric `json:"channel_items"`
+	APIKeyItems       []ChannelMonitorSuccessAPIKeyMetric  `json:"api_key_items"`
 	FailureCategories []ChannelMonitorFailureCategory      `json:"failure_categories"`
 }
 
@@ -67,15 +77,32 @@ type channelMonitorSuccessCounts struct {
 	actualFailure int64
 	finalSuccess  int64
 	finalFailure  int64
+	cacheHit      int64
+	cacheSample   int64
 }
 
 type channelMonitorSuccessRow struct {
-	ChannelId      int
-	ModelName      string
-	GroupName      string `gorm:"column:group_name"`
-	Type           int
-	IsRetryAttempt *bool
-	Count          int64
+	ChannelId        int
+	ModelName        string
+	GroupName        string `gorm:"column:group_name"`
+	TokenId          int
+	TokenName        string
+	Type             int
+	IsRetryAttempt   *bool
+	Count            int64
+	CacheHitCount    int64 `gorm:"column:cache_hit_count"`
+	CacheSampleCount int64 `gorm:"column:cache_sample_count"`
+}
+
+type channelMonitorSuccessAPIKeyKey struct {
+	id   int
+	name string
+}
+
+type channelMonitorSuccessAPIKeyAggregate struct {
+	id     int
+	name   string
+	counts channelMonitorSuccessCounts
 }
 
 func channelMonitorLogGroupColumn() string {
@@ -101,13 +128,31 @@ func applyChannelMonitorSuccessFilter(tx *gorm.DB, filter ChannelMonitorSuccessF
 	return tx
 }
 
-func getChannelMonitorSuccessRows(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) ([]channelMonitorSuccessRow, error) {
+func getChannelMonitorSuccessRows(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter, includeCacheMetrics bool, includeAPIKeyMetrics bool) ([]channelMonitorSuccessRow, error) {
 	groupColumn := channelMonitorLogGroupColumn()
 	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, type, is_retry_attempt, COUNT(*) AS count"
 	groupColumns := "channel_id, model_name, " + groupColumn + ", type, is_retry_attempt"
-	query := LOG_DB.WithContext(ctx).
-		Model(&Log{}).
-		Select(selectColumns).
+	if includeAPIKeyMetrics {
+		selectColumns = "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, COUNT(*) AS count"
+		groupColumns = "channel_id, model_name, " + groupColumn + ", token_id, token_name, type, is_retry_attempt"
+	}
+	query := LOG_DB.WithContext(ctx).Model(&Log{})
+	if includeCacheMetrics {
+		const cacheTokenFieldPattern = `%"cache_tokens":%`
+		const zeroCacheTokenBeforeFieldPattern = `%"cache_tokens":0,%`
+		const zeroCacheTokenAtEndPattern = `%"cache_tokens":0}%`
+		selectColumns += ", SUM(CASE WHEN other LIKE ? THEN 1 ELSE 0 END) AS cache_sample_count, " +
+			"SUM(CASE WHEN other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ? THEN 1 ELSE 0 END) AS cache_hit_count"
+		query = query.Select(selectColumns,
+			cacheTokenFieldPattern,
+			cacheTokenFieldPattern,
+			zeroCacheTokenBeforeFieldPattern,
+			zeroCacheTokenAtEndPattern,
+		)
+	} else {
+		query = query.Select(selectColumns)
+	}
+	query = query.
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
 		Where("channel_id > ?", 0).
 		Where("created_at >= ?", startTimestamp)
@@ -118,10 +163,12 @@ func getChannelMonitorSuccessRows(ctx context.Context, startTimestamp int64, fil
 	return rows, err
 }
 
-func (counts *channelMonitorSuccessCounts) add(logType int, isRetryAttempt bool, count int64) {
+func (counts *channelMonitorSuccessCounts) add(logType int, isRetryAttempt bool, count int64, cacheHitCount int64, cacheSampleCount int64) {
 	if logType == LogTypeConsume {
 		counts.actualSuccess += count
 		counts.finalSuccess += count
+		counts.cacheHit += cacheHitCount
+		counts.cacheSample += cacheSampleCount
 		return
 	}
 	counts.actualFailure += count
@@ -140,6 +187,8 @@ func (counts channelMonitorSuccessCounts) summary() ChannelMonitorSuccessSummary
 		FinalSuccessCount:  counts.finalSuccess,
 		FinalFailureCount:  counts.finalFailure,
 		FinalSampleCount:   finalSampleCount,
+		CacheHitCount:      counts.cacheHit,
+		CacheSampleCount:   counts.cacheSample,
 	}
 	if actualSampleCount > 0 {
 		summary.ActualSuccessRate = float64(counts.actualSuccess) / float64(actualSampleCount)
@@ -147,14 +196,69 @@ func (counts channelMonitorSuccessCounts) summary() ChannelMonitorSuccessSummary
 	if finalSampleCount > 0 {
 		summary.FinalSuccessRate = float64(counts.finalSuccess) / float64(finalSampleCount)
 	}
+	if counts.cacheSample > 0 {
+		summary.CacheHitRate = float64(counts.cacheHit) / float64(counts.cacheSample)
+	}
 	return summary
+}
+
+func addChannelMonitorSuccessAPIKeyCount(aggregates map[channelMonitorSuccessAPIKeyKey]*channelMonitorSuccessAPIKeyAggregate, row channelMonitorSuccessRow) {
+	key := channelMonitorSuccessAPIKeyKey{
+		id:   row.TokenId,
+		name: strings.TrimSpace(row.TokenName),
+	}
+	if key.id > 0 {
+		key.name = ""
+	}
+	aggregate := aggregates[key]
+	if aggregate == nil {
+		aggregate = &channelMonitorSuccessAPIKeyAggregate{
+			id:   row.TokenId,
+			name: strings.TrimSpace(row.TokenName),
+		}
+		aggregates[key] = aggregate
+	} else if aggregate.name == "" {
+		aggregate.name = strings.TrimSpace(row.TokenName)
+	}
+	aggregate.counts.add(
+		row.Type,
+		row.IsRetryAttempt != nil && *row.IsRetryAttempt,
+		row.Count,
+		row.CacheHitCount,
+		row.CacheSampleCount,
+	)
+}
+
+func channelMonitorSuccessAPIKeyMetrics(aggregates map[channelMonitorSuccessAPIKeyKey]*channelMonitorSuccessAPIKeyAggregate) []ChannelMonitorSuccessAPIKeyMetric {
+	metrics := make([]ChannelMonitorSuccessAPIKeyMetric, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		metrics = append(metrics, ChannelMonitorSuccessAPIKeyMetric{
+			APIKeyId:                     aggregate.id,
+			APIKeyName:                   aggregate.name,
+			ChannelMonitorSuccessSummary: aggregate.counts.summary(),
+		})
+	}
+	sort.Slice(metrics, func(i int, j int) bool {
+		if metrics[i].ActualSampleCount != metrics[j].ActualSampleCount {
+			return metrics[i].ActualSampleCount > metrics[j].ActualSampleCount
+		}
+		if metrics[i].APIKeyId != metrics[j].APIKeyId {
+			return metrics[i].APIKeyId < metrics[j].APIKeyId
+		}
+		return metrics[i].APIKeyName < metrics[j].APIKeyName
+	})
+	return metrics
 }
 
 // GetChannelMonitorSuccessMetrics reports upstream-call success and the final
 // user-visible outcome. Retry-attempt errors affect actual calls but are
 // excluded from final outcomes.
 func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
-	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, ChannelMonitorSuccessFilter{})
+	return getChannelMonitorSuccessMetrics(ctx, startTimestamp, true)
+}
+
+func getChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64, includeCacheMetrics bool) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
+	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, ChannelMonitorSuccessFilter{}, includeCacheMetrics, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,7 +278,7 @@ func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) 
 				counts = &channelMonitorSuccessCounts{}
 				channelCounts[key] = counts
 			}
-			counts.add(row.Type, isRetryAttempt, row.Count)
+			counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
 		}
 
 		group := strings.TrimSpace(row.GroupName)
@@ -186,7 +290,7 @@ func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) 
 			counts = &channelMonitorSuccessCounts{}
 			groupCounts[group] = counts
 		}
-		counts.add(row.Type, isRetryAttempt, row.Count)
+		counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
 	}
 
 	channelMetrics := make([]ChannelMonitorSuccessMetric, 0, len(channelCounts))
@@ -220,25 +324,27 @@ func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) 
 // GetChannelMonitorSuccessDetail returns the selected scope's totals and
 // per-channel breakdown. Channel scopes also include categorized failures.
 func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) (ChannelMonitorSuccessDetail, error) {
-	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter)
+	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter, true, true)
 	if err != nil {
 		return ChannelMonitorSuccessDetail{}, err
 	}
 
 	totalCounts := channelMonitorSuccessCounts{}
 	channelCounts := make(map[int]*channelMonitorSuccessCounts)
+	apiKeyCounts := make(map[channelMonitorSuccessAPIKeyKey]*channelMonitorSuccessAPIKeyAggregate)
 	for _, row := range rows {
 		if filter.Group == "" && strings.TrimSpace(row.ModelName) == "" {
 			continue
 		}
 		isRetryAttempt := row.IsRetryAttempt != nil && *row.IsRetryAttempt
-		totalCounts.add(row.Type, isRetryAttempt, row.Count)
+		totalCounts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 		counts := channelCounts[row.ChannelId]
 		if counts == nil {
 			counts = &channelMonitorSuccessCounts{}
 			channelCounts[row.ChannelId] = counts
 		}
-		counts.add(row.Type, isRetryAttempt, row.Count)
+		counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
 	}
 
 	channelItems := make([]ChannelMonitorChannelSuccessMetric, 0, len(channelCounts))
@@ -262,6 +368,7 @@ func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, f
 	return ChannelMonitorSuccessDetail{
 		Summary:           totalCounts.summary(),
 		ChannelItems:      channelItems,
+		APIKeyItems:       channelMonitorSuccessAPIKeyMetrics(apiKeyCounts),
 		FailureCategories: failureCategories,
 	}, nil
 }

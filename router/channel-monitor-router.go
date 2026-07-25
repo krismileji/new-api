@@ -14,6 +14,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.GET("/", controller.GetChannelMonitorOverview)
 		monitorRoute.GET("/cost", controller.GetChannelMonitorCostOverview)
 		monitorRoute.GET("/performance", controller.GetChannelMonitorPerformance)
+		monitorRoute.GET("/success/today", controller.GetChannelMonitorTodaySuccess)
 		monitorRoute.GET("/success/detail", controller.GetChannelMonitorSuccessDetail)
 		monitorRoute.GET("/tasks", controller.ListChannelMonitorTasks)
 		monitorRoute.PUT("/settings", controller.UpdateChannelMonitorSettings)

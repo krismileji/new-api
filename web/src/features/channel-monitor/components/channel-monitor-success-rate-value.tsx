@@ -27,6 +27,10 @@ type ChannelMonitorSuccessRateValueProps = {
   rate: number | null | undefined
   successCount: number | null | undefined
   sampleCount: number | null | undefined
+  cacheHitRate?: number | null
+  cacheHitCount?: number | null
+  cacheSampleCount?: number | null
+  showCacheRate?: boolean
   available: boolean
   loading: boolean
   error: boolean
@@ -43,7 +47,11 @@ export function ChannelMonitorSuccessRateValue(
   props: ChannelMonitorSuccessRateValueProps
 ) {
   if (props.loading) {
-    return <Skeleton className='h-9 w-20' />
+    return (
+      <Skeleton
+        className={cn(props.showCacheRate ? 'h-14 w-24' : 'h-9 w-20')}
+      />
+    )
   }
   if (props.error) {
     return <span className='text-destructive text-xs'>加载失败</span>
@@ -67,14 +75,23 @@ export function ChannelMonitorSuccessRateValue(
     rateClassName = 'text-warning'
   }
   const successCount = props.successCount ?? 0
+  const cacheHitCount = props.cacheHitCount ?? 0
+  const cacheSampleCount = props.cacheSampleCount ?? 0
+  const cacheRateAvailable =
+    cacheSampleCount > 0 &&
+    props.cacheHitRate != null &&
+    Number.isFinite(props.cacheHitRate)
+  const cacheRateText = cacheRateAvailable
+    ? percentFormatter.format(props.cacheHitRate ?? 0)
+    : '-'
+  const cacheDetail = cacheRateAvailable
+    ? `缓存命中 ${cacheHitCount} / ${cacheSampleCount} 次`
+    : '暂无缓存样本'
+  const valueTitle = `${successCount} 次成功 / ${props.sampleCount} 次统计${props.showCacheRate ? `；${cacheDetail}` : ''}`
   const value = (
     <span
       className='flex min-w-20 flex-col items-start gap-0.5'
-      title={
-        props.onClick
-          ? undefined
-          : `${successCount} 次成功 / ${props.sampleCount} 次统计`
-      }
+      title={props.onClick ? undefined : valueTitle}
     >
       <span
         className={cn('font-mono font-semibold tabular-nums', rateClassName)}
@@ -84,6 +101,14 @@ export function ChannelMonitorSuccessRateValue(
       <span className='text-muted-foreground text-xs tabular-nums'>
         {successCount} / {props.sampleCount} 次
       </span>
+      {props.showCacheRate ? (
+        <span
+          className='text-muted-foreground text-xs tabular-nums'
+          title={cacheDetail}
+        >
+          缓存率 {cacheRateText}
+        </span>
+      ) : null}
     </span>
   )
   if (!props.onClick) {
@@ -97,7 +122,7 @@ export function ChannelMonitorSuccessRateValue(
       className='h-auto min-w-0 justify-start gap-1 px-1 py-0.5 text-left whitespace-normal'
       onClick={props.onClick}
       aria-label={detailLabel}
-      title={`${detailLabel}；${successCount} 次成功 / ${props.sampleCount} 次统计`}
+      title={`${detailLabel}；${valueTitle}`}
     >
       {value}
       <HugeiconsIcon icon={ViewIcon} data-icon='inline-end' />

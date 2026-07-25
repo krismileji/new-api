@@ -198,7 +198,7 @@ func getChannelMonitorPerformanceMetrics(ctx context.Context, logDB *gorm.DB, st
 // included so a channel failure is still counted when a later fallback channel
 // succeeds.
 func GetChannelMonitorStabilityMetrics(ctx context.Context, startTimestamp int64) ([]ChannelMonitorStabilityMetric, error) {
-	channelMetrics, _, err := GetChannelMonitorSuccessMetrics(ctx, startTimestamp)
+	channelMetrics, _, err := getChannelMonitorSuccessMetrics(ctx, startTimestamp, false)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +221,7 @@ func channelMonitorStabilityMetricsFromSuccess(channelMetrics []ChannelMonitorSu
 }
 
 func GetChannelMonitorStabilityMetric(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) (ChannelMonitorStabilityMetric, error) {
-	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter)
+	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter, false, false)
 	if err != nil {
 		return ChannelMonitorStabilityMetric{}, err
 	}
@@ -231,7 +231,7 @@ func GetChannelMonitorStabilityMetric(ctx context.Context, startTimestamp int64,
 		if strings.TrimSpace(row.ModelName) == "" {
 			continue
 		}
-		counts.add(row.Type, row.IsRetryAttempt != nil && *row.IsRetryAttempt, row.Count)
+		counts.add(row.Type, row.IsRetryAttempt != nil && *row.IsRetryAttempt, row.Count, 0, 0)
 	}
 	summary := counts.summary()
 	return ChannelMonitorStabilityMetric{
