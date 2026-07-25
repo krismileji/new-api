@@ -101,6 +101,7 @@ import type {
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
+import { EditChannelRatioDialog } from './edit-channel-ratio-dialog'
 
 type UpstreamConfigDialogProps = {
   channel: ChannelMonitorItem
@@ -193,6 +194,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const [testResult, setTestResult] = useState<NewAPIGroupRatioResult | null>(
     null
   )
+  const [ratioEditorOpen, setRatioEditorOpen] = useState(false)
   const [upstreamVersion, setUpstreamVersion] = useState<string | null>(null)
   const savedUpstream = props.channel.upstream
   const savedCostConversion: ChannelMonitorCostConversion =
@@ -771,6 +773,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
               <ChannelMonitorCostConversionFields
                 form={form}
                 upstreamRatio={testResult?.ratio ?? props.channel.ratio}
+                onEditRatio={() => {
+                  setTestResult(null)
+                  setRatioEditorOpen(true)
+                }}
+                editRatioDisabled={pending}
               />
 
               <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
@@ -1360,6 +1367,13 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
           </Form>
         </div>
       </DialogContent>
+      {ratioEditorOpen ? (
+        <EditChannelRatioDialog
+          channel={props.channel}
+          open={ratioEditorOpen}
+          onOpenChange={setRatioEditorOpen}
+        />
+      ) : null}
     </Dialog>
   )
 }

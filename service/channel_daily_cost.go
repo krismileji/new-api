@@ -1,12 +1,13 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,12 +21,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
 const (
 	channelDailyCostSnapshotContextKey = "channel_daily_cost_snapshot"
-	channelDailyCostSnapshotTTL        = 5 * time.Second
+	channelDailyCostSnapshotTTL        = time.Minute
 )
 
 type channelDailyCostSnapshot struct {
@@ -42,9 +44,14 @@ type channelDailyCostSnapshot struct {
 type channelDailyCostSnapshotCacheEntry struct {
 	Snapshot  channelDailyCostSnapshot
 	ExpiresAt time.Time
+	Version   uint64
 }
 
-var channelDailyCostSnapshotCache sync.Map
+var (
+	channelDailyCostSnapshotCache    sync.Map
+	channelDailyCostSnapshotVersions sync.Map
+	channelDailyCostSnapshotLoads    singleflight.Group
+)
 
 // CaptureChannelDailyCostSnapshot freezes the channel's upstream cost ratio
 // before an upstream request starts. Settlement uses this snapshot even if an
@@ -59,10 +66,17 @@ func CaptureChannelDailyCostSnapshot(ctx *gin.Context, channelId int) {
 }
 
 func InvalidateChannelDailyCostSnapshot(channelId int) {
+	channelDailyCostSnapshotVersion(channelId).Add(1)
 	channelDailyCostSnapshotCache.Delete(channelId)
+	channelDailyCostSnapshotLoads.Forget(strconv.Itoa(channelId))
 }
 
 func ResetChannelDailyCostSnapshotCache() {
+	channelDailyCostSnapshotVersions.Range(func(key any, value any) bool {
+		value.(*atomic.Uint64).Add(1)
+		channelDailyCostSnapshotLoads.Forget(strconv.Itoa(key.(int)))
+		return true
+	})
 	channelDailyCostSnapshotCache.Range(func(key any, _ any) bool {
 		channelDailyCostSnapshotCache.Delete(key)
 		return true
@@ -70,55 +84,90 @@ func ResetChannelDailyCostSnapshotCache() {
 }
 
 func getChannelDailyCostSnapshot(channelId int) (channelDailyCostSnapshot, error) {
-	if cached, ok := channelDailyCostSnapshotCache.Load(channelId); ok {
-		entry := cached.(channelDailyCostSnapshotCacheEntry)
-		if time.Now().Before(entry.ExpiresAt) {
-			return entry.Snapshot, nil
+	version := channelDailyCostSnapshotVersion(channelId)
+	if snapshot, ok := loadChannelDailyCostSnapshotFromCache(channelId, version.Load()); ok {
+		return snapshot, nil
+	}
+	value, err, _ := channelDailyCostSnapshotLoads.Do(strconv.Itoa(channelId), func() (any, error) {
+		loadVersion := version.Load()
+		if snapshot, ok := loadChannelDailyCostSnapshotFromCache(channelId, loadVersion); ok {
+			return snapshot, nil
 		}
-		channelDailyCostSnapshotCache.Delete(channelId)
-	}
+		snapshot := channelDailyCostSnapshot{
+			ChannelId:    channelId,
+			QuotaPerUnit: common.QuotaPerUnit,
+		}
+		monitor, err := model.GetChannelRatioMonitor(channelId)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			storeChannelDailyCostSnapshot(channelId, version, loadVersion, snapshot)
+			return snapshot, nil
+		}
+		if err != nil {
+			return snapshot, err
+		}
+		if monitor.UpdatedTime <= 0 {
+			storeChannelDailyCostSnapshot(channelId, version, loadVersion, snapshot)
+			return snapshot, nil
+		}
 
-	snapshot := channelDailyCostSnapshot{
-		ChannelId:    channelId,
-		QuotaPerUnit: common.QuotaPerUnit,
-	}
-	monitor, err := model.GetChannelRatioMonitor(channelId)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		channelDailyCostSnapshotCache.Store(channelId, channelDailyCostSnapshotCacheEntry{
-			Snapshot:  snapshot,
-			ExpiresAt: time.Now().Add(channelDailyCostSnapshotTTL),
-		})
+		conversion, err := ParseChannelMonitorCostConversion(monitor.CostConversion)
+		if err != nil {
+			return snapshot, err
+		}
+		if math.IsNaN(snapshot.QuotaPerUnit) || math.IsInf(snapshot.QuotaPerUnit, 0) || snapshot.QuotaPerUnit <= 0 {
+			return snapshot, errors.New("额度单位配置无效")
+		}
+		costRatio, _, err := CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
+		if err != nil {
+			return snapshot, err
+		}
+		snapshot.CostRatioCNY = costRatio
+		snapshot.Configured = true
+		storeChannelDailyCostSnapshot(channelId, version, loadVersion, snapshot)
 		return snapshot, nil
-	}
+	})
 	if err != nil {
-		return snapshot, err
+		return channelDailyCostSnapshot{
+			ChannelId:    channelId,
+			QuotaPerUnit: common.QuotaPerUnit,
+		}, err
 	}
-	if monitor.UpdatedTime <= 0 {
-		channelDailyCostSnapshotCache.Store(channelId, channelDailyCostSnapshotCacheEntry{
-			Snapshot:  snapshot,
-			ExpiresAt: time.Now().Add(channelDailyCostSnapshotTTL),
-		})
-		return snapshot, nil
+	snapshot, ok := value.(channelDailyCostSnapshot)
+	if !ok {
+		return channelDailyCostSnapshot{
+			ChannelId:    channelId,
+			QuotaPerUnit: common.QuotaPerUnit,
+		}, errors.New("渠道成本快照结果无效")
 	}
+	return snapshot, nil
+}
 
-	conversion, err := ParseChannelMonitorCostConversion(monitor.CostConversion)
-	if err != nil {
-		return snapshot, err
+func channelDailyCostSnapshotVersion(channelId int) *atomic.Uint64 {
+	value, _ := channelDailyCostSnapshotVersions.LoadOrStore(channelId, &atomic.Uint64{})
+	return value.(*atomic.Uint64)
+}
+
+func loadChannelDailyCostSnapshotFromCache(channelId int, version uint64) (channelDailyCostSnapshot, bool) {
+	cached, ok := channelDailyCostSnapshotCache.Load(channelId)
+	if !ok {
+		return channelDailyCostSnapshot{}, false
 	}
-	if math.IsNaN(snapshot.QuotaPerUnit) || math.IsInf(snapshot.QuotaPerUnit, 0) || snapshot.QuotaPerUnit <= 0 {
-		return snapshot, errors.New("额度单位配置无效")
+	entry := cached.(channelDailyCostSnapshotCacheEntry)
+	if entry.Version != version || !time.Now().Before(entry.ExpiresAt) {
+		return channelDailyCostSnapshot{}, false
 	}
-	costRatio, _, err := CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
-	if err != nil {
-		return snapshot, err
+	return entry.Snapshot, true
+}
+
+func storeChannelDailyCostSnapshot(channelId int, version *atomic.Uint64, loadVersion uint64, snapshot channelDailyCostSnapshot) {
+	if version.Load() != loadVersion {
+		return
 	}
-	snapshot.CostRatioCNY = costRatio
-	snapshot.Configured = true
 	channelDailyCostSnapshotCache.Store(channelId, channelDailyCostSnapshotCacheEntry{
 		Snapshot:  snapshot,
 		ExpiresAt: time.Now().Add(channelDailyCostSnapshotTTL),
+		Version:   loadVersion,
 	})
-	return snapshot, nil
 }
 
 func channelDailyCostSnapshotFromContext(ctx *gin.Context, channelId int) channelDailyCostSnapshot {
@@ -151,11 +200,6 @@ func channelDailyCostSnapshotWithCurrentKey(ctx *gin.Context, snapshot channelDa
 	}
 	snapshot.APIKeyId = ctx.GetInt("token_id")
 	snapshot.APIKeyName = strings.TrimSpace(ctx.GetString("token_name"))
-	if snapshot.APIKeyId > 0 && snapshot.APIKeyName == "" {
-		if token, err := model.GetTokenById(snapshot.APIKeyId); err == nil {
-			snapshot.APIKeyName = strings.TrimSpace(token.Name)
-		}
-	}
 	value, exists := common.GetContextKey(ctx, constant.ContextKeyChannelKey)
 	if !exists {
 		snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, "")
@@ -179,6 +223,9 @@ func recordChannelDailyCostFromQuota(ctx *gin.Context, channelId int, quotaBefor
 
 func recordChannelDailyCostUnresolved(ctx *gin.Context, channelId int) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
+	if !snapshot.Configured {
+		return
+	}
 	recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 }
 
@@ -194,7 +241,10 @@ func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bo
 
 func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) {
 	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
-	if !snapshot.Configured || math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
+	if !snapshot.Configured {
+		return
+	}
+	if math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
@@ -215,13 +265,17 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 	if snapshot.ChannelId <= 0 {
 		return
 	}
-	dbContext := context.Background()
-	if ctx != nil && ctx.Request != nil {
-		dbContext = context.WithoutCancel(ctx.Request.Context())
-	}
-	if err := model.AddChannelDailyCostWithAPIKeyAndToken(dbContext, snapshot.ChannelId, common.GetTimestamp(), costNanoCNY, settledDelta, unresolvedDelta, snapshot.APIKeyId, snapshot.APIKeyName, snapshot.KeyFingerprint, snapshot.KeyDisplay); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败: %s", snapshot.ChannelId, err.Error()))
-	}
+	enqueueChannelDailyCost(model.ChannelDailyCostDelta{
+		ChannelId:       snapshot.ChannelId,
+		OccurredAt:      common.GetTimestamp(),
+		CostNanoCNY:     costNanoCNY,
+		SettledDelta:    settledDelta,
+		UnresolvedDelta: unresolvedDelta,
+		APIKeyId:        snapshot.APIKeyId,
+		APIKeyName:      snapshot.APIKeyName,
+		KeyFingerprint:  snapshot.KeyFingerprint,
+		KeyDisplay:      snapshot.KeyDisplay,
+	})
 }
 
 func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, billingUsage *dto.Usage, originUsage *dto.Usage, summary textQuotaSummary, tieredBillingApplied bool, tieredResult *billingexpr.TieredResult) {
@@ -316,7 +370,6 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
 	if !snapshot.Configured {
-		recordChannelDailyCostUnresolved(ctx, channelId)
 		return
 	}
 

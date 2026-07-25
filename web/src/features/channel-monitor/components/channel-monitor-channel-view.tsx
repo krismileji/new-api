@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  Edit02Icon,
   GaugeIcon,
   HistoryIcon,
   Layers01Icon,
@@ -88,7 +87,6 @@ type ChannelMonitorChannelViewProps = {
   onFetchUpstreamRatio: (channel: ChannelMonitorItem) => void
   onToggleStatus: (channel: ChannelMonitorItem) => void
   onTestConnection: (channel: ChannelMonitorItem) => void
-  onEditRatio: (channel: ChannelMonitorItem) => void
   onEditConcurrency: (channel: ChannelMonitorItem) => void
   onEditGroups: (channel: ChannelMonitorItem) => void
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
@@ -146,13 +144,11 @@ function ChannelMonitorUpdateMeta(props: ChannelMonitorUpdateMetaProps) {
   return (
     <div
       className={cn(
-        'text-muted-foreground flex w-full min-w-0 flex-col items-start gap-0.5 text-xs leading-4',
+        'text-muted-foreground flex flex-col items-start gap-0.5 text-xs leading-4 whitespace-nowrap',
         props.className
       )}
     >
-      <span className='block w-full truncate' title={label}>
-        {label}
-      </span>
+      <span title={label}>{label}</span>
     </div>
   )
 }
@@ -215,7 +211,7 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   if (!props.channel.upstream.balance_sync_enabled) {
     return (
       <span
-        className='text-muted-foreground block max-w-full truncate text-xs'
+        className='text-muted-foreground text-xs whitespace-nowrap'
         title='余额同步已关闭'
       >
         余额同步已关闭
@@ -252,7 +248,7 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   }
   return (
     <div
-      className='flex w-full min-w-0 flex-col items-start gap-0.5'
+      className='flex flex-col items-start gap-0.5 whitespace-nowrap'
       title={titleParts.join('；')}
     >
       <span
@@ -326,45 +322,24 @@ export function ChannelMonitorChannelView(
 
   return (
     <div className='overflow-hidden rounded-lg border'>
-      <Table
-        className={cn(
-          'table-fixed [&_td]:align-top [&_td]:overflow-hidden [&_td]:py-3',
-          props.smartScheduleEnabled ? 'min-w-[1744px]' : 'min-w-[1584px]'
-        )}
-      >
-        <colgroup>
-          <col className='w-[160px]' />
-          <col className='w-[208px]' />
-          <col className='w-[128px]' />
-          <col className='w-[224px]' />
-          <col className='w-[200px]' />
-          <col className='w-[176px]' />
-          <col className='w-[128px]' />
-          <col className='w-[136px]' />
-          <col className='w-[120px]' />
-          {props.smartScheduleEnabled ? <col className='w-[160px]' /> : null}
-          <col className='w-[104px]' />
-        </colgroup>
+      <Table className='w-max min-w-full table-auto [&_td]:py-3 [&_td]:align-top'>
         <TableHeader>
           <TableRow className='[&_th]:text-left'>
             <TableHead>渠道</TableHead>
-            <TableHead className='pl-[34px]'>上游余额</TableHead>
+            <TableHead className='min-w-[224px] pl-[34px]'>上游余额</TableHead>
             <TableHead>今日成本</TableHead>
             <TableHead className='pl-[34px]'>成本倍率</TableHead>
             <TableHead>倍率更新状态</TableHead>
             <TableHead>关联分组</TableHead>
             <TableHead>性能（{props.performanceRangeLabel}）</TableHead>
-            <TableHead
-              className='whitespace-normal'
-              title='按真实上游调用统计，包含重试过程中的失败'
-            >
+            <TableHead title='按真实上游调用统计，包含重试过程中的失败'>
               成功率（{props.performanceRangeLabel}）
             </TableHead>
             <TableHead>并发限制</TableHead>
             {props.smartScheduleEnabled ? (
               <TableHead>智能调度</TableHead>
             ) : null}
-            <TableHead>操作</TableHead>
+            <TableHead className='min-w-[112px]'>操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -382,11 +357,16 @@ export function ChannelMonitorChannelView(
               refreshesMetricsTogether &&
               (props.fetchingBalanceChannelId === channel.id ||
                 props.fetchingRatioChannelId === channel.id)
+            const sortedGroups = [...channel.groups].sort((left, right) => {
+              const ratioDifference =
+                (props.groupRatios[left] ?? 1) - (props.groupRatios[right] ?? 1)
+              return ratioDifference || left.localeCompare(right)
+            })
             return (
               <TableRow key={channel.id} className='[&_td]:text-left'>
-                <TableCell className='whitespace-normal'>
-                  <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                    <div className='flex w-full min-w-0 flex-wrap items-center gap-1.5'>
+                <TableCell className='whitespace-nowrap'>
+                  <div className='flex flex-col items-start gap-0.5'>
+                    <div className='flex items-center gap-1.5'>
                       <span
                         className={cn(
                           'size-2 shrink-0 rounded-full',
@@ -396,10 +376,7 @@ export function ChannelMonitorChannelView(
                         aria-label={channelStatusLabel}
                         title={channelStatusLabel}
                       />
-                      <span
-                        className='min-w-0 flex-1 truncate font-medium'
-                        title={channel.name}
-                      >
+                      <span className='font-medium' title={channel.name}>
                         {channel.name}
                       </span>
                       {!channelEnabled && (
@@ -412,7 +389,7 @@ export function ChannelMonitorChannelView(
                     </div>
                     {channel.channel_remark && (
                       <span
-                        className='text-muted-foreground max-w-full truncate text-xs'
+                        className='text-muted-foreground text-xs'
                         title={channel.channel_remark}
                       >
                         备注：{channel.channel_remark}
@@ -423,8 +400,8 @@ export function ChannelMonitorChannelView(
                     </span>
                   </div>
                 </TableCell>
-                <TableCell className='whitespace-normal'>
-                  <div className='grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-start gap-x-0.5'>
+                <TableCell className='min-w-[224px] whitespace-normal'>
+                  <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
                     {channel.upstream?.balance_sync_enabled ? (
                       <ChannelActionButton
                         label='更新上游余额'
@@ -442,7 +419,7 @@ export function ChannelMonitorChannelView(
                         size='icon-xs'
                       />
                     ) : null}
-                    <div className='col-start-2 min-w-0'>
+                    <div className='col-start-2'>
                       <ChannelUpstreamBalanceCell channel={channel} />
                     </div>
                   </div>
@@ -454,7 +431,7 @@ export function ChannelMonitorChannelView(
                   />
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  <div className='grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-start gap-x-0.5'>
+                  <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
                     {channel.upstream?.ratio_sync_enabled ? (
                       <ChannelActionButton
                         label='更新上游倍率'
@@ -472,8 +449,8 @@ export function ChannelMonitorChannelView(
                         size='icon-xs'
                       />
                     ) : null}
-                    <div className='col-start-2 min-w-0'>
-                      <div className='flex min-w-0 items-center gap-2 whitespace-nowrap'>
+                    <div className='col-start-2'>
+                      <div className='flex items-center gap-2 whitespace-nowrap'>
                         <span className='font-mono text-base font-semibold'>
                           {formatMonitorRatio(channel.cost_ratio)}
                         </span>
@@ -488,7 +465,7 @@ export function ChannelMonitorChannelView(
                       />
                       {channel.upstream ? (
                         <span
-                          className='text-muted-foreground mt-0.5 block w-full truncate text-xs'
+                          className='text-muted-foreground mt-0.5 block text-xs whitespace-nowrap'
                           title={`上游分组：${channel.upstream.group}`}
                         >
                           上游分组：{channel.upstream.group}
@@ -504,18 +481,13 @@ export function ChannelMonitorChannelView(
                   {channel.groups.length === 0 ? (
                     <span className='text-muted-foreground'>-</span>
                   ) : (
-                    <div className='flex w-full min-w-0 flex-wrap gap-1'>
-                      {channel.groups.map((group) => {
+                    <div className='flex w-max flex-col items-start gap-1'>
+                      {sortedGroups.map((group) => {
                         const groupRatio = props.groupRatios[group] ?? 1
                         const coefficient = props.groupCoefficients[group] ?? 1
                         return (
-                          <Badge
-                            key={group}
-                            variant='outline'
-                            className='max-w-full min-w-0'
-                            title={group}
-                          >
-                            <span className='min-w-0 truncate'>{group}</span>
+                          <Badge key={group} variant='outline' title={group}>
+                            <span>{group}</span>
                             <span className='shrink-0'>
                               {' '}
                               ×{' '}
@@ -577,7 +549,7 @@ export function ChannelMonitorChannelView(
                     />
                   </TableCell>
                 ) : null}
-                <TableCell>
+                <TableCell className='min-w-[112px]'>
                   <div className='inline-grid grid-cols-3 gap-0.5'>
                     <ChannelActionButton
                       label={
@@ -603,13 +575,6 @@ export function ChannelMonitorChannelView(
                       label='测试连接'
                       icon={TestTubeIcon}
                       onClick={() => props.onTestConnection(channel)}
-                    />
-                    <ChannelActionButton
-                      label={
-                        channel.ratio == null ? '记录渠道倍率' : '修改渠道倍率'
-                      }
-                      icon={Edit02Icon}
-                      onClick={() => props.onEditRatio(channel)}
                     />
                     <ChannelActionButton
                       label='设置并发限制'

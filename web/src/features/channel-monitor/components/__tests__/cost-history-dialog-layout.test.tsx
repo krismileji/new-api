@@ -56,7 +56,15 @@ function createOverview(): ChannelMonitorCostOverview {
     item_page: 1,
     item_page_size: 7,
     item_page_count: 2,
-    channels: [],
+    channels: [
+      {
+        channel_id: 1,
+        channel_name: '渠道一',
+        cost_cny: 2,
+        settled_count: 1,
+        unresolved_count: 0,
+      },
+    ],
     api_keys: [
       {
         id: 1,
@@ -81,5 +89,15 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('成本趋势'))
     assert.ok(markup.includes('API Key 明细'))
     assert.ok(markup.includes('日期第 1 / 2 页'))
+  })
+
+  test('keeps the channel summary table aligned with the daily table on wide layouts', () => {
+    const markup = renderToStaticMarkup(
+      <CostHistoryData overview={createOverview()} />
+    )
+
+    assert.ok(markup.includes('lg:col-start-2 lg:row-start-1'))
+    assert.ok(markup.includes('lg:h-0 lg:max-h-none lg:min-h-0 lg:flex-1'))
+    assert.ok(markup.includes('lg:col-start-1 lg:row-start-2'))
   })
 })

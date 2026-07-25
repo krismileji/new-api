@@ -36,6 +36,9 @@ export const MAX_CUSTOM_UPSTREAM_BODY_BYTES = 49_152
 export const MAX_AUTO_UPDATE_INTERVAL_MINUTES = 525_600
 export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
 export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
+export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
+export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
+export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
@@ -111,6 +114,18 @@ export function createChannelMonitorSettingsSchema() {
         .min(0, '失败重试次数不能小于 0')
         .max(MAX_AUTO_UPDATE_RETRY_COUNT, '失败重试次数不能超过 10 次'),
       autoDisableOnUpdateFailure: z.boolean(),
+      autoEnableOnCostRatioRecovery: z.boolean(),
+      costRetentionDays: z.coerce
+        .number()
+        .int('成本数据保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '成本数据保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '成本数据保留天数不能超过 3650 天'
+        ),
       emailNotificationEnabled: z.boolean(),
       notificationEmail: z
         .string()

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
@@ -106,11 +108,49 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	assert.Equal(t, int64(1), overview.Channels[2].SettledCount)
 }
 
+func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, model.AddChannelDailyCost(context.Background(), 1, now-channelMonitorCostDaySeconds, 2_000_000_000, 1, 0))
+	require.NoError(t, model.AddChannelDailyCost(context.Background(), 1, now, 1_000_000_000, 1, 1))
+
+	var detailQueries atomic.Int64
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_channel_monitor_cost_details", func(tx *gorm.DB) {
+		if tx.Statement == nil {
+			return
+		}
+		if tx.Statement.Table == "channel_daily_api_key_costs" || tx.Statement.Table == "channels" {
+			detailQueries.Add(1)
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Query().Remove("test:count_channel_monitor_cost_details"))
+	})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=2&summary_only=true", nil)
+	GetChannelMonitorCostOverview(ctx)
+	require.Equal(t, 200, recorder.Code)
+	var response struct {
+		Data channelMonitorCostOverview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.InDelta(t, 2, response.Data.YesterdayCostCNY, 1e-9)
+	assert.InDelta(t, 1, response.Data.TodayCostCNY, 1e-9)
+	assert.InDelta(t, 3, response.Data.TotalCostCNY, 1e-9)
+	assert.Equal(t, 1, response.Data.Coverage.IncludedChannelCount)
+	assert.Equal(t, 1, response.Data.Coverage.UnresolvedChannelCount)
+	assert.Empty(t, response.Data.Channels)
+	assert.Empty(t, response.Data.APIKeys)
+	assert.Zero(t, detailQueries.Load())
+}
+
 func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	channelAlphaRemark := "  主力线路  "
+	channelBetaRemark := "备用线路"
 	require.NoError(t, db.Create(&[]model.Channel{
-		{Id: 21, Name: "渠道甲", Key: "sk-channel-alpha"},
-		{Id: 22, Name: "渠道乙", Key: "sk-channel-beta"},
+		{Id: 21, Name: "渠道甲", Key: "sk-channel-alpha", Remark: &channelAlphaRemark},
+		{Id: 22, Name: "渠道乙", Key: "sk-channel-beta", Remark: &channelBetaRemark},
 	}).Error)
 
 	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
@@ -128,7 +168,10 @@ func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(
 	assert.InDelta(t, 3.5, overview.APIKeys[0].CostCNY, 1e-9)
 	require.Len(t, overview.APIKeys[0].Channels, 2)
 	assert.Equal(t, 22, overview.APIKeys[0].Channels[0].ChannelId)
+	assert.Equal(t, "备用线路", overview.APIKeys[0].Channels[0].ChannelRemark)
 	assert.Equal(t, int64(1), overview.APIKeys[0].Channels[0].UnresolvedCount)
+	assert.Equal(t, 21, overview.APIKeys[0].Channels[1].ChannelId)
+	assert.Equal(t, "主力线路", overview.APIKeys[0].Channels[1].ChannelRemark)
 	assert.Equal(t, 102, overview.APIKeys[1].APIKeyId)
 	assert.Equal(t, "备用 Key", overview.APIKeys[1].APIKeyName)
 	assert.Equal(t, displayA, overview.APIKeys[0].APIKey)
@@ -156,14 +199,17 @@ func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(
 	for _, apiKey := range filteredResponse.Data.APIKeys {
 		require.Len(t, apiKey.Channels, 1)
 		assert.Equal(t, 21, apiKey.Channels[0].ChannelId)
+		assert.Equal(t, "主力线路", apiKey.Channels[0].ChannelRemark)
 	}
 }
 
 func TestGetChannelMonitorCostOverviewKeepsUnattributedChannelsVisible(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	legacyChannelRemark := "历史补录"
+	adminChannelRemark := "后台测试"
 	require.NoError(t, db.Create(&[]model.Channel{
-		{Id: 31, Name: "旧记录渠道", Key: "key-31"},
-		{Id: 32, Name: "后台测试渠道", Key: "key-32"},
+		{Id: 31, Name: "旧记录渠道", Key: "key-31", Remark: &legacyChannelRemark},
+		{Id: 32, Name: "后台测试渠道", Key: "key-32", Remark: &adminChannelRemark},
 	}).Error)
 	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 31, now, 2_000_000_000, 2, 0))
@@ -180,10 +226,12 @@ func TestGetChannelMonitorCostOverviewKeepsUnattributedChannelsVisible(t *testin
 	unattributed := byName["未识别 API Key"]
 	require.Len(t, unattributed.Channels, 1)
 	assert.Equal(t, 31, unattributed.Channels[0].ChannelId)
+	assert.Equal(t, "历史补录", unattributed.Channels[0].ChannelRemark)
 	assert.InDelta(t, 2, unattributed.Channels[0].CostCNY, 1e-9)
 	legacy := byName["上游 Key "+display]
 	require.Len(t, legacy.Channels, 1)
 	assert.Equal(t, 32, legacy.Channels[0].ChannelId)
+	assert.Equal(t, "后台测试", legacy.Channels[0].ChannelRemark)
 }
 
 func TestGetChannelMonitorCostOverviewRejectsInvalidDays(t *testing.T) {
@@ -202,6 +250,11 @@ func TestGetChannelMonitorCostOverviewRejectsInvalidDays(t *testing.T) {
 	GetChannelMonitorCostOverview(ctx)
 	assert.Equal(t, 400, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "页码必须为正整数")
+
+	ctx, recorder = newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?summary_only=invalid", nil)
+	GetChannelMonitorCostOverview(ctx)
+	assert.Equal(t, 400, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "摘要模式参数必须为布尔值")
 }
 
 func TestGetChannelMonitorCostOverviewUsesServerPaginationForDates(t *testing.T) {

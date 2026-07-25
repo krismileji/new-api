@@ -77,7 +77,6 @@ import {
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
   getChannelMonitorOverview,
-  getChannelMonitorPerformance,
   updateChannelMonitorSmartScheduleConfig,
   updateMonitoredChannelStatus,
 } from './api'
@@ -94,13 +93,14 @@ import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-ta
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
-import { EditChannelRatioDialog } from './components/edit-channel-ratio-dialog'
 import { EditGroupChannelsDialog } from './components/edit-group-channels-dialog'
 import { EditGroupRatioDialog } from './components/edit-group-ratio-dialog'
 import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
 import { handleChannelMonitorMutationError } from './lib/error'
 import { formatChannelMonitorCost, formatMonitorRatio } from './lib/format'
+import { getChannelMonitorPerformanceQueryOptions } from './lib/query-options'
+import { DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS } from './lib/schema'
 import { sortChannelMonitorItems } from './lib/sort'
 import type {
   ChannelMonitorChannelPerformance,
@@ -131,7 +131,6 @@ const LazyChannelBatchTestDialog = lazy(() =>
 type MonitorView = 'channels' | 'groups' | 'models'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
-  | 'ratio'
   | 'concurrency'
   | 'groups'
   | 'upstream'
@@ -153,6 +152,8 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   auto_update_interval_minutes: 0,
   auto_update_retry_count: 2,
   auto_disable_on_update_failure: false,
+  auto_enable_on_cost_ratio_recovery: false,
+  cost_retention_days: DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   email_notification_enabled: false,
   notification_email: '',
   smart_schedule_enabled: false,
@@ -262,14 +263,12 @@ export function ChannelMonitor() {
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
   })
-  const performanceQuery = useQuery({
-    queryKey: ['channel-monitor-performance', performanceRangeMinutes],
-    queryFn: () => getChannelMonitorPerformance(performanceRangeMinutes),
-    refetchInterval: 60_000,
-  })
+  const performanceQuery = useQuery(
+    getChannelMonitorPerformanceQueryOptions(performanceRangeMinutes)
+  )
   const costQuery = useQuery({
-    queryKey: ['channel-monitor', 'cost', 2],
-    queryFn: () => getChannelMonitorCostOverview(2),
+    queryKey: ['channel-monitor', 'cost', 'summary', 2],
+    queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
     refetchInterval: 60_000,
   })
   const ratioFetchMutation = useMutation({
@@ -880,9 +879,6 @@ export function ChannelMonitor() {
                       : CHANNEL_STATUS.ENABLED,
                 })
               }
-              onEditRatio={(channel) =>
-                setChannelDialog({ channelId: channel.id, type: 'ratio' })
-              }
               onEditConcurrency={(channel) =>
                 setChannelDialog({
                   channelId: channel.id,
@@ -1073,16 +1069,6 @@ export function ChannelMonitor() {
         <SectionPageLayout.Content>{pageContent}</SectionPageLayout.Content>
       </SectionPageLayout>
 
-      {dialogChannel && channelDialog?.type === 'ratio' && (
-        <EditChannelRatioDialog
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
       {dialogChannel && channelDialog?.type === 'concurrency' && (
         <EditChannelConcurrencyLimitDialog
           key={dialogChannel.id}
@@ -1165,7 +1151,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           initialSection={settingsSection}

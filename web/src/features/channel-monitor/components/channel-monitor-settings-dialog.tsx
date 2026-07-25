@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useForm, useWatch, type Resolver } from 'react-hook-form'
+import {
+  useForm,
+  useWatch,
+  type Resolver,
+  type UseFormReturn,
+} from 'react-hook-form'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -53,8 +58,11 @@ import { updateChannelMonitorSettings } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   createChannelMonitorSettingsSchema,
+  DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
 import type { ChannelMonitorSettings } from '../types'
@@ -68,6 +76,46 @@ type ChannelMonitorSettingsDialogProps = {
   initialSection: ChannelMonitorSettingsSection
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+export function ChannelMonitorCostRetentionField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='costRetentionDays'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>成本数据保留天数</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS}
+                max={MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.costRetentionDays
+                )}
+              />
+              <InputGroupAddon align='inline-end'>天</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            每天按北京时间清理超出范围的渠道及 API Key 成本数据；删除后不可恢复
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 }
 
 export function ChannelMonitorSettingsDialog(
@@ -87,6 +135,11 @@ export function ChannelMonitorSettingsDialog(
       autoUpdateRetryCount: props.settings.auto_update_retry_count,
       autoDisableOnUpdateFailure:
         props.settings.auto_disable_on_update_failure ?? false,
+      autoEnableOnCostRatioRecovery:
+        props.settings.auto_enable_on_cost_ratio_recovery ?? false,
+      costRetentionDays:
+        props.settings.cost_retention_days ??
+        DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
@@ -141,6 +194,8 @@ export function ChannelMonitorSettingsDialog(
       auto_update_interval_minutes: values.autoUpdateIntervalMinutes,
       auto_update_retry_count: values.autoUpdateRetryCount,
       auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,
+      auto_enable_on_cost_ratio_recovery: values.autoEnableOnCostRatioRecovery,
+      cost_retention_days: values.costRetentionDays,
       email_notification_enabled: values.emailNotificationEnabled,
       notification_email: values.notificationEmail,
       smart_schedule_enabled: values.smartScheduleEnabled,
@@ -271,6 +326,30 @@ export function ChannelMonitorSettingsDialog(
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name='autoEnableOnCostRatioRecovery'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between gap-4'>
+                      <div className='space-y-1'>
+                        <FormLabel>成本倍率恢复后自动启用渠道</FormLabel>
+                        <FormDescription>
+                          开启后，因成本倍率过高被系统禁用的渠道，在按分组系数换算后不再高于全部所属分组倍率时自动启用
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label='成本倍率恢复后自动启用渠道'
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <ChannelMonitorCostRetentionField form={form} />
 
                 <FormField
                   control={form.control}

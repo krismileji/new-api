@@ -353,8 +353,8 @@ export function CostHistoryData(props: {
             )}
           </div>
           <CostCoverage coverage={coverage} />
-          <div className='grid gap-3 lg:grid-cols-2'>
-            <section className='flex min-w-0 flex-col gap-2'>
+          <div className='grid items-stretch gap-3 lg:grid-cols-2'>
+            <section className='flex min-w-0 flex-col gap-2 lg:col-start-1 lg:row-start-1'>
               <h3 className='text-sm font-medium'>按日成本</h3>
               <div className='overflow-auto rounded-md border'>
                 <Table className='min-w-[360px]'>
@@ -385,46 +385,46 @@ export function CostHistoryData(props: {
                   </TableBody>
                 </Table>
               </div>
-              {datePageCount > 1 ? (
-                <div className='flex items-center justify-end gap-2'>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='icon-sm'
-                    aria-label='上一页日期'
-                    title='上一页日期'
-                    onClick={() =>
-                      props.onDatePageChange?.(Math.max(1, currentDatePage - 1))
-                    }
-                    disabled={currentDatePage <= 1}
-                  >
-                    <HugeiconsIcon icon={ArrowLeft01Icon} />
-                  </Button>
-                  <span className='text-muted-foreground min-w-24 text-center text-xs tabular-nums'>
-                    日期第 {currentDatePage} / {datePageCount} 页
-                  </span>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='icon-sm'
-                    aria-label='下一页日期'
-                    title='下一页日期'
-                    onClick={() =>
-                      props.onDatePageChange?.(
-                        Math.min(datePageCount, currentDatePage + 1)
-                      )
-                    }
-                    disabled={currentDatePage >= datePageCount}
-                  >
-                    <HugeiconsIcon icon={ArrowRight01Icon} />
-                  </Button>
-                </div>
-              ) : null}
             </section>
+            {datePageCount > 1 ? (
+              <div className='flex items-center justify-end gap-2 lg:col-start-1 lg:row-start-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='icon-sm'
+                  aria-label='上一页日期'
+                  title='上一页日期'
+                  onClick={() =>
+                    props.onDatePageChange?.(Math.max(1, currentDatePage - 1))
+                  }
+                  disabled={currentDatePage <= 1}
+                >
+                  <HugeiconsIcon icon={ArrowLeft01Icon} />
+                </Button>
+                <span className='text-muted-foreground min-w-24 text-center text-xs tabular-nums'>
+                  日期第 {currentDatePage} / {datePageCount} 页
+                </span>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='icon-sm'
+                  aria-label='下一页日期'
+                  title='下一页日期'
+                  onClick={() =>
+                    props.onDatePageChange?.(
+                      Math.min(datePageCount, currentDatePage + 1)
+                    )
+                  }
+                  disabled={currentDatePage >= datePageCount}
+                >
+                  <HugeiconsIcon icon={ArrowRight01Icon} />
+                </Button>
+              </div>
+            ) : null}
             {props.channelId == null && props.overview.channels.length > 0 ? (
-              <section className='flex min-w-0 flex-col gap-2'>
+              <section className='flex min-w-0 flex-col gap-2 lg:col-start-2 lg:row-start-1'>
                 <h3 className='text-sm font-medium'>渠道汇总</h3>
-                <div className='max-h-64 overflow-auto rounded-md border'>
+                <div className='max-h-64 overflow-auto rounded-md border lg:h-0 lg:max-h-none lg:min-h-0 lg:flex-1'>
                   <Table className='min-w-[360px]'>
                     <TableHeader>
                       <TableRow>

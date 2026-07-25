@@ -239,6 +239,12 @@ func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConc
 	if err != nil {
 		return nil, false, ChannelConcurrencyStatus{}, err
 	}
+	channelConcurrency.Lock()
+	limit := channelConcurrency.configs[channelID].Limit
+	channelConcurrency.Unlock()
+	if limit <= 0 {
+		return &ChannelConcurrencyLease{}, true, ChannelConcurrencyStatus{}, nil
+	}
 	if common.RedisEnabled {
 		if refreshed {
 			if err = ensureChannelConcurrencyRedisConfig(ctx, common.RDB, getChannelConcurrencyConfigsSnapshot()); err != nil {

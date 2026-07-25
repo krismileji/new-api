@@ -27,6 +27,7 @@ import { ChannelMonitorAPIKeyCostTable } from '../channel-monitor-api-key-cost-t
 describe('channel monitor API key cost table', () => {
   test('uses fixed columns and exposes truncated masked values on hover', () => {
     const channelName = '这是一个用于验证列宽与省略展示的特别长渠道名称'
+    const channelRemark = '这是一个用于验证备注省略展示的特别长渠道备注'
     const maskedKey = 'sk-a**********lpha'
     const markup = renderToStaticMarkup(
       <ChannelMonitorAPIKeyCostTable
@@ -43,6 +44,7 @@ describe('channel monitor API key cost table', () => {
               {
                 channel_id: 7,
                 channel_name: channelName,
+                channel_remark: channelRemark,
                 cost_cny: 12.3456,
                 settled_count: 9,
                 unresolved_count: 2,
@@ -57,6 +59,8 @@ describe('channel monitor API key cost table', () => {
     assert.match(markup, /truncate/)
     assert.ok(markup.includes('主 API Key'))
     assert.ok(markup.includes(`title="${channelName}"`))
+    assert.ok(markup.includes(`备注：${channelRemark}`))
+    assert.ok(markup.includes(`title="${channelRemark}"`))
     assert.ok(markup.includes(`title="${maskedKey}"`))
     assert.ok(markup.includes(formatChannelMonitorCost(12.3456)))
     assert.ok(markup.includes('title="2 次成本未确认"'))
@@ -87,6 +91,7 @@ describe('channel monitor API key cost table', () => {
               {
                 channel_id: 3,
                 channel_name: '渠道三',
+                channel_remark: '',
                 cost_cny: 1,
                 settled_count: 1,
                 unresolved_count: 0,

@@ -135,12 +135,22 @@ export function ChannelMonitorAPIKeyCostTable(
                           {item.channels.map((channel) => (
                             <TableRow key={channel.channel_id}>
                               <TableCell className='min-w-0'>
-                                <span
-                                  className='block truncate'
-                                  title={channel.channel_name}
-                                >
-                                  {channel.channel_name}
-                                </span>
+                                <div className='min-w-0'>
+                                  <span
+                                    className='block truncate'
+                                    title={channel.channel_name}
+                                  >
+                                    {channel.channel_name}
+                                  </span>
+                                  {channel.channel_remark ? (
+                                    <span
+                                      className='text-muted-foreground block truncate text-xs'
+                                      title={channel.channel_remark}
+                                    >
+                                      备注：{channel.channel_remark}
+                                    </span>
+                                  ) : null}
+                                </div>
                               </TableCell>
                               <TableCell className='text-right font-mono tabular-nums'>
                                 {formatChannelMonitorCost(channel.cost_cny)}

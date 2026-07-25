@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,14 +36,27 @@ func setupChannelDailyCostServiceTest(t *testing.T) *gorm.DB {
 	model.DB = db
 	common.QuotaPerUnit = 500_000
 	ResetChannelDailyCostSnapshotCache()
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    64,
+		MaxBatchSize:  16,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   3,
+	}, model.AddChannelDailyCostBatch)
 	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}, &model.ChannelDailyCost{}, &model.ChannelDailyAPIKeyCost{}))
 	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
 		model.DB = originalDB
 		common.QuotaPerUnit = originalQuotaPerUnit
 		ResetChannelDailyCostSnapshotCache()
 		require.NoError(t, sqlDB.Close())
 	})
 	return db
+}
+
+func flushChannelDailyCostEvents(t *testing.T) {
+	t.Helper()
+	require.NoError(t, flushChannelDailyCostEventsForTest())
 }
 
 func newChannelDailyCostTestContext() *gin.Context {
@@ -78,6 +94,7 @@ func TestChannelDailyCostFreezesRatioPerRequest(t *testing.T) {
 	secondRequest := newChannelDailyCostTestContext()
 	CaptureChannelDailyCostSnapshot(secondRequest, 1)
 	recordChannelDailyCostFromQuota(secondRequest, 1, 500_000)
+	flushChannelDailyCostEvents(t)
 
 	var costs []model.ChannelDailyCost
 	require.NoError(t, db.Find(&costs).Error)
@@ -103,6 +120,7 @@ func TestChannelDailyCostUsesUpstreamRatioWithoutConversion(t *testing.T) {
 	CaptureChannelDailyCostSnapshot(ctx, 7)
 
 	recordChannelDailyCostFromQuota(ctx, 7, 500_000)
+	flushChannelDailyCostEvents(t)
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", 7).Error)
@@ -133,6 +151,7 @@ func TestChannelDailyCostUsesQuotaBeforeFreeGroup(t *testing.T) {
 	require.Zero(t, summary.Quota)
 
 	recordTextChannelDailyCost(ctx, relayInfo, usage, usage, summary, false, nil)
+	flushChannelDailyCostEvents(t)
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", 2).Error)
@@ -140,11 +159,14 @@ func TestChannelDailyCostUsesQuotaBeforeFreeGroup(t *testing.T) {
 	assert.Equal(t, int64(1), cost.SettledCount)
 }
 
-func TestChannelDailyCostTracksUnresolvedAndTieredSettlements(t *testing.T) {
+func TestChannelDailyCostSkipsUnconfiguredChannelsAndTracksTieredSettlements(t *testing.T) {
 	db := setupChannelDailyCostServiceTest(t)
 	unconfigured := newChannelDailyCostTestContext()
 	CaptureChannelDailyCostSnapshot(unconfigured, 3)
 	recordChannelDailyCostFromQuota(unconfigured, 3, 500_000)
+	recordChannelDailyCostUnresolved(unconfigured, 3)
+	RecordPerCallChannelDailyCost(unconfigured, 3, "test-model", types.PriceData{ModelPrice: 1, UsePrice: true})
+	assert.Zero(t, pendingChannelDailyCostEventsForTest())
 
 	createChannelDailyCostMonitor(t, db, 4, 0.2)
 	tiered := newChannelDailyCostTestContext()
@@ -155,16 +177,64 @@ func TestChannelDailyCostTracksUnresolvedAndTieredSettlements(t *testing.T) {
 			BillingMode: "tiered_expr",
 		},
 	}, 0, &billingexpr.TieredResult{ActualQuotaBeforeGroup: 2_500}, &dto.Usage{TotalTokens: 1}, true)
+	flushChannelDailyCostEvents(t)
 
-	var unresolved model.ChannelDailyCost
-	require.NoError(t, db.First(&unresolved, "channel_id = ?", 3).Error)
-	assert.Zero(t, unresolved.SettledCount)
-	assert.Equal(t, int64(1), unresolved.UnresolvedCount)
+	var unconfiguredCount int64
+	require.NoError(t, db.Model(&model.ChannelDailyCost{}).Where("channel_id = ?", 3).Count(&unconfiguredCount).Error)
+	assert.Zero(t, unconfiguredCount)
 
 	var settled model.ChannelDailyCost
 	require.NoError(t, db.First(&settled, "channel_id = ?", 4).Error)
 	assert.Equal(t, int64(5_000_000), settled.CostNanoCNY)
 	assert.Equal(t, int64(1), settled.SettledCount)
+}
+
+func TestChannelDailyCostSnapshotCoalescesConcurrentCacheMisses(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 13, 0.2)
+	var queryCount atomic.Int64
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_channel_daily_cost_snapshot", func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Schema != nil && tx.Statement.Schema.Name == "ChannelRatioMonitor" {
+			queryCount.Add(1)
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Query().Remove("test:count_channel_daily_cost_snapshot"))
+	})
+	InvalidateChannelDailyCostSnapshot(13)
+
+	const requests = 24
+	start := make(chan struct{})
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(requests)
+	for range requests {
+		go func() {
+			defer waitGroup.Done()
+			<-start
+			snapshot, err := getChannelDailyCostSnapshot(13)
+			assert.NoError(t, err)
+			assert.True(t, snapshot.Configured)
+		}()
+	}
+	close(start)
+	waitGroup.Wait()
+	assert.Equal(t, int64(1), queryCount.Load())
+}
+
+func TestChannelDailyCostSnapshotReturnsAFallbackWhenConfigurationParsingFails(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:      14,
+		Ratio:          0.2,
+		UpdatedTime:    1,
+		CostConversion: "{invalid",
+	}).Error)
+
+	snapshot, err := getChannelDailyCostSnapshot(14)
+	require.Error(t, err)
+	assert.Equal(t, 14, snapshot.ChannelId)
+	assert.Equal(t, common.QuotaPerUnit, snapshot.QuotaPerUnit)
+	assert.False(t, snapshot.Configured)
 }
 
 func TestChannelDailyCostLeavesEstimatedUsageUnresolved(t *testing.T) {
@@ -199,6 +269,7 @@ func TestChannelDailyCostLeavesEstimatedUsageUnresolved(t *testing.T) {
 	recordTextChannelDailyCost(estimatedUsageContext, &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 5},
 	}, estimatedUsage, estimatedUsage, textQuotaSummary{TotalTokens: 1_000}, false, nil)
+	flushChannelDailyCostEvents(t)
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", 5).Error)
@@ -217,6 +288,7 @@ func TestChannelDailyCostPersistsAfterRequestCancellation(t *testing.T) {
 	ctx.Request = ctx.Request.WithContext(requestContext)
 	cancel()
 	recordChannelDailyCostFromQuota(ctx, 6, 500_000)
+	flushChannelDailyCostEvents(t)
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", 6).Error)
@@ -241,6 +313,7 @@ func TestChannelDailyCostAttributesSettlementsToTheSelectedAPIKey(t *testing.T) 
 	common.SetContextKey(secondContext, constant.ContextKeyChannelKey, "sk-selected-beta")
 	CaptureChannelDailyCostSnapshot(secondContext, 8)
 	recordChannelDailyCostFromQuota(secondContext, 8, 500_000)
+	flushChannelDailyCostEvents(t)
 
 	var total model.ChannelDailyCost
 	require.NoError(t, db.First(&total, "channel_id = ?", 8).Error)
@@ -270,9 +343,109 @@ func TestChannelDailyCostResolvesTokenNameWhenContextOnlyHasTheID(t *testing.T) 
 	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "sk-selected")
 	CaptureChannelDailyCostSnapshot(ctx, 9)
 	recordChannelDailyCostFromQuota(ctx, 9, 500_000)
+	flushChannelDailyCostEvents(t)
 
-	var row model.ChannelDailyAPIKeyCost
-	require.NoError(t, db.First(&row).Error)
-	assert.Equal(t, 29, row.APIKeyId)
-	assert.Equal(t, "从令牌表解析的名称", row.APIKeyName)
+	rows, err := model.GetChannelDailyAPIKeyCosts(context.Background(), 0, time.Now().Add(24*time.Hour).Unix())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 29, rows[0].APIKeyId)
+	assert.Equal(t, "从令牌表解析的名称", rows[0].APIKeyName)
+}
+
+func TestChannelDailyCostAggregatesWithoutWritingOnTheRequestPath(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 10, 0.2)
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set("token_id", 31)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "sk-batched")
+	CaptureChannelDailyCostSnapshot(ctx, 10)
+
+	recordChannelDailyCostFromQuota(ctx, 10, 500_000)
+	recordChannelDailyCostFromQuota(ctx, 10, 500_000)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelDailyCost{}).Count(&count).Error)
+	assert.Zero(t, count)
+	assert.Equal(t, 1, pendingChannelDailyCostEventsForTest())
+	flushChannelDailyCostEvents(t)
+
+	var total model.ChannelDailyCost
+	require.NoError(t, db.First(&total).Error)
+	assert.Equal(t, int64(2_000_000_000), total.CostNanoCNY)
+	assert.Equal(t, int64(2), total.SettledCount)
+	var detail model.ChannelDailyAPIKeyCost
+	require.NoError(t, db.First(&detail).Error)
+	assert.Equal(t, total.CostNanoCNY, detail.CostNanoCNY)
+	assert.Equal(t, total.SettledCount, detail.SettledCount)
+}
+
+func TestChannelDailyCostBatcherIsBoundedAndKeepsAggregatingExistingKeys(t *testing.T) {
+	var written []model.ChannelDailyCostDelta
+	batcher := newChannelDailyCostBatcher(channelDailyCostBatcherConfig{
+		MaxPending:    1,
+		MaxBatchSize:  1,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+	}, func(_ context.Context, deltas []model.ChannelDailyCostDelta) error {
+		written = append(written, deltas...)
+		return nil
+	})
+	t.Cleanup(batcher.stop)
+
+	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 1}))
+	assert.False(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 2, OccurredAt: 100, SettledDelta: 1}))
+	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 101, SettledDelta: 2}))
+	require.NoError(t, batcher.flushAll())
+
+	require.Len(t, written, 1)
+	assert.Equal(t, int64(3), written[0].SettledDelta)
+	assert.Equal(t, int64(1), batcher.droppedCount())
+}
+
+func TestChannelDailyCostBatcherRetriesAFlushWithoutDuplicatingTheBatch(t *testing.T) {
+	attempts := 0
+	var written []model.ChannelDailyCostDelta
+	batcher := newChannelDailyCostBatcher(channelDailyCostBatcherConfig{
+		MaxPending:    4,
+		MaxBatchSize:  4,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   3,
+	}, func(_ context.Context, deltas []model.ChannelDailyCostDelta) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("temporary database failure")
+		}
+		written = append(written, deltas...)
+		return nil
+	})
+	t.Cleanup(batcher.stop)
+
+	require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 2}))
+	require.NoError(t, batcher.flushAll())
+	assert.Equal(t, 3, attempts)
+	require.Len(t, written, 1)
+	assert.Equal(t, int64(2), written[0].SettledDelta)
+}
+
+func TestChannelDailyCostBatcherDropsAFailedBatchAfterBoundedRetries(t *testing.T) {
+	attempts := 0
+	batcher := newChannelDailyCostBatcher(channelDailyCostBatcherConfig{
+		MaxPending:    2,
+		MaxBatchSize:  2,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   2,
+	}, func(_ context.Context, _ []model.ChannelDailyCostDelta) error {
+		attempts++
+		return errors.New("database unavailable")
+	})
+	t.Cleanup(batcher.stop)
+
+	require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 2, UnresolvedDelta: 1}))
+	require.Error(t, batcher.flushAll())
+	assert.Equal(t, 2, attempts)
+	assert.Zero(t, batcher.pendingCount())
+	assert.Equal(t, int64(3), batcher.droppedCount())
 }

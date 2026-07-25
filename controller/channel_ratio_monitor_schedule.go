@@ -272,9 +272,10 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	performanceStart := now - int64(settings.SmartSchedulePerformanceMinutes*60)
 	var metrics []model.ChannelMonitorPerformanceMetric
 	if needsPerformance {
-		metrics, err = model.GetChannelMonitorPerformanceMetrics(
+		metrics, err = model.GetChannelMonitorPerformanceMetricsCached(
 			ctx,
-			performanceStart,
+			now,
+			settings.SmartSchedulePerformanceMinutes,
 		)
 		if err != nil {
 			return result, err
@@ -283,9 +284,10 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	stabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	var stabilityMetrics []model.ChannelMonitorStabilityMetric
 	if needsStability && stabilityAvailable {
-		stabilityMetrics, err = model.GetChannelMonitorStabilityMetrics(
+		stabilityMetrics, err = model.GetChannelMonitorStabilityMetricsCached(
 			ctx,
-			performanceStart,
+			now,
+			settings.SmartSchedulePerformanceMinutes,
 		)
 		if err != nil {
 			return result, err

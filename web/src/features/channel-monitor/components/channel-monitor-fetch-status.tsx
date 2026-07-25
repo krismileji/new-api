@@ -39,11 +39,7 @@ export function ChannelMonitorFetchStatus(
 ) {
   if (props.channel.upstream && !props.channel.upstream.ratio_sync_enabled) {
     return (
-      <Badge
-        variant='outline'
-        className='max-w-full truncate'
-        title='倍率同步已关闭'
-      >
+      <Badge variant='outline' title='倍率同步已关闭'>
         倍率同步已关闭
       </Badge>
     )
@@ -55,22 +51,19 @@ export function ChannelMonitorFetchStatus(
     const lastAttemptLabel = `最后尝试：${formatTimestampToDate(props.channel.last_fetch_time)}`
 
     return (
-      <div className='flex w-full min-w-0 flex-col items-start gap-1'>
-        <div className='flex w-full min-w-0 items-center gap-1.5'>
+      <div className='flex flex-col items-start gap-1 whitespace-nowrap'>
+        <div className='flex items-center gap-1.5'>
           <Badge variant='destructive' className='shrink-0'>
             <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
             更新失败
           </Badge>
-          <span
-            className='text-destructive min-w-0 flex-1 truncate text-xs'
-            title={failureLabel}
-          >
+          <span className='text-destructive text-xs' title={failureLabel}>
             {failureLabel}
           </span>
         </div>
         {props.channel.last_fetch_time > 0 && (
           <span
-            className='text-muted-foreground block w-full truncate text-xs'
+            className='text-muted-foreground text-xs'
             title={lastAttemptLabel}
           >
             {lastAttemptLabel}
@@ -84,7 +77,7 @@ export function ChannelMonitorFetchStatus(
     const successLabel = formatTimestampToDate(props.channel.last_fetch_time)
 
     return (
-      <div className='flex w-full min-w-0 flex-col items-start gap-1'>
+      <div className='flex flex-col items-start gap-1 whitespace-nowrap'>
         <Badge
           variant='secondary'
           className='shrink-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
@@ -92,10 +85,7 @@ export function ChannelMonitorFetchStatus(
           更新成功
         </Badge>
         {props.channel.last_fetch_time > 0 && (
-          <span
-            className='text-muted-foreground block w-full truncate text-xs'
-            title={successLabel}
-          >
+          <span className='text-muted-foreground text-xs' title={successLabel}>
             {successLabel}
           </span>
         )}
@@ -105,11 +95,7 @@ export function ChannelMonitorFetchStatus(
 
   if (props.channel.upstream) {
     return (
-      <Badge
-        variant='outline'
-        className='max-w-full truncate'
-        title='等待首次更新'
-      >
+      <Badge variant='outline' title='等待首次更新'>
         等待首次更新
       </Badge>
     )

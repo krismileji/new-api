@@ -261,6 +261,7 @@ export type ChannelMonitorCostAPIKey = {
 export type ChannelMonitorCostAPIKeyChannel = {
   channel_id: number
   channel_name: string
+  channel_remark: string
   cost_cny: number
   settled_count: number
   unresolved_count: number
@@ -415,6 +416,8 @@ export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
   auto_disable_on_update_failure: boolean
+  auto_enable_on_cost_ratio_recovery: boolean
+  cost_retention_days: number
   email_notification_enabled: boolean
   notification_email: string
   smart_schedule_enabled: boolean
@@ -489,6 +492,7 @@ export type ChannelMonitorTaskResult = {
   group_memberships_removed?: number
   group_update_failed?: boolean
   channels_disabled?: number
+  channels_enabled?: number
   groups_skipped?: number
   retried?: number
   recovered_after_retry?: number

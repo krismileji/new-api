@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
 type ChannelMonitorPerformanceMetric struct {
@@ -62,7 +63,11 @@ type channelMonitorPerformanceAggregate struct {
 // GetChannelMonitorPerformanceMetrics aggregates the same per-request timing
 // values shown by usage logs: other.frt and completion_tokens / use_time.
 func GetChannelMonitorPerformanceMetrics(ctx context.Context, startTimestamp int64) ([]ChannelMonitorPerformanceMetric, error) {
-	rows, err := LOG_DB.WithContext(ctx).
+	return getChannelMonitorPerformanceMetrics(ctx, LOG_DB, startTimestamp)
+}
+
+func getChannelMonitorPerformanceMetrics(ctx context.Context, logDB *gorm.DB, startTimestamp int64) ([]ChannelMonitorPerformanceMetric, error) {
+	rows, err := logDB.WithContext(ctx).
 		Model(&Log{}).
 		Select("channel_id, model_name, completion_tokens, use_time, other, created_at").
 		Where("type = ?", LogTypeConsume).
@@ -197,6 +202,10 @@ func GetChannelMonitorStabilityMetrics(ctx context.Context, startTimestamp int64
 	if err != nil {
 		return nil, err
 	}
+	return channelMonitorStabilityMetricsFromSuccess(channelMetrics), nil
+}
+
+func channelMonitorStabilityMetricsFromSuccess(channelMetrics []ChannelMonitorSuccessMetric) []ChannelMonitorStabilityMetric {
 	metrics := make([]ChannelMonitorStabilityMetric, 0, len(channelMetrics))
 	for _, metric := range channelMetrics {
 		metrics = append(metrics, ChannelMonitorStabilityMetric{
@@ -208,7 +217,7 @@ func GetChannelMonitorStabilityMetrics(ctx context.Context, startTimestamp int64
 			SuccessRate:  metric.ActualSuccessRate,
 		})
 	}
-	return metrics, nil
+	return metrics
 }
 
 func GetChannelMonitorStabilityMetric(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) (ChannelMonitorStabilityMetric, error) {

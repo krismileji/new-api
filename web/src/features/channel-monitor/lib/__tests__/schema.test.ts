@@ -21,7 +21,10 @@ import { describe, test } from 'node:test'
 
 import {
   createChannelConcurrencyLimitSchema,
+  createChannelMonitorSettingsSchema,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
 } from '../schema'
 
 describe('channel concurrency limit schema', () => {
@@ -44,6 +47,78 @@ describe('channel concurrency limit schema', () => {
       MAX_CHANNEL_CONCURRENCY_LIMIT + 1,
     ]) {
       assert.equal(schema.safeParse({ concurrencyLimit }).success, false)
+    }
+  })
+})
+
+describe('channel monitor settings schema', () => {
+  test('keeps the cost ratio recovery switch in parsed settings', () => {
+    const settings = createChannelMonitorSettingsSchema().parse({
+      autoUpdateIntervalMinutes: 10,
+      autoUpdateRetryCount: 2,
+      autoDisableOnUpdateFailure: true,
+      autoEnableOnCostRatioRecovery: true,
+      costRetentionDays: 120,
+      emailNotificationEnabled: false,
+      notificationEmail: '',
+      smartScheduleEnabled: false,
+      smartScheduleIntervalMinutes: 10,
+      smartScheduleStrategy: 'smart',
+      smartScheduleStabilityEnabled: false,
+      smartScheduleApplyMode: 'weight',
+      smartSchedulePerformanceMinutes: 60,
+      smartScheduleModels: [],
+      smartScheduleMinSamples: 5,
+      smartScheduleMinSuccessRate: 80,
+      smartScheduleCooldownMinutes: 30,
+      smartScheduleForceReset: false,
+    })
+
+    assert.equal(settings.autoEnableOnCostRatioRecovery, true)
+    assert.equal(settings.costRetentionDays, 120)
+  })
+
+  test('accepts retention boundaries and rejects invalid retention days', () => {
+    const baseSettings = {
+      autoUpdateIntervalMinutes: 10,
+      autoUpdateRetryCount: 2,
+      autoDisableOnUpdateFailure: false,
+      autoEnableOnCostRatioRecovery: false,
+      costRetentionDays: 120,
+      emailNotificationEnabled: false,
+      notificationEmail: '',
+      smartScheduleEnabled: false,
+      smartScheduleIntervalMinutes: 10,
+      smartScheduleStrategy: 'smart' as const,
+      smartScheduleStabilityEnabled: false,
+      smartScheduleApplyMode: 'weight' as const,
+      smartSchedulePerformanceMinutes: 60 as const,
+      smartScheduleModels: [],
+      smartScheduleMinSamples: 5,
+      smartScheduleMinSuccessRate: 80,
+      smartScheduleCooldownMinutes: 30,
+      smartScheduleForceReset: false,
+    }
+    const schema = createChannelMonitorSettingsSchema()
+
+    for (const costRetentionDays of [
+      MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+      MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+    ]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, costRetentionDays }).costRetentionDays,
+        costRetentionDays
+      )
+    }
+    for (const costRetentionDays of [
+      MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS - 1,
+      1.5,
+      MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, costRetentionDays }).success,
+        false
+      )
     }
   })
 })

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -151,4 +152,94 @@ func TestGetChannelDailyAPIKeyCostsResolvesAStoredTokenName(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "当前 API Key 名称", rows[0].APIKeyName)
+}
+
+func TestAddChannelDailyCostBatchAtomicallyAddsTotalsAndAPIKeyDetails(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-batch.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	when := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	fingerprintA, displayA := ChannelDailyCostAPIKeyIdentityForToken(11, "sk-alpha")
+	fingerprintB, displayB := ChannelDailyCostAPIKeyIdentityForToken(12, "sk-beta")
+	require.Error(t, AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{
+		{ChannelId: 1, OccurredAt: when, CostNanoCNY: math.MaxInt64, SettledDelta: 1, KeyFingerprint: fingerprintA, KeyDisplay: displayA},
+		{ChannelId: 1, OccurredAt: when, CostNanoCNY: 1, SettledDelta: 1, KeyFingerprint: fingerprintB, KeyDisplay: displayB},
+	}))
+	var count int64
+	require.NoError(t, db.Model(&ChannelDailyCost{}).Count(&count).Error)
+	assert.Zero(t, count)
+	require.NoError(t, AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{
+		{
+			ChannelId:      1,
+			OccurredAt:     when,
+			CostNanoCNY:    300,
+			SettledDelta:   3,
+			APIKeyId:       11,
+			APIKeyName:     "生产 Key",
+			KeyFingerprint: fingerprintA,
+			KeyDisplay:     displayA,
+		},
+		{
+			ChannelId:       1,
+			OccurredAt:      when,
+			UnresolvedDelta: 2,
+			APIKeyId:        12,
+			APIKeyName:      "备用 Key",
+			KeyFingerprint:  fingerprintB,
+			KeyDisplay:      displayB,
+		},
+	}))
+
+	var total ChannelDailyCost
+	require.NoError(t, db.First(&total).Error)
+	assert.Equal(t, int64(300), total.CostNanoCNY)
+	assert.Equal(t, int64(3), total.SettledCount)
+	assert.Equal(t, int64(2), total.UnresolvedCount)
+	var details []ChannelDailyAPIKeyCost
+	require.NoError(t, db.Order("api_key_id ASC").Find(&details).Error)
+	require.Len(t, details, 2)
+	assert.Equal(t, total.CostNanoCNY, details[0].CostNanoCNY+details[1].CostNanoCNY)
+	assert.Equal(t, total.SettledCount, details[0].SettledCount+details[1].SettledCount)
+	assert.Equal(t, total.UnresolvedCount, details[0].UnresolvedCount+details[1].UnresolvedCount)
+}
+
+func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDaysInTheDatabase(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-totals.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayOne := time.Date(2026, 7, 20, 4, 0, 0, 0, time.UTC).Unix()
+	dayTwo := dayOne + channelDailyCostDaySeconds
+	fingerprint, display := ChannelDailyCostAPIKeyIdentityForToken(11, "sk-alpha")
+	require.NoError(t, AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{
+		{ChannelId: 1, OccurredAt: dayOne, CostNanoCNY: 100, SettledDelta: 1, APIKeyId: 11, APIKeyName: "生产 Key", KeyFingerprint: fingerprint, KeyDisplay: display},
+		{ChannelId: 1, OccurredAt: dayTwo, CostNanoCNY: 250, SettledDelta: 2, UnresolvedDelta: 1, APIKeyId: 11, APIKeyName: "生产 Key", KeyFingerprint: fingerprint, KeyDisplay: display},
+		{ChannelId: 2, OccurredAt: dayOne, CostNanoCNY: 900, SettledDelta: 1, APIKeyId: 11, APIKeyName: "生产 Key", KeyFingerprint: fingerprint, KeyDisplay: display},
+	}))
+
+	startTimestamp := ChannelDailyCostDayStart(dayOne)
+	totals, err := GetChannelDailyAPIKeyCostTotalsForChannel(context.Background(), startTimestamp, startTimestamp+2*channelDailyCostDaySeconds, 1)
+	require.NoError(t, err)
+	require.Len(t, totals, 1)
+	assert.Equal(t, 1, totals[0].ChannelId)
+	assert.Equal(t, int64(350), totals[0].CostNanoCNY)
+	assert.Equal(t, int64(3), totals[0].SettledCount)
+	assert.Equal(t, int64(1), totals[0].UnresolvedCount)
 }

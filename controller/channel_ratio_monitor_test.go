@@ -346,6 +346,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
 		{"auto_update_retry_count": maxChannelMonitorAutoUpdateRetryCount + 1},
+		{"cost_retention_days": minChannelMonitorCostRetentionDays - 1},
+		{"cost_retention_days": maxChannelMonitorCostRetentionDays + 1},
 		{"email_notification_enabled": true},
 		{"notification_email": "invalid"},
 		{"notification_email": strings.Repeat("a", maxChannelMonitorNotificationEmailLength) + "@example.com"},
@@ -374,6 +376,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"auto_update_interval_minutes":       15,
 		"auto_update_retry_count":            3,
 		"auto_disable_on_update_failure":     true,
+		"cost_retention_days":                365,
 		"email_notification_enabled":         true,
 		"notification_email":                 "alerts@example.com",
 		"smart_schedule_enabled":             true,
@@ -398,6 +401,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
+	assert.Equal(t, 365, response.Data.CostRetentionDays)
 	assert.True(t, response.Data.EmailNotificationEnabled)
 	assert.Equal(t, "alerts@example.com", response.Data.NotificationEmail)
 	assert.True(t, response.Data.SmartScheduleEnabled)
@@ -421,6 +425,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoDisableOnUpdateFailureOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorCostRetentionDaysOption).First(&option).Error)
+	assert.Equal(t, "365", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorEmailNotificationOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)

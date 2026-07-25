@@ -56,7 +56,7 @@ func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoC
 	if costNanoCNY < 0 {
 		return errors.New("daily cost must not be negative")
 	}
-	if settledDelta < 0 || unresolvedDelta < 0 || settledDelta+unresolvedDelta <= 0 {
+	if settledDelta < 0 || unresolvedDelta < 0 || (settledDelta == 0 && unresolvedDelta == 0) {
 		return errors.New("daily cost event count must be positive")
 	}
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -39,6 +40,7 @@ type channelMonitorCostChannel struct {
 type channelMonitorCostAPIKeyChannel struct {
 	ChannelId       int     `json:"channel_id"`
 	ChannelName     string  `json:"channel_name"`
+	ChannelRemark   string  `json:"channel_remark"`
 	CostCNY         float64 `json:"cost_cny"`
 	SettledCount    int64   `json:"settled_count"`
 	UnresolvedCount int64   `json:"unresolved_count"`
@@ -97,6 +99,15 @@ func GetChannelMonitorCostOverview(c *gin.Context) {
 		}
 		channelId = parsedChannelId
 	}
+	summaryOnly := false
+	if rawSummaryOnly := c.Query("summary_only"); rawSummaryOnly != "" {
+		parsedSummaryOnly, err := strconv.ParseBool(rawSummaryOnly)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "摘要模式参数必须为布尔值"})
+			return
+		}
+		summaryOnly = parsedSummaryOnly
+	}
 	page := 1
 	if rawPage := c.Query("page"); rawPage != "" {
 		parsedPage, err := strconv.Atoi(rawPage)
@@ -107,18 +118,82 @@ func GetChannelMonitorCostOverview(c *gin.Context) {
 		page = parsedPage
 	}
 
+	now := common.GetTimestamp()
 	var overview channelMonitorCostOverview
 	var err error
-	if channelId > 0 {
-		overview, err = getChannelMonitorCostOverviewForChannelPage(c.Request.Context(), days, common.GetTimestamp(), channelId, page, channelMonitorCostDatePageSize)
+	if summaryOnly {
+		overview, err = getChannelMonitorCostSummary(c.Request.Context(), days, now, channelId)
+	} else if channelId > 0 {
+		overview, err = getChannelMonitorCostOverviewForChannelPage(c.Request.Context(), days, now, channelId, page, channelMonitorCostDatePageSize)
 	} else {
-		overview, err = getChannelMonitorCostOverviewPage(c.Request.Context(), days, common.GetTimestamp(), page, channelMonitorCostDatePageSize)
+		overview, err = getChannelMonitorCostOverviewPage(c.Request.Context(), days, now, page, channelMonitorCostDatePageSize)
 	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	common.ApiSuccess(c, overview)
+}
+
+func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, channelId int) (channelMonitorCostOverview, error) {
+	todayStart := channelMonitorCostDayStart(now)
+	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
+	endTimestamp := todayStart + channelMonitorCostDaySeconds
+	rows, err := model.GetChannelDailyCostsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
+
+	totalsByDay := make(map[int64]*model.ChannelDailyCostDayTotal, days)
+	includedChannels := make(map[int]struct{})
+	unresolvedChannels := make(map[int]struct{})
+	for _, row := range rows {
+		total := totalsByDay[row.DayStart]
+		if total == nil {
+			total = &model.ChannelDailyCostDayTotal{DayStart: row.DayStart}
+			totalsByDay[row.DayStart] = total
+		}
+		total.CostNanoCNY += row.CostNanoCNY
+		total.UnresolvedCount += row.UnresolvedCount
+		if row.SettledCount > 0 {
+			includedChannels[row.ChannelId] = struct{}{}
+		}
+		if row.UnresolvedCount > 0 {
+			unresolvedChannels[row.ChannelId] = struct{}{}
+		}
+	}
+
+	totals := make([]model.ChannelDailyCostDayTotal, 0, len(totalsByDay))
+	for _, total := range totalsByDay {
+		totals = append(totals, *total)
+	}
+	items := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, totals)
+	overview := channelMonitorCostOverview{
+		Days:          days,
+		GeneratedAt:   now,
+		Items:         items,
+		ChartItems:    items,
+		ItemTotal:     days,
+		ItemPage:      1,
+		ItemPageSize:  days,
+		ItemPageCount: 1,
+		Channels:      make([]channelMonitorCostChannel, 0),
+		APIKeys:       make([]channelMonitorCostAPIKey, 0),
+		Coverage: channelMonitorCostCoverage{
+			IncludedChannelCount:   len(includedChannels),
+			UnresolvedChannelCount: len(unresolvedChannels),
+		},
+	}
+	for _, item := range items {
+		overview.TotalCostCNY += item.CostCNY
+	}
+	if len(items) > 0 {
+		overview.TodayCostCNY = items[len(items)-1].CostCNY
+	}
+	if len(items) > 1 {
+		overview.YesterdayCostCNY = items[len(items)-2].CostCNY
+	}
+	return overview, nil
 }
 
 func getChannelMonitorCostOverview(ctx context.Context, days int, now int64) (channelMonitorCostOverview, error) {
@@ -148,7 +223,7 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
-	apiKeyRows, err := model.GetChannelDailyAPIKeyCostsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	apiKeyRows, err := model.GetChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -158,8 +233,12 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	}
 
 	channelNames := make(map[int]string, len(channels))
+	channelRemarks := make(map[int]string, len(channels))
 	for _, channel := range channels {
 		channelNames[channel.Id] = channel.Name
+		if channel.Remark != nil {
+			channelRemarks[channel.Id] = strings.TrimSpace(*channel.Remark)
+		}
 	}
 
 	type channelCostSummary struct {
@@ -227,6 +306,7 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	}
 	type apiKeyChannelSummary struct {
 		ChannelName     string
+		ChannelRemark   string
 		CostCNY         float64
 		SettledCount    int64
 		UnresolvedCount int64
@@ -277,7 +357,10 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 			if channelName == "" {
 				channelName = "已删除渠道"
 			}
-			channelSummary = &apiKeyChannelSummary{ChannelName: channelName}
+			channelSummary = &apiKeyChannelSummary{
+				ChannelName:   channelName,
+				ChannelRemark: channelRemarks[row.ChannelId],
+			}
 			summary.Channels[row.ChannelId] = channelSummary
 		}
 		channelSummary.CostCNY += channelMonitorCostCNY(row.CostNanoCNY)
@@ -337,7 +420,10 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 		}
 		channelDetail := summary.Channels[channelId]
 		if channelDetail == nil {
-			channelDetail = &apiKeyChannelSummary{ChannelName: channelName}
+			channelDetail = &apiKeyChannelSummary{
+				ChannelName:   channelName,
+				ChannelRemark: channelRemarks[channelId],
+			}
 			summary.Channels[channelId] = channelDetail
 		}
 		channelDetail.CostCNY += channelMonitorCostCNY(unattributedCost)
@@ -363,6 +449,7 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 			channelsByCost = append(channelsByCost, channelMonitorCostAPIKeyChannel{
 				ChannelId:       channelId,
 				ChannelName:     channelSummary.ChannelName,
+				ChannelRemark:   channelSummary.ChannelRemark,
 				CostCNY:         channelSummary.CostCNY,
 				SettledCount:    channelSummary.SettledCount,
 				UnresolvedCount: channelSummary.UnresolvedCount,

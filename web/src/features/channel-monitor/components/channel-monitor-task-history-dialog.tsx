@@ -324,6 +324,7 @@ function ChannelTaskPolicyResult(props: { task: ChannelMonitorTask }) {
       </span>
       <span>移出分组 {result.group_memberships_removed ?? 0}</span>
       <span>禁用渠道 {result.channels_disabled ?? 0}</span>
+      <span>恢复渠道 {result.channels_enabled ?? 0}</span>
       <span>跳过分组 {result.groups_skipped ?? 0}</span>
     </div>
   )

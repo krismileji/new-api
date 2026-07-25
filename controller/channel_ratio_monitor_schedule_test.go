@@ -554,7 +554,7 @@ func TestPlanChannelSmartScheduleRatioIgnoresInsufficientPerformanceSamples(t *t
 	}
 	assert.InDelta(t, 1, items[1].Score, 1e-9)
 	assert.InDelta(t, 0, items[2].Score, 1e-9)
-	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(40), items[1].TargetWeight)
 	assert.Equal(t, uint(10), items[2].TargetWeight)
 }
 

@@ -42,9 +42,10 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		return
 	}
 	generatedAt := time.Now().Unix()
-	metrics, err := model.GetChannelMonitorPerformanceMetrics(
+	metrics, err := model.GetChannelMonitorPerformanceMetricsCached(
 		c.Request.Context(),
-		generatedAt-int64(minutes*60),
+		generatedAt,
+		minutes,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -54,9 +55,10 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 	successMetrics := make([]model.ChannelMonitorSuccessMetric, 0)
 	groupSuccessMetrics := make([]model.ChannelMonitorGroupSuccessMetric, 0)
 	if successMetricsAvailable {
-		successMetrics, groupSuccessMetrics, err = model.GetChannelMonitorSuccessMetrics(
+		successMetrics, groupSuccessMetrics, err = model.GetChannelMonitorSuccessMetricsCached(
 			c.Request.Context(),
-			generatedAt-int64(minutes*60),
+			generatedAt,
+			minutes,
 		)
 		if err != nil {
 			common.ApiError(c, err)

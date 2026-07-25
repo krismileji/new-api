@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,10 +10,28 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func useChannelConcurrencyTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	originalDB := model.DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-concurrency.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}))
+	t.Cleanup(func() {
+		model.DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+	return db
+}
 
 func useChannelConcurrencyTestState(t *testing.T, limits map[int]int) {
 	t.Helper()
@@ -62,6 +81,18 @@ func useChannelConcurrencyRedis(t *testing.T) *redis.Client {
 	return client
 }
 
+func useUnavailableChannelConcurrencyRedis(t *testing.T) {
+	t.Helper()
+	originalEnabled := common.RedisEnabled
+	originalClient := common.RDB
+	common.RedisEnabled = true
+	common.RDB = nil
+	t.Cleanup(func() {
+		common.RedisEnabled = originalEnabled
+		common.RDB = originalClient
+	})
+}
+
 func TestAcquireChannelConcurrencyLocalHonorsLimitAndIdempotentRelease(t *testing.T) {
 	useChannelConcurrencyTestState(t, map[int]int{7: 2})
 	originalRedisEnabled := common.RedisEnabled
@@ -98,6 +129,67 @@ func TestAcquireChannelConcurrencyLocalHonorsLimitAndIdempotentRelease(t *testin
 	snapshot, err := GetChannelConcurrencySnapshot(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 2}, snapshot[7])
+}
+
+func TestAcquireChannelConcurrencyRedisSkipsUnlimitedChannel(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	useUnavailableChannelConcurrencyRedis(t)
+
+	lease, acquired, status, err := AcquireChannelConcurrency(t.Context(), 8)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, ChannelConcurrencyStatus{}, status)
+	require.NotNil(t, lease)
+	lease.Release()
+}
+
+func TestAcquireChannelConcurrencyRedisFailsClosedForConfiguredChannel(t *testing.T) {
+	useChannelConcurrencyTestState(t, map[int]int{8: 1})
+	useUnavailableChannelConcurrencyRedis(t)
+
+	lease, acquired, status, err := AcquireChannelConcurrency(t.Context(), 8)
+	require.ErrorContains(t, err, "Redis 客户端未初始化")
+	assert.False(t, acquired)
+	assert.Nil(t, lease)
+	assert.Equal(t, ChannelConcurrencyStatus{}, status)
+}
+
+func TestAcquireChannelConcurrencyRefreshesBeforeUnlimitedFastPath(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		loaded bool
+	}{
+		{
+			name: "first load",
+		},
+		{
+			name:   "minute refresh",
+			loaded: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := useChannelConcurrencyTestDB(t)
+			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+				ChannelId:           14,
+				ConcurrencyLimit:    1,
+				ConcurrencyRevision: 1,
+			}).Error)
+			useChannelConcurrencyTestState(t, nil)
+			channelConcurrency.Lock()
+			channelConcurrency.loaded = test.loaded
+			if test.loaded {
+				channelConcurrency.loadedAt = time.Now().Add(-channelConcurrencyConfigRefresh)
+			}
+			channelConcurrency.Unlock()
+			useUnavailableChannelConcurrencyRedis(t)
+
+			lease, acquired, status, err := AcquireChannelConcurrency(t.Context(), 14)
+			require.ErrorContains(t, err, "Redis 客户端未初始化")
+			assert.False(t, acquired)
+			assert.Nil(t, lease)
+			assert.Equal(t, ChannelConcurrencyStatus{}, status)
+		})
+	}
 }
 
 func TestAcquireChannelConcurrencyRedisSharesLimitsAndActiveLeases(t *testing.T) {

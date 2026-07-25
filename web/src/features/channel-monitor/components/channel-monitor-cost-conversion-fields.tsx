@@ -17,8 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Edit02Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormField,
@@ -32,6 +35,11 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 import {
   getChannelMonitorConversionFactor,
@@ -47,6 +55,8 @@ import type { ChannelMonitorCostConversion } from '../types'
 type ChannelMonitorCostConversionFieldsProps = {
   form: UseFormReturn<UpstreamConfigFormValues>
   upstreamRatio: number | null
+  onEditRatio: () => void
+  editRatioDisabled?: boolean
 }
 
 export function ChannelMonitorCostConversionFields(
@@ -317,9 +327,28 @@ export function ChannelMonitorCostConversionFields(
         </div>
         <div className='flex min-w-0 flex-col gap-1'>
           <span className='text-muted-foreground'>上游倍率</span>
-          <span className='truncate font-mono font-semibold'>
-            {formatMonitorRatio(props.upstreamRatio)}
-          </span>
+          <div className='flex min-w-0 items-center gap-1'>
+            <span className='min-w-0 flex-1 truncate font-mono font-semibold'>
+              {formatMonitorRatio(props.upstreamRatio)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-xs'
+                    onClick={props.onEditRatio}
+                    disabled={props.editRatioDisabled}
+                    aria-label='修改上游原始倍率'
+                  >
+                    <HugeiconsIcon icon={Edit02Icon} />
+                  </Button>
+                }
+              />
+              <TooltipContent>修改上游原始倍率</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
         <div className='flex min-w-0 flex-col gap-1'>
           <span className='text-muted-foreground'>成本倍率</span>

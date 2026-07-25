@@ -101,13 +101,17 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
   } satisfies ChannelMonitorItem
 }
 
-function renderView(channel: ChannelMonitorItem) {
+function renderView(
+  channel: ChannelMonitorItem,
+  groupRatios: Record<string, number> = { default: 1 },
+  groupCoefficients: Record<string, number> = { default: 1 }
+) {
   return renderToStaticMarkup(
     <I18nextProvider i18n={testI18n}>
       <ChannelMonitorChannelView
         channels={[channel]}
-        groupRatios={{ default: 1 }}
-        groupCoefficients={{ default: 1 }}
+        groupRatios={groupRatios}
+        groupCoefficients={groupCoefficients}
         performanceByChannel={new Map()}
         successByChannel={new Map()}
         successMetricsAvailable={false}
@@ -118,7 +122,6 @@ function renderView(channel: ChannelMonitorItem) {
         onFetchUpstreamRatio={noop}
         onToggleStatus={noop}
         onTestConnection={noop}
-        onEditRatio={noop}
         onEditConcurrency={noop}
         onEditGroups={noop}
         onConfigureUpstream={noop}
@@ -145,6 +148,21 @@ function getTableHeaders(markup: string) {
 }
 
 describe('channel monitor channel view timestamps', () => {
+  test('sizes columns from content while preserving balance and action minimums', () => {
+    const markup = renderView(createChannel())
+    const cells = getTableCells(markup)
+    const headers = getTableHeaders(markup)
+
+    assert.match(markup, /table-auto/)
+    assert.match(markup, /w-max/)
+    assert.match(markup, /min-w-full/)
+    assert.doesNotMatch(markup, /<colgroup>/)
+    assert.match(headers[1] ?? '', /min-w-\[224px\]/)
+    assert.match(headers[9] ?? '', /min-w-\[112px\]/)
+    assert.match(cells[1] ?? '', /min-w-\[224px\]/)
+    assert.match(cells[9] ?? '', /min-w-\[112px\]/)
+  })
+
   test('shows ratio, group, and update time without updater attribution', () => {
     const channel = createChannel()
     const markup = renderView(channel)
@@ -182,8 +200,10 @@ describe('channel monitor channel view timestamps', () => {
       ratioCell.indexOf('aria-label="更新上游倍率"') <
         ratioCell.indexOf(formatMonitorRatio(channel.cost_ratio))
     )
-    assert.match(balanceCell, /grid-cols-\[24px_minmax\(0,1fr\)\]/)
-    assert.match(ratioCell, /grid-cols-\[24px_minmax\(0,1fr\)\]/)
+    assert.match(balanceCell, /grid-cols-\[24px_max-content\]/)
+    assert.match(ratioCell, /grid-cols-\[24px_max-content\]/)
+    assert.match(balanceCell, /w-max/)
+    assert.match(ratioCell, /w-max/)
     assert.match(balanceCell, /col-start-2/)
     assert.match(ratioCell, /col-start-2/)
     assert.ok(headers[1]?.includes('pl-[34px]'))
@@ -209,7 +229,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[3]?.includes('上游分组：default'))
   })
 
-  test('truncates long cell metadata and exposes the full values on hover', () => {
+  test('shows complete cell values and preserves their hover details', () => {
     const channel = createChannel()
     assert.ok(channel.upstream)
     const longChannelName = '这是一个用于验证省略展示的特别长渠道名称'
@@ -240,10 +260,34 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[4]?.includes('title="连续失败 942 次"'))
     assert.ok(cells[4]?.includes(`title="最后尝试：${fetchTimestamp}"`))
     assert.ok(cells[5]?.includes(`title="${longGroup}"`))
-    assert.match(cells[1] ?? '', /truncate/)
-    assert.match(cells[3] ?? '', /truncate/)
-    assert.match(cells[4] ?? '', /truncate/)
-    assert.match(cells[5] ?? '', /truncate/)
+    assert.doesNotMatch(cells[0] ?? '', /truncate/)
+    assert.doesNotMatch(cells[1] ?? '', /truncate/)
+    assert.ok(
+      cells[3]?.includes(
+        `whitespace-nowrap" title="上游分组：${longUpstreamGroup}`
+      )
+    )
+    assert.doesNotMatch(cells[4] ?? '', /truncate/)
+    assert.doesNotMatch(cells[5] ?? '', /truncate/)
+  })
+
+  test('stacks related groups and orders them from lowest ratio to highest', () => {
+    const cells = getTableCells(
+      renderView(
+        createChannel({ groups: ['premium', 'default', 'basic'] }),
+        { premium: 2, default: 1, basic: 0.5 },
+        { premium: 1, default: 1, basic: 1 }
+      )
+    )
+    const groupCell = cells[5] ?? ''
+    const basicIndex = groupCell.indexOf('title="basic"')
+    const defaultIndex = groupCell.indexOf('title="default"')
+    const premiumIndex = groupCell.indexOf('title="premium"')
+
+    assert.match(groupCell, /flex-col/)
+    assert.ok(basicIndex >= 0)
+    assert.ok(basicIndex < defaultIndex)
+    assert.ok(defaultIndex < premiumIndex)
   })
 
   test('does not show update metadata before either metric has been updated', () => {
@@ -316,6 +360,14 @@ describe('channel monitor channel view timestamps', () => {
 
     assert.ok(cells[8]?.includes('不限'))
     assert.ok(markup.includes('aria-label="设置并发限制"'))
+  })
+
+  test('keeps manual upstream ratio editing out of the operation column', () => {
+    const cells = getTableCells(renderView(createChannel()))
+    const operationCell = cells[9] ?? ''
+
+    assert.equal(operationCell.includes('aria-label="修改渠道倍率"'), false)
+    assert.equal(operationCell.includes('aria-label="记录渠道倍率"'), false)
   })
 
   test('exposes the system disable reason from the status badge', () => {

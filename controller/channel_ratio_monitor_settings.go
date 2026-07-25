@@ -21,6 +21,8 @@ const (
 	channelMonitorAutoUpdateIntervalOption             = "ChannelMonitorAutoUpdateIntervalMinutes"
 	channelMonitorAutoUpdateRetryCountOption           = "ChannelMonitorAutoUpdateRetryCount"
 	channelMonitorAutoDisableOnUpdateFailureOption     = "ChannelMonitorAutoDisableOnUpdateFailure"
+	channelMonitorAutoEnableOnCostRatioRecoveryOption  = "ChannelMonitorAutoEnableOnCostRatioRecovery"
+	channelMonitorCostRetentionDaysOption              = "ChannelMonitorCostRetentionDays"
 	channelMonitorEmailNotificationOption              = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption              = "ChannelMonitorNotificationEmail"
 	channelMonitorGroupCoefficientsOption              = "ChannelMonitorGroupCoefficients"
@@ -49,6 +51,8 @@ const (
 	channelMonitorSmartScheduleApplyPriorityWeight     = "priority_weight"
 	maxChannelMonitorAutoUpdateIntervalMinutes         = 525600
 	maxChannelMonitorAutoUpdateRetryCount              = 10
+	minChannelMonitorCostRetentionDays                 = 1
+	maxChannelMonitorCostRetentionDays                 = 3650
 	maxChannelMonitorNotificationEmailLength           = 254
 	maxChannelMonitorChannelOrderCount                 = 100000
 	maxChannelMonitorSmartScheduleModelLength          = 255
@@ -56,6 +60,7 @@ const (
 	maxChannelMonitorSmartScheduleMinSamples           = 100000
 	maxChannelMonitorSmartScheduleSuccessRate          = 100
 	defaultChannelMonitorAutoUpdateRetryCount          = 2
+	defaultChannelMonitorCostRetentionDays             = 120
 	defaultChannelMonitorGroupCoefficient              = 1
 	defaultChannelMonitorSmartScheduleInterval         = 10
 	defaultChannelMonitorSmartScheduleRange            = 60
@@ -68,6 +73,8 @@ type channelMonitorSettings struct {
 	AutoUpdateIntervalMinutes          int      `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount               int      `json:"auto_update_retry_count"`
 	AutoDisableOnUpdateFailure         bool     `json:"auto_disable_on_update_failure"`
+	AutoEnableOnCostRatioRecovery      bool     `json:"auto_enable_on_cost_ratio_recovery"`
+	CostRetentionDays                  int      `json:"cost_retention_days"`
 	EmailNotificationEnabled           bool     `json:"email_notification_enabled"`
 	NotificationEmail                  string   `json:"notification_email"`
 	SmartScheduleEnabled               bool     `json:"smart_schedule_enabled"`
@@ -90,6 +97,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	AutoUpdateIntervalMinutes       *int      `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount            *int      `json:"auto_update_retry_count"`
 	AutoDisableOnUpdateFailure      *bool     `json:"auto_disable_on_update_failure"`
+	AutoEnableOnCostRatioRecovery   *bool     `json:"auto_enable_on_cost_ratio_recovery"`
+	CostRetentionDays               *int      `json:"cost_retention_days"`
 	EmailNotificationEnabled        *bool     `json:"email_notification_enabled"`
 	NotificationEmail               *string   `json:"notification_email"`
 	SmartScheduleEnabled            *bool     `json:"smart_schedule_enabled"`
@@ -115,6 +124,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawInterval := common.OptionMap[channelMonitorAutoUpdateIntervalOption]
 	rawRetryCount := common.OptionMap[channelMonitorAutoUpdateRetryCountOption]
 	rawAutoDisableOnUpdateFailure := common.OptionMap[channelMonitorAutoDisableOnUpdateFailureOption]
+	rawAutoEnableOnCostRatioRecovery := common.OptionMap[channelMonitorAutoEnableOnCostRatioRecoveryOption]
+	rawCostRetentionDays := common.OptionMap[channelMonitorCostRetentionDaysOption]
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
@@ -141,6 +152,14 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	autoDisableOnUpdateFailure, err := strconv.ParseBool(rawAutoDisableOnUpdateFailure)
 	if err != nil {
 		autoDisableOnUpdateFailure = false
+	}
+	autoEnableOnCostRatioRecovery, err := strconv.ParseBool(rawAutoEnableOnCostRatioRecovery)
+	if err != nil {
+		autoEnableOnCostRatioRecovery = false
+	}
+	costRetentionDays, err := strconv.Atoi(rawCostRetentionDays)
+	if err != nil || costRetentionDays < minChannelMonitorCostRetentionDays || costRetentionDays > maxChannelMonitorCostRetentionDays {
+		costRetentionDays = defaultChannelMonitorCostRetentionDays
 	}
 	notificationEmail, err := normalizeChannelMonitorNotificationEmail(rawNotificationEmail)
 	if err != nil {
@@ -205,6 +224,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		AutoUpdateIntervalMinutes:       interval,
 		AutoUpdateRetryCount:            retryCount,
 		AutoDisableOnUpdateFailure:      autoDisableOnUpdateFailure,
+		AutoEnableOnCostRatioRecovery:   autoEnableOnCostRatioRecovery,
+		CostRetentionDays:               costRetentionDays,
 		EmailNotificationEnabled:        emailNotificationEnabled,
 		NotificationEmail:               notificationEmail,
 		SmartScheduleEnabled:            smartScheduleEnabled,
@@ -432,6 +453,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoUpdateIntervalMinutes == nil &&
 		request.AutoUpdateRetryCount == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
+		request.AutoEnableOnCostRatioRecovery == nil &&
+		request.CostRetentionDays == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
 		request.SmartScheduleEnabled == nil &&
@@ -451,7 +474,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	settings := getChannelMonitorSettings()
 	smartScheduleWasEnabled := settings.SmartScheduleEnabled
-	values := make(map[string]string, 16)
+	values := make(map[string]string, 18)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -479,6 +502,22 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoDisableOnUpdateFailure != nil {
 		settings.AutoDisableOnUpdateFailure = *request.AutoDisableOnUpdateFailure
 		values[channelMonitorAutoDisableOnUpdateFailureOption] = strconv.FormatBool(settings.AutoDisableOnUpdateFailure)
+	}
+	if request.AutoEnableOnCostRatioRecovery != nil {
+		settings.AutoEnableOnCostRatioRecovery = *request.AutoEnableOnCostRatioRecovery
+		values[channelMonitorAutoEnableOnCostRatioRecoveryOption] = strconv.FormatBool(settings.AutoEnableOnCostRatioRecovery)
+	}
+	if request.CostRetentionDays != nil && (*request.CostRetentionDays < minChannelMonitorCostRetentionDays ||
+		*request.CostRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "成本数据保留天数必须在 1 到 3650 天之间",
+		})
+		return
+	}
+	if request.CostRetentionDays != nil {
+		settings.CostRetentionDays = *request.CostRetentionDays
+		values[channelMonitorCostRetentionDaysOption] = strconv.Itoa(settings.CostRetentionDays)
 	}
 	if request.EmailNotificationEnabled != nil {
 		settings.EmailNotificationEnabled = *request.EmailNotificationEnabled
@@ -656,6 +695,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"auto_update_interval_minutes":       settings.AutoUpdateIntervalMinutes,
 		"auto_update_retry_count":            settings.AutoUpdateRetryCount,
 		"auto_disable_on_update_failure":     settings.AutoDisableOnUpdateFailure,
+		"auto_enable_on_cost_ratio_recovery": settings.AutoEnableOnCostRatioRecovery,
+		"cost_retention_days":                settings.CostRetentionDays,
 		"email_notification_enabled":         settings.EmailNotificationEnabled,
 		"notification_email_configured":      settings.NotificationEmail != "",
 		"smart_schedule_enabled":             settings.SmartScheduleEnabled,

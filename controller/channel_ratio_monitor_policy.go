@@ -20,9 +20,10 @@ type channelMonitorPolicyPlan struct {
 }
 
 type channelMonitorPolicyInput struct {
-	CostRatio              float64
-	SingleChannelAction    string
-	MultipleChannelsAction string
+	CostRatio                        float64
+	BalanceBelowAutoDisableThreshold bool
+	SingleChannelAction              string
+	MultipleChannelsAction           string
 }
 
 type channelMonitorPolicyMember struct {
@@ -287,7 +288,7 @@ func applyChannelMonitorPolicyPlan(ctx context.Context, plan channelMonitorPolic
 		if ctx != nil && ctx.Err() != nil {
 			return groupsUpdated, removedMemberships, disabledChannelIds, false, ctx.Err()
 		}
-		if model.UpdateChannelStatus(channelId, "", common.ChannelStatusAutoDisabled, "渠道监控：成本倍率高于分组倍率") {
+		if model.UpdateChannelStatus(channelId, "", common.ChannelStatusAutoDisabled, channelMonitorCostRatioPolicyDisableReason) {
 			disabledChannelIds = append(disabledChannelIds, channelId)
 		}
 	}

@@ -70,14 +70,20 @@ export async function getChannelMonitorOverview() {
 export async function getChannelMonitorCostOverview(
   days: number,
   channelId?: number,
-  page = 1
+  page = 1,
+  summaryOnly = false
 ) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorCostOverview>
   >(
     '/api/channel_monitor/cost',
     channelMonitorRequestConfig({
-      params: { days, channel_id: channelId, page },
+      params: {
+        days,
+        channel_id: channelId,
+        page,
+        summary_only: summaryOnly || undefined,
+      },
     })
   )
   return ensureChannelMonitorSuccess(response.data)

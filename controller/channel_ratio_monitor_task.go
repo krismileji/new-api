@@ -35,6 +35,7 @@ type channelRatioMonitorTaskResult struct {
 	GroupMembershipsRemoved int                              `json:"group_memberships_removed"`
 	GroupUpdateFailed       bool                             `json:"group_update_failed,omitempty"`
 	ChannelsDisabled        int                              `json:"channels_disabled"`
+	ChannelsEnabled         int                              `json:"channels_enabled,omitempty"`
 	GroupsSkipped           int                              `json:"groups_skipped"`
 	Retried                 int                              `json:"retried,omitempty"`
 	RecoveredAfterRetry     int                              `json:"recovered_after_retry,omitempty"`
@@ -279,6 +280,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 
 		var outcome channelMonitorFetchOutcome
 		var recordedBalance *float64
+		balanceBelowAutoDisableThreshold := false
 		ratioUpdated := false
 		syncSkipped := false
 		retriesUsed := 0
@@ -342,6 +344,8 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		}
 		if recordedBalance != nil {
 			balance := *recordedBalance
+			balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
+				balance < *monitor.BalanceAutoDisableThreshold
 			summary.BalanceUpdated++
 			balanceAutoDisabled, disableErr := autoDisableChannelMonitorForLowBalance(monitor, channel, balance)
 			if disableErr != nil {
@@ -376,7 +380,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			}
 			summary.recordFailure(monitor.ChannelId, channel.Name, channelRemark, failureErr)
 			if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled &&
-				model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, "渠道监控：上游倍率或余额更新失败") {
+				model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, channelMonitorUpdateFailureDisableReason) {
 				summary.ChannelsDisabled++
 				channelStatusChanged = true
 				disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
@@ -392,11 +396,23 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			if retriesUsed > 0 {
 				summary.RecoveredAfterRetry++
 			}
+			if channelMonitorUpdateFailureRecovered(monitor, channel, recordedBalance) {
+				recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
+				if recoveryErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
+				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, recordedBalance) &&
+					model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "") {
+					channel.Status = common.ChannelStatusEnabled
+					summary.ChannelsEnabled++
+					channelStatusChanged = true
+				}
+			}
 			if ratioUpdated {
 				policyInputs[monitor.ChannelId] = channelMonitorPolicyInput{
-					CostRatio:              outcome.Result.CostRatio,
-					SingleChannelAction:    monitor.SingleChannelAction,
-					MultipleChannelsAction: monitor.MultipleChannelsAction,
+					CostRatio:                        outcome.Result.CostRatio,
+					BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
+					SingleChannelAction:              monitor.SingleChannelAction,
+					MultipleChannelsAction:           monitor.MultipleChannelsAction,
 				}
 				if outcome.Changed {
 					summary.Changed++
@@ -421,11 +437,29 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	if err != nil {
 		return summary, err
 	}
+	groupCoefficients := getChannelMonitorGroupCoefficients()
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	if settings.AutoEnableOnCostRatioRecovery {
+		enabledChannelIds, recoveryErr := autoEnableChannelsAfterCostRatioRecovery(
+			ctx,
+			channels,
+			policyInputs,
+			groupRatios,
+			groupCoefficients,
+		)
+		if recoveryErr != nil {
+			return summary, recoveryErr
+		}
+		if len(enabledChannelIds) > 0 {
+			summary.ChannelsEnabled += len(enabledChannelIds)
+			channelStatusChanged = true
+		}
+	}
 	plan := planChannelMonitorPolicyActions(
 		channels,
 		policyInputs,
-		ratio_setting.GetGroupRatioCopy(),
-		getChannelMonitorGroupCoefficients(),
+		groupRatios,
+		groupCoefficients,
 	)
 	summary.GroupsSkipped = plan.SkippedGroupCount
 	groupsUpdated, removedMemberships, disabledChannelIds, groupUpdateFailed, err := applyChannelMonitorPolicyPlan(ctx, plan)

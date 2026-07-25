@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -77,6 +79,206 @@ func TestGetChannelMonitorPerformanceMetricsUsesUsageLogTimingRules(t *testing.T
 	require.NotNil(t, metrics[2].AverageFirstTokenMs)
 	assert.InDelta(t, 500, *metrics[2].AverageFirstTokenMs, 0.001)
 	assert.Nil(t, metrics[2].AverageTPS)
+}
+
+func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *testing.T) {
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	t.Cleanup(func() {
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+		resetChannelMonitorMetricsCache()
+	})
+	resetChannelMonitorMetricsCache()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	require.NoError(t, db.Create(&Log{
+		ChannelId:        1,
+		ModelName:        "model-a",
+		Group:            "vip",
+		CreatedAt:        995,
+		Type:             LogTypeConsume,
+		IsStream:         true,
+		CompletionTokens: 100,
+		UseTime:          10,
+		Other:            `{"frt":1000}`,
+	}).Error)
+
+	performance, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	require.Len(t, performance, 1)
+	success, groups, err := GetChannelMonitorSuccessMetricsCached(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	require.Len(t, success, 1)
+	require.Len(t, groups, 1)
+
+	performance[0].ModelName = "mutated"
+	require.NotNil(t, performance[0].AverageFirstTokenMs)
+	*performance[0].AverageFirstTokenMs = -1
+	success[0].ModelName = "mutated"
+	groups[0].Group = "mutated"
+	require.NoError(t, db.Create(&Log{
+		ChannelId:        1,
+		ModelName:        "model-a",
+		Group:            "vip",
+		CreatedAt:        996,
+		Type:             LogTypeConsume,
+		IsStream:         true,
+		CompletionTokens: 200,
+		UseTime:          10,
+		Other:            `{"frt":2000}`,
+	}).Error)
+
+	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1001, 15)
+	require.NoError(t, err)
+	require.Len(t, performance, 1)
+	assert.Equal(t, "model-a", performance[0].ModelName)
+	assert.Equal(t, 1, performance[0].SampleCount)
+	require.NotNil(t, performance[0].AverageFirstTokenMs)
+	assert.InDelta(t, 1000, *performance[0].AverageFirstTokenMs, 0.001)
+	success, groups, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1001, 15)
+	require.NoError(t, err)
+	assert.Equal(t, "model-a", success[0].ModelName)
+	assert.Equal(t, int64(1), success[0].ActualSuccessCount)
+	assert.Equal(t, "vip", groups[0].Group)
+
+	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1020, 15)
+	require.NoError(t, err)
+	require.Len(t, performance, 1)
+	assert.Equal(t, 2, performance[0].SampleCount)
+	success, _, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1020, 15)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), success[0].ActualSuccessCount)
+}
+
+func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *testing.T) {
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	t.Cleanup(func() {
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+		resetChannelMonitorMetricsCache()
+	})
+	resetChannelMonitorMetricsCache()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-singleflight.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	require.NoError(t, db.Create(&Log{
+		ChannelId:        1,
+		ModelName:        "model-a",
+		CreatedAt:        995,
+		Type:             LogTypeConsume,
+		IsStream:         true,
+		CompletionTokens: 100,
+		UseTime:          10,
+	}).Error)
+
+	queryStarted := make(chan struct{})
+	releaseQuery := make(chan struct{})
+	var queryCount atomic.Int32
+	var blockFirstQuery sync.Once
+	require.NoError(t, db.Callback().Row().Before("gorm:row").Register(
+		"channel_monitor_performance_cache_test",
+		func(*gorm.DB) {
+			queryCount.Add(1)
+			blockFirstQuery.Do(func() {
+				close(queryStarted)
+				<-releaseQuery
+			})
+		},
+	))
+
+	const callers = 8
+	results := make(chan error, callers)
+	go func() {
+		_, callErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+		results <- callErr
+	}()
+	<-queryStarted
+	for range callers - 1 {
+		go func() {
+			_, callErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+			results <- callErr
+		}()
+	}
+	close(releaseQuery)
+	for range callers {
+		require.NoError(t, <-results)
+	}
+	assert.Equal(t, int32(1), queryCount.Load())
+}
+
+func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testing.T) {
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	t.Cleanup(func() {
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+		resetChannelMonitorMetricsCache()
+	})
+	resetChannelMonitorMetricsCache()
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+
+	firstDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache-first.db")), &gorm.Config{})
+	require.NoError(t, err)
+	firstSQLDB, err := firstDB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, firstSQLDB.Close())
+	})
+	require.NoError(t, firstDB.AutoMigrate(&Log{}))
+	require.NoError(t, firstDB.Create(&Log{
+		ChannelId: 1,
+		ModelName: "first-db-model",
+		CreatedAt: 995,
+		Type:      LogTypeConsume,
+		IsStream:  true,
+		Other:     `{"frt":1000}`,
+	}).Error)
+	LOG_DB = firstDB
+	metrics, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "first-db-model", metrics[0].ModelName)
+
+	secondDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache-second.db")), &gorm.Config{})
+	require.NoError(t, err)
+	secondSQLDB, err := secondDB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, secondSQLDB.Close())
+	})
+	require.NoError(t, secondDB.AutoMigrate(&Log{}))
+	require.NoError(t, secondDB.Create(&Log{
+		ChannelId: 2,
+		ModelName: "second-db-model",
+		CreatedAt: 995,
+		Type:      LogTypeConsume,
+		IsStream:  true,
+		Other:     `{"frt":2000}`,
+	}).Error)
+	LOG_DB = secondDB
+	metrics, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	assert.Equal(t, "second-db-model", metrics[0].ModelName)
 }
 
 func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *testing.T) {
