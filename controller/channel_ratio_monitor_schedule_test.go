@@ -425,12 +425,12 @@ func TestPlanChannelSmartSchedulePriorityWeightUsesQualityTiersAndDamping(t *tes
 	assert.Equal(t, int64(100), items[1].TargetPriority)
 	assert.Equal(t, uint(80), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(20), items[2].TargetWeight)
+	assert.Equal(t, uint(50), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
 	assert.Equal(t, uint(20), items[3].TargetWeight)
 }
 
-func TestPlanChannelSmartScheduleSingleMetricBiasesBestChannel(t *testing.T) {
+func TestPlanChannelSmartScheduleUsesLinearScoreCurveByDefault(t *testing.T) {
 	ratioLow := 1.0
 	ratioMiddle := 2.0
 	ratioHigh := 3.0
@@ -484,7 +484,7 @@ func TestPlanChannelSmartScheduleSingleMetricBiasesBestChannel(t *testing.T) {
 				items[item.ChannelId] = item
 			}
 			assert.Equal(t, uint(40), items[1].TargetWeight)
-			assert.Equal(t, uint(20), items[2].TargetWeight)
+			assert.Equal(t, uint(40), items[2].TargetWeight)
 			assert.Equal(t, uint(10), items[3].TargetWeight)
 			assert.InDelta(t, 0.5, items[2].Score, 1e-9)
 		})
@@ -529,7 +529,127 @@ func TestPlanChannelSmartScheduleRatioBalancesPerformanceGuardrails(t *testing.T
 	assert.InDelta(t, 0.7, items[1].Score, 1e-9)
 	assert.InDelta(t, 0.3, items[2].Score, 1e-9)
 	assert.Equal(t, uint(40), items[1].TargetWeight)
-	assert.Equal(t, uint(10), items[2].TargetWeight)
+	assert.Equal(t, uint(35), items[2].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleUsesConfiguredStrategyPercentages(t *testing.T) {
+	ratioCheap := 1.0
+	ratioExpensive := 2.0
+	firstTokenSlow := 900.0
+	firstTokenFast := 100.0
+	tpsSlow := 10.0
+	tpsFast := 30.0
+	candidates := []channelSmartScheduleCandidate{
+		{
+			ChannelId: 1, Ratio: &ratioCheap,
+			FirstTokenMs: &firstTokenSlow, FirstTokenSampleCount: 5,
+			TPS: &tpsSlow, TPSSampleCount: 5,
+		},
+		{
+			ChannelId: 2, Ratio: &ratioExpensive,
+			FirstTokenMs: &firstTokenFast, FirstTokenSampleCount: 5,
+			TPS: &tpsFast, TPSSampleCount: 5,
+		},
+	}
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.Smart = channelSmartScheduleMetricPercentages{
+		CostRatioPercent: 60, FirstTokenPercent: 20, TPSPercent: 20,
+	}
+	scoring.Ratio = channelSmartScheduleMetricPercentages{
+		CostRatioPercent: 20, FirstTokenPercent: 40, TPSPercent: 40,
+	}
+
+	plan := planChannelSmartScheduleWithScoring(
+		candidates,
+		channelMonitorSmartScheduleStrategySmart,
+		false,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.InDelta(t, 0.6, items[1].Score, 1e-9)
+	assert.InDelta(t, 0.4, items[2].Score, 1e-9)
+	assert.Equal(t, uint(65), items[1].TargetWeight)
+	assert.Equal(t, uint(45), items[2].TargetWeight)
+
+	plan = planChannelSmartScheduleWithScoring(
+		candidates,
+		channelMonitorSmartScheduleStrategyRatio,
+		false,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	items = make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.InDelta(t, 0.2, items[1].Score, 1e-9)
+	assert.InDelta(t, 0.8, items[2].Score, 1e-9)
+	assert.Equal(t, uint(30), items[1].TargetWeight)
+	assert.Equal(t, uint(80), items[2].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleDoesNotRequireZeroPercentMetrics(t *testing.T) {
+	ratioLow := 1.0
+	ratioHigh := 2.0
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.Smart = channelSmartScheduleMetricPercentages{CostRatioPercent: 100}
+
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{ChannelId: 1, Ratio: &ratioLow},
+			{ChannelId: 2, Ratio: &ratioHigh},
+		},
+		channelMonitorSmartScheduleStrategySmart,
+		false,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		scoring,
+	)
+
+	require.Len(t, plan.Items, 2)
+	assert.Empty(t, plan.Skipped)
+}
+
+func TestPlanChannelSmartScheduleFullStabilityDoesNotRequireBusinessMetrics(t *testing.T) {
+	stabilityLow := 0.8
+	stabilityHigh := 1.0
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	candidates := []channelSmartScheduleCandidate{
+		{ChannelId: 1, Stability: &stabilityLow, StabilitySampleCount: 5, StabilityAvailable: true},
+		{ChannelId: 2, Stability: &stabilityHigh, StabilitySampleCount: 5, StabilityAvailable: true},
+	}
+
+	for _, strategy := range []string{
+		channelMonitorSmartScheduleStrategySmart,
+		channelMonitorSmartScheduleStrategyRatio,
+	} {
+		plan := planChannelSmartScheduleWithScoring(
+			candidates,
+			strategy,
+			true,
+			channelMonitorSmartScheduleApplyWeight,
+			5,
+			false,
+			scoring,
+		)
+
+		require.Len(t, plan.Items, 2)
+		assert.Empty(t, plan.Skipped)
+		assert.InDelta(t, stabilityLow, plan.Items[0].Score, 1e-9)
+		assert.InDelta(t, stabilityHigh, plan.Items[1].Score, 1e-9)
+	}
 }
 
 func TestPlanChannelSmartScheduleRatioIgnoresInsufficientPerformanceSamples(t *testing.T) {
@@ -630,8 +750,8 @@ func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, uint(70), items[1].TargetWeight)
-	assert.Equal(t, uint(40), items[2].TargetWeight)
+	assert.Equal(t, uint(80), items[1].TargetWeight)
+	assert.Equal(t, uint(30), items[2].TargetWeight)
 
 	plan = planChannelSmartSchedule([]channelSmartScheduleCandidate{
 		{
@@ -652,8 +772,8 @@ func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, uint(70), items[1].TargetWeight)
-	assert.Equal(t, uint(50), items[2].TargetWeight)
+	assert.Equal(t, uint(80), items[1].TargetWeight)
+	assert.Equal(t, uint(65), items[2].TargetWeight)
 }
 
 func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testing.T) {
@@ -670,6 +790,8 @@ func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testi
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
+	assert.InDelta(t, 0.995, items[1].Score, 1e-9)
+	assert.InDelta(t, 0.9, items[2].Score, 1e-9)
 	assert.Equal(t, uint(100), items[1].TargetWeight)
 	assert.Equal(t, uint(90), items[2].TargetWeight)
 
@@ -761,7 +883,7 @@ func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *test
 	assert.Equal(t, int64(100), items[1].TargetPriority)
 	assert.Equal(t, uint(100), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(20), items[2].TargetWeight)
+	assert.Equal(t, uint(55), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
 	assert.Equal(t, uint(10), items[3].TargetWeight)
 }

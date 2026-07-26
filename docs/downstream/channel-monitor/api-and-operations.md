@@ -53,6 +53,7 @@
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
 | `smart_schedule_stability_enabled` | `ChannelMonitorSmartScheduleStabilityEnabled` | `false` | 布尔值 |
+| `smart_schedule_scoring` | `ChannelMonitorSmartScheduleScoring` | 见下方 | 稳定性、策略指标百分比和得分曲线指数 |
 | `smart_schedule_apply_mode` | `ChannelMonitorSmartScheduleApplyMode` | `weight` | `weight`、`priority_weight` |
 | `smart_schedule_performance_minutes` | `ChannelMonitorSmartSchedulePerformanceMinutes` | `60` | `15`、`60`、`360`、`1440` |
 | `smart_schedule_models` | `ChannelMonitorSmartScheduleModels` | `[]` | 最多 100 个，每项最长 255 字符 |
@@ -61,6 +62,25 @@
 | `smart_schedule_cooldown_minutes` | `ChannelMonitorSmartScheduleCooldownMinutes` | `30` | `1..525600` |
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
+
+`smart_schedule_scoring` 必须提交完整对象；两个策略的指标占比各自合计为 `100%`，曲线指数范围为 `0.1..5`：
+
+```json
+{
+  "stability_percent": 50,
+  "curve_exponent": 1,
+  "smart": {
+    "cost_ratio_percent": 40,
+    "first_token_percent": 40,
+    "tps_percent": 20
+  },
+  "ratio": {
+    "cost_ratio_percent": 70,
+    "first_token_percent": 20,
+    "tps_percent": 10
+  }
+}
+```
 
 ## 系统任务
 

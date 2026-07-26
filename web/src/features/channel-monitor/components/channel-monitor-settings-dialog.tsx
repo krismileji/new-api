@@ -55,6 +55,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { updateChannelMonitorSettings } from '../api'
+import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from '../constants'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   createChannelMonitorSettingsSchema,
@@ -127,6 +128,9 @@ export function ChannelMonitorSettingsDialog(
   if (smartScheduleModels.length === 0 && props.settings.smart_schedule_model) {
     smartScheduleModels = [props.settings.smart_schedule_model]
   }
+  const smartScheduleScoring =
+    props.settings.smart_schedule_scoring ??
+    DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING
   const form = useForm<ChannelMonitorSettingsFormValues>({
     resolver: zodResolver(
       createChannelMonitorSettingsSchema()
@@ -154,6 +158,20 @@ export function ChannelMonitorSettingsDialog(
       smartScheduleStrategy: props.settings.smart_schedule_strategy,
       smartScheduleStabilityEnabled:
         props.settings.smart_schedule_stability_enabled ?? false,
+      smartScheduleScoring: {
+        stabilityPercent: smartScheduleScoring.stability_percent,
+        curveExponent: smartScheduleScoring.curve_exponent,
+        smart: {
+          costRatioPercent: smartScheduleScoring.smart.cost_ratio_percent,
+          firstTokenPercent: smartScheduleScoring.smart.first_token_percent,
+          tpsPercent: smartScheduleScoring.smart.tps_percent,
+        },
+        ratio: {
+          costRatioPercent: smartScheduleScoring.ratio.cost_ratio_percent,
+          firstTokenPercent: smartScheduleScoring.ratio.first_token_percent,
+          tpsPercent: smartScheduleScoring.ratio.tps_percent,
+        },
+      },
       smartScheduleApplyMode: props.settings.smart_schedule_apply_mode,
       smartSchedulePerformanceMinutes:
         props.settings.smart_schedule_performance_minutes,
@@ -212,6 +230,24 @@ export function ChannelMonitorSettingsDialog(
       smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
       smart_schedule_strategy: values.smartScheduleStrategy,
       smart_schedule_stability_enabled: values.smartScheduleStabilityEnabled,
+      smart_schedule_scoring: {
+        stability_percent: values.smartScheduleScoring.stabilityPercent,
+        curve_exponent: values.smartScheduleScoring.curveExponent,
+        smart: {
+          cost_ratio_percent:
+            values.smartScheduleScoring.smart.costRatioPercent,
+          first_token_percent:
+            values.smartScheduleScoring.smart.firstTokenPercent,
+          tps_percent: values.smartScheduleScoring.smart.tpsPercent,
+        },
+        ratio: {
+          cost_ratio_percent:
+            values.smartScheduleScoring.ratio.costRatioPercent,
+          first_token_percent:
+            values.smartScheduleScoring.ratio.firstTokenPercent,
+          tps_percent: values.smartScheduleScoring.ratio.tpsPercent,
+        },
+      },
       smart_schedule_apply_mode: values.smartScheduleApplyMode,
       smart_schedule_performance_minutes:
         values.smartSchedulePerformanceMinutes,

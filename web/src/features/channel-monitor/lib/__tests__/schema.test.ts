@@ -69,6 +69,20 @@ describe('channel monitor settings schema', () => {
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart',
       smartScheduleStabilityEnabled: false,
+      smartScheduleScoring: {
+        stabilityPercent: 50,
+        curveExponent: 1,
+        smart: {
+          costRatioPercent: 40,
+          firstTokenPercent: 40,
+          tpsPercent: 20,
+        },
+        ratio: {
+          costRatioPercent: 70,
+          firstTokenPercent: 20,
+          tpsPercent: 10,
+        },
+      },
       smartScheduleApplyMode: 'weight',
       smartSchedulePerformanceMinutes: 60,
       smartScheduleModels: [],
@@ -101,6 +115,20 @@ describe('channel monitor settings schema', () => {
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart' as const,
       smartScheduleStabilityEnabled: false,
+      smartScheduleScoring: {
+        stabilityPercent: 50,
+        curveExponent: 1,
+        smart: {
+          costRatioPercent: 40,
+          firstTokenPercent: 40,
+          tpsPercent: 20,
+        },
+        ratio: {
+          costRatioPercent: 70,
+          firstTokenPercent: 20,
+          tpsPercent: 10,
+        },
+      },
       smartScheduleApplyMode: 'weight' as const,
       smartSchedulePerformanceMinutes: 60 as const,
       smartScheduleModels: [],
@@ -154,5 +182,96 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
+  })
+
+  test('requires valid configurable smart schedule percentages', () => {
+    const baseSettings = {
+      autoUpdateIntervalMinutes: 10,
+      autoUpdateRetryCount: 2,
+      autoDisableOnUpdateFailure: false,
+      autoEnableOnCostRatioRecovery: false,
+      autoEnableOnBalanceRecovery: false,
+      costRetentionDays: 120,
+      emailNotificationEnabled: false,
+      notificationEmail: '',
+      probeResponseEnabled: false,
+      relayResponseHeaderTimeoutSeconds: 0,
+      smartScheduleEnabled: true,
+      smartScheduleIntervalMinutes: 10,
+      smartScheduleStrategy: 'smart' as const,
+      smartScheduleStabilityEnabled: true,
+      smartScheduleScoring: {
+        stabilityPercent: 50,
+        curveExponent: 1,
+        smart: {
+          costRatioPercent: 40,
+          firstTokenPercent: 40,
+          tpsPercent: 20,
+        },
+        ratio: {
+          costRatioPercent: 70,
+          firstTokenPercent: 20,
+          tpsPercent: 10,
+        },
+      },
+      smartScheduleApplyMode: 'weight' as const,
+      smartSchedulePerformanceMinutes: 60 as const,
+      smartScheduleModels: [],
+      smartScheduleMinSamples: 5,
+      smartScheduleMinSuccessRate: 80,
+      smartScheduleCooldownMinutes: 30,
+      smartScheduleForceReset: false,
+    }
+    const schema = createChannelMonitorSettingsSchema()
+
+    assert.equal(schema.safeParse(baseSettings).success, true)
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          smart: {
+            costRatioPercent: 50,
+            firstTokenPercent: 30,
+            tpsPercent: 30,
+          },
+        },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          stabilityPercent: 101,
+        },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          curveExponent: 5.1,
+        },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          ratio: {
+            costRatioPercent: 0,
+            firstTokenPercent: 50,
+            tpsPercent: 50,
+          },
+        },
+      }).success,
+      false
+    )
   })
 })

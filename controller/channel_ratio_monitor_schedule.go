@@ -25,10 +25,6 @@ const (
 	channelMonitorSmartScheduleMinWeightChange                   = 10
 	channelMonitorSmartScheduleMaxWeightChange                   = 20
 	channelMonitorSmartScheduleSingleMetricMaxWeightChange       = 30
-	channelMonitorSmartScheduleSingleMetricWeightExponent        = 3.0
-	channelMonitorSmartScheduleRatioPrimaryScoreWeight           = 0.7
-	channelMonitorSmartScheduleRatioSecondaryScoreWeight         = 0.3
-	channelMonitorSmartScheduleStabilityScoreWeight              = 0.2
 	channelMonitorSmartScheduleBaselinePriority            int64 = 80
 	channelMonitorSmartScheduleDegradedPriority            int64 = 0
 	channelMonitorSmartScheduleDegradedWeight              uint  = 0
@@ -102,6 +98,7 @@ type channelSmartScheduleTaskFailure struct {
 type channelSmartScheduleTaskResult struct {
 	Strategy                string                            `json:"strategy"`
 	StabilityEnabled        bool                              `json:"stability_enabled"`
+	Scoring                 channelSmartScheduleScoring       `json:"scoring"`
 	ForceReset              bool                              `json:"force_reset"`
 	ApplyMode               string                            `json:"apply_mode"`
 	Model                   string                            `json:"model"`
@@ -213,6 +210,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	result := channelSmartScheduleTaskResult{
 		Strategy:           settings.SmartScheduleStrategy,
 		StabilityEnabled:   settings.SmartScheduleStabilityEnabled,
+		Scoring:            settings.SmartScheduleScoring,
 		ForceReset:         forceReset,
 		ApplyMode:          settings.SmartScheduleApplyMode,
 		Model:              settings.SmartScheduleModel,
@@ -261,12 +259,20 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		}
 		channelCacheDirty = len(channelIds) > 0
 	}
-	needsPerformance := settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio ||
-		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyFirstToken ||
+	usesBusinessScore := channelSmartScheduleUsesBusinessScore(
+		settings.SmartScheduleStabilityEnabled,
+		settings.SmartScheduleScoring,
+	)
+	needsPerformance := usesBusinessScore && (settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyFirstToken ||
 		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyTPS ||
-		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart
-	needsRatio := settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio ||
-		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart
+		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart &&
+			(settings.SmartScheduleScoring.Smart.FirstTokenPercent > 0 || settings.SmartScheduleScoring.Smart.TPSPercent > 0)) ||
+		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio &&
+			(settings.SmartScheduleScoring.Ratio.FirstTokenPercent > 0 || settings.SmartScheduleScoring.Ratio.TPSPercent > 0)))
+	needsRatio := usesBusinessScore && ((settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio &&
+		settings.SmartScheduleScoring.Ratio.CostRatioPercent > 0) ||
+		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart &&
+			settings.SmartScheduleScoring.Smart.CostRatioPercent > 0))
 	needsStability := settings.SmartScheduleStabilityEnabled
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceMinutes*60)
@@ -633,16 +639,18 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 			candidate.Stability = performance.Stability
 			candidate.StabilitySampleCount = performance.StabilitySampleCount
 		}
-		if reason := channelSmartScheduleCandidateSkipReason(
+		if reason := channelSmartScheduleCandidateSkipReasonWithScoring(
 			candidate,
 			settings.SmartScheduleStrategy,
 			settings.SmartScheduleStabilityEnabled,
 			settings.SmartScheduleMinSamples,
-		); reason != "" && channelSmartScheduleCandidateNeedsExploration(
+			settings.SmartScheduleScoring,
+		); reason != "" && channelSmartScheduleCandidateNeedsExplorationWithScoring(
 			candidate,
 			settings.SmartScheduleStrategy,
 			settings.SmartScheduleStabilityEnabled,
 			settings.SmartScheduleMinSamples,
+			settings.SmartScheduleScoring,
 		) {
 			directActions = append(directActions, channelSmartScheduleDirectAction{
 				ChannelId:       channel.Id,
@@ -658,13 +666,14 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		candidates = append(candidates, candidate)
 	}
 
-	plan := planChannelSmartSchedule(
+	plan := planChannelSmartScheduleWithScoring(
 		candidates,
 		settings.SmartScheduleStrategy,
 		settings.SmartScheduleStabilityEnabled,
 		settings.SmartScheduleApplyMode,
 		settings.SmartScheduleMinSamples,
 		forceReset,
+		settings.SmartScheduleScoring,
 	)
 	result.Planned = len(plan.Items)
 	for _, candidate := range candidates {
@@ -877,11 +886,26 @@ func channelSmartScheduleRestoreTarget(monitor model.ChannelRatioMonitor) (int64
 }
 
 func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, applyMode string, minSamples int, forceReset bool) channelSmartSchedulePlan {
+	return planChannelSmartScheduleWithScoring(
+		candidates,
+		strategy,
+		stabilityEnabled,
+		applyMode,
+		minSamples,
+		forceReset,
+		defaultChannelSmartScheduleScoring(),
+	)
+}
+
+func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, applyMode string, minSamples int, forceReset bool, scoring channelSmartScheduleScoring) channelSmartSchedulePlan {
 	plan := channelSmartSchedulePlan{
 		Skipped: make(map[int]string),
 	}
 	if minSamples <= 0 {
 		minSamples = defaultChannelMonitorSmartScheduleSamples
+	}
+	if validateChannelSmartScheduleScoring(scoring) != nil {
+		scoring = defaultChannelSmartScheduleScoring()
 	}
 	singleMetricStrategy := strategy == channelMonitorSmartScheduleStrategyRatio ||
 		strategy == channelMonitorSmartScheduleStrategyFirstToken ||
@@ -896,7 +920,7 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 	}
 	cohorts := make(map[int64]*cohort)
 	for _, candidate := range candidates {
-		if reason := channelSmartScheduleCandidateSkipReason(candidate, strategy, stabilityEnabled, minSamples); reason != "" {
+		if reason := channelSmartScheduleCandidateSkipReasonWithScoring(candidate, strategy, stabilityEnabled, minSamples, scoring); reason != "" {
 			plan.Skipped[candidate.ChannelId] = reason
 			continue
 		}
@@ -959,41 +983,46 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 			if candidate.TPS != nil {
 				tpsScore = channelSmartScheduleHigherIsBetterScore(*candidate.TPS, tpsMin, tpsMax)
 			}
-			primaryScore := 0.0
-			secondaryScores := make([]float64, 0, 2)
+			businessScore := 0.0
 			switch strategy {
 			case channelMonitorSmartScheduleStrategyRatio:
-				primaryScore = ratioScore
-				if candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples && firstTokenAvailableCount >= 2 {
-					secondaryScores = append(secondaryScores, firstTokenScore)
-				}
-				if candidate.TPS != nil && candidate.TPSSampleCount >= minSamples && tpsAvailableCount >= 2 {
-					secondaryScores = append(secondaryScores, tpsScore)
-				}
+				businessScore = channelSmartScheduleWeightedScore(
+					channelSmartScheduleScorePart{
+						Score: ratioScore, Percent: scoring.Ratio.CostRatioPercent,
+						Available: candidate.Ratio != nil,
+					},
+					channelSmartScheduleScorePart{
+						Score: firstTokenScore, Percent: scoring.Ratio.FirstTokenPercent,
+						Available: candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples && firstTokenAvailableCount >= 2,
+					},
+					channelSmartScheduleScorePart{
+						Score: tpsScore, Percent: scoring.Ratio.TPSPercent,
+						Available: candidate.TPS != nil && candidate.TPSSampleCount >= minSamples && tpsAvailableCount >= 2,
+					},
+				)
 			case channelMonitorSmartScheduleStrategyFirstToken:
-				primaryScore = firstTokenScore
+				businessScore = firstTokenScore
 			case channelMonitorSmartScheduleStrategyTPS:
-				primaryScore = tpsScore
+				businessScore = tpsScore
 			case channelMonitorSmartScheduleStrategySmart:
-				primaryScore = (ratioScore + firstTokenScore + tpsScore) / 3
+				businessScore = channelSmartScheduleWeightedScore(
+					channelSmartScheduleScorePart{
+						Score: ratioScore, Percent: scoring.Smart.CostRatioPercent,
+						Available: candidate.Ratio != nil,
+					},
+					channelSmartScheduleScorePart{
+						Score: firstTokenScore, Percent: scoring.Smart.FirstTokenPercent,
+						Available: candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples,
+					},
+					channelSmartScheduleScorePart{
+						Score: tpsScore, Percent: scoring.Smart.TPSPercent,
+						Available: candidate.TPS != nil && candidate.TPSSampleCount >= minSamples,
+					},
+				)
 			default:
 				continue
 			}
-			score := primaryScore
-			if strategy == channelMonitorSmartScheduleStrategyRatio && len(secondaryScores) > 0 {
-				secondaryScore := 0.0
-				for _, value := range secondaryScores {
-					secondaryScore += value
-				}
-				secondaryScore /= float64(len(secondaryScores))
-				// Keep the selected metric dominant while using available
-				// performance metrics to prevent a poor-quality cheap channel
-				// from taking nearly all traffic.
-				score = channelMonitorSmartScheduleRatioPrimaryScoreWeight*primaryScore +
-					channelMonitorSmartScheduleRatioSecondaryScoreWeight*secondaryScore
-			}
-			// Stability remains a hard admission gate, and also softens the
-			// score for channels that pass the gate with a lower success rate.
+			score := businessScore
 			if stabilityEnabled && candidate.Stability != nil && candidate.StabilitySampleCount >= int64(minSamples) {
 				stabilityScore := *candidate.Stability
 				if stabilityScore < 0 {
@@ -1001,15 +1030,15 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 				} else if stabilityScore > 1 {
 					stabilityScore = 1
 				}
-				score = (1-channelMonitorSmartScheduleStabilityScoreWeight)*score +
-					channelMonitorSmartScheduleStabilityScoreWeight*stabilityScore
+				stabilityWeight := scoring.StabilityPercent / channelMonitorScorePercentageTotal
+				score = (1-stabilityWeight)*score + stabilityWeight*stabilityScore
 			}
-			weightScore := score
-			if singleMetricStrategy {
-				// An explicitly selected single metric represents a deliberate
-				// preference, so make the best channels pull ahead more sharply.
-				weightScore = math.Pow(score, channelMonitorSmartScheduleSingleMetricWeightExponent)
+			if score < 0 {
+				score = 0
+			} else if score > 1 {
+				score = 1
 			}
+			weightScore := math.Pow(score, scoring.CurveExponent)
 			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+weightScore*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
 			if targetWeight < channelMonitorSmartScheduleMinWeight {
 				targetWeight = channelMonitorSmartScheduleMinWeight
@@ -1059,20 +1088,37 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 }
 
 func channelSmartScheduleCandidateSkipReason(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int) string {
+	return channelSmartScheduleCandidateSkipReasonWithScoring(
+		candidate,
+		strategy,
+		stabilityEnabled,
+		minSamples,
+		defaultChannelSmartScheduleScoring(),
+	)
+}
+
+func channelSmartScheduleCandidateSkipReasonWithScoring(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int, scoring channelSmartScheduleScoring) string {
 	if stabilityEnabled && !candidate.StabilityAvailable {
 		return "稳定性统计不可用，请开启消费日志和 ERROR_LOG_ENABLED"
 	}
-	if strategy == channelMonitorSmartScheduleStrategyRatio || strategy == channelMonitorSmartScheduleStrategySmart {
+	usesBusinessScore := channelSmartScheduleUsesBusinessScore(stabilityEnabled, scoring)
+	needsRatio := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyRatio ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.CostRatioPercent > 0))
+	if needsRatio {
 		if candidate.Ratio == nil {
 			return "未记录成本倍率"
 		}
 	}
-	if strategy == channelMonitorSmartScheduleStrategyFirstToken || strategy == channelMonitorSmartScheduleStrategySmart {
+	needsFirstToken := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyFirstToken ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.FirstTokenPercent > 0))
+	if needsFirstToken {
 		if candidate.FirstTokenMs == nil || candidate.FirstTokenSampleCount < minSamples {
 			return fmt.Sprintf("首字样本不足（%d/%d）", candidate.FirstTokenSampleCount, minSamples)
 		}
 	}
-	if strategy == channelMonitorSmartScheduleStrategyTPS || strategy == channelMonitorSmartScheduleStrategySmart {
+	needsTPS := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyTPS ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.TPSPercent > 0))
+	if needsTPS {
 		if candidate.TPS == nil || candidate.TPSSampleCount < minSamples {
 			return fmt.Sprintf("TPS 样本不足（%d/%d）", candidate.TPSSampleCount, minSamples)
 		}
@@ -1086,6 +1132,16 @@ func channelSmartScheduleCandidateSkipReason(candidate channelSmartScheduleCandi
 }
 
 func channelSmartScheduleCandidateNeedsExploration(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int) bool {
+	return channelSmartScheduleCandidateNeedsExplorationWithScoring(
+		candidate,
+		strategy,
+		stabilityEnabled,
+		minSamples,
+		defaultChannelSmartScheduleScoring(),
+	)
+}
+
+func channelSmartScheduleCandidateNeedsExplorationWithScoring(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int, scoring channelSmartScheduleScoring) bool {
 	if minSamples <= 0 {
 		minSamples = defaultChannelMonitorSmartScheduleSamples
 	}
@@ -1093,12 +1149,17 @@ func channelSmartScheduleCandidateNeedsExploration(candidate channelSmartSchedul
 		(candidate.Stability == nil || candidate.StabilitySampleCount < int64(minSamples)) {
 		return true
 	}
-	if strategy == channelMonitorSmartScheduleStrategyFirstToken || strategy == channelMonitorSmartScheduleStrategySmart {
+	usesBusinessScore := channelSmartScheduleUsesBusinessScore(stabilityEnabled, scoring)
+	needsFirstToken := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyFirstToken ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.FirstTokenPercent > 0))
+	if needsFirstToken {
 		if candidate.FirstTokenMs == nil || candidate.FirstTokenSampleCount < minSamples {
 			return true
 		}
 	}
-	if strategy == channelMonitorSmartScheduleStrategyTPS || strategy == channelMonitorSmartScheduleStrategySmart {
+	needsTPS := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyTPS ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.TPSPercent > 0))
+	if needsTPS {
 		if candidate.TPS == nil || candidate.TPSSampleCount < minSamples {
 			return true
 		}

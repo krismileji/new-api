@@ -18,9 +18,26 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type {
   ChannelMonitorPolicyAction,
+  ChannelMonitorSmartScheduleScoring,
   ChannelMonitorUpstreamAuthType,
   ChannelMonitorUpstreamType,
 } from './types'
+
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmartScheduleScoring =
+  {
+    stability_percent: 50,
+    curve_exponent: 1,
+    smart: {
+      cost_ratio_percent: 40,
+      first_token_percent: 40,
+      tps_percent: 20,
+    },
+    ratio: {
+      cost_ratio_percent: 70,
+      first_token_percent: 20,
+      tps_percent: 10,
+    },
+  }
 
 export const CHANNEL_MONITOR_STATUS_LABELS: Partial<Record<number, string>> = {
   0: '未知',

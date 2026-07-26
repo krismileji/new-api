@@ -464,6 +464,19 @@ export type ChannelMonitorPolicyAction =
   | 'disable_channel'
   | 'remove_from_group'
 
+export type ChannelMonitorSmartScheduleMetricPercentages = {
+  cost_ratio_percent: number
+  first_token_percent: number
+  tps_percent: number
+}
+
+export type ChannelMonitorSmartScheduleScoring = {
+  stability_percent: number
+  curve_exponent: number
+  smart: ChannelMonitorSmartScheduleMetricPercentages
+  ratio: ChannelMonitorSmartScheduleMetricPercentages
+}
+
 export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
@@ -479,6 +492,7 @@ export type ChannelMonitorSettings = {
   smart_schedule_interval_minutes: number
   smart_schedule_strategy: ChannelMonitorSmartScheduleStrategy
   smart_schedule_stability_enabled: boolean
+  smart_schedule_scoring?: ChannelMonitorSmartScheduleScoring
   smart_schedule_apply_mode: ChannelMonitorSmartScheduleApplyMode
   smart_schedule_performance_minutes: ChannelMonitorSmartSchedulePerformanceRangeMinutes
   smart_schedule_model: string
@@ -553,6 +567,7 @@ export type ChannelMonitorTaskResult = {
   recovered_after_retry?: number
   strategy?: ChannelMonitorSmartScheduleStrategy | 'stability'
   stability_enabled?: boolean
+  scoring?: ChannelMonitorSmartScheduleScoring
   force_reset?: boolean
   apply_mode?: ChannelMonitorSmartScheduleApplyMode
   model?: string

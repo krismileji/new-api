@@ -51,14 +51,37 @@ function ProbeResponseFieldsFixture() {
   )
 }
 
-function SmartScheduleFieldsFixture() {
+type SmartScheduleFieldsFixtureProps = {
+  strategy?: 'smart' | 'ratio'
+  ratioPercentages?: {
+    costRatioPercent: number | string
+    firstTokenPercent: number | string
+    tpsPercent: number | string
+  }
+}
+
+function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
-      smartScheduleStrategy: 'smart',
+      smartScheduleStrategy: props.strategy ?? 'smart',
       smartScheduleStabilityEnabled: false,
+      smartScheduleScoring: {
+        stabilityPercent: 50,
+        curveExponent: 1,
+        smart: {
+          costRatioPercent: 40,
+          firstTokenPercent: 40,
+          tpsPercent: 20,
+        },
+        ratio: props.ratioPercentages ?? {
+          costRatioPercent: 70,
+          firstTokenPercent: 20,
+          tpsPercent: 10,
+        },
+      },
       smartScheduleApplyMode: 'weight',
       smartSchedulePerformanceMinutes: 60,
       smartScheduleModels: [],
@@ -66,7 +89,7 @@ function SmartScheduleFieldsFixture() {
       smartScheduleMinSuccessRate: 80,
       smartScheduleCooldownMinutes: 30,
       smartScheduleForceReset: false,
-    },
+    } as unknown as ChannelMonitorSettingsFormValues,
   })
   return (
     <Form {...form}>
@@ -107,5 +130,49 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('0 表示不限制'))
     assert.ok(markup.includes('收到响应头后停止计时'))
     assert.ok(markup.includes('不限制后续流式输出'))
+  })
+
+  test('shows configurable scoring percentages with stability defaulting to half', () => {
+    const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+    const ratioMarkup = renderToStaticMarkup(
+      <SmartScheduleFieldsFixture strategy='ratio' />
+    )
+
+    assert.ok(markup.includes('智能调度指标占比'))
+    assert.ok(markup.includes('当前合计：100%'))
+    assert.ok(markup.includes('启用后占最终得分的 50%'))
+    assert.ok(markup.includes('得分曲线指数'))
+    assert.ok(markup.includes('旧版单指标调度相当于 3'))
+    assert.match(
+      markup,
+      /id="channel-monitor-smartScheduleScoring-smart-firstTokenPercent"[^>]*value="40"/
+    )
+    assert.match(
+      markup,
+      /id="channel-monitor-smartScheduleScoring-smart-tpsPercent"[^>]*value="20"/
+    )
+    assert.match(
+      ratioMarkup,
+      /id="channel-monitor-smartScheduleScoring-ratio-firstTokenPercent"[^>]*value="20"/
+    )
+    assert.match(
+      ratioMarkup,
+      /id="channel-monitor-smartScheduleScoring-ratio-tpsPercent"[^>]*value="10"/
+    )
+  })
+
+  test('adds temporary string percentages numerically in the displayed total', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleFieldsFixture
+        strategy='ratio'
+        ratioPercentages={{
+          costRatioPercent: '70',
+          firstTokenPercent: '15',
+          tpsPercent: '25',
+        }}
+      />
+    )
+
+    assert.ok(markup.includes('当前合计：110%'))
   })
 })

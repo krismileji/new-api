@@ -352,6 +352,28 @@ func TestChannelSmartScheduleSettingsReadOrderedModelsAndLegacyFallback(t *testi
 	}
 }
 
+func TestChannelSmartScheduleSettingsUseConfigurableScoringDefaults(t *testing.T) {
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	settings := getChannelMonitorSettings()
+	assert.Equal(t, defaultChannelSmartScheduleScoring(), settings.SmartScheduleScoring)
+	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.CostRatioPercent)
+	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.FirstTokenPercent)
+	assert.Equal(t, 20.0, settings.SmartScheduleScoring.Smart.TPSPercent)
+	assert.Equal(t, 70.0, settings.SmartScheduleScoring.Ratio.CostRatioPercent)
+	assert.Equal(t, 20.0, settings.SmartScheduleScoring.Ratio.FirstTokenPercent)
+	assert.Equal(t, 10.0, settings.SmartScheduleScoring.Ratio.TPSPercent)
+
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleScoringOption: `{"stability_percent":60,"curve_exponent":1.5,"smart":{"cost_ratio_percent":50,"first_token_percent":25,"tps_percent":25},"ratio":{"cost_ratio_percent":80,"first_token_percent":10,"tps_percent":10}}`,
+	})
+	settings = getChannelMonitorSettings()
+	assert.Equal(t, 60.0, settings.SmartScheduleScoring.StabilityPercent)
+	assert.Equal(t, 1.5, settings.SmartScheduleScoring.CurveExponent)
+	assert.Equal(t, 50.0, settings.SmartScheduleScoring.Smart.CostRatioPercent)
+	assert.Equal(t, 80.0, settings.SmartScheduleScoring.Ratio.CostRatioPercent)
+}
+
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
@@ -361,6 +383,17 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	})
 
 	tooManySmartScheduleModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
+	invalidSmartScoring := defaultChannelSmartScheduleScoring()
+	invalidSmartScoring.Smart.TPSPercent = 40
+	invalidStabilityScoring := defaultChannelSmartScheduleScoring()
+	invalidStabilityScoring.StabilityPercent = 101
+	invalidCurveScoring := defaultChannelSmartScheduleScoring()
+	invalidCurveScoring.CurveExponent = 0
+	invalidRatioScoring := defaultChannelSmartScheduleScoring()
+	invalidRatioScoring.Ratio = channelSmartScheduleMetricPercentages{
+		FirstTokenPercent: 50,
+		TPSPercent:        50,
+	}
 	invalidRequests := []map[string]any{
 		{},
 		{"auto_update_interval_minutes": -1},
@@ -377,6 +410,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_interval_minutes": 0},
 		{"smart_schedule_strategy": "invalid"},
 		{"smart_schedule_strategy": "stability"},
+		{"smart_schedule_scoring": invalidSmartScoring},
+		{"smart_schedule_scoring": invalidStabilityScoring},
+		{"smart_schedule_scoring": invalidCurveScoring},
+		{"smart_schedule_scoring": invalidRatioScoring},
 		{"smart_schedule_apply_mode": "invalid"},
 		{"smart_schedule_performance_minutes": 30},
 		{"smart_schedule_model": strings.Repeat("m", maxChannelMonitorSmartScheduleModelLength+1)},
@@ -395,6 +432,16 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	}
 
+	validScoring := channelSmartScheduleScoring{
+		StabilityPercent: 60,
+		CurveExponent:    1.5,
+		Smart: channelSmartScheduleMetricPercentages{
+			CostRatioPercent: 50, FirstTokenPercent: 25, TPSPercent: 25,
+		},
+		Ratio: channelSmartScheduleMetricPercentages{
+			CostRatioPercent: 80, FirstTokenPercent: 10, TPSPercent: 10,
+		},
+	}
 	request := map[string]any{
 		"auto_update_interval_minutes":       15,
 		"auto_update_retry_count":            3,
@@ -407,6 +454,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"smart_schedule_interval_minutes":    10,
 		"smart_schedule_strategy":            channelMonitorSmartScheduleStrategySmart,
 		"smart_schedule_stability_enabled":   true,
+		"smart_schedule_scoring":             validScoring,
 		"smart_schedule_apply_mode":          channelMonitorSmartScheduleApplyPriorityWeight,
 		"smart_schedule_performance_minutes": 360,
 		"smart_schedule_model":               "legacy-model",
@@ -436,6 +484,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, response.Data.SmartScheduleStrategy)
 	assert.True(t, response.Data.SmartScheduleStabilityEnabled)
+	assert.Equal(t, validScoring, response.Data.SmartScheduleScoring)
 	assert.Equal(t, channelMonitorSmartScheduleApplyPriorityWeight, response.Data.SmartScheduleApplyMode)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceMinutes)
 	assert.Equal(t, "claude-3-5-sonnet", response.Data.SmartScheduleModel)
@@ -477,6 +526,11 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStabilityOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleScoringOption).First(&option).Error)
+	var storedScoring channelSmartScheduleScoring
+	require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedScoring))
+	assert.Equal(t, validScoring, storedScoring)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleModelOption).First(&option).Error)
 	assert.Equal(t, "claude-3-5-sonnet", option.Value)

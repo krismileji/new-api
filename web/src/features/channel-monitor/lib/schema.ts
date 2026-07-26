@@ -63,6 +63,18 @@ const channelMonitorPolicyActions = [
   'remove_from_group',
 ] as const satisfies readonly ChannelMonitorPolicyAction[]
 
+const smartSchedulePercentageSchema = z.coerce
+  .number()
+  .finite('占比必须是有效数字')
+  .min(0, '占比不能小于 0%')
+  .max(100, '占比不能超过 100%')
+
+const smartScheduleMetricPercentagesSchema = z.object({
+  costRatioPercent: smartSchedulePercentageSchema,
+  firstTokenPercent: smartSchedulePercentageSchema,
+  tpsPercent: smartSchedulePercentageSchema,
+})
+
 export function createChannelRatioSchema() {
   return z.object({
     ratio: z.coerce
@@ -158,6 +170,16 @@ export function createChannelMonitorSettingsSchema() {
         ),
       smartScheduleStrategy: z.enum(channelMonitorSmartScheduleStrategies),
       smartScheduleStabilityEnabled: z.boolean(),
+      smartScheduleScoring: z.object({
+        stabilityPercent: smartSchedulePercentageSchema,
+        curveExponent: z.coerce
+          .number()
+          .finite('得分曲线指数必须是有效数字')
+          .min(0.1, '得分曲线指数不能小于 0.1')
+          .max(5, '得分曲线指数不能超过 5'),
+        smart: smartScheduleMetricPercentagesSchema,
+        ratio: smartScheduleMetricPercentagesSchema,
+      }),
       smartScheduleApplyMode: z.enum(channelMonitorSmartScheduleApplyModes),
       smartSchedulePerformanceMinutes: z.union([
         z.literal(15),
@@ -200,6 +222,38 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['notificationEmail'],
           message: '开启邮件通知时请填写通知邮箱',
+        })
+      }
+      const scoringGroups = [
+        {
+          key: 'smart' as const,
+          label: '智能调度',
+          percentages: values.smartScheduleScoring.smart,
+        },
+        {
+          key: 'ratio' as const,
+          label: '按成本倍率调度',
+          percentages: values.smartScheduleScoring.ratio,
+        },
+      ]
+      for (const group of scoringGroups) {
+        const total =
+          group.percentages.costRatioPercent +
+          group.percentages.firstTokenPercent +
+          group.percentages.tpsPercent
+        if (Math.abs(total - 100) > 0.000001) {
+          context.addIssue({
+            code: 'custom',
+            path: ['smartScheduleScoring', group.key, 'tpsPercent'],
+            message: `${group.label}的指标占比合计必须为 100%`,
+          })
+        }
+      }
+      if (values.smartScheduleScoring.ratio.costRatioPercent <= 0) {
+        context.addIssue({
+          code: 'custom',
+          path: ['smartScheduleScoring', 'ratio', 'costRatioPercent'],
+          message: '按成本倍率调度的成本倍率占比必须大于 0%',
         })
       }
     })

@@ -113,6 +113,93 @@ type ChannelMonitorSmartScheduleFieldsProps = {
   modelOptions: string[]
 }
 
+type SmartScheduleMetricGroup = 'smart' | 'ratio'
+
+function SmartSchedulePercentField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  name:
+    | 'smartScheduleScoring.stabilityPercent'
+    | `smartScheduleScoring.${SmartScheduleMetricGroup}.costRatioPercent`
+    | `smartScheduleScoring.${SmartScheduleMetricGroup}.firstTokenPercent`
+    | `smartScheduleScoring.${SmartScheduleMetricGroup}.tpsPercent`
+  label: string
+}) {
+  const inputId = `channel-monitor-${props.name.replaceAll('.', '-')}`
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel htmlFor={inputId}>{props.label}</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                id={inputId}
+                type='number'
+                min={0}
+                max={100}
+                step={0.1}
+                inputMode='decimal'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={props.form.getFieldState(props.name).invalid}
+              />
+              <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+function SmartScheduleMetricPercentageFields(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  group: SmartScheduleMetricGroup
+  title: string
+}) {
+  const percentages = useWatch({
+    control: props.form.control,
+    name: `smartScheduleScoring.${props.group}`,
+  })
+  const total =
+    Number(percentages.costRatioPercent) +
+    Number(percentages.firstTokenPercent) +
+    Number(percentages.tpsPercent)
+
+  return (
+    <fieldset className='space-y-3 border-t pt-4'>
+      <legend className='text-sm font-medium'>{props.title}</legend>
+      <p className='text-muted-foreground text-sm'>
+        三项合计必须为 100%；开启稳定性后，本组指标共同使用剩余占比。当前合计：
+        {total}%
+      </p>
+      <div className='grid gap-4 sm:grid-cols-3'>
+        <SmartSchedulePercentField
+          form={props.form}
+          name={`smartScheduleScoring.${props.group}.costRatioPercent`}
+          label='成本倍率'
+        />
+        <SmartSchedulePercentField
+          form={props.form}
+          name={`smartScheduleScoring.${props.group}.firstTokenPercent`}
+          label='首字时间'
+        />
+        <SmartSchedulePercentField
+          form={props.form}
+          name={`smartScheduleScoring.${props.group}.tpsPercent`}
+          label='TPS'
+        />
+      </div>
+    </fieldset>
+  )
+}
+
 function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
 }) {
@@ -178,6 +265,14 @@ export function ChannelMonitorSmartScheduleFields(
   const stabilityEnabled = useWatch({
     control: props.form.control,
     name: 'smartScheduleStabilityEnabled',
+  })
+  const strategy = useWatch({
+    control: props.form.control,
+    name: 'smartScheduleStrategy',
+  })
+  const stabilityPercent = useWatch({
+    control: props.form.control,
+    name: 'smartScheduleScoring.stabilityPercent',
   })
 
   return (
@@ -252,7 +347,7 @@ export function ChannelMonitorSmartScheduleFields(
             <div className='flex flex-col gap-1'>
               <FormLabel>稳定性保护</FormLabel>
               <FormDescription>
-                参与综合调度得分，同时负责准入、降级和恢复
+                启用后占最终得分的 {stabilityPercent}%，同时负责准入、降级和恢复
               </FormDescription>
             </div>
             <FormControl>
@@ -266,8 +361,66 @@ export function ChannelMonitorSmartScheduleFields(
         )}
       />
 
+      {strategy === 'smart' && (
+        <SmartScheduleMetricPercentageFields
+          form={props.form}
+          group='smart'
+          title='智能调度指标占比'
+        />
+      )}
+
+      {strategy === 'ratio' && (
+        <SmartScheduleMetricPercentageFields
+          form={props.form}
+          group='ratio'
+          title='按成本倍率调度指标占比'
+        />
+      )}
+
+      <FormField
+        control={props.form.control}
+        name='smartScheduleScoring.curveExponent'
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel htmlFor='channel-monitor-smart-schedule-curve-exponent'>
+              得分曲线指数
+            </FormLabel>
+            <FormControl>
+              <InputGroup>
+                <InputGroupInput
+                  id='channel-monitor-smart-schedule-curve-exponent'
+                  type='number'
+                  min={0.1}
+                  max={5}
+                  step={0.1}
+                  inputMode='decimal'
+                  value={field.value}
+                  onBlur={field.onBlur}
+                  onChange={field.onChange}
+                  name={field.name}
+                  ref={field.ref}
+                  aria-invalid={Boolean(
+                    props.form.formState.errors.smartScheduleScoring
+                      ?.curveExponent
+                  )}
+                />
+              </InputGroup>
+            </FormControl>
+            <FormDescription>
+              1 为线性；大于 1 会放大渠道差距，旧版单指标调度相当于 3
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
       {stabilityEnabled && (
         <div className='grid gap-4 sm:grid-cols-2'>
+          <SmartSchedulePercentField
+            form={props.form}
+            name='smartScheduleScoring.stabilityPercent'
+            label='稳定性占比'
+          />
           <FormField
             control={props.form.control}
             name='smartScheduleMinSuccessRate'
@@ -619,8 +772,8 @@ export function ChannelMonitorSmartScheduleFields(
       <Alert>
         <AlertTitle>调度规则</AlertTitle>
         <AlertDescription>
-          调度得分使用已选择的调度指标；开启稳定性后，成功率以 20%
-          参与综合得分。稳定性按成功调用数 ÷（成功调用数 +
+          调度得分按上方百分比计算，得分曲线指数决定渠道差距的放大程度；开启稳定性后，成功率按配置占比参与综合得分。稳定性按成功调用数
+          ÷（成功调用数 +
           渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
           0、权重
           0，冷却到期后恢复原设置并只用新样本试放。指标样本不足的渠道使用优先级

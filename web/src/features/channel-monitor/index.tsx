@@ -99,6 +99,7 @@ import { EditGroupChannelsDialog } from './components/edit-group-channels-dialog
 import { EditGroupRatioDialog } from './components/edit-group-ratio-dialog'
 import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
+import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from './constants'
 import { handleChannelMonitorMutationError } from './lib/error'
 import { formatChannelMonitorCost, formatMonitorRatio } from './lib/format'
 import {
@@ -174,6 +175,7 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   smart_schedule_interval_minutes: 10,
   smart_schedule_strategy: 'smart',
   smart_schedule_stability_enabled: false,
+  smart_schedule_scoring: DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING,
   smart_schedule_apply_mode: 'weight',
   smart_schedule_performance_minutes: 60,
   smart_schedule_model: '',
@@ -1170,7 +1172,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           initialSection={settingsSection}
