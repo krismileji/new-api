@@ -15,10 +15,10 @@ import (
 const channelMonitorMetricsCacheTTL = time.Minute
 
 type channelMonitorMetricsCacheKey struct {
-	logDB           *gorm.DB
-	logDatabaseType common.DatabaseType
-	windowEnd       int64
-	rangeMinutes    int
+	db           *gorm.DB
+	databaseType common.DatabaseType
+	windowEnd    int64
+	rangeMinutes int
 }
 
 type channelMonitorPerformanceCacheEntry struct {
@@ -52,10 +52,10 @@ func newChannelMonitorMetricsCacheKey(generatedAt int64, rangeMinutes int) chann
 	bucketSeconds := int64(channelMonitorMetricsCacheTTL / time.Second)
 	windowEnd := generatedAt - generatedAt%bucketSeconds
 	return channelMonitorMetricsCacheKey{
-		logDB:           LOG_DB,
-		logDatabaseType: common.LogDatabaseType(),
-		windowEnd:       windowEnd,
-		rangeMinutes:    rangeMinutes,
+		db:           DB,
+		databaseType: common.MainDatabaseType(),
+		windowEnd:    windowEnd,
+		rangeMinutes: rangeMinutes,
 	}
 }
 
@@ -63,8 +63,8 @@ func (key channelMonitorMetricsCacheKey) singleflightKey(metricType string) stri
 	return fmt.Sprintf(
 		"%s:%p:%s:%d:%d",
 		metricType,
-		key.logDB,
-		key.logDatabaseType,
+		key.db,
+		key.databaseType,
 		key.windowEnd,
 		key.rangeMinutes,
 	)
@@ -172,8 +172,8 @@ func storeChannelMonitorSuccessMetrics(
 	channelMonitorMetricsCache.Unlock()
 }
 
-// GetChannelMonitorPerformanceMetricsCached bounds repeated log scans to one
-// query per stable time bucket and coalesces concurrent dashboard/task reads.
+// GetChannelMonitorPerformanceMetricsCached reads persisted minute aggregates
+// and coalesces concurrent dashboard/task reads.
 func GetChannelMonitorPerformanceMetricsCached(ctx context.Context, generatedAt int64, rangeMinutes int) ([]ChannelMonitorPerformanceMetric, error) {
 	key := newChannelMonitorMetricsCacheKey(generatedAt, rangeMinutes)
 	now := time.Now()
@@ -186,11 +186,8 @@ func GetChannelMonitorPerformanceMetricsCached(ctx context.Context, generatedAt 
 		if metrics, exists := cachedChannelMonitorPerformanceMetrics(key, loadTime); exists {
 			return metrics, nil
 		}
-		metrics, queryErr := getChannelMonitorPerformanceMetrics(
-			ctx,
-			key.logDB,
-			key.windowEnd-int64(key.rangeMinutes*60),
-		)
+		startTimestamp := key.windowEnd - int64(key.rangeMinutes*60)
+		metrics, queryErr := getChannelMonitorMinutePerformanceMetrics(ctx, startTimestamp, key.windowEnd)
 		if queryErr != nil {
 			return nil, queryErr
 		}
@@ -218,9 +215,11 @@ func GetChannelMonitorSuccessMetricsCached(ctx context.Context, generatedAt int6
 		if cached, exists := cachedChannelMonitorSuccessMetrics(key, loadTime); exists {
 			return cached, nil
 		}
-		metrics, groupMetrics, queryErr := GetChannelMonitorSuccessMetrics(
+		metrics, groupMetrics, queryErr := getChannelMonitorSuccessMetrics(
 			ctx,
 			key.windowEnd-int64(key.rangeMinutes*60),
+			key.windowEnd,
+			true,
 		)
 		if queryErr != nil {
 			return nil, queryErr

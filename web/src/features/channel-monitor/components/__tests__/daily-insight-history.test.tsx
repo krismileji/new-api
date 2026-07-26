@@ -48,10 +48,9 @@ const items: ChannelMonitorDailyInsightDay[] = [
 ]
 
 describe('channel monitor daily insight history', () => {
-  test('shows range and date selectors with a success/cache chart', () => {
+  test('shows rates and cache-write requests in one shared chart', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorDailyInsightHistory
-        kind='success-cache'
         days={30}
         selectedDate='2026-07-23'
         items={items}
@@ -61,34 +60,19 @@ describe('channel monitor daily insight history', () => {
       />
     )
 
-    assert.ok(markup.includes('aria-label="成功率与缓存率统计范围"'))
-    assert.ok(markup.includes('aria-label="成功率与缓存率明细日期"'))
-    assert.ok(markup.includes('aria-label="每日成功率与缓存率柱状图"'))
-    assert.ok(markup.includes('2026-07-23'))
-  })
-
-  test('shows the same date controls with a cache-write chart', () => {
-    const markup = renderToStaticMarkup(
-      <ChannelMonitorDailyInsightHistory
-        kind='cache-write'
-        days={7}
-        selectedDate='2026-07-22'
-        items={items}
-        loading={false}
-        onDaysChange={() => {}}
-        onDateChange={() => {}}
-      />
+    assert.ok(markup.includes('aria-label="请求与缓存统计范围"'))
+    assert.ok(markup.includes('aria-label="请求与缓存明细日期"'))
+    assert.ok(
+      markup.includes('aria-label="每日成功率、缓存率与缓存写请求组合图"')
     )
-
-    assert.ok(markup.includes('aria-label="缓存写统计范围"'))
-    assert.ok(markup.includes('aria-label="缓存写明细日期"'))
-    assert.ok(markup.includes('aria-label="每日缓存写请求柱状图"'))
+    assert.equal((markup.match(/role="img"/g) ?? []).length, 1)
+    assert.equal(markup.includes('每日缓存写请求柱状图'), false)
+    assert.ok(markup.includes('2026-07-23'))
   })
 
   test('keeps the date controls visible while history is loading', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorDailyInsightHistory
-        kind='success-cache'
         days={30}
         selectedDate='2026-07-23'
         items={[]}
@@ -98,7 +82,7 @@ describe('channel monitor daily insight history', () => {
       />
     )
 
-    assert.ok(markup.includes('aria-label="成功率与缓存率统计范围"'))
-    assert.ok(markup.includes('data-slot="skeleton"'))
+    assert.ok(markup.includes('aria-label="请求与缓存统计范围"'))
+    assert.equal((markup.match(/data-slot="skeleton"/g) ?? []).length, 1)
   })
 })

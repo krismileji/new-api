@@ -41,12 +41,15 @@ func TestRunChannelSmartScheduleUsesFirstSupportedModelPerChannel(t *testing.T) 
 		{Id: 103, Name: "unsupported", Group: "vip", Models: "model-c", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
 	}
 	require.NoError(t, db.Create(&channels).Error)
-	now := time.Now().Unix()
+	completedMinute := time.Now().Unix()
+	completedMinute = completedMinute - completedMinute%60 - 60
+	logTime := completedMinute + 1
 	require.NoError(t, db.Create(&[]model.Log{
-		{ChannelId: 101, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
-		{ChannelId: 101, ModelName: "model-b", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":1000}`},
-		{ChannelId: 102, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 101, ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 101, ModelName: "model-b", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":1000}`},
+		{ChannelId: 102, ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -252,13 +255,17 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *t
 		{ChannelId: 31, Ratio: 2, UpdatedTime: 1},
 		{ChannelId: 32, Ratio: 1, UpdatedTime: 1},
 	}).Error)
-	initialLogTime := time.Now().Unix() - 10
+	completedMinuteEnd := time.Now().Unix()
+	completedMinuteEnd -= completedMinuteEnd % 60
+	initialMinute := completedMinuteEnd - 180
+	initialLogTime := initialMinute + 1
 	require.NoError(t, db.Create(&[]model.Log{
 		{ChannelId: 31, ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeError},
 		{ChannelId: 31, ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeError},
 		{ChannelId: 32, ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeConsume},
 		{ChannelId: 32, ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeConsume},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(initialMinute, initialMinute+60))
 
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -285,6 +292,11 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *t
 	require.NoError(t, err)
 	assert.Equal(t, model.ChannelSmartScheduleStabilityProbing, monitor.SmartScheduleStabilityState)
 	require.Positive(t, monitor.SmartScheduleStabilitySince)
+	probeMinute := completedMinuteEnd - 60
+	require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).
+		Where("channel_id = ?", 31).
+		Update("smart_schedule_stability_since", probeMinute).Error)
+	monitor.SmartScheduleStabilitySince = probeMinute
 
 	oldSuccesses := make([]model.Log, 20)
 	for index := range oldSuccesses {
@@ -297,6 +309,7 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *t
 		{ChannelId: 31, ModelName: "model-a", CreatedAt: monitor.SmartScheduleStabilitySince, Type: model.LogTypeError},
 		{ChannelId: 31, ModelName: "model-a", CreatedAt: monitor.SmartScheduleStabilitySince, Type: model.LogTypeError},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(probeMinute-60, completedMinuteEnd))
 
 	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -331,7 +344,8 @@ func TestRunChannelSmartScheduleClearsProbeStateAfterSuccessfulNewSamples(t *tes
 
 	priority := int64(80)
 	weight := uint(30)
-	probeStartedAt := time.Now().Unix() - 10
+	probeStartedAt := time.Now().Unix()
+	probeStartedAt = probeStartedAt - probeStartedAt%60 - 60
 	require.NoError(t, db.Create(&[]model.Channel{
 		{Id: 33, Name: "recovering", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
 		{Id: 34, Name: "stable", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
@@ -352,6 +366,7 @@ func TestRunChannelSmartScheduleClearsProbeStateAfterSuccessfulNewSamples(t *tes
 		{ChannelId: 34, ModelName: "model-a", CreatedAt: probeStartedAt, Type: model.LogTypeConsume},
 		{ChannelId: 34, ModelName: "model-a", CreatedAt: probeStartedAt, Type: model.LogTypeConsume},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(probeStartedAt, probeStartedAt+60))
 
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -689,12 +704,15 @@ func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t 
 		{Id: 61, Name: "insufficient", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weight},
 		{Id: 62, Name: "measured", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityHigh, Weight: &weight},
 	}).Error)
-	now := time.Now().Unix()
+	completedMinute := time.Now().Unix()
+	completedMinute = completedMinute - completedMinute%60 - 60
+	logTime := completedMinute + 1
 	require.NoError(t, db.Create(&[]model.Log{
-		{ChannelId: 61, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
-		{ChannelId: 62, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
-		{ChannelId: 62, ModelName: "model-a", CreatedAt: now, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 61, ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
+		{ChannelId: 62, ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 62, ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)

@@ -14,9 +14,11 @@ import (
 )
 
 func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t *testing.T) {
+	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
+		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
 	})
@@ -28,12 +30,13 @@ func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
-	const dayStart = int64(100)
 	const daySeconds = int64(24 * 60 * 60)
+	dayStart := ChannelDailyCostDayStart(1_700_000_000)
 	logs := []*Log{
 		{ChannelId: 1, ModelName: "model-a", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 1, Type: LogTypeConsume, Other: `{"cache_tokens":12,"cache_creation_tokens":100,"cache_write_tokens":100}`},
 		{ChannelId: 1, ModelName: "model-b", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 2, Type: LogTypeConsume, Other: `{"cache_tokens":0,"cache_creation_tokens_5m":64}`},
@@ -47,6 +50,8 @@ func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t 
 		{ChannelId: 1, ModelName: "manage", CreatedAt: dayStart + 8, Type: LogTypeManage},
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	_, err = AggregateChannelMonitorMinuteRange(context.Background(), dayStart, dayStart+daySeconds)
+	require.NoError(t, err)
 
 	metrics, err := getChannelMonitorTodaySuccessMetrics(context.Background(), dayStart)
 	require.NoError(t, err)
@@ -86,9 +91,11 @@ func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t 
 }
 
 func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing.T) {
+	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
+		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
 	})
@@ -100,7 +107,8 @@ func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
@@ -116,6 +124,8 @@ func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing
 		{ChannelId: 1, CreatedAt: secondDayStart + channelDailyCostDaySeconds, Type: LogTypeConsume},
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	_, err = AggregateChannelMonitorMinuteRange(context.Background(), firstDayStart, secondDayStart+channelDailyCostDaySeconds)
+	require.NoError(t, err)
 
 	items, err := getChannelMonitorDailySuccessMetrics(
 		context.Background(), firstDayStart, secondDayStart+channelDailyCostDaySeconds,
@@ -142,10 +152,12 @@ func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing
 }
 
 func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t *testing.T) {
+	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	resetChannelMonitorTodaySuccessCache()
 	t.Cleanup(func() {
+		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
 		resetChannelMonitorTodaySuccessCache()
@@ -158,7 +170,8 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
@@ -171,6 +184,8 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 		Type:      LogTypeConsume,
 		Other:     `{"cache_write_tokens":10}`,
 	}).Error)
+	_, err = AggregateChannelMonitorMinuteRange(context.Background(), dayStart, dayStart+channelDailyCostDaySeconds)
+	require.NoError(t, err)
 
 	first, err := GetChannelMonitorTodaySuccessMetricsCached(context.Background(), generatedAt)
 	require.NoError(t, err)

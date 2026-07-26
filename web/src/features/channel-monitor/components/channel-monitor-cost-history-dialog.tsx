@@ -264,10 +264,7 @@ function CostHistoryContent(props: {
         </EmptyHeader>
       </Empty>
     )
-  } else if (
-    props.overview.coverage.included_channel_count === 0 &&
-    props.overview.coverage.unresolved_channel_count === 0
-  ) {
+  } else if (props.overview.coverage.included_channel_count === 0) {
     content = (
       <Empty className='min-h-64 border'>
         <EmptyHeader>
@@ -439,17 +436,8 @@ export function CostHistoryData(props: {
                         aria-current={selected ? 'date' : undefined}
                       >
                         <TableCell className='font-mono'>{item.date}</TableCell>
-                        <TableCell className='text-right'>
-                          <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
-                            <span>
-                              {formatChannelMonitorCost(item.cost_cny)}
-                            </span>
-                            {item.unresolved_count > 0 ? (
-                              <span className='text-warning font-sans text-xs'>
-                                不完整
-                              </span>
-                            ) : null}
-                          </div>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {formatChannelMonitorCost(item.cost_cny)}
                         </TableCell>
                       </TableRow>
                     )
@@ -511,16 +499,10 @@ export function CostHistoryData(props: {
 function CostCoverage(props: {
   coverage: ChannelMonitorCostOverview['coverage']
 }) {
-  const values = [`已结算 ${props.coverage.included_channel_count} 个渠道`]
-  if (props.coverage.unresolved_channel_count > 0) {
-    values.push(
-      `${props.coverage.unresolved_channel_count} 个渠道存在未确认成本`
-    )
-  }
   return (
     <div className='text-muted-foreground flex items-start gap-2 text-xs'>
       <HugeiconsIcon icon={ChartLineData01Icon} className='mt-0.5 shrink-0' />
-      <span>{values.join('；')}</span>
+      <span>已结算 {props.coverage.included_channel_count} 个渠道</span>
     </div>
   )
 }

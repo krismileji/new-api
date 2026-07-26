@@ -304,6 +304,7 @@ func migrateDB() error {
 		&ChannelRatioHistory{},
 		&ChannelDailyCost{},
 		&ChannelDailyAPIKeyCost{},
+		&ChannelMonitorMinuteMetric{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -374,6 +375,7 @@ func migrateDBFast() error {
 		{&ChannelRatioHistory{}, "ChannelRatioHistory"},
 		{&ChannelDailyCost{}, "ChannelDailyCost"},
 		{&ChannelDailyAPIKeyCost{}, "ChannelDailyAPIKeyCost"},
+		{&ChannelMonitorMinuteMetric{}, "ChannelMonitorMinuteMetric"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

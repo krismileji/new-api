@@ -42,8 +42,13 @@ const percentFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 2,
 })
 
+const HISTORY_LABELS = {
+  range: '请求与缓存统计范围',
+  date: '请求与缓存明细日期',
+  chart: '每日成功率、缓存率与缓存写请求组合图',
+} as const
+
 type ChannelMonitorDailyInsightHistoryProps = {
-  kind: 'success-cache' | 'cache-write'
   days: number
   selectedDate: string
   items: readonly ChannelMonitorDailyInsightDay[]
@@ -55,18 +60,6 @@ type ChannelMonitorDailyInsightHistoryProps = {
 export function ChannelMonitorDailyInsightHistory(
   props: ChannelMonitorDailyInsightHistoryProps
 ) {
-  const labels =
-    props.kind === 'success-cache'
-      ? {
-          range: '成功率与缓存率统计范围',
-          date: '成功率与缓存率明细日期',
-          chart: '每日成功率与缓存率柱状图',
-        }
-      : {
-          range: '缓存写统计范围',
-          date: '缓存写明细日期',
-          chart: '每日缓存写请求柱状图',
-        }
   const dateOptions = useMemo(
     () =>
       [...props.items].reverse().map((item) => ({
@@ -75,55 +68,10 @@ export function ChannelMonitorDailyInsightHistory(
       })),
     [props.items]
   )
-  const chartSpec = useMemo(() => {
-    if (props.kind === 'cache-write') {
-      return {
-        type: 'bar' as const,
-        data: [
-          {
-            id: 'cache-write-daily',
-            values: props.items.map((item) => ({
-              date: item.date,
-              value: item.cache_write_request_count,
-              selected: item.date === props.selectedDate,
-            })),
-          },
-        ],
-        xField: 'date',
-        yField: 'value',
-        bar: {
-          style: {
-            cornerRadius: [4, 4, 0, 0],
-            cursor: 'pointer',
-            fillOpacity: (datum: { selected: boolean }) =>
-              datum.selected ? 1 : 0.55,
-          },
-        },
-        legends: { visible: false },
-        tooltip: {
-          mark: {
-            title: { value: (datum: { date: string }) => datum.date },
-            content: [
-              {
-                key: '写入请求数',
-                value: (datum: { value: number }) => `${datum.value} 次`,
-              },
-            ],
-          },
-        },
-        axes: [
-          {
-            orient: 'bottom' as const,
-            label: { autoHide: true },
-            tick: { visible: false },
-          },
-          { orient: 'left' as const, label: { formatMethod: Math.round } },
-        ],
-      }
-    }
-
-    return {
-      type: 'bar' as const,
+  const chartSpec = useMemo(
+    () => ({
+      type: 'common' as const,
+      seriesField: 'metric',
       data: [
         {
           id: 'success-cache-daily',
@@ -142,18 +90,58 @@ export function ChannelMonitorDailyInsightHistory(
             },
           ]),
         },
-      ],
-      xField: 'date',
-      yField: 'value',
-      seriesField: 'metric',
-      bar: {
-        style: {
-          cornerRadius: [4, 4, 0, 0],
-          cursor: 'pointer',
-          fillOpacity: (datum: { selected: boolean }) =>
-            datum.selected ? 1 : 0.55,
+        {
+          id: 'cache-write-daily',
+          values: props.items.map((item) => ({
+            date: item.date,
+            metric: '缓存写请求',
+            value: item.cache_write_request_count,
+            selected: item.date === props.selectedDate,
+          })),
         },
-      },
+      ],
+      series: [
+        {
+          type: 'bar' as const,
+          id: 'success-cache',
+          dataIndex: 0,
+          xField: 'date',
+          yField: 'value',
+          seriesField: 'metric',
+          bar: {
+            style: {
+              cornerRadius: [4, 4, 0, 0],
+              cursor: 'pointer',
+              fillOpacity: (datum: { selected: boolean }) =>
+                datum.selected ? 1 : 0.55,
+            },
+          },
+        },
+        {
+          type: 'line' as const,
+          id: 'cache-write',
+          dataIndex: 1,
+          xField: 'date',
+          yField: 'value',
+          seriesField: 'metric',
+          line: {
+            style: {
+              cursor: 'pointer',
+              lineWidth: 2,
+              opacity: (datum: { selected: boolean }) =>
+                datum.selected ? 1 : 0.55,
+            },
+          },
+          point: {
+            visible: true,
+            style: {
+              cursor: 'pointer',
+              fillOpacity: (datum: { selected: boolean }) =>
+                datum.selected ? 1 : 0.55,
+            },
+          },
+        },
+      ],
       legends: { visible: true, orient: 'top' as const },
       tooltip: {
         mark: {
@@ -161,10 +149,13 @@ export function ChannelMonitorDailyInsightHistory(
           content: [
             {
               key: (datum: { metric: string }) => datum.metric,
-              value: (datum: { value: number | null }) =>
-                datum.value == null
-                  ? '-'
-                  : percentFormatter.format(datum.value),
+              value: (datum: { metric: string; value: number | null }) => {
+                if (datum.value == null) return '-'
+                if (datum.metric === '缓存写请求') {
+                  return `${datum.value} 次`
+                }
+                return percentFormatter.format(datum.value)
+              },
             },
           ],
         },
@@ -177,16 +168,30 @@ export function ChannelMonitorDailyInsightHistory(
         },
         {
           orient: 'left' as const,
+          seriesId: ['success-cache'],
           min: 0,
           max: 1,
+          title: { visible: true, text: '成功率 / 缓存率' },
           label: {
             formatMethod: (value: number | string) =>
               percentFormatter.format(Number(value)),
           },
         },
+        {
+          orient: 'right' as const,
+          seriesId: ['cache-write'],
+          min: 0,
+          grid: { visible: false },
+          title: { visible: true, text: '缓存写请求数' },
+          label: {
+            formatMethod: (value: number | string) =>
+              String(Math.round(Number(value))),
+          },
+        },
       ],
-    }
-  }, [props.items, props.kind, props.selectedDate])
+    }),
+    [props.items, props.selectedDate]
+  )
 
   return (
     <section className='flex shrink-0 flex-col gap-3'>
@@ -201,7 +206,10 @@ export function ChannelMonitorDailyInsightHistory(
               if (Number.isInteger(days)) props.onDaysChange(days)
             }}
           >
-            <SelectTrigger className='w-full sm:w-32' aria-label={labels.range}>
+            <SelectTrigger
+              className='w-full sm:w-32'
+              aria-label={HISTORY_LABELS.range}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
@@ -224,7 +232,7 @@ export function ChannelMonitorDailyInsightHistory(
           >
             <SelectTrigger
               className='w-full font-mono sm:w-36'
-              aria-label={labels.date}
+              aria-label={HISTORY_LABELS.date}
             >
               <SelectValue />
             </SelectTrigger>
@@ -244,8 +252,8 @@ export function ChannelMonitorDailyInsightHistory(
         <Skeleton className='h-48 w-full sm:h-56' />
       ) : (
         <ChannelMonitorDailyBarChart
-          ariaLabel={labels.chart}
-          chartKey={`${props.kind}:${props.days}`}
+          ariaLabel={HISTORY_LABELS.chart}
+          chartKey={`combined:${props.days}`}
           spec={chartSpec}
           onDateChange={props.onDateChange}
         />

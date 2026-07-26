@@ -49,7 +49,25 @@ describe('channel monitor API key cost table', () => {
                 settled_count: 9,
                 unresolved_count: 2,
               },
+              {
+                channel_id: 8,
+                channel_name: '仅未确认渠道',
+                channel_remark: '',
+                cost_cny: 0,
+                settled_count: 0,
+                unresolved_count: 2,
+              },
             ],
+          },
+          {
+            id: 18,
+            api_key_id: 8,
+            api_key_name: '仅未确认 API Key',
+            api_key: '',
+            cost_cny: 0,
+            settled_count: 0,
+            unresolved_count: 3,
+            channels: [],
           },
         ]}
       />
@@ -63,7 +81,11 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes(`title="${channelRemark}"`))
     assert.ok(markup.includes(`title="${maskedKey}"`))
     assert.ok(markup.includes(formatChannelMonitorCost(12.3456)))
-    assert.ok(markup.includes('title="2 次成本未确认"'))
+    assert.ok(markup.includes('1 个渠道'))
+    assert.equal(markup.includes('仅未确认渠道'), false)
+    assert.equal(markup.includes('仅未确认 API Key'), false)
+    assert.equal(markup.includes('未确认'), false)
+    assert.equal(markup.includes('title="2 次成本未确认"'), false)
   })
 
   test('explains that API key costs start with newly settled requests', () => {

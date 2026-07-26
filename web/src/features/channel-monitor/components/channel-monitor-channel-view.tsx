@@ -274,13 +274,6 @@ function ChannelTodayCostCell(props: {
   channel: ChannelMonitorItem
   onOpenCostHistory: (channel: ChannelMonitorItem) => void
 }) {
-  let costTitle: string | undefined
-  if (!props.channel.today_cost_configured) {
-    costTitle = '查看每日成本详情'
-  } else if (props.channel.today_cost_unresolved_count > 0) {
-    costTitle = `今日有 ${props.channel.today_cost_unresolved_count} 次成本未确认`
-  }
-
   return (
     <Button
       type='button'
@@ -288,18 +281,13 @@ function ChannelTodayCostCell(props: {
       onClick={() => props.onOpenCostHistory(props.channel)}
       aria-label={`查看渠道 ${props.channel.name} 的今日成本详情`}
       className='h-auto max-w-full min-w-0 justify-start p-0 text-left font-normal'
-      title={costTitle}
+      title='查看每日成本详情'
     >
       {!props.channel.today_cost_configured ? (
         <span className='text-muted-foreground text-xs'>未配置</span>
       ) : (
-        <span className='flex min-w-0 flex-col items-start gap-0.5'>
-          <span className='font-mono font-semibold tabular-nums'>
-            {formatChannelMonitorCost(props.channel.today_cost_cny)}
-          </span>
-          {!props.channel.today_cost_complete ? (
-            <span className='text-warning text-xs'>不完整</span>
-          ) : null}
+        <span className='font-mono font-semibold tabular-nums'>
+          {formatChannelMonitorCost(props.channel.today_cost_cny)}
         </span>
       )}
     </Button>

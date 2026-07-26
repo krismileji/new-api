@@ -1,6 +1,7 @@
 package controller
 
 import (
+	contextpkg "context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -30,11 +31,13 @@ type channelMonitorPerformanceAPIResponse struct {
 }
 
 func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
+	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
 	t.Cleanup(func() {
+		model.DB = originalDB
 		model.LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
 		common.LogConsumeEnabled = originalLogConsumeEnabled
@@ -50,13 +53,16 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.ChannelMonitorMinuteMetric{}))
+	model.DB = db
 	model.LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	now := time.Now().Unix()
+	logTimestamp := now - 60
 	require.NoError(t, db.Create(&model.Log{
 		ChannelId:        7,
 		ModelName:        "test-model",
-		CreatedAt:        time.Now().Unix(),
+		CreatedAt:        logTimestamp,
 		Type:             model.LogTypeConsume,
 		IsStream:         true,
 		Group:            "vip",
@@ -67,13 +73,15 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	require.NoError(t, db.Create(&model.Log{
 		ChannelId:      7,
 		ModelName:      "test-model",
-		CreatedAt:      time.Now().Unix(),
+		CreatedAt:      logTimestamp,
 		Type:           model.LogTypeError,
 		IsRetryAttempt: true,
 		Group:          "vip",
 		Content:        "status_code=503, upstream unavailable",
 		Other:          `{"status_code":503,"error_type":"upstream_error","error_code":"bad_response_status_code"}`,
 	}).Error)
+	_, err = model.AggregateChannelMonitorMinuteRange(contextpkg.Background(), now-1800, now-now%60)
+	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

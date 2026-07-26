@@ -143,6 +143,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelRatioHistory{},
 		&model.ChannelDailyCost{},
 		&model.ChannelDailyAPIKeyCost{},
+		&model.ChannelMonitorMinuteMetric{},
 		&model.SystemTask{},
 	))
 	require.NoError(t, service.ReloadChannelConcurrencyLimits(context.Background()))
@@ -160,6 +161,12 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func aggregateChannelMonitorTestLogs(startTimestamp int64, endTimestamp int64) error {
+	endTimestamp -= endTimestamp % 60
+	_, err := model.AggregateChannelMonitorMinuteRange(context.Background(), startTimestamp, endTimestamp)
+	return err
 }
 
 func disableChannelMonitorSSRFProtection(t *testing.T) {

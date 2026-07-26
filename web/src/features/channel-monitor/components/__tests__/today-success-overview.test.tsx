@@ -320,26 +320,30 @@ describe('channel monitor today success overview', () => {
     assert.equal(tables.length, 2)
     assert.ok((tables[0] ?? '').includes('备注'))
     assert.ok((tables[0] ?? '').includes('成本倍率'))
-    assert.equal(channelCells.length, 18)
+    assert.ok((tables[0] ?? '').includes('写入请求数'))
+    assert.equal(channelCells.length, 21)
 
     assert.ok(channelCells[0]?.includes('渠道三'))
     assert.ok(channelCells[0]?.includes('ID 9'))
     assert.ok(channelCells[1]?.includes('低倍率线路'))
     assert.ok(channelCells[2]?.includes('0.5'))
+    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '0')
 
-    assert.ok(channelCells[6]?.includes('渠道二'))
-    assert.ok(channelCells[6]?.includes('ID 8'))
-    assert.match(channelCells[7] ?? '', />-<\/span><\/td>/)
-    assert.ok(channelCells[8]?.includes('1.5'))
-    assert.ok(channelCells[10]?.includes('100%'))
-    assert.ok(channelCells[11]?.includes('50%'))
-    assert.ok(channelCells[11]?.includes('text-foreground'))
+    assert.ok(channelCells[7]?.includes('渠道二'))
+    assert.ok(channelCells[7]?.includes('ID 8'))
+    assert.match(channelCells[8] ?? '', />-<\/span><\/td>/)
+    assert.ok(channelCells[9]?.includes('1.5'))
+    assert.ok(channelCells[11]?.includes('100%'))
+    assert.ok(channelCells[12]?.includes('50%'))
+    assert.ok(channelCells[12]?.includes('text-foreground'))
+    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '3')
 
-    assert.ok(channelCells[12]?.includes('渠道一'))
-    assert.ok(channelCells[12]?.includes('ID 7'))
-    assert.ok(channelCells[12]?.includes('手动禁用'))
-    assert.ok(channelCells[13]?.includes('主线路'))
-    assert.ok(channelCells[14]?.includes('0.2'))
+    assert.ok(channelCells[14]?.includes('渠道一'))
+    assert.ok(channelCells[14]?.includes('ID 7'))
+    assert.ok(channelCells[14]?.includes('手动禁用'))
+    assert.ok(channelCells[15]?.includes('主线路'))
+    assert.ok(channelCells[16]?.includes('0.2'))
+    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '4')
   })
 
   test('fits the channel detail table inside the dialog without horizontal scrolling', () => {
@@ -350,8 +354,8 @@ describe('channel monitor today success overview', () => {
     assert.ok(channelTable.includes('table-fixed'))
     assert.ok(channelTable.includes('w-full'))
     assert.equal(channelTable.includes('min-w-[960px]'), false)
+    assert.match(channelTable, /<th[^>]*w-\[19%\]/)
     assert.match(channelTable, /<th[^>]*w-\[22%\]/)
-    assert.match(channelTable, /<th[^>]*w-\[26%\]/)
   })
 
   test('uses the remaining dialog height as the vertical scroll container', () => {
@@ -375,6 +379,37 @@ describe('channel monitor today success overview', () => {
       markup,
       /data-slot="channel-monitor-success-api-key-details"[^>]*class="[^"]*shrink-0/
     )
+  })
+
+  test('merges cache-write totals and per-channel counts into success details', () => {
+    const markup = renderDialogContent()
+    const tables = getTables(markup)
+    const channelCells = getTableCells(tables[0] ?? '')
+
+    assert.match(markup, /缓存率[\s\S]*缓存写渠道[\s\S]*写入请求数/)
+    assert.ok(markup.includes('缓存写渠道'))
+    assert.ok(markup.includes('2 个'))
+    assert.ok(markup.includes('7 次'))
+    assert.equal(tables.length, 2)
+    assert.ok((tables[0] ?? '').includes('写入请求数'))
+    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '0')
+    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '3')
+    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '4')
+    assert.equal(markup.includes('缓存写渠道明细'), false)
+    assert.equal(markup.includes('today-cache-write-details'), false)
+  })
+
+  test('shows unavailable cache-write values as dashes in the merged summary and table', () => {
+    const markup = renderDialogContent({
+      result: createResult({ cache_write_metrics_available: false }),
+    })
+    const channelCells = getTableCells(getTables(markup)[0] ?? '')
+
+    assert.match(markup, /缓存写渠道[\s\S]*>-<\/span>/)
+    assert.match(markup, /写入请求数[\s\S]*>-<\/span>/)
+    assert.match(channelCells[6] ?? '', />-<\/td>/)
+    assert.match(channelCells[13] ?? '', />-<\/td>/)
+    assert.match(channelCells[20] ?? '', />-<\/td>/)
   })
 
   test('orders API Keys by success rate then cache rate descending', () => {

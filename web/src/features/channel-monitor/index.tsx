@@ -610,8 +610,6 @@ export function ChannelMonitor() {
     : '按北京时间记录结算成本'
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
-  } else if (costOverview?.coverage.unresolved_channel_count) {
-    costDescription = `${costOverview.coverage.unresolved_channel_count} 个渠道存在未确认成本`
   } else if (costOverview?.coverage.included_channel_count === 0) {
     costDescription = '暂无已记录的成本'
   }

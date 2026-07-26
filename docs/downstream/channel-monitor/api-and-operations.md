@@ -82,7 +82,7 @@
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
-性能与成功率从日志表按时间窗口聚合，不新建永久指标表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
+性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，页面只读取分钟表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

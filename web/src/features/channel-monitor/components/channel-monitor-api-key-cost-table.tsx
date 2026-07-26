@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { useMemo } from 'react'
 
 import {
   Empty,
@@ -44,6 +45,19 @@ type ChannelMonitorAPIKeyCostTableProps = {
 export function ChannelMonitorAPIKeyCostTable(
   props: ChannelMonitorAPIKeyCostTableProps
 ) {
+  const settledItems = useMemo(
+    () =>
+      props.items
+        .filter((item) => item.settled_count > 0)
+        .map((item) => ({
+          ...item,
+          channels: item.channels.filter(
+            (channel) => channel.settled_count > 0
+          ),
+        })),
+    [props.items]
+  )
+
   return (
     <section
       className='flex flex-col gap-2'
@@ -52,7 +66,7 @@ export function ChannelMonitorAPIKeyCostTable(
       <h3 id='api-key-cost-title' className='text-sm font-medium'>
         API Key 成本（按名称）
       </h3>
-      {props.items.length === 0 ? (
+      {settledItems.length === 0 ? (
         <Empty className='min-h-32 border'>
           <EmptyHeader>
             <EmptyTitle>暂无 API Key 成本</EmptyTitle>
@@ -62,7 +76,7 @@ export function ChannelMonitorAPIKeyCostTable(
       ) : (
         <div className='max-h-[min(30rem,50dvh)] overflow-auto rounded-md border'>
           <div className='divide-border divide-y'>
-            {props.items.map((item) => {
+            {settledItems.map((item) => {
               let apiKeyName = item.api_key_name
               if (!apiKeyName && item.api_key_id > 0) {
                 apiKeyName = `未命名 API Key #${item.api_key_id}`
@@ -119,15 +133,12 @@ export function ChannelMonitorAPIKeyCostTable(
                       <Table className='min-w-[520px] table-fixed'>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className='w-[52%]'>关联渠道</TableHead>
+                            <TableHead className='w-[64%]'>关联渠道</TableHead>
                             <TableHead className='w-[24%] text-right'>
                               渠道成本
                             </TableHead>
                             <TableHead className='w-[12%] text-right'>
                               结算
-                            </TableHead>
-                            <TableHead className='w-[12%] text-right'>
-                              未确认
                             </TableHead>
                           </TableRow>
                         </TableHeader>
@@ -157,18 +168,6 @@ export function ChannelMonitorAPIKeyCostTable(
                               </TableCell>
                               <TableCell className='text-right font-mono tabular-nums'>
                                 {channel.settled_count}
-                              </TableCell>
-                              <TableCell className='text-right font-mono tabular-nums'>
-                                {channel.unresolved_count > 0 ? (
-                                  <span
-                                    className='text-warning'
-                                    title={`${channel.unresolved_count} 次成本未确认`}
-                                  >
-                                    {channel.unresolved_count}
-                                  </span>
-                                ) : (
-                                  0
-                                )}
                               </TableCell>
                             </TableRow>
                           ))}

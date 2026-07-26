@@ -14,9 +14,11 @@ import (
 )
 
 func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *testing.T) {
+	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
+		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
 		initCol()
@@ -29,25 +31,28 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 	initCol()
 
 	logs := []*Log{
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 101, Type: LogTypeConsume, Other: `{"cache_tokens":25,"cache_ratio":0.5}`},
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 102, Type: LogTypeConsume, Other: `{"cache_ratio":0.5,"cache_tokens":0}`},
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 103, Type: LogTypeError, IsRetryAttempt: true, Content: "status_code=503, upstream unavailable", Other: `{"status_code":503,"error_type":"upstream_error","error_code":"bad_response_status_code"}`},
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 104, Type: LogTypeError, Content: "status_code=429, rate limited", Other: `{"status_code":"429","error_type":"rate_limit","error_code":"rate_limit_exceeded"}`},
-		{ChannelId: 2, ModelName: "model-b", Group: "vip", TokenId: 12, TokenName: "备用 Key", CreatedAt: 105, Type: LogTypeError, IsRetryAttempt: true, Content: "status_code=503, another upstream failure", Other: `{"error_type":"upstream_error","error_code":"bad_response_status_code"}`},
-		{ChannelId: 2, ModelName: "model-b", Group: "standard", TokenId: 12, TokenName: "备用 Key", CreatedAt: 106, Type: LogTypeConsume, Other: `{}`},
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", CreatedAt: 99, Type: LogTypeError},
-		{ChannelId: 0, ModelName: "model-a", Group: "vip", CreatedAt: 107, Type: LogTypeError},
-		{ChannelId: 1, ModelName: "model-a", Group: "vip", CreatedAt: 108, Type: LogTypeManage},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 121, Type: LogTypeConsume, Other: `{"cache_tokens":25,"cache_ratio":0.5}`},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 122, Type: LogTypeConsume, Other: `{"cache_ratio":0.5,"cache_tokens":0}`},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 123, Type: LogTypeError, IsRetryAttempt: true, Content: "status_code=503, upstream unavailable", Other: `{"status_code":503,"error_type":"upstream_error","error_code":"bad_response_status_code"}`},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 11, TokenName: "主 Key", CreatedAt: 124, Type: LogTypeError, Content: "status_code=429, rate limited", Other: `{"status_code":"429","error_type":"rate_limit","error_code":"rate_limit_exceeded"}`},
+		{ChannelId: 2, ModelName: "model-b", Group: "vip", TokenId: 12, TokenName: "备用 Key", CreatedAt: 125, Type: LogTypeError, IsRetryAttempt: true, Content: "status_code=503, another upstream failure", Other: `{"error_type":"upstream_error","error_code":"bad_response_status_code"}`},
+		{ChannelId: 2, ModelName: "model-b", Group: "standard", TokenId: 12, TokenName: "备用 Key", CreatedAt: 126, Type: LogTypeConsume, Other: `{}`},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", CreatedAt: 119, Type: LogTypeError},
+		{ChannelId: 0, ModelName: "model-a", Group: "vip", CreatedAt: 127, Type: LogTypeError},
+		{ChannelId: 1, ModelName: "model-a", Group: "vip", CreatedAt: 128, Type: LogTypeManage},
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	_, err = AggregateChannelMonitorMinuteRange(context.Background(), 60, 180)
+	require.NoError(t, err)
 
-	channelMetrics, groupMetrics, err := GetChannelMonitorSuccessMetrics(context.Background(), 100)
+	channelMetrics, groupMetrics, err := GetChannelMonitorSuccessMetrics(context.Background(), 120)
 	require.NoError(t, err)
 	require.Len(t, channelMetrics, 2)
 
@@ -96,7 +101,7 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 	assert.Equal(t, int64(2), groupMetrics[1].CacheSampleCount)
 	assert.InDelta(t, 0.5, groupMetrics[1].CacheHitRate, 0.0001)
 
-	channelDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 100, ChannelMonitorSuccessFilter{
+	channelDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 120, ChannelMonitorSuccessFilter{
 		ChannelId: 1,
 		ModelName: "model-a",
 	})
@@ -122,7 +127,7 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 	assert.Equal(t, int64(1), channelDetail.FailureCategories[1].ActualCount)
 	assert.Zero(t, channelDetail.FailureCategories[1].FinalCount)
 
-	groupDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 100, ChannelMonitorSuccessFilter{Group: "vip"})
+	groupDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 120, ChannelMonitorSuccessFilter{Group: "vip"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), groupDetail.Summary.ActualSampleCount)
 	assert.Equal(t, int64(3), groupDetail.Summary.FinalSampleCount)
@@ -141,13 +146,13 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 		ChannelId:      1,
 		ModelName:      "model-a",
 		Group:          "vip",
-		CreatedAt:      110,
+		CreatedAt:      130,
 		Type:           LogTypeError,
 		IsRetryAttempt: true,
 		Content:        "status_code=503, second unavailable response",
 		Other:          `{"status_code":503,"error_type":"upstream_error","error_code":"bad_response_status_code"}`,
 	}).Error)
-	mergedDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 100, ChannelMonitorSuccessFilter{
+	mergedDetail, err := GetChannelMonitorSuccessDetail(context.Background(), 120, ChannelMonitorSuccessFilter{
 		ChannelId: 1,
 		ModelName: "model-a",
 	})
@@ -156,6 +161,6 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 	assert.Equal(t, 503, mergedDetail.FailureCategories[0].StatusCode)
 	assert.Equal(t, int64(2), mergedDetail.FailureCategories[0].ActualCount)
 	assert.Zero(t, mergedDetail.FailureCategories[0].FinalCount)
-	assert.Equal(t, int64(110), mergedDetail.FailureCategories[0].LastOccurred)
+	assert.Equal(t, int64(130), mergedDetail.FailureCategories[0].LastOccurred)
 	assert.Contains(t, mergedDetail.FailureCategories[0].SampleContent, "second unavailable")
 }

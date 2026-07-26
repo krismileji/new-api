@@ -328,7 +328,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[2]?.includes('查看渠道 测试渠道 的今日成本详情'))
   })
 
-  test('keeps zero visible and marks totals with unresolved settlements', () => {
+  test('keeps zero visible without exposing unresolved settlements', () => {
     const cells = getTableCells(
       renderView(
         createChannel({
@@ -340,8 +340,8 @@ describe('channel monitor channel view timestamps', () => {
     )
 
     assert.ok(cells[2]?.includes(formatChannelMonitorCost(0)))
-    assert.ok(cells[2]?.includes('不完整'))
-    assert.ok(cells[2]?.includes('今日有 2 次成本未确认'))
+    assert.equal(cells[2]?.includes('不完整'), false)
+    assert.equal(cells[2]?.includes('未确认'), false)
   })
 
   test('shows channel concurrency limit as active over configured limit', () => {

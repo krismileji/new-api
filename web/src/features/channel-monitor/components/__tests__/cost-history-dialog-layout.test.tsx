@@ -127,6 +127,22 @@ describe('channel monitor cost history dialog layout', () => {
 
   test('shows channel remarks, status, and cost ratios in the channel view', () => {
     const overview = createOverview()
+    overview.channels = [
+      ...overview.channels.map((channel) => ({
+        ...channel,
+        unresolved_count: 2,
+      })),
+      {
+        channel_id: 2,
+        channel_name: '仅未确认渠道',
+        channel_remark: '不应展示',
+        status: 1,
+        cost_ratio: 0.2,
+        cost_cny: 0,
+        settled_count: 0,
+        unresolved_count: 3,
+      },
+    ]
     const markup = renderToStaticMarkup(
       <ChannelMonitorChannelCostTable
         items={overview.channels}
@@ -139,6 +155,28 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('启用'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('0.5'))
+    assert.equal(markup.includes('仅未确认渠道'), false)
+    assert.equal(markup.includes('不完整'), false)
+    assert.equal(markup.includes('未确认'), false)
+  })
+
+  test('does not expose unresolved cost indicators in the trend view', () => {
+    const overview = createOverview()
+    overview.coverage.unresolved_channel_count = 2
+    overview.items = overview.items.map((item) => ({
+      ...item,
+      unresolved_count: 2,
+    }))
+    overview.chart_items = overview.chart_items.map((item) => ({
+      ...item,
+      unresolved_count: 2,
+    }))
+
+    const markup = renderToStaticMarkup(<CostHistoryData overview={overview} />)
+
+    assert.ok(markup.includes('已结算 1 个渠道'))
+    assert.equal(markup.includes('不完整'), false)
+    assert.equal(markup.includes('未确认'), false)
   })
 
   test('orders cost channels by enabled status and then ascending ratio', () => {

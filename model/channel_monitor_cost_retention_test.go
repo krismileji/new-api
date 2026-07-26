@@ -18,7 +18,7 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	DB = db
-	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}))
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}, &ChannelMonitorMinuteMetric{}))
 	t.Cleanup(func() {
 		DB = originalDB
 		require.NoError(t, sqlDB.Close())
@@ -35,11 +35,16 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 		{ChannelId: 2, DayStart: cutoff - 2, KeyFingerprint: "old-b", KeyDisplay: "old", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 		{ChannelId: 3, DayStart: cutoff, KeyFingerprint: "keep", KeyDisplay: "keep", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 	}).Error)
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteMetric{
+		{MinuteStart: cutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", APIKeyKey: "old"},
+		{MinuteStart: cutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", APIKeyKey: "keep"},
+	}).Error)
 
 	result, err := DeleteChannelMonitorCostsBefore(context.Background(), cutoff, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)
 	assert.Equal(t, int64(2), result.APIKeyRowsDeleted)
+	assert.Equal(t, int64(1), result.MinuteRowsDeleted)
 
 	var channelRows []ChannelDailyCost
 	require.NoError(t, db.Order("channel_id ASC").Find(&channelRows).Error)
@@ -50,6 +55,11 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	require.NoError(t, db.Find(&apiKeyRows).Error)
 	require.Len(t, apiKeyRows, 1)
 	assert.Equal(t, 3, apiKeyRows[0].ChannelId)
+
+	var minuteRows []ChannelMonitorMinuteMetric
+	require.NoError(t, db.Find(&minuteRows).Error)
+	require.Len(t, minuteRows, 1)
+	assert.Equal(t, 2, minuteRows[0].ChannelId)
 }
 
 func TestDeleteChannelMonitorCostsBeforeRejectsInvalidArguments(t *testing.T) {

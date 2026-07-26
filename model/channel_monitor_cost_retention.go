@@ -8,6 +8,7 @@ import (
 type ChannelMonitorCostRetentionResult struct {
 	ChannelRowsDeleted int64 `json:"channel_rows_deleted"`
 	APIKeyRowsDeleted  int64 `json:"api_key_rows_deleted"`
+	MinuteRowsDeleted  int64 `json:"minute_rows_deleted"`
 }
 
 func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSize int) (ChannelMonitorCostRetentionResult, error) {
@@ -17,6 +18,26 @@ func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSiz
 	}
 	if batchSize <= 0 {
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
+	}
+
+	for {
+		var ids []int64
+		if err := DB.WithContext(ctx).
+			Model(&ChannelMonitorMinuteMetric{}).
+			Where("minute_start < ?", cutoff).
+			Order("minute_start ASC, id ASC").
+			Limit(batchSize).
+			Pluck("id", &ids).Error; err != nil {
+			return result, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		deleted := DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ChannelMonitorMinuteMetric{})
+		if deleted.Error != nil {
+			return result, deleted.Error
+		}
+		result.MinuteRowsDeleted += deleted.RowsAffected
 	}
 
 	for {

@@ -49,7 +49,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -64,7 +63,6 @@ import type {
 import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
-import { ChannelMonitorTodayCacheWriteDialogContent } from './channel-monitor-today-cache-write-dialog'
 
 type ChannelMonitorTodaySuccessChannelMetadata = Pick<
   ChannelMonitorItem,
@@ -78,9 +76,17 @@ type ChannelMonitorTodaySuccessDialogProps = {
 }
 
 type TodaySuccessSummaryValueProps = {
+  className?: string
   label: string
   value: ReactNode
   valueClassName?: string
+}
+
+type TodaySuccessSummaryProps = {
+  summary: ChannelMonitorSuccessSummary
+  cacheWriteMetricsAvailable: boolean
+  cacheWriteChannelCount: number
+  cacheWriteRequestCount: number
 }
 
 export type ChannelMonitorTodaySuccessDialogContentProps = {
@@ -111,7 +117,12 @@ function getRateClassName(rate: number) {
 
 function TodaySuccessSummaryValue(props: TodaySuccessSummaryValueProps) {
   return (
-    <div className='flex min-h-20 flex-col justify-center gap-1 px-4 py-3'>
+    <div
+      className={cn(
+        'bg-background flex min-h-20 flex-col justify-center gap-1 px-4 py-3',
+        props.className
+      )}
+    >
       <span className='text-muted-foreground text-xs'>{props.label}</span>
       <span
         className={cn(
@@ -125,7 +136,7 @@ function TodaySuccessSummaryValue(props: TodaySuccessSummaryValueProps) {
   )
 }
 
-function TodaySuccessSummary(props: { summary: ChannelMonitorSuccessSummary }) {
+function TodaySuccessSummary(props: TodaySuccessSummaryProps) {
   const successRateClassName =
     props.summary.actual_sample_count > 0
       ? getRateClassName(props.summary.actual_success_rate)
@@ -134,10 +145,17 @@ function TodaySuccessSummary(props: { summary: ChannelMonitorSuccessSummary }) {
     props.summary.cache_sample_count > 0
       ? 'text-foreground'
       : 'text-muted-foreground'
+  const cacheWriteValueClassName = props.cacheWriteMetricsAvailable
+    ? 'text-foreground'
+    : 'text-muted-foreground'
 
   return (
-    <div className='grid shrink-0 grid-cols-1 divide-y rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
+    <div
+      data-slot='today-success-summary'
+      className='bg-border grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-5'
+    >
       <TodaySuccessSummaryValue
+        className='col-span-2 sm:col-span-1'
         label='请求数'
         value={`${props.summary.actual_sample_count} 次`}
       />
@@ -156,6 +174,24 @@ function TodaySuccessSummary(props: { summary: ChannelMonitorSuccessSummary }) {
           props.summary.cache_sample_count
         )}
         valueClassName={cacheRateClassName}
+      />
+      <TodaySuccessSummaryValue
+        label='缓存写渠道'
+        value={
+          props.cacheWriteMetricsAvailable
+            ? `${props.cacheWriteChannelCount} 个`
+            : '-'
+        }
+        valueClassName={cacheWriteValueClassName}
+      />
+      <TodaySuccessSummaryValue
+        label='写入请求数'
+        value={
+          props.cacheWriteMetricsAvailable
+            ? `${props.cacheWriteRequestCount} 次`
+            : '-'
+        }
+        valueClassName={cacheWriteValueClassName}
       />
     </div>
   )
@@ -178,6 +214,22 @@ export function ChannelMonitorTodaySuccessDialogContent(
 ) {
   const result = props.result
   const summary = result?.summary
+  const cacheWriteMetrics = useMemo(() => {
+    const requestCountByChannelId = new Map<number, number>()
+    const items = result?.cache_write_items ?? []
+    let requestCount = 0
+
+    for (const item of items) {
+      requestCountByChannelId.set(item.channel_id, item.request_count)
+      requestCount += item.request_count
+    }
+
+    return {
+      channelCount: items.length,
+      requestCount,
+      requestCountByChannelId,
+    }
+  }, [result?.cache_write_items])
   const channelRows = useMemo(() => {
     const channelById = new Map(
       props.channels.map((channel) => [channel.id, channel])
@@ -187,6 +239,8 @@ export function ChannelMonitorTodaySuccessDialogContent(
       .map((metric) => ({
         metric,
         channel: channelById.get(metric.channel_id) ?? null,
+        cacheWriteRequestCount:
+          cacheWriteMetrics.requestCountByChannelId.get(metric.channel_id) ?? 0,
       }))
       .sort((first, second) => {
         const firstEnabled = first.channel?.status === CHANNEL_STATUS.ENABLED
@@ -226,7 +280,11 @@ export function ChannelMonitorTodaySuccessDialogContent(
           ? nameOrder
           : first.metric.channel_id - second.metric.channel_id
       })
-  }, [props.channels, result?.channel_items])
+  }, [
+    cacheWriteMetrics.requestCountByChannelId,
+    props.channels,
+    result?.channel_items,
+  ])
 
   if (props.isLoading) {
     return (
@@ -306,7 +364,12 @@ export function ChannelMonitorTodaySuccessDialogContent(
 
   return (
     <TodaySuccessContentLayout history={props.history}>
-      <TodaySuccessSummary summary={summary} />
+      <TodaySuccessSummary
+        summary={summary}
+        cacheWriteMetricsAvailable={result.cache_write_metrics_available}
+        cacheWriteChannelCount={cacheWriteMetrics.channelCount}
+        cacheWriteRequestCount={cacheWriteMetrics.requestCount}
+      />
       <div
         data-slot='today-success-channel-details'
         className='flex shrink-0 flex-col gap-2'
@@ -316,23 +379,26 @@ export function ChannelMonitorTodaySuccessDialogContent(
           <Table className='w-full table-fixed'>
             <TableHeader>
               <TableRow>
-                <TableHead className='w-[22%] whitespace-normal'>
+                <TableHead className='w-[19%] whitespace-normal'>
                   渠道
                 </TableHead>
-                <TableHead className='w-[26%] whitespace-normal'>
+                <TableHead className='w-[22%] whitespace-normal'>
                   备注
                 </TableHead>
-                <TableHead className='w-[12%] text-right whitespace-normal'>
+                <TableHead className='w-[11%] text-right whitespace-normal'>
                   成本倍率
                 </TableHead>
-                <TableHead className='w-[14%] text-right whitespace-normal'>
+                <TableHead className='w-[11%] text-right whitespace-normal'>
                   请求数
                 </TableHead>
-                <TableHead className='w-[13%] text-right whitespace-normal'>
+                <TableHead className='w-[12%] text-right whitespace-normal'>
                   成功率
                 </TableHead>
-                <TableHead className='w-[13%] text-right whitespace-normal'>
+                <TableHead className='w-[12%] text-right whitespace-normal'>
                   缓存率
+                </TableHead>
+                <TableHead className='w-[13%] text-right whitespace-normal'>
+                  写入请求数
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -412,6 +478,17 @@ export function ChannelMonitorTodaySuccessDialogContent(
                     >
                       {formatRate(item.cache_hit_rate, item.cache_sample_count)}
                     </TableCell>
+                    <TableCell
+                      className={cn(
+                        'text-right font-mono font-medium tabular-nums',
+                        !result.cache_write_metrics_available &&
+                          'text-muted-foreground'
+                      )}
+                    >
+                      {result.cache_write_metrics_available
+                        ? row.cacheWriteRequestCount
+                        : '-'}
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -444,56 +521,25 @@ export function ChannelMonitorTodaySuccessDialog(
           <DialogTitle>成功率、缓存率与缓存写</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <Tabs defaultValue='success-cache' className='min-h-0 flex-1 gap-3'>
-          <TabsList className='shrink-0' aria-label='今日请求统计视图'>
-            <TabsTrigger value='success-cache'>成功率 / 缓存率</TabsTrigger>
-            <TabsTrigger value='cache-write'>缓存写渠道</TabsTrigger>
-          </TabsList>
-          <TabsContent value='success-cache' className='flex min-h-0'>
-            <ChannelMonitorTodaySuccessDialogContent
-              result={result}
-              channels={props.channels}
-              isLoading={detailLoading}
-              isError={insight.query.isError}
-              isFetching={insight.query.isFetching}
-              detailDate={insight.selectedDate}
-              history={
-                <ChannelMonitorDailyInsightHistory
-                  kind='success-cache'
-                  days={insight.days}
-                  selectedDate={insight.selectedDate}
-                  items={result?.chart_items ?? []}
-                  loading={insight.query.isLoading}
-                  onDaysChange={insight.changeDays}
-                  onDateChange={insight.changeDate}
-                />
-              }
-              onRetry={() => insight.query.refetch()}
+        <ChannelMonitorTodaySuccessDialogContent
+          result={result}
+          channels={props.channels}
+          isLoading={detailLoading}
+          isError={insight.query.isError}
+          isFetching={insight.query.isFetching}
+          detailDate={insight.selectedDate}
+          history={
+            <ChannelMonitorDailyInsightHistory
+              days={insight.days}
+              selectedDate={insight.selectedDate}
+              items={result?.chart_items ?? []}
+              loading={insight.query.isLoading}
+              onDaysChange={insight.changeDays}
+              onDateChange={insight.changeDate}
             />
-          </TabsContent>
-          <TabsContent value='cache-write' className='flex min-h-0'>
-            <ChannelMonitorTodayCacheWriteDialogContent
-              result={result}
-              channels={props.channels}
-              isLoading={detailLoading}
-              isError={insight.query.isError}
-              isFetching={insight.query.isFetching}
-              detailDate={insight.selectedDate}
-              history={
-                <ChannelMonitorDailyInsightHistory
-                  kind='cache-write'
-                  days={insight.days}
-                  selectedDate={insight.selectedDate}
-                  items={result?.chart_items ?? []}
-                  loading={insight.query.isLoading}
-                  onDaysChange={insight.changeDays}
-                  onDateChange={insight.changeDate}
-                />
-              }
-              onRetry={() => insight.query.refetch()}
-            />
-          </TabsContent>
-        </Tabs>
+          }
+          onRetry={() => insight.query.refetch()}
+        />
       </DialogContent>
     </Dialog>
   )

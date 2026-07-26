@@ -92,6 +92,7 @@ type channelMonitorSuccessRow struct {
 	Count            int64
 	CacheHitCount    int64 `gorm:"column:cache_hit_count"`
 	CacheSampleCount int64 `gorm:"column:cache_sample_count"`
+	CacheWriteCount  int64 `gorm:"column:cache_write_count"`
 }
 
 type channelMonitorSuccessAPIKeyKey struct {
@@ -129,38 +130,14 @@ func applyChannelMonitorSuccessFilter(tx *gorm.DB, filter ChannelMonitorSuccessF
 }
 
 func getChannelMonitorSuccessRows(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter, includeCacheMetrics bool, includeAPIKeyMetrics bool) ([]channelMonitorSuccessRow, error) {
-	groupColumn := channelMonitorLogGroupColumn()
-	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, type, is_retry_attempt, COUNT(*) AS count"
-	groupColumns := "channel_id, model_name, " + groupColumn + ", type, is_retry_attempt"
-	if includeAPIKeyMetrics {
-		selectColumns = "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, COUNT(*) AS count"
-		groupColumns = "channel_id, model_name, " + groupColumn + ", token_id, token_name, type, is_retry_attempt"
-	}
-	query := LOG_DB.WithContext(ctx).Model(&Log{})
-	if includeCacheMetrics {
-		const cacheTokenFieldPattern = `%"cache_tokens":%`
-		const zeroCacheTokenBeforeFieldPattern = `%"cache_tokens":0,%`
-		const zeroCacheTokenAtEndPattern = `%"cache_tokens":0}%`
-		selectColumns += ", SUM(CASE WHEN other LIKE ? THEN 1 ELSE 0 END) AS cache_sample_count, " +
-			"SUM(CASE WHEN other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ? THEN 1 ELSE 0 END) AS cache_hit_count"
-		query = query.Select(selectColumns,
-			cacheTokenFieldPattern,
-			cacheTokenFieldPattern,
-			zeroCacheTokenBeforeFieldPattern,
-			zeroCacheTokenAtEndPattern,
-		)
-	} else {
-		query = query.Select(selectColumns)
-	}
-	query = query.
-		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
-		Where("channel_id > ?", 0).
-		Where("created_at >= ?", startTimestamp)
-	query = applyChannelMonitorSuccessFilter(query, filter)
-
-	var rows []channelMonitorSuccessRow
-	err := query.Group(groupColumns).Scan(&rows).Error
-	return rows, err
+	return getChannelMonitorMinuteSuccessRows(
+		ctx,
+		startTimestamp,
+		0,
+		filter,
+		includeCacheMetrics,
+		includeAPIKeyMetrics,
+	)
 }
 
 func (counts *channelMonitorSuccessCounts) add(logType int, isRetryAttempt bool, count int64, cacheHitCount int64, cacheSampleCount int64) {
@@ -254,11 +231,18 @@ func channelMonitorSuccessAPIKeyMetrics(aggregates map[channelMonitorSuccessAPIK
 // user-visible outcome. Retry-attempt errors affect actual calls but are
 // excluded from final outcomes.
 func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
-	return getChannelMonitorSuccessMetrics(ctx, startTimestamp, true)
+	return getChannelMonitorSuccessMetrics(ctx, startTimestamp, 0, true)
 }
 
-func getChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64, includeCacheMetrics bool) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
-	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, ChannelMonitorSuccessFilter{}, includeCacheMetrics, false)
+func getChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64, includeCacheMetrics bool) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
+	rows, err := getChannelMonitorMinuteSuccessRows(
+		ctx,
+		startTimestamp,
+		endTimestamp,
+		ChannelMonitorSuccessFilter{},
+		includeCacheMetrics,
+		false,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -388,7 +372,7 @@ func getChannelMonitorFailureCategories(ctx context.Context, startTimestamp int6
 		Select("channel_id, model_name, content, MAX(other) AS other, is_retry_attempt, COUNT(*) AS count, MAX(created_at) AS last_occurred_at").
 		Where("type = ?", LogTypeError).
 		Where("channel_id > ?", 0).
-		Where("created_at >= ?", startTimestamp)
+		Where("created_at >= ? AND created_at < ?", startTimestamp, channelMonitorMinuteStart(common.GetTimestamp()))
 	query = applyChannelMonitorSuccessFilter(query, filter)
 
 	var rows []failureRow

@@ -31,23 +31,25 @@ func TestGetChannelMonitorPerformanceMetricsUsesUsageLogTimingRules(t *testing.T
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, db)
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
 	logs := []*Log{
-		{ChannelId: 1, ModelName: "model-a", CreatedAt: 101, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 10, Other: `{"frt":1000}`},
-		{ChannelId: 1, ModelName: "model-a", CreatedAt: 102, Type: LogTypeConsume, IsStream: true, CompletionTokens: 90, UseTime: 3, Other: `{"frt":3000}`},
-		{ChannelId: 1, ModelName: "model-b", CreatedAt: 103, Type: LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
-		{ChannelId: 2, ModelName: "model-a", CreatedAt: 104, Type: LogTypeConsume, IsStream: true, CompletionTokens: 40, UseTime: 2, Other: "not-json"},
-		{ChannelId: 1, ModelName: "non-stream", CreatedAt: 105, Type: LogTypeConsume, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
-		{ChannelId: 1, ModelName: "error-log", CreatedAt: 106, Type: LogTypeError, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
-		{ChannelId: 1, ModelName: "too-old", CreatedAt: 99, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
-		{ChannelId: 0, ModelName: "no-channel", CreatedAt: 107, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
-		{ChannelId: 1, ModelName: "", CreatedAt: 108, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 10, Other: `{"frt":1000}`},
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume, IsStream: true, CompletionTokens: 90, UseTime: 3, Other: `{"frt":3000}`},
+		{ChannelId: 1, ModelName: "model-b", CreatedAt: 123, Type: LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
+		{ChannelId: 2, ModelName: "model-a", CreatedAt: 124, Type: LogTypeConsume, IsStream: true, CompletionTokens: 40, UseTime: 2, Other: "not-json"},
+		{ChannelId: 1, ModelName: "non-stream", CreatedAt: 125, Type: LogTypeConsume, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
+		{ChannelId: 1, ModelName: "error-log", CreatedAt: 126, Type: LogTypeError, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
+		{ChannelId: 1, ModelName: "too-old", CreatedAt: 119, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
+		{ChannelId: 0, ModelName: "no-channel", CreatedAt: 127, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
+		{ChannelId: 1, ModelName: "", CreatedAt: 128, Type: LogTypeConsume, IsStream: true, CompletionTokens: 100, UseTime: 1, Other: `{"frt":100}`},
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 60, 180)
 
-	metrics, err := GetChannelMonitorPerformanceMetrics(context.Background(), 100)
+	metrics, err := GetChannelMonitorPerformanceMetrics(context.Background(), 120)
 	require.NoError(t, err)
 	require.Len(t, metrics, 3)
 
@@ -64,7 +66,7 @@ func TestGetChannelMonitorPerformanceMetricsUsesUsageLogTimingRules(t *testing.T
 	assert.InDelta(t, 3000, *metrics[0].LatestFirstTokenMs, 0.001)
 	require.NotNil(t, metrics[0].LatestTPS)
 	assert.InDelta(t, 30, *metrics[0].LatestTPS, 0.001)
-	assert.Equal(t, int64(102), metrics[0].LastUsedTime)
+	assert.Equal(t, int64(122), metrics[0].LastUsedTime)
 
 	assert.Equal(t, "model-a", metrics[1].ModelName)
 	assert.Equal(t, 2, metrics[1].ChannelId)
@@ -99,19 +101,21 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, db)
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 	require.NoError(t, db.Create(&Log{
 		ChannelId:        1,
 		ModelName:        "model-a",
 		Group:            "vip",
-		CreatedAt:        995,
+		CreatedAt:        900,
 		Type:             LogTypeConsume,
 		IsStream:         true,
 		CompletionTokens: 100,
 		UseTime:          10,
 		Other:            `{"frt":1000}`,
 	}).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 
 	performance, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
 	require.NoError(t, err)
@@ -130,7 +134,7 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 		ChannelId:        1,
 		ModelName:        "model-a",
 		Group:            "vip",
-		CreatedAt:        996,
+		CreatedAt:        901,
 		Type:             LogTypeConsume,
 		IsStream:         true,
 		CompletionTokens: 200,
@@ -150,6 +154,7 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 	assert.Equal(t, "model-a", success[0].ModelName)
 	assert.Equal(t, int64(1), success[0].ActualSuccessCount)
 	assert.Equal(t, "vip", groups[0].Group)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 1020)
 
 	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1020, 15)
 	require.NoError(t, err)
@@ -178,17 +183,19 @@ func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, db)
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 	require.NoError(t, db.Create(&Log{
 		ChannelId:        1,
 		ModelName:        "model-a",
-		CreatedAt:        995,
+		CreatedAt:        900,
 		Type:             LogTypeConsume,
 		IsStream:         true,
 		CompletionTokens: 100,
 		UseTime:          10,
 	}).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 
 	queryStarted := make(chan struct{})
 	releaseQuery := make(chan struct{})
@@ -222,7 +229,7 @@ func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *
 	for range callers {
 		require.NoError(t, <-results)
 	}
-	assert.Equal(t, int32(1), queryCount.Load())
+	assert.Equal(t, int32(3), queryCount.Load())
 }
 
 func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testing.T) {
@@ -244,15 +251,17 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 		require.NoError(t, firstSQLDB.Close())
 	})
 	require.NoError(t, firstDB.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, firstDB)
 	require.NoError(t, firstDB.Create(&Log{
 		ChannelId: 1,
 		ModelName: "first-db-model",
-		CreatedAt: 995,
+		CreatedAt: 900,
 		Type:      LogTypeConsume,
 		IsStream:  true,
 		Other:     `{"frt":1000}`,
 	}).Error)
 	LOG_DB = firstDB
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 	metrics, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -265,16 +274,18 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 	t.Cleanup(func() {
 		require.NoError(t, secondSQLDB.Close())
 	})
-	require.NoError(t, secondDB.AutoMigrate(&Log{}))
+	require.NoError(t, secondDB.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	DB = secondDB
 	require.NoError(t, secondDB.Create(&Log{
 		ChannelId: 2,
 		ModelName: "second-db-model",
-		CreatedAt: 995,
+		CreatedAt: 900,
 		Type:      LogTypeConsume,
 		IsStream:  true,
 		Other:     `{"frt":2000}`,
 	}).Error)
 	LOG_DB = secondDB
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 	metrics, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
@@ -297,6 +308,7 @@ func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *tes
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, db)
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
@@ -306,7 +318,7 @@ func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *tes
 	}
 	logs = append(logs,
 		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 102, Type: LogTypeError},
-		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 103, Type: LogTypeError, IsRetryAttempt: true},
+		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 181, Type: LogTypeError, IsRetryAttempt: true},
 	)
 	for range 2 {
 		logs = append(logs, &Log{ChannelId: 2, ModelName: "model-a", CreatedAt: 104, Type: LogTypeConsume})
@@ -315,11 +327,12 @@ func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *tes
 		logs = append(logs, &Log{ChannelId: 2, ModelName: "model-a", CreatedAt: 105, Type: LogTypeError})
 	}
 	logs = append(logs,
-		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 99, Type: LogTypeError},
+		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 59, Type: LogTypeError},
 		&Log{ChannelId: 1, ModelName: "model-a", CreatedAt: 106, Type: LogTypeManage},
 		&Log{ChannelId: 0, ModelName: "model-a", CreatedAt: 107, Type: LogTypeError},
 	)
 	require.NoError(t, db.Create(&logs).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 240)
 
 	metrics, err := GetChannelMonitorStabilityMetrics(context.Background(), 100)
 	require.NoError(t, err)
@@ -337,7 +350,7 @@ func TestGetChannelMonitorStabilityMetricsCountsSuccessesAndRetryFailures(t *tes
 	assert.Equal(t, int64(5), metrics[1].SampleCount)
 	assert.InDelta(t, 0.4, metrics[1].SuccessRate, 0.0001)
 
-	probeMetric, err := GetChannelMonitorStabilityMetric(context.Background(), 103, ChannelMonitorSuccessFilter{
+	probeMetric, err := GetChannelMonitorStabilityMetric(context.Background(), 180, ChannelMonitorSuccessFilter{
 		ChannelId: 1,
 		ModelName: "model-a",
 	})

@@ -81,8 +81,9 @@ export function ChannelMonitorChannelCostTable(
       }),
     [props.items]
   )
+  const settledItems = orderedItems.filter((item) => item.settled_count > 0)
 
-  if (props.items.length === 0) {
+  if (settledItems.length === 0) {
     return (
       <Empty className='min-h-56 border'>
         <EmptyHeader>
@@ -119,7 +120,7 @@ export function ChannelMonitorChannelCostTable(
             </TableRow>
           </TableHeader>
           <TableBody>
-            {orderedItems.map((channel) => (
+            {settledItems.map((channel) => (
               <TableRow key={channel.channel_id}>
                 <TableCell className='min-w-0 whitespace-normal'>
                   <div className='flex min-w-0 flex-col gap-1'>
@@ -152,15 +153,8 @@ export function ChannelMonitorChannelCostTable(
                 <TableCell className='text-right font-mono font-medium tabular-nums'>
                   {formatMonitorRatio(channel.cost_ratio)}
                 </TableCell>
-                <TableCell className='text-right'>
-                  <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
-                    <span>{formatChannelMonitorCost(channel.cost_cny)}</span>
-                    {channel.unresolved_count > 0 ? (
-                      <span className='text-warning font-sans text-xs'>
-                        不完整
-                      </span>
-                    ) : null}
-                  </div>
+                <TableCell className='text-right font-mono tabular-nums'>
+                  {formatChannelMonitorCost(channel.cost_cny)}
                 </TableCell>
               </TableRow>
             ))}

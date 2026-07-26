@@ -45,6 +45,7 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 		{ChannelId: 7, ModelName: "tomorrow", CreatedAt: dayStart + 24*60*60, Type: model.LogTypeConsume},
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(dayStart, now))
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/success/today", nil)
 	GetChannelMonitorTodaySuccess(ctx)
@@ -137,6 +138,7 @@ func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *
 		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
 		{ChannelId: 27, ModelName: "today", TokenId: 32, TokenName: "今日 Key", CreatedAt: todayStart + 1, Type: model.LogTypeError},
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(yesterdayStart, now))
 
 	detailDate := channelMonitorCostDate(yesterdayStart)
 	ctx, recorder := newChannelMonitorControllerContext(
@@ -235,6 +237,7 @@ func TestGetChannelMonitorTodaySuccessReturnsCacheWritesWithoutErrorLogs(t *test
 		Type:      model.LogTypeConsume,
 		Other:     `{"cache_write_tokens":128}`,
 	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(dayStart, now))
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/success/today", nil)
 	GetChannelMonitorTodaySuccess(ctx)
