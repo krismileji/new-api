@@ -103,7 +103,10 @@ export function ChannelMonitorSuccessAPIKeyTable(
   if (props.items.length === 0) return null
 
   return (
-    <section className='flex flex-col gap-2'>
+    <section
+      data-slot='channel-monitor-success-api-key-details'
+      className='flex shrink-0 flex-col gap-2'
+    >
       <h3 className='font-medium'>API Key 明细</h3>
       <div className='overflow-auto rounded-lg border'>
         <Table className='min-w-[640px]'>

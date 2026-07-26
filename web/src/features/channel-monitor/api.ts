@@ -72,7 +72,8 @@ export async function getChannelMonitorCostOverview(
   days: number,
   channelId?: number,
   page = 1,
-  summaryOnly = false
+  summaryOnly = false,
+  date?: string
 ) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorCostOverview>
@@ -84,6 +85,7 @@ export async function getChannelMonitorCostOverview(
         channel_id: channelId,
         page,
         summary_only: summaryOnly || undefined,
+        date,
       },
     })
   )
@@ -124,10 +126,25 @@ export async function getChannelMonitorSuccessDetail(request: {
   return ensureChannelMonitorSuccess(response.data)
 }
 
-export async function getChannelMonitorTodaySuccess() {
+export async function getChannelMonitorTodaySuccess(request?: {
+  days: number
+  date: string
+}) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorTodaySuccessResult>
-  >('/api/channel_monitor/success/today', channelMonitorRequestConfig())
+  >(
+    '/api/channel_monitor/success/today',
+    channelMonitorRequestConfig(
+      request
+        ? {
+            params: {
+              days: request.days,
+              date: request.date,
+            },
+          }
+        : undefined
+    )
+  )
   return ensureChannelMonitorSuccess(response.data)
 }
 

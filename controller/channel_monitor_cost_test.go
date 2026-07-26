@@ -108,6 +108,97 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	assert.Equal(t, int64(1), overview.Channels[2].SettledCount)
 }
 
+func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     41,
+		Name:   "按日统计渠道",
+		Key:    "key-41",
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	now := common.GetTimestamp()
+	todayStart := channelMonitorCostDayStart(now)
+	yesterdayStart := todayStart - channelMonitorCostDaySeconds
+	yesterdayFingerprint, yesterdayDisplay := model.ChannelDailyCostAPIKeyIdentityForToken(201, "yesterday-key")
+	todayFingerprint, todayDisplay := model.ChannelDailyCostAPIKeyIdentityForToken(202, "today-key")
+	require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+		context.Background(), 41, yesterdayStart+60, 2_000_000_000, 1, 0,
+		201, "昨日 Key", yesterdayFingerprint, yesterdayDisplay,
+	))
+	require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+		context.Background(), 41, todayStart+60, 3_000_000_000, 1, 0,
+		202, "今日 Key", todayFingerprint, todayDisplay,
+	))
+
+	detailDate := channelMonitorCostDate(yesterdayStart)
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, "GET", "/api/channel_monitor/cost?days=3&date="+detailDate, nil,
+	)
+	GetChannelMonitorCostOverview(ctx)
+	require.Equal(t, 200, recorder.Code)
+	var response struct {
+		Data channelMonitorCostOverview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	overview := response.Data
+
+	assert.Equal(t, detailDate, overview.DetailDate)
+	require.Len(t, overview.ChartItems, 3)
+	assert.InDelta(t, 5, overview.TotalCostCNY, 1e-9)
+	require.Len(t, overview.Channels, 1)
+	assert.InDelta(t, 2, overview.Channels[0].CostCNY, 1e-9)
+	require.Len(t, overview.APIKeys, 1)
+	assert.Equal(t, 201, overview.APIKeys[0].APIKeyId)
+	assert.Equal(t, "昨日 Key", overview.APIKeys[0].APIKeyName)
+}
+
+func TestGetChannelMonitorCostOverviewOrdersChannelMetadataByStatusAndRatio(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	lowRemark := "  低倍率主线路  "
+	highRemark := "高倍率线路"
+	disabledRemark := "停用备用线路"
+	missingRatioRemark := "未配置倍率"
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 51, Name: "高倍率启用", Key: "key-51", Status: common.ChannelStatusEnabled, Remark: &highRemark},
+		{Id: 52, Name: "低倍率启用", Key: "key-52", Status: common.ChannelStatusEnabled, Remark: &lowRemark},
+		{Id: 53, Name: "低倍率停用", Key: "key-53", Status: common.ChannelStatusManuallyDisabled, Remark: &disabledRemark},
+		{Id: 54, Name: "未配置倍率启用", Key: "key-54", Status: common.ChannelStatusEnabled, Remark: &missingRatioRemark},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 51, Ratio: 1.5, UpdatedTime: 1},
+		{ChannelId: 52, Ratio: 0.5, UpdatedTime: 1},
+		{ChannelId: 53, Ratio: 0.2, UpdatedTime: 1},
+	}).Error)
+
+	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	dayStart := channelMonitorCostDayStart(now)
+	for _, channelId := range []int{51, 52, 53, 54} {
+		require.NoError(t, model.AddChannelDailyCost(
+			context.Background(), channelId, dayStart+60, 1_000_000_000, 1, 0,
+		))
+	}
+
+	overview, err := getChannelMonitorCostOverviewForChannelPageAtDay(
+		context.Background(), 1, now, 0, 1, 1, dayStart,
+	)
+	require.NoError(t, err)
+	require.Len(t, overview.Channels, 4)
+
+	assert.Equal(t, []int{52, 51, 54, 53}, []int{
+		overview.Channels[0].ChannelId,
+		overview.Channels[1].ChannelId,
+		overview.Channels[2].ChannelId,
+		overview.Channels[3].ChannelId,
+	})
+	assert.Equal(t, "低倍率主线路", overview.Channels[0].ChannelRemark)
+	assert.Equal(t, common.ChannelStatusEnabled, overview.Channels[0].Status)
+	require.NotNil(t, overview.Channels[0].CostRatio)
+	assert.InDelta(t, 0.5, *overview.Channels[0].CostRatio, 1e-9)
+	assert.Nil(t, overview.Channels[2].CostRatio)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, overview.Channels[3].Status)
+}
+
 func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	now := common.GetTimestamp()
@@ -255,6 +346,13 @@ func TestGetChannelMonitorCostOverviewRejectsInvalidDays(t *testing.T) {
 	GetChannelMonitorCostOverview(ctx)
 	assert.Equal(t, 400, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "摘要模式参数必须为布尔值")
+
+	for _, detailDate := range []string{"invalid", "1970-01-01"} {
+		ctx, recorder = newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=7&date="+detailDate, nil)
+		GetChannelMonitorCostOverview(ctx)
+		assert.Equal(t, 400, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "统计日期必须在所选时间范围内")
+	}
 }
 
 func TestGetChannelMonitorCostOverviewUsesServerPaginationForDates(t *testing.T) {

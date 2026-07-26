@@ -118,6 +118,66 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	assert.Equal(t, int64(1), response.Data.CacheWriteItems[1].RequestCount)
 }
 
+func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+
+	require.NoError(t, db.Create(&model.Channel{Id: 27, Name: "按日渠道", Key: "key-27"}).Error)
+	now := common.GetTimestamp()
+	todayStart := model.ChannelDailyCostDayStart(now)
+	yesterdayStart := todayStart - channelMonitorCostDaySeconds
+	require.NoError(t, db.Create(&[]*model.Log{
+		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
+		{ChannelId: 27, ModelName: "today", TokenId: 32, TokenName: "今日 Key", CreatedAt: todayStart + 1, Type: model.LogTypeError},
+	}).Error)
+
+	detailDate := channelMonitorCostDate(yesterdayStart)
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/success/today?days=3&date="+detailDate, nil,
+	)
+	GetChannelMonitorTodaySuccess(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool                               `json:"success"`
+		Data    channelMonitorTodaySuccessOverview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Equal(t, 3, response.Data.Days)
+	assert.Equal(t, detailDate, response.Data.DetailDate)
+	assert.Equal(t, yesterdayStart, response.Data.DayStart)
+	assert.Equal(t, int64(1), response.Data.Summary.ActualSuccessCount)
+	assert.Zero(t, response.Data.Summary.ActualFailureCount)
+	require.Len(t, response.Data.APIKeyItems, 1)
+	assert.Equal(t, 31, response.Data.APIKeyItems[0].APIKeyId)
+	require.Len(t, response.Data.ChartItems, 3)
+	assert.Zero(t, response.Data.ChartItems[0].RequestCount)
+	assert.Equal(t, int64(1), response.Data.ChartItems[1].RequestCount)
+	assert.InDelta(t, 1, response.Data.ChartItems[1].SuccessRate, 0.0001)
+	assert.InDelta(t, 1, response.Data.ChartItems[1].CacheRate, 0.0001)
+	assert.Equal(t, int64(1), response.Data.ChartItems[1].CacheWriteRequestCount)
+	assert.Equal(t, 1, response.Data.ChartItems[1].CacheWriteChannelCount)
+	assert.Equal(t, int64(1), response.Data.ChartItems[2].RequestCount)
+	assert.Zero(t, response.Data.ChartItems[2].SuccessRate)
+}
+
+func TestGetChannelMonitorTodaySuccessRejectsDateOutsideRange(t *testing.T) {
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/success/today?days=7&date=2000-01-01", nil,
+	)
+	GetChannelMonitorTodaySuccess(ctx)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "统计日期必须在所选时间范围内")
+}
+
 func TestGetChannelMonitorTodaySuccessReportsUnavailableWithoutLogSources(t *testing.T) {
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled

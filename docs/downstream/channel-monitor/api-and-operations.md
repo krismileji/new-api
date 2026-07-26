@@ -9,8 +9,9 @@
 | 方法 | 路径 | 用途与主要参数 |
 | --- | --- | --- |
 | `GET` | `/` | 返回渠道、人工顺序、分组倍率、分组系数和全局设置 |
-| `GET` | `/cost` | 成本统计；`days`、`channel_id`、`summary_only`、`page` |
+| `GET` | `/cost` | 成本统计；`days`、`channel_id`、`summary_only`、`page`、`date=YYYY-MM-DD` |
 | `GET` | `/performance` | 性能与成功率；`minutes=1..1440` |
+| `GET` | `/success/today` | 按日请求、成功率、缓存率和缓存写统计；可选 `days=1..90`、`date=YYYY-MM-DD` |
 | `GET` | `/success/detail` | 成功率明细；指定 `channel_id`（可加 `model_name`）或 `group`，二选一 |
 | `GET` | `/tasks` | 任务记录；`kind=ratio|schedule` 和通用分页参数 |
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
@@ -80,6 +81,10 @@
 性能与成功率从日志表按时间窗口聚合，不新建永久指标表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
+
+成本详情未传 `date` 时沿用完整窗口汇总，保证旧调用方兼容；页面会默认传入北京时间当天。传入日期必须位于 `days` 指定的窗口内；区间累计和趋势仍覆盖完整窗口，渠道汇总与 API Key 明细仅聚合所选日期。
+
+`/success/today` 未传参数时保持原有的今日统计响应；传入 `days` 后返回连续的北京时间日趋势，`date` 指定渠道、API Key 和缓存写渠道明细对应的日期。指定日期必须位于所选窗口内。
 
 ## 安全与审计
 

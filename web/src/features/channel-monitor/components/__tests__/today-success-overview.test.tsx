@@ -56,8 +56,10 @@ function createResult(
   overrides: Partial<ChannelMonitorTodaySuccessResult> = {}
 ): ChannelMonitorTodaySuccessResult {
   return {
+    days: 1,
     generated_at: 1_752_777_845,
     day_start: 1_752_681_600,
+    detail_date: '2026-07-23',
     success_metrics_available: true,
     cache_write_metrics_available: true,
     summary: createSummary(),
@@ -147,6 +149,7 @@ function createResult(
       },
     ],
     cache_write_items: [],
+    chart_items: [],
     ...overrides,
   }
 }
@@ -309,12 +312,35 @@ describe('channel monitor today success overview', () => {
     const markup = renderDialogContent()
     const channelTable = getTables(markup)[0] ?? ''
 
-    assert.ok(markup.includes('overflow-hidden rounded-lg border'))
+    assert.ok(markup.includes('class="rounded-lg border"'))
     assert.ok(channelTable.includes('table-fixed'))
     assert.ok(channelTable.includes('w-full'))
     assert.equal(channelTable.includes('min-w-[960px]'), false)
     assert.match(channelTable, /<th[^>]*w-\[22%\]/)
     assert.match(channelTable, /<th[^>]*w-\[26%\]/)
+  })
+
+  test('uses the remaining dialog height as the vertical scroll container', () => {
+    const markup = renderDialogContent()
+    const contentRoot = markup.match(/^<div\b[^>]*>/)?.[0] ?? ''
+
+    assert.ok(contentRoot.includes('min-h-0'))
+    assert.ok(contentRoot.includes('flex-1'))
+    assert.ok(contentRoot.includes('overflow-y-auto'))
+    assert.ok(contentRoot.includes('overscroll-contain'))
+  })
+
+  test('keeps channel and API key details from shrinking into each other', () => {
+    const markup = renderDialogContent()
+
+    assert.match(
+      markup,
+      /data-slot="today-success-channel-details"[^>]*class="[^"]*shrink-0/
+    )
+    assert.match(
+      markup,
+      /data-slot="channel-monitor-success-api-key-details"[^>]*class="[^"]*shrink-0/
+    )
   })
 
   test('orders API Keys by success rate then cache rate descending', () => {
@@ -343,7 +369,7 @@ describe('channel monitor today success overview', () => {
   test('shows a retry action after the daily summary fails to load', () => {
     const markup = renderDialogContent({ result: undefined, isError: true })
 
-    assert.ok(markup.includes('今日请求统计加载失败'))
+    assert.ok(markup.includes('请求统计加载失败'))
     assert.ok(markup.includes('重新加载'))
     assert.match(markup, /<button\b/)
   })
@@ -370,7 +396,7 @@ describe('channel monitor today success overview', () => {
       }),
     })
 
-    assert.ok(markup.includes('今日暂无请求数据'))
-    assert.ok(markup.includes('今日尚未记录可统计的请求'))
+    assert.ok(markup.includes('所选日期暂无请求数据'))
+    assert.ok(markup.includes('所选日期尚未记录可统计的请求'))
   })
 })

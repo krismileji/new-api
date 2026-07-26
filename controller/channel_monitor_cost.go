@@ -30,11 +30,14 @@ type channelMonitorCostDay struct {
 }
 
 type channelMonitorCostChannel struct {
-	ChannelId       int     `json:"channel_id"`
-	ChannelName     string  `json:"channel_name"`
-	CostCNY         float64 `json:"cost_cny"`
-	SettledCount    int64   `json:"settled_count"`
-	UnresolvedCount int64   `json:"unresolved_count"`
+	ChannelId       int      `json:"channel_id"`
+	ChannelName     string   `json:"channel_name"`
+	ChannelRemark   string   `json:"channel_remark"`
+	Status          int      `json:"status"`
+	CostRatio       *float64 `json:"cost_ratio"`
+	CostCNY         float64  `json:"cost_cny"`
+	SettledCount    int64    `json:"settled_count"`
+	UnresolvedCount int64    `json:"unresolved_count"`
 }
 
 type channelMonitorCostAPIKeyChannel struct {
@@ -66,6 +69,7 @@ type channelMonitorCostCoverage struct {
 type channelMonitorCostOverview struct {
 	Days             int                         `json:"days"`
 	GeneratedAt      int64                       `json:"generated_at"`
+	DetailDate       string                      `json:"detail_date"`
 	TodayCostCNY     float64                     `json:"today_cost_cny"`
 	YesterdayCostCNY float64                     `json:"yesterday_cost_cny"`
 	TotalCostCNY     float64                     `json:"total_cost_cny"`
@@ -119,14 +123,25 @@ func GetChannelMonitorCostOverview(c *gin.Context) {
 	}
 
 	now := common.GetTimestamp()
+	todayStart := channelMonitorCostDayStart(now)
+	detailDayStart := int64(0)
+	if rawDetailDate := c.Query("date"); rawDetailDate != "" {
+		parsedDayStart, parseErr := channelMonitorCostDateStart(rawDetailDate)
+		rangeStart := todayStart - int64(days-1)*channelMonitorCostDaySeconds
+		if parseErr != nil || parsedDayStart < rangeStart || parsedDayStart > todayStart {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "统计日期必须在所选时间范围内"})
+			return
+		}
+		detailDayStart = parsedDayStart
+	}
 	var overview channelMonitorCostOverview
 	var err error
 	if summaryOnly {
 		overview, err = getChannelMonitorCostSummary(c.Request.Context(), days, now, channelId)
 	} else if channelId > 0 {
-		overview, err = getChannelMonitorCostOverviewForChannelPage(c.Request.Context(), days, now, channelId, page, channelMonitorCostDatePageSize)
+		overview, err = getChannelMonitorCostOverviewForChannelPageAtDay(c.Request.Context(), days, now, channelId, page, channelMonitorCostDatePageSize, detailDayStart)
 	} else {
-		overview, err = getChannelMonitorCostOverviewPage(c.Request.Context(), days, now, page, channelMonitorCostDatePageSize)
+		overview, err = getChannelMonitorCostOverviewForChannelPageAtDay(c.Request.Context(), days, now, 0, page, channelMonitorCostDatePageSize, detailDayStart)
 	}
 	if err != nil {
 		common.ApiError(c, err)
@@ -209,6 +224,10 @@ func getChannelMonitorCostOverviewPage(ctx context.Context, days int, now int64,
 }
 
 func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, now int64, channelId int, page int, pageSize int) (channelMonitorCostOverview, error) {
+	return getChannelMonitorCostOverviewForChannelPageAtDay(ctx, days, now, channelId, page, pageSize, 0)
+}
+
+func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days int, now int64, channelId int, page int, pageSize int, detailDayStart int64) (channelMonitorCostOverview, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -223,7 +242,13 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
-	apiKeyRows, err := model.GetChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	detailStartTimestamp := startTimestamp
+	detailEndTimestamp := endTimestamp
+	if detailDayStart > 0 {
+		detailStartTimestamp = detailDayStart
+		detailEndTimestamp = detailDayStart + channelMonitorCostDaySeconds
+	}
+	apiKeyRows, err := model.GetChannelDailyAPIKeyCostTotalsForChannel(ctx, detailStartTimestamp, detailEndTimestamp, channelId)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -231,13 +256,29 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
+	monitors, err := model.GetChannelRatioMonitorCostMetadata()
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
 
 	channelNames := make(map[int]string, len(channels))
 	channelRemarks := make(map[int]string, len(channels))
+	channelStatuses := make(map[int]int, len(channels))
 	for _, channel := range channels {
 		channelNames[channel.Id] = channel.Name
+		channelStatuses[channel.Id] = channel.Status
 		if channel.Remark != nil {
 			channelRemarks[channel.Id] = strings.TrimSpace(*channel.Remark)
+		}
+	}
+	channelCostRatios := make(map[int]float64, len(monitors))
+	for _, monitor := range monitors {
+		if monitor.UpdatedTime <= 0 {
+			continue
+		}
+		costRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
+		if conversionErr == nil {
+			channelCostRatios[monitor.ChannelId] = costRatio
 		}
 	}
 
@@ -251,6 +292,17 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 	includedChannels := make(map[int]struct{})
 	unresolvedChannels := make(map[int]struct{})
 	for _, row := range rows {
+		if row.SettledCount > 0 {
+			includedChannels[row.ChannelId] = struct{}{}
+		}
+		if row.UnresolvedCount > 0 {
+			unresolvedChannels[row.ChannelId] = struct{}{}
+		}
+	}
+	for _, row := range rows {
+		if detailDayStart > 0 && row.DayStart != detailDayStart {
+			continue
+		}
 		costCNY := channelMonitorCostCNY(row.CostNanoCNY)
 		summary := channelCosts[row.ChannelId]
 		if summary == nil {
@@ -261,12 +313,6 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 		summary.CostCNY += costCNY
 		summary.SettledCount += row.SettledCount
 		summary.UnresolvedCount += row.UnresolvedCount
-		if row.SettledCount > 0 {
-			includedChannels[row.ChannelId] = struct{}{}
-		}
-		if row.UnresolvedCount > 0 {
-			unresolvedChannels[row.ChannelId] = struct{}{}
-		}
 	}
 
 	chartRows, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
@@ -285,19 +331,40 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 		if channelName == "" {
 			channelName = "已删除渠道"
 		}
+		var costRatio *float64
+		if value, exists := channelCostRatios[channelId]; exists {
+			costRatio = &value
+		}
 		costChannels = append(costChannels, channelMonitorCostChannel{
 			ChannelId:       channelId,
 			ChannelName:     channelName,
+			ChannelRemark:   channelRemarks[channelId],
+			Status:          channelStatuses[channelId],
+			CostRatio:       costRatio,
 			CostCNY:         summary.CostCNY,
 			SettledCount:    summary.SettledCount,
 			UnresolvedCount: summary.UnresolvedCount,
 		})
 	}
 	sort.Slice(costChannels, func(i int, j int) bool {
-		if costChannels[i].CostCNY == costChannels[j].CostCNY {
-			return costChannels[i].ChannelId < costChannels[j].ChannelId
+		firstEnabled := costChannels[i].Status == common.ChannelStatusEnabled
+		secondEnabled := costChannels[j].Status == common.ChannelStatusEnabled
+		if firstEnabled != secondEnabled {
+			return firstEnabled
 		}
-		return costChannels[i].CostCNY > costChannels[j].CostCNY
+		if costChannels[i].CostRatio == nil && costChannels[j].CostRatio != nil {
+			return false
+		}
+		if costChannels[i].CostRatio != nil && costChannels[j].CostRatio == nil {
+			return true
+		}
+		if costChannels[i].CostRatio != nil && costChannels[j].CostRatio != nil && *costChannels[i].CostRatio != *costChannels[j].CostRatio {
+			return *costChannels[i].CostRatio < *costChannels[j].CostRatio
+		}
+		if costChannels[i].ChannelName != costChannels[j].ChannelName {
+			return costChannels[i].ChannelName < costChannels[j].ChannelName
+		}
+		return costChannels[i].ChannelId < costChannels[j].ChannelId
 	})
 
 	type apiKeyCostKey struct {
@@ -520,6 +587,9 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 		Channels:      costChannels,
 		APIKeys:       costAPIKeys,
 	}
+	if detailDayStart > 0 {
+		overview.DetailDate = channelMonitorCostDate(detailDayStart)
+	}
 	if len(chartItems) > 0 {
 		overview.TodayCostCNY = chartItems[len(chartItems)-1].CostCNY
 	}
@@ -560,6 +630,14 @@ func channelMonitorCostDayStart(timestamp int64) int64 {
 
 func channelMonitorCostDate(dayStart int64) string {
 	return time.Unix(dayStart+channelMonitorCostOffset, 0).UTC().Format("2006-01-02")
+}
+
+func channelMonitorCostDateStart(date string) (int64, error) {
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(date))
+	if err != nil {
+		return 0, err
+	}
+	return parsed.Unix() - channelMonitorCostOffset, nil
 }
 
 func channelMonitorCostCNY(costNanoCNY int64) float64 {

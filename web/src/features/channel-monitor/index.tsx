@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ChannelTestDialogForChannel } from '@/features/channels/components/dialogs/channel-test-dialog'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { cn } from '@/lib/utils'
 
 import {
   fetchChannelMonitorUpstreamBalance,
@@ -92,9 +93,7 @@ import {
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-task-history-dialog'
 import { ChannelMonitorTodayCacheWriteCard } from './components/channel-monitor-today-cache-write-card'
-import { ChannelMonitorTodayCacheWriteDialog } from './components/channel-monitor-today-cache-write-dialog'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
-import { ChannelMonitorTodaySuccessDialog } from './components/channel-monitor-today-success-dialog'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
@@ -126,6 +125,18 @@ const LazyChannelMonitorCostHistoryDialog = lazy(() =>
   import('./components/channel-monitor-cost-history-dialog').then((module) => ({
     default: module.ChannelMonitorCostHistoryDialog,
   }))
+)
+const LazyChannelMonitorTodaySuccessDialog = lazy(() =>
+  import('./components/channel-monitor-today-success-dialog').then(
+    (module) => ({
+      default: module.ChannelMonitorTodaySuccessDialog,
+    })
+  )
+)
+const LazyChannelMonitorTodayCacheWriteDialog = lazy(() =>
+  import('./components/channel-monitor-today-cache-write-dialog').then(
+    (module) => ({ default: module.ChannelMonitorTodayCacheWriteDialog })
+  )
 )
 const LazyChannelBatchTestDialog = lazy(() =>
   import('@/features/channels/components/dialogs/channel-batch-test-dialog').then(
@@ -280,7 +291,7 @@ export function ChannelMonitor() {
   })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
-    queryFn: getChannelMonitorTodaySuccess,
+    queryFn: () => getChannelMonitorTodaySuccess(),
     refetchInterval: 60_000,
   })
   const ratioFetchMutation = useMutation({
@@ -651,29 +662,16 @@ export function ChannelMonitor() {
           <MonitorStatCard
             label='今日累计成本'
             value={
-              <Button
-                type='button'
-                variant='link'
-                size='default'
-                onClick={() => openCostHistory()}
-                disabled={costQuery.isLoading}
-                aria-label='查看每日成本'
-                className='h-auto p-0 text-2xl font-semibold tabular-nums'
-              >
-                {costQuery.isLoading ? (
-                  <Skeleton className='h-7 w-24' />
-                ) : (
-                  formatChannelMonitorCost(costOverview?.today_cost_cny)
-                )}
-              </Button>
+              costQuery.isLoading ? (
+                <Skeleton className='h-7 w-24' />
+              ) : (
+                formatChannelMonitorCost(costOverview?.today_cost_cny)
+              )
             }
             description={costDescription}
             icon={MoneyBag02Icon}
-            action={{
-              label: '查看每日成本',
-              icon: HistoryIcon,
-              onClick: () => setCostHistoryOpen(true),
-            }}
+            ariaLabel='查看每日成本'
+            onClick={openCostHistory}
           />
           <ChannelMonitorTodaySuccessCard
             result={todaySuccessQuery.data?.data}
@@ -1217,28 +1215,22 @@ export function ChannelMonitor() {
         </Suspense>
       )}
       {todaySuccessOpen && (
-        <ChannelMonitorTodaySuccessDialog
-          result={todaySuccessQuery.data?.data}
-          channels={channels}
-          isLoading={todaySuccessQuery.isLoading}
-          isError={todaySuccessQuery.isError}
-          isFetching={todaySuccessQuery.isFetching}
-          open
-          onOpenChange={setTodaySuccessOpen}
-          onRetry={() => todaySuccessQuery.refetch()}
-        />
+        <Suspense fallback={null}>
+          <LazyChannelMonitorTodaySuccessDialog
+            channels={channels}
+            open
+            onOpenChange={setTodaySuccessOpen}
+          />
+        </Suspense>
       )}
       {todayCacheWriteOpen && (
-        <ChannelMonitorTodayCacheWriteDialog
-          result={todaySuccessQuery.data?.data}
-          channels={channels}
-          isLoading={todaySuccessQuery.isLoading}
-          isError={todaySuccessQuery.isError}
-          isFetching={todaySuccessQuery.isFetching}
-          open
-          onOpenChange={setTodayCacheWriteOpen}
-          onRetry={() => todaySuccessQuery.refetch()}
-        />
+        <Suspense fallback={null}>
+          <LazyChannelMonitorTodayCacheWriteDialog
+            channels={channels}
+            open
+            onOpenChange={setTodayCacheWriteOpen}
+          />
+        </Suspense>
       )}
       {batchTestOpen && (
         <Suspense fallback={null}>
@@ -1282,43 +1274,41 @@ type MonitorStatCardProps = {
   value: ReactNode
   description: string
   icon: React.ComponentProps<typeof HugeiconsIcon>['icon']
-  action?: {
-    label: string
-    icon: React.ComponentProps<typeof HugeiconsIcon>['icon']
-    onClick: () => void
-  }
+  ariaLabel?: string
+  onClick?: () => void
 }
 
-function MonitorStatCard(props: MonitorStatCardProps) {
+export function MonitorStatCard(props: MonitorStatCardProps) {
+  const interactive = props.onClick != null
+
   return (
-    <Card size='sm'>
+    <Card
+      size='sm'
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? (props.ariaLabel ?? props.label) : undefined}
+      onClick={props.onClick}
+      onKeyDown={
+        interactive
+          ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              props.onClick?.()
+            }
+          : undefined
+      }
+      className={cn(
+        interactive &&
+          'cursor-pointer transition-colors hover:ring-2 hover:ring-ring/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+      )}
+    >
       <CardHeader>
         <CardDescription>{props.label}</CardDescription>
         <CardTitle className='text-2xl tabular-nums'>{props.value}</CardTitle>
         <CardAction>
-          <div className='flex items-center gap-1'>
-            <span className='bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-lg'>
-              <HugeiconsIcon icon={props.icon} />
-            </span>
-            {props.action && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='icon'
-                      onClick={props.action.onClick}
-                      aria-label={props.action.label}
-                    >
-                      <HugeiconsIcon icon={props.action.icon} />
-                    </Button>
-                  }
-                />
-                <TooltipContent>{props.action.label}</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+          <span className='bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-lg'>
+            <HugeiconsIcon icon={props.icon} />
+          </span>
         </CardAction>
         <CardDescription>{props.description}</CardDescription>
       </CardHeader>

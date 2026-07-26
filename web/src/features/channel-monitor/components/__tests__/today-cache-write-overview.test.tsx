@@ -34,8 +34,10 @@ function createResult(
   overrides: Partial<ChannelMonitorTodaySuccessResult> = {}
 ): ChannelMonitorTodaySuccessResult {
   return {
+    days: 1,
     generated_at: 1_752_777_845,
     day_start: 1_752_681_600,
+    detail_date: '2026-07-23',
     success_metrics_available: true,
     cache_write_metrics_available: true,
     summary: {
@@ -79,6 +81,7 @@ function createResult(
         request_count: 3,
       },
     ],
+    chart_items: [],
     ...overrides,
   }
 }
@@ -210,13 +213,32 @@ describe('channel monitor today cache write overview', () => {
     assert.match(cells[14] ?? '', />-<\/td>/)
   })
 
+  test('uses the remaining dialog height as the vertical scroll container', () => {
+    const markup = renderDialogContent()
+    const contentRoot = markup.match(/^<div\b[^>]*>/)?.[0] ?? ''
+
+    assert.ok(contentRoot.includes('min-h-0'))
+    assert.ok(contentRoot.includes('flex-1'))
+    assert.ok(contentRoot.includes('overflow-y-auto'))
+    assert.ok(contentRoot.includes('overscroll-contain'))
+  })
+
+  test('keeps channel details from shrinking out of view', () => {
+    const markup = renderDialogContent()
+
+    assert.match(
+      markup,
+      /data-slot="today-cache-write-channel-details"[^>]*class="[^"]*shrink-0/
+    )
+  })
+
   test('shows an empty state when today has no cache writes', () => {
     const markup = renderDialogContent({
       result: createResult({ cache_write_items: [] }),
     })
 
-    assert.ok(markup.includes('今日暂无缓存写'))
-    assert.ok(markup.includes('今日尚未记录包含缓存写的请求'))
+    assert.ok(markup.includes('所选日期暂无缓存写'))
+    assert.ok(markup.includes('所选日期尚未记录包含缓存写的请求'))
     assert.equal(markup.includes('<table'), false)
   })
 
@@ -241,7 +263,7 @@ describe('channel monitor today cache write overview', () => {
 
     assert.ok(loadingMarkup.includes('data-slot="skeleton"'))
     assert.equal(loadingMarkup.includes('<table'), false)
-    assert.ok(errorMarkup.includes('今日缓存写统计加载失败'))
+    assert.ok(errorMarkup.includes('缓存写统计加载失败'))
     assert.ok(errorMarkup.includes('重新加载'))
   })
 })

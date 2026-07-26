@@ -137,6 +137,12 @@ func GetChannelRatioMonitors() ([]ChannelRatioMonitor, error) {
 	return monitors, err
 }
 
+func GetChannelRatioMonitorCostMetadata() ([]ChannelRatioMonitor, error) {
+	var monitors []ChannelRatioMonitor
+	err := DB.Select("channel_id", "ratio", "cost_conversion", "updated_time").Find(&monitors).Error
+	return monitors, err
+}
+
 func GetChannelRatioMonitor(channelId int) (ChannelRatioMonitor, error) {
 	var monitor ChannelRatioMonitor
 	err := DB.Where("channel_id = ?", channelId).First(&monitor).Error

@@ -21,7 +21,9 @@ import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { getChannelMonitorChartEventDate } from '../../lib/daily-chart'
 import type { ChannelMonitorCostOverview } from '../../types'
+import { ChannelMonitorChannelCostTable } from '../channel-monitor-channel-cost-table'
 import { CostHistoryData } from '../channel-monitor-cost-history-dialog'
 
 function createOverview(): ChannelMonitorCostOverview {
@@ -31,6 +33,7 @@ function createOverview(): ChannelMonitorCostOverview {
     today_cost_cny: 1.2,
     yesterday_cost_cny: 0.8,
     total_cost_cny: 2,
+    detail_date: '2026-07-23',
     coverage: {
       included_channel_count: 1,
       unresolved_channel_count: 0,
@@ -60,6 +63,9 @@ function createOverview(): ChannelMonitorCostOverview {
       {
         channel_id: 1,
         channel_name: '渠道一',
+        channel_remark: '主力线路',
+        status: 1,
+        cost_ratio: 0.5,
         cost_cny: 2,
         settled_count: 1,
         unresolved_count: 0,
@@ -81,23 +87,125 @@ function createOverview(): ChannelMonitorCostOverview {
 }
 
 describe('channel monitor cost history dialog layout', () => {
-  test('separates API Key costs into a dedicated view', () => {
+  test('places channel and API Key costs in tabs beside the cost trend', () => {
     const markup = renderToStaticMarkup(
       <CostHistoryData overview={createOverview()} />
     )
 
-    assert.ok(markup.includes('成本趋势'))
-    assert.ok(markup.includes('API Key 明细'))
+    const trendIndex = markup.indexOf('成本趋势')
+    const channelIndex = markup.indexOf('渠道汇总')
+    const apiKeyIndex = markup.indexOf('API Key 明细')
+    assert.ok(trendIndex >= 0)
+    assert.ok(channelIndex > trendIndex)
+    assert.ok(apiKeyIndex > channelIndex)
+    assert.ok(markup.includes('grid-cols-3'))
     assert.ok(markup.includes('日期第 1 / 2 页'))
   })
 
-  test('keeps the channel summary table aligned with the daily table on wide layouts', () => {
+  test('shares one selected-date control across all three cost views', () => {
     const markup = renderToStaticMarkup(
       <CostHistoryData overview={createOverview()} />
     )
 
-    assert.ok(markup.includes('lg:col-start-2 lg:row-start-1'))
-    assert.ok(markup.includes('lg:h-0 lg:max-h-none lg:min-h-0 lg:flex-1'))
-    assert.ok(markup.includes('lg:col-start-1 lg:row-start-2'))
+    assert.equal(markup.match(/aria-label="成本明细日期"/g)?.length, 1)
+    assert.ok(markup.includes('2026-07-23'))
+    assert.ok(markup.includes('data-selected-date="true"'))
+    assert.equal(markup.match(/aria-label="每日成本柱状图"/g)?.length, 1)
+  })
+
+  test('reads the selected date from a clicked chart bar', () => {
+    assert.equal(
+      getChannelMonitorChartEventDate({ datum: { date: '2026-07-23' } }),
+      '2026-07-23'
+    )
+    assert.equal(
+      getChannelMonitorChartEventDate({ datum: { cost: 1.2 } }),
+      null
+    )
+    assert.equal(getChannelMonitorChartEventDate({}), null)
+  })
+
+  test('shows channel remarks, status, and cost ratios in the channel view', () => {
+    const overview = createOverview()
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorChannelCostTable
+        items={overview.channels}
+        detailDate={overview.detail_date}
+      />
+    )
+
+    assert.ok(markup.includes('渠道一'))
+    assert.ok(markup.includes('主力线路'))
+    assert.ok(markup.includes('启用'))
+    assert.ok(markup.includes('成本倍率'))
+    assert.ok(markup.includes('0.5'))
+  })
+
+  test('orders cost channels by enabled status and then ascending ratio', () => {
+    const overview = createOverview()
+    overview.channels = [
+      {
+        channel_id: 4,
+        channel_name: '禁用高倍率',
+        channel_remark: '禁用备注',
+        status: 2,
+        cost_ratio: 2,
+        cost_cny: 1,
+        settled_count: 1,
+        unresolved_count: 0,
+      },
+      {
+        channel_id: 3,
+        channel_name: '启用高倍率',
+        channel_remark: '启用高倍率备注',
+        status: 1,
+        cost_ratio: 1.5,
+        cost_cny: 1,
+        settled_count: 1,
+        unresolved_count: 0,
+      },
+      {
+        channel_id: 2,
+        channel_name: '启用低倍率',
+        channel_remark: '启用低倍率备注',
+        status: 1,
+        cost_ratio: 0.2,
+        cost_cny: 1,
+        settled_count: 1,
+        unresolved_count: 0,
+      },
+      {
+        channel_id: 5,
+        channel_name: '禁用低倍率',
+        channel_remark: '禁用低倍率备注',
+        status: 3,
+        cost_ratio: 0.1,
+        cost_cny: 1,
+        settled_count: 1,
+        unresolved_count: 0,
+      },
+    ]
+
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorChannelCostTable
+        items={overview.channels}
+        detailDate={overview.detail_date}
+      />
+    )
+
+    const orderedNames = [
+      '启用低倍率',
+      '启用高倍率',
+      '禁用低倍率',
+      '禁用高倍率',
+    ]
+    let previousIndex = -1
+    for (const name of orderedNames) {
+      const index = markup.indexOf(name)
+      assert.ok(index > previousIndex, `${name} should be ordered`)
+      previousIndex = index
+    }
+    assert.ok(markup.includes('启用低倍率备注'))
+    assert.ok(markup.includes('0.2'))
   })
 })

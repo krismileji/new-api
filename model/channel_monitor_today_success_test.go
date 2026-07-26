@@ -85,6 +85,62 @@ func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t 
 	assert.Equal(t, int64(2), metrics.APIKeyItems[1].ActualSampleCount)
 }
 
+func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing.T) {
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	t.Cleanup(func() {
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+	})
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-success.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+
+	firstDayStart := ChannelDailyCostDayStart(1_700_000_000)
+	secondDayStart := firstDayStart + channelDailyCostDaySeconds
+	logs := []*Log{
+		{ChannelId: 1, CreatedAt: firstDayStart + 1, Type: LogTypeConsume, Other: `{"cache_tokens":12,"cache_write_tokens":100}`},
+		{ChannelId: 1, CreatedAt: firstDayStart + 2, Type: LogTypeError, IsRetryAttempt: true},
+		{ChannelId: 2, CreatedAt: firstDayStart + 3, Type: LogTypeConsume, Other: `{"cache_creation_tokens_5m":64}`},
+		{ChannelId: 1, CreatedAt: secondDayStart + 1, Type: LogTypeConsume, Other: `{"cache_tokens":0}`},
+		{ChannelId: 2, CreatedAt: secondDayStart + 2, Type: LogTypeError},
+		{ChannelId: 1, CreatedAt: firstDayStart - 1, Type: LogTypeConsume},
+		{ChannelId: 1, CreatedAt: secondDayStart + channelDailyCostDaySeconds, Type: LogTypeConsume},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+
+	items, err := getChannelMonitorDailySuccessMetrics(
+		context.Background(), firstDayStart, secondDayStart+channelDailyCostDaySeconds,
+	)
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+
+	assert.Equal(t, firstDayStart, items[0].DayStart)
+	assert.Equal(t, int64(3), items[0].Summary.ActualSampleCount)
+	assert.Equal(t, int64(2), items[0].Summary.FinalSampleCount)
+	assert.InDelta(t, 1, items[0].Summary.FinalSuccessRate, 0.0001)
+	assert.Equal(t, int64(1), items[0].Summary.CacheHitCount)
+	assert.Equal(t, int64(1), items[0].Summary.CacheSampleCount)
+	assert.Equal(t, int64(2), items[0].CacheWriteRequestCount)
+	assert.Equal(t, 2, items[0].CacheWriteChannelCount)
+
+	assert.Equal(t, secondDayStart, items[1].DayStart)
+	assert.Equal(t, int64(2), items[1].Summary.ActualSampleCount)
+	assert.InDelta(t, 0.5, items[1].Summary.ActualSuccessRate, 0.0001)
+	assert.Zero(t, items[1].Summary.CacheHitCount)
+	assert.Equal(t, int64(1), items[1].Summary.CacheSampleCount)
+	assert.Zero(t, items[1].CacheWriteRequestCount)
+	assert.Zero(t, items[1].CacheWriteChannelCount)
+}
+
 func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()

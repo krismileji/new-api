@@ -14,7 +14,12 @@ import (
 	"gorm.io/gorm"
 )
 
-const channelMonitorTodaySuccessCacheTTL = time.Minute
+const (
+	channelMonitorTodaySuccessCacheTTL        = time.Minute
+	channelMonitorCacheTokenFieldPattern      = `%"cache_tokens":%`
+	channelMonitorZeroCacheTokenBeforePattern = `%"cache_tokens":0,%`
+	channelMonitorZeroCacheTokenAtEndPattern  = `%"cache_tokens":0}%`
+)
 
 type ChannelMonitorTodaySuccessMetrics struct {
 	Summary         ChannelMonitorSuccessSummary          `json:"summary"`
@@ -28,10 +33,28 @@ type ChannelMonitorTodayCacheWriteMetric struct {
 	RequestCount int64 `json:"request_count"`
 }
 
+type ChannelMonitorDailySuccessMetric struct {
+	DayStart               int64
+	Summary                ChannelMonitorSuccessSummary
+	CacheWriteChannelCount int
+	CacheWriteRequestCount int64
+}
+
 type channelMonitorTodaySuccessRow struct {
 	ChannelId        int
 	TokenId          int
 	TokenName        string
+	Type             int
+	IsRetryAttempt   *bool
+	Count            int64
+	CacheHitCount    int64 `gorm:"column:cache_hit_count"`
+	CacheSampleCount int64 `gorm:"column:cache_sample_count"`
+	CacheWriteCount  int64 `gorm:"column:cache_write_count"`
+}
+
+type channelMonitorDailySuccessRow struct {
+	DayBucket        int64 `gorm:"column:day_bucket"`
+	ChannelId        int
 	Type             int
 	IsRetryAttempt   *bool
 	Count            int64
@@ -51,6 +74,18 @@ type channelMonitorTodaySuccessCacheEntry struct {
 	metrics   ChannelMonitorTodaySuccessMetrics
 }
 
+type channelMonitorDailySuccessCacheKey struct {
+	logDB           *gorm.DB
+	logDatabaseType common.DatabaseType
+	startTimestamp  int64
+	endTimestamp    int64
+}
+
+type channelMonitorDailySuccessCacheEntry struct {
+	expiresAt time.Time
+	metrics   []ChannelMonitorDailySuccessMetric
+}
+
 var channelMonitorTodaySuccessCache = struct {
 	sync.RWMutex
 	items map[channelMonitorTodaySuccessCacheKey]channelMonitorTodaySuccessCacheEntry
@@ -60,34 +95,44 @@ var channelMonitorTodaySuccessCache = struct {
 
 var channelMonitorTodaySuccessSingleflight singleflight.Group
 
-func getChannelMonitorTodaySuccessMetrics(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
-	const cacheTokenFieldPattern = `%"cache_tokens":%`
-	const zeroCacheTokenBeforeFieldPattern = `%"cache_tokens":0,%`
-	const zeroCacheTokenAtEndPattern = `%"cache_tokens":0}%`
-	const daySeconds = int64(24 * 60 * 60)
-	cacheWritePatterns := [][3]string{
+var channelMonitorDailySuccessCache = struct {
+	sync.RWMutex
+	items map[channelMonitorDailySuccessCacheKey]channelMonitorDailySuccessCacheEntry
+}{
+	items: make(map[channelMonitorDailySuccessCacheKey]channelMonitorDailySuccessCacheEntry),
+}
+
+var channelMonitorDailySuccessSingleflight singleflight.Group
+
+func channelMonitorCacheWritePredicate() (string, []any) {
+	patterns := [][3]string{
 		{`%"cache_write_tokens":%`, `%"cache_write_tokens":0,%`, `%"cache_write_tokens":0}%`},
 		{`%"cache_creation_tokens":%`, `%"cache_creation_tokens":0,%`, `%"cache_creation_tokens":0}%`},
 		{`%"cache_creation_tokens_5m":%`, `%"cache_creation_tokens_5m":0,%`, `%"cache_creation_tokens_5m":0}%`},
 		{`%"cache_creation_tokens_1h":%`, `%"cache_creation_tokens_1h":0,%`, `%"cache_creation_tokens_1h":0}%`},
 	}
-	cacheWriteConditions := make([]string, 0, len(cacheWritePatterns))
-	cacheWriteArgs := make([]any, 0, len(cacheWritePatterns)*3)
-	for _, patterns := range cacheWritePatterns {
-		cacheWriteConditions = append(cacheWriteConditions, "(other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ?)")
-		cacheWriteArgs = append(cacheWriteArgs, patterns[0], patterns[1], patterns[2])
+	conditions := make([]string, 0, len(patterns))
+	args := make([]any, 0, len(patterns)*3)
+	for _, pattern := range patterns {
+		conditions = append(conditions, "(other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ?)")
+		args = append(args, pattern[0], pattern[1], pattern[2])
 	}
-	cacheWritePredicate := "(" + strings.Join(cacheWriteConditions, " OR ") + ")"
+	return "(" + strings.Join(conditions, " OR ") + ")", args
+}
+
+func getChannelMonitorTodaySuccessMetrics(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
+	const daySeconds = int64(24 * 60 * 60)
+	cacheWritePredicate, cacheWriteArgs := channelMonitorCacheWritePredicate()
 
 	selectColumns := "channel_id, token_id, token_name, type, is_retry_attempt, COUNT(*) AS count, " +
 		"SUM(CASE WHEN other LIKE ? THEN 1 ELSE 0 END) AS cache_sample_count, " +
 		"SUM(CASE WHEN other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ? THEN 1 ELSE 0 END) AS cache_hit_count, " +
 		"SUM(CASE WHEN type = ? AND " + cacheWritePredicate + " THEN 1 ELSE 0 END) AS cache_write_count"
 	selectArgs := []any{
-		cacheTokenFieldPattern,
-		cacheTokenFieldPattern,
-		zeroCacheTokenBeforeFieldPattern,
-		zeroCacheTokenAtEndPattern,
+		channelMonitorCacheTokenFieldPattern,
+		channelMonitorCacheTokenFieldPattern,
+		channelMonitorZeroCacheTokenBeforePattern,
+		channelMonitorZeroCacheTokenAtEndPattern,
 		LogTypeConsume,
 	}
 	selectArgs = append(selectArgs, cacheWriteArgs...)
@@ -160,6 +205,80 @@ func getChannelMonitorTodaySuccessMetrics(ctx context.Context, dayStart int64) (
 	}, nil
 }
 
+func getChannelMonitorDailySuccessMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorDailySuccessMetric, error) {
+	if startTimestamp >= endTimestamp {
+		return []ChannelMonitorDailySuccessMetric{}, nil
+	}
+
+	cacheWritePredicate, cacheWriteArgs := channelMonitorCacheWritePredicate()
+	dayBucket := channelMonitorCostDayBucketSQL()
+	selectColumns := dayBucket + " AS day_bucket, channel_id, type, is_retry_attempt, COUNT(*) AS count, " +
+		"SUM(CASE WHEN other LIKE ? THEN 1 ELSE 0 END) AS cache_sample_count, " +
+		"SUM(CASE WHEN other LIKE ? AND other NOT LIKE ? AND other NOT LIKE ? THEN 1 ELSE 0 END) AS cache_hit_count, " +
+		"SUM(CASE WHEN type = ? AND " + cacheWritePredicate + " THEN 1 ELSE 0 END) AS cache_write_count"
+	selectArgs := []any{
+		channelMonitorCacheTokenFieldPattern,
+		channelMonitorCacheTokenFieldPattern,
+		channelMonitorZeroCacheTokenBeforePattern,
+		channelMonitorZeroCacheTokenAtEndPattern,
+		LogTypeConsume,
+	}
+	selectArgs = append(selectArgs, cacheWriteArgs...)
+
+	var rows []channelMonitorDailySuccessRow
+	err := LOG_DB.WithContext(ctx).
+		Model(&Log{}).
+		Select(selectColumns, selectArgs...).
+		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
+		Where("channel_id > ?", 0).
+		Where("created_at >= ? AND created_at < ?", startTimestamp, endTimestamp).
+		Group(dayBucket + ", channel_id, type, is_retry_attempt").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	type dailyAggregate struct {
+		counts             channelMonitorSuccessCounts
+		cacheWriteChannels map[int]struct{}
+		cacheWriteRequests int64
+	}
+	aggregates := make(map[int64]*dailyAggregate)
+	for _, row := range rows {
+		dayStart := row.DayBucket*channelMonitorCostDaySeconds - channelMonitorCostTimezoneOffsetSeconds
+		aggregate := aggregates[dayStart]
+		if aggregate == nil {
+			aggregate = &dailyAggregate{cacheWriteChannels: make(map[int]struct{})}
+			aggregates[dayStart] = aggregate
+		}
+		aggregate.counts.add(
+			row.Type,
+			row.IsRetryAttempt != nil && *row.IsRetryAttempt,
+			row.Count,
+			row.CacheHitCount,
+			row.CacheSampleCount,
+		)
+		if row.CacheWriteCount > 0 {
+			aggregate.cacheWriteRequests += row.CacheWriteCount
+			aggregate.cacheWriteChannels[row.ChannelId] = struct{}{}
+		}
+	}
+
+	items := make([]ChannelMonitorDailySuccessMetric, 0, len(aggregates))
+	for dayStart, aggregate := range aggregates {
+		items = append(items, ChannelMonitorDailySuccessMetric{
+			DayStart:               dayStart,
+			Summary:                aggregate.counts.summary(),
+			CacheWriteChannelCount: len(aggregate.cacheWriteChannels),
+			CacheWriteRequestCount: aggregate.cacheWriteRequests,
+		})
+	}
+	sort.Slice(items, func(i int, j int) bool {
+		return items[i].DayStart < items[j].DayStart
+	})
+	return items, nil
+}
+
 func cloneChannelMonitorTodaySuccessMetrics(metrics ChannelMonitorTodaySuccessMetrics) ChannelMonitorTodaySuccessMetrics {
 	cloned := metrics
 	if metrics.ChannelItems != nil {
@@ -201,13 +320,85 @@ func storeChannelMonitorTodaySuccessMetrics(key channelMonitorTodaySuccessCacheK
 	channelMonitorTodaySuccessCache.Unlock()
 }
 
+func cloneChannelMonitorDailySuccessMetrics(metrics []ChannelMonitorDailySuccessMetric) []ChannelMonitorDailySuccessMetric {
+	if metrics == nil {
+		return nil
+	}
+	cloned := make([]ChannelMonitorDailySuccessMetric, len(metrics))
+	copy(cloned, metrics)
+	return cloned
+}
+
+func cachedChannelMonitorDailySuccessMetrics(key channelMonitorDailySuccessCacheKey, now time.Time) ([]ChannelMonitorDailySuccessMetric, bool) {
+	channelMonitorDailySuccessCache.RLock()
+	entry, exists := channelMonitorDailySuccessCache.items[key]
+	channelMonitorDailySuccessCache.RUnlock()
+	if !exists || !now.Before(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.metrics, true
+}
+
+func storeChannelMonitorDailySuccessMetrics(key channelMonitorDailySuccessCacheKey, now time.Time, metrics []ChannelMonitorDailySuccessMetric) {
+	channelMonitorDailySuccessCache.Lock()
+	for cachedKey, entry := range channelMonitorDailySuccessCache.items {
+		if !now.Before(entry.expiresAt) {
+			delete(channelMonitorDailySuccessCache.items, cachedKey)
+		}
+	}
+	channelMonitorDailySuccessCache.items[key] = channelMonitorDailySuccessCacheEntry{
+		expiresAt: now.Add(channelMonitorTodaySuccessCacheTTL),
+		metrics:   metrics,
+	}
+	channelMonitorDailySuccessCache.Unlock()
+}
+
+func GetChannelMonitorDailySuccessMetricsCached(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorDailySuccessMetric, error) {
+	key := channelMonitorDailySuccessCacheKey{
+		logDB:           LOG_DB,
+		logDatabaseType: common.LogDatabaseType(),
+		startTimestamp:  startTimestamp,
+		endTimestamp:    endTimestamp,
+	}
+	now := time.Now()
+	if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, now); exists {
+		return cloneChannelMonitorDailySuccessMetrics(metrics), nil
+	}
+
+	singleflightKey := fmt.Sprintf("daily-success:%p:%s:%d:%d", key.logDB, key.logDatabaseType, startTimestamp, endTimestamp)
+	result, err, _ := channelMonitorDailySuccessSingleflight.Do(singleflightKey, func() (any, error) {
+		loadTime := time.Now()
+		if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, loadTime); exists {
+			return metrics, nil
+		}
+		metrics, queryErr := getChannelMonitorDailySuccessMetrics(ctx, startTimestamp, endTimestamp)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		storeChannelMonitorDailySuccessMetrics(key, loadTime, metrics)
+		return metrics, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneChannelMonitorDailySuccessMetrics(result.([]ChannelMonitorDailySuccessMetric)), nil
+}
+
+func GetChannelMonitorSuccessMetricsForDayCached(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
+	return getChannelMonitorSuccessMetricsForDayCached(ctx, ChannelDailyCostDayStart(dayStart))
+}
+
 // GetChannelMonitorTodaySuccessMetricsCached aggregates one Beijing calendar
 // day and bounds repeated dashboard refreshes to one log query per minute.
 func GetChannelMonitorTodaySuccessMetricsCached(ctx context.Context, generatedAt int64) (ChannelMonitorTodaySuccessMetrics, error) {
+	return getChannelMonitorSuccessMetricsForDayCached(ctx, ChannelDailyCostDayStart(generatedAt))
+}
+
+func getChannelMonitorSuccessMetricsForDayCached(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
 	key := channelMonitorTodaySuccessCacheKey{
 		logDB:           LOG_DB,
 		logDatabaseType: common.LogDatabaseType(),
-		dayStart:        ChannelDailyCostDayStart(generatedAt),
+		dayStart:        dayStart,
 	}
 	now := time.Now()
 	if metrics, exists := cachedChannelMonitorTodaySuccessMetrics(key, now); exists {
@@ -237,4 +428,7 @@ func resetChannelMonitorTodaySuccessCache() {
 	channelMonitorTodaySuccessCache.Lock()
 	channelMonitorTodaySuccessCache.items = make(map[channelMonitorTodaySuccessCacheKey]channelMonitorTodaySuccessCacheEntry)
 	channelMonitorTodaySuccessCache.Unlock()
+	channelMonitorDailySuccessCache.Lock()
+	channelMonitorDailySuccessCache.items = make(map[channelMonitorDailySuccessCacheKey]channelMonitorDailySuccessCacheEntry)
+	channelMonitorDailySuccessCache.Unlock()
 }

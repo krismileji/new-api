@@ -22,7 +22,7 @@ import {
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -52,11 +52,13 @@ import {
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
+import { useChannelMonitorDailyInsight } from '../hooks/use-channel-monitor-daily-insight'
 import { formatMonitorRatio } from '../lib/format'
 import type {
   ChannelMonitorItem,
   ChannelMonitorTodaySuccessResult,
 } from '../types'
+import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
 type ChannelMonitorTodayCacheWriteChannelMetadata = Pick<
@@ -65,20 +67,33 @@ type ChannelMonitorTodayCacheWriteChannelMetadata = Pick<
 >
 
 type ChannelMonitorTodayCacheWriteDialogProps = {
+  channels: readonly ChannelMonitorTodayCacheWriteChannelMetadata[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export type ChannelMonitorTodayCacheWriteDialogContentProps = {
   result: ChannelMonitorTodaySuccessResult | undefined
   channels: readonly ChannelMonitorTodayCacheWriteChannelMetadata[]
   isLoading: boolean
   isError: boolean
   isFetching: boolean
-  open: boolean
-  onOpenChange: (open: boolean) => void
   onRetry: () => void
+  history?: ReactNode
+  detailDate?: string
 }
 
-export type ChannelMonitorTodayCacheWriteDialogContentProps = Omit<
-  ChannelMonitorTodayCacheWriteDialogProps,
-  'open' | 'onOpenChange'
->
+function TodayCacheWriteContentLayout(props: {
+  history?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-1'>
+      {props.history}
+      {props.children}
+    </div>
+  )
+}
 
 export function ChannelMonitorTodayCacheWriteDialogContent(
   props: ChannelMonitorTodayCacheWriteDialogContentProps
@@ -140,68 +155,78 @@ export function ChannelMonitorTodayCacheWriteDialogContent(
 
   if (props.isLoading) {
     return (
-      <div className='flex flex-col gap-3'>
-        <Skeleton className='h-20 w-full' />
-        <Skeleton className='h-56 w-full' />
-      </div>
+      <TodayCacheWriteContentLayout history={props.history}>
+        <div className='flex flex-col gap-3'>
+          <Skeleton className='h-20 w-full' />
+          <Skeleton className='h-56 w-full' />
+        </div>
+      </TodayCacheWriteContentLayout>
     )
   }
 
   if (props.isError) {
     return (
-      <Empty className='min-h-64 border-0'>
-        <EmptyHeader>
-          <EmptyMedia variant='icon'>
-            <HugeiconsIcon icon={Alert02Icon} />
-          </EmptyMedia>
-          <EmptyTitle>今日缓存写统计加载失败</EmptyTitle>
-          <EmptyDescription>网络或服务暂时不可用</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button
-            type='button'
-            variant='outline'
-            onClick={props.onRetry}
-            disabled={props.isFetching}
-          >
-            <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
-            重新加载
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <TodayCacheWriteContentLayout history={props.history}>
+        <Empty className='min-h-64 border-0'>
+          <EmptyHeader>
+            <EmptyMedia variant='icon'>
+              <HugeiconsIcon icon={Alert02Icon} />
+            </EmptyMedia>
+            <EmptyTitle>缓存写统计加载失败</EmptyTitle>
+            <EmptyDescription>网络或服务暂时不可用</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={props.onRetry}
+              disabled={props.isFetching}
+            >
+              <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
+              重新加载
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </TodayCacheWriteContentLayout>
     )
   }
 
   if (!props.result?.cache_write_metrics_available) {
     return (
-      <Empty className='min-h-64 border-0'>
-        <EmptyHeader>
-          <EmptyMedia variant='icon'>
-            <HugeiconsIcon icon={Alert02Icon} />
-          </EmptyMedia>
-          <EmptyTitle>缓存写统计不可用</EmptyTitle>
-          <EmptyDescription>需要开启消费日志</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <TodayCacheWriteContentLayout history={props.history}>
+        <Empty className='min-h-64 border-0'>
+          <EmptyHeader>
+            <EmptyMedia variant='icon'>
+              <HugeiconsIcon icon={Alert02Icon} />
+            </EmptyMedia>
+            <EmptyTitle>缓存写统计不可用</EmptyTitle>
+            <EmptyDescription>需要开启消费日志</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </TodayCacheWriteContentLayout>
     )
   }
 
   if (rows.length === 0) {
     return (
-      <Empty className='min-h-64 border-0'>
-        <EmptyHeader>
-          <EmptyMedia variant='icon'>
-            <HugeiconsIcon icon={DatabaseAddIcon} />
-          </EmptyMedia>
-          <EmptyTitle>今日暂无缓存写</EmptyTitle>
-          <EmptyDescription>今日尚未记录包含缓存写的请求</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <TodayCacheWriteContentLayout history={props.history}>
+        <Empty className='min-h-64 border-0'>
+          <EmptyHeader>
+            <EmptyMedia variant='icon'>
+              <HugeiconsIcon icon={DatabaseAddIcon} />
+            </EmptyMedia>
+            <EmptyTitle>{props.detailDate || '所选日期'}暂无缓存写</EmptyTitle>
+            <EmptyDescription>
+              所选日期尚未记录包含缓存写的请求
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </TodayCacheWriteContentLayout>
     )
   }
 
   return (
-    <div className='flex min-h-0 flex-col gap-4 overflow-y-auto pr-1'>
+    <TodayCacheWriteContentLayout history={props.history}>
       <div className='grid shrink-0 grid-cols-2 divide-x rounded-lg border'>
         <div className='flex min-h-20 flex-col justify-center gap-1 px-4 py-3'>
           <span className='text-muted-foreground text-xs'>缓存写渠道</span>
@@ -216,9 +241,12 @@ export function ChannelMonitorTodayCacheWriteDialogContent(
           </span>
         </div>
       </div>
-      <div className='flex min-h-0 flex-col gap-2'>
+      <div
+        data-slot='today-cache-write-channel-details'
+        className='flex shrink-0 flex-col gap-2'
+      >
         <h3 className='font-medium'>渠道明细</h3>
-        <div className='min-h-0 overflow-hidden rounded-lg border'>
+        <div className='rounded-lg border'>
           <Table className='w-full table-fixed'>
             <TableHeader>
               <TableRow>
@@ -291,32 +319,49 @@ export function ChannelMonitorTodayCacheWriteDialogContent(
           </Table>
         </div>
       </div>
-    </div>
+    </TodayCacheWriteContentLayout>
   )
 }
 
 export function ChannelMonitorTodayCacheWriteDialog(
   props: ChannelMonitorTodayCacheWriteDialogProps
 ) {
-  let description = '按北京时间统计真实调用中的缓存写'
-  if (props.result?.generated_at) {
-    description += ` · 更新于 ${formatTimestampToDate(props.result.generated_at)}`
+  const insight = useChannelMonitorDailyInsight(props.open)
+  const result = insight.query.data?.data
+  const detailLoading =
+    insight.query.isLoading ||
+    (insight.query.isFetching && result?.detail_date !== insight.selectedDate)
+  let description = `按北京时间统计 ${insight.selectedDate} 的缓存写`
+  if (result?.generated_at && result.detail_date === insight.selectedDate) {
+    description += ` · 更新于 ${formatTimestampToDate(result.generated_at)}`
   }
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-3xl'>
         <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>今日缓存写渠道</DialogTitle>
+          <DialogTitle>缓存写渠道</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <ChannelMonitorTodayCacheWriteDialogContent
-          result={props.result}
+          result={result}
           channels={props.channels}
-          isLoading={props.isLoading}
-          isError={props.isError}
-          isFetching={props.isFetching}
-          onRetry={props.onRetry}
+          isLoading={detailLoading}
+          isError={insight.query.isError}
+          isFetching={insight.query.isFetching}
+          detailDate={insight.selectedDate}
+          history={
+            <ChannelMonitorDailyInsightHistory
+              kind='cache-write'
+              days={insight.days}
+              selectedDate={insight.selectedDate}
+              items={result?.chart_items ?? []}
+              loading={insight.query.isLoading}
+              onDaysChange={insight.changeDays}
+              onDateChange={insight.changeDate}
+            />
+          }
+          onRetry={() => insight.query.refetch()}
         />
       </DialogContent>
     </Dialog>

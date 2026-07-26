@@ -55,6 +55,37 @@ test('requests only the lightweight cost summary for the monitor dashboard', asy
     channel_id: undefined,
     page: 1,
     summary_only: true,
+    date: undefined,
+  })
+})
+
+test('requests channel and API Key cost details for the selected Beijing date', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: { success: true, message: '', data: {} },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await getChannelMonitorCostOverview(30, undefined, 2, false, '2026-07-23')
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.deepEqual(requestConfig?.params, {
+    days: 30,
+    channel_id: undefined,
+    page: 2,
+    summary_only: undefined,
+    date: '2026-07-23',
   })
 })
 
@@ -80,6 +111,36 @@ test('requests the Beijing-day success summary for the monitor dashboard', async
   }
 
   assert.equal(requestUrl, '/api/channel_monitor/success/today')
+})
+
+test('requests daily success and cache insights for the selected date', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: { success: true, message: '', data: {} },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await getChannelMonitorTodaySuccess({
+      days: 30,
+      date: '2026-07-23',
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.deepEqual(requestConfig?.params, {
+    days: 30,
+    date: '2026-07-23',
+  })
 })
 
 test('normalizes nullable group membership change lists from older servers', async () => {

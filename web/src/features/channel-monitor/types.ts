@@ -242,6 +242,9 @@ export type ChannelMonitorCostDay = {
 export type ChannelMonitorCostChannel = {
   channel_id: number
   channel_name: string
+  channel_remark: string
+  status: number
+  cost_ratio: number | null
   cost_cny: number
   settled_count: number
   unresolved_count: number
@@ -276,6 +279,7 @@ export type ChannelMonitorCostCoverage = {
 export type ChannelMonitorCostOverview = {
   days: number
   generated_at: number
+  detail_date: string
   today_cost_cny: number
   yesterday_cost_cny: number
   total_cost_cny: number
@@ -358,15 +362,29 @@ export type ChannelMonitorTodayCacheWriteItem = {
   request_count: number
 }
 
+export type ChannelMonitorDailyInsightDay = {
+  date: string
+  start_at: number
+  request_count: number
+  success_rate: number
+  cache_sample_count: number
+  cache_rate: number
+  cache_write_channel_count: number
+  cache_write_request_count: number
+}
+
 export type ChannelMonitorTodaySuccessResult = {
+  days: number
   generated_at: number
   day_start: number
+  detail_date: string
   success_metrics_available: boolean
   cache_write_metrics_available: boolean
   summary: ChannelMonitorSuccessSummary
   channel_items: ChannelMonitorTodaySuccessChannelItem[]
   api_key_items: ChannelMonitorSuccessAPIKeyMetric[]
   cache_write_items: ChannelMonitorTodayCacheWriteItem[]
+  chart_items: ChannelMonitorDailyInsightDay[]
 }
 
 export type ChannelMonitorFailureCategory = {

@@ -23,8 +23,7 @@ import {
   MoneyBag02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useQuery } from '@tanstack/react-query'
-import { VChart } from '@visactor/react-vchart'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -60,13 +59,14 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useChartTheme } from '@/lib/use-chart-theme'
-import { VCHART_OPTION } from '@/lib/vchart'
 
 import { getChannelMonitorCostOverview } from '../api'
+import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { formatChannelMonitorCost } from '../lib/format'
 import type { ChannelMonitorCostOverview } from '../types'
 import { ChannelMonitorAPIKeyCostTable } from './channel-monitor-api-key-cost-table'
+import { ChannelMonitorChannelCostTable } from './channel-monitor-channel-cost-table'
+import { ChannelMonitorDailyBarChart } from './channel-monitor-daily-bar-chart'
 
 const COST_HISTORY_RANGE_OPTIONS = [
   { value: '7', label: '近 7 天' },
@@ -86,6 +86,9 @@ export function ChannelMonitorCostHistoryDialog(
 ) {
   const [days, setDays] = useState(30)
   const [datePage, setDatePage] = useState(1)
+  const [detailDate, setDetailDate] = useState(() =>
+    formatChannelMonitorBeijingDate(new Date())
+  )
   const query = useQuery({
     queryKey: [
       'channel-monitor',
@@ -93,16 +96,35 @@ export function ChannelMonitorCostHistoryDialog(
       props.channelId ?? 'all',
       days,
       datePage,
+      detailDate,
     ],
     queryFn: () =>
-      getChannelMonitorCostOverview(days, props.channelId, datePage),
+      getChannelMonitorCostOverview(
+        days,
+        props.channelId,
+        datePage,
+        false,
+        detailDate
+      ),
     enabled: props.open,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
   useEffect(() => {
     setDatePage(1)
-  }, [props.channelId, days])
+    setDetailDate(formatChannelMonitorBeijingDate(new Date()))
+  }, [props.channelId])
+
+  const handleDetailDateChange = (value: string) => {
+    setDetailDate(value)
+    const chartItems = query.data?.data.chart_items ?? []
+    const selectedIndex = chartItems.findIndex((item) => item.date === value)
+    if (selectedIndex < 0) return
+    const newestFirstIndex = chartItems.length - 1 - selectedIndex
+    const pageSize = query.data?.data.item_page_size || 7
+    setDatePage(Math.floor(newestFirstIndex / pageSize) + 1)
+  }
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -130,14 +152,17 @@ export function ChannelMonitorCostHistoryDialog(
                     case '7':
                       setDays(7)
                       setDatePage(1)
+                      setDetailDate(formatChannelMonitorBeijingDate(new Date()))
                       break
                     case '30':
                       setDays(30)
                       setDatePage(1)
+                      setDetailDate(formatChannelMonitorBeijingDate(new Date()))
                       break
                     case '90':
                       setDays(90)
                       setDatePage(1)
+                      setDetailDate(formatChannelMonitorBeijingDate(new Date()))
                       break
                   }
                 }}
@@ -163,8 +188,9 @@ export function ChannelMonitorCostHistoryDialog(
               loading={query.isLoading}
               error={query.isError}
               overview={query.data?.data}
-              channelId={props.channelId}
               onDatePageChange={setDatePage}
+              selectedDate={detailDate}
+              onDetailDateChange={handleDetailDateChange}
             />
           </div>
         </div>
@@ -214,8 +240,9 @@ function CostHistoryContent(props: {
   loading: boolean
   error: boolean
   overview: ChannelMonitorCostOverview | undefined
-  channelId?: number
   onDatePageChange: (page: number) => void
+  selectedDate?: string
+  onDetailDateChange: (date: string) => void
 }) {
   let content: ReactNode
   if (props.loading) {
@@ -258,8 +285,9 @@ function CostHistoryContent(props: {
     content = (
       <CostHistoryData
         overview={props.overview}
-        channelId={props.channelId}
         onDatePageChange={props.onDatePageChange}
+        selectedDate={props.selectedDate}
+        onDetailDateChange={props.onDetailDateChange}
       />
     )
   }
@@ -268,10 +296,10 @@ function CostHistoryContent(props: {
 
 export function CostHistoryData(props: {
   overview: ChannelMonitorCostOverview
-  channelId?: number
   onDatePageChange?: (page: number) => void
+  selectedDate?: string
+  onDetailDateChange?: (date: string) => void
 }) {
-  const { resolvedTheme, themeReady } = useChartTheme()
   const datePageCount = Math.max(1, props.overview.item_page_count || 1)
   const currentDatePage = Math.min(props.overview.item_page || 1, datePageCount)
   const dateItems = useMemo(() => {
@@ -279,6 +307,17 @@ export function CostHistoryData(props: {
   }, [props.overview.items])
 
   const chartItems = props.overview.chart_items ?? props.overview.items
+  const detailDateOptions = useMemo(() => {
+    return [...chartItems].reverse().map((item) => ({
+      value: item.date,
+      label: item.date,
+    }))
+  }, [chartItems])
+  const detailDate =
+    props.selectedDate ||
+    props.overview.detail_date ||
+    detailDateOptions[0]?.value ||
+    ''
 
   const chartSpec = useMemo(
     () => ({
@@ -289,6 +328,7 @@ export function CostHistoryData(props: {
           values: chartItems.map((item) => ({
             date: item.date,
             cost: item.cost_cny,
+            selected: item.date === detailDate,
           })),
         },
       ],
@@ -297,6 +337,9 @@ export function CostHistoryData(props: {
       bar: {
         style: {
           cornerRadius: [4, 4, 0, 0],
+          cursor: 'pointer',
+          fillOpacity: (datum: { selected: boolean }) =>
+            datum.selected ? 1 : 0.55,
         },
       },
       legends: { visible: false },
@@ -327,46 +370,74 @@ export function CostHistoryData(props: {
         },
       ],
     }),
-    [chartItems]
+    [chartItems, detailDate]
   )
 
   const coverage = props.overview.coverage
   return (
     <Tabs defaultValue='overview' className='min-h-0'>
-      <TabsList className='grid w-full grid-cols-2 sm:w-fit'>
-        <TabsTrigger value='overview'>成本趋势</TabsTrigger>
-        <TabsTrigger value='api-keys'>API Key 明细</TabsTrigger>
-      </TabsList>
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        <TabsList className='grid w-full grid-cols-3 sm:w-fit'>
+          <TabsTrigger value='overview'>成本趋势</TabsTrigger>
+          <TabsTrigger value='channels'>渠道汇总</TabsTrigger>
+          <TabsTrigger value='api-keys'>API Key 明细</TabsTrigger>
+        </TabsList>
+        <Select
+          items={detailDateOptions}
+          value={detailDate}
+          disabled={detailDateOptions.length === 0}
+          onValueChange={(value) => {
+            if (value) props.onDetailDateChange?.(value)
+          }}
+        >
+          <SelectTrigger
+            className='w-full font-mono sm:w-36'
+            aria-label='成本明细日期'
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {detailDateOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className='mt-3'>
+        <ChannelMonitorDailyBarChart
+          ariaLabel='每日成本柱状图'
+          chartKey={`cost:${props.overview.days}`}
+          spec={chartSpec}
+          onDateChange={(date) => props.onDetailDateChange?.(date)}
+        />
+      </div>
       <TabsContent value='overview' className='mt-3 min-h-0'>
         <div className='flex flex-col gap-3'>
-          <div className='h-48 overflow-hidden rounded-md border sm:h-56'>
-            {themeReady && (
-              <VChart
-                key={`${props.overview.days}:${resolvedTheme}`}
-                spec={{
-                  ...chartSpec,
-                  theme: resolvedTheme === 'dark' ? 'dark' : 'light',
-                  background: 'transparent',
-                }}
-                option={VCHART_OPTION}
-              />
-            )}
-          </div>
           <CostCoverage coverage={coverage} />
-          <div className='grid items-stretch gap-3 lg:grid-cols-2'>
-            <section className='flex min-w-0 flex-col gap-2 lg:col-start-1 lg:row-start-1'>
-              <h3 className='text-sm font-medium'>按日成本</h3>
-              <div className='overflow-auto rounded-md border'>
-                <Table className='min-w-[360px]'>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>日期</TableHead>
-                      <TableHead className='text-right'>成本</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {dateItems.map((item) => (
-                      <TableRow key={item.start_at}>
+          <section className='flex min-w-0 flex-col gap-2'>
+            <h3 className='text-sm font-medium'>按日成本</h3>
+            <div className='overflow-auto rounded-md border'>
+              <Table className='min-w-[360px]'>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>日期</TableHead>
+                    <TableHead className='text-right'>成本</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dateItems.map((item) => {
+                    const selected = item.date === detailDate
+                    return (
+                      <TableRow
+                        key={item.start_at}
+                        data-selected-date={selected || undefined}
+                        data-state={selected ? 'selected' : undefined}
+                        aria-current={selected ? 'date' : undefined}
+                      >
                         <TableCell className='font-mono'>{item.date}</TableCell>
                         <TableCell className='text-right'>
                           <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
@@ -381,89 +452,54 @@ export function CostHistoryData(props: {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </section>
-            {datePageCount > 1 ? (
-              <div className='flex items-center justify-end gap-2 lg:col-start-1 lg:row-start-2'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='icon-sm'
-                  aria-label='上一页日期'
-                  title='上一页日期'
-                  onClick={() =>
-                    props.onDatePageChange?.(Math.max(1, currentDatePage - 1))
-                  }
-                  disabled={currentDatePage <= 1}
-                >
-                  <HugeiconsIcon icon={ArrowLeft01Icon} />
-                </Button>
-                <span className='text-muted-foreground min-w-24 text-center text-xs tabular-nums'>
-                  日期第 {currentDatePage} / {datePageCount} 页
-                </span>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='icon-sm'
-                  aria-label='下一页日期'
-                  title='下一页日期'
-                  onClick={() =>
-                    props.onDatePageChange?.(
-                      Math.min(datePageCount, currentDatePage + 1)
                     )
-                  }
-                  disabled={currentDatePage >= datePageCount}
-                >
-                  <HugeiconsIcon icon={ArrowRight01Icon} />
-                </Button>
-              </div>
-            ) : null}
-            {props.channelId == null && props.overview.channels.length > 0 ? (
-              <section className='flex min-w-0 flex-col gap-2 lg:col-start-2 lg:row-start-1'>
-                <h3 className='text-sm font-medium'>渠道汇总</h3>
-                <div className='max-h-64 overflow-auto rounded-md border lg:h-0 lg:max-h-none lg:min-h-0 lg:flex-1'>
-                  <Table className='min-w-[360px]'>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>渠道</TableHead>
-                        <TableHead className='text-right'>区间成本</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {props.overview.channels.map((channel) => (
-                        <TableRow key={channel.channel_id}>
-                          <TableCell className='max-w-72'>
-                            <span
-                              className='block truncate'
-                              title={channel.channel_name}
-                            >
-                              {channel.channel_name}
-                            </span>
-                          </TableCell>
-                          <TableCell className='text-right'>
-                            <div className='flex flex-col items-end gap-0.5 font-mono tabular-nums'>
-                              <span>
-                                {formatChannelMonitorCost(channel.cost_cny)}
-                              </span>
-                              {channel.unresolved_count > 0 ? (
-                                <span className='text-warning font-sans text-xs'>
-                                  不完整
-                                </span>
-                              ) : null}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </section>
-            ) : null}
-          </div>
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
+          {datePageCount > 1 ? (
+            <div className='flex items-center justify-end gap-2'>
+              <Button
+                type='button'
+                variant='outline'
+                size='icon-sm'
+                aria-label='上一页日期'
+                title='上一页日期'
+                onClick={() =>
+                  props.onDatePageChange?.(Math.max(1, currentDatePage - 1))
+                }
+                disabled={currentDatePage <= 1}
+              >
+                <HugeiconsIcon icon={ArrowLeft01Icon} />
+              </Button>
+              <span className='text-muted-foreground min-w-24 text-center text-xs tabular-nums'>
+                日期第 {currentDatePage} / {datePageCount} 页
+              </span>
+              <Button
+                type='button'
+                variant='outline'
+                size='icon-sm'
+                aria-label='下一页日期'
+                title='下一页日期'
+                onClick={() =>
+                  props.onDatePageChange?.(
+                    Math.min(datePageCount, currentDatePage + 1)
+                  )
+                }
+                disabled={currentDatePage >= datePageCount}
+              >
+                <HugeiconsIcon icon={ArrowRight01Icon} />
+              </Button>
+            </div>
+          ) : null}
         </div>
+      </TabsContent>
+      <TabsContent value='channels' className='mt-3 min-h-0'>
+        <ChannelMonitorChannelCostTable
+          items={props.overview.channels ?? []}
+          detailDate={detailDate}
+        />
       </TabsContent>
       <TabsContent value='api-keys' className='mt-3 min-h-0'>
         <ChannelMonitorAPIKeyCostTable items={props.overview.api_keys ?? []} />
