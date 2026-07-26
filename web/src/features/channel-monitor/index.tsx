@@ -77,7 +77,6 @@ import {
   fetchChannelMonitorUpstreamBalance,
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
-  getChannelMonitorOverview,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorSmartScheduleConfig,
   updateMonitoredChannelStatus,
@@ -102,7 +101,10 @@ import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
 import { handleChannelMonitorMutationError } from './lib/error'
 import { formatChannelMonitorCost, formatMonitorRatio } from './lib/format'
-import { getChannelMonitorPerformanceQueryOptions } from './lib/query-options'
+import {
+  getChannelMonitorOverviewQueryOptions,
+  getChannelMonitorPerformanceQueryOptions,
+} from './lib/query-options'
 import { DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS } from './lib/schema'
 import { sortChannelMonitorItems } from './lib/sort'
 import type {
@@ -272,10 +274,7 @@ export function ChannelMonitor() {
     null
   )
 
-  const query = useQuery({
-    queryKey: ['channel-monitor'],
-    queryFn: getChannelMonitorOverview,
-  })
+  const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const performanceQuery = useQuery(
     getChannelMonitorPerformanceQueryOptions(performanceRangeMinutes)
   )

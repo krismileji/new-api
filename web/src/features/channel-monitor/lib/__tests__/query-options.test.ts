@@ -25,9 +25,20 @@ import type {
   ChannelMonitorApiResponse,
   ChannelMonitorPerformanceResult,
 } from '../../types'
-import { getChannelMonitorPerformanceQueryOptions } from '../query-options'
+import {
+  getChannelMonitorOverviewQueryOptions,
+  getChannelMonitorPerformanceQueryOptions,
+} from '../query-options'
 
-describe('channel monitor performance query policy', () => {
+describe('channel monitor query policy', () => {
+  test('refreshes overview and performance data every minute', () => {
+    const overviewOptions = getChannelMonitorOverviewQueryOptions()
+    const performanceOptions = getChannelMonitorPerformanceQueryOptions(15)
+
+    assert.equal(overviewOptions.refetchInterval, 60_000)
+    assert.equal(performanceOptions.refetchInterval, 60_000)
+  })
+
   test('deduplicates fresh reads while preserving an explicit refresh', async () => {
     let requestCount = 0
     const options = getChannelMonitorPerformanceQueryOptions(15)
@@ -59,6 +70,6 @@ describe('channel monitor performance query policy', () => {
     await queryClient.refetchQueries({ queryKey: options.queryKey })
     assert.equal(requestCount, 2)
     assert.equal(options.staleTime, 60_000)
-    assert.equal(options.refetchInterval, 120_000)
+    assert.equal(options.refetchInterval, 60_000)
   })
 })

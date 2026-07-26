@@ -73,6 +73,10 @@ import {
   runChannelMonitorSmartSchedule,
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import {
+  getLatestCompletedChannelMonitorTaskTime,
+  isActiveChannelMonitorTask,
+} from '../lib/task-status'
 import type {
   ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorTask,
@@ -116,12 +120,10 @@ type ChannelMonitorTaskHistoryDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
-function isActiveTask(task: ChannelMonitorTask) {
-  return task.status === 'pending' || task.status === 'running'
-}
-
 function formatTaskDuration(task: ChannelMonitorTask) {
-  if (isActiveTask(task)) return task.status === 'running' ? '执行中' : '-'
+  if (isActiveChannelMonitorTask(task)) {
+    return task.status === 'running' ? '执行中' : '-'
+  }
 
   const seconds = Math.max(0, task.updated_at - task.created_at)
   if (seconds < 1) return '< 1 秒'
@@ -388,7 +390,7 @@ export function ChannelMonitorTaskHistoryDialog(
     placeholderData: keepPreviousData,
     staleTime: 30 * 1000,
     refetchInterval: (result) =>
-      result.state.data?.data.items.some(isActiveTask)
+      result.state.data?.data.items.some(isActiveChannelMonitorTask)
         ? ACTIVE_REFRESH_INTERVAL_MS
         : false,
   })
@@ -397,20 +399,14 @@ export function ChannelMonitorTaskHistoryDialog(
   const totalPages = Math.max(1, Math.ceil(total / TASK_PAGE_SIZE))
   const rangeStart = total === 0 ? 0 : (page - 1) * TASK_PAGE_SIZE + 1
   const rangeEnd = Math.min(page * TASK_PAGE_SIZE, total)
-  const latestCompletedScheduleTime =
-    kind === 'schedule'
-      ? tasks.reduce(
-          (latest, task) =>
-            isActiveTask(task) ? latest : Math.max(latest, task.updated_at),
-          0
-        )
-      : 0
+  const latestCompletedTaskTime =
+    getLatestCompletedChannelMonitorTaskTime(tasks)
 
   useEffect(() => {
-    if (latestCompletedScheduleTime <= 0) return
+    if (latestCompletedTaskTime <= 0) return
     queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
     queryClient.invalidateQueries({ queryKey: ['channels'] })
-  }, [latestCompletedScheduleTime, queryClient])
+  }, [latestCompletedTaskTime, queryClient])
 
   let content: ReactNode
   if (query.isLoading) {
