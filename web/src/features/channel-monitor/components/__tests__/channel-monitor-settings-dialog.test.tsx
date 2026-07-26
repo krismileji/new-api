@@ -25,6 +25,7 @@ import { useForm } from 'react-hook-form'
 import { Form } from '@/components/ui/form'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
+import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import { ChannelMonitorCostRetentionField } from '../channel-monitor-settings-dialog'
 
 function CostRetentionFieldFixture() {
@@ -38,6 +39,17 @@ function CostRetentionFieldFixture() {
   )
 }
 
+function ProbeResponseFieldsFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { probeResponseEnabled: true },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorProbeResponseFields form={form} />
+    </Form>
+  )
+}
+
 describe('channel monitor settings dialog', () => {
   test('shows persisted cost retention days with bounded numeric input', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
@@ -46,5 +58,18 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /type="number"[^>]*min="1"[^>]*max="3650"/)
     assert.match(markup, /value="120"/)
     assert.ok(markup.includes('删除后不可恢复'))
+  })
+
+  test('shows the enabled local probe response contract', () => {
+    const markup = renderToStaticMarkup(<ProbeResponseFieldsFixture />)
+
+    assert.ok(markup.includes('启用本地探针响应'))
+    assert.ok(markup.includes('aria-label="启用本地探针响应"'))
+    assert.ok(markup.includes('data-checked'))
+    assert.ok(markup.includes('Hi. What are you working on?'))
+    assert.ok(markup.includes('0.5-2 秒'))
+    assert.ok(markup.includes('/v1/responses'))
+    assert.ok(markup.includes('/v1/chat/completions'))
+    assert.ok(markup.includes('渠道连通性测试不经过此拦截'))
   })
 })

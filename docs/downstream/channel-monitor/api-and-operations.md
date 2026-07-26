@@ -46,6 +46,7 @@
 | `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `120` | `1..3650` |
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
+| `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
@@ -93,6 +94,8 @@ SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持�
 上游访问令牌、登录密码和自定义敏感值不会在概览响应中明文返回，只返回是否已配置。自定义 HTTP 请求使用 SSRF 防护，并在需要时复用渠道代理。
 
 管理端的倍率、分组、上游、设置、任务、状态、调度和并发变更都会写入管理操作审计。渠道监控审计内容固定使用简体中文；凭据和完整 API Key 不进入审计详情。
+
+本地探针响应仅在公开中继请求通过正常鉴权和模型请求限流后生效。命中请求在渠道分配前返回，不选择渠道、不请求上游、不扣费，也不写消费日志或渠道成本；详细边界见[本地探针响应](probe-response.md)。
 
 ## 运维检查
 

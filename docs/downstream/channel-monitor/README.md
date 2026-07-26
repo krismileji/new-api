@@ -9,6 +9,7 @@
 - [智能调度](smart-scheduling.md)：评分策略、参与规则、稳定性保护和任务执行。
 - [成本、性能与成功率](cost-performance.md)：成本口径、API Key 归因、性能指标和失败明细。
 - [测试与并发限制](testing-and-concurrency.md)：单次、批量、并发循环测试及渠道并发租约。
+- [本地探针响应](probe-response.md)：单轮 `hi` 探针的本地拦截、协议响应和计费边界。
 - [API 与运维](api-and-operations.md)：接口清单、系统选项、环境变量、数据和任务。
 
 ## 能力边界

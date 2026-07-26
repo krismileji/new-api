@@ -61,6 +61,7 @@ describe('channel monitor settings schema', () => {
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
+      probeResponseEnabled: true,
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart',
@@ -76,6 +77,7 @@ describe('channel monitor settings schema', () => {
 
     assert.equal(settings.autoEnableOnCostRatioRecovery, true)
     assert.equal(settings.costRetentionDays, 120)
+    assert.equal(settings.probeResponseEnabled, true)
   })
 
   test('accepts retention boundaries and rejects invalid retention days', () => {
@@ -87,6 +89,7 @@ describe('channel monitor settings schema', () => {
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
+      probeResponseEnabled: false,
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart' as const,

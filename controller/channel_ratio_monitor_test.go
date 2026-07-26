@@ -195,6 +195,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 		wantRetryCount   int
 		wantAutoDisable  bool
 		wantEmailEnabled bool
+		wantProbeEnabled bool
 		wantEnabled      bool
 		wantTaskInterval time.Duration
 	}{
@@ -212,11 +213,13 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorAutoDisableOnUpdateFailureOption: "true",
 				channelMonitorEmailNotificationOption:          "true",
 				channelMonitorNotificationEmailOption:          "alerts@example.com",
+				channelMonitorProbeResponseOption:              "true",
 			},
 			wantInterval:     30,
 			wantRetryCount:   4,
 			wantAutoDisable:  true,
 			wantEmailEnabled: true,
+			wantProbeEnabled: true,
 			wantEnabled:      true,
 			wantTaskInterval: 30 * time.Minute,
 		},
@@ -228,6 +231,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorAutoDisableOnUpdateFailureOption: "invalid",
 				channelMonitorEmailNotificationOption:          "invalid",
 				channelMonitorNotificationEmailOption:          "invalid",
+				channelMonitorProbeResponseOption:              "invalid",
 			},
 			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
 			wantTaskInterval: time.Minute,
@@ -242,6 +246,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			assert.Equal(t, test.wantRetryCount, settings.AutoUpdateRetryCount)
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
 			assert.Equal(t, test.wantEmailEnabled, settings.EmailNotificationEnabled)
+			assert.Equal(t, test.wantProbeEnabled, settings.ProbeResponseEnabled)
 			if test.name == "valid values" {
 				assert.Equal(t, "alerts@example.com", settings.NotificationEmail)
 			} else {
@@ -379,6 +384,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"cost_retention_days":                365,
 		"email_notification_enabled":         true,
 		"notification_email":                 "alerts@example.com",
+		"probe_response_enabled":             true,
 		"smart_schedule_enabled":             true,
 		"smart_schedule_interval_minutes":    10,
 		"smart_schedule_strategy":            channelMonitorSmartScheduleStrategySmart,
@@ -404,6 +410,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 365, response.Data.CostRetentionDays)
 	assert.True(t, response.Data.EmailNotificationEnabled)
 	assert.Equal(t, "alerts@example.com", response.Data.NotificationEmail)
+	assert.True(t, response.Data.ProbeResponseEnabled)
 	assert.True(t, response.Data.SmartScheduleEnabled)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, response.Data.SmartScheduleStrategy)
@@ -434,6 +441,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorNotificationEmailOption).First(&option).Error)
 	assert.Equal(t, "alerts@example.com", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorProbeResponseOption).First(&option).Error)
+	assert.Equal(t, "true", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleEnabledOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)

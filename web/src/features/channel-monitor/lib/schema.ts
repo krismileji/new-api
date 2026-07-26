@@ -136,6 +136,7 @@ export function createChannelMonitorSettingsSchema() {
             value === '' || z.string().email().safeParse(value).success,
           '请输入有效的通知邮箱'
         ),
+      probeResponseEnabled: z.boolean(),
       smartScheduleEnabled: z.boolean(),
       smartScheduleIntervalMinutes: z.coerce
         .number()

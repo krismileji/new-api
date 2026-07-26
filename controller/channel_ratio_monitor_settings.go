@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,7 @@ const (
 	channelMonitorCostRetentionDaysOption              = "ChannelMonitorCostRetentionDays"
 	channelMonitorEmailNotificationOption              = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption              = "ChannelMonitorNotificationEmail"
+	channelMonitorProbeResponseOption                  = channelprobe.OptionKey
 	channelMonitorGroupCoefficientsOption              = "ChannelMonitorGroupCoefficients"
 	channelMonitorChannelOrderOption                   = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption           = "ChannelMonitorSmartScheduleEnabled"
@@ -77,6 +79,7 @@ type channelMonitorSettings struct {
 	CostRetentionDays                  int      `json:"cost_retention_days"`
 	EmailNotificationEnabled           bool     `json:"email_notification_enabled"`
 	NotificationEmail                  string   `json:"notification_email"`
+	ProbeResponseEnabled               bool     `json:"probe_response_enabled"`
 	SmartScheduleEnabled               bool     `json:"smart_schedule_enabled"`
 	SmartScheduleIntervalMinutes       int      `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy              string   `json:"smart_schedule_strategy"`
@@ -101,6 +104,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	CostRetentionDays               *int      `json:"cost_retention_days"`
 	EmailNotificationEnabled        *bool     `json:"email_notification_enabled"`
 	NotificationEmail               *string   `json:"notification_email"`
+	ProbeResponseEnabled            *bool     `json:"probe_response_enabled"`
 	SmartScheduleEnabled            *bool     `json:"smart_schedule_enabled"`
 	SmartScheduleIntervalMinutes    *int      `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy           *string   `json:"smart_schedule_strategy"`
@@ -128,6 +132,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawCostRetentionDays := common.OptionMap[channelMonitorCostRetentionDaysOption]
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
+	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleInterval := common.OptionMap[channelMonitorSmartScheduleIntervalOption]
 	rawSmartScheduleStrategy := common.OptionMap[channelMonitorSmartScheduleStrategyOption]
@@ -168,6 +173,10 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	emailNotificationEnabled, err := strconv.ParseBool(rawEmailNotificationEnabled)
 	if err != nil {
 		emailNotificationEnabled = false
+	}
+	probeResponseEnabled, err := strconv.ParseBool(rawProbeResponseEnabled)
+	if err != nil {
+		probeResponseEnabled = false
 	}
 	smartScheduleEnabled, err := strconv.ParseBool(rawSmartScheduleEnabled)
 	if err != nil {
@@ -228,6 +237,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		CostRetentionDays:               costRetentionDays,
 		EmailNotificationEnabled:        emailNotificationEnabled,
 		NotificationEmail:               notificationEmail,
+		ProbeResponseEnabled:            probeResponseEnabled,
 		SmartScheduleEnabled:            smartScheduleEnabled,
 		SmartScheduleIntervalMinutes:    smartScheduleInterval,
 		SmartScheduleStrategy:           normalizeChannelMonitorSmartScheduleStrategy(rawSmartScheduleStrategy),
@@ -457,6 +467,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.CostRetentionDays == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
+		request.ProbeResponseEnabled == nil &&
 		request.SmartScheduleEnabled == nil &&
 		request.SmartScheduleIntervalMinutes == nil &&
 		request.SmartScheduleStrategy == nil &&
@@ -474,7 +485,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	settings := getChannelMonitorSettings()
 	smartScheduleWasEnabled := settings.SmartScheduleEnabled
-	values := make(map[string]string, 18)
+	values := make(map[string]string, 19)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -535,6 +546,10 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if settings.EmailNotificationEnabled && settings.NotificationEmail == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "开启邮件通知时请填写通知邮箱"})
 		return
+	}
+	if request.ProbeResponseEnabled != nil {
+		settings.ProbeResponseEnabled = *request.ProbeResponseEnabled
+		values[channelMonitorProbeResponseOption] = strconv.FormatBool(settings.ProbeResponseEnabled)
 	}
 	if request.SmartScheduleEnabled != nil {
 		settings.SmartScheduleEnabled = *request.SmartScheduleEnabled
@@ -699,6 +714,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"cost_retention_days":                settings.CostRetentionDays,
 		"email_notification_enabled":         settings.EmailNotificationEnabled,
 		"notification_email_configured":      settings.NotificationEmail != "",
+		"probe_response_enabled":             settings.ProbeResponseEnabled,
 		"smart_schedule_enabled":             settings.SmartScheduleEnabled,
 		"smart_schedule_interval_minutes":    settings.SmartScheduleIntervalMinutes,
 		"smart_schedule_strategy":            settings.SmartScheduleStrategy,

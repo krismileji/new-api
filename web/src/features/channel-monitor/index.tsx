@@ -166,6 +166,7 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   cost_retention_days: DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   email_notification_enabled: false,
   notification_email: '',
+  probe_response_enabled: false,
   smart_schedule_enabled: false,
   smart_schedule_interval_minutes: 10,
   smart_schedule_strategy: 'smart',
@@ -1171,7 +1172,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           initialSection={settingsSection}

@@ -66,9 +66,10 @@ import {
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
 import type { ChannelMonitorSettings } from '../types'
+import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
 
-export type ChannelMonitorSettingsSection = 'monitor' | 'schedule'
+export type ChannelMonitorSettingsSection = 'monitor' | 'schedule' | 'probe'
 
 type ChannelMonitorSettingsDialogProps = {
   settings: ChannelMonitorSettings
@@ -142,6 +143,7 @@ export function ChannelMonitorSettingsDialog(
         DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
+      probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
       smartScheduleIntervalMinutes:
         props.settings.smart_schedule_interval_minutes,
@@ -198,6 +200,7 @@ export function ChannelMonitorSettingsDialog(
       cost_retention_days: values.costRetentionDays,
       email_notification_enabled: values.emailNotificationEnabled,
       notification_email: values.notificationEmail,
+      probe_response_enabled: values.probeResponseEnabled,
       smart_schedule_enabled: values.smartScheduleEnabled,
       smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
       smart_schedule_strategy: values.smartScheduleStrategy,
@@ -220,16 +223,19 @@ export function ChannelMonitorSettingsDialog(
         <DialogHeader>
           <DialogTitle>渠道监控设置</DialogTitle>
           <DialogDescription>
-            设置上游倍率更新、通知和智能调度规则
+            设置上游倍率更新、通知、智能调度和探针响应规则
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form className='flex flex-col gap-5' onSubmit={handleSubmit}>
             <Tabs defaultValue={props.initialSection} className='gap-5'>
-              <TabsList className='grid w-full grid-cols-2'>
-                <TabsTrigger value='monitor'>倍率更新与通知</TabsTrigger>
+              <TabsList className='grid h-auto w-full grid-cols-3'>
+                <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
+                  倍率更新与通知
+                </TabsTrigger>
                 <TabsTrigger value='schedule'>智能调度</TabsTrigger>
+                <TabsTrigger value='probe'>探针响应</TabsTrigger>
               </TabsList>
 
               <TabsContent value='monitor' className='mt-0 flex flex-col gap-5'>
@@ -409,6 +415,10 @@ export function ChannelMonitorSettingsDialog(
                   form={form}
                   modelOptions={props.modelOptions}
                 />
+              </TabsContent>
+
+              <TabsContent value='probe' className='mt-0'>
+                <ChannelMonitorProbeResponseFields form={form} />
               </TabsContent>
             </Tabs>
 
