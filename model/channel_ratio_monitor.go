@@ -36,6 +36,7 @@ type ChannelRatioMonitor struct {
 	UpstreamBalance             *float64 `json:"upstream_balance"`
 	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
 	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
+	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
 	BalanceWarningThreshold     *float64 `json:"balance_warning_threshold"`
 	BalanceAutoDisableThreshold *float64 `json:"balance_auto_disable_threshold"`
 	BalanceAlertNotified        bool     `json:"balance_alert_notified"`
@@ -205,7 +206,13 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			(monitor.BalanceWarningThreshold == nil) != (options.BalanceWarningThreshold == nil) ||
 				(monitor.BalanceWarningThreshold != nil && options.BalanceWarningThreshold != nil &&
 					*monitor.BalanceWarningThreshold != *options.BalanceWarningThreshold)
+		ratioSyncChanged := monitor.UpstreamRatioSyncDisabled != !options.RatioSyncEnabled
 		balanceSyncChanged := monitor.UpstreamBalanceSyncDisabled != !options.BalanceSyncEnabled
+		ratioRequestChanged := upstreamAccountChanged ||
+			monitor.UpstreamGroup != group ||
+			monitor.CostConversion != options.CostConversion ||
+			ratioSyncChanged
+		balanceRequestChanged := upstreamAccountChanged || balanceSyncChanged
 
 		monitor.UpstreamType = upstreamType
 		monitor.UpstreamBaseURL = baseURL
@@ -236,7 +243,18 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		if upstreamAccountChanged {
 			monitor.UpstreamBalance = nil
 			monitor.LastBalanceTime = 0
+		}
+		if ratioRequestChanged {
+			monitor.ConsecutiveFailures = 0
+			if monitor.LastFetchStatus == ChannelRatioFetchStatusFailed {
+				monitor.LastFetchStatus = ""
+				monitor.LastFetchError = ""
+				monitor.LastFetchTime = 0
+			}
+		}
+		if balanceRequestChanged {
 			monitor.LastBalanceError = ""
+			monitor.BalanceConsecutiveFailures = 0
 		}
 		if upstreamAccountChanged || balanceWarningThresholdChanged || balanceSyncChanged {
 			monitor.BalanceAlertNotified = false
@@ -491,7 +509,9 @@ func RecordChannelRatioMonitorFetchFailure(channelId int, fetchError string) err
 		if monitor.ConsecutiveFailures < 0 {
 			monitor.ConsecutiveFailures = 0
 		}
-		monitor.ConsecutiveFailures++
+		if monitor.ConsecutiveFailures < math.MaxInt {
+			monitor.ConsecutiveFailures++
+		}
 		return tx.Save(&monitor).Error
 	})
 }
@@ -524,11 +544,18 @@ func RecordChannelRatioMonitorBalance(channelId int, balance *float64, fetchErro
 			monitor.UpstreamBalance = &value
 			monitor.LastBalanceTime = common.GetTimestamp()
 			monitor.LastBalanceError = ""
+			monitor.BalanceConsecutiveFailures = 0
 			if monitor.BalanceWarningThreshold == nil || value >= *monitor.BalanceWarningThreshold {
 				monitor.BalanceAlertNotified = false
 			}
 		} else {
 			monitor.LastBalanceError = message
+			if monitor.BalanceConsecutiveFailures < 0 {
+				monitor.BalanceConsecutiveFailures = 0
+			}
+			if monitor.BalanceConsecutiveFailures < math.MaxInt {
+				monitor.BalanceConsecutiveFailures++
+			}
 		}
 		return tx.Save(&monitor).Error
 	})

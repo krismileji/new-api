@@ -111,6 +111,7 @@ func TestChannelRatioMonitorBalanceKeepsLastValueWhenRefreshFails(t *testing.T) 
 	assert.InDelta(t, balance, *monitor.UpstreamBalance, 1e-9)
 	assert.NotZero(t, monitor.LastBalanceTime)
 	assert.Empty(t, monitor.LastBalanceError)
+	assert.Zero(t, monitor.BalanceConsecutiveFailures)
 	lastBalanceTime := monitor.LastBalanceTime
 
 	require.NoError(t, RecordChannelRatioMonitorBalance(10, nil, "upstream timeout"))
@@ -120,6 +121,71 @@ func TestChannelRatioMonitorBalanceKeepsLastValueWhenRefreshFails(t *testing.T) 
 	assert.InDelta(t, balance, *monitor.UpstreamBalance, 1e-9)
 	assert.Equal(t, lastBalanceTime, monitor.LastBalanceTime)
 	assert.Equal(t, "upstream timeout", monitor.LastBalanceError)
+	assert.Equal(t, 1, monitor.BalanceConsecutiveFailures)
+
+	require.NoError(t, RecordChannelRatioMonitorBalance(10, nil, "upstream returned 502"))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.Equal(t, 2, monitor.BalanceConsecutiveFailures)
+
+	recoveredBalance := 15.0
+	require.NoError(t, RecordChannelRatioMonitorBalance(10, &recoveredBalance, ""))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.Empty(t, monitor.LastBalanceError)
+	assert.Zero(t, monitor.BalanceConsecutiveFailures)
+}
+
+func TestChannelRatioUpstreamConfigChangeResetsRelatedFetchFailures(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId:                  10,
+		UpstreamType:               "new_api",
+		UpstreamBaseURL:            "https://upstream.example",
+		UpstreamGroup:              "default",
+		UpstreamAuthType:           "user",
+		UpstreamUserId:             7,
+		UpstreamAccessToken:        "old-token",
+		LastFetchStatus:            ChannelRatioFetchStatusFailed,
+		LastFetchError:             "倍率失败",
+		LastFetchTime:              100,
+		ConsecutiveFailures:        2,
+		LastBalanceError:           "余额失败",
+		BalanceConsecutiveFailures: 2,
+	}).Error)
+
+	monitor, err := SaveChannelRatioUpstreamConfig(
+		10,
+		"new_api",
+		"https://upstream.example",
+		"vip",
+		"user",
+		7,
+		"old-token",
+		ChannelRatioUpstreamOptions{RatioSyncEnabled: true, BalanceSyncEnabled: true},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, monitor.ConsecutiveFailures)
+	assert.Empty(t, monitor.LastFetchStatus)
+	assert.Empty(t, monitor.LastFetchError)
+	assert.Zero(t, monitor.LastFetchTime)
+	assert.Equal(t, 2, monitor.BalanceConsecutiveFailures)
+	assert.Equal(t, "余额失败", monitor.LastBalanceError)
+
+	monitor, err = SaveChannelRatioUpstreamConfig(
+		10,
+		"new_api",
+		"https://upstream.example",
+		"vip",
+		"user",
+		7,
+		"new-token",
+		ChannelRatioUpstreamOptions{RatioSyncEnabled: true, BalanceSyncEnabled: true},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, monitor.BalanceConsecutiveFailures)
+	assert.Empty(t, monitor.LastBalanceError)
 }
 
 func TestChannelRatioMonitorBalanceAlertResetsAfterRecoveryOrThresholdChange(t *testing.T) {

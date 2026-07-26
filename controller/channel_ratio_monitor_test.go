@@ -2587,23 +2587,23 @@ func TestRunChannelRatioMonitorTaskContinuesAfterFailure(t *testing.T) {
 	assert.Equal(t, 2, summary.Total)
 	assert.Equal(t, 1, summary.Updated)
 	assert.Equal(t, 1, summary.Failed)
-	assert.Equal(t, 2, summary.Retried)
+	assert.Equal(t, 1, summary.Retried)
 	assert.Zero(t, summary.RecoveredAfterRetry)
 	require.Len(t, summary.Failures, 1)
 	assert.Equal(t, 1, summary.Failures[0].ChannelId)
 	assert.Equal(t, "failing disabled", summary.Failures[0].ChannelName)
-	assert.Contains(t, summary.Failures[0].Error, "重试 2 次后仍失败")
+	assert.Contains(t, summary.Failures[0].Error, "重试 1 次后仍失败")
 	assert.Contains(t, summary.Failures[0].Error, "502 Bad Gateway")
 	assert.False(t, summary.FailureDetailsTruncated)
 	assert.Equal(t, [][2]int{{1, 2}, {2, 2}}, progress)
-	assert.EqualValues(t, 6, failingRequestCount.Load())
+	assert.EqualValues(t, 4, failingRequestCount.Load())
 
 	failedMonitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Equal(t, model.ChannelRatioFetchStatusFailed, failedMonitor.LastFetchStatus)
 	assert.NotEmpty(t, failedMonitor.LastFetchError)
 	assert.NotZero(t, failedMonitor.LastFetchTime)
-	assert.Equal(t, 3, failedMonitor.ConsecutiveFailures)
+	assert.Equal(t, 2, failedMonitor.ConsecutiveFailures)
 
 	monitor, err := model.GetChannelRatioMonitor(2)
 	require.NoError(t, err)
@@ -2718,7 +2718,7 @@ func TestRunChannelRatioMonitorTaskRecoversAfterRetry(t *testing.T) {
 
 	var requestCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if requestCount.Add(1) <= 4 {
+		if requestCount.Add(1) <= 2 {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
@@ -2739,9 +2739,9 @@ func TestRunChannelRatioMonitorTaskRecoversAfterRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, summary.Updated)
 	assert.Zero(t, summary.Failed)
-	assert.Equal(t, 2, summary.Retried)
+	assert.Equal(t, 1, summary.Retried)
 	assert.Equal(t, 1, summary.RecoveredAfterRetry)
-	assert.EqualValues(t, 5, requestCount.Load())
+	assert.EqualValues(t, 3, requestCount.Load())
 
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
