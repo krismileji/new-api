@@ -41,6 +41,9 @@ func prepareNextRelayAttempt(
 	if apiError == nil {
 		return false
 	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return false
+	}
 
 	if relayMode == relayconstant.RelayModeChatCompletions || relayMode == relayconstant.RelayModeResponses {
 		var remaining *int

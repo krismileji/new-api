@@ -1,17 +1,21 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,6 +157,25 @@ func TestPrepareNextRelayAttemptStopsWhenSystemRetryDoesNotIncludeStatus(t *test
 
 	require.False(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
 	require.Zero(t, retryParam.GetRetry())
+}
+
+func TestRetryStopsWhenClientRequestIsCanceled(t *testing.T) {
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestContext)
+	retry := 0
+	retryParam := &service.RetryParam{Retry: &retry}
+	retryBudget := relayRetryBudget{retry503Remaining: 1}
+	apiErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+
+	assert.False(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &retryBudget))
+	assert.Equal(t, relayRetryBudget{retry503Remaining: 1}, retryBudget)
+	assert.Zero(t, retryParam.GetRetry())
+
+	taskErr := &dto.TaskError{StatusCode: http.StatusServiceUnavailable}
+	assert.False(t, shouldRetryTaskRelay(c, 1, taskErr, 1))
 }
 
 func TestShouldRetry500UsesDefaultBudget(t *testing.T) {

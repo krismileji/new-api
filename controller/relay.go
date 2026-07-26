@@ -678,6 +678,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if taskErr == nil {
 		return false
 	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
