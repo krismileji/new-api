@@ -65,6 +65,54 @@ func TestChannelMonitorCostRatioRecoverySettingDefaultsToDisabled(t *testing.T) 
 	}
 }
 
+func TestUpdateChannelMonitorSettingsPersistsBalanceRecoverySwitch(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"auto_enable_on_balance_recovery": true,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			AutoEnableOnBalanceRecovery bool `json:"auto_enable_on_balance_recovery"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.True(t, response.Data.AutoEnableOnBalanceRecovery)
+
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorAutoEnableOnBalanceRecoveryOption).First(&option).Error)
+	assert.Equal(t, "true", option.Value)
+}
+
+func TestChannelMonitorBalanceRecoverySettingDefaultsToDisabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		expects bool
+	}{
+		{name: "missing option"},
+		{name: "invalid option", value: "invalid"},
+		{name: "enabled option", value: "true", expects: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := map[string]string{}
+			if test.value != "" {
+				options[channelMonitorAutoEnableOnBalanceRecoveryOption] = test.value
+			}
+			useChannelMonitorOptionMap(t, options)
+			assert.Equal(t, test.expects, getChannelMonitorSettings().AutoEnableOnBalanceRecovery)
+		})
+	}
+}
+
 func TestRunChannelRatioMonitorTaskAutoEnablesChannelAfterRatioUpdateRecovers(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
@@ -216,6 +264,106 @@ func TestRunChannelRatioMonitorTaskAutoEnablesChannelAfterBalanceUpdateRecovers(
 				assert.Equal(t, "渠道监控：上游倍率或余额更新失败", storedChannel.GetOtherInfo()["status_reason"])
 			} else {
 				assert.Empty(t, storedChannel.GetOtherInfo()["status_reason"])
+			}
+		})
+	}
+}
+
+func TestRunChannelRatioMonitorTaskBalanceRecoveryRespectsSwitchAndGroupRatios(t *testing.T) {
+	tests := []struct {
+		name        string
+		switchOn    bool
+		balance     float64
+		costRatio   float64
+		groups      string
+		status      int
+		reason      string
+		wantStatus  int
+		wantEnabled int
+	}{
+		{
+			name: "switch disabled leaves channel disabled", balance: 5, costRatio: 0.8,
+			groups: "vip", status: common.ChannelStatusAutoDisabled, wantStatus: common.ChannelStatusAutoDisabled,
+		},
+		{
+			name: "balance below threshold leaves channel disabled", switchOn: true, balance: 3, costRatio: 0.8,
+			groups: "vip", status: common.ChannelStatusAutoDisabled, wantStatus: common.ChannelStatusAutoDisabled,
+		},
+		{
+			name: "ratio equal to group ratio enables channel", switchOn: true, balance: 5, costRatio: 1,
+			groups: "vip", status: common.ChannelStatusAutoDisabled, wantStatus: common.ChannelStatusEnabled, wantEnabled: 1,
+		},
+		{
+			name: "ratio above group ratio leaves channel disabled", switchOn: true, balance: 5, costRatio: 1.01,
+			groups: "vip", status: common.ChannelStatusAutoDisabled, wantStatus: common.ChannelStatusAutoDisabled,
+		},
+		{
+			name: "every group must allow recovery", switchOn: true, balance: 5, costRatio: 0.8,
+			groups: "vip,discount", status: common.ChannelStatusAutoDisabled, wantStatus: common.ChannelStatusAutoDisabled,
+		},
+		{
+			name: "other automatic disable reason is untouched", switchOn: true, balance: 5, costRatio: 0.8,
+			groups: "vip", status: common.ChannelStatusAutoDisabled, reason: "其他系统自动禁用原因",
+			wantStatus: common.ChannelStatusAutoDisabled,
+		},
+		{
+			name: "manual disable is untouched", switchOn: true, balance: 5, costRatio: 0.8,
+			groups: "vip", status: common.ChannelStatusManuallyDisabled, wantStatus: common.ChannelStatusManuallyDisabled,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorAutoEnableOnBalanceRecoveryOption: strconv.FormatBool(test.switchOn),
+				channelMonitorAutoUpdateRetryCountOption:        "0",
+			})
+			disableChannelMonitorSSRFProtection(t)
+			originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1,"discount":0.75}`))
+			t.Cleanup(func() {
+				require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+			})
+
+			customConfig, err := service.MarshalChannelMonitorCustomUpstreamConfig(service.ChannelMonitorCustomUpstreamConfig{
+				Ratio: service.ChannelMonitorCustomMetricConfig{
+					Source: service.ChannelMonitorCustomSourceFixed, FixedValue: &test.costRatio,
+				},
+				Balance: service.ChannelMonitorCustomMetricConfig{
+					Source: service.ChannelMonitorCustomSourceFixed, FixedValue: &test.balance,
+				},
+			})
+			require.NoError(t, err)
+			reason := test.reason
+			if reason == "" {
+				reason = channelMonitorBalancePolicyDisableReasonPrefix + "3" +
+					channelMonitorBalancePolicyDisableThresholdMarker + "4"
+			}
+			channel := model.Channel{
+				Id: 1, Name: "balance policy recovery", Group: test.groups, Status: test.status,
+			}
+			channel.SetOtherInfo(map[string]interface{}{"status_reason": reason})
+			require.NoError(t, db.Create(&channel).Error)
+			threshold := 4.0
+			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+				ChannelId: 1, Ratio: test.costRatio, UpdatedTime: 1,
+				UpstreamType: service.CustomUpstreamType, UpstreamBaseURL: "https://custom.example",
+				UpstreamAuthType: service.CustomUpstreamAuthType, CustomUpstreamConfig: customConfig,
+				UpstreamRatioSyncDisabled: true, BalanceAutoDisableThreshold: &threshold,
+			}).Error)
+
+			summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 1, summary.BalanceUpdated)
+			assert.Equal(t, test.wantEnabled, summary.ChannelsEnabled)
+			storedChannel, err := model.GetChannelById(1, true)
+			require.NoError(t, err)
+			assert.Equal(t, test.wantStatus, storedChannel.Status)
+			if test.wantStatus == common.ChannelStatusEnabled {
+				assert.Empty(t, storedChannel.GetOtherInfo()["status_reason"])
+			} else {
+				assert.Equal(t, reason, storedChannel.GetOtherInfo()["status_reason"])
 			}
 		})
 	}
@@ -426,6 +574,30 @@ func TestCostRatioRecoveryRequiresEveryGroupToRecover(t *testing.T) {
 		channels,
 		map[int]channelMonitorPolicyInput{1: {CostRatio: 0.8}},
 		map[string]float64{"vip": 1, "discount": 0.75},
+		map[string]float64{},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, enabledChannelIds)
+	storedChannel, err := model.GetChannelById(1, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, storedChannel.Status)
+}
+
+func TestCostRatioRecoveryRequiresStrictlyLowerRatio(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	channel := model.Channel{
+		Id: 1, Name: "equal ratio", Group: "vip", Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": channelMonitorCostRatioPolicyDisableReason,
+	})
+	require.NoError(t, db.Create(&channel).Error)
+
+	enabledChannelIds, err := autoEnableChannelsAfterCostRatioRecovery(
+		context.Background(),
+		[]*model.Channel{&channel},
+		map[int]channelMonitorPolicyInput{1: {CostRatio: 1}},
+		map[string]float64{"vip": 1},
 		map[string]float64{},
 	)
 	require.NoError(t, err)

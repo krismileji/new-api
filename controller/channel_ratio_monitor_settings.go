@@ -23,6 +23,7 @@ const (
 	channelMonitorAutoUpdateRetryCountOption           = "ChannelMonitorAutoUpdateRetryCount"
 	channelMonitorAutoDisableOnUpdateFailureOption     = "ChannelMonitorAutoDisableOnUpdateFailure"
 	channelMonitorAutoEnableOnCostRatioRecoveryOption  = "ChannelMonitorAutoEnableOnCostRatioRecovery"
+	channelMonitorAutoEnableOnBalanceRecoveryOption    = "ChannelMonitorAutoEnableOnBalanceRecovery"
 	channelMonitorCostRetentionDaysOption              = "ChannelMonitorCostRetentionDays"
 	channelMonitorEmailNotificationOption              = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption              = "ChannelMonitorNotificationEmail"
@@ -76,6 +77,7 @@ type channelMonitorSettings struct {
 	AutoUpdateRetryCount               int      `json:"auto_update_retry_count"`
 	AutoDisableOnUpdateFailure         bool     `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery      bool     `json:"auto_enable_on_cost_ratio_recovery"`
+	AutoEnableOnBalanceRecovery        bool     `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                  int      `json:"cost_retention_days"`
 	EmailNotificationEnabled           bool     `json:"email_notification_enabled"`
 	NotificationEmail                  string   `json:"notification_email"`
@@ -101,6 +103,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	AutoUpdateRetryCount            *int      `json:"auto_update_retry_count"`
 	AutoDisableOnUpdateFailure      *bool     `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery   *bool     `json:"auto_enable_on_cost_ratio_recovery"`
+	AutoEnableOnBalanceRecovery     *bool     `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays               *int      `json:"cost_retention_days"`
 	EmailNotificationEnabled        *bool     `json:"email_notification_enabled"`
 	NotificationEmail               *string   `json:"notification_email"`
@@ -129,6 +132,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawRetryCount := common.OptionMap[channelMonitorAutoUpdateRetryCountOption]
 	rawAutoDisableOnUpdateFailure := common.OptionMap[channelMonitorAutoDisableOnUpdateFailureOption]
 	rawAutoEnableOnCostRatioRecovery := common.OptionMap[channelMonitorAutoEnableOnCostRatioRecoveryOption]
+	rawAutoEnableOnBalanceRecovery := common.OptionMap[channelMonitorAutoEnableOnBalanceRecoveryOption]
 	rawCostRetentionDays := common.OptionMap[channelMonitorCostRetentionDaysOption]
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
@@ -161,6 +165,10 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	autoEnableOnCostRatioRecovery, err := strconv.ParseBool(rawAutoEnableOnCostRatioRecovery)
 	if err != nil {
 		autoEnableOnCostRatioRecovery = false
+	}
+	autoEnableOnBalanceRecovery, err := strconv.ParseBool(rawAutoEnableOnBalanceRecovery)
+	if err != nil {
+		autoEnableOnBalanceRecovery = false
 	}
 	costRetentionDays, err := strconv.Atoi(rawCostRetentionDays)
 	if err != nil || costRetentionDays < minChannelMonitorCostRetentionDays || costRetentionDays > maxChannelMonitorCostRetentionDays {
@@ -234,6 +242,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		AutoUpdateRetryCount:            retryCount,
 		AutoDisableOnUpdateFailure:      autoDisableOnUpdateFailure,
 		AutoEnableOnCostRatioRecovery:   autoEnableOnCostRatioRecovery,
+		AutoEnableOnBalanceRecovery:     autoEnableOnBalanceRecovery,
 		CostRetentionDays:               costRetentionDays,
 		EmailNotificationEnabled:        emailNotificationEnabled,
 		NotificationEmail:               notificationEmail,
@@ -464,6 +473,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.AutoUpdateRetryCount == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
 		request.AutoEnableOnCostRatioRecovery == nil &&
+		request.AutoEnableOnBalanceRecovery == nil &&
 		request.CostRetentionDays == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
@@ -485,7 +495,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	settings := getChannelMonitorSettings()
 	smartScheduleWasEnabled := settings.SmartScheduleEnabled
-	values := make(map[string]string, 19)
+	values := make(map[string]string, 20)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -517,6 +527,10 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoEnableOnCostRatioRecovery != nil {
 		settings.AutoEnableOnCostRatioRecovery = *request.AutoEnableOnCostRatioRecovery
 		values[channelMonitorAutoEnableOnCostRatioRecoveryOption] = strconv.FormatBool(settings.AutoEnableOnCostRatioRecovery)
+	}
+	if request.AutoEnableOnBalanceRecovery != nil {
+		settings.AutoEnableOnBalanceRecovery = *request.AutoEnableOnBalanceRecovery
+		values[channelMonitorAutoEnableOnBalanceRecoveryOption] = strconv.FormatBool(settings.AutoEnableOnBalanceRecovery)
 	}
 	if request.CostRetentionDays != nil && (*request.CostRetentionDays < minChannelMonitorCostRetentionDays ||
 		*request.CostRetentionDays > maxChannelMonitorCostRetentionDays) {
@@ -711,6 +725,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"auto_update_retry_count":            settings.AutoUpdateRetryCount,
 		"auto_disable_on_update_failure":     settings.AutoDisableOnUpdateFailure,
 		"auto_enable_on_cost_ratio_recovery": settings.AutoEnableOnCostRatioRecovery,
+		"auto_enable_on_balance_recovery":    settings.AutoEnableOnBalanceRecovery,
 		"cost_retention_days":                settings.CostRetentionDays,
 		"email_notification_enabled":         settings.EmailNotificationEnabled,
 		"notification_email_configured":      settings.NotificationEmail != "",

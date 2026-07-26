@@ -115,6 +115,7 @@ export function createChannelMonitorSettingsSchema() {
         .max(MAX_AUTO_UPDATE_RETRY_COUNT, '失败重试次数不能超过 10 次'),
       autoDisableOnUpdateFailure: z.boolean(),
       autoEnableOnCostRatioRecovery: z.boolean(),
+      autoEnableOnBalanceRecovery: z.boolean(),
       costRetentionDays: z.coerce
         .number()
         .int('成本数据保留天数必须是整数')

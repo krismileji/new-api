@@ -254,6 +254,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	}
 	summary = channelRatioMonitorTaskResult{Total: len(configured)}
 	policyInputs := make(map[int]channelMonitorPolicyInput, len(configured))
+	balanceRecoveryInputs := make(map[int]channelMonitorPolicyInput, len(configured))
 	for index, monitor := range configured {
 		select {
 		case <-ctx.Done():
@@ -461,6 +462,33 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					})
 				}
 			}
+			if settings.AutoEnableOnBalanceRecovery && recordedBalance != nil {
+				costRatio := 0.0
+				costRatioAvailable := false
+				if ratioUpdated {
+					costRatio = outcome.Result.CostRatio
+					costRatioAvailable = validateChannelMonitorRatio(&costRatio)
+				} else if monitor.UpdatedTime > 0 &&
+					(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < channelMonitorAutoFetchConsecutiveFailureLimit) {
+					storedCostRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
+					if conversionErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf(
+							"channel ratio monitor: channel_id=%d balance recovery cost ratio calculation failed: %v",
+							monitor.ChannelId,
+							conversionErr,
+						))
+					} else {
+						costRatio = storedCostRatio
+						costRatioAvailable = true
+					}
+				}
+				if costRatioAvailable {
+					balanceRecoveryInputs[monitor.ChannelId] = channelMonitorPolicyInput{
+						CostRatio:                        costRatio,
+						BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
+					}
+				}
+			}
 		}
 		reportProgress(index+1, summary.Total)
 	}
@@ -470,6 +498,22 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	}
 	groupCoefficients := getChannelMonitorGroupCoefficients()
 	groupRatios := ratio_setting.GetGroupRatioCopy()
+	if settings.AutoEnableOnBalanceRecovery {
+		enabledChannelIds, recoveryErr := autoEnableChannelsAfterBalanceRecovery(
+			ctx,
+			channels,
+			balanceRecoveryInputs,
+			groupRatios,
+			groupCoefficients,
+		)
+		if recoveryErr != nil {
+			return summary, recoveryErr
+		}
+		if len(enabledChannelIds) > 0 {
+			summary.ChannelsEnabled += len(enabledChannelIds)
+			channelStatusChanged = true
+		}
+	}
 	if settings.AutoEnableOnCostRatioRecovery {
 		enabledChannelIds, recoveryErr := autoEnableChannelsAfterCostRatioRecovery(
 			ctx,

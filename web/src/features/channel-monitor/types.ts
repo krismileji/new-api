@@ -469,6 +469,7 @@ export type ChannelMonitorSettings = {
   auto_update_retry_count: number
   auto_disable_on_update_failure: boolean
   auto_enable_on_cost_ratio_recovery: boolean
+  auto_enable_on_balance_recovery: boolean
   cost_retention_days: number
   email_notification_enabled: boolean
   notification_email: string

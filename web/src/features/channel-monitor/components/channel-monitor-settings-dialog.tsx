@@ -138,6 +138,8 @@ export function ChannelMonitorSettingsDialog(
         props.settings.auto_disable_on_update_failure ?? false,
       autoEnableOnCostRatioRecovery:
         props.settings.auto_enable_on_cost_ratio_recovery ?? false,
+      autoEnableOnBalanceRecovery:
+        props.settings.auto_enable_on_balance_recovery ?? false,
       costRetentionDays:
         props.settings.cost_retention_days ??
         DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
@@ -197,6 +199,7 @@ export function ChannelMonitorSettingsDialog(
       auto_update_retry_count: values.autoUpdateRetryCount,
       auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,
       auto_enable_on_cost_ratio_recovery: values.autoEnableOnCostRatioRecovery,
+      auto_enable_on_balance_recovery: values.autoEnableOnBalanceRecovery,
       cost_retention_days: values.costRetentionDays,
       email_notification_enabled: values.emailNotificationEnabled,
       notification_email: values.notificationEmail,
@@ -341,7 +344,7 @@ export function ChannelMonitorSettingsDialog(
                       <div className='space-y-1'>
                         <FormLabel>成本倍率恢复后自动启用渠道</FormLabel>
                         <FormDescription>
-                          开启后，因成本倍率过高被系统禁用的渠道，在按分组系数换算后不再高于全部所属分组倍率时自动启用
+                          开启后，因成本倍率过高被系统禁用的渠道，在按分组系数换算后严格低于全部所属分组倍率时自动启用
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -349,6 +352,28 @@ export function ChannelMonitorSettingsDialog(
                           checked={field.value}
                           onCheckedChange={field.onChange}
                           aria-label='成本倍率恢复后自动启用渠道'
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='autoEnableOnBalanceRecovery'
+                  render={({ field }) => (
+                    <FormItem className='flex items-center justify-between gap-4'>
+                      <div className='space-y-1'>
+                        <FormLabel>余额恢复后自动启用渠道</FormLabel>
+                        <FormDescription>
+                          开启后，因余额低于阈值被系统禁用的渠道，在余额恢复且按分组系数换算后的成本倍率不高于全部所属分组倍率时自动启用
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label='余额恢复后自动启用渠道'
                         />
                       </FormControl>
                     </FormItem>

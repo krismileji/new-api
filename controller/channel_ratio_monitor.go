@@ -1226,11 +1226,10 @@ func autoDisableChannelMonitorForLowBalance(monitor model.ChannelRatioMonitor, c
 		balance >= *monitor.BalanceAutoDisableThreshold {
 		return false, nil
 	}
-	reason := fmt.Sprintf(
-		"渠道监控：上游余额 %s 低于自动禁用阈值 %s",
-		strconv.FormatFloat(balance, 'f', -1, 64),
-		strconv.FormatFloat(*monitor.BalanceAutoDisableThreshold, 'f', -1, 64),
-	)
+	reason := channelMonitorBalancePolicyDisableReasonPrefix +
+		strconv.FormatFloat(balance, 'f', -1, 64) +
+		channelMonitorBalancePolicyDisableThresholdMarker +
+		strconv.FormatFloat(*monitor.BalanceAutoDisableThreshold, 'f', -1, 64)
 	if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, reason) {
 		channel.Status = common.ChannelStatusAutoDisabled
 		return true, nil

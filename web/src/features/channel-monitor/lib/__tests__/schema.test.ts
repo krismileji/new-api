@@ -58,6 +58,7 @@ describe('channel monitor settings schema', () => {
       autoUpdateRetryCount: 2,
       autoDisableOnUpdateFailure: true,
       autoEnableOnCostRatioRecovery: true,
+      autoEnableOnBalanceRecovery: true,
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
@@ -76,6 +77,7 @@ describe('channel monitor settings schema', () => {
     })
 
     assert.equal(settings.autoEnableOnCostRatioRecovery, true)
+    assert.equal(settings.autoEnableOnBalanceRecovery, true)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
   })
@@ -86,6 +88,7 @@ describe('channel monitor settings schema', () => {
       autoUpdateRetryCount: 2,
       autoDisableOnUpdateFailure: false,
       autoEnableOnCostRatioRecovery: false,
+      autoEnableOnBalanceRecovery: false,
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
