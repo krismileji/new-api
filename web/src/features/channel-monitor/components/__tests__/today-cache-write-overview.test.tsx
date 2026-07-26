@@ -19,13 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import type { KeyboardEvent, ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import type { ChannelMonitorTodaySuccessResult } from '../../types'
-import { ChannelMonitorTodayCacheWriteCard } from '../channel-monitor-today-cache-write-card'
 import { ChannelMonitorTodayCacheWriteDialogContent } from '../channel-monitor-today-cache-write-dialog'
 
 const noop = () => {}
@@ -138,54 +136,6 @@ function getTableCells(markup: string) {
 }
 
 describe('channel monitor today cache write overview', () => {
-  test('exposes the whole card as a keyboard-focusable detail action', () => {
-    const markup = renderToStaticMarkup(
-      <ChannelMonitorTodayCacheWriteCard
-        result={createResult()}
-        isLoading={false}
-        isError={false}
-        onOpen={noop}
-      />
-    )
-
-    assert.match(markup, /^<div\b/)
-    assert.ok(markup.includes('role="button"'))
-    assert.ok(markup.includes('tabindex="0"'))
-    assert.ok(markup.includes('今日缓存写渠道'))
-    assert.ok(markup.includes('4'))
-    assert.ok(markup.includes('10 次写入请求 · 点击查看渠道'))
-    assert.ok(
-      markup.includes(
-        'aria-label="查看今日缓存写渠道明细，共 4 个渠道，10 次写入请求"'
-      )
-    )
-  })
-
-  test('opens the detail from Enter and Space keyboard activation', () => {
-    const activatedKeys: string[] = []
-    const element = ChannelMonitorTodayCacheWriteCard({
-      result: createResult(),
-      isLoading: false,
-      isError: false,
-      onOpen: () => activatedKeys.push('opened'),
-    }) as ReactElement<{
-      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void
-    }>
-
-    for (const key of ['Enter', ' ']) {
-      let defaultPrevented = false
-      element.props.onKeyDown({
-        key,
-        preventDefault: () => {
-          defaultPrevented = true
-        },
-      } as KeyboardEvent<HTMLDivElement>)
-      assert.equal(defaultPrevented, true)
-    }
-
-    assert.deepEqual(activatedKeys, ['opened', 'opened'])
-  })
-
   test('lists enabled channels first and then sorts by ascending cost ratio', () => {
     const markup = renderDialogContent()
     const cells = getTableCells(markup)

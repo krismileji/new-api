@@ -92,7 +92,6 @@ import {
 } from './components/channel-monitor-settings-dialog'
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-task-history-dialog'
-import { ChannelMonitorTodayCacheWriteCard } from './components/channel-monitor-today-cache-write-card'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
@@ -131,11 +130,6 @@ const LazyChannelMonitorTodaySuccessDialog = lazy(() =>
     (module) => ({
       default: module.ChannelMonitorTodaySuccessDialog,
     })
-  )
-)
-const LazyChannelMonitorTodayCacheWriteDialog = lazy(() =>
-  import('./components/channel-monitor-today-cache-write-dialog').then(
-    (module) => ({ default: module.ChannelMonitorTodayCacheWriteDialog })
   )
 )
 const LazyChannelBatchTestDialog = lazy(() =>
@@ -240,7 +234,6 @@ export function ChannelMonitor() {
     name: string
   } | null>(null)
   const [todaySuccessOpen, setTodaySuccessOpen] = useState(false)
-  const [todayCacheWriteOpen, setTodayCacheWriteOpen] = useState(false)
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -652,7 +645,7 @@ export function ChannelMonitor() {
   } else {
     pageContent = (
       <div className='flex flex-col gap-4'>
-        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-6'>
+        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
           <MonitorStatCard
             label='全部渠道'
             value={channels.length}
@@ -678,12 +671,6 @@ export function ChannelMonitor() {
             isLoading={todaySuccessQuery.isLoading}
             isError={todaySuccessQuery.isError}
             onOpen={() => setTodaySuccessOpen(true)}
-          />
-          <ChannelMonitorTodayCacheWriteCard
-            result={todaySuccessQuery.data?.data}
-            isLoading={todaySuccessQuery.isLoading}
-            isError={todaySuccessQuery.isError}
-            onOpen={() => setTodayCacheWriteOpen(true)}
           />
           <MonitorStatCard
             label='已记录倍率'
@@ -1220,15 +1207,6 @@ export function ChannelMonitor() {
             channels={channels}
             open
             onOpenChange={setTodaySuccessOpen}
-          />
-        </Suspense>
-      )}
-      {todayCacheWriteOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelMonitorTodayCacheWriteDialog
-            channels={channels}
-            open
-            onOpenChange={setTodayCacheWriteOpen}
           />
         </Suspense>
       )}

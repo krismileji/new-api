@@ -26,13 +26,6 @@ import { useMemo, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -50,27 +43,18 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
-import { formatTimestampToDate } from '@/lib/format'
 
-import { useChannelMonitorDailyInsight } from '../hooks/use-channel-monitor-daily-insight'
 import { formatMonitorRatio } from '../lib/format'
 import type {
   ChannelMonitorItem,
   ChannelMonitorTodaySuccessResult,
 } from '../types'
-import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
 type ChannelMonitorTodayCacheWriteChannelMetadata = Pick<
   ChannelMonitorItem,
   'id' | 'name' | 'status' | 'status_reason' | 'cost_ratio' | 'channel_remark'
 >
-
-type ChannelMonitorTodayCacheWriteDialogProps = {
-  channels: readonly ChannelMonitorTodayCacheWriteChannelMetadata[]
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}
 
 export type ChannelMonitorTodayCacheWriteDialogContentProps = {
   result: ChannelMonitorTodaySuccessResult | undefined
@@ -320,50 +304,5 @@ export function ChannelMonitorTodayCacheWriteDialogContent(
         </div>
       </div>
     </TodayCacheWriteContentLayout>
-  )
-}
-
-export function ChannelMonitorTodayCacheWriteDialog(
-  props: ChannelMonitorTodayCacheWriteDialogProps
-) {
-  const insight = useChannelMonitorDailyInsight(props.open)
-  const result = insight.query.data?.data
-  const detailLoading =
-    insight.query.isLoading ||
-    (insight.query.isFetching && result?.detail_date !== insight.selectedDate)
-  let description = `按北京时间统计 ${insight.selectedDate} 的缓存写`
-  if (result?.generated_at && result.detail_date === insight.selectedDate) {
-    description += ` · 更新于 ${formatTimestampToDate(result.generated_at)}`
-  }
-
-  return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-3xl'>
-        <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>缓存写渠道</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <ChannelMonitorTodayCacheWriteDialogContent
-          result={result}
-          channels={props.channels}
-          isLoading={detailLoading}
-          isError={insight.query.isError}
-          isFetching={insight.query.isFetching}
-          detailDate={insight.selectedDate}
-          history={
-            <ChannelMonitorDailyInsightHistory
-              kind='cache-write'
-              days={insight.days}
-              selectedDate={insight.selectedDate}
-              items={result?.chart_items ?? []}
-              loading={insight.query.isLoading}
-              onDaysChange={insight.changeDays}
-              onDateChange={insight.changeDate}
-            />
-          }
-          onRetry={() => insight.query.refetch()}
-        />
-      </DialogContent>
-    </Dialog>
   )
 }

@@ -148,7 +148,20 @@ function createResult(
         }),
       },
     ],
-    cache_write_items: [],
+    cache_write_items: [
+      {
+        channel_id: 7,
+        channel_name: '渠道一',
+        channel_remark: '主线路',
+        request_count: 4,
+      },
+      {
+        channel_id: 8,
+        channel_name: '渠道二',
+        channel_remark: '',
+        request_count: 3,
+      },
+    ],
     chart_items: [],
     ...overrides,
   }
@@ -226,9 +239,15 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('今日成功率 / 缓存率'))
     assert.ok(markup.includes('90%'))
     assert.ok(markup.includes('50%'))
-    assert.ok(markup.includes('10 次请求 · 点击查看渠道和 API Key 明细'))
+    assert.ok(markup.includes('10 次请求'))
+    assert.ok(markup.includes('缓存写渠道'))
+    assert.ok(markup.includes('2 个'))
+    assert.ok(markup.includes('缓存写请求'))
+    assert.ok(markup.includes('7 次'))
     assert.ok(
-      markup.includes('aria-label="查看今日成功率和缓存率渠道及 API Key 明细')
+      markup.includes(
+        'aria-label="查看今日成功率、缓存率和缓存写明细，成功率 90%，缓存率 50%，缓存写渠道 2 个，缓存写请求 7 次"'
+      )
     )
   })
 
@@ -276,6 +295,21 @@ describe('channel monitor today success overview', () => {
 
     assert.match(markup, /90%[\s\S]*>[\s\n]*-[\s\n]*<\/span>/)
     assert.doesNotMatch(markup, />0%<\/span>/)
+  })
+
+  test('shows unavailable cache-write counts without hiding success metrics', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={createResult({ cache_write_metrics_available: false })}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
+
+    assert.ok(markup.includes('90%'))
+    assert.ok(markup.includes('50%'))
+    assert.ok(markup.includes('缓存写渠道 -，缓存写请求 -'))
   })
 
   test('shows channel metadata and orders enabled channels by ascending cost ratio', () => {

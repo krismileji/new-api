@@ -42,6 +42,9 @@ const percentFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 2,
 })
 
+const EMPTY_CACHE_WRITE_ITEMS: ChannelMonitorTodaySuccessResult['cache_write_items'] =
+  []
+
 function formatRate(rate: number, sampleCount: number) {
   return sampleCount > 0 ? percentFormatter.format(rate) : '-'
 }
@@ -59,6 +62,22 @@ export function ChannelMonitorTodaySuccessCard(
     !props.isLoading && !props.isError && metricsAvailable && summary
       ? formatRate(summary.cache_hit_rate, summary.cache_sample_count)
       : '-'
+  const cacheWriteMetricsAvailable =
+    props.result?.cache_write_metrics_available ?? false
+  const cacheWriteItems =
+    props.result?.cache_write_items ?? EMPTY_CACHE_WRITE_ITEMS
+  const hasCacheWriteMetrics =
+    !props.isLoading && !props.isError && cacheWriteMetricsAvailable
+  const cacheWriteChannelCount = hasCacheWriteMetrics
+    ? cacheWriteItems.length
+    : null
+  const cacheWriteRequestCount = hasCacheWriteMetrics
+    ? cacheWriteItems.reduce((total, item) => total + item.request_count, 0)
+    : null
+  const cacheWriteChannelLabel =
+    cacheWriteChannelCount == null ? '-' : `${cacheWriteChannelCount} 个`
+  const cacheWriteRequestLabel =
+    cacheWriteRequestCount == null ? '-' : `${cacheWriteRequestCount} 次`
 
   let description = '按北京时间统计真实调用结果'
   if (props.isLoading) {
@@ -70,7 +89,7 @@ export function ChannelMonitorTodaySuccessCard(
   } else if (!summary || summary.actual_sample_count === 0) {
     description = '今日暂无请求数据'
   } else {
-    description = `${summary.actual_sample_count} 次请求 · 点击查看渠道和 API Key 明细`
+    description = `${summary.actual_sample_count} 次请求`
   }
 
   return (
@@ -86,7 +105,7 @@ export function ChannelMonitorTodaySuccessCard(
           props.onOpen()
         }
       }}
-      aria-label={`查看今日成功率和缓存率渠道及 API Key 明细，成功率 ${successRate}，缓存率 ${cacheRate}`}
+      aria-label={`查看今日成功率、缓存率和缓存写明细，成功率 ${successRate}，缓存率 ${cacheRate}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
     >
       <CardHeader>
         <CardDescription>今日成功率 / 缓存率</CardDescription>
@@ -108,7 +127,23 @@ export function ChannelMonitorTodaySuccessCard(
             <HugeiconsIcon icon={ChartAverageIcon} aria-hidden='true' />
           </span>
         </CardAction>
-        <CardDescription>{description}</CardDescription>
+        <CardDescription className='flex flex-col gap-1'>
+          <span>{description}</span>
+          <span className='flex flex-wrap gap-x-3 gap-y-1'>
+            <span>
+              缓存写渠道{' '}
+              <span className='text-foreground font-mono font-medium tabular-nums'>
+                {cacheWriteChannelLabel}
+              </span>
+            </span>
+            <span>
+              缓存写请求{' '}
+              <span className='text-foreground font-mono font-medium tabular-nums'>
+                {cacheWriteRequestLabel}
+              </span>
+            </span>
+          </span>
+        </CardDescription>
       </CardHeader>
     </Card>
   )

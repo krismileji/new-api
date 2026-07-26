@@ -49,6 +49,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -63,6 +64,7 @@ import type {
 import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
+import { ChannelMonitorTodayCacheWriteDialogContent } from './channel-monitor-today-cache-write-dialog'
 
 type ChannelMonitorTodaySuccessChannelMetadata = Pick<
   ChannelMonitorItem,
@@ -430,7 +432,7 @@ export function ChannelMonitorTodaySuccessDialog(
   const detailLoading =
     insight.query.isLoading ||
     (insight.query.isFetching && result?.detail_date !== insight.selectedDate)
-  let description = `按北京时间统计 ${insight.selectedDate} 的真实调用结果`
+  let description = `按北京时间统计 ${insight.selectedDate} 的请求与缓存`
   if (result?.generated_at && result.detail_date === insight.selectedDate) {
     description += ` · 更新于 ${formatTimestampToDate(result.generated_at)}`
   }
@@ -439,29 +441,59 @@ export function ChannelMonitorTodaySuccessDialog(
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-5xl'>
         <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>成功率与缓存率</DialogTitle>
+          <DialogTitle>成功率、缓存率与缓存写</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <ChannelMonitorTodaySuccessDialogContent
-          result={result}
-          channels={props.channels}
-          isLoading={detailLoading}
-          isError={insight.query.isError}
-          isFetching={insight.query.isFetching}
-          detailDate={insight.selectedDate}
-          history={
-            <ChannelMonitorDailyInsightHistory
-              kind='success-cache'
-              days={insight.days}
-              selectedDate={insight.selectedDate}
-              items={result?.chart_items ?? []}
-              loading={insight.query.isLoading}
-              onDaysChange={insight.changeDays}
-              onDateChange={insight.changeDate}
+        <Tabs defaultValue='success-cache' className='min-h-0 flex-1 gap-3'>
+          <TabsList className='shrink-0' aria-label='今日请求统计视图'>
+            <TabsTrigger value='success-cache'>成功率 / 缓存率</TabsTrigger>
+            <TabsTrigger value='cache-write'>缓存写渠道</TabsTrigger>
+          </TabsList>
+          <TabsContent value='success-cache' className='flex min-h-0'>
+            <ChannelMonitorTodaySuccessDialogContent
+              result={result}
+              channels={props.channels}
+              isLoading={detailLoading}
+              isError={insight.query.isError}
+              isFetching={insight.query.isFetching}
+              detailDate={insight.selectedDate}
+              history={
+                <ChannelMonitorDailyInsightHistory
+                  kind='success-cache'
+                  days={insight.days}
+                  selectedDate={insight.selectedDate}
+                  items={result?.chart_items ?? []}
+                  loading={insight.query.isLoading}
+                  onDaysChange={insight.changeDays}
+                  onDateChange={insight.changeDate}
+                />
+              }
+              onRetry={() => insight.query.refetch()}
             />
-          }
-          onRetry={() => insight.query.refetch()}
-        />
+          </TabsContent>
+          <TabsContent value='cache-write' className='flex min-h-0'>
+            <ChannelMonitorTodayCacheWriteDialogContent
+              result={result}
+              channels={props.channels}
+              isLoading={detailLoading}
+              isError={insight.query.isError}
+              isFetching={insight.query.isFetching}
+              detailDate={insight.selectedDate}
+              history={
+                <ChannelMonitorDailyInsightHistory
+                  kind='cache-write'
+                  days={insight.days}
+                  selectedDate={insight.selectedDate}
+                  items={result?.chart_items ?? []}
+                  loading={insight.query.isLoading}
+                  onDaysChange={insight.changeDays}
+                  onDateChange={insight.changeDate}
+                />
+              }
+              onRetry={() => insight.query.refetch()}
+            />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )
