@@ -203,6 +203,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 		wantAutoDisable  bool
 		wantEmailEnabled bool
 		wantProbeEnabled bool
+		wantRelayTimeout int
 		wantEnabled      bool
 		wantTaskInterval time.Duration
 	}{
@@ -221,12 +222,14 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorEmailNotificationOption:          "true",
 				channelMonitorNotificationEmailOption:          "alerts@example.com",
 				channelMonitorProbeResponseOption:              "true",
+				common.RelayResponseHeaderTimeoutOptionKey:     "60",
 			},
 			wantInterval:     30,
 			wantRetryCount:   4,
 			wantAutoDisable:  true,
 			wantEmailEnabled: true,
 			wantProbeEnabled: true,
+			wantRelayTimeout: 60,
 			wantEnabled:      true,
 			wantTaskInterval: 30 * time.Minute,
 		},
@@ -239,6 +242,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorEmailNotificationOption:          "invalid",
 				channelMonitorNotificationEmailOption:          "invalid",
 				channelMonitorProbeResponseOption:              "invalid",
+				common.RelayResponseHeaderTimeoutOptionKey:     "601",
 			},
 			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
 			wantTaskInterval: time.Minute,
@@ -254,6 +258,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
 			assert.Equal(t, test.wantEmailEnabled, settings.EmailNotificationEnabled)
 			assert.Equal(t, test.wantProbeEnabled, settings.ProbeResponseEnabled)
+			assert.Equal(t, test.wantRelayTimeout, settings.RelayHeaderTimeoutSeconds)
 			if test.name == "valid values" {
 				assert.Equal(t, "alerts@example.com", settings.NotificationEmail)
 			} else {
@@ -350,6 +355,10 @@ func TestChannelSmartScheduleSettingsReadOrderedModelsAndLegacyFallback(t *testi
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
+	originalRelayTimeout := common.GetRelayResponseHeaderTimeoutSeconds()
+	t.Cleanup(func() {
+		common.SetRelayResponseHeaderTimeoutSeconds(originalRelayTimeout)
+	})
 
 	tooManySmartScheduleModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
 	invalidRequests := []map[string]any{
@@ -363,6 +372,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"email_notification_enabled": true},
 		{"notification_email": "invalid"},
 		{"notification_email": strings.Repeat("a", maxChannelMonitorNotificationEmailLength) + "@example.com"},
+		{"relay_response_header_timeout_seconds": -1},
+		{"relay_response_header_timeout_seconds": common.MaxRelayResponseHeaderTimeoutSeconds + 1},
 		{"smart_schedule_interval_minutes": 0},
 		{"smart_schedule_strategy": "invalid"},
 		{"smart_schedule_strategy": "stability"},
@@ -404,6 +415,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"smart_schedule_min_success_rate":    75.5,
 		"smart_schedule_cooldown_minutes":    45,
 	}
+	request["relay_response_header_timeout_seconds"] = 60
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
 	UpdateChannelMonitorSettings(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -418,6 +430,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.True(t, response.Data.EmailNotificationEnabled)
 	assert.Equal(t, "alerts@example.com", response.Data.NotificationEmail)
 	assert.True(t, response.Data.ProbeResponseEnabled)
+	assert.Equal(t, 60, response.Data.RelayHeaderTimeoutSeconds)
+	assert.Equal(t, 60, common.GetRelayResponseHeaderTimeoutSeconds())
 	assert.True(t, response.Data.SmartScheduleEnabled)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, response.Data.SmartScheduleStrategy)
@@ -451,6 +465,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorProbeResponseOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", common.RelayResponseHeaderTimeoutOptionKey).First(&option).Error)
+	assert.Equal(t, "60", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleEnabledOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)

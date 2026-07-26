@@ -59,6 +59,7 @@ import {
 
 import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
+  MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
   type ChannelMonitorSettingsFormValues,
@@ -112,6 +113,47 @@ type ChannelMonitorSmartScheduleFieldsProps = {
   modelOptions: string[]
 }
 
+function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='relayResponseHeaderTimeoutSeconds'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>上游响应等待时间</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={0}
+                max={MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.relayResponseHeaderTimeoutSeconds
+                )}
+              />
+              <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            0
+            表示不限制；超时后按现有重试规则处理，收到响应头后停止计时，不限制后续流式输出
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 function reorderSmartScheduleModels(
   models: string[],
   sourceIndex: number,
@@ -161,6 +203,8 @@ export function ChannelMonitorSmartScheduleFields(
           </FormItem>
         )}
       />
+
+      <ChannelMonitorRelayResponseHeaderTimeoutField form={props.form} />
 
       <FormField
         control={props.form.control}

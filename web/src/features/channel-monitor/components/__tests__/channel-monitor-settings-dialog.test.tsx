@@ -27,6 +27,7 @@ import { Form } from '@/components/ui/form'
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import { ChannelMonitorCostRetentionField } from '../channel-monitor-settings-dialog'
+import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
 
 function CostRetentionFieldFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
@@ -46,6 +47,30 @@ function ProbeResponseFieldsFixture() {
   return (
     <Form {...form}>
       <ChannelMonitorProbeResponseFields form={form} />
+    </Form>
+  )
+}
+
+function SmartScheduleFieldsFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: {
+      relayResponseHeaderTimeoutSeconds: 60,
+      smartScheduleEnabled: false,
+      smartScheduleIntervalMinutes: 10,
+      smartScheduleStrategy: 'smart',
+      smartScheduleStabilityEnabled: false,
+      smartScheduleApplyMode: 'weight',
+      smartSchedulePerformanceMinutes: 60,
+      smartScheduleModels: [],
+      smartScheduleMinSamples: 10,
+      smartScheduleMinSuccessRate: 80,
+      smartScheduleCooldownMinutes: 30,
+      smartScheduleForceReset: false,
+    },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorSmartScheduleFields form={form} modelOptions={[]} />
     </Form>
   )
 }
@@ -71,5 +96,16 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('/v1/responses'))
     assert.ok(markup.includes('/v1/chat/completions'))
     assert.ok(markup.includes('渠道连通性测试不经过此拦截'))
+  })
+
+  test('shows the bounded upstream response wait setting in smart scheduling', () => {
+    const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+
+    assert.ok(markup.includes('上游响应等待时间'))
+    assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
+    assert.match(markup, /value="60"/)
+    assert.ok(markup.includes('0 表示不限制'))
+    assert.ok(markup.includes('收到响应头后停止计时'))
+    assert.ok(markup.includes('不限制后续流式输出'))
   })
 })

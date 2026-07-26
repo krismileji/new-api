@@ -98,7 +98,7 @@ func newRelayHTTPTransport() *http.Transport {
 
 func newRelayHTTPClient(transport *http.Transport) *http.Client {
 	client := &http.Client{
-		Transport:     transport,
+		Transport:     newRelayResponseHeaderTimeoutTransport(transport),
 		CheckRedirect: checkRedirect,
 	}
 	if common.RelayTimeout != 0 {

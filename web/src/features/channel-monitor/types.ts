@@ -474,6 +474,7 @@ export type ChannelMonitorSettings = {
   email_notification_enabled: boolean
   notification_email: string
   probe_response_enabled: boolean
+  relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
   smart_schedule_interval_minutes: number
   smart_schedule_strategy: ChannelMonitorSmartScheduleStrategy

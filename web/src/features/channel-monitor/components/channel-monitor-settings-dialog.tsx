@@ -146,6 +146,8 @@ export function ChannelMonitorSettingsDialog(
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
+      relayResponseHeaderTimeoutSeconds:
+        props.settings.relay_response_header_timeout_seconds ?? 0,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
       smartScheduleIntervalMinutes:
         props.settings.smart_schedule_interval_minutes,
@@ -204,6 +206,8 @@ export function ChannelMonitorSettingsDialog(
       email_notification_enabled: values.emailNotificationEnabled,
       notification_email: values.notificationEmail,
       probe_response_enabled: values.probeResponseEnabled,
+      relay_response_header_timeout_seconds:
+        values.relayResponseHeaderTimeoutSeconds,
       smart_schedule_enabled: values.smartScheduleEnabled,
       smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
       smart_schedule_strategy: values.smartScheduleStrategy,

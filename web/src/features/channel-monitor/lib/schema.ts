@@ -39,6 +39,7 @@ export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
 export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
+export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
@@ -138,6 +139,14 @@ export function createChannelMonitorSettingsSchema() {
           '请输入有效的通知邮箱'
         ),
       probeResponseEnabled: z.boolean(),
+      relayResponseHeaderTimeoutSeconds: z.coerce
+        .number()
+        .int('上游响应等待时间必须是整数')
+        .min(0, '上游响应等待时间不能小于 0 秒')
+        .max(
+          MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
+          '上游响应等待时间不能超过 600 秒'
+        ),
       smartScheduleEnabled: z.boolean(),
       smartScheduleIntervalMinutes: z.coerce
         .number()

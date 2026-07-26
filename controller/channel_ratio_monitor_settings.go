@@ -82,6 +82,7 @@ type channelMonitorSettings struct {
 	EmailNotificationEnabled           bool     `json:"email_notification_enabled"`
 	NotificationEmail                  string   `json:"notification_email"`
 	ProbeResponseEnabled               bool     `json:"probe_response_enabled"`
+	RelayHeaderTimeoutSeconds          int      `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled               bool     `json:"smart_schedule_enabled"`
 	SmartScheduleIntervalMinutes       int      `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy              string   `json:"smart_schedule_strategy"`
@@ -108,6 +109,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	EmailNotificationEnabled        *bool     `json:"email_notification_enabled"`
 	NotificationEmail               *string   `json:"notification_email"`
 	ProbeResponseEnabled            *bool     `json:"probe_response_enabled"`
+	RelayHeaderTimeoutSeconds       *int      `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled            *bool     `json:"smart_schedule_enabled"`
 	SmartScheduleIntervalMinutes    *int      `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy           *string   `json:"smart_schedule_strategy"`
@@ -137,6 +139,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
 	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
+	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleInterval := common.OptionMap[channelMonitorSmartScheduleIntervalOption]
 	rawSmartScheduleStrategy := common.OptionMap[channelMonitorSmartScheduleStrategyOption]
@@ -185,6 +188,11 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	probeResponseEnabled, err := strconv.ParseBool(rawProbeResponseEnabled)
 	if err != nil {
 		probeResponseEnabled = false
+	}
+	relayResponseHeaderTimeoutSeconds, err := strconv.Atoi(rawRelayResponseHeaderTimeout)
+	if err != nil || relayResponseHeaderTimeoutSeconds < 0 ||
+		relayResponseHeaderTimeoutSeconds > common.MaxRelayResponseHeaderTimeoutSeconds {
+		relayResponseHeaderTimeoutSeconds = common.DefaultRelayResponseHeaderTimeoutSeconds
 	}
 	smartScheduleEnabled, err := strconv.ParseBool(rawSmartScheduleEnabled)
 	if err != nil {
@@ -247,6 +255,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		EmailNotificationEnabled:        emailNotificationEnabled,
 		NotificationEmail:               notificationEmail,
 		ProbeResponseEnabled:            probeResponseEnabled,
+		RelayHeaderTimeoutSeconds:       relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:            smartScheduleEnabled,
 		SmartScheduleIntervalMinutes:    smartScheduleInterval,
 		SmartScheduleStrategy:           normalizeChannelMonitorSmartScheduleStrategy(rawSmartScheduleStrategy),
@@ -478,6 +487,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
 		request.ProbeResponseEnabled == nil &&
+		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
 		request.SmartScheduleIntervalMinutes == nil &&
 		request.SmartScheduleStrategy == nil &&
@@ -495,7 +505,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	settings := getChannelMonitorSettings()
 	smartScheduleWasEnabled := settings.SmartScheduleEnabled
-	values := make(map[string]string, 20)
+	values := make(map[string]string, 21)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -564,6 +574,19 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.ProbeResponseEnabled != nil {
 		settings.ProbeResponseEnabled = *request.ProbeResponseEnabled
 		values[channelMonitorProbeResponseOption] = strconv.FormatBool(settings.ProbeResponseEnabled)
+	}
+	if request.RelayHeaderTimeoutSeconds != nil &&
+		(*request.RelayHeaderTimeoutSeconds < 0 ||
+			*request.RelayHeaderTimeoutSeconds > common.MaxRelayResponseHeaderTimeoutSeconds) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "上游响应等待时间必须在 0 到 600 秒之间",
+		})
+		return
+	}
+	if request.RelayHeaderTimeoutSeconds != nil {
+		settings.RelayHeaderTimeoutSeconds = *request.RelayHeaderTimeoutSeconds
+		values[common.RelayResponseHeaderTimeoutOptionKey] = strconv.Itoa(settings.RelayHeaderTimeoutSeconds)
 	}
 	if request.SmartScheduleEnabled != nil {
 		settings.SmartScheduleEnabled = *request.SmartScheduleEnabled
@@ -720,7 +743,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartScheduleForceResetTaskId = forceResetTaskId
 		settings.SmartScheduleForceResetTaskError = forceResetTaskError
 	}
-	recordManageAudit(c, "channel.monitor_settings_update", map[string]interface{}{
+	auditDetails := map[string]interface{}{
 		"auto_update_interval_minutes":       settings.AutoUpdateIntervalMinutes,
 		"auto_update_retry_count":            settings.AutoUpdateRetryCount,
 		"auto_disable_on_update_failure":     settings.AutoDisableOnUpdateFailure,
@@ -748,6 +771,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"smart_schedule_force_reset_created": forceResetTaskCreated,
 		"smart_schedule_force_reset_task_id": forceResetTaskId,
 		"smart_schedule_force_reset_error":   forceResetTaskError,
-	})
+	}
+	auditDetails["relay_response_header_timeout_seconds"] = settings.RelayHeaderTimeoutSeconds
+	recordManageAudit(c, "channel.monitor_settings_update", auditDetails)
 	common.ApiSuccess(c, settings)
 }

@@ -24,6 +24,7 @@ import {
   createChannelMonitorSettingsSchema,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
 } from '../schema'
 
@@ -63,6 +64,7 @@ describe('channel monitor settings schema', () => {
       emailNotificationEnabled: false,
       notificationEmail: '',
       probeResponseEnabled: true,
+      relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart',
@@ -80,6 +82,7 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.autoEnableOnBalanceRecovery, true)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
+    assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
   })
 
   test('accepts retention boundaries and rejects invalid retention days', () => {
@@ -93,6 +96,7 @@ describe('channel monitor settings schema', () => {
       emailNotificationEnabled: false,
       notificationEmail: '',
       probeResponseEnabled: false,
+      relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: 'smart' as const,
@@ -123,6 +127,30 @@ describe('channel monitor settings schema', () => {
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, costRetentionDays }).success,
+        false
+      )
+    }
+
+    for (const relayResponseHeaderTimeoutSeconds of [
+      0,
+      MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
+    ]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, relayResponseHeaderTimeoutSeconds })
+          .relayResponseHeaderTimeoutSeconds,
+        relayResponseHeaderTimeoutSeconds
+      )
+    }
+    for (const relayResponseHeaderTimeoutSeconds of [
+      -1,
+      1.5,
+      MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          relayResponseHeaderTimeoutSeconds,
+        }).success,
         false
       )
     }

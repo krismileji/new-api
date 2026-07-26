@@ -48,6 +48,7 @@
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
+| `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
