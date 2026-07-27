@@ -480,6 +480,7 @@ export type ChannelMonitorSmartScheduleScoring = {
 export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
+  auto_update_consecutive_failure_limit: number
   auto_disable_on_update_failure: boolean
   auto_enable_on_cost_ratio_recovery: boolean
   auto_enable_on_balance_recovery: boolean

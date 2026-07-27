@@ -26,7 +26,10 @@ import { Form } from '@/components/ui/form'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
-import { ChannelMonitorCostRetentionField } from '../channel-monitor-settings-dialog'
+import {
+  ChannelMonitorConsecutiveFailureLimitField,
+  ChannelMonitorCostRetentionField,
+} from '../channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
 
 function CostRetentionFieldFixture() {
@@ -36,6 +39,17 @@ function CostRetentionFieldFixture() {
   return (
     <Form {...form}>
       <ChannelMonitorCostRetentionField form={form} />
+    </Form>
+  )
+}
+
+function ConsecutiveFailureLimitFieldFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { autoUpdateConsecutiveFailureLimit: 3 },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorConsecutiveFailureLimitField form={form} />
     </Form>
   )
 }
@@ -99,6 +113,15 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
 }
 
 describe('channel monitor settings dialog', () => {
+  test('shows the configured consecutive failure stop limit', () => {
+    const markup = renderToStaticMarkup(<ConsecutiveFailureLimitFieldFixture />)
+
+    assert.ok(markup.includes('连续失败停止次数'))
+    assert.match(markup, /type="number"[^>]*min="1"[^>]*max="100"/)
+    assert.match(markup, /value="3"/)
+    assert.ok(markup.includes('倍率和余额分别连续失败'))
+  })
+
   test('shows persisted cost retention days with bounded numeric input', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
 

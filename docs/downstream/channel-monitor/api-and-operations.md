@@ -41,6 +41,7 @@
 | --- | --- | ---: | --- |
 | `auto_update_interval_minutes` | `ChannelMonitorAutoUpdateIntervalMinutes` | `0` | `0..525600`，`0` 关闭 |
 | `auto_update_retry_count` | `ChannelMonitorAutoUpdateRetryCount` | `2` | `0..10` |
+| `auto_update_consecutive_failure_limit` | `ChannelMonitorAutoUpdateConsecutiveFailureLimit` | `2` | `1..100`；倍率与余额分别计数，达到后停止对应自动更新 |
 | `auto_disable_on_update_failure` | `ChannelMonitorAutoDisableOnUpdateFailure` | `false` | 布尔值 |
 | `auto_enable_on_cost_ratio_recovery` | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `false` | 布尔值 |
 | `auto_enable_on_balance_recovery` | `ChannelMonitorAutoEnableOnBalanceRecovery` | `false` | 布尔值 |

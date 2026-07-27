@@ -21,10 +21,7 @@ import (
 
 type channelRatioMonitorTaskHandler struct{}
 
-const (
-	maxChannelRatioMonitorTaskFailureDetails       = 100
-	channelMonitorAutoFetchConsecutiveFailureLimit = 2
-)
+const maxChannelRatioMonitorTaskFailureDetails = 100
 
 type channelRatioMonitorTaskResult struct {
 	Total                   int                              `json:"total"`
@@ -267,9 +264,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			continue
 		}
 		ratioAutoFetchEnabled := !monitor.UpstreamRatioSyncDisabled &&
-			monitor.ConsecutiveFailures < channelMonitorAutoFetchConsecutiveFailureLimit
+			monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
 		balanceAutoFetchEnabled := !monitor.UpstreamBalanceSyncDisabled &&
-			monitor.BalanceConsecutiveFailures < channelMonitorAutoFetchConsecutiveFailureLimit
+			monitor.BalanceConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
 		if !ratioAutoFetchEnabled && !balanceAutoFetchEnabled {
 			summary.Skipped++
 			reportProgress(index+1, summary.Total)
@@ -318,7 +315,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						err = nil
 						break
 					}
-					if monitor.ConsecutiveFailures >= channelMonitorAutoFetchConsecutiveFailureLimit {
+					if monitor.ConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
 						break
 					}
 				} else {
@@ -327,7 +324,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						err = nil
 						break
 					}
-					if monitor.BalanceConsecutiveFailures >= channelMonitorAutoFetchConsecutiveFailureLimit {
+					if monitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
 						break
 					}
 				}
@@ -338,7 +335,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			ratioUpdated = false
 			if fetchRatio {
 				fetchMonitor := monitor
-				if fetchMonitor.BalanceConsecutiveFailures >= channelMonitorAutoFetchConsecutiveFailureLimit {
+				if fetchMonitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
 					fetchMonitor.UpstreamBalanceSyncDisabled = true
 				}
 				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, true, 0, "系统自动更新")
@@ -469,7 +466,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					costRatio = outcome.Result.CostRatio
 					costRatioAvailable = validateChannelMonitorRatio(&costRatio)
 				} else if monitor.UpdatedTime > 0 &&
-					(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < channelMonitorAutoFetchConsecutiveFailureLimit) {
+					(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit) {
 					storedCostRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
 					if conversionErr != nil {
 						logger.LogWarn(ctx, fmt.Sprintf(

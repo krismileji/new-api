@@ -59,11 +59,14 @@ import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from '../constants'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   createChannelMonitorSettingsSchema,
+  DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
 import type { ChannelMonitorSettings } from '../types'
@@ -120,6 +123,46 @@ export function ChannelMonitorCostRetentionField(props: {
   )
 }
 
+export function ChannelMonitorConsecutiveFailureLimitField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='autoUpdateConsecutiveFailureLimit'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>连续失败停止次数</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT}
+                max={MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.autoUpdateConsecutiveFailureLimit
+                )}
+              />
+              <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            倍率和余额分别连续失败达到该次数后停止自动更新；手动更新成功后恢复
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 export function ChannelMonitorSettingsDialog(
   props: ChannelMonitorSettingsDialogProps
 ) {
@@ -138,6 +181,9 @@ export function ChannelMonitorSettingsDialog(
     defaultValues: {
       autoUpdateIntervalMinutes: props.settings.auto_update_interval_minutes,
       autoUpdateRetryCount: props.settings.auto_update_retry_count,
+      autoUpdateConsecutiveFailureLimit:
+        props.settings.auto_update_consecutive_failure_limit ??
+        DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
       autoDisableOnUpdateFailure:
         props.settings.auto_disable_on_update_failure ?? false,
       autoEnableOnCostRatioRecovery:
@@ -217,6 +263,8 @@ export function ChannelMonitorSettingsDialog(
     mutation.mutate({
       auto_update_interval_minutes: values.autoUpdateIntervalMinutes,
       auto_update_retry_count: values.autoUpdateRetryCount,
+      auto_update_consecutive_failure_limit:
+        values.autoUpdateConsecutiveFailureLimit,
       auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,
       auto_enable_on_cost_ratio_recovery: values.autoEnableOnCostRatioRecovery,
       auto_enable_on_balance_recovery: values.autoEnableOnBalanceRecovery,
@@ -317,6 +365,8 @@ export function ChannelMonitorSettingsDialog(
                     </FormItem>
                   )}
                 />
+
+                <ChannelMonitorConsecutiveFailureLimitField form={form} />
 
                 <FormField
                   control={form.control}

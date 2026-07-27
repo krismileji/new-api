@@ -106,7 +106,10 @@ import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
 } from './lib/query-options'
-import { DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS } from './lib/schema'
+import {
+  DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+} from './lib/schema'
 import { sortChannelMonitorItems } from './lib/sort'
 import type {
   ChannelMonitorChannelPerformance,
@@ -164,6 +167,8 @@ const EMPTY_GROUP_SUCCESS_METRICS: ChannelMonitorGroupSuccessMetric[] = []
 const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   auto_update_interval_minutes: 0,
   auto_update_retry_count: 2,
+  auto_update_consecutive_failure_limit:
+    DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   auto_disable_on_update_failure: false,
   auto_enable_on_cost_ratio_recovery: false,
   auto_enable_on_balance_recovery: false,
@@ -368,9 +373,12 @@ export function ChannelMonitor() {
   const dialogChannel =
     channels.find((channel) => channel.id === channelDialog?.channelId) ?? null
   const autoUpdateIntervalMinutes = settings.auto_update_interval_minutes
+  const autoUpdateConsecutiveFailureLimit =
+    settings.auto_update_consecutive_failure_limit ??
+    DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT
   const autoUpdateLabel =
     autoUpdateIntervalMinutes > 0
-      ? `自动更新：每 ${autoUpdateIntervalMinutes} 分钟 · 失败重试 ${settings.auto_update_retry_count} 次`
+      ? `自动更新：每 ${autoUpdateIntervalMinutes} 分钟 · 失败重试 ${settings.auto_update_retry_count} 次 · 连续失败 ${autoUpdateConsecutiveFailureLimit} 次后停止`
       : '自动更新：已关闭'
   const smartScheduleLabel = settings.smart_schedule_enabled
     ? `智能调度：每 ${settings.smart_schedule_interval_minutes} 分钟`
@@ -1172,7 +1180,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           initialSection={settingsSection}

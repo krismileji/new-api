@@ -200,6 +200,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 		values           map[string]string
 		wantInterval     int
 		wantRetryCount   int
+		wantFailureLimit int
 		wantAutoDisable  bool
 		wantEmailEnabled bool
 		wantProbeEnabled bool
@@ -211,21 +212,24 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			name:             "missing values are disabled",
 			values:           map[string]string{},
 			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
+			wantFailureLimit: defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
 			wantTaskInterval: time.Minute,
 		},
 		{
 			name: "valid values",
 			values: map[string]string{
-				channelMonitorAutoUpdateIntervalOption:         "30",
-				channelMonitorAutoUpdateRetryCountOption:       "4",
-				channelMonitorAutoDisableOnUpdateFailureOption: "true",
-				channelMonitorEmailNotificationOption:          "true",
-				channelMonitorNotificationEmailOption:          "alerts@example.com",
-				channelMonitorProbeResponseOption:              "true",
-				common.RelayResponseHeaderTimeoutOptionKey:     "60",
+				channelMonitorAutoUpdateIntervalOption:                "30",
+				channelMonitorAutoUpdateRetryCountOption:              "4",
+				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "5",
+				channelMonitorAutoDisableOnUpdateFailureOption:        "true",
+				channelMonitorEmailNotificationOption:                 "true",
+				channelMonitorNotificationEmailOption:                 "alerts@example.com",
+				channelMonitorProbeResponseOption:                     "true",
+				common.RelayResponseHeaderTimeoutOptionKey:            "60",
 			},
 			wantInterval:     30,
 			wantRetryCount:   4,
+			wantFailureLimit: 5,
 			wantAutoDisable:  true,
 			wantEmailEnabled: true,
 			wantProbeEnabled: true,
@@ -236,15 +240,17 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 		{
 			name: "invalid values use safe defaults",
 			values: map[string]string{
-				channelMonitorAutoUpdateIntervalOption:         "525601",
-				channelMonitorAutoUpdateRetryCountOption:       "11",
-				channelMonitorAutoDisableOnUpdateFailureOption: "invalid",
-				channelMonitorEmailNotificationOption:          "invalid",
-				channelMonitorNotificationEmailOption:          "invalid",
-				channelMonitorProbeResponseOption:              "invalid",
-				common.RelayResponseHeaderTimeoutOptionKey:     "601",
+				channelMonitorAutoUpdateIntervalOption:                "525601",
+				channelMonitorAutoUpdateRetryCountOption:              "11",
+				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "101",
+				channelMonitorAutoDisableOnUpdateFailureOption:        "invalid",
+				channelMonitorEmailNotificationOption:                 "invalid",
+				channelMonitorNotificationEmailOption:                 "invalid",
+				channelMonitorProbeResponseOption:                     "invalid",
+				common.RelayResponseHeaderTimeoutOptionKey:            "601",
 			},
 			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
+			wantFailureLimit: defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
 			wantTaskInterval: time.Minute,
 		},
 	}
@@ -255,6 +261,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			settings := getChannelMonitorSettings()
 			assert.Equal(t, test.wantInterval, settings.AutoUpdateIntervalMinutes)
 			assert.Equal(t, test.wantRetryCount, settings.AutoUpdateRetryCount)
+			assert.Equal(t, test.wantFailureLimit, settings.AutoUpdateConsecutiveFailureLimit)
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
 			assert.Equal(t, test.wantEmailEnabled, settings.EmailNotificationEnabled)
 			assert.Equal(t, test.wantProbeEnabled, settings.ProbeResponseEnabled)
@@ -400,6 +407,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
 		{"auto_update_retry_count": maxChannelMonitorAutoUpdateRetryCount + 1},
+		{"auto_update_consecutive_failure_limit": 0},
+		{"auto_update_consecutive_failure_limit": maxChannelMonitorAutoUpdateConsecutiveFailureLimit + 1},
 		{"cost_retention_days": minChannelMonitorCostRetentionDays - 1},
 		{"cost_retention_days": maxChannelMonitorCostRetentionDays + 1},
 		{"email_notification_enabled": true},
@@ -443,25 +452,26 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		},
 	}
 	request := map[string]any{
-		"auto_update_interval_minutes":       15,
-		"auto_update_retry_count":            3,
-		"auto_disable_on_update_failure":     true,
-		"cost_retention_days":                365,
-		"email_notification_enabled":         true,
-		"notification_email":                 "alerts@example.com",
-		"probe_response_enabled":             true,
-		"smart_schedule_enabled":             true,
-		"smart_schedule_interval_minutes":    10,
-		"smart_schedule_strategy":            channelMonitorSmartScheduleStrategySmart,
-		"smart_schedule_stability_enabled":   true,
-		"smart_schedule_scoring":             validScoring,
-		"smart_schedule_apply_mode":          channelMonitorSmartScheduleApplyPriorityWeight,
-		"smart_schedule_performance_minutes": 360,
-		"smart_schedule_model":               "legacy-model",
-		"smart_schedule_models":              []string{" claude-3-5-sonnet ", "gpt-4o-mini", "claude-3-5-sonnet"},
-		"smart_schedule_min_samples":         8,
-		"smart_schedule_min_success_rate":    75.5,
-		"smart_schedule_cooldown_minutes":    45,
+		"auto_update_interval_minutes":          15,
+		"auto_update_retry_count":               3,
+		"auto_update_consecutive_failure_limit": 5,
+		"auto_disable_on_update_failure":        true,
+		"cost_retention_days":                   365,
+		"email_notification_enabled":            true,
+		"notification_email":                    "alerts@example.com",
+		"probe_response_enabled":                true,
+		"smart_schedule_enabled":                true,
+		"smart_schedule_interval_minutes":       10,
+		"smart_schedule_strategy":               channelMonitorSmartScheduleStrategySmart,
+		"smart_schedule_stability_enabled":      true,
+		"smart_schedule_scoring":                validScoring,
+		"smart_schedule_apply_mode":             channelMonitorSmartScheduleApplyPriorityWeight,
+		"smart_schedule_performance_minutes":    360,
+		"smart_schedule_model":                  "legacy-model",
+		"smart_schedule_models":                 []string{" claude-3-5-sonnet ", "gpt-4o-mini", "claude-3-5-sonnet"},
+		"smart_schedule_min_samples":            8,
+		"smart_schedule_min_success_rate":       75.5,
+		"smart_schedule_cooldown_minutes":       45,
 	}
 	request["relay_response_header_timeout_seconds"] = 60
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -473,6 +483,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.True(t, response.Success)
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
 	assert.Equal(t, 365, response.Data.CostRetentionDays)
 	assert.True(t, response.Data.EmailNotificationEnabled)
@@ -499,6 +510,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateRetryCountOption).First(&option).Error)
 	assert.Equal(t, "3", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateConsecutiveFailureLimitOption).First(&option).Error)
+	assert.Equal(t, "5", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoDisableOnUpdateFailureOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
@@ -552,6 +566,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
 	assert.False(t, response.Data.EmailNotificationEnabled)
 	assert.Empty(t, response.Data.NotificationEmail)

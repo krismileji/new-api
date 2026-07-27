@@ -15,10 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunChannelRatioMonitorTaskStopsRatioAfterTwoConsecutiveFailures(t *testing.T) {
+func TestRunChannelRatioMonitorTaskStopsRatioAtConfiguredConsecutiveFailureLimit(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorAutoUpdateRetryCountOption: "10",
+		channelMonitorAutoUpdateRetryCountOption:              "10",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "3",
 	})
 	disableChannelMonitorSSRFProtection(t)
 
@@ -41,10 +42,10 @@ func TestRunChannelRatioMonitorTaskStopsRatioAfterTwoConsecutiveFailures(t *test
 	firstSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, firstSummary.Failed)
-	assert.Equal(t, 1, firstSummary.Retried)
+	assert.Equal(t, 2, firstSummary.Retried)
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
-	assert.Equal(t, channelMonitorAutoFetchConsecutiveFailureLimit, monitor.ConsecutiveFailures)
+	assert.Equal(t, 3, monitor.ConsecutiveFailures)
 	requestsAfterFailureLimit := requestCount.Load()
 	assert.Positive(t, requestsAfterFailureLimit)
 
@@ -55,10 +56,11 @@ func TestRunChannelRatioMonitorTaskStopsRatioAfterTwoConsecutiveFailures(t *test
 	assert.Equal(t, requestsAfterFailureLimit, requestCount.Load())
 }
 
-func TestRunChannelRatioMonitorTaskStopsBalanceAfterTwoConsecutiveFailures(t *testing.T) {
+func TestRunChannelRatioMonitorTaskStopsBalanceAtConfiguredConsecutiveFailureLimit(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorAutoUpdateRetryCountOption: "10",
+		channelMonitorAutoUpdateRetryCountOption:              "10",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "3",
 	})
 	disableChannelMonitorSSRFProtection(t)
 
@@ -81,23 +83,24 @@ func TestRunChannelRatioMonitorTaskStopsBalanceAfterTwoConsecutiveFailures(t *te
 	firstSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, firstSummary.Failed)
-	assert.Equal(t, 1, firstSummary.Retried)
-	assert.EqualValues(t, 2, requestCount.Load())
+	assert.Equal(t, 2, firstSummary.Retried)
+	assert.EqualValues(t, 3, requestCount.Load())
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
-	assert.Equal(t, channelMonitorAutoFetchConsecutiveFailureLimit, monitor.BalanceConsecutiveFailures)
+	assert.Equal(t, 3, monitor.BalanceConsecutiveFailures)
 
 	secondSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, secondSummary.Skipped)
 	assert.Zero(t, secondSummary.Failed)
-	assert.EqualValues(t, 2, requestCount.Load())
+	assert.EqualValues(t, 3, requestCount.Load())
 }
 
 func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorAutoUpdateRetryCountOption: "0",
+		channelMonitorAutoUpdateRetryCountOption:              "0",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "3",
 	})
 	disableChannelMonitorSSRFProtection(t)
 
@@ -132,14 +135,14 @@ func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.
 			UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
 			UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
 			UpstreamUserId: 41, UpstreamAccessToken: "ratio-token",
-			BalanceConsecutiveFailures: channelMonitorAutoFetchConsecutiveFailureLimit,
+			BalanceConsecutiveFailures: 3,
 		},
 		{
 			ChannelId:    2,
 			UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
 			UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
 			UpstreamUserId: 42, UpstreamAccessToken: "balance-token",
-			ConsecutiveFailures: channelMonitorAutoFetchConsecutiveFailureLimit,
+			ConsecutiveFailures: 3,
 		},
 	}).Error)
 
@@ -155,10 +158,10 @@ func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.
 	ratioMonitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Zero(t, ratioMonitor.ConsecutiveFailures)
-	assert.Equal(t, channelMonitorAutoFetchConsecutiveFailureLimit, ratioMonitor.BalanceConsecutiveFailures)
+	assert.Equal(t, 3, ratioMonitor.BalanceConsecutiveFailures)
 	balanceMonitor, err := model.GetChannelRatioMonitor(2)
 	require.NoError(t, err)
-	assert.Equal(t, channelMonitorAutoFetchConsecutiveFailureLimit, balanceMonitor.ConsecutiveFailures)
+	assert.Equal(t, 3, balanceMonitor.ConsecutiveFailures)
 	assert.Zero(t, balanceMonitor.BalanceConsecutiveFailures)
 	require.NotNil(t, balanceMonitor.UpstreamBalance)
 	assert.InDelta(t, 5, *balanceMonitor.UpstreamBalance, 1e-9)

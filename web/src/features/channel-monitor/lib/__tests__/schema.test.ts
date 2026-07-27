@@ -22,9 +22,11 @@ import { describe, test } from 'node:test'
 import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
+  MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
+  MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
 } from '../schema'
 
@@ -57,6 +59,7 @@ describe('channel monitor settings schema', () => {
     const settings = createChannelMonitorSettingsSchema().parse({
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: true,
       autoEnableOnCostRatioRecovery: true,
       autoEnableOnBalanceRecovery: true,
@@ -94,6 +97,7 @@ describe('channel monitor settings schema', () => {
 
     assert.equal(settings.autoEnableOnCostRatioRecovery, true)
     assert.equal(settings.autoEnableOnBalanceRecovery, true)
+    assert.equal(settings.autoUpdateConsecutiveFailureLimit, 2)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
@@ -103,6 +107,7 @@ describe('channel monitor settings schema', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
       autoEnableOnCostRatioRecovery: false,
       autoEnableOnBalanceRecovery: false,
@@ -138,6 +143,32 @@ describe('channel monitor settings schema', () => {
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
+
+    for (const autoUpdateConsecutiveFailureLimit of [
+      MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+      MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+    ]) {
+      assert.equal(
+        schema.parse({
+          ...baseSettings,
+          autoUpdateConsecutiveFailureLimit,
+        }).autoUpdateConsecutiveFailureLimit,
+        autoUpdateConsecutiveFailureLimit
+      )
+    }
+    for (const autoUpdateConsecutiveFailureLimit of [
+      MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT - 1,
+      1.5,
+      MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          autoUpdateConsecutiveFailureLimit,
+        }).success,
+        false
+      )
+    }
 
     for (const costRetentionDays of [
       MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
@@ -188,6 +219,7 @@ describe('channel monitor settings schema', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
       autoEnableOnCostRatioRecovery: false,
       autoEnableOnBalanceRecovery: false,
