@@ -272,9 +272,10 @@ function ChannelTodayCostCell(props: {
       variant='link'
       onClick={() => props.onOpenCostHistory(props.channel)}
       aria-label={`查看渠道 ${props.channel.name} 的今日成本详情`}
-      className='h-auto max-w-full min-w-0 justify-start p-0 text-left font-normal'
+      className='mt-1 h-auto max-w-full min-w-0 justify-start gap-1.5 p-0 text-left text-xs font-normal'
       title='查看每日成本详情'
     >
+      <span className='text-muted-foreground shrink-0'>今日成本</span>
       {!props.channel.today_cost_configured ? (
         <span className='text-muted-foreground text-xs'>未配置</span>
       ) : (
@@ -307,7 +308,6 @@ export function ChannelMonitorChannelView(
           <TableRow className='[&_th]:text-left'>
             <TableHead>渠道</TableHead>
             <TableHead className='min-w-[224px] pl-[34px]'>上游余额</TableHead>
-            <TableHead>今日成本</TableHead>
             <TableHead className='pl-[34px]'>成本倍率</TableHead>
             <TableHead>关联分组</TableHead>
             <TableHead>性能（{props.performanceRangeLabel}）</TableHead>
@@ -395,16 +395,14 @@ export function ChannelMonitorChannelView(
                         size='icon-xs'
                       />
                     ) : null}
-                    <div className='col-start-2'>
+                    <div className='col-start-2 flex min-w-0 flex-col items-start'>
                       <ChannelUpstreamBalanceCell channel={channel} />
+                      <ChannelTodayCostCell
+                        channel={channel}
+                        onOpenCostHistory={props.onOpenCostHistory}
+                      />
                     </div>
                   </div>
-                </TableCell>
-                <TableCell className='whitespace-normal'>
-                  <ChannelTodayCostCell
-                    channel={channel}
-                    onOpenCostHistory={props.onOpenCostHistory}
-                  />
                 </TableCell>
                 <TableCell className='whitespace-normal'>
                   <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
