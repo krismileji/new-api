@@ -7,7 +7,7 @@
 ## 文档导航
 
 - [功能总览](feature-catalog.md)：当前二开功能清单和入口。
-- [中继重试与错误可见性](relay-reliability/README.md)：定向重试、渠道轮换和日志隔离。
+- [中继重试与错误可见性](relay-reliability/README.md)：失败渠道切换、亲和规则和日志隔离。
 - [管理员分组访问](admin-group-access/README.md)：管理员使用全部已配置分组的规则。
 - [图像生成定价保护](image-pricing-guard/README.md)：未配置图像倍率时的请求保护。
 - [文档维护约定](maintenance.md)：新增、修改和下线二开功能时的记录要求。

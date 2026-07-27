@@ -1,55 +1,81 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelayRetryRoutingRetriesOnceThenCyclesChannels(t *testing.T) {
+func TestRelayRetryRoutingExcludesFailedChannelsImmediately(t *testing.T) {
 	routing := newRelayRetryRouting()
 
-	routing.recordFailure(26, "vip")
-	next, ok := routing.takeNext()
-	require.True(t, ok)
-	assert.Equal(t, relayRetryChannel{id: 26, group: "vip"}, next)
+	routing.exclude(26)
+	routing.exclude(7)
 
-	routing.recordFailure(26, "vip")
 	options, ok := routing.selectionOptions()
 	require.True(t, ok)
-	assert.Equal(t, []int{26}, options.ExcludedChannelIds)
-
-	routing.recordFailure(7, "vip")
-	next, ok = routing.takeNext()
-	require.True(t, ok)
-	assert.Equal(t, relayRetryChannel{id: 7, group: "vip"}, next)
-
-	routing.recordFailure(7, "vip")
-	options, ok = routing.selectionOptions()
-	require.True(t, ok)
 	assert.Equal(t, []int{26, 7}, options.ExcludedChannelIds)
-
-	next, ok = routing.restartFromFirst()
-	require.True(t, ok)
-	assert.Equal(t, relayRetryChannel{id: 26, group: "vip"}, next)
-	_, ok = routing.selectionOptions()
-	assert.False(t, ok)
-
-	routing.recordFailure(26, "vip")
-	next, ok = routing.takeNext()
-	require.True(t, ok)
-	assert.Equal(t, relayRetryChannel{id: 26, group: "vip"}, next)
+	assert.False(t, routing.candidatesExhausted())
 }
 
-func TestRelayRetryRoutingFallsBackToOnlyChannel(t *testing.T) {
-	routing := newRelayRetryRouting()
-	routing.recordFailure(26, "vip")
-	_, ok := routing.takeNext()
-	require.True(t, ok)
-	routing.recordFailure(26, "vip")
+func TestRelayRetryRoutingSelectsAlternativeThenStopsAfterExhaustion(t *testing.T) {
+	t.Cleanup(model.InitChannelCache)
+	db := setupChannelMonitorControllerTestDB(t)
+	priority := int64(100)
+	weight := uint(10)
+	require.NoError(t, db.Create([]model.Channel{
+		{
+			Id: 26, Name: "failed", Key: "key", Group: "vip", Models: "model-a",
+			Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+		},
+		{
+			Id: 7, Name: "alternative", Key: "key", Group: "vip", Models: "model-a",
+			Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create([]model.Ability{
+		{
+			Group: "vip", Model: "model-a", ChannelId: 26, Enabled: true,
+			Priority: &priority, Weight: weight,
+		},
+		{
+			Group: "vip", Model: "model-a", ChannelId: 7, Enabled: true,
+			Priority: &priority, Weight: weight,
+		},
+	}).Error)
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
 
-	next, ok := routing.restartFromFirst()
-	require.True(t, ok)
-	assert.Equal(t, relayRetryChannel{id: 26, group: "vip"}, next)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	retryParam := &service.RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "vip",
+		ModelName:   "model-a",
+		RequestPath: ctx.Request.URL.Path,
+		Retry:       common.GetPointer(1),
+	}
+	routing := newRelayRetryRouting()
+	routing.exclude(26)
+
+	channel, group, err := routing.selectChannel(retryParam)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 7, channel.Id)
+	assert.Equal(t, "vip", group)
+	assert.False(t, routing.candidatesExhausted())
+
+	routing.exclude(7)
+	channel, group, err = routing.selectChannel(retryParam)
+	require.NoError(t, err)
+	assert.Nil(t, channel)
+	assert.Equal(t, "vip", group)
+	assert.True(t, routing.candidatesExhausted())
 }

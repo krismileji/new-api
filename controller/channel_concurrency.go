@@ -91,11 +91,7 @@ func acquireRelayChannelConcurrency(
 			return nil, nil, channelConcurrencySaturatedError(channel.Id, status)
 		}
 
-		selectedGroup := retryParam.TokenGroup
-		if selectedGroup == "auto" {
-			selectedGroup = common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
-		}
-		retryRouting.exclude(relayRetryChannel{id: channel.Id, group: selectedGroup})
+		retryRouting.exclude(channel.Id)
 
 		var selectGroup string
 		selectionOptions, _ := retryRouting.selectionOptions()

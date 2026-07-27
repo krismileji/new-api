@@ -3,15 +3,11 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -19,170 +15,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrepareNextRelayAttemptScopesDedicatedRetries(t *testing.T) {
-	tests := []struct {
-		name       string
-		relayMode  int
-		statusCode int
-		message    string
-		budget     relayRetryBudget
-		want       bool
-		wantBudget relayRetryBudget
-	}{
-		{name: "400 upstream failed", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}},
-		{name: "400 upstream failed chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: true},
-		{name: "400 upstream failed disabled", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{}, want: false},
-		{name: "other 400", relayMode: relayconstant.RelayModeResponses, statusCode: 400, message: "Unsupported parameter: max_output_tokens", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: false, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}},
-		{name: "400 upstream failed image generation", relayMode: relayconstant.RelayModeImagesGenerations, statusCode: 400, message: "Upstream request failed", budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}, want: false, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1}},
-		{name: "502 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 502, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry503Remaining: 1, retry524Remaining: 1}},
-		{name: "502 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 502, budget: relayRetryBudget{retry502Remaining: 1}, want: true},
-		{name: "502 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 502, budget: relayRetryBudget{}, want: false},
-		{name: "503 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 503, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry524Remaining: 1}},
-		{name: "503 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 503, budget: relayRetryBudget{retry503Remaining: 1}, want: true},
-		{name: "503 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 503, budget: relayRetryBudget{}, want: false},
-		{name: "524 chat completions", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 524, budget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}, want: true, wantBudget: relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1}},
-		{name: "524 responses", relayMode: relayconstant.RelayModeResponses, statusCode: 524, budget: relayRetryBudget{retry524Remaining: 1}, want: true},
-		{name: "524 disabled", relayMode: relayconstant.RelayModeChatCompletions, statusCode: 524, budget: relayRetryBudget{}, want: false},
-		{name: "image generation", relayMode: relayconstant.RelayModeImagesGenerations, statusCode: 503, budget: relayRetryBudget{retry503Remaining: 1}, want: false, wantBudget: relayRetryBudget{retry503Remaining: 1}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Set("specific_channel_id", "2")
-			retry := 0
-			retryParam := &service.RetryParam{Retry: &retry}
-			message := tt.message
-			if message == "" {
-				message = "upstream unavailable"
-			}
-			apiErr := types.NewOpenAIError(errors.New(message), types.ErrorCodeBadResponseStatusCode, tt.statusCode)
-
-			require.Equal(t, tt.want, prepareNextRelayAttempt(c, tt.relayMode, apiErr, retryParam, &tt.budget))
-			require.Equal(t, tt.wantBudget, tt.budget)
-		})
-	}
-}
-
-func TestPrepareNextRelayAttemptClearsPendingAutoGroupResetForDedicatedRetries(t *testing.T) {
-	tests := []struct {
-		statusCode int
-		message    string
-	}{
-		{statusCode: 400, message: "Upstream request failed"},
-		{statusCode: 502, message: "bad gateway"},
-		{statusCode: 503, message: "upstream unavailable"},
-		{statusCode: 524, message: "upstream timeout"},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("status %d", tt.statusCode), func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			retry := 2
-			retryParam := &service.RetryParam{Retry: &retry}
-			retryParam.ResetRetryNextTry()
-			budget := relayRetryBudget{retry400UpstreamFailedRemaining: 1, retry502Remaining: 1, retry503Remaining: 1, retry524Remaining: 1}
-			apiErr := types.NewOpenAIError(errors.New(tt.message), types.ErrorCodeBadResponseStatusCode, tt.statusCode)
-
-			require.True(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
-			require.Equal(t, 2, retryParam.GetRetry())
-
-			retryParam.IncreaseRetry()
-			require.Equal(t, 3, retryParam.GetRetry())
-		})
-	}
-}
-
-func TestPrepareNextRelayAttemptFallsBackToConfiguredSystemRetry(t *testing.T) {
-	originalRetryTimes := common.RetryTimes
+func TestFormerDedicatedRetryErrorsUseConfiguredStatusRules(t *testing.T) {
 	originalRanges := operation_setting.AutomaticRetryStatusCodeRanges
 	t.Cleanup(func() {
-		common.RetryTimes = originalRetryTimes
 		operation_setting.AutomaticRetryStatusCodeRanges = originalRanges
 	})
-	common.RetryTimes = 2
 	operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{
-		{Start: 400, End: 400},
-		{Start: 502, End: 502},
-		{Start: 503, End: 503},
-		{Start: 524, End: 524},
+		{Start: 502, End: 503},
 	}
 
 	tests := []struct {
 		name       string
 		statusCode int
 		message    string
+		want       bool
 	}{
-		{name: "400 upstream failed", statusCode: 400, message: "Upstream request failed"},
-		{name: "502", statusCode: 502, message: "bad gateway"},
-		{name: "503", statusCode: 503, message: "upstream unavailable"},
-		{name: "524", statusCode: 524, message: "upstream timeout"},
+		{name: "400 upstream failed", statusCode: 400, message: "Upstream request failed", want: false},
+		{name: "502", statusCode: 502, message: "bad gateway", want: true},
+		{name: "503", statusCode: 503, message: "upstream unavailable", want: true},
+		{name: "524", statusCode: 524, message: "upstream timeout", want: false},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			retry := 0
-			retryParam := &service.RetryParam{Retry: &retry}
-			budget := relayRetryBudget{
-				retry400UpstreamFailedRemaining: 1,
-				retry502Remaining:               1,
-				retry503Remaining:               1,
-				retry524Remaining:               1,
-			}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			apiErr := types.NewOpenAIError(errors.New(test.message), types.ErrorCodeBadResponseStatusCode, test.statusCode)
 
-			require.True(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
-			require.Zero(t, retryParam.GetRetry())
-			require.True(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
-			require.Equal(t, 1, retryParam.GetRetry())
+			assert.Equal(t, test.want, shouldRetry(ctx, apiErr, 1))
+			assert.False(t, shouldRetry(ctx, apiErr, 0))
 		})
 	}
 }
 
-func TestPrepareNextRelayAttemptStopsWhenSystemRetryDoesNotIncludeStatus(t *testing.T) {
-	originalRetryTimes := common.RetryTimes
-	originalRanges := operation_setting.AutomaticRetryStatusCodeRanges
-	t.Cleanup(func() {
-		common.RetryTimes = originalRetryTimes
-		operation_setting.AutomaticRetryStatusCodeRanges = originalRanges
-	})
-	common.RetryTimes = 2
-	operation_setting.AutomaticRetryStatusCodeRanges = nil
+func TestShouldRetryHonorsSkipRetryAndSpecificChannel(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	apiErr := types.NewErrorWithStatusCode(
+		errors.New("upstream unavailable"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithSkipRetry(),
+	)
+	require.False(t, shouldRetry(ctx, apiErr, 1))
 
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	retry := 0
-	retryParam := &service.RetryParam{Retry: &retry}
-	budget := relayRetryBudget{}
-	apiErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, 503)
-
-	require.False(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &budget))
-	require.Zero(t, retryParam.GetRetry())
+	ctx.Set("specific_channel_id", "2")
+	apiErr = types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	require.False(t, shouldRetry(ctx, apiErr, 1))
 }
 
 func TestRetryStopsWhenClientRequestIsCanceled(t *testing.T) {
 	requestContext, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestContext)
-	retry := 0
-	retryParam := &service.RetryParam{Retry: &retry}
-	retryBudget := relayRetryBudget{retry503Remaining: 1}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestContext)
 	apiErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
 
-	assert.False(t, prepareNextRelayAttempt(c, relayconstant.RelayModeResponses, apiErr, retryParam, &retryBudget))
-	assert.Equal(t, relayRetryBudget{retry503Remaining: 1}, retryBudget)
-	assert.Zero(t, retryParam.GetRetry())
+	assert.False(t, shouldRetry(ctx, apiErr, 1))
 
 	taskErr := &dto.TaskError{StatusCode: http.StatusServiceUnavailable}
-	assert.False(t, shouldRetryTaskRelay(c, 1, taskErr, 1))
+	assert.False(t, shouldRetryTaskRelay(ctx, 1, taskErr, 1))
 }
 
-func TestShouldRetry500UsesDefaultBudget(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+func TestShouldRetry500UsesConfiguredBudget(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	apiErr := types.NewOpenAIError(errors.New("internal server error"), types.ErrorCodeBadResponseStatusCode, 500)
 
-	require.True(t, shouldRetry(c, apiErr, 1))
-	require.False(t, shouldRetry(c, apiErr, 0))
+	require.True(t, shouldRetry(ctx, apiErr, 1))
+	require.False(t, shouldRetry(ctx, apiErr, 0))
 }

@@ -8,7 +8,7 @@
 | 渠道上游倍率与余额同步 | 使用中 | 渠道监控的“上游配置与策略” | [上游同步与策略](channel-monitor/upstream-and-policies.md) |
 | 渠道成本、性能和成功率统计 | 使用中 | 渠道监控的渠道、分组、模型和成本视图 | [成本、性能与成功率](channel-monitor/cost-performance.md) |
 | 渠道连通性测试与并发限制 | 使用中 | 渠道监控、渠道管理 | [测试与并发限制](channel-monitor/testing-and-concurrency.md) |
-| 中继定向重试与错误日志隔离 | 使用中 | Chat Completions、Responses 和任务中继 | [中继重试与错误可见性](relay-reliability/README.md) |
+| 中继失败切换与错误日志隔离 | 使用中 | Chat Completions、Responses 和任务中继 | [中继重试与错误可见性](relay-reliability/README.md) |
 | 管理员访问全部已配置分组 | 使用中 | 令牌鉴权、分组、模型和定价接口 | [管理员分组访问](admin-group-access/README.md) |
 | 未定价图像生成保护 | 使用中 | `/v1/images/generations` | [图像生成定价保护](image-pricing-guard/README.md) |
 

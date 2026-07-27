@@ -206,7 +206,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
-	retryBudget := newRelayRetryBudget()
 	retryRouting := newRelayRetryRouting()
 	finalRetryLogPending := false
 
@@ -214,6 +213,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam, retryRouting)
 		if channelErr != nil {
+			if retryRouting.candidatesExhausted() && relayInfo.LastError != nil {
+				newAPIError = relayInfo.LastError
+				break
+			}
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
 			break
@@ -247,13 +250,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		shouldRetry := prepareNextRelayAttempt(c, relayInfo.RelayMode, newAPIError, retryParam, &retryBudget)
+		shouldRetry := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if shouldRetry {
-			selectedGroup := retryParam.TokenGroup
-			if selectedGroup == "auto" {
-				selectedGroup = common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
-			}
-			retryRouting.recordFailure(channel.Id, selectedGroup)
+			retryParam.IncreaseRetry()
+			retryRouting.exclude(channel.Id)
 		}
 		processChannelError(c,
 			*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
@@ -344,7 +344,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	if len(retryRoutings) > 0 {
 		retryRouting = retryRoutings[len(retryRoutings)-1]
 	}
-	channel, selectGroup, err := retryRouting.selectChannel(c, retryParam)
+	channel, selectGroup, err := retryRouting.selectChannel(retryParam)
 	if retryParam.TokenGroup == "auto" && channel != nil && selectGroup != "" {
 		common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
 	}
@@ -367,6 +367,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil {
+		return false
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
@@ -580,6 +583,9 @@ func RelayTask(c *gin.Context) {
 			var channelErr *types.NewAPIError
 			channel, channelErr = getChannel(c, relayInfo, retryParam, retryRouting)
 			if channelErr != nil {
+				if retryRouting.candidatesExhausted() && taskErr != nil {
+					break
+				}
 				logger.LogError(c, channelErr.Error())
 				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
 				break
@@ -608,6 +614,9 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 		shouldRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
+		if shouldRetry && allowAlternative {
+			retryRouting.exclude(channel.Id)
+		}
 
 		if !taskErr.LocalError {
 			processChannelError(c,
