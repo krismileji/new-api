@@ -25,31 +25,26 @@ func TestRelayRetryRoutingExcludesFailedChannelsImmediately(t *testing.T) {
 	assert.False(t, routing.candidatesExhausted())
 }
 
-func TestRelayRetryRoutingSelectsAlternativeThenStopsAfterExhaustion(t *testing.T) {
+func TestRelayRetryRoutingRestartsRoundsUntilRetryBudgetIsUsed(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
-	priority := int64(100)
+	channelIDs := []int{26, 7, 8, 9, 10}
+	priorities := []int64{500, 400, 300, 200, 100}
 	weight := uint(10)
-	require.NoError(t, db.Create([]model.Channel{
-		{
-			Id: 26, Name: "failed", Key: "key", Group: "vip", Models: "model-a",
-			Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
-		},
-		{
-			Id: 7, Name: "alternative", Key: "key", Group: "vip", Models: "model-a",
-			Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
-		},
-	}).Error)
-	require.NoError(t, db.Create([]model.Ability{
-		{
-			Group: "vip", Model: "model-a", ChannelId: 26, Enabled: true,
-			Priority: &priority, Weight: weight,
-		},
-		{
-			Group: "vip", Model: "model-a", ChannelId: 7, Enabled: true,
-			Priority: &priority, Weight: weight,
-		},
-	}).Error)
+	channels := make([]model.Channel, 0, len(channelIDs))
+	abilities := make([]model.Ability, 0, len(channelIDs))
+	for i, channelID := range channelIDs {
+		channels = append(channels, model.Channel{
+			Id: channelID, Name: "retry-channel", Key: "key", Group: "vip", Models: "model-a",
+			Status: common.ChannelStatusEnabled, Priority: common.GetPointer(priorities[i]), Weight: &weight,
+		})
+		abilities = append(abilities, model.Ability{
+			Group: "vip", Model: "model-a", ChannelId: channelID, Enabled: true,
+			Priority: common.GetPointer(priorities[i]), Weight: weight,
+		})
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	require.NoError(t, db.Create(&abilities).Error)
 	common.MemoryCacheEnabled = true
 	model.InitChannelCache()
 
@@ -60,22 +55,22 @@ func TestRelayRetryRoutingSelectsAlternativeThenStopsAfterExhaustion(t *testing.
 		TokenGroup:  "vip",
 		ModelName:   "model-a",
 		RequestPath: ctx.Request.URL.Path,
-		Retry:       common.GetPointer(1),
+		Retry:       common.GetPointer(0),
 	}
 	routing := newRelayRetryRouting()
-	routing.exclude(26)
+	currentChannelID := channelIDs[0]
+	attemptedChannelIDs := []int{currentChannelID}
+	for retry := 1; retry <= 10; retry++ {
+		routing.exclude(currentChannelID)
+		retryParam.SetRetry(retry)
+		channel, group, err := routing.selectChannel(retryParam)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		assert.Equal(t, "vip", group)
+		assert.False(t, routing.candidatesExhausted())
+		currentChannelID = channel.Id
+		attemptedChannelIDs = append(attemptedChannelIDs, currentChannelID)
+	}
 
-	channel, group, err := routing.selectChannel(retryParam)
-	require.NoError(t, err)
-	require.NotNil(t, channel)
-	assert.Equal(t, 7, channel.Id)
-	assert.Equal(t, "vip", group)
-	assert.False(t, routing.candidatesExhausted())
-
-	routing.exclude(7)
-	channel, group, err = routing.selectChannel(retryParam)
-	require.NoError(t, err)
-	assert.Nil(t, channel)
-	assert.Equal(t, "vip", group)
-	assert.True(t, routing.candidatesExhausted())
+	assert.Equal(t, []int{26, 7, 8, 9, 10, 26, 7, 8, 9, 10, 26}, attemptedChannelIDs)
 }

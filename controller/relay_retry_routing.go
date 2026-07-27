@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -41,6 +43,16 @@ func (routing *relayRetryRouting) candidatesExhausted() bool {
 	return routing != nil && routing.exhausted
 }
 
+func (routing *relayRetryRouting) restartRound(retryParam *service.RetryParam) {
+	routing.excluded = make(map[int]struct{})
+	routing.excludedOrder = nil
+	routing.exhausted = false
+	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
+		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, 0)
+		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex, 0)
+	}
+}
+
 func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) (*model.Channel, string, error) {
 	if routing == nil {
 		return service.CacheGetRandomSatisfiedChannel(retryParam)
@@ -52,6 +64,15 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		return service.CacheGetRandomSatisfiedChannel(retryParam)
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam, selectionOptions)
+	if err != nil || channel != nil {
+		return channel, selectGroup, err
+	}
+
+	routing.restartRound(retryParam)
+	roundRetry := 0
+	roundRetryParam := *retryParam
+	roundRetryParam.Retry = &roundRetry
+	channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&roundRetryParam)
 	if err == nil && channel == nil {
 		routing.exhausted = true
 	}
