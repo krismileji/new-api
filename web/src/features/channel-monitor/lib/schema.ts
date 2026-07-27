@@ -191,6 +191,9 @@ export function createChannelMonitorSettingsSchema() {
           .finite('得分曲线指数必须是有效数字')
           .min(0.1, '得分曲线指数不能小于 0.1')
           .max(5, '得分曲线指数不能超过 5'),
+        relativeWeightEnabled: z.boolean(),
+        relativeWeightStartPercent: smartSchedulePercentageSchema,
+        relativeWeightFullPercent: smartSchedulePercentageSchema,
         smart: smartScheduleMetricPercentagesSchema,
         ratio: smartScheduleMetricPercentagesSchema,
       }),
@@ -268,6 +271,16 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['smartScheduleScoring', 'ratio', 'costRatioPercent'],
           message: '按成本倍率调度的成本倍率占比必须大于 0%',
+        })
+      }
+      if (
+        values.smartScheduleScoring.relativeWeightFullPercent <=
+        values.smartScheduleScoring.relativeWeightStartPercent
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['smartScheduleScoring', 'relativeWeightFullPercent'],
+          message: '完整拉伸分差必须大于开始拉伸分差',
         })
       }
     })

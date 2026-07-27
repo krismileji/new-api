@@ -207,6 +207,15 @@ export function ChannelMonitorSettingsDialog(
       smartScheduleScoring: {
         stabilityPercent: smartScheduleScoring.stability_percent,
         curveExponent: smartScheduleScoring.curve_exponent,
+        relativeWeightEnabled:
+          smartScheduleScoring.relative_weight_enabled ??
+          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_enabled,
+        relativeWeightStartPercent:
+          smartScheduleScoring.relative_weight_start_percent ??
+          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_start_percent,
+        relativeWeightFullPercent:
+          smartScheduleScoring.relative_weight_full_percent ??
+          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_full_percent,
         smart: {
           costRatioPercent: smartScheduleScoring.smart.cost_ratio_percent,
           firstTokenPercent: smartScheduleScoring.smart.first_token_percent,
@@ -281,6 +290,12 @@ export function ChannelMonitorSettingsDialog(
       smart_schedule_scoring: {
         stability_percent: values.smartScheduleScoring.stabilityPercent,
         curve_exponent: values.smartScheduleScoring.curveExponent,
+        relative_weight_enabled:
+          values.smartScheduleScoring.relativeWeightEnabled,
+        relative_weight_start_percent:
+          values.smartScheduleScoring.relativeWeightStartPercent,
+        relative_weight_full_percent:
+          values.smartScheduleScoring.relativeWeightFullPercent,
         smart: {
           cost_ratio_percent:
             values.smartScheduleScoring.smart.costRatioPercent,
@@ -366,8 +381,6 @@ export function ChannelMonitorSettingsDialog(
                   )}
                 />
 
-                <ChannelMonitorConsecutiveFailureLimitField form={form} />
-
                 <FormField
                   control={form.control}
                   name='autoUpdateRetryCount'
@@ -403,6 +416,8 @@ export function ChannelMonitorSettingsDialog(
                     </FormItem>
                   )}
                 />
+
+                <ChannelMonitorConsecutiveFailureLimitField form={form} />
 
                 <FormField
                   control={form.control}

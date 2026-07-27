@@ -11,63 +11,67 @@ import (
 )
 
 const (
-	ChannelRatioFetchStatusSucceeded      = "succeeded"
-	ChannelRatioFetchStatusFailed         = "failed"
-	ChannelSmartScheduleStatusSucceeded   = "succeeded"
-	ChannelSmartScheduleStatusSkipped     = "skipped"
-	ChannelSmartScheduleStatusFailed      = "failed"
-	ChannelSmartScheduleStabilityDegraded = "degraded"
-	ChannelSmartScheduleStabilityProbing  = "probing"
+	ChannelRatioFetchStatusSucceeded                   = "succeeded"
+	ChannelRatioFetchStatusFailed                      = "failed"
+	ChannelSmartScheduleStatusSucceeded                = "succeeded"
+	ChannelSmartScheduleStatusSkipped                  = "skipped"
+	ChannelSmartScheduleStatusFailed                   = "failed"
+	ChannelSmartScheduleStabilityDegraded              = "degraded"
+	ChannelSmartScheduleStabilityProbing               = "probing"
+	ChannelSmartScheduleControlRevisionOption          = "ChannelMonitorSmartScheduleControlRevision"
+	ChannelSmartScheduleParticipationInitializedOption = "ChannelMonitorSmartScheduleParticipationInitialized"
 )
 
 type ChannelRatioMonitor struct {
-	Id                          int      `json:"id"`
-	ChannelId                   int      `json:"channel_id" gorm:"uniqueIndex;not null"`
-	Ratio                       float64  `json:"ratio" gorm:"not null"`
-	PreviousRatio               *float64 `json:"previous_ratio"`
-	Remark                      string   `json:"remark" gorm:"type:varchar(255);default:''"`
-	UpdatedTime                 int64    `json:"updated_time" gorm:"bigint;index"`
-	UpdatedBy                   int      `json:"updated_by" gorm:"index"`
-	UpdatedByUsername           string   `json:"updated_by_username" gorm:"type:varchar(64);default:''"`
-	LastFetchStatus             string   `json:"last_fetch_status" gorm:"type:varchar(16);index"`
-	LastFetchError              string   `json:"last_fetch_error" gorm:"type:varchar(255)"`
-	LastFetchTime               int64    `json:"last_fetch_time" gorm:"bigint;index"`
-	ConsecutiveFailures         int      `json:"consecutive_failures"`
-	UpstreamBalance             *float64 `json:"upstream_balance"`
-	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
-	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
-	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
-	BalanceWarningThreshold     *float64 `json:"balance_warning_threshold"`
-	BalanceAutoDisableThreshold *float64 `json:"balance_auto_disable_threshold"`
-	BalanceAlertNotified        bool     `json:"balance_alert_notified"`
-	UpstreamType                string   `json:"upstream_type" gorm:"type:varchar(32)"`
-	UpstreamBaseURL             string   `json:"upstream_base_url" gorm:"type:text"`
-	UpstreamGroup               string   `json:"upstream_group" gorm:"type:varchar(64)"`
-	UpstreamAuthType            string   `json:"upstream_auth_type" gorm:"type:varchar(16)"`
-	UpstreamUserId              int      `json:"upstream_user_id"`
-	UpstreamAccessToken         string   `json:"-" gorm:"type:text"`
-	UpstreamAccount             string   `json:"-" gorm:"type:varchar(320)"`
-	UpstreamPassword            string   `json:"-" gorm:"type:text"`
-	CostConversion              string   `json:"-" gorm:"type:text"`
-	CustomUpstreamConfig        string   `json:"-" gorm:"type:text"`
-	UpstreamRatioSyncDisabled   bool     `json:"-"`
-	UpstreamBalanceSyncDisabled bool     `json:"-"`
-	SingleChannelAction         string   `json:"single_channel_action" gorm:"type:varchar(32)"`
-	MultipleChannelsAction      string   `json:"multiple_channels_action" gorm:"type:varchar(32)"`
-	SmartScheduleExcluded       bool     `json:"smart_schedule_excluded"`
-	LastScheduleStatus          string   `json:"last_schedule_status" gorm:"type:varchar(16);index"`
-	LastScheduleError           string   `json:"last_schedule_error" gorm:"type:varchar(255)"`
-	LastScheduleScore           *float64 `json:"last_schedule_score"`
-	LastSchedulePriority        int64    `json:"last_schedule_priority" gorm:"bigint"`
-	LastScheduleWeight          uint     `json:"last_schedule_weight"`
-	LastScheduleTime            int64    `json:"last_schedule_time" gorm:"bigint;index"`
-	SmartScheduleStabilityState string   `json:"smart_schedule_stability_state" gorm:"type:varchar(16);index"`
-	SmartScheduleStabilityUntil int64    `json:"smart_schedule_stability_until" gorm:"bigint;index"`
-	SmartScheduleStabilitySince int64    `json:"smart_schedule_stability_since" gorm:"bigint"`
-	SmartScheduleSavedPriority  int64    `json:"smart_schedule_saved_priority" gorm:"bigint"`
-	SmartScheduleSavedWeight    uint     `json:"smart_schedule_saved_weight"`
-	ConcurrencyLimit            int      `json:"concurrency_limit"`
-	ConcurrencyRevision         int64    `json:"-" gorm:"bigint"`
+	Id                            int      `json:"id"`
+	ChannelId                     int      `json:"channel_id" gorm:"uniqueIndex;not null"`
+	Ratio                         float64  `json:"ratio" gorm:"not null"`
+	PreviousRatio                 *float64 `json:"previous_ratio"`
+	Remark                        string   `json:"remark" gorm:"type:varchar(255);default:''"`
+	UpdatedTime                   int64    `json:"updated_time" gorm:"bigint;index"`
+	UpdatedBy                     int      `json:"updated_by" gorm:"index"`
+	UpdatedByUsername             string   `json:"updated_by_username" gorm:"type:varchar(64);default:''"`
+	LastFetchStatus               string   `json:"last_fetch_status" gorm:"type:varchar(16);index"`
+	LastFetchError                string   `json:"last_fetch_error" gorm:"type:varchar(255)"`
+	LastFetchTime                 int64    `json:"last_fetch_time" gorm:"bigint;index"`
+	ConsecutiveFailures           int      `json:"consecutive_failures"`
+	UpstreamBalance               *float64 `json:"upstream_balance"`
+	LastBalanceTime               int64    `json:"last_balance_time" gorm:"bigint"`
+	LastBalanceError              string   `json:"last_balance_error" gorm:"type:varchar(255)"`
+	BalanceConsecutiveFailures    int      `json:"balance_consecutive_failures"`
+	BalanceWarningThreshold       *float64 `json:"balance_warning_threshold"`
+	BalanceAutoDisableThreshold   *float64 `json:"balance_auto_disable_threshold"`
+	BalanceAlertNotified          bool     `json:"balance_alert_notified"`
+	UpstreamType                  string   `json:"upstream_type" gorm:"type:varchar(32)"`
+	UpstreamBaseURL               string   `json:"upstream_base_url" gorm:"type:text"`
+	UpstreamGroup                 string   `json:"upstream_group" gorm:"type:varchar(64)"`
+	UpstreamAuthType              string   `json:"upstream_auth_type" gorm:"type:varchar(16)"`
+	UpstreamUserId                int      `json:"upstream_user_id"`
+	UpstreamAccessToken           string   `json:"-" gorm:"type:text"`
+	UpstreamAccount               string   `json:"-" gorm:"type:varchar(320)"`
+	UpstreamPassword              string   `json:"-" gorm:"type:text"`
+	CostConversion                string   `json:"-" gorm:"type:text"`
+	CustomUpstreamConfig          string   `json:"-" gorm:"type:text"`
+	UpstreamRatioSyncDisabled     bool     `json:"-"`
+	UpstreamBalanceSyncDisabled   bool     `json:"-"`
+	SingleChannelAction           string   `json:"single_channel_action" gorm:"type:varchar(32)"`
+	MultipleChannelsAction        string   `json:"multiple_channels_action" gorm:"type:varchar(32)"`
+	SmartScheduleParticipationSet bool     `json:"smart_schedule_participation_set"`
+	SmartScheduleExcluded         bool     `json:"smart_schedule_excluded"`
+	SmartScheduleRevision         int64    `json:"-" gorm:"bigint"`
+	LastScheduleStatus            string   `json:"last_schedule_status" gorm:"type:varchar(16);index"`
+	LastScheduleError             string   `json:"last_schedule_error" gorm:"type:varchar(255)"`
+	LastScheduleScore             *float64 `json:"last_schedule_score"`
+	LastSchedulePriority          int64    `json:"last_schedule_priority" gorm:"bigint"`
+	LastScheduleWeight            uint     `json:"last_schedule_weight"`
+	LastScheduleTime              int64    `json:"last_schedule_time" gorm:"bigint;index"`
+	SmartScheduleStabilityState   string   `json:"smart_schedule_stability_state" gorm:"type:varchar(16);index"`
+	SmartScheduleStabilityUntil   int64    `json:"smart_schedule_stability_until" gorm:"bigint;index"`
+	SmartScheduleStabilitySince   int64    `json:"smart_schedule_stability_since" gorm:"bigint"`
+	SmartScheduleSavedPriority    int64    `json:"smart_schedule_saved_priority" gorm:"bigint"`
+	SmartScheduleSavedWeight      uint     `json:"smart_schedule_saved_weight"`
+	ConcurrencyLimit              int      `json:"concurrency_limit"`
+	ConcurrencyRevision           int64    `json:"-" gorm:"bigint"`
 }
 
 type ChannelConcurrencyConfig struct {
@@ -90,19 +94,36 @@ type ChannelRatioUpstreamOptions struct {
 
 type ChannelSmartScheduleConfigOptions struct {
 	Excluded bool
-	Priority *int64
-	Weight   *uint
 }
 
 type ChannelSmartScheduleResultUpdate struct {
-	ChannelId int
-	Status    string
-	Error     string
-	Score     *float64
-	Priority  int64
-	Weight    uint
-	Time      int64
-	Stability *ChannelSmartScheduleStabilityUpdate
+	ChannelId               int
+	Status                  string
+	Error                   string
+	Score                   *float64
+	Priority                int64
+	Weight                  uint
+	Time                    int64
+	Stability               *ChannelSmartScheduleStabilityUpdate
+	GuardCurrent            bool
+	ExpectedRevision        int64
+	ExpectedControlRevision string
+	ExpectedPriority        int64
+	ExpectedWeight          uint
+	ApplyPriorityWeight     bool
+}
+
+type ChannelSmartScheduleApplyOutcome struct {
+	ChannelId      int
+	Applied        bool
+	RoutingChanged bool
+}
+
+type ChannelSmartScheduleStabilityClearResult struct {
+	PreviousState string
+	Cleared       bool
+	Priority      int64
+	Weight        uint
 }
 
 type ChannelSmartScheduleStabilityUpdate struct {
@@ -111,6 +132,10 @@ type ChannelSmartScheduleStabilityUpdate struct {
 	Since         int64
 	SavedPriority int64
 	SavedWeight   uint
+}
+
+func (monitor ChannelRatioMonitor) ParticipatesInSmartSchedule() bool {
+	return monitor.SmartScheduleParticipationSet && !monitor.SmartScheduleExcluded
 }
 
 type ChannelRatioHistory struct {
@@ -267,81 +292,161 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 func SaveChannelSmartScheduleConfig(channelId int, options ChannelSmartScheduleConfigOptions) (monitor ChannelRatioMonitor, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
-		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+		created := errors.Is(findErr, gorm.ErrRecordNotFound)
+		if created {
 			monitor = ChannelRatioMonitor{ChannelId: channelId}
 		} else if findErr != nil {
 			return findErr
 		}
 
-		if options.Excluded && monitor.SmartScheduleStabilityState != "" {
-			priority := monitor.SmartScheduleSavedPriority
-			weight := monitor.SmartScheduleSavedWeight
-			options.Priority = &priority
-			options.Weight = &weight
+		wasParticipating := monitor.ParticipatesInSmartSchedule()
+		if monitor.SmartScheduleParticipationSet && monitor.SmartScheduleExcluded == options.Excluded {
+			return nil
 		}
+		if monitor.SmartScheduleRevision == math.MaxInt64 {
+			return errors.New("渠道智能调度修订号已达上限")
+		}
+		monitor.SmartScheduleParticipationSet = true
 		monitor.SmartScheduleExcluded = options.Excluded
-		if options.Priority != nil || options.Weight != nil {
-			monitor.SmartScheduleStabilityState = ""
-			monitor.SmartScheduleStabilityUntil = 0
-			monitor.SmartScheduleStabilitySince = 0
-			monitor.SmartScheduleSavedPriority = 0
-			monitor.SmartScheduleSavedWeight = 0
+		if !wasParticipating && !options.Excluded &&
+			monitor.SmartScheduleStabilityState == ChannelSmartScheduleStabilityProbing {
+			monitor.SmartScheduleStabilitySince = common.GetTimestamp()
 		}
-		if err := tx.Save(&monitor).Error; err != nil {
-			return err
+		monitor.SmartScheduleRevision++
+		if created {
+			return tx.Create(&monitor).Error
 		}
-		return updateChannelSmartSchedulePriorityWeightTx(tx, channelId, options.Priority, options.Weight)
+		return tx.Save(&monitor).Error
 	})
 	return monitor, err
 }
 
-func ExcludeAllChannelsFromSmartSchedule() (int, error) {
-	channelIds := make([]int, 0)
+func InitializeChannelSmartScheduleParticipation(smartScheduleEnabled bool) error {
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var option Option
+		findOptionErr := lockForUpdate(tx).
+			Where(&Option{Key: ChannelSmartScheduleParticipationInitializedOption}).
+			First(&option).Error
+		if findOptionErr == nil && option.Value == "true" {
+			return nil
+		}
+		if findOptionErr != nil && !errors.Is(findOptionErr, gorm.ErrRecordNotFound) {
+			return findOptionErr
+		}
+
+		var channelIds []int
 		if err := tx.Model(&Channel{}).Pluck("id", &channelIds).Error; err != nil {
 			return err
 		}
-
-		for _, channelId := range channelIds {
-			var monitor ChannelRatioMonitor
-			findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
-			if errors.Is(findErr, gorm.ErrRecordNotFound) {
-				monitor = ChannelRatioMonitor{
-					ChannelId:             channelId,
-					SmartScheduleExcluded: true,
-				}
-				if err := tx.Create(&monitor).Error; err != nil {
-					return err
-				}
-				continue
-			}
-			if findErr != nil {
-				return findErr
-			}
-			if monitor.SmartScheduleExcluded {
-				continue
-			}
-			if err := tx.Model(&monitor).Update("smart_schedule_excluded", true).Error; err != nil {
+		var monitors []ChannelRatioMonitor
+		if len(channelIds) > 0 {
+			if err := lockForUpdate(tx).Where("channel_id IN ?", channelIds).Find(&monitors).Error; err != nil {
 				return err
 			}
 		}
-		return nil
+		monitorByChannel := make(map[int]ChannelRatioMonitor, len(monitors))
+		for _, monitor := range monitors {
+			monitorByChannel[monitor.ChannelId] = monitor
+		}
+		adoptLegacyParticipation := smartScheduleEnabled
+		if !adoptLegacyParticipation {
+			for _, monitor := range monitors {
+				if monitor.SmartScheduleExcluded || monitor.LastScheduleStatus != "" ||
+					monitor.LastScheduleTime > 0 || monitor.SmartScheduleStabilityState != "" ||
+					monitor.SmartScheduleStabilitySince > 0 || monitor.SmartScheduleSavedPriority != 0 ||
+					monitor.SmartScheduleSavedWeight != 0 {
+					adoptLegacyParticipation = true
+					break
+				}
+			}
+		}
+		for _, channelId := range channelIds {
+			monitor, exists := monitorByChannel[channelId]
+			if exists && monitor.SmartScheduleParticipationSet {
+				continue
+			}
+			monitor.ChannelId = channelId
+			monitor.SmartScheduleParticipationSet = true
+			if !adoptLegacyParticipation {
+				monitor.SmartScheduleExcluded = true
+			}
+			if monitor.SmartScheduleRevision == math.MaxInt64 {
+				return errors.New("渠道智能调度修订号已达上限")
+			}
+			monitor.SmartScheduleRevision++
+			if exists {
+				if err := tx.Save(&monitor).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Create(&monitor).Error; err != nil {
+				return err
+			}
+		}
+
+		option.Key = ChannelSmartScheduleParticipationInitializedOption
+		option.Value = "true"
+		if errors.Is(findOptionErr, gorm.ErrRecordNotFound) {
+			return tx.Create(&option).Error
+		}
+		return tx.Save(&option).Error
 	})
-	return len(channelIds), err
+	if err != nil {
+		return err
+	}
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	common.OptionMap[ChannelSmartScheduleParticipationInitializedOption] = "true"
+	common.OptionMapRWMutex.Unlock()
+	return nil
 }
 
-func SaveChannelSmartScheduleResults(results []ChannelSmartScheduleResultUpdate) error {
+func ApplyChannelSmartScheduleResults(results []ChannelSmartScheduleResultUpdate) ([]ChannelSmartScheduleApplyOutcome, error) {
 	if len(results) == 0 {
-		return nil
+		return nil, nil
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	outcomes := make([]ChannelSmartScheduleApplyOutcome, 0, len(results))
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		for _, result := range results {
+			outcome := ChannelSmartScheduleApplyOutcome{ChannelId: result.ChannelId}
+			var controlOption Option
+			if result.GuardCurrent {
+				optionErr := lockForUpdate(tx).Where(&Option{Key: ChannelSmartScheduleControlRevisionOption}).
+					First(&controlOption).Error
+				if errors.Is(optionErr, gorm.ErrRecordNotFound) {
+					controlOption.Value = ""
+				} else if optionErr != nil {
+					return optionErr
+				}
+			}
 			var monitor ChannelRatioMonitor
 			findErr := lockForUpdate(tx).Where("channel_id = ?", result.ChannelId).First(&monitor).Error
 			if errors.Is(findErr, gorm.ErrRecordNotFound) {
-				monitor = ChannelRatioMonitor{ChannelId: result.ChannelId}
+				monitor = ChannelRatioMonitor{
+					ChannelId:                     result.ChannelId,
+					SmartScheduleParticipationSet: true,
+					SmartScheduleExcluded:         true,
+				}
 			} else if findErr != nil {
 				return findErr
+			}
+			if result.GuardCurrent {
+				if controlOption.Value != result.ExpectedControlRevision ||
+					monitor.SmartScheduleRevision != result.ExpectedRevision ||
+					!monitor.ParticipatesInSmartSchedule() {
+					outcomes = append(outcomes, outcome)
+					continue
+				}
+				var channel Channel
+				if err := lockForUpdate(tx).Where("id = ?", result.ChannelId).First(&channel).Error; err != nil {
+					return err
+				}
+				if channel.Status != common.ChannelStatusEnabled || channel.GetPriority() != result.ExpectedPriority ||
+					uint(channel.GetWeight()) != result.ExpectedWeight {
+					outcomes = append(outcomes, outcome)
+					continue
+				}
 			}
 
 			message := strings.TrimSpace(result.Error)
@@ -366,12 +471,81 @@ func SaveChannelSmartScheduleResults(results []ChannelSmartScheduleResultUpdate)
 				monitor.SmartScheduleSavedPriority = result.Stability.SavedPriority
 				monitor.SmartScheduleSavedWeight = result.Stability.SavedWeight
 			}
+			if monitor.SmartScheduleRevision == math.MaxInt64 {
+				return errors.New("渠道智能调度修订号已达上限")
+			}
+			monitor.SmartScheduleRevision++
+			if result.ApplyPriorityWeight {
+				priority := result.Priority
+				weight := result.Weight
+				if err := updateChannelSmartSchedulePriorityWeightTx(tx, result.ChannelId, &priority, &weight); err != nil {
+					return err
+				}
+				outcome.RoutingChanged = priority != result.ExpectedPriority || weight != result.ExpectedWeight
+			}
 			if err := tx.Save(&monitor).Error; err != nil {
 				return err
 			}
+			outcome.Applied = true
+			outcomes = append(outcomes, outcome)
 		}
 		return nil
 	})
+	return outcomes, err
+}
+
+func SaveChannelSmartScheduleResults(results []ChannelSmartScheduleResultUpdate) error {
+	_, err := ApplyChannelSmartScheduleResults(results)
+	return err
+}
+
+func ClearChannelSmartScheduleStability(channelId int, fallbackPriority int64, fallbackWeight uint) (result ChannelSmartScheduleStabilityClearResult, err error) {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var monitor ChannelRatioMonitor
+		if err := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error; err != nil {
+			return err
+		}
+		var channel Channel
+		if err := lockForUpdate(tx).Where("id = ?", channelId).First(&channel).Error; err != nil {
+			return err
+		}
+		result.PreviousState = monitor.SmartScheduleStabilityState
+		result.Priority = channel.GetPriority()
+		result.Weight = uint(channel.GetWeight())
+		if result.PreviousState == "" {
+			return nil
+		}
+		if monitor.SmartScheduleRevision == math.MaxInt64 {
+			return errors.New("渠道智能调度修订号已达上限")
+		}
+		result.Priority = monitor.SmartScheduleSavedPriority
+		if result.Priority <= 0 {
+			result.Priority = fallbackPriority
+		}
+		result.Weight = monitor.SmartScheduleSavedWeight
+		if result.Weight == 0 {
+			result.Weight = fallbackWeight
+		}
+		if err := updateChannelSmartSchedulePriorityWeightTx(tx, channelId, &result.Priority, &result.Weight); err != nil {
+			return err
+		}
+		now := common.GetTimestamp()
+		monitor.SmartScheduleStabilityState = ""
+		monitor.SmartScheduleStabilityUntil = 0
+		monitor.SmartScheduleStabilitySince = now
+		monitor.SmartScheduleSavedPriority = 0
+		monitor.SmartScheduleSavedWeight = 0
+		monitor.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
+		monitor.LastScheduleError = "管理员已手动解除稳定性保护"
+		monitor.LastScheduleScore = nil
+		monitor.LastSchedulePriority = result.Priority
+		monitor.LastScheduleWeight = result.Weight
+		monitor.LastScheduleTime = now
+		monitor.SmartScheduleRevision++
+		result.Cleared = true
+		return tx.Save(&monitor).Error
+	})
+	return result, err
 }
 
 func UpdateChannelSmartSchedulePriorityWeight(channelId int, priority *int64, weight *uint) error {

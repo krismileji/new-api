@@ -74,6 +74,7 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import {
+  clearChannelMonitorSmartScheduleStability,
   fetchChannelMonitorUpstreamBalance,
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
@@ -352,6 +353,21 @@ export function ChannelMonitor() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
+    },
+  })
+  const smartScheduleStabilityClearMutation = useMutation({
+    mutationFn: clearChannelMonitorSmartScheduleStability,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: (response) => {
+      toast.success(
+        response.data.cleared
+          ? `已解除稳定性保护，恢复优先级 ${response.data.priority}、权重 ${response.data.weight}`
+          : '渠道当前没有需要解除的稳定性保护'
+      )
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
+      queryClient.invalidateQueries({ queryKey: ['channels'] })
     },
   })
   const overview = query.data?.data
@@ -934,10 +950,11 @@ export function ChannelMonitor() {
                 smartScheduleConfigMutation.mutate({
                   channelId: channel.id,
                   excluded,
-                  reset: !excluded,
                 })
               }
-              smartScheduleEnabled={settings.smart_schedule_enabled}
+              onClearSmartScheduleStability={(channel) =>
+                smartScheduleStabilityClearMutation.mutate(channel.id)
+              }
               fetchingBalanceChannelId={
                 balanceFetchMutation.isPending
                   ? balanceFetchMutation.variables
@@ -956,6 +973,11 @@ export function ChannelMonitor() {
               updatingSmartScheduleChannelId={
                 smartScheduleConfigMutation.isPending
                   ? (smartScheduleConfigMutation.variables?.channelId ?? null)
+                  : null
+              }
+              clearingSmartScheduleStabilityChannelId={
+                smartScheduleStabilityClearMutation.isPending
+                  ? (smartScheduleStabilityClearMutation.variables ?? null)
                   : null
               }
             />

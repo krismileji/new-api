@@ -96,11 +96,12 @@ type ChannelMonitorChannelViewProps = {
     channel: ChannelMonitorItem,
     excluded: boolean
   ) => void
-  smartScheduleEnabled: boolean
+  onClearSmartScheduleStability: (channel: ChannelMonitorItem) => void
   fetchingBalanceChannelId: number | null
   fetchingRatioChannelId: number | null
   updatingStatusChannelId: number | null
   updatingSmartScheduleChannelId: number | null
+  clearingSmartScheduleStabilityChannelId: number | null
 }
 
 type ChannelActionButtonProps = {
@@ -322,9 +323,7 @@ export function ChannelMonitorChannelView(
               成功率（{props.performanceRangeLabel}）
             </TableHead>
             <TableHead>并发限制</TableHead>
-            {props.smartScheduleEnabled ? (
-              <TableHead>智能调度</TableHead>
-            ) : null}
+            <TableHead>智能调度</TableHead>
             <TableHead className='min-w-[112px]'>操作</TableHead>
           </TableRow>
         </TableHeader>
@@ -529,19 +528,24 @@ export function ChannelMonitorChannelView(
                     <span className='text-muted-foreground text-sm'>不限</span>
                   )}
                 </TableCell>
-                {props.smartScheduleEnabled ? (
-                  <TableCell className='whitespace-normal'>
-                    <ChannelMonitorSmartScheduleCell
-                      channel={channel}
-                      pending={
-                        props.updatingSmartScheduleChannelId === channel.id
-                      }
-                      onUpdate={(excluded) =>
-                        props.onUpdateSmartSchedule(channel, excluded)
-                      }
-                    />
-                  </TableCell>
-                ) : null}
+                <TableCell className='whitespace-normal'>
+                  <ChannelMonitorSmartScheduleCell
+                    channel={channel}
+                    pending={
+                      props.updatingSmartScheduleChannelId === channel.id
+                    }
+                    clearPending={
+                      props.clearingSmartScheduleStabilityChannelId ===
+                      channel.id
+                    }
+                    onUpdate={(excluded) =>
+                      props.onUpdateSmartSchedule(channel, excluded)
+                    }
+                    onClearStability={() =>
+                      props.onClearSmartScheduleStability(channel)
+                    }
+                  />
+                </TableCell>
                 <TableCell className='min-w-[112px]'>
                   <div className='inline-grid grid-cols-3 gap-0.5'>
                     <ChannelActionButton

@@ -30,6 +30,7 @@ import type {
   ChannelMonitorPerformanceResult,
   ChannelMonitorSettings,
   ChannelMonitorSmartScheduleConfig,
+  ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
   ChannelMonitorTaskRunResult,
@@ -198,7 +199,6 @@ export async function runChannelMonitorRatioUpdate() {
 export async function updateChannelMonitorSmartScheduleConfig(request: {
   channelId: number
   excluded: boolean
-  reset?: boolean
 }) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleConfig>
@@ -206,8 +206,20 @@ export async function updateChannelMonitorSmartScheduleConfig(request: {
     `/api/channel_monitor/channel/${request.channelId}/schedule`,
     {
       excluded: request.excluded,
-      reset: request.reset,
     },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function clearChannelMonitorSmartScheduleStability(
+  channelId: number
+) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleStabilityClearResult>
+  >(
+    `/api/channel_monitor/channel/${channelId}/schedule/stability/clear`,
+    undefined,
     channelMonitorRequestConfig()
   )
   return ensureChannelMonitorSuccess(response.data)

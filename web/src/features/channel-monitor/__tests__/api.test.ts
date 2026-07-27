@@ -24,10 +24,82 @@ import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
 import { api } from '@/lib/api'
 
 import {
+  clearChannelMonitorSmartScheduleStability,
   getChannelMonitorCostOverview,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorGroupChannels,
+  updateChannelMonitorSmartScheduleConfig,
 } from '../api'
+
+test('updates only channel participation without sending a routing reset flag', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: { success: true, message: '', data: { excluded: false } },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await updateChannelMonitorSmartScheduleConfig({
+      channelId: 7,
+      excluded: false,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requestConfig?.url, '/api/channel_monitor/channel/7/schedule')
+  assert.equal(requestConfig?.method, 'put')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    excluded: false,
+  })
+})
+
+test('posts the manual stability clear action for a channel', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          cleared: true,
+          previous_state: 'degraded',
+          priority: 90,
+          weight: 35,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    const response = await clearChannelMonitorSmartScheduleStability(7)
+    assert.equal(response.data.cleared, true)
+    assert.equal(response.data.previous_state, 'degraded')
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/stability/clear'
+  )
+  assert.equal(requestConfig?.method, 'post')
+})
 
 test('requests only the lightweight cost summary for the monitor dashboard', async () => {
   const originalAdapter = api.defaults.adapter

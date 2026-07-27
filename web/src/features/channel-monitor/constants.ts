@@ -27,6 +27,9 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmart
   {
     stability_percent: 50,
     curve_exponent: 1,
+    relative_weight_enabled: true,
+    relative_weight_start_percent: 3,
+    relative_weight_full_percent: 10,
     smart: {
       cost_ratio_percent: 40,
       first_token_percent: 40,

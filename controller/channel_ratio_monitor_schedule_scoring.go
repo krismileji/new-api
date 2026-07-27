@@ -12,6 +12,8 @@ const (
 	channelMonitorScorePercentageTotal       = 100.0
 	channelMonitorMinScoreCurveExponent      = 0.1
 	channelMonitorMaxScoreCurveExponent      = 5.0
+	channelMonitorDefaultWeightSpreadStart   = 3.0
+	channelMonitorDefaultWeightSpreadFull    = 10.0
 )
 
 type channelSmartScheduleMetricPercentages struct {
@@ -21,16 +23,22 @@ type channelSmartScheduleMetricPercentages struct {
 }
 
 type channelSmartScheduleScoring struct {
-	StabilityPercent float64                               `json:"stability_percent"`
-	CurveExponent    float64                               `json:"curve_exponent"`
-	Smart            channelSmartScheduleMetricPercentages `json:"smart"`
-	Ratio            channelSmartScheduleMetricPercentages `json:"ratio"`
+	StabilityPercent           float64                               `json:"stability_percent"`
+	CurveExponent              float64                               `json:"curve_exponent"`
+	RelativeWeightEnabled      bool                                  `json:"relative_weight_enabled"`
+	RelativeWeightStartPercent float64                               `json:"relative_weight_start_percent"`
+	RelativeWeightFullPercent  float64                               `json:"relative_weight_full_percent"`
+	Smart                      channelSmartScheduleMetricPercentages `json:"smart"`
+	Ratio                      channelSmartScheduleMetricPercentages `json:"ratio"`
 }
 
 func defaultChannelSmartScheduleScoring() channelSmartScheduleScoring {
 	return channelSmartScheduleScoring{
-		StabilityPercent: 50,
-		CurveExponent:    1,
+		StabilityPercent:           50,
+		CurveExponent:              1,
+		RelativeWeightEnabled:      true,
+		RelativeWeightStartPercent: channelMonitorDefaultWeightSpreadStart,
+		RelativeWeightFullPercent:  channelMonitorDefaultWeightSpreadFull,
 		Smart: channelSmartScheduleMetricPercentages{
 			CostRatioPercent:  40,
 			FirstTokenPercent: 40,
@@ -50,9 +58,24 @@ func parseChannelSmartScheduleScoring(raw string) channelSmartScheduleScoring {
 		return defaults
 	}
 	var scoring channelSmartScheduleScoring
-	if common.UnmarshalJsonStr(raw, &scoring) != nil || validateChannelSmartScheduleScoring(scoring) != nil {
+	if common.UnmarshalJsonStr(raw, &scoring) != nil {
 		return defaults
 	}
+	scoring = normalizeChannelSmartScheduleScoring(scoring)
+	if validateChannelSmartScheduleScoring(scoring) != nil {
+		return defaults
+	}
+	return scoring
+}
+
+func normalizeChannelSmartScheduleScoring(scoring channelSmartScheduleScoring) channelSmartScheduleScoring {
+	if scoring.RelativeWeightStartPercent != 0 || scoring.RelativeWeightFullPercent != 0 {
+		return scoring
+	}
+	defaults := defaultChannelSmartScheduleScoring()
+	scoring.RelativeWeightEnabled = defaults.RelativeWeightEnabled
+	scoring.RelativeWeightStartPercent = defaults.RelativeWeightStartPercent
+	scoring.RelativeWeightFullPercent = defaults.RelativeWeightFullPercent
 	return scoring
 }
 
@@ -64,6 +87,13 @@ func validateChannelSmartScheduleScoring(scoring channelSmartScheduleScoring) er
 		scoring.CurveExponent < channelMonitorMinScoreCurveExponent ||
 		scoring.CurveExponent > channelMonitorMaxScoreCurveExponent {
 		return errors.New("得分曲线指数必须在 0.1 到 5 之间")
+	}
+	if err := validateChannelSmartSchedulePercentage(scoring.RelativeWeightStartPercent); err != nil {
+		return errors.New("相对权重拉伸起始分差必须在 0% 到 100% 之间")
+	}
+	if err := validateChannelSmartSchedulePercentage(scoring.RelativeWeightFullPercent); err != nil ||
+		scoring.RelativeWeightFullPercent <= scoring.RelativeWeightStartPercent {
+		return errors.New("相对权重拉伸完整分差必须大于起始分差且不超过 100%")
 	}
 	if err := validateChannelSmartScheduleMetricPercentages(scoring.Smart); err != nil {
 		return errors.New("智能调度的成本倍率、首字和 TPS 占比合计必须为 100%")

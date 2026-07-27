@@ -473,6 +473,9 @@ export type ChannelMonitorSmartScheduleMetricPercentages = {
 export type ChannelMonitorSmartScheduleScoring = {
   stability_percent: number
   curve_exponent: number
+  relative_weight_enabled: boolean
+  relative_weight_start_percent: number
+  relative_weight_full_percent: number
   smart: ChannelMonitorSmartScheduleMetricPercentages
   ratio: ChannelMonitorSmartScheduleMetricPercentages
 }
@@ -516,6 +519,13 @@ export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
 
 export type ChannelMonitorSmartScheduleConfig = {
   excluded: boolean
+}
+
+export type ChannelMonitorSmartScheduleStabilityClearResult = {
+  cleared: boolean
+  previous_state: '' | 'degraded' | 'probing'
+  priority: number
+  weight: number
 }
 
 export type ChannelMonitorTaskRunResult = {

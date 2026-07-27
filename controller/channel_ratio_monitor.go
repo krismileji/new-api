@@ -42,7 +42,6 @@ type groupRatioSyncRequest struct {
 
 type channelSmartScheduleConfigUpdateRequest struct {
 	Excluded *bool `json:"excluded"`
-	Reset    bool  `json:"reset"`
 }
 
 type channelMonitorUpstreamRequest struct {
@@ -414,6 +413,10 @@ func getChannelMonitorOperator(c *gin.Context) (int, string) {
 }
 
 func GetChannelMonitorOverview(c *gin.Context) {
+	if err := initializeChannelSmartScheduleParticipation(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {
 		common.ApiError(c, err)
@@ -466,18 +469,19 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			}
 		}
 		item := channelMonitorItem{
-			Id:            channel.Id,
-			Name:          channel.Name,
-			Type:          channel.Type,
-			Status:        channel.Status,
-			StatusReason:  statusReason,
-			Priority:      channel.GetPriority(),
-			Weight:        channel.GetWeight(),
-			BaseURL:       channel.GetBaseURL(),
-			Models:        channel.Models,
-			TestModel:     channel.TestModel,
-			Groups:        groups,
-			ChannelRemark: channelRemark,
+			Id:                    channel.Id,
+			Name:                  channel.Name,
+			Type:                  channel.Type,
+			Status:                channel.Status,
+			StatusReason:          statusReason,
+			Priority:              channel.GetPriority(),
+			Weight:                channel.GetWeight(),
+			BaseURL:               channel.GetBaseURL(),
+			Models:                channel.Models,
+			TestModel:             channel.TestModel,
+			Groups:                groups,
+			ChannelRemark:         channelRemark,
+			SmartScheduleExcluded: true,
 		}
 		if cost, exists := todayCostByChannel[channel.Id]; exists {
 			item.TodayCostCNY = channelMonitorCostCNY(cost.CostNanoCNY)
@@ -500,7 +504,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			item.UpstreamBalance = monitor.UpstreamBalance
 			item.LastBalanceTime = monitor.LastBalanceTime
 			item.LastBalanceError = monitor.LastBalanceError
-			item.SmartScheduleExcluded = monitor.SmartScheduleExcluded
+			item.SmartScheduleExcluded = !monitor.ParticipatesInSmartSchedule()
 			item.LastScheduleStatus = monitor.LastScheduleStatus
 			item.LastScheduleError = monitor.LastScheduleError
 			item.LastScheduleScore = monitor.LastScheduleScore
@@ -571,28 +575,57 @@ func UpdateChannelMonitorSmartScheduleConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的调度设置"})
 		return
 	}
+	if err := initializeChannelSmartScheduleParticipation(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	options := model.ChannelSmartScheduleConfigOptions{Excluded: *request.Excluded}
-	reset := !options.Excluded && request.Reset
-	if reset {
-		priority := channelMonitorSmartScheduleBaselinePriority
-		weight := uint(channelMonitorSmartScheduleMinWeight)
-		options.Priority = &priority
-		options.Weight = &weight
-	}
 	monitor, err := model.SaveChannelSmartScheduleConfig(channelId, options)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if reset {
-		model.InitChannelCache()
-	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
-		"id": channelId, "excluded": options.Excluded, "reset": reset,
+		"id": channelId, "excluded": options.Excluded,
 	})
 	common.ApiSuccess(c, gin.H{
 		"excluded": monitor.SmartScheduleExcluded,
+	})
+}
+
+func ClearChannelMonitorSmartScheduleStability(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelId <= 0 {
+		common.ApiErrorMsg(c, "无效的渠道 ID")
+		return
+	}
+	if _, err := model.GetChannelById(channelId, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	result, err := model.ClearChannelSmartScheduleStability(
+		channelId,
+		channelMonitorSmartScheduleBaselinePriority,
+		channelMonitorSmartScheduleMinWeight,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if result.Cleared {
+		model.InitChannelCache()
+	}
+	recordManageAudit(c, "channel.monitor_smart_schedule_stability_clear", map[string]interface{}{
+		"id": channelId, "previous_state": result.PreviousState, "cleared": result.Cleared,
+		"priority": result.Priority, "weight": result.Weight,
+	})
+	common.ApiSuccess(c, gin.H{
+		"cleared":        result.Cleared,
+		"previous_state": result.PreviousState,
+		"priority":       result.Priority,
+		"weight":         result.Weight,
 	})
 }
 

@@ -119,6 +119,8 @@ function SmartSchedulePercentField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   name:
     | 'smartScheduleScoring.stabilityPercent'
+    | 'smartScheduleScoring.relativeWeightStartPercent'
+    | 'smartScheduleScoring.relativeWeightFullPercent'
     | `smartScheduleScoring.${SmartScheduleMetricGroup}.costRatioPercent`
     | `smartScheduleScoring.${SmartScheduleMetricGroup}.firstTokenPercent`
     | `smartScheduleScoring.${SmartScheduleMetricGroup}.tpsPercent`
@@ -274,6 +276,10 @@ export function ChannelMonitorSmartScheduleFields(
     control: props.form.control,
     name: 'smartScheduleScoring.stabilityPercent',
   })
+  const relativeWeightEnabled = useWatch({
+    control: props.form.control,
+    name: 'smartScheduleScoring.relativeWeightEnabled',
+  })
 
   return (
     <div className='flex flex-col gap-5'>
@@ -407,12 +413,55 @@ export function ChannelMonitorSmartScheduleFields(
               </InputGroup>
             </FormControl>
             <FormDescription>
-              1 为线性；大于 1 会放大渠道差距，旧版单指标调度相当于 3
+              1 为线性；大于 1 会进一步压低中低分渠道。相对拉伸也使用该指数
             </FormDescription>
             <FormMessage />
           </FormItem>
         )}
       />
+
+      <FormField
+        control={props.form.control}
+        name='smartScheduleScoring.relativeWeightEnabled'
+        render={({ field }) => (
+          <FormItem className='flex items-center justify-between gap-4 border-t pt-4'>
+            <div className='flex flex-col gap-1'>
+              <FormLabel>相对权重拉伸</FormLabel>
+              <FormDescription>
+                根据同一调度组内的得分范围渐进拉开权重，减少相近评分渠道平均分流
+              </FormDescription>
+            </div>
+            <FormControl>
+              <Switch
+                checked={field.value}
+                onCheckedChange={field.onChange}
+                aria-label='相对权重拉伸'
+              />
+            </FormControl>
+          </FormItem>
+        )}
+      />
+
+      {relativeWeightEnabled ? (
+        <div className='space-y-3'>
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <SmartSchedulePercentField
+              form={props.form}
+              name='smartScheduleScoring.relativeWeightStartPercent'
+              label='开始拉伸分差'
+            />
+            <SmartSchedulePercentField
+              form={props.form}
+              name='smartScheduleScoring.relativeWeightFullPercent'
+              label='完整拉伸分差'
+            />
+          </div>
+          <p className='text-muted-foreground text-sm'>
+            低于开始值保持绝对得分映射；达到完整值时，组内最低和最高得分映射到权重
+            10 和 100，中间按比例混合。开始值设为 0% 时，任何分差都会开始拉伸
+          </p>
+        </div>
+      ) : null}
 
       {stabilityEnabled && (
         <div className='grid gap-4 sm:grid-cols-2'>
@@ -482,7 +531,7 @@ export function ChannelMonitorSmartScheduleFields(
                   </InputGroup>
                 </FormControl>
                 <FormDescription>
-                  到期后恢复原优先级和权重，并只用新样本试放
+                  到期后恢复原优先级，以不超过 10 的小流量权重用新样本试放
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -775,8 +824,8 @@ export function ChannelMonitorSmartScheduleFields(
           调度得分按上方百分比计算，得分曲线指数决定渠道差距的放大程度；开启稳定性后，成功率按配置占比参与综合得分。稳定性按成功调用数
           ÷（成功调用数 +
           渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
-          0、权重
-          0，冷却到期后恢复原设置并只用新样本试放。指标样本不足的渠道使用优先级
+          0、权重 0，冷却到期后恢复原优先级，以不超过 10
+          的小流量权重只用新样本试放；达标后再恢复完整权重。指标样本不足的渠道使用优先级
           80、权重 10 进行探索。稳定性保护需要同时开启消费日志和
           ERROR_LOG_ENABLED。
         </AlertDescription>

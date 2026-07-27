@@ -158,6 +158,10 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 }
 
 func RunChannelMonitorSmartSchedule(c *gin.Context) {
+	if !getChannelMonitorSettings().SmartScheduleEnabled {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度已禁用"})
+		return
+	}
 	task, created, err := service.EnqueueSystemTask(channelMonitorSmartScheduleTaskType, nil)
 	if err != nil {
 		common.ApiError(c, err)
@@ -207,6 +211,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		reportProgress = func(int, int) {}
 	}
 	settings := getChannelMonitorSettings()
+	controlRevision := settings.SmartScheduleControlRevision
 	result := channelSmartScheduleTaskResult{
 		Strategy:           settings.SmartScheduleStrategy,
 		StabilityEnabled:   settings.SmartScheduleStabilityEnabled,
@@ -219,6 +224,12 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		MinSamples:         settings.SmartScheduleMinSamples,
 		MinSuccessRate:     settings.SmartScheduleMinSuccessRate,
 		CooldownMinutes:    settings.SmartScheduleCooldownMinutes,
+	}
+	if !settings.SmartScheduleEnabled {
+		return result, fmt.Errorf("智能调度已禁用")
+	}
+	if err := initializeChannelSmartScheduleParticipation(); err != nil {
+		return result, err
 	}
 
 	channels, err := model.GetAllChannelsForMonitor()
@@ -240,25 +251,6 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 			model.InitChannelCache()
 		}
 	}()
-	if forceReset {
-		channelIds := make([]int, 0, len(channels))
-		for _, channel := range channels {
-			monitor := monitorByChannel[channel.Id]
-			if channel.Status != common.ChannelStatusEnabled || monitor.SmartScheduleExcluded ||
-				monitor.SmartScheduleStabilityState != "" {
-				continue
-			}
-			channelIds = append(channelIds, channel.Id)
-		}
-		if err := model.ResetChannelSmartSchedulePriorityWeight(
-			channelIds,
-			channelMonitorSmartScheduleBaselinePriority,
-			channelMonitorSmartScheduleMinWeight,
-		); err != nil {
-			return result, err
-		}
-		channelCacheDirty = len(channelIds) > 0
-	}
 	usesBusinessScore := channelSmartScheduleUsesBusinessScore(
 		settings.SmartScheduleStabilityEnabled,
 		settings.SmartScheduleScoring,
@@ -361,76 +353,45 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	directActions := make([]channelSmartScheduleDirectAction, 0)
 	statusUpdates := make([]model.ChannelSmartScheduleResultUpdate, 0, len(channels))
 	stabilityUpdates := make(map[int]*model.ChannelSmartScheduleStabilityUpdate)
-	channelById := make(map[int]*model.Channel, len(channels))
+	priorityByChannel := make(map[int]int64, len(channels))
+	weightByChannel := make(map[int]uint, len(channels))
 	minimumSuccessRate := settings.SmartScheduleMinSuccessRate / 100
 	for _, channel := range channels {
-		channelById[channel.Id] = channel
 		monitor := monitorByChannel[channel.Id]
+		if _, exists := monitorByChannel[channel.Id]; !exists {
+			monitor.SmartScheduleParticipationSet = true
+			monitor.SmartScheduleExcluded = true
+		}
 		currentPriority := channel.GetPriority()
 		currentWeight := uint(channel.GetWeight())
-		if forceReset && channel.Status == common.ChannelStatusEnabled && !monitor.SmartScheduleExcluded &&
+		priorityByChannel[channel.Id] = currentPriority
+		weightByChannel[channel.Id] = currentWeight
+		if forceReset && channel.Status == common.ChannelStatusEnabled && monitor.ParticipatesInSmartSchedule() &&
 			monitor.SmartScheduleStabilityState == "" {
 			currentPriority = channelMonitorSmartScheduleBaselinePriority
 			currentWeight = channelMonitorSmartScheduleMinWeight
 		}
 		if channel.Status != common.ChannelStatusEnabled {
-			statusUpdates = append(statusUpdates, channelSmartScheduleStatusUpdate(
-				channel.Id,
-				model.ChannelSmartScheduleStatusSkipped,
-				"渠道未启用",
-				nil,
-				currentPriority,
-				currentWeight,
-				now,
-			))
 			result.Skipped++
 			continue
 		}
 
-		if monitor.SmartScheduleExcluded {
-			if monitor.SmartScheduleStabilityState != "" {
-				targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
-				directActions = append(directActions, channelSmartScheduleDirectAction{
-					ChannelId:       channel.Id,
-					CurrentPriority: currentPriority,
-					CurrentWeight:   currentWeight,
-					TargetPriority:  targetPriority,
-					TargetWeight:    targetWeight,
-					Status:          model.ChannelSmartScheduleStatusSucceeded,
-					Message:         "已停止参与智能调度，恢复降级前的优先级和权重",
-					Stability:       &model.ChannelSmartScheduleStabilityUpdate{},
-				})
-				continue
-			}
-			statusUpdates = append(statusUpdates, channelSmartScheduleStatusUpdate(
-				channel.Id,
-				model.ChannelSmartScheduleStatusSkipped,
-				"已设为不参与智能调度",
-				nil,
-				currentPriority,
-				currentWeight,
-				now,
-			))
+		if !monitor.ParticipatesInSmartSchedule() {
 			result.Skipped++
 			continue
 		}
 
-		if (!needsStability || !stabilityAvailable) && monitor.SmartScheduleStabilityState != "" {
-			targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
+		if monitor.SmartScheduleStabilityState != "" && (!needsStability || !stabilityAvailable) {
 			directActions = append(directActions, channelSmartScheduleDirectAction{
 				ChannelId:       channel.Id,
 				CurrentPriority: currentPriority,
 				CurrentWeight:   currentWeight,
-				TargetPriority:  targetPriority,
-				TargetWeight:    targetWeight,
-				Status:          model.ChannelSmartScheduleStatusSucceeded,
-				Message:         "稳定性调度不可用，已恢复降级前的优先级和权重",
-				Stability:       &model.ChannelSmartScheduleStabilityUpdate{},
+				TargetPriority:  currentPriority,
+				TargetWeight:    currentWeight,
+				Status:          model.ChannelSmartScheduleStatusSkipped,
+				Message:         "稳定性保护未启用或统计不可用，保持当前安全状态",
 			})
 			continue
-		}
-		if !needsStability && monitor.SmartScheduleStabilitySince > 0 {
-			stabilityUpdates[channel.Id] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
 		switch monitor.SmartScheduleStabilityState {
@@ -450,7 +411,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				})
 				continue
 			}
-			targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
+			targetPriority, targetWeight := channelSmartScheduleProbeTarget(monitor)
 			directActions = append(directActions, channelSmartScheduleDirectAction{
 				ChannelId:       channel.Id,
 				CurrentPriority: currentPriority,
@@ -458,7 +419,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				TargetPriority:  targetPriority,
 				TargetWeight:    targetWeight,
 				Status:          model.ChannelSmartScheduleStatusSucceeded,
-				Message:         "降级时间已结束，已恢复降级前的优先级和权重并开始试放",
+				Message:         "降级时间已结束，已按小流量权重开始稳定性试放",
 				Stability: &model.ChannelSmartScheduleStabilityUpdate{
 					State:         model.ChannelSmartScheduleStabilityProbing,
 					Since:         now,
@@ -470,26 +431,19 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		case model.ChannelSmartScheduleStabilityProbing:
 		case "":
 		default:
-			targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
 			directActions = append(directActions, channelSmartScheduleDirectAction{
 				ChannelId:       channel.Id,
 				CurrentPriority: currentPriority,
 				CurrentWeight:   currentWeight,
-				TargetPriority:  targetPriority,
-				TargetWeight:    targetWeight,
-				Status:          model.ChannelSmartScheduleStatusSucceeded,
-				Message:         "稳定性调度状态无效，已恢复原优先级和权重",
-				Stability:       &model.ChannelSmartScheduleStabilityUpdate{},
+				TargetPriority:  currentPriority,
+				TargetWeight:    currentWeight,
+				Status:          model.ChannelSmartScheduleStatusSkipped,
+				Message:         "稳定性调度状态无效，保持当前安全状态",
 			})
 			continue
 		}
 
 		if len(settings.SmartScheduleModels) > 0 && selectedModelByChannel[channel.Id] == "" && (needsPerformance || needsStability) {
-			stabilityUpdate := stabilityUpdates[channel.Id]
-			if monitor.SmartScheduleStabilityState == model.ChannelSmartScheduleStabilityProbing ||
-				monitor.SmartScheduleStabilitySince > 0 {
-				stabilityUpdate = &model.ChannelSmartScheduleStabilityUpdate{}
-			}
 			statusUpdate := channelSmartScheduleStatusUpdate(
 				channel.Id,
 				model.ChannelSmartScheduleStatusSkipped,
@@ -499,9 +453,8 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				currentWeight,
 				now,
 			)
-			statusUpdate.Stability = stabilityUpdate
+			statusUpdate.Stability = stabilityUpdates[channel.Id]
 			statusUpdates = append(statusUpdates, statusUpdate)
-			result.Skipped++
 			continue
 		}
 
@@ -535,7 +488,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				if performance != nil {
 					sampleCount = performance.StabilitySampleCount
 				}
-				targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
+				targetPriority, targetWeight := channelSmartScheduleProbeTarget(monitor)
 				directActions = append(directActions, channelSmartScheduleDirectAction{
 					ChannelId:       channel.Id,
 					CurrentPriority: currentPriority,
@@ -569,10 +522,26 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				})
 				continue
 			}
-			stabilityUpdates[channel.Id] = &model.ChannelSmartScheduleStabilityUpdate{
-				Since: monitor.SmartScheduleStabilitySince,
-			}
-		} else if monitor.SmartScheduleStabilitySince > 0 && monitor.SmartScheduleStabilitySince <= performanceStart {
+			targetPriority, targetWeight := channelSmartScheduleRestoreTarget(monitor)
+			directActions = append(directActions, channelSmartScheduleDirectAction{
+				ChannelId:       channel.Id,
+				CurrentPriority: currentPriority,
+				CurrentWeight:   currentWeight,
+				TargetPriority:  targetPriority,
+				TargetWeight:    targetWeight,
+				Status:          model.ChannelSmartScheduleStatusSucceeded,
+				Message: fmt.Sprintf(
+					"试放成功率 %.1f%% 已达到 %.1f%%，已解除保护并恢复原优先级和权重",
+					*performance.Stability*100,
+					settings.SmartScheduleMinSuccessRate,
+				),
+				Stability: &model.ChannelSmartScheduleStabilityUpdate{
+					Since: monitor.SmartScheduleStabilitySince,
+				},
+			})
+			continue
+		} else if monitor.SmartScheduleStabilityState == "" && monitor.SmartScheduleStabilitySince > 0 &&
+			monitor.SmartScheduleStabilitySince <= performanceStart {
 			stabilityUpdates[channel.Id] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
@@ -617,7 +586,6 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 				)
 				statusUpdate.Stability = stabilityUpdates[channel.Id]
 				statusUpdates = append(statusUpdates, statusUpdate)
-				result.Skipped++
 				continue
 			}
 			if conversionErr == nil {
@@ -692,57 +660,10 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		)
 		statusUpdate.Stability = stabilityUpdates[candidate.ChannelId]
 		statusUpdates = append(statusUpdates, statusUpdate)
-		result.Skipped++
 	}
 
 	processed := result.Skipped
 	for _, action := range directActions {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		var priority *int64
-		if action.TargetPriority != action.CurrentPriority {
-			value := action.TargetPriority
-			priority = &value
-		}
-		var weight *uint
-		if action.TargetWeight != action.CurrentWeight {
-			value := action.TargetWeight
-			weight = &value
-		}
-		if priority != nil || weight != nil {
-			if err := model.UpdateChannelSmartSchedulePriorityWeight(action.ChannelId, priority, weight); err != nil {
-				channelName := ""
-				if channel := channelById[action.ChannelId]; channel != nil {
-					channelName = channel.Name
-				}
-				result.recordFailure(action.ChannelId, channelName, err)
-				statusUpdates = append(statusUpdates, channelSmartScheduleStatusUpdate(
-					action.ChannelId,
-					model.ChannelSmartScheduleStatusFailed,
-					err.Error(),
-					nil,
-					action.CurrentPriority,
-					action.CurrentWeight,
-					now,
-				))
-				processed++
-				reportProgress(processed, result.Total)
-				continue
-			}
-			channelCacheDirty = true
-		}
-
-		if priority != nil || weight != nil || action.Stability != nil {
-			result.Updated++
-		} else if action.Status == model.ChannelSmartScheduleStatusSkipped {
-			result.Skipped++
-		} else {
-			result.Unchanged++
-		}
 		statusUpdate := channelSmartScheduleStatusUpdate(
 			action.ChannelId,
 			action.Status,
@@ -754,68 +675,10 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		)
 		statusUpdate.Stability = action.Stability
 		statusUpdates = append(statusUpdates, statusUpdate)
-		processed++
-		reportProgress(processed, result.Total)
 	}
 
 	for _, item := range plan.Items {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		var priority *int64
-		if item.TargetPriority != item.CurrentPriority {
-			value := item.TargetPriority
-			priority = &value
-		}
-		var weight *uint
-		if item.TargetWeight != item.CurrentWeight {
-			value := item.TargetWeight
-			weight = &value
-		}
 		stabilityUpdate := stabilityUpdates[item.ChannelId]
-		if priority == nil && weight == nil && stabilityUpdate == nil {
-			result.Unchanged++
-			score := item.Score
-			statusUpdates = append(statusUpdates, channelSmartScheduleStatusUpdate(
-				item.ChannelId,
-				model.ChannelSmartScheduleStatusSucceeded,
-				"",
-				&score,
-				item.TargetPriority,
-				item.TargetWeight,
-				now,
-			))
-			processed++
-			reportProgress(processed, result.Total)
-			continue
-		}
-
-		if priority != nil || weight != nil {
-			if err := model.UpdateChannelSmartSchedulePriorityWeight(item.ChannelId, priority, weight); err != nil {
-				channelName := ""
-				if channel := channelById[item.ChannelId]; channel != nil {
-					channelName = channel.Name
-				}
-				result.recordFailure(item.ChannelId, channelName, err)
-				statusUpdates = append(statusUpdates, channelSmartScheduleStatusUpdate(
-					item.ChannelId,
-					model.ChannelSmartScheduleStatusFailed,
-					err.Error(),
-					nil,
-					item.CurrentPriority,
-					item.CurrentWeight,
-					now,
-				))
-				processed++
-				reportProgress(processed, result.Total)
-				continue
-			}
-			channelCacheDirty = true
-		}
-		result.Updated++
 		score := item.Score
 		statusUpdate := channelSmartScheduleStatusUpdate(
 			item.ChannelId,
@@ -828,12 +691,42 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		)
 		statusUpdate.Stability = stabilityUpdate
 		statusUpdates = append(statusUpdates, statusUpdate)
-		processed++
-		reportProgress(processed, result.Total)
 	}
 
-	if err := model.SaveChannelSmartScheduleResults(statusUpdates); err != nil {
-		return result, err
+	channelNameById := make(map[int]string, len(channels))
+	for _, channel := range channels {
+		channelNameById[channel.Id] = channel.Name
+	}
+	for _, statusUpdate := range statusUpdates {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
+		}
+
+		monitor := monitorByChannel[statusUpdate.ChannelId]
+		statusUpdate.GuardCurrent = true
+		statusUpdate.ExpectedRevision = monitor.SmartScheduleRevision
+		statusUpdate.ExpectedControlRevision = controlRevision
+		statusUpdate.ExpectedPriority = priorityByChannel[statusUpdate.ChannelId]
+		statusUpdate.ExpectedWeight = weightByChannel[statusUpdate.ChannelId]
+		statusUpdate.ApplyPriorityWeight = statusUpdate.Priority != statusUpdate.ExpectedPriority ||
+			statusUpdate.Weight != statusUpdate.ExpectedWeight
+		outcomes, applyErr := model.ApplyChannelSmartScheduleResults([]model.ChannelSmartScheduleResultUpdate{statusUpdate})
+		if applyErr != nil {
+			result.recordFailure(statusUpdate.ChannelId, channelNameById[statusUpdate.ChannelId], applyErr)
+		} else if len(outcomes) == 0 || !outcomes[0].Applied {
+			result.Skipped++
+		} else if outcomes[0].RoutingChanged || statusUpdate.Stability != nil {
+			result.Updated++
+			channelCacheDirty = channelCacheDirty || outcomes[0].RoutingChanged
+		} else if statusUpdate.Status == model.ChannelSmartScheduleStatusSkipped {
+			result.Skipped++
+		} else {
+			result.Unchanged++
+		}
+		processed++
+		reportProgress(processed, result.Total)
 	}
 	reportProgress(result.Total, result.Total)
 	return result, nil
@@ -883,6 +776,11 @@ func channelSmartScheduleRestoreTarget(monitor model.ChannelRatioMonitor) (int64
 		monitor.SmartScheduleSavedPriority,
 		monitor.SmartScheduleSavedWeight,
 	)
+}
+
+func channelSmartScheduleProbeTarget(monitor model.ChannelRatioMonitor) (int64, uint) {
+	priority, weight := channelSmartScheduleRestoreTarget(monitor)
+	return priority, min(weight, channelMonitorSmartScheduleMinWeight)
 }
 
 func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, applyMode string, minSamples int, forceReset bool) channelSmartSchedulePlan {
@@ -970,6 +868,8 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 		}
 
 		items := make([]channelSmartSchedulePlanItem, 0, len(scheduleCohort.Candidates))
+		scoreMin := math.Inf(1)
+		scoreMax := math.Inf(-1)
 		for _, candidate := range scheduleCohort.Candidates {
 			ratioScore := 0.0
 			if candidate.Ratio != nil {
@@ -1038,16 +938,8 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 			} else if score > 1 {
 				score = 1
 			}
-			weightScore := math.Pow(score, scoring.CurveExponent)
-			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+weightScore*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
-			if targetWeight < channelMonitorSmartScheduleMinWeight {
-				targetWeight = channelMonitorSmartScheduleMinWeight
-			} else if targetWeight > channelMonitorSmartScheduleMaxWeight {
-				targetWeight = channelMonitorSmartScheduleMaxWeight
-			}
-			if !forceReset {
-				targetWeight = channelSmartScheduleDampedWeight(candidate.CurrentWeight, targetWeight, maxWeightChange)
-			}
+			scoreMin = math.Min(scoreMin, score)
+			scoreMax = math.Max(scoreMax, score)
 			targetPriority := candidate.CurrentPriority
 			if forceReset && applyMode == channelMonitorSmartScheduleApplyWeight {
 				targetPriority = channelMonitorSmartScheduleBaselinePriority
@@ -1058,8 +950,25 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 				CurrentPriority: candidate.CurrentPriority,
 				CurrentWeight:   candidate.CurrentWeight,
 				TargetPriority:  targetPriority,
-				TargetWeight:    targetWeight,
 			})
+		}
+		for index := range items {
+			weightScore := channelSmartScheduleWeightScore(
+				items[index].Score,
+				scoreMin,
+				scoreMax,
+				scoring,
+			)
+			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+weightScore*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
+			if targetWeight < channelMonitorSmartScheduleMinWeight {
+				targetWeight = channelMonitorSmartScheduleMinWeight
+			} else if targetWeight > channelMonitorSmartScheduleMaxWeight {
+				targetWeight = channelMonitorSmartScheduleMaxWeight
+			}
+			if !forceReset {
+				targetWeight = channelSmartScheduleDampedWeight(items[index].CurrentWeight, targetWeight, maxWeightChange)
+			}
+			items[index].TargetWeight = targetWeight
 		}
 
 		sort.Slice(items, func(i int, j int) bool {
@@ -1085,6 +994,39 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 		return plan.Items[i].ChannelId < plan.Items[j].ChannelId
 	})
 	return plan
+}
+
+func channelSmartScheduleWeightScore(score, scoreMin, scoreMax float64, scoring channelSmartScheduleScoring) float64 {
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0
+	}
+	if score < 0 {
+		score = 0
+	} else if score > 1 {
+		score = 1
+	}
+	absoluteScore := math.Pow(score, scoring.CurveExponent)
+	if !scoring.RelativeWeightEnabled || scoreMax-scoreMin <= channelMonitorRatioEpsilon ||
+		scoring.RelativeWeightFullPercent <= scoring.RelativeWeightStartPercent {
+		return absoluteScore
+	}
+	relativeScore := (score - scoreMin) / (scoreMax - scoreMin)
+	if relativeScore < 0 {
+		relativeScore = 0
+	} else if relativeScore > 1 {
+		relativeScore = 1
+	}
+	relativeScore = math.Pow(relativeScore, scoring.CurveExponent)
+	spreadPercent := (scoreMax - scoreMin) * channelMonitorScorePercentageTotal
+	blend := (spreadPercent - scoring.RelativeWeightStartPercent) /
+		(scoring.RelativeWeightFullPercent - scoring.RelativeWeightStartPercent)
+	if blend <= 0 {
+		return absoluteScore
+	}
+	if blend > 1 {
+		blend = 1
+	}
+	return absoluteScore + (relativeScore-absoluteScore)*blend
 }
 
 func channelSmartScheduleCandidateSkipReason(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int) string {

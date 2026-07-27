@@ -78,7 +78,9 @@ function renderCell(overrides: Partial<ChannelMonitorItem>) {
     <ChannelMonitorSmartScheduleCell
       channel={createChannel(overrides)}
       pending={false}
+      clearPending={false}
       onUpdate={noop}
+      onClearStability={noop}
     />
   )
 }
@@ -110,6 +112,7 @@ describe('channel monitor smart schedule cell status', () => {
 
   test('places low-success degradation on a separate third row instead of a stale score', () => {
     const markup = renderCell({
+      smart_schedule_excluded: true,
       smart_schedule_stability_state: 'degraded',
       smart_schedule_stability_until: 1_752_777_845,
       last_schedule_score: 0.288,
@@ -117,9 +120,11 @@ describe('channel monitor smart schedule cell status', () => {
 
     assert.match(
       markup,
-      /参与调度[\s\S]*<\/div><span data-slot="smart-schedule-stability-status"[^>]*>低成功率降级/
+      /参与调度[\s\S]*data-slot="smart-schedule-stability-status"[^>]*>低成功率降级/
     )
     assert.doesNotMatch(markup, /得分 28\.8/)
+    assert.match(markup, /手动解除/)
+    assert.match(markup, /aria-label="手动解除 测试渠道 的稳定性保护"/)
   })
 
   test('places stability probing on a separate third row', () => {
@@ -129,8 +134,9 @@ describe('channel monitor smart schedule cell status', () => {
 
     assert.match(
       markup,
-      /参与调度[\s\S]*<\/div><span data-slot="smart-schedule-stability-status"[^>]*>稳定性试放/
+      /参与调度[\s\S]*data-slot="smart-schedule-stability-status"[^>]*>稳定性试放/
     )
+    assert.match(markup, /手动解除/)
   })
 
   test('does not render a legacy task-status row for any schedule state', () => {

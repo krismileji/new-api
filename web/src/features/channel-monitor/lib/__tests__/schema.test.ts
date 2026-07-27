@@ -75,6 +75,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleScoring: {
         stabilityPercent: 50,
         curveExponent: 1,
+        relativeWeightEnabled: true,
+        relativeWeightStartPercent: 3,
+        relativeWeightFullPercent: 10,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -123,6 +126,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleScoring: {
         stabilityPercent: 50,
         curveExponent: 1,
+        relativeWeightEnabled: true,
+        relativeWeightStartPercent: 3,
+        relativeWeightFullPercent: 10,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -235,6 +241,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleScoring: {
         stabilityPercent: 50,
         curveExponent: 1,
+        relativeWeightEnabled: true,
+        relativeWeightStartPercent: 3,
+        relativeWeightFullPercent: 10,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -290,6 +299,38 @@ describe('channel monitor settings schema', () => {
         },
       }).success,
       false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          relativeWeightStartPercent: -0.1,
+        },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          relativeWeightStartPercent: 10,
+          relativeWeightFullPercent: 10,
+        },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleScoring: {
+          ...baseSettings.smartScheduleScoring,
+          relativeWeightStartPercent: 0,
+          relativeWeightFullPercent: 100,
+        },
+      }).success,
+      true
     )
     assert.equal(
       schema.safeParse({

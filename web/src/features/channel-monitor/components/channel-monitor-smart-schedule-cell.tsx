@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ShieldMinusIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 
 import {
@@ -28,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { formatTimestampToDate } from '@/lib/format'
@@ -37,14 +40,20 @@ import type { ChannelMonitorItem } from '../types'
 type ChannelMonitorSmartScheduleCellProps = {
   channel: ChannelMonitorItem
   pending: boolean
+  clearPending: boolean
   onUpdate: (excluded: boolean) => void
+  onClearStability: () => void
 }
 
 export function ChannelMonitorSmartScheduleCell(
   props: ChannelMonitorSmartScheduleCellProps
 ) {
-  const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false)
+  const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
   const participating = !props.channel.smart_schedule_excluded
+  const busy = props.pending || props.clearPending
+  const stabilityState = props.channel.smart_schedule_stability_state
+  const hasStabilityProtection =
+    stabilityState === 'degraded' || stabilityState === 'probing'
 
   return (
     <div className='flex w-full min-w-0 flex-col items-start gap-2'>
@@ -55,21 +64,15 @@ export function ChannelMonitorSmartScheduleCell(
         <span>
           权重 <strong>{props.channel.weight}</strong>
         </span>
-        {props.pending && <Spinner className='size-3.5' />}
+        {busy && <Spinner className='size-3.5' />}
       </div>
 
       <div className='flex flex-wrap items-center gap-2'>
         <div className='flex items-center gap-2'>
           <Switch
             checked={participating}
-            disabled={props.pending}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                setResetConfirmationOpen(true)
-              } else {
-                props.onUpdate(true)
-              }
-            }}
+            disabled={busy}
+            onCheckedChange={(checked) => props.onUpdate(!checked)}
             aria-label={`${participating ? '停止' : '启用'} ${props.channel.name} 的智能调度`}
           />
           <span className='text-xs'>参与调度</span>
@@ -83,49 +86,65 @@ export function ChannelMonitorSmartScheduleCell(
         ) : null}
       </div>
 
-      {participating &&
-      props.channel.smart_schedule_stability_state === 'degraded' ? (
-        <span
-          data-slot='smart-schedule-stability-status'
-          className='text-destructive text-xs'
-        >
-          低成功率降级
-          {props.channel.smart_schedule_stability_until
-            ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
-            : ''}
-        </span>
-      ) : null}
-      {participating &&
-      props.channel.smart_schedule_stability_state === 'probing' ? (
-        <span
-          data-slot='smart-schedule-stability-status'
-          className='text-xs text-amber-600 dark:text-amber-400'
-        >
-          稳定性试放
-        </span>
+      {hasStabilityProtection ? (
+        <div className='flex flex-wrap items-center gap-2'>
+          {stabilityState === 'degraded' ? (
+            <span
+              data-slot='smart-schedule-stability-status'
+              className='text-destructive text-xs'
+            >
+              低成功率降级
+              {props.channel.smart_schedule_stability_until
+                ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
+                : ''}
+            </span>
+          ) : (
+            <span
+              data-slot='smart-schedule-stability-status'
+              className='text-xs text-amber-600 dark:text-amber-400'
+            >
+              稳定性试放
+            </span>
+          )}
+          <Button
+            type='button'
+            variant='outline'
+            size='xs'
+            disabled={busy}
+            onClick={() => setClearConfirmationOpen(true)}
+            aria-label={`手动解除 ${props.channel.name} 的稳定性保护`}
+          >
+            <HugeiconsIcon icon={ShieldMinusIcon} data-icon='inline-start' />
+            手动解除
+          </Button>
+        </div>
       ) : null}
 
       <AlertDialog
-        open={resetConfirmationOpen}
-        onOpenChange={setResetConfirmationOpen}
+        open={clearConfirmationOpen}
+        onOpenChange={setClearConfirmationOpen}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认参与调度？</AlertDialogTitle>
+            <AlertDialogTitle>确认手动解除稳定性保护？</AlertDialogTitle>
             <AlertDialogDescription>
-              启用“{props.channel.name}”参与智能调度将把优先级重置为
-              80、权重重置为 10。
+              将立即清除“{props.channel.name}”的
+              {stabilityState === 'degraded' ? '低成功率降级' : '稳定性试放'}
+              状态，并恢复进入保护前保存的优先级和完整权重。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={props.clearPending}>
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
+              disabled={props.clearPending}
               onClick={() => {
-                props.onUpdate(false)
-                setResetConfirmationOpen(false)
+                props.onClearStability()
+                setClearConfirmationOpen(false)
               }}
             >
-              确认
+              {props.clearPending ? '解除中...' : '确认解除'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

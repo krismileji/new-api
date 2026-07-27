@@ -19,7 +19,8 @@
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
-| `PUT` | `/channel/:id/schedule` | 更新参与状态；`excluded`，可选 `reset` |
+| `PUT` | `/channel/:id/schedule` | 更新参与状态；`excluded`，不修改当前路由或稳定性状态 |
+| `POST` | `/channel/:id/schedule/stability/clear` | 手动解除低成功率降级或稳定性试放，恢复保护前保存的路由 |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
 | `GET` | `/channel/:id/history` | 查询倍率变更历史，支持通用分页 |
 | `PUT` | `/channel/:id/upstream` | 保存上游认证、同步、换算、余额和策略配置 |
@@ -54,7 +55,7 @@
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
 | `smart_schedule_stability_enabled` | `ChannelMonitorSmartScheduleStabilityEnabled` | `false` | 布尔值 |
-| `smart_schedule_scoring` | `ChannelMonitorSmartScheduleScoring` | 见下方 | 稳定性、策略指标百分比和得分曲线指数 |
+| `smart_schedule_scoring` | `ChannelMonitorSmartScheduleScoring` | 见下方 | 稳定性、策略指标百分比、得分曲线指数和相对权重拉伸 |
 | `smart_schedule_apply_mode` | `ChannelMonitorSmartScheduleApplyMode` | `weight` | `weight`、`priority_weight` |
 | `smart_schedule_performance_minutes` | `ChannelMonitorSmartSchedulePerformanceMinutes` | `60` | `15`、`60`、`360`、`1440` |
 | `smart_schedule_models` | `ChannelMonitorSmartScheduleModels` | `[]` | 最多 100 个，每项最长 255 字符 |
@@ -64,12 +65,15 @@
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
 
-`smart_schedule_scoring` 必须提交完整对象；两个策略的指标占比各自合计为 `100%`，曲线指数范围为 `0.1..5`：
+`smart_schedule_scoring` 必须提交完整对象；两个策略的指标占比各自合计为 `100%`，曲线指数范围为 `0.1..5`。相对权重拉伸的两个分差范围均为 `0..100`，且完整拉伸分差必须大于开始拉伸分差：
 
 ```json
 {
   "stability_percent": 50,
   "curve_exponent": 1,
+  "relative_weight_enabled": true,
+  "relative_weight_start_percent": 3,
+  "relative_weight_full_percent": 10,
   "smart": {
     "cost_ratio_percent": 40,
     "first_token_percent": 40,
@@ -82,6 +86,8 @@
   }
 }
 ```
+
+旧客户端提交不含三个相对权重字段的完整评分对象时，后端自动补为 `true / 3 / 10` 后保存。关闭相对权重拉伸时仍需保留有效的开始和完整分差，便于再次开启。
 
 ## 系统任务
 

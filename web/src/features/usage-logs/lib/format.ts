@@ -457,6 +457,8 @@ const CHANNEL_MONITOR_AUDIT_TEMPLATES: Record<string, string> = {
   'channel.status_update': '已将渠道 {{id}} 的状态更新为 {{status}}',
   'channel.monitor_smart_schedule_config_update':
     '已更新渠道 {{id}} 的智能调度设置',
+  'channel.monitor_smart_schedule_stability_clear':
+    '已手动解除渠道 {{id}} 的稳定性保护，恢复优先级 {{priority}}、权重 {{weight}}',
   'channel.monitor_group_ratio_sync':
     '已根据上游倍率 {{upstream_ratio}} 和系数 {{coefficient}}，将分组 {{group}} 的倍率更新为 {{ratio}}',
   'channel.monitor_group_ratio_update':

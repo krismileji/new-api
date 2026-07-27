@@ -454,6 +454,186 @@ func TestChannelSmartScheduleConfigAndResultPersistWithoutRatioBaseline(t *testi
 	assert.Equal(t, uint(70), monitor.SmartScheduleSavedWeight)
 }
 
+func TestChannelSmartScheduleParticipationChangesFreezeRoutingAndRestartProbeSampling(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	require.NoError(t, DB.AutoMigrate(&Ability{}))
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id = ?", 36).Delete(&Ability{}).Error)
+	})
+
+	priority := int64(90)
+	weight := uint(40)
+	require.NoError(t, DB.Create(&Channel{
+		Id: 36, Name: "probing", Status: common.ChannelStatusEnabled, Group: "vip",
+		Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "vip", Model: "model-a", ChannelId: 36, Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId: 36, SmartScheduleParticipationSet: true,
+		SmartScheduleStabilityState: ChannelSmartScheduleStabilityProbing,
+		SmartScheduleStabilitySince: 1, SmartScheduleSavedPriority: 90, SmartScheduleSavedWeight: 75,
+	}).Error)
+
+	monitor, err := SaveChannelSmartScheduleConfig(36, ChannelSmartScheduleConfigOptions{Excluded: true})
+	require.NoError(t, err)
+	assert.False(t, monitor.ParticipatesInSmartSchedule())
+	assert.Equal(t, ChannelSmartScheduleStabilityProbing, monitor.SmartScheduleStabilityState)
+	assert.Equal(t, int64(1), monitor.SmartScheduleStabilitySince)
+
+	monitor, err = SaveChannelSmartScheduleConfig(36, ChannelSmartScheduleConfigOptions{Excluded: false})
+	require.NoError(t, err)
+	assert.True(t, monitor.ParticipatesInSmartSchedule())
+	assert.Equal(t, ChannelSmartScheduleStabilityProbing, monitor.SmartScheduleStabilityState)
+	assert.Greater(t, monitor.SmartScheduleStabilitySince, int64(1))
+	assert.Equal(t, int64(90), monitor.SmartScheduleSavedPriority)
+	assert.Equal(t, uint(75), monitor.SmartScheduleSavedWeight)
+
+	var channel Channel
+	require.NoError(t, DB.First(&channel, "id = ?", 36).Error)
+	assert.Equal(t, priority, channel.GetPriority())
+	assert.Equal(t, int(weight), channel.GetWeight())
+	var ability Ability
+	require.NoError(t, DB.First(&ability, "channel_id = ?", 36).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
+}
+
+func TestClearChannelSmartScheduleStabilityRestoresRoutingAndInvalidatesStaleResults(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	require.NoError(t, DB.AutoMigrate(&Ability{}, &Option{}))
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id IN ?", []int{37, 38}).Delete(&Ability{}).Error)
+		require.NoError(t, DB.Where("key = ?", ChannelSmartScheduleControlRevisionOption).Delete(&Option{}).Error)
+	})
+
+	zeroPriority := int64(0)
+	zeroWeight := uint(0)
+	require.NoError(t, DB.Create(&[]Channel{
+		{Id: 37, Name: "degraded", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a", Priority: &zeroPriority, Weight: &zeroWeight},
+		{Id: 38, Name: "probing", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a", Priority: &zeroPriority, Weight: &zeroWeight},
+	}).Error)
+	require.NoError(t, DB.Create(&[]Ability{
+		{Group: "vip", Model: "model-a", ChannelId: 37, Enabled: true, Priority: &zeroPriority, Weight: zeroWeight},
+		{Group: "vip", Model: "model-a", ChannelId: 38, Enabled: true, Priority: &zeroPriority, Weight: zeroWeight},
+	}).Error)
+	require.NoError(t, DB.Create(&[]ChannelRatioMonitor{
+		{
+			ChannelId: 37, SmartScheduleParticipationSet: true, SmartScheduleRevision: 4,
+			SmartScheduleStabilityState: ChannelSmartScheduleStabilityDegraded,
+			SmartScheduleStabilityUntil: 999, SmartScheduleSavedPriority: 90, SmartScheduleSavedWeight: 40,
+		},
+		{
+			ChannelId: 38, SmartScheduleParticipationSet: true, SmartScheduleRevision: 8,
+			SmartScheduleStabilityState: ChannelSmartScheduleStabilityProbing,
+			SmartScheduleStabilitySince: 888, SmartScheduleSavedPriority: 100, SmartScheduleSavedWeight: 60,
+		},
+	}).Error)
+
+	for channelId, expected := range map[int]struct {
+		state    string
+		priority int64
+		weight   uint
+	}{
+		37: {state: ChannelSmartScheduleStabilityDegraded, priority: 90, weight: 40},
+		38: {state: ChannelSmartScheduleStabilityProbing, priority: 100, weight: 60},
+	} {
+		clearStartedAt := common.GetTimestamp()
+		result, err := ClearChannelSmartScheduleStability(channelId, 80, 10)
+		require.NoError(t, err)
+		clearFinishedAt := common.GetTimestamp()
+		assert.True(t, result.Cleared)
+		assert.Equal(t, expected.state, result.PreviousState)
+		assert.Equal(t, expected.priority, result.Priority)
+		assert.Equal(t, expected.weight, result.Weight)
+
+		var channel Channel
+		require.NoError(t, DB.First(&channel, "id = ?", channelId).Error)
+		assert.Equal(t, expected.priority, channel.GetPriority())
+		assert.Equal(t, int(expected.weight), channel.GetWeight())
+		var ability Ability
+		require.NoError(t, DB.First(&ability, "channel_id = ?", channelId).Error)
+		require.NotNil(t, ability.Priority)
+		assert.Equal(t, expected.priority, *ability.Priority)
+		assert.Equal(t, expected.weight, ability.Weight)
+		monitor, monitorErr := GetChannelRatioMonitor(channelId)
+		require.NoError(t, monitorErr)
+		assert.Empty(t, monitor.SmartScheduleStabilityState)
+		assert.Zero(t, monitor.SmartScheduleStabilityUntil)
+		assert.GreaterOrEqual(t, monitor.SmartScheduleStabilitySince, clearStartedAt)
+		assert.LessOrEqual(t, monitor.SmartScheduleStabilitySince, clearFinishedAt)
+		assert.Zero(t, monitor.SmartScheduleSavedPriority)
+		assert.Zero(t, monitor.SmartScheduleSavedWeight)
+	}
+
+	secondClear, err := ClearChannelSmartScheduleStability(37, 80, 10)
+	require.NoError(t, err)
+	assert.False(t, secondClear.Cleared)
+	assert.Empty(t, secondClear.PreviousState)
+	assert.Equal(t, int64(90), secondClear.Priority)
+	assert.Equal(t, uint(40), secondClear.Weight)
+
+	outcomes, err := ApplyChannelSmartScheduleResults([]ChannelSmartScheduleResultUpdate{{
+		ChannelId: 37, Status: ChannelSmartScheduleStatusSucceeded, Priority: 0, Weight: 0,
+		GuardCurrent: true, ExpectedRevision: 4, ExpectedControlRevision: "",
+		ExpectedPriority: 0, ExpectedWeight: 0, ApplyPriorityWeight: true,
+	}})
+	require.NoError(t, err)
+	require.Len(t, outcomes, 1)
+	assert.False(t, outcomes[0].Applied)
+	var channel Channel
+	require.NoError(t, DB.First(&channel, "id = ?", 37).Error)
+	assert.Equal(t, int64(90), channel.GetPriority())
+	assert.Equal(t, 40, channel.GetWeight())
+}
+
+func TestApplyChannelSmartScheduleResultsRejectsStaleGlobalSettings(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	require.NoError(t, DB.AutoMigrate(&Ability{}, &Option{}))
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id = ?", 39).Delete(&Ability{}).Error)
+		require.NoError(t, DB.Where("key = ?", ChannelSmartScheduleControlRevisionOption).Delete(&Option{}).Error)
+	})
+
+	priority := int64(80)
+	weight := uint(10)
+	require.NoError(t, DB.Create(&Channel{
+		Id: 39, Name: "guarded", Status: common.ChannelStatusEnabled, Group: "vip",
+		Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, DB.Create(&Ability{
+		Group: "vip", Model: "model-a", ChannelId: 39, Enabled: true, Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId: 39, SmartScheduleParticipationSet: true, SmartScheduleRevision: 3,
+	}).Error)
+	require.NoError(t, DB.Where("key = ?", ChannelSmartScheduleControlRevisionOption).Delete(&Option{}).Error)
+	require.NoError(t, DB.Create(&Option{Key: ChannelSmartScheduleControlRevisionOption, Value: "current"}).Error)
+
+	update := ChannelSmartScheduleResultUpdate{
+		ChannelId: 39, Status: ChannelSmartScheduleStatusSucceeded, Priority: 90, Weight: 30,
+		GuardCurrent: true, ExpectedRevision: 3, ExpectedControlRevision: "stale",
+		ExpectedPriority: 80, ExpectedWeight: 10, ApplyPriorityWeight: true,
+	}
+	outcomes, err := ApplyChannelSmartScheduleResults([]ChannelSmartScheduleResultUpdate{update})
+	require.NoError(t, err)
+	require.Len(t, outcomes, 1)
+	assert.False(t, outcomes[0].Applied)
+
+	update.ExpectedControlRevision = "current"
+	outcomes, err = ApplyChannelSmartScheduleResults([]ChannelSmartScheduleResultUpdate{update})
+	require.NoError(t, err)
+	require.Len(t, outcomes, 1)
+	assert.True(t, outcomes[0].Applied)
+	assert.True(t, outcomes[0].RoutingChanged)
+	var channel Channel
+	require.NoError(t, DB.First(&channel, "id = ?", 39).Error)
+	assert.Equal(t, int64(90), channel.GetPriority())
+	assert.Equal(t, 30, channel.GetWeight())
+}
+
 func TestDropLegacyChannelSmartScheduleGroupColumnPreservesMonitorData(t *testing.T) {
 	resetChannelRatioMonitorTables(t)
 	require.NoError(t, dropLegacyChannelSmartScheduleGroupColumn())

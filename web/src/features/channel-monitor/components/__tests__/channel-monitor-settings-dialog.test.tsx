@@ -67,6 +67,8 @@ function ProbeResponseFieldsFixture() {
 
 type SmartScheduleFieldsFixtureProps = {
   strategy?: 'smart' | 'ratio'
+  stabilityEnabled?: boolean
+  relativeWeightEnabled?: boolean
   ratioPercentages?: {
     costRatioPercent: number | string
     firstTokenPercent: number | string
@@ -81,10 +83,13 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
       smartScheduleEnabled: false,
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: props.strategy ?? 'smart',
-      smartScheduleStabilityEnabled: false,
+      smartScheduleStabilityEnabled: props.stabilityEnabled ?? false,
       smartScheduleScoring: {
         stabilityPercent: 50,
         curveExponent: 1,
+        relativeWeightEnabled: props.relativeWeightEnabled ?? true,
+        relativeWeightStartPercent: 3,
+        relativeWeightFullPercent: 10,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -165,7 +170,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('当前合计：100%'))
     assert.ok(markup.includes('启用后占最终得分的 50%'))
     assert.ok(markup.includes('得分曲线指数'))
-    assert.ok(markup.includes('旧版单指标调度相当于 3'))
+    assert.ok(markup.includes('大于 1 会进一步压低中低分渠道'))
     assert.match(
       markup,
       /id="channel-monitor-smartScheduleScoring-smart-firstTokenPercent"[^>]*value="40"/
@@ -182,6 +187,38 @@ describe('channel monitor settings dialog', () => {
       ratioMarkup,
       /id="channel-monitor-smartScheduleScoring-ratio-tpsPercent"[^>]*value="10"/
     )
+  })
+
+  test('shows configurable relative weight thresholds only when enabled', () => {
+    const enabledMarkup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+    const disabledMarkup = renderToStaticMarkup(
+      <SmartScheduleFieldsFixture relativeWeightEnabled={false} />
+    )
+
+    assert.ok(enabledMarkup.includes('相对权重拉伸'))
+    assert.ok(enabledMarkup.includes('aria-label="相对权重拉伸"'))
+    assert.ok(enabledMarkup.includes('开始拉伸分差'))
+    assert.ok(enabledMarkup.includes('完整拉伸分差'))
+    assert.match(
+      enabledMarkup,
+      /id="channel-monitor-smartScheduleScoring-relativeWeightStartPercent"[^>]*value="3"/
+    )
+    assert.match(
+      enabledMarkup,
+      /id="channel-monitor-smartScheduleScoring-relativeWeightFullPercent"[^>]*value="10"/
+    )
+    assert.ok(enabledMarkup.includes('任何分差都会开始拉伸'))
+    assert.equal(disabledMarkup.includes('开始拉伸分差'), false)
+    assert.equal(disabledMarkup.includes('完整拉伸分差'), false)
+  })
+
+  test('describes low-flow probing before restoring the full saved weight', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleFieldsFixture stabilityEnabled />
+    )
+
+    assert.ok(markup.includes('以不超过 10 的小流量权重用新样本试放'))
+    assert.ok(markup.includes('达标后再恢复完整权重'))
   })
 
   test('adds temporary string percentages numerically in the displayed total', () => {
