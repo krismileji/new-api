@@ -140,6 +140,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.Channel{},
 		&model.Ability{},
 		&model.ChannelRatioMonitor{},
+		&model.ChannelSmartScheduleRouteState{},
 		&model.ChannelRatioHistory{},
 		&model.ChannelDailyCost{},
 		&model.ChannelDailyAPIKeyCost{},
@@ -363,6 +364,8 @@ func TestChannelSmartScheduleSettingsUseConfigurableScoringDefaults(t *testing.T
 	useChannelMonitorOptionMap(t, map[string]string{})
 
 	settings := getChannelMonitorSettings()
+	assert.Equal(t, channelMonitorSmartScheduleScopeChannel, settings.SmartScheduleScope)
+	assert.Empty(t, settings.SmartScheduleGroups)
 	assert.Equal(t, defaultChannelSmartScheduleScoring(), settings.SmartScheduleScoring)
 	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.CostRatioPercent)
 	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.FirstTokenPercent)
@@ -393,6 +396,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	})
 
 	tooManySmartScheduleModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
+	tooManySmartScheduleGroups := make([]string, maxChannelMonitorSmartScheduleGroupCount+1)
 	invalidSmartScoring := defaultChannelSmartScheduleScoring()
 	invalidSmartScoring.Smart.TPSPercent = 40
 	invalidStabilityScoring := defaultChannelSmartScheduleScoring()
@@ -423,6 +427,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"notification_email": strings.Repeat("a", maxChannelMonitorNotificationEmailLength) + "@example.com"},
 		{"relay_response_header_timeout_seconds": -1},
 		{"relay_response_header_timeout_seconds": common.MaxRelayResponseHeaderTimeoutSeconds + 1},
+		{"smart_schedule_scope": "invalid"},
+		{"smart_schedule_groups": []string{strings.Repeat("g", maxChannelMonitorSmartScheduleGroupLength+1)}},
+		{"smart_schedule_groups": tooManySmartScheduleGroups},
 		{"smart_schedule_interval_minutes": 0},
 		{"smart_schedule_strategy": "invalid"},
 		{"smart_schedule_strategy": "stability"},
@@ -473,6 +480,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"notification_email":                    "alerts@example.com",
 		"probe_response_enabled":                true,
 		"smart_schedule_enabled":                true,
+		"smart_schedule_scope":                  channelMonitorSmartScheduleScopeGroupModel,
+		"smart_schedule_groups":                 []string{" vip ", "default", "vip"},
 		"smart_schedule_interval_minutes":       10,
 		"smart_schedule_strategy":               channelMonitorSmartScheduleStrategySmart,
 		"smart_schedule_stability_enabled":      true,
@@ -504,6 +513,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 60, response.Data.RelayHeaderTimeoutSeconds)
 	assert.Equal(t, 60, common.GetRelayResponseHeaderTimeoutSeconds())
 	assert.True(t, response.Data.SmartScheduleEnabled)
+	assert.Equal(t, channelMonitorSmartScheduleScopeGroupModel, response.Data.SmartScheduleScope)
+	assert.Equal(t, []string{"vip", "default"}, response.Data.SmartScheduleGroups)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, response.Data.SmartScheduleStrategy)
 	assert.True(t, response.Data.SmartScheduleStabilityEnabled)
@@ -546,6 +557,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleEnabledOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleScopeOption).First(&option).Error)
+	assert.Equal(t, channelMonitorSmartScheduleScopeGroupModel, option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleGroupsOption).First(&option).Error)
+	assert.JSONEq(t, `["vip","default"]`, option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStrategyOption).First(&option).Error)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, option.Value)

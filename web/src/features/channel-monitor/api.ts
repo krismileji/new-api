@@ -31,6 +31,7 @@ import type {
   ChannelMonitorSettings,
   ChannelMonitorSmartScheduleConfig,
   ChannelMonitorSmartScheduleStabilityClearResult,
+  ChannelMonitorSmartScheduleRouteResult,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
   ChannelMonitorTaskRunResult,
@@ -189,6 +190,13 @@ export async function runChannelMonitorSmartSchedule() {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export async function getChannelMonitorSmartScheduleRoutes() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRouteResult>
+  >('/api/channel_monitor/schedule', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
 export async function runChannelMonitorRatioUpdate() {
   const response = await api.post<
     ChannelMonitorApiResponse<ChannelMonitorTaskRunResult>
@@ -220,6 +228,46 @@ export async function clearChannelMonitorSmartScheduleStability(
   >(
     `/api/channel_monitor/channel/${channelId}/schedule/stability/clear`,
     undefined,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function updateChannelMonitorSmartScheduleRouteConfig(request: {
+  channelId: number
+  group: string
+  model: string
+  excluded: boolean
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<{
+      channel_id: number
+      group: string
+      model: string
+      excluded: boolean
+    }>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route`,
+    {
+      group: request.group,
+      model: request.model,
+      excluded: request.excluded,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function clearChannelMonitorSmartScheduleRouteStability(request: {
+  channelId: number
+  group: string
+  model: string
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleStabilityClearResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/stability/clear`,
+    { group: request.group, model: request.model },
     channelMonitorRequestConfig()
   )
   return ensureChannelMonitorSuccess(response.data)

@@ -101,6 +101,8 @@ type channelSmartScheduleTaskResult struct {
 	Scoring                 channelSmartScheduleScoring       `json:"scoring"`
 	ForceReset              bool                              `json:"force_reset"`
 	ApplyMode               string                            `json:"apply_mode"`
+	Scope                   string                            `json:"scope"`
+	Groups                  []string                          `json:"groups,omitempty"`
 	Model                   string                            `json:"model"`
 	Models                  []string                          `json:"models,omitempty"`
 	PerformanceMinutes      int                               `json:"performance_minutes"`
@@ -218,6 +220,8 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		Scoring:            settings.SmartScheduleScoring,
 		ForceReset:         forceReset,
 		ApplyMode:          settings.SmartScheduleApplyMode,
+		Scope:              settings.SmartScheduleScope,
+		Groups:             settings.SmartScheduleGroups,
 		Model:              settings.SmartScheduleModel,
 		Models:             settings.SmartScheduleModels,
 		PerformanceMinutes: settings.SmartSchedulePerformanceMinutes,
@@ -227,6 +231,9 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	}
 	if !settings.SmartScheduleEnabled {
 		return result, fmt.Errorf("智能调度已禁用")
+	}
+	if settings.SmartScheduleScope == channelMonitorSmartScheduleScopeGroupModel {
+		return runChannelSmartScheduleByRouteOnce(ctx, reportProgress, forceReset, settings, result)
 	}
 	if err := initializeChannelSmartScheduleParticipation(); err != nil {
 		return result, err

@@ -24,11 +24,14 @@ import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
 import { api } from '@/lib/api'
 
 import {
+  clearChannelMonitorSmartScheduleRouteStability,
   clearChannelMonitorSmartScheduleStability,
   getChannelMonitorCostOverview,
+  getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorGroupChannels,
   updateChannelMonitorSmartScheduleConfig,
+  updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 
 test('updates only channel participation without sending a routing reset flag', async () => {
@@ -99,6 +102,92 @@ test('posts the manual stability clear action for a channel', async () => {
     '/api/channel_monitor/channel/7/schedule/stability/clear'
   )
   assert.equal(requestConfig?.method, 'post')
+})
+
+test('loads and updates one group-model scheduling route', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    return {
+      data: { success: true, message: '', data: {} },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await getChannelMonitorSmartScheduleRoutes()
+    await updateChannelMonitorSmartScheduleRouteConfig({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+      excluded: true,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requests[0]?.url, '/api/channel_monitor/schedule')
+  assert.equal(requests[0]?.method, 'get')
+  assert.equal(
+    requests[1]?.url,
+    '/api/channel_monitor/channel/7/schedule/route'
+  )
+  assert.equal(requests[1]?.method, 'put')
+  assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    excluded: true,
+  })
+})
+
+test('posts manual stability clear for one group-model route', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          cleared: true,
+          previous_state: 'probing',
+          priority: 90,
+          weight: 35,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await clearChannelMonitorSmartScheduleRouteStability({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/route/stability/clear'
+  )
+  assert.equal(requestConfig?.method, 'post')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    group: 'vip',
+    model: 'model-a',
+  })
 })
 
 test('requests only the lightweight cost summary for the monitor dashboard', async () => {

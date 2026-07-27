@@ -78,6 +78,7 @@ export type ChannelMonitorSettingsSection = 'monitor' | 'schedule' | 'probe'
 type ChannelMonitorSettingsDialogProps = {
   settings: ChannelMonitorSettings
   modelOptions: string[]
+  groupOptions: string[]
   initialSection: ChannelMonitorSettingsSection
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -199,6 +200,8 @@ export function ChannelMonitorSettingsDialog(
       relayResponseHeaderTimeoutSeconds:
         props.settings.relay_response_header_timeout_seconds ?? 0,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
+      smartScheduleScope: props.settings.smart_schedule_scope ?? 'channel',
+      smartScheduleGroups: props.settings.smart_schedule_groups ?? [],
       smartScheduleIntervalMinutes:
         props.settings.smart_schedule_interval_minutes,
       smartScheduleStrategy: props.settings.smart_schedule_strategy,
@@ -284,6 +287,8 @@ export function ChannelMonitorSettingsDialog(
       relay_response_header_timeout_seconds:
         values.relayResponseHeaderTimeoutSeconds,
       smart_schedule_enabled: values.smartScheduleEnabled,
+      smart_schedule_scope: values.smartScheduleScope,
+      smart_schedule_groups: values.smartScheduleGroups,
       smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
       smart_schedule_strategy: values.smartScheduleStrategy,
       smart_schedule_stability_enabled: values.smartScheduleStabilityEnabled,
@@ -325,7 +330,7 @@ export function ChannelMonitorSettingsDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='max-h-[min(90dvh,54rem)] overflow-y-auto sm:max-w-2xl'>
+      <DialogContent className='max-h-[min(90dvh,54rem)] overflow-y-auto sm:max-w-4xl'>
         <DialogHeader>
           <DialogTitle>渠道监控设置</DialogTitle>
           <DialogDescription>
@@ -544,6 +549,7 @@ export function ChannelMonitorSettingsDialog(
                 <ChannelMonitorSmartScheduleFields
                   form={form}
                   modelOptions={props.modelOptions}
+                  groupOptions={props.groupOptions}
                 />
               </TabsContent>
 

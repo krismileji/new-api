@@ -21,6 +21,7 @@ import * as z from 'zod'
 import type {
   ChannelMonitorPolicyAction,
   ChannelMonitorSmartScheduleApplyMode,
+  ChannelMonitorSmartScheduleScope,
   ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorUpstreamAuthType,
   ChannelMonitorUpstreamType,
@@ -45,6 +46,7 @@ export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
+export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
 
 const channelMonitorSmartScheduleApplyModes = [
@@ -58,6 +60,11 @@ const channelMonitorSmartScheduleStrategies = [
   'tps',
   'smart',
 ] as const satisfies readonly ChannelMonitorSmartScheduleStrategy[]
+
+const channelMonitorSmartScheduleScopes = [
+  'channel',
+  'group_model',
+] as const satisfies readonly ChannelMonitorSmartScheduleScope[]
 
 const channelMonitorPolicyActions = [
   'none',
@@ -174,6 +181,19 @@ export function createChannelMonitorSettingsSchema() {
           '上游响应等待时间不能超过 600 秒'
         ),
       smartScheduleEnabled: z.boolean(),
+      smartScheduleScope: z
+        .enum(channelMonitorSmartScheduleScopes)
+        .default('channel'),
+      smartScheduleGroups: z
+        .array(
+          z
+            .string()
+            .trim()
+            .min(1, '调度分组不能为空')
+            .max(64, '调度分组不能超过 64 个字符')
+        )
+        .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '调度分组不能超过 100 个')
+        .default([]),
       smartScheduleIntervalMinutes: z.coerce
         .number()
         .int('智能调度间隔必须是整数')

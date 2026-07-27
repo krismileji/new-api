@@ -17,10 +17,13 @@
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
+| `GET` | `/schedule` | 隔离模式下返回分组模型路由、实际优先级/权重、调度状态和性能/成功率指标；其他范围返回 `409` |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
 | `PUT` | `/channel/:id/schedule` | 更新参与状态；`excluded`，不修改当前路由或稳定性状态 |
 | `POST` | `/channel/:id/schedule/stability/clear` | 手动解除低成功率降级或稳定性试放，恢复保护前保存的路由 |
+| `PUT` | `/channel/:id/schedule/route` | 更新一条分组模型路由的参与状态；`group`、`model`、`excluded` |
+| `POST` | `/channel/:id/schedule/route/stability/clear` | 手动解除一条分组模型路由的低成功率降级或稳定性试放；`group`、`model` |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
 | `GET` | `/channel/:id/history` | 查询倍率变更历史，支持通用分页 |
 | `PUT` | `/channel/:id/upstream` | 保存上游认证、同步、换算、余额和策略配置 |
@@ -52,6 +55,8 @@
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
+| `smart_schedule_scope` | `ChannelMonitorSmartScheduleScope` | `channel` | `channel`、`group_model` |
+| `smart_schedule_groups` | `ChannelMonitorSmartScheduleGroups` | `[]` | 最多 100 个，每项最长 64 字符；空数组表示全部分组 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
 | `smart_schedule_stability_enabled` | `ChannelMonitorSmartScheduleStabilityEnabled` | `false` | 布尔值 |
@@ -106,6 +111,7 @@
 自动迁移包含以下模型：
 
 - `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略、调度状态和并发限制。
+- `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度、稳定性和范围切换暂存状态。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。

@@ -556,6 +556,9 @@ func GetChannelMonitorOverview(c *gin.Context) {
 }
 
 func UpdateChannelMonitorSmartScheduleConfig(c *gin.Context) {
+	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeChannel) {
+		return
+	}
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelId <= 0 {
 		common.ApiErrorMsg(c, "无效的渠道 ID")
@@ -595,6 +598,9 @@ func UpdateChannelMonitorSmartScheduleConfig(c *gin.Context) {
 }
 
 func ClearChannelMonitorSmartScheduleStability(c *gin.Context) {
+	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeChannel) {
+		return
+	}
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelId <= 0 {
 		common.ApiErrorMsg(c, "无效的渠道 ID")

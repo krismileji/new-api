@@ -111,6 +111,7 @@ const PERFORMANCE_RANGE_OPTIONS = [
 type ChannelMonitorSmartScheduleFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   modelOptions: string[]
+  groupOptions: string[]
 }
 
 type SmartScheduleMetricGroup = 'smart' | 'ratio'
@@ -264,6 +265,14 @@ export function ChannelMonitorSmartScheduleFields(
     () => props.modelOptions.map((model) => ({ value: model, label: model })),
     [props.modelOptions]
   )
+  const groupOptions = useMemo(
+    () => props.groupOptions.map((group) => ({ value: group, label: group })),
+    [props.groupOptions]
+  )
+  const scheduleScope = useWatch({
+    control: props.form.control,
+    name: 'smartScheduleScope',
+  })
   const stabilityEnabled = useWatch({
     control: props.form.control,
     name: 'smartScheduleStabilityEnabled',
@@ -306,6 +315,71 @@ export function ChannelMonitorSmartScheduleFields(
       />
 
       <ChannelMonitorRelayResponseHeaderTimeoutField form={props.form} />
+
+      <div className='grid gap-4 md:grid-cols-2'>
+        <FormField
+          control={props.form.control}
+          name='smartScheduleScope'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>调度范围</FormLabel>
+              <Select
+                items={[
+                  { value: 'group_model', label: '按分组和模型隔离' },
+                  { value: 'channel', label: '按渠道（兼容模式）' },
+                ]}
+                value={field.value}
+                onValueChange={(value) =>
+                  value !== null && field.onChange(value)
+                }
+              >
+                <FormControl>
+                  <SelectTrigger className='w-full'>
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value='group_model'>
+                      按分组和模型隔离
+                    </SelectItem>
+                    <SelectItem value='channel'>按渠道（兼容模式）</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FormDescription>
+                隔离模式只调整对应分组、模型的路由，不影响同一渠道的其他分组
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={props.form.control}
+          name='smartScheduleGroups'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>参与分组</FormLabel>
+              <FormControl>
+                <MultiSelect
+                  options={groupOptions}
+                  selected={field.value}
+                  onChange={field.onChange}
+                  placeholder='全部分组'
+                  emptyText='没有匹配的分组'
+                  maxVisibleChips={3}
+                  disabled={scheduleScope !== 'group_model'}
+                />
+              </FormControl>
+              <FormDescription>
+                不选择表示全部分组；仅在按分组和模型隔离时生效
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
 
       <FormField
         control={props.form.control}
@@ -705,21 +779,29 @@ export function ChannelMonitorSmartScheduleFields(
         name='smartScheduleModels'
         render={({ field }) => (
           <FormItem className='min-w-0'>
-            <FormLabel>基准模型优先级</FormLabel>
+            <FormLabel>
+              {scheduleScope === 'group_model' ? '参与模型' : '基准模型优先级'}
+            </FormLabel>
             <FormControl>
               <MultiSelect
                 options={modelOptions}
                 selected={field.value}
                 onChange={field.onChange}
-                placeholder='搜索并选择基准模型'
+                placeholder={
+                  scheduleScope === 'group_model'
+                    ? '全部模型'
+                    : '搜索并选择基准模型'
+                }
                 emptyText='没有匹配的模型'
                 maxVisibleChips={4}
               />
             </FormControl>
             <FormDescription>
-              每个渠道按下列顺序使用其支持的第一个模型；未选择时汇总全部模型
+              {scheduleScope === 'group_model'
+                ? '不选择表示全部模型；每个分组和模型独立调度，选择顺序不生效'
+                : '每个渠道按下列顺序使用其支持的第一个模型；未选择时汇总全部模型'}
             </FormDescription>
-            {field.value.length > 0 && (
+            {scheduleScope === 'channel' && field.value.length > 0 && (
               <ol className='divide-border overflow-hidden rounded-md border'>
                 {field.value.map((modelName, index) => (
                   <li

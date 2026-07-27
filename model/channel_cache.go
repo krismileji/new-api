@@ -42,6 +42,10 @@ func InitChannelCache() {
 	}
 	var abilities []*Ability
 	DB.Find(&abilities)
+	var newChannelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
+	if channelSmartScheduleRouteSelectionEnabled() {
+		newChannelSmartScheduleRouteCache = buildChannelSmartScheduleRouteCache(abilities, newChannelId2channel)
+	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -78,6 +82,7 @@ func InitChannelCache() {
 
 	channelSyncLock.Lock()
 	group2model2channels = newGroup2model2channels
+	channelSmartScheduleRouteCache = newChannelSmartScheduleRouteCache
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {
@@ -123,6 +128,9 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
+	if channel, handled, err := getRandomSatisfiedChannelByAbility(group, model, retry, requestPath, selectionOptions); handled {
+		return channel, err
+	}
 
 	// First, try to find channels with the exact model name.
 	channels := filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model)

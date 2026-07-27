@@ -493,6 +493,8 @@ export type ChannelMonitorSettings = {
   probe_response_enabled: boolean
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
+  smart_schedule_scope: ChannelMonitorSmartScheduleScope
+  smart_schedule_groups: string[]
   smart_schedule_interval_minutes: number
   smart_schedule_strategy: ChannelMonitorSmartScheduleStrategy
   smart_schedule_stability_enabled: boolean
@@ -517,6 +519,8 @@ export type ChannelMonitorSmartScheduleStrategy =
 
 export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
 
+export type ChannelMonitorSmartScheduleScope = 'channel' | 'group_model'
+
 export type ChannelMonitorSmartScheduleConfig = {
   excluded: boolean
 }
@@ -526,6 +530,73 @@ export type ChannelMonitorSmartScheduleStabilityClearResult = {
   previous_state: '' | 'degraded' | 'probing'
   priority: number
   weight: number
+}
+
+export type ChannelMonitorSmartScheduleRouteState = {
+  id: number
+  channel_id: number
+  group: string
+  model: string
+  participation_set: boolean
+  excluded: boolean
+  last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
+  last_schedule_error: string
+  last_schedule_score: number | null
+  last_schedule_priority: number
+  last_schedule_weight: number
+  last_schedule_time: number
+  stability_state: '' | 'degraded' | 'probing'
+  stability_until: number
+  stability_since: number
+  stability_saved_priority: number
+  stability_saved_weight: number
+}
+
+export type ChannelMonitorSmartScheduleRoute = {
+  channel_id: number
+  channel_name: string
+  channel_status: number
+  channel_priority: number
+  channel_weight: number
+  group: string
+  model: string
+  enabled: boolean
+  priority: number
+  weight: number
+  state: ChannelMonitorSmartScheduleRouteState
+}
+
+export type ChannelMonitorSmartScheduleRoutePerformance = {
+  channel_id: number
+  group: string
+  model: string
+  sample_count: number
+  first_token_sample_count: number
+  tps_sample_count: number
+  average_first_token_ms: number | null
+  average_tps: number | null
+  last_used_time: number
+}
+
+export type ChannelMonitorSmartScheduleRouteStability = {
+  channel_id: number
+  group: string
+  model: string
+  success_count: number
+  failure_count: number
+  sample_count: number
+  success_rate: number
+}
+
+export type ChannelMonitorSmartScheduleRouteResult = {
+  generated_at: number
+  range_minutes: number
+  scope: ChannelMonitorSmartScheduleScope
+  enabled: boolean
+  routes: ChannelMonitorSmartScheduleRoute[]
+  performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
+  stability_metrics_available: boolean
+  stability_items: ChannelMonitorSmartScheduleRouteStability[]
 }
 
 export type ChannelMonitorTaskRunResult = {
@@ -581,6 +652,8 @@ export type ChannelMonitorTaskResult = {
   scoring?: ChannelMonitorSmartScheduleScoring
   force_reset?: boolean
   apply_mode?: ChannelMonitorSmartScheduleApplyMode
+  scope?: ChannelMonitorSmartScheduleScope
+  groups?: string[]
   model?: string
   models?: string[]
   performance_minutes?: number

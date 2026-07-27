@@ -67,6 +67,7 @@ function ProbeResponseFieldsFixture() {
 
 type SmartScheduleFieldsFixtureProps = {
   strategy?: 'smart' | 'ratio'
+  scope?: 'channel' | 'group_model'
   stabilityEnabled?: boolean
   relativeWeightEnabled?: boolean
   ratioPercentages?: {
@@ -81,6 +82,8 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
     defaultValues: {
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
+      smartScheduleScope: props.scope ?? 'group_model',
+      smartScheduleGroups: [],
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: props.strategy ?? 'smart',
       smartScheduleStabilityEnabled: props.stabilityEnabled ?? false,
@@ -112,7 +115,11 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
   })
   return (
     <Form {...form}>
-      <ChannelMonitorSmartScheduleFields form={form} modelOptions={[]} />
+      <ChannelMonitorSmartScheduleFields
+        form={form}
+        modelOptions={[]}
+        groupOptions={['default', 'vip']}
+      />
     </Form>
   )
 }
@@ -158,6 +165,23 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('0 表示不限制'))
     assert.ok(markup.includes('收到响应头后停止计时'))
     assert.ok(markup.includes('不限制后续流式输出'))
+  })
+
+  test('shows isolated route scope and selectable groups', () => {
+    const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+    const compatibilityMarkup = renderToStaticMarkup(
+      <SmartScheduleFieldsFixture scope='channel' />
+    )
+
+    assert.ok(markup.includes('按分组和模型隔离'))
+    assert.ok(compatibilityMarkup.includes('按渠道（兼容模式）'))
+    assert.ok(markup.includes('参与分组'))
+    assert.ok(markup.includes('不选择表示全部分组'))
+    assert.ok(markup.includes('全部分组'))
+    assert.ok(markup.includes('参与模型'))
+    assert.ok(markup.includes('每个分组和模型独立调度'))
+    assert.ok(compatibilityMarkup.includes('基准模型优先级'))
+    assert.ok(compatibilityMarkup.includes('使用其支持的第一个模型'))
   })
 
   test('shows configurable scoring percentages with stability defaulting to half', () => {

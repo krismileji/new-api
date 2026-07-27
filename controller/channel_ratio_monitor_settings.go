@@ -32,6 +32,8 @@ const (
 	channelMonitorGroupCoefficientsOption                  = "ChannelMonitorGroupCoefficients"
 	channelMonitorChannelOrderOption                       = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption               = "ChannelMonitorSmartScheduleEnabled"
+	channelMonitorSmartScheduleScopeOption                 = "ChannelMonitorSmartScheduleScope"
+	channelMonitorSmartScheduleGroupsOption                = "ChannelMonitorSmartScheduleGroups"
 	channelMonitorSmartScheduleIntervalOption              = "ChannelMonitorSmartScheduleIntervalMinutes"
 	channelMonitorSmartScheduleStrategyOption              = "ChannelMonitorSmartScheduleStrategy"
 	channelMonitorSmartScheduleStabilityOption             = "ChannelMonitorSmartScheduleStabilityEnabled"
@@ -54,6 +56,8 @@ const (
 	legacyChannelMonitorSmartScheduleStrategyStability     = "stability"
 	channelMonitorSmartScheduleApplyWeight                 = "weight"
 	channelMonitorSmartScheduleApplyPriorityWeight         = "priority_weight"
+	channelMonitorSmartScheduleScopeChannel                = "channel"
+	channelMonitorSmartScheduleScopeGroupModel             = "group_model"
 	maxChannelMonitorAutoUpdateIntervalMinutes             = 525600
 	maxChannelMonitorAutoUpdateRetryCount                  = 10
 	minChannelMonitorAutoUpdateConsecutiveFailureLimit     = 1
@@ -64,6 +68,8 @@ const (
 	maxChannelMonitorChannelOrderCount                     = 100000
 	maxChannelMonitorSmartScheduleModelLength              = 255
 	maxChannelMonitorSmartScheduleModelCount               = 100
+	maxChannelMonitorSmartScheduleGroupCount               = 100
+	maxChannelMonitorSmartScheduleGroupLength              = 64
 	maxChannelMonitorSmartScheduleMinSamples               = 100000
 	maxChannelMonitorSmartScheduleSuccessRate              = 100
 	defaultChannelMonitorAutoUpdateRetryCount              = 2
@@ -90,6 +96,8 @@ type channelMonitorSettings struct {
 	ProbeResponseEnabled               bool                        `json:"probe_response_enabled"`
 	RelayHeaderTimeoutSeconds          int                         `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled               bool                        `json:"smart_schedule_enabled"`
+	SmartScheduleScope                 string                      `json:"smart_schedule_scope"`
+	SmartScheduleGroups                []string                    `json:"smart_schedule_groups"`
 	SmartScheduleIntervalMinutes       int                         `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy              string                      `json:"smart_schedule_strategy"`
 	SmartScheduleStabilityEnabled      bool                        `json:"smart_schedule_stability_enabled"`
@@ -120,6 +128,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	ProbeResponseEnabled              *bool                        `json:"probe_response_enabled"`
 	RelayHeaderTimeoutSeconds         *int                         `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled              *bool                        `json:"smart_schedule_enabled"`
+	SmartScheduleScope                *string                      `json:"smart_schedule_scope"`
+	SmartScheduleGroups               *[]string                    `json:"smart_schedule_groups"`
 	SmartScheduleIntervalMinutes      *int                         `json:"smart_schedule_interval_minutes"`
 	SmartScheduleStrategy             *string                      `json:"smart_schedule_strategy"`
 	SmartScheduleStabilityEnabled     *bool                        `json:"smart_schedule_stability_enabled"`
@@ -152,6 +162,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
 	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
+	rawSmartScheduleScope := common.OptionMap[channelMonitorSmartScheduleScopeOption]
+	rawSmartScheduleGroups := common.OptionMap[channelMonitorSmartScheduleGroupsOption]
 	rawSmartScheduleInterval := common.OptionMap[channelMonitorSmartScheduleIntervalOption]
 	rawSmartScheduleStrategy := common.OptionMap[channelMonitorSmartScheduleStrategyOption]
 	rawSmartScheduleStabilityEnabled := common.OptionMap[channelMonitorSmartScheduleStabilityOption]
@@ -263,6 +275,15 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if len(smartScheduleModels) > 0 {
 		smartScheduleModel = smartScheduleModels[0]
 	}
+	smartScheduleGroups := make([]string, 0)
+	if rawSmartScheduleGroups != "" {
+		var storedGroups []string
+		if common.UnmarshalJsonStr(rawSmartScheduleGroups, &storedGroups) == nil {
+			if normalizedGroups, normalizeErr := normalizeChannelMonitorSmartScheduleGroups(storedGroups); normalizeErr == nil {
+				smartScheduleGroups = normalizedGroups
+			}
+		}
+	}
 	return channelMonitorSettings{
 		AutoUpdateIntervalMinutes:         interval,
 		AutoUpdateRetryCount:              retryCount,
@@ -276,6 +297,8 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		ProbeResponseEnabled:              probeResponseEnabled,
 		RelayHeaderTimeoutSeconds:         relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:              smartScheduleEnabled,
+		SmartScheduleScope:                normalizeChannelMonitorSmartScheduleScope(rawSmartScheduleScope),
+		SmartScheduleGroups:               smartScheduleGroups,
 		SmartScheduleIntervalMinutes:      smartScheduleInterval,
 		SmartScheduleStrategy:             normalizeChannelMonitorSmartScheduleStrategy(rawSmartScheduleStrategy),
 		SmartScheduleStabilityEnabled:     smartScheduleStabilityEnabled,
@@ -295,6 +318,36 @@ func initializeChannelSmartScheduleParticipation() error {
 	return model.InitializeChannelSmartScheduleParticipation(
 		getChannelMonitorSettings().SmartScheduleEnabled,
 	)
+}
+
+func normalizeChannelMonitorSmartScheduleScope(scope string) string {
+	if strings.TrimSpace(scope) == channelMonitorSmartScheduleScopeGroupModel {
+		return channelMonitorSmartScheduleScopeGroupModel
+	}
+	return channelMonitorSmartScheduleScopeChannel
+}
+
+func normalizeChannelMonitorSmartScheduleGroups(groups []string) ([]string, error) {
+	if len(groups) > maxChannelMonitorSmartScheduleGroupCount {
+		return nil, fmt.Errorf("智能调度分组不能超过 %d 个", maxChannelMonitorSmartScheduleGroupCount)
+	}
+	normalized := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if utf8.RuneCountInString(group) > maxChannelMonitorSmartScheduleGroupLength {
+			return nil, fmt.Errorf("智能调度分组不能超过 %d 个字符", maxChannelMonitorSmartScheduleGroupLength)
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		normalized = append(normalized, group)
+	}
+	return normalized, nil
 }
 
 func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, error) {
@@ -517,6 +570,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ProbeResponseEnabled == nil &&
 		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
+		request.SmartScheduleScope == nil &&
+		request.SmartScheduleGroups == nil &&
 		request.SmartScheduleIntervalMinutes == nil &&
 		request.SmartScheduleStrategy == nil &&
 		request.SmartScheduleStabilityEnabled == nil &&
@@ -533,7 +588,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		return
 	}
 	settings := getChannelMonitorSettings()
-	values := make(map[string]string, 24)
+	previousSmartScheduleScope := settings.SmartScheduleScope
+	values := make(map[string]string, 26)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -632,6 +688,29 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.SmartScheduleEnabled != nil {
 		settings.SmartScheduleEnabled = *request.SmartScheduleEnabled
 		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
+	}
+	if request.SmartScheduleScope != nil {
+		scope := strings.TrimSpace(*request.SmartScheduleScope)
+		if normalizeChannelMonitorSmartScheduleScope(scope) != scope {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度范围无效"})
+			return
+		}
+		settings.SmartScheduleScope = scope
+		values[channelMonitorSmartScheduleScopeOption] = scope
+	}
+	if request.SmartScheduleGroups != nil {
+		groups, err := normalizeChannelMonitorSmartScheduleGroups(*request.SmartScheduleGroups)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		serializedGroups, err := common.Marshal(groups)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		settings.SmartScheduleGroups = groups
+		values[channelMonitorSmartScheduleGroupsOption] = string(serializedGroups)
 	}
 	if request.SmartScheduleIntervalMinutes != nil && (*request.SmartScheduleIntervalMinutes <= 0 ||
 		*request.SmartScheduleIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -753,6 +832,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		return
 	}
 	smartScheduleSettingsChanged := request.SmartScheduleEnabled != nil ||
+		request.SmartScheduleScope != nil ||
+		request.SmartScheduleGroups != nil ||
 		request.SmartScheduleIntervalMinutes != nil ||
 		request.SmartScheduleStrategy != nil ||
 		request.SmartScheduleStabilityEnabled != nil ||
@@ -771,7 +852,21 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		values[channelMonitorSmartScheduleControlRevisionOption] = common.GetUUID()
 	}
-	if err := model.UpdateOptionsBulk(values); err != nil {
+	smartScheduleScopeChanged := previousSmartScheduleScope != settings.SmartScheduleScope
+	if smartScheduleScopeChanged {
+		if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if _, err := model.UpdateOptionsBulkWithChannelSmartScheduleScope(
+			values,
+			settings.SmartScheduleScope,
+		); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		model.InitChannelCache()
+	} else if err := model.UpdateOptionsBulk(values); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -805,6 +900,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"notification_email_configured":         settings.NotificationEmail != "",
 		"probe_response_enabled":                settings.ProbeResponseEnabled,
 		"smart_schedule_enabled":                settings.SmartScheduleEnabled,
+		"smart_schedule_scope":                  settings.SmartScheduleScope,
+		"smart_schedule_groups":                 settings.SmartScheduleGroups,
 		"smart_schedule_interval_minutes":       settings.SmartScheduleIntervalMinutes,
 		"smart_schedule_strategy":               settings.SmartScheduleStrategy,
 		"smart_schedule_stability_enabled":      settings.SmartScheduleStabilityEnabled,

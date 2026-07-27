@@ -132,13 +132,9 @@ function renderView(
         onViewHistory={noop}
         onOpenCostHistory={noop}
         onOpenSuccessDetail={noop}
-        onUpdateSmartSchedule={noop}
-        onClearSmartScheduleStability={noop}
         fetchingBalanceChannelId={null}
         fetchingRatioChannelId={null}
         updatingStatusChannelId={null}
-        updatingSmartScheduleChannelId={null}
-        clearingSmartScheduleStabilityChannelId={null}
       />
     </I18nextProvider>
   )
@@ -163,9 +159,9 @@ describe('channel monitor channel view timestamps', () => {
     assert.match(markup, /min-w-full/)
     assert.doesNotMatch(markup, /<colgroup>/)
     assert.match(headers[1] ?? '', /min-w-\[224px\]/)
-    assert.match(headers[9] ?? '', /min-w-\[112px\]/)
+    assert.match(headers[8] ?? '', /min-w-\[112px\]/)
     assert.match(cells[1] ?? '', /min-w-\[224px\]/)
-    assert.match(cells[9] ?? '', /min-w-\[112px\]/)
+    assert.match(cells[8] ?? '', /min-w-\[112px\]/)
   })
 
   test('shows ratio, group, and update time without updater attribution', () => {
@@ -173,7 +169,7 @@ describe('channel monitor channel view timestamps', () => {
     const markup = renderView(channel)
     const cells = getTableCells(markup)
 
-    assert.equal(cells.length, 10)
+    assert.equal(cells.length, 9)
     assert.doesNotMatch(markup, /<th\b[^>]*>更新时间<\/th>/)
     assert.doesNotMatch(markup, /<th\b[^>]*>倍率更新状态<\/th>/)
     assert.ok(markup.indexOf('上游余额') < markup.indexOf('今日成本'))
@@ -266,7 +262,7 @@ describe('channel monitor channel view timestamps', () => {
     const balanceTimestamp = formatTimestampToDate(channel.last_balance_time)
     const ratioTimestamp = formatTimestampToDate(channel.updated_time)
 
-    assert.equal(cells.length, 10)
+    assert.equal(cells.length, 9)
     assert.ok(cells[0]?.includes(`title="${longChannelName}"`))
     assert.ok(cells[1]?.includes(`title="更新：${balanceTimestamp}"`))
     assert.ok(cells[3]?.includes(`title="更新：${ratioTimestamp}"`))
@@ -406,7 +402,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 
-  test('keeps participation and protected state actionable while global scheduling is disabled', () => {
+  test('keeps smart scheduling controls out of the channel overview table', () => {
     const markup = renderView(
       createChannel({
         smart_schedule_excluded: true,
@@ -414,22 +410,17 @@ describe('channel monitor channel view timestamps', () => {
         smart_schedule_stability_until: 1_752_777_845,
       })
     )
-    const headers = getTableHeaders(markup)
-    const cells = getTableCells(markup)
-    const scheduleCell = cells[8] ?? ''
-
-    assert.ok(headers[8]?.includes('智能调度'))
-    assert.ok(scheduleCell.includes('低成功率降级'))
-    assert.ok(scheduleCell.includes('手动解除'))
-    assert.ok(
-      scheduleCell.includes('aria-label="手动解除 测试渠道 的稳定性保护"')
+    assert.equal(getTableCells(markup).length, 9)
+    assert.equal(
+      getTableHeaders(markup).some((header) => header.includes('智能调度')),
+      false
     )
-    assert.match(scheduleCell, /role="switch" tabindex="0"/)
+    assert.equal(markup.includes('手动解除'), false)
   })
 
   test('keeps manual upstream ratio editing out of the operation column', () => {
     const cells = getTableCells(renderView(createChannel()))
-    const operationCell = cells[9] ?? ''
+    const operationCell = cells[8] ?? ''
 
     assert.equal(operationCell.includes('aria-label="修改渠道倍率"'), false)
     assert.equal(operationCell.includes('aria-label="记录渠道倍率"'), false)

@@ -24,6 +24,7 @@ import {
   Layers01Icon,
   MoneyBag02Icon,
   Refresh01Icon,
+  Route01Icon,
   Search01Icon,
   Settings02Icon,
   TestTubeIcon,
@@ -74,12 +75,10 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import {
-  clearChannelMonitorSmartScheduleStability,
   fetchChannelMonitorUpstreamBalance,
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
   getChannelMonitorTodaySuccess,
-  updateChannelMonitorSmartScheduleConfig,
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
@@ -144,8 +143,13 @@ const LazyChannelBatchTestDialog = lazy(() =>
     (module) => ({ default: module.ChannelBatchTestDialog })
   )
 )
+const LazyChannelMonitorSmartScheduleTab = lazy(() =>
+  import('./components/channel-monitor-smart-schedule-tab').then((module) => ({
+    default: module.ChannelMonitorSmartScheduleTab,
+  }))
+)
 
-type MonitorView = 'channels' | 'groups' | 'models'
+type MonitorView = 'channels' | 'groups' | 'models' | 'schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
   | 'concurrency'
@@ -178,6 +182,8 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   notification_email: '',
   probe_response_enabled: false,
   smart_schedule_enabled: false,
+  smart_schedule_scope: 'channel',
+  smart_schedule_groups: [],
   smart_schedule_interval_minutes: 10,
   smart_schedule_strategy: 'smart',
   smart_schedule_stability_enabled: false,
@@ -338,31 +344,6 @@ export function ChannelMonitor() {
     onSuccess: (_response, request) => {
       toast.success(
         request.status === CHANNEL_STATUS.ENABLED ? '渠道已启用' : '渠道已禁用'
-      )
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
-      queryClient.invalidateQueries({ queryKey: ['channels'] })
-    },
-  })
-  const smartScheduleConfigMutation = useMutation({
-    mutationFn: updateChannelMonitorSmartScheduleConfig,
-    onError: handleChannelMonitorMutationError,
-    onSuccess: () => {
-      toast.success('渠道调度设置已保存')
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
-    },
-  })
-  const smartScheduleStabilityClearMutation = useMutation({
-    mutationFn: clearChannelMonitorSmartScheduleStability,
-    onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
-      toast.success(
-        response.data.cleared
-          ? `已解除稳定性保护，恢复优先级 ${response.data.priority}、权重 ${response.data.weight}`
-          : '渠道当前没有需要解除的稳定性保护'
       )
     },
     onSettled: () => {
@@ -716,7 +697,7 @@ export function ChannelMonitor() {
           className='gap-4'
         >
           <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
-            <TabsList>
+            <TabsList className='grid h-auto w-full grid-cols-2 sm:inline-flex sm:h-8 sm:w-fit'>
               <TabsTrigger value='channels'>
                 <HugeiconsIcon
                   icon={Analytics01Icon}
@@ -735,159 +716,167 @@ export function ChannelMonitor() {
                 />
                 模型性能 {performanceModelOptions.length}
               </TabsTrigger>
+              <TabsTrigger value='schedule'>
+                <HugeiconsIcon icon={Route01Icon} data-icon='inline-start' />
+                智能调度
+              </TabsTrigger>
             </TabsList>
 
-            <div className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap lg:max-w-5xl lg:justify-end'>
-              {view === 'channels' && (
-                <ToggleGroup
-                  value={[upstreamFilter]}
-                  onValueChange={(values) => {
-                    const nextValue = values.find(
-                      (value) => value !== upstreamFilter
-                    )
-                    if (
-                      nextValue !== 'all' &&
-                      nextValue !== 'new_api' &&
-                      nextValue !== 'sub2api' &&
-                      nextValue !== 'custom'
-                    ) {
-                      return
-                    }
-                    setUpstreamFilter(nextValue)
-                  }}
-                  variant='outline'
-                  size='sm'
-                  spacing={0}
-                  aria-label='按上游类型筛选渠道'
-                  className='grid w-full grid-cols-2 sm:w-auto sm:grid-cols-4'
-                >
-                  <ToggleGroupItem value='all' className='w-full'>
-                    全部 {channels.length}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value='new_api' className='w-full'>
-                    New API {newAPIChannelCount}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value='sub2api' className='w-full'>
-                    Sub2API {sub2APIChannelCount}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value='custom' className='w-full'>
-                    自定义 {customUpstreamChannelCount}
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              )}
-
-              {view === 'channels' && (
-                <div className='flex w-full gap-2 sm:w-auto'>
-                  <Select
-                    items={CHANNEL_MONITOR_SORT_OPTIONS}
-                    value={channelSortMode}
-                    onValueChange={(value) => {
-                      if (value === null) return
-                      setChannelSortMode(value)
-                      localStorage.setItem(
-                        CHANNEL_MONITOR_SORT_STORAGE_KEY,
-                        value
+            {view !== 'schedule' ? (
+              <div className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap lg:max-w-5xl lg:justify-end'>
+                {view === 'channels' && (
+                  <ToggleGroup
+                    value={[upstreamFilter]}
+                    onValueChange={(values) => {
+                      const nextValue = values.find(
+                        (value) => value !== upstreamFilter
                       )
+                      if (
+                        nextValue !== 'all' &&
+                        nextValue !== 'new_api' &&
+                        nextValue !== 'sub2api' &&
+                        nextValue !== 'custom'
+                      ) {
+                        return
+                      }
+                      setUpstreamFilter(nextValue)
                     }}
+                    variant='outline'
+                    size='sm'
+                    spacing={0}
+                    aria-label='按上游类型筛选渠道'
+                    className='grid w-full grid-cols-2 sm:w-auto sm:grid-cols-4'
                   >
-                    <SelectTrigger
-                      className='w-full sm:w-48'
-                      aria-label='渠道排序方式'
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {CHANNEL_MONITOR_SORT_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  {channelSortMode === 'custom' && (
-                    <Button
-                      type='button'
-                      variant='outline'
-                      onClick={() => setOrderDialogOpen(true)}
-                      className='shrink-0'
-                    >
-                      <HugeiconsIcon
-                        icon={ArrangeIcon}
-                        data-icon='inline-start'
-                      />
-                      调整顺序
-                    </Button>
-                  )}
-                </div>
-              )}
+                    <ToggleGroupItem value='all' className='w-full'>
+                      全部 {channels.length}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value='new_api' className='w-full'>
+                      New API {newAPIChannelCount}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value='sub2api' className='w-full'>
+                      Sub2API {sub2APIChannelCount}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value='custom' className='w-full'>
+                      自定义 {customUpstreamChannelCount}
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                )}
 
-              {view === 'models' && (
-                <div className='flex w-full sm:w-56'>
-                  <Select
-                    items={performanceModelOptions}
-                    value={activePerformanceModel || null}
-                    onValueChange={(value) => {
-                      if (value !== null) setPerformanceModelFilter(value)
+                {view === 'channels' && (
+                  <div className='flex w-full gap-2 sm:w-auto'>
+                    <Select
+                      items={CHANNEL_MONITOR_SORT_OPTIONS}
+                      value={channelSortMode}
+                      onValueChange={(value) => {
+                        if (value === null) return
+                        setChannelSortMode(value)
+                        localStorage.setItem(
+                          CHANNEL_MONITOR_SORT_STORAGE_KEY,
+                          value
+                        )
+                      }}
+                    >
+                      <SelectTrigger
+                        className='w-full sm:w-48'
+                        aria-label='渠道排序方式'
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {CHANNEL_MONITOR_SORT_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    {channelSortMode === 'custom' && (
+                      <Button
+                        type='button'
+                        variant='outline'
+                        onClick={() => setOrderDialogOpen(true)}
+                        className='shrink-0'
+                      >
+                        <HugeiconsIcon
+                          icon={ArrangeIcon}
+                          data-icon='inline-start'
+                        />
+                        调整顺序
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {view === 'models' && (
+                  <div className='flex w-full sm:w-56'>
+                    <Select
+                      items={performanceModelOptions}
+                      value={activePerformanceModel || null}
+                      onValueChange={(value) => {
+                        if (value !== null) setPerformanceModelFilter(value)
+                      }}
+                    >
+                      <SelectTrigger
+                        className='min-w-0 flex-1 sm:w-56'
+                        aria-label='选择性能模型'
+                        disabled={performanceModelOptions.length === 0}
+                      >
+                        <SelectValue placeholder='选择模型' />
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {performanceModelOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <InputGroup className='w-full sm:w-36'>
+                  <InputGroupAddon>近</InputGroupAddon>
+                  <InputGroupInput
+                    type='number'
+                    min={MIN_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
+                    max={MAX_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
+                    step={1}
+                    value={performanceRangeInput}
+                    onChange={(event) =>
+                      setPerformanceRangeInput(event.target.value)
+                    }
+                    onBlur={applyPerformanceRange}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur()
                     }}
-                  >
-                    <SelectTrigger
-                      className='min-w-0 flex-1 sm:w-56'
-                      aria-label='选择性能模型'
-                      disabled={performanceModelOptions.length === 0}
-                    >
-                      <SelectValue placeholder='选择模型' />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {performanceModelOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                    aria-label='性能与成功率统计范围（分钟）'
+                    aria-invalid={!isPerformanceRangeInputValid}
+                    className='min-w-0 text-right font-mono'
+                  />
+                  <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+                </InputGroup>
 
-              <InputGroup className='w-full sm:w-36'>
-                <InputGroupAddon>近</InputGroupAddon>
-                <InputGroupInput
-                  type='number'
-                  min={MIN_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
-                  max={MAX_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
-                  step={1}
-                  value={performanceRangeInput}
-                  onChange={(event) =>
-                    setPerformanceRangeInput(event.target.value)
-                  }
-                  onBlur={applyPerformanceRange}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') event.currentTarget.blur()
-                  }}
-                  aria-label='性能与成功率统计范围（分钟）'
-                  aria-invalid={!isPerformanceRangeInputValid}
-                  className='min-w-0 text-right font-mono'
-                />
-                <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-              </InputGroup>
-
-              <InputGroup className='w-full sm:max-w-sm'>
-                <InputGroupAddon>
-                  <HugeiconsIcon icon={Search01Icon} />
-                </InputGroupAddon>
-                <InputGroupInput
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={
-                    view === 'models' ? '搜索渠道' : '搜索渠道或分组'
-                  }
-                  aria-label={view === 'models' ? '搜索渠道' : '搜索渠道或分组'}
-                />
-              </InputGroup>
-            </div>
+                <InputGroup className='w-full sm:max-w-sm'>
+                  <InputGroupAddon>
+                    <HugeiconsIcon icon={Search01Icon} />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={
+                      view === 'models' ? '搜索渠道' : '搜索渠道或分组'
+                    }
+                    aria-label={
+                      view === 'models' ? '搜索渠道' : '搜索渠道或分组'
+                    }
+                  />
+                </InputGroup>
+              </div>
+            ) : null}
           </div>
 
           <TabsContent value='channels'>
@@ -946,15 +935,6 @@ export function ChannelMonitor() {
                   channelName: channel.name,
                 })
               }
-              onUpdateSmartSchedule={(channel, excluded) =>
-                smartScheduleConfigMutation.mutate({
-                  channelId: channel.id,
-                  excluded,
-                })
-              }
-              onClearSmartScheduleStability={(channel) =>
-                smartScheduleStabilityClearMutation.mutate(channel.id)
-              }
               fetchingBalanceChannelId={
                 balanceFetchMutation.isPending
                   ? balanceFetchMutation.variables
@@ -968,16 +948,6 @@ export function ChannelMonitor() {
               updatingStatusChannelId={
                 statusMutation.isPending
                   ? (statusMutation.variables?.channelId ?? null)
-                  : null
-              }
-              updatingSmartScheduleChannelId={
-                smartScheduleConfigMutation.isPending
-                  ? (smartScheduleConfigMutation.variables?.channelId ?? null)
-                  : null
-              }
-              clearingSmartScheduleStabilityChannelId={
-                smartScheduleStabilityClearMutation.isPending
-                  ? (smartScheduleStabilityClearMutation.variables ?? null)
                   : null
               }
             />
@@ -1027,6 +997,28 @@ export function ChannelMonitor() {
                 })
               }
             />
+          </TabsContent>
+          <TabsContent value='schedule'>
+            {view === 'schedule' ? (
+              <Suspense
+                fallback={
+                  <div className='flex flex-col gap-3'>
+                    <Skeleton className='h-10 w-full' />
+                    <Skeleton className='h-96 w-full' />
+                  </div>
+                }
+              >
+                <LazyChannelMonitorSmartScheduleTab
+                  active
+                  channels={channels}
+                  settings={settings}
+                  onOpenSettings={() => {
+                    setSettingsSection('schedule')
+                    setSettingsOpen(true)
+                  }}
+                />
+              </Suspense>
+            ) : null}
           </TabsContent>
         </Tabs>
       </div>
@@ -1101,6 +1093,9 @@ export function ChannelMonitor() {
                     performanceQuery.refetch()
                     costQuery.refetch()
                     todaySuccessQuery.refetch()
+                    queryClient.invalidateQueries({
+                      queryKey: ['channel-monitor', 'smart-schedule', 'routes'],
+                    })
                   }}
                   disabled={
                     query.isFetching ||
@@ -1202,9 +1197,10 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_scope}:${(settings.smart_schedule_groups ?? []).join(',')}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
+          groupOptions={groups.map((group) => group.name)}
           initialSection={settingsSection}
           open
           onOpenChange={setSettingsOpen}
