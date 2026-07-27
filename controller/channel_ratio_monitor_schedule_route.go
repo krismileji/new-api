@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -53,9 +54,10 @@ func runChannelSmartScheduleByRouteOnce(
 	for _, group := range settings.SmartScheduleGroups {
 		selectedGroups[group] = struct{}{}
 	}
-	selectedModels := make(map[string]struct{}, len(settings.SmartScheduleModels))
-	for _, modelName := range settings.SmartScheduleModels {
-		selectedModels[modelName] = struct{}{}
+	defaultPolicy := channelSmartSchedulePolicyFromSettings(settings)
+	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
+	for _, groupPolicy := range settings.SmartScheduleGroupPolicies {
+		policyByGroup[groupPolicy.Group] = groupPolicy.resolve(defaultPolicy)
 	}
 	selectedRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(routes))
 	for _, route := range routes {
@@ -64,10 +66,12 @@ func runChannelSmartScheduleByRouteOnce(
 				continue
 			}
 		}
-		if len(selectedModels) > 0 {
-			if _, selected := selectedModels[route.Model]; !selected {
-				continue
-			}
+		policy := defaultPolicy
+		if groupPolicy, configured := policyByGroup[route.Group]; configured {
+			policy = groupPolicy
+		}
+		if len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model) {
+			continue
 		}
 		selectedRoutes = append(selectedRoutes, route)
 	}
@@ -92,21 +96,16 @@ func runChannelSmartScheduleByRouteOnce(
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
 
-	usesBusinessScore := channelSmartScheduleUsesBusinessScore(
-		settings.SmartScheduleStabilityEnabled,
-		settings.SmartScheduleScoring,
-	)
-	needsPerformance := usesBusinessScore && (settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyFirstToken ||
-		settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyTPS ||
-		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart &&
-			(settings.SmartScheduleScoring.Smart.FirstTokenPercent > 0 || settings.SmartScheduleScoring.Smart.TPSPercent > 0)) ||
-		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio &&
-			(settings.SmartScheduleScoring.Ratio.FirstTokenPercent > 0 || settings.SmartScheduleScoring.Ratio.TPSPercent > 0)))
-	needsRatio := usesBusinessScore && ((settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategyRatio &&
-		settings.SmartScheduleScoring.Ratio.CostRatioPercent > 0) ||
-		(settings.SmartScheduleStrategy == channelMonitorSmartScheduleStrategySmart &&
-			settings.SmartScheduleScoring.Smart.CostRatioPercent > 0))
-	needsStability := settings.SmartScheduleStabilityEnabled
+	needsPerformance := false
+	needsStability := false
+	for _, route := range selectedRoutes {
+		policy := defaultPolicy
+		if groupPolicy, configured := policyByGroup[route.Group]; configured {
+			policy = groupPolicy
+		}
+		needsPerformance = needsPerformance || policy.needsPerformance()
+		needsStability = needsStability || policy.StabilityEnabled
+	}
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceMinutes*60)
 	performanceByRoute := make(map[channelSmartScheduleRouteKey]*channelSmartSchedulePerformance)
@@ -138,8 +137,6 @@ func runChannelSmartScheduleByRouteOnce(
 				performance = &channelSmartSchedulePerformance{}
 				performanceByRoute[key] = performance
 			}
-			performance.StabilitySuccessCount = metric.SuccessCount
-			performance.StabilityFailureCount = metric.FailureCount
 			performance.StabilitySampleCount = metric.SampleCount
 			if metric.SampleCount > 0 {
 				value := metric.SuccessRate
@@ -154,8 +151,12 @@ func runChannelSmartScheduleByRouteOnce(
 	statusUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(selectedRoutes))
 	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
-	minimumSuccessRate := settings.SmartScheduleMinSuccessRate / 100
 	for _, route := range selectedRoutes {
+		policy := defaultPolicy
+		if groupPolicy, configured := policyByGroup[route.Group]; configured {
+			policy = groupPolicy
+		}
+		minimumSuccessRate := policy.MinSuccessRate / 100
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		routeByKey[key] = route
 		currentPriority := route.Priority
@@ -169,7 +170,7 @@ func runChannelSmartScheduleByRouteOnce(
 			continue
 		}
 
-		if route.State.StabilityState != "" && (!needsStability || !stabilityAvailable) {
+		if route.State.StabilityState != "" && (!policy.StabilityEnabled || !stabilityAvailable) {
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 				targetPriority: currentPriority, targetWeight: currentWeight,
@@ -217,7 +218,7 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 
 		performance := performanceByRoute[key]
-		if needsStability && stabilityAvailable && route.State.StabilitySince > performanceStart {
+		if policy.StabilityEnabled && stabilityAvailable && route.State.StabilitySince > performanceStart {
 			metric, metricErr := model.GetChannelMonitorRouteStabilityMetric(
 				ctx, route.State.StabilitySince, route.ChannelId, route.Group, route.Model,
 			)
@@ -228,8 +229,6 @@ func runChannelSmartScheduleByRouteOnce(
 				performance = &channelSmartSchedulePerformance{}
 				performanceByRoute[key] = performance
 			}
-			performance.StabilitySuccessCount = metric.SuccessCount
-			performance.StabilityFailureCount = metric.FailureCount
 			performance.StabilitySampleCount = metric.SampleCount
 			performance.Stability = nil
 			if metric.SampleCount > 0 {
@@ -240,7 +239,7 @@ func runChannelSmartScheduleByRouteOnce(
 
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
 			if performance == nil || performance.Stability == nil ||
-				performance.StabilitySampleCount < int64(settings.SmartScheduleMinSamples) {
+				performance.StabilitySampleCount < int64(policy.MinSamples) {
 				sampleCount := int64(0)
 				if performance != nil {
 					sampleCount = performance.StabilitySampleCount
@@ -250,7 +249,7 @@ func runChannelSmartScheduleByRouteOnce(
 					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 					targetPriority: targetPriority, targetWeight: targetWeight,
 					status:  model.ChannelSmartScheduleStatusSkipped,
-					message: fmt.Sprintf("稳定性试放样本不足（%d/%d）", sampleCount, settings.SmartScheduleMinSamples),
+					message: fmt.Sprintf("稳定性试放样本不足（%d/%d）", sampleCount, policy.MinSamples),
 				})
 				continue
 			}
@@ -261,10 +260,10 @@ func runChannelSmartScheduleByRouteOnce(
 					targetWeight:   channelMonitorSmartScheduleDegradedWeight,
 					status:         model.ChannelSmartScheduleStatusSucceeded,
 					message: fmt.Sprintf("试放成功率 %.1f%% 低于 %.1f%%，再次降级",
-						*performance.Stability*100, settings.SmartScheduleMinSuccessRate),
+						*performance.Stability*100, policy.MinSuccessRate),
 					stability: &model.ChannelSmartScheduleStabilityUpdate{
 						State:         model.ChannelSmartScheduleStabilityDegraded,
-						Until:         now + int64(settings.SmartScheduleCooldownMinutes*60),
+						Until:         now + int64(policy.CooldownMinutes*60),
 						SavedPriority: route.State.StabilitySavedPriority,
 						SavedWeight:   route.State.StabilitySavedWeight,
 					},
@@ -277,7 +276,7 @@ func runChannelSmartScheduleByRouteOnce(
 				targetPriority: targetPriority, targetWeight: targetWeight,
 				status: model.ChannelSmartScheduleStatusSucceeded,
 				message: fmt.Sprintf("试放成功率 %.1f%% 已达到 %.1f%%，已解除保护并恢复原优先级和权重",
-					*performance.Stability*100, settings.SmartScheduleMinSuccessRate),
+					*performance.Stability*100, policy.MinSuccessRate),
 				stability: &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
 			})
 			continue
@@ -286,8 +285,8 @@ func runChannelSmartScheduleByRouteOnce(
 			stabilityUpdates[key] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
-		if route.State.StabilityState == "" && performance != nil && performance.Stability != nil &&
-			performance.StabilitySampleCount >= int64(settings.SmartScheduleMinSamples) &&
+		if policy.StabilityEnabled && route.State.StabilityState == "" && performance != nil && performance.Stability != nil &&
+			performance.StabilitySampleCount >= int64(policy.MinSamples) &&
 			*performance.Stability < minimumSuccessRate {
 			savedPriority, savedWeight := channelSmartScheduleSavedTarget(currentPriority, currentWeight)
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
@@ -296,10 +295,10 @@ func runChannelSmartScheduleByRouteOnce(
 				targetWeight:   channelMonitorSmartScheduleDegradedWeight,
 				status:         model.ChannelSmartScheduleStatusSucceeded,
 				message: fmt.Sprintf("成功率 %.1f%% 低于 %.1f%%，已在当前分组和模型降级至优先级 0、权重 0",
-					*performance.Stability*100, settings.SmartScheduleMinSuccessRate),
+					*performance.Stability*100, policy.MinSuccessRate),
 				stability: &model.ChannelSmartScheduleStabilityUpdate{
 					State:         model.ChannelSmartScheduleStabilityDegraded,
-					Until:         now + int64(settings.SmartScheduleCooldownMinutes*60),
+					Until:         now + int64(policy.CooldownMinutes*60),
 					SavedPriority: savedPriority, SavedWeight: savedWeight,
 				},
 			})
@@ -310,7 +309,7 @@ func runChannelSmartScheduleByRouteOnce(
 		var ratio *float64
 		if monitor.UpdatedTime > 0 && validateChannelMonitorRatio(&monitor.Ratio) {
 			value, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
-			if conversionErr != nil && needsRatio {
+			if conversionErr != nil && policy.needsRatio() {
 				statusUpdates = append(statusUpdates, channelSmartScheduleRouteStatusUpdate(
 					key, model.ChannelSmartScheduleStatusSkipped, "成本倍率换算失败："+conversionErr.Error(),
 					nil, currentPriority, currentWeight, now, stabilityUpdates[key],
@@ -334,11 +333,11 @@ func runChannelSmartScheduleByRouteOnce(
 			candidate.StabilitySampleCount = performance.StabilitySampleCount
 		}
 		if reason := channelSmartScheduleCandidateSkipReasonWithScoring(
-			candidate, settings.SmartScheduleStrategy, settings.SmartScheduleStabilityEnabled,
-			settings.SmartScheduleMinSamples, settings.SmartScheduleScoring,
+			candidate, policy.Strategy, policy.StabilityEnabled,
+			policy.MinSamples, policy.Scoring,
 		); reason != "" && channelSmartScheduleCandidateNeedsExplorationWithScoring(
-			candidate, settings.SmartScheduleStrategy, settings.SmartScheduleStabilityEnabled,
-			settings.SmartScheduleMinSamples, settings.SmartScheduleScoring,
+			candidate, policy.Strategy, policy.StabilityEnabled,
+			policy.MinSamples, policy.Scoring,
 		) {
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
@@ -358,9 +357,13 @@ func runChannelSmartScheduleByRouteOnce(
 	}
 
 	for poolKey, candidates := range poolCandidates {
+		policy := defaultPolicy
+		if groupPolicy, configured := policyByGroup[poolKey.group]; configured {
+			policy = groupPolicy
+		}
 		plan := planChannelSmartScheduleWithScoring(
-			candidates, settings.SmartScheduleStrategy, settings.SmartScheduleStabilityEnabled,
-			settings.SmartScheduleApplyMode, settings.SmartScheduleMinSamples, forceReset, settings.SmartScheduleScoring,
+			candidates, policy.Strategy, policy.StabilityEnabled,
+			policy.ApplyMode, policy.MinSamples, forceReset, policy.Scoring,
 		)
 		result.Planned += len(plan.Items)
 		for _, candidate := range candidates {

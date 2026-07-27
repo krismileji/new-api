@@ -16,18 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  Delete02Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo } from 'react'
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 
 import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   FormControl,
@@ -51,11 +44,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
@@ -64,42 +53,11 @@ import {
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
-
-const SCHEDULE_STRATEGY_OPTIONS = [
-  {
-    value: 'smart',
-    label: '智能调度',
-    description: '综合成本倍率、首字和 TPS',
-  },
-  {
-    value: 'ratio',
-    label: '按成本倍率',
-    description: '倍率越低，调度得分越高',
-  },
-  {
-    value: 'first_token',
-    label: '按首字',
-    description: '平均首字时间越低，调度得分越高',
-  },
-  {
-    value: 'tps',
-    label: '按 TPS',
-    description: '平均 TPS 越高，调度得分越高',
-  },
-] as const
-
-const APPLY_MODE_OPTIONS = [
-  {
-    value: 'weight',
-    label: '只调整权重',
-    description: '保留现有优先级，只在同优先级内调整流量',
-  },
-  {
-    value: 'priority_weight',
-    label: '优先级分层 + 权重',
-    description: '按得分分为 100、90、80 三档，再调整权重',
-  },
-] as const
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS,
+  CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS,
+} from '../lib/smart-schedule-options'
+import { ChannelMonitorSmartScheduleGroupPolicies } from './channel-monitor-smart-schedule-group-policies'
 
 const PERFORMANCE_RANGE_OPTIONS = [
   { value: '15', label: '近 15 分钟' },
@@ -244,20 +202,6 @@ function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
   )
 }
 
-function reorderSmartScheduleModels(
-  models: string[],
-  sourceIndex: number,
-  offset: -1 | 1
-) {
-  const targetIndex = sourceIndex + offset
-  if (targetIndex < 0 || targetIndex >= models.length) return models
-  const nextModels = [...models]
-  const [modelName] = nextModels.splice(sourceIndex, 1)
-  if (modelName === undefined) return models
-  nextModels.splice(targetIndex, 0, modelName)
-  return nextModels
-}
-
 export function ChannelMonitorSmartScheduleFields(
   props: ChannelMonitorSmartScheduleFieldsProps
 ) {
@@ -269,10 +213,6 @@ export function ChannelMonitorSmartScheduleFields(
     () => props.groupOptions.map((group) => ({ value: group, label: group })),
     [props.groupOptions]
   )
-  const scheduleScope = useWatch({
-    control: props.form.control,
-    name: 'smartScheduleScope',
-  })
   const stabilityEnabled = useWatch({
     control: props.form.control,
     name: 'smartScheduleStabilityEnabled',
@@ -300,7 +240,7 @@ export function ChannelMonitorSmartScheduleFields(
             <div className='flex flex-col gap-1'>
               <FormLabel>智能调度</FormLabel>
               <FormDescription>
-                定时按照统一调度方式调整参与渠道的优先级、权重
+                按分组和模型分别调整参与路由的优先级、权重
               </FormDescription>
             </div>
             <FormControl>
@@ -314,52 +254,12 @@ export function ChannelMonitorSmartScheduleFields(
         )}
       />
 
-      <ChannelMonitorRelayResponseHeaderTimeoutField form={props.form} />
-
-      <div className='grid gap-4 md:grid-cols-2'>
-        <FormField
-          control={props.form.control}
-          name='smartScheduleScope'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>调度范围</FormLabel>
-              <Select
-                items={[
-                  { value: 'group_model', label: '按分组和模型隔离' },
-                  { value: 'channel', label: '按渠道（兼容模式）' },
-                ]}
-                value={field.value}
-                onValueChange={(value) =>
-                  value !== null && field.onChange(value)
-                }
-              >
-                <FormControl>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    <SelectItem value='group_model'>
-                      按分组和模型隔离
-                    </SelectItem>
-                    <SelectItem value='channel'>按渠道（兼容模式）</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FormDescription>
-                隔离模式只调整对应分组、模型的路由，不影响同一渠道的其他分组
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
+      <div className='grid items-start gap-4'>
         <FormField
           control={props.form.control}
           name='smartScheduleGroups'
           render={({ field }) => (
-            <FormItem>
+            <FormItem className='min-w-0'>
               <FormLabel>参与分组</FormLabel>
               <FormControl>
                 <MultiSelect
@@ -368,12 +268,16 @@ export function ChannelMonitorSmartScheduleFields(
                   onChange={field.onChange}
                   placeholder='全部分组'
                   emptyText='没有匹配的分组'
-                  maxVisibleChips={3}
-                  disabled={scheduleScope !== 'group_model'}
+                  className='h-8 min-h-8 flex-nowrap overflow-hidden'
+                  renderSelectedSummary={
+                    field.value.length > 0
+                      ? (values) => `已选择 ${values.length} 个分组`
+                      : undefined
+                  }
                 />
               </FormControl>
               <FormDescription>
-                不选择表示全部分组；仅在按分组和模型隔离时生效
+                不选择表示全部分组；每个分组和模型形成独立调度池
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -381,215 +285,34 @@ export function ChannelMonitorSmartScheduleFields(
         />
       </div>
 
-      <FormField
-        control={props.form.control}
-        name='smartScheduleStrategy'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>调度方式</FormLabel>
-            <Select
-              items={SCHEDULE_STRATEGY_OPTIONS}
-              value={field.value}
-              onValueChange={(value) => value !== null && field.onChange(value)}
-            >
-              <FormControl>
-                <SelectTrigger className='w-full'>
-                  <SelectValue />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {SCHEDULE_STRATEGY_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FormDescription>
-              {
-                SCHEDULE_STRATEGY_OPTIONS.find(
-                  (option) => option.value === field.value
-                )?.description
-              }
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={props.form.control}
-        name='smartScheduleStabilityEnabled'
-        render={({ field }) => (
-          <FormItem className='flex items-center justify-between gap-4'>
-            <div className='flex flex-col gap-1'>
-              <FormLabel>稳定性保护</FormLabel>
-              <FormDescription>
-                启用后占最终得分的 {stabilityPercent}%，同时负责准入、降级和恢复
-              </FormDescription>
-            </div>
-            <FormControl>
-              <Switch
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                aria-label='稳定性保护'
-              />
-            </FormControl>
-          </FormItem>
-        )}
-      />
-
-      {strategy === 'smart' && (
-        <SmartScheduleMetricPercentageFields
-          form={props.form}
-          group='smart'
-          title='智能调度指标占比'
-        />
-      )}
-
-      {strategy === 'ratio' && (
-        <SmartScheduleMetricPercentageFields
-          form={props.form}
-          group='ratio'
-          title='按成本倍率调度指标占比'
-        />
-      )}
-
-      <FormField
-        control={props.form.control}
-        name='smartScheduleScoring.curveExponent'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel htmlFor='channel-monitor-smart-schedule-curve-exponent'>
-              得分曲线指数
-            </FormLabel>
-            <FormControl>
-              <InputGroup>
-                <InputGroupInput
-                  id='channel-monitor-smart-schedule-curve-exponent'
-                  type='number'
-                  min={0.1}
-                  max={5}
-                  step={0.1}
-                  inputMode='decimal'
-                  value={field.value}
-                  onBlur={field.onBlur}
-                  onChange={field.onChange}
-                  name={field.name}
-                  ref={field.ref}
-                  aria-invalid={Boolean(
-                    props.form.formState.errors.smartScheduleScoring
-                      ?.curveExponent
-                  )}
-                />
-              </InputGroup>
-            </FormControl>
-            <FormDescription>
-              1 为线性；大于 1 会进一步压低中低分渠道。相对拉伸也使用该指数
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={props.form.control}
-        name='smartScheduleScoring.relativeWeightEnabled'
-        render={({ field }) => (
-          <FormItem className='flex items-center justify-between gap-4 border-t pt-4'>
-            <div className='flex flex-col gap-1'>
-              <FormLabel>相对权重拉伸</FormLabel>
-              <FormDescription>
-                根据同一调度组内的得分范围渐进拉开权重，减少相近评分渠道平均分流
-              </FormDescription>
-            </div>
-            <FormControl>
-              <Switch
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                aria-label='相对权重拉伸'
-              />
-            </FormControl>
-          </FormItem>
-        )}
-      />
-
-      {relativeWeightEnabled ? (
-        <div className='space-y-3'>
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <SmartSchedulePercentField
-              form={props.form}
-              name='smartScheduleScoring.relativeWeightStartPercent'
-              label='开始拉伸分差'
-            />
-            <SmartSchedulePercentField
-              form={props.form}
-              name='smartScheduleScoring.relativeWeightFullPercent'
-              label='完整拉伸分差'
-            />
-          </div>
-          <p className='text-muted-foreground text-sm'>
-            低于开始值保持绝对得分映射；达到完整值时，组内最低和最高得分映射到权重
-            10 和 100，中间按比例混合。开始值设为 0% 时，任何分差都会开始拉伸
+      <section
+        className='flex flex-col gap-4'
+        aria-labelledby='channel-monitor-smart-schedule-runtime-title'
+      >
+        <div>
+          <h3
+            id='channel-monitor-smart-schedule-runtime-title'
+            className='text-sm font-medium'
+          >
+            运行设置
+          </h3>
+          <p className='text-muted-foreground mt-1 text-sm'>
+            对全部分组统一生效，不随分组策略变化
           </p>
         </div>
-      ) : null}
-
-      {stabilityEnabled && (
-        <div className='grid gap-4 sm:grid-cols-2'>
-          <SmartSchedulePercentField
-            form={props.form}
-            name='smartScheduleScoring.stabilityPercent'
-            label='稳定性占比'
-          />
+        <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-3'>
           <FormField
             control={props.form.control}
-            name='smartScheduleMinSuccessRate'
+            name='smartScheduleIntervalMinutes'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>最低成功率</FormLabel>
-                <FormControl>
-                  <InputGroup>
-                    <InputGroupInput
-                      type='number'
-                      min={0}
-                      max={100}
-                      step={1}
-                      inputMode='decimal'
-                      value={field.value}
-                      onBlur={field.onBlur}
-                      onChange={field.onChange}
-                      name={field.name}
-                      ref={field.ref}
-                      aria-invalid={Boolean(
-                        props.form.formState.errors.smartScheduleMinSuccessRate
-                      )}
-                    />
-                    <InputGroupAddon align='inline-end'>%</InputGroupAddon>
-                  </InputGroup>
-                </FormControl>
-                <FormDescription>
-                  样本达到要求且低于该值时降为优先级 0、权重 0
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={props.form.control}
-            name='smartScheduleCooldownMinutes'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>降级时长</FormLabel>
+                <FormLabel>调度间隔</FormLabel>
                 <FormControl>
                   <InputGroup>
                     <InputGroupInput
                       type='number'
                       min={1}
-                      max={MAX_SMART_SCHEDULE_COOLDOWN_MINUTES}
+                      max={MAX_AUTO_UPDATE_INTERVAL_MINUTES}
                       step={1}
                       inputMode='numeric'
                       value={field.value}
@@ -598,90 +321,428 @@ export function ChannelMonitorSmartScheduleFields(
                       name={field.name}
                       ref={field.ref}
                       aria-invalid={Boolean(
-                        props.form.formState.errors.smartScheduleCooldownMinutes
+                        props.form.formState.errors.smartScheduleIntervalMinutes
                       )}
                     />
                     <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
                   </InputGroup>
                 </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={props.form.control}
+            name='smartSchedulePerformanceMinutes'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>统计范围</FormLabel>
+                <Select
+                  items={PERFORMANCE_RANGE_OPTIONS}
+                  value={String(field.value)}
+                  onValueChange={(value) => {
+                    if (value !== null) field.onChange(Number(value))
+                  }}
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {PERFORMANCE_RANGE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <ChannelMonitorRelayResponseHeaderTimeoutField form={props.form} />
+        </div>
+      </section>
+
+      <Tabs defaultValue='default-policy' className='gap-4'>
+        <TabsList className='grid h-auto w-full grid-cols-2'>
+          <TabsTrigger value='default-policy'>默认策略</TabsTrigger>
+          <TabsTrigger value='group-policies'>分组策略</TabsTrigger>
+        </TabsList>
+
+        <TabsContent
+          value='default-policy'
+          className='mt-0 flex flex-col gap-5'
+        >
+          <FormField
+            control={props.form.control}
+            name='smartScheduleStrategy'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>调度方式</FormLabel>
+                <Select
+                  items={CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS}
+                  value={field.value}
+                  onValueChange={(value) =>
+                    value !== null && field.onChange(value)
+                  }
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.map(
+                        (option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <FormDescription>
-                  到期后恢复原优先级，以不超过 10 的小流量权重用新样本试放
+                  {
+                    CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.find(
+                      (option) => option.value === field.value
+                    )?.description
+                  }
                 </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
-        </div>
-      )}
 
-      <FormField
-        control={props.form.control}
-        name='smartScheduleIntervalMinutes'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>调度间隔</FormLabel>
-            <FormControl>
-              <InputGroup>
-                <InputGroupInput
-                  type='number'
-                  min={1}
-                  max={MAX_AUTO_UPDATE_INTERVAL_MINUTES}
-                  step={1}
-                  inputMode='numeric'
-                  value={field.value}
-                  onBlur={field.onBlur}
-                  onChange={field.onChange}
-                  name={field.name}
-                  ref={field.ref}
-                  aria-invalid={Boolean(
-                    props.form.formState.errors.smartScheduleIntervalMinutes
-                  )}
+          <FormField
+            control={props.form.control}
+            name='smartScheduleStabilityEnabled'
+            render={({ field }) => (
+              <FormItem className='flex items-center justify-between gap-4'>
+                <div className='flex flex-col gap-1'>
+                  <FormLabel>稳定性保护</FormLabel>
+                  <FormDescription>
+                    启用后占最终得分的 {stabilityPercent}
+                    %，同时负责准入、降级和恢复
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    aria-label='稳定性保护'
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+
+          {strategy === 'smart' && (
+            <SmartScheduleMetricPercentageFields
+              form={props.form}
+              group='smart'
+              title='智能调度指标占比'
+            />
+          )}
+
+          {strategy === 'ratio' && (
+            <SmartScheduleMetricPercentageFields
+              form={props.form}
+              group='ratio'
+              title='按成本倍率调度指标占比'
+            />
+          )}
+
+          <FormField
+            control={props.form.control}
+            name='smartScheduleScoring.curveExponent'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel htmlFor='channel-monitor-smart-schedule-curve-exponent'>
+                  得分曲线指数
+                </FormLabel>
+                <FormControl>
+                  <InputGroup>
+                    <InputGroupInput
+                      id='channel-monitor-smart-schedule-curve-exponent'
+                      type='number'
+                      min={0.1}
+                      max={5}
+                      step={0.1}
+                      inputMode='decimal'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors.smartScheduleScoring
+                          ?.curveExponent
+                      )}
+                    />
+                  </InputGroup>
+                </FormControl>
+                <FormDescription>
+                  1 为线性；大于 1 会进一步压低中低分渠道。相对拉伸也使用该指数
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={props.form.control}
+            name='smartScheduleScoring.relativeWeightEnabled'
+            render={({ field }) => (
+              <FormItem className='flex items-center justify-between gap-4 border-t pt-4'>
+                <div className='flex flex-col gap-1'>
+                  <FormLabel>相对权重拉伸</FormLabel>
+                  <FormDescription>
+                    根据同一调度组内的得分范围渐进拉开权重，减少相近评分渠道平均分流
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    aria-label='相对权重拉伸'
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+
+          {relativeWeightEnabled ? (
+            <div className='space-y-3'>
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <SmartSchedulePercentField
+                  form={props.form}
+                  name='smartScheduleScoring.relativeWeightStartPercent'
+                  label='开始拉伸分差'
                 />
-                <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-              </InputGroup>
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+                <SmartSchedulePercentField
+                  form={props.form}
+                  name='smartScheduleScoring.relativeWeightFullPercent'
+                  label='完整拉伸分差'
+                />
+              </div>
+              <p className='text-muted-foreground text-sm'>
+                低于开始值保持绝对得分映射；达到完整值时，组内最低和最高得分映射到权重
+                10 和 100，中间按比例混合。开始值设为 0%
+                时，任何分差都会开始拉伸
+              </p>
+            </div>
+          ) : null}
 
-      <FormField
-        control={props.form.control}
-        name='smartScheduleApplyMode'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>调整方式</FormLabel>
-            <Select
-              items={APPLY_MODE_OPTIONS}
-              value={field.value}
-              onValueChange={(value) => value !== null && field.onChange(value)}
-            >
-              <FormControl>
-                <SelectTrigger className='w-full'>
-                  <SelectValue />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {APPLY_MODE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FormDescription>
-              {
-                APPLY_MODE_OPTIONS.find(
-                  (option) => option.value === field.value
-                )?.description
-              }
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+          {stabilityEnabled && (
+            <div className='grid gap-4 sm:grid-cols-2'>
+              <SmartSchedulePercentField
+                form={props.form}
+                name='smartScheduleScoring.stabilityPercent'
+                label='稳定性占比'
+              />
+              <FormField
+                control={props.form.control}
+                name='smartScheduleMinSuccessRate'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>最低成功率</FormLabel>
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={0}
+                          max={100}
+                          step={1}
+                          inputMode='decimal'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors
+                              .smartScheduleMinSuccessRate
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      样本达到要求且低于该值时降为优先级 0、权重 0
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={props.form.control}
+                name='smartScheduleCooldownMinutes'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>降级时长</FormLabel>
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={1}
+                          max={MAX_SMART_SCHEDULE_COOLDOWN_MINUTES}
+                          step={1}
+                          inputMode='numeric'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors
+                              .smartScheduleCooldownMinutes
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>
+                          分钟
+                        </InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      到期后恢复原优先级，以不超过 10 的小流量权重用新样本试放
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          )}
+
+          <FormField
+            control={props.form.control}
+            name='smartScheduleApplyMode'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>调整方式</FormLabel>
+                <Select
+                  items={CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS}
+                  value={field.value}
+                  onValueChange={(value) =>
+                    value !== null && field.onChange(value)
+                  }
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.map(
+                        (option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {
+                    CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.find(
+                      (option) => option.value === field.value
+                    )?.description
+                  }
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <FormField
+              control={props.form.control}
+              name='smartScheduleMinSamples'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>最少样本</FormLabel>
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={MAX_SMART_SCHEDULE_MIN_SAMPLES}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.smartScheduleMinSamples
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <FormField
+            control={props.form.control}
+            name='smartScheduleModels'
+            render={({ field }) => (
+              <FormItem className='min-w-0'>
+                <FormLabel>参与模型</FormLabel>
+                <FormControl>
+                  <MultiSelect
+                    options={modelOptions}
+                    selected={field.value}
+                    onChange={field.onChange}
+                    placeholder='全部模型'
+                    emptyText='没有匹配的模型'
+                    maxVisibleChips={4}
+                  />
+                </FormControl>
+                <FormDescription>
+                  不选择表示全部模型；每个分组和模型独立调度，选择顺序不生效
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <Alert>
+            <AlertTitle>调度规则</AlertTitle>
+            <AlertDescription>
+              调度得分按上方百分比计算，得分曲线指数决定渠道差距的放大程度；开启稳定性后，成功率按配置占比参与综合得分。稳定性按成功调用数
+              ÷（成功调用数 +
+              渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
+              0、权重 0，冷却到期后恢复原优先级，以不超过 10
+              的小流量权重只用新样本试放；达标后再恢复完整权重。指标样本不足的渠道使用优先级
+              80、权重 10 进行探索。稳定性保护需要同时开启消费日志和
+              ERROR_LOG_ENABLED。
+            </AlertDescription>
+          </Alert>
+        </TabsContent>
+
+        <TabsContent value='group-policies' className='mt-0'>
+          <ChannelMonitorSmartScheduleGroupPolicies
+            form={props.form}
+            groupOptions={props.groupOptions}
+            modelOptions={props.modelOptions}
+          />
+        </TabsContent>
+      </Tabs>
 
       <FormField
         control={props.form.control}
@@ -707,211 +768,6 @@ export function ChannelMonitorSmartScheduleFields(
           </FormItem>
         )}
       />
-
-      <div className='grid gap-4 sm:grid-cols-2'>
-        <FormField
-          control={props.form.control}
-          name='smartSchedulePerformanceMinutes'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>统计范围</FormLabel>
-              <Select
-                items={PERFORMANCE_RANGE_OPTIONS}
-                value={String(field.value)}
-                onValueChange={(value) => {
-                  if (value !== null) field.onChange(Number(value))
-                }}
-              >
-                <FormControl>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    {PERFORMANCE_RANGE_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={props.form.control}
-          name='smartScheduleMinSamples'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>最少样本</FormLabel>
-              <FormControl>
-                <InputGroup>
-                  <InputGroupInput
-                    type='number'
-                    min={1}
-                    max={MAX_SMART_SCHEDULE_MIN_SAMPLES}
-                    step={1}
-                    inputMode='numeric'
-                    value={field.value}
-                    onBlur={field.onBlur}
-                    onChange={field.onChange}
-                    name={field.name}
-                    ref={field.ref}
-                    aria-invalid={Boolean(
-                      props.form.formState.errors.smartScheduleMinSamples
-                    )}
-                  />
-                  <InputGroupAddon align='inline-end'>次</InputGroupAddon>
-                </InputGroup>
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <FormField
-        control={props.form.control}
-        name='smartScheduleModels'
-        render={({ field }) => (
-          <FormItem className='min-w-0'>
-            <FormLabel>
-              {scheduleScope === 'group_model' ? '参与模型' : '基准模型优先级'}
-            </FormLabel>
-            <FormControl>
-              <MultiSelect
-                options={modelOptions}
-                selected={field.value}
-                onChange={field.onChange}
-                placeholder={
-                  scheduleScope === 'group_model'
-                    ? '全部模型'
-                    : '搜索并选择基准模型'
-                }
-                emptyText='没有匹配的模型'
-                maxVisibleChips={4}
-              />
-            </FormControl>
-            <FormDescription>
-              {scheduleScope === 'group_model'
-                ? '不选择表示全部模型；每个分组和模型独立调度，选择顺序不生效'
-                : '每个渠道按下列顺序使用其支持的第一个模型；未选择时汇总全部模型'}
-            </FormDescription>
-            {scheduleScope === 'channel' && field.value.length > 0 && (
-              <ol className='divide-border overflow-hidden rounded-md border'>
-                {field.value.map((modelName, index) => (
-                  <li
-                    key={modelName}
-                    className='flex min-w-0 items-center gap-2 border-b p-2 last:border-b-0'
-                  >
-                    <span className='bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-sm text-xs font-medium tabular-nums'>
-                      {index + 1}
-                    </span>
-                    <span
-                      className='min-w-0 flex-1 truncate text-sm'
-                      title={modelName}
-                    >
-                      {modelName}
-                    </span>
-                    <div className='flex shrink-0 items-center gap-1'>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              disabled={index === 0}
-                              onClick={() =>
-                                field.onChange(
-                                  reorderSmartScheduleModels(
-                                    field.value,
-                                    index,
-                                    -1
-                                  )
-                                )
-                              }
-                              aria-label={`上移模型 ${modelName}`}
-                            >
-                              <HugeiconsIcon icon={ArrowUp01Icon} />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>上移</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              disabled={index === field.value.length - 1}
-                              onClick={() =>
-                                field.onChange(
-                                  reorderSmartScheduleModels(
-                                    field.value,
-                                    index,
-                                    1
-                                  )
-                                )
-                              }
-                              aria-label={`下移模型 ${modelName}`}
-                            >
-                              <HugeiconsIcon icon={ArrowDown01Icon} />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>下移</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() =>
-                                field.onChange(
-                                  field.value.filter(
-                                    (_, modelIndex) => modelIndex !== index
-                                  )
-                                )
-                              }
-                              aria-label={`移除模型 ${modelName}`}
-                            >
-                              <HugeiconsIcon icon={Delete02Icon} />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>移除</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <Alert>
-        <AlertTitle>调度规则</AlertTitle>
-        <AlertDescription>
-          调度得分按上方百分比计算，得分曲线指数决定渠道差距的放大程度；开启稳定性后，成功率按配置占比参与综合得分。稳定性按成功调用数
-          ÷（成功调用数 +
-          渠道错误数）计算，重试中的渠道错误也会计入；样本达到要求且低于最低成功率时降为优先级
-          0、权重 0，冷却到期后恢复原优先级，以不超过 10
-          的小流量权重只用新样本试放；达标后再恢复完整权重。指标样本不足的渠道使用优先级
-          80、权重 10 进行探索。稳定性保护需要同时开启消费日志和
-          ERROR_LOG_ENABLED。
-        </AlertDescription>
-      </Alert>
     </div>
   )
 }

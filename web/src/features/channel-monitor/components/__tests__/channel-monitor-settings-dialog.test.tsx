@@ -31,6 +31,7 @@ import {
   ChannelMonitorCostRetentionField,
 } from '../channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
+import { ChannelMonitorSmartScheduleGroupPolicies } from '../channel-monitor-smart-schedule-group-policies'
 
 function CostRetentionFieldFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
@@ -67,7 +68,6 @@ function ProbeResponseFieldsFixture() {
 
 type SmartScheduleFieldsFixtureProps = {
   strategy?: 'smart' | 'ratio'
-  scope?: 'channel' | 'group_model'
   stabilityEnabled?: boolean
   relativeWeightEnabled?: boolean
   ratioPercentages?: {
@@ -82,7 +82,6 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
     defaultValues: {
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
-      smartScheduleScope: props.scope ?? 'group_model',
       smartScheduleGroups: [],
       smartScheduleIntervalMinutes: 10,
       smartScheduleStrategy: props.strategy ?? 'smart',
@@ -119,6 +118,78 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
         form={form}
         modelOptions={[]}
         groupOptions={['default', 'vip']}
+      />
+    </Form>
+  )
+}
+
+function SmartScheduleGroupPoliciesFixture(props: { configured: boolean }) {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: {
+      smartScheduleGroups: ['default'],
+      smartScheduleGroupPolicies: props.configured
+        ? [
+            {
+              group: 'vip',
+              strategy: 'ratio',
+              stabilityEnabled: false,
+              scoring: {
+                stabilityPercent: 50,
+                curveExponent: 1,
+                relativeWeightEnabled: true,
+                relativeWeightStartPercent: 3,
+                relativeWeightFullPercent: 10,
+                smart: {
+                  costRatioPercent: 40,
+                  firstTokenPercent: 40,
+                  tpsPercent: 20,
+                },
+                ratio: {
+                  costRatioPercent: 70,
+                  firstTokenPercent: 20,
+                  tpsPercent: 10,
+                },
+              },
+              applyMode: 'priority_weight',
+              models: [],
+              minSamples: 5,
+              minSuccessRate: 80,
+              cooldownMinutes: 30,
+            },
+          ]
+        : [],
+      smartScheduleStrategy: 'smart',
+      smartScheduleStabilityEnabled: true,
+      smartScheduleScoring: {
+        stabilityPercent: 50,
+        curveExponent: 1,
+        relativeWeightEnabled: true,
+        relativeWeightStartPercent: 3,
+        relativeWeightFullPercent: 10,
+        smart: {
+          costRatioPercent: 40,
+          firstTokenPercent: 40,
+          tpsPercent: 20,
+        },
+        ratio: {
+          costRatioPercent: 70,
+          firstTokenPercent: 20,
+          tpsPercent: 10,
+        },
+      },
+      smartScheduleApplyMode: 'weight',
+      smartScheduleModels: [],
+      smartScheduleMinSamples: 5,
+      smartScheduleMinSuccessRate: 80,
+      smartScheduleCooldownMinutes: 30,
+    } as unknown as ChannelMonitorSettingsFormValues,
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorSmartScheduleGroupPolicies
+        form={form}
+        groupOptions={['default', 'vip']}
+        modelOptions={['model-a', 'model-b']}
       />
     </Form>
   )
@@ -167,21 +238,30 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('不限制后续流式输出'))
   })
 
-  test('shows isolated route scope and selectable groups', () => {
+  test('separates global runtime controls from group-overridable policies', () => {
     const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
-    const compatibilityMarkup = renderToStaticMarkup(
-      <SmartScheduleFieldsFixture scope='channel' />
-    )
+    const runtimeSettingsIndex = markup.indexOf('运行设置')
+    const defaultPolicyIndex = markup.indexOf('默认策略')
+    const forceResetIndex = markup.indexOf('强制重置优先级和权重')
 
-    assert.ok(markup.includes('按分组和模型隔离'))
-    assert.ok(compatibilityMarkup.includes('按渠道（兼容模式）'))
+    assert.ok(runtimeSettingsIndex >= 0)
+    assert.ok(runtimeSettingsIndex < defaultPolicyIndex)
+    assert.ok(markup.includes('对全部分组统一生效，不随分组策略变化'))
+    assert.ok(forceResetIndex > defaultPolicyIndex)
+  })
+
+  test('shows only group-model scheduling with selectable groups and models', () => {
+    const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+
+    assert.ok(markup.includes('按分组和模型分别调整参与路由'))
     assert.ok(markup.includes('参与分组'))
     assert.ok(markup.includes('不选择表示全部分组'))
     assert.ok(markup.includes('全部分组'))
     assert.ok(markup.includes('参与模型'))
     assert.ok(markup.includes('每个分组和模型独立调度'))
-    assert.ok(compatibilityMarkup.includes('基准模型优先级'))
-    assert.ok(compatibilityMarkup.includes('使用其支持的第一个模型'))
+    assert.equal(markup.includes('调度范围'), false)
+    assert.equal(markup.includes('按渠道（兼容模式）'), false)
+    assert.equal(markup.includes('基准模型优先级'), false)
   })
 
   test('shows configurable scoring percentages with stability defaulting to half', () => {
@@ -258,5 +338,29 @@ describe('channel monitor settings dialog', () => {
     )
 
     assert.ok(markup.includes('当前合计：110%'))
+  })
+
+  test('shows the empty state before any independent group policy is configured', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPoliciesFixture configured={false} />
+    )
+
+    assert.ok(markup.includes('尚未配置独立分组策略'))
+    assert.ok(markup.includes('新增分组策略'))
+  })
+
+  test('summarizes effective group policy and participation in a table row', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPoliciesFixture configured />
+    )
+
+    assert.ok(markup.includes('vip'))
+    assert.equal(markup.includes('独立配置'), false)
+    assert.ok(markup.includes('按成本倍率'))
+    assert.ok(markup.includes('优先级分层 + 权重'))
+    assert.ok(markup.includes('全部模型'))
+    assert.ok(markup.includes('未参与调度'))
+    assert.ok(markup.includes('aria-label="编辑分组策略 vip"'))
+    assert.ok(markup.includes('aria-label="删除分组策略并使用默认策略 vip"'))
   })
 })

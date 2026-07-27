@@ -25,9 +25,6 @@ type channelSmartScheduleRouteRequest struct {
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
-	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeGroupModel) {
-		return
-	}
 	if err := initializeChannelSmartScheduleParticipation(); err != nil {
 		common.ApiError(c, err)
 		return
@@ -65,7 +62,6 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                generatedAt,
 		"range_minutes":               settings.SmartSchedulePerformanceMinutes,
-		"scope":                       settings.SmartScheduleScope,
 		"enabled":                     settings.SmartScheduleEnabled,
 		"routes":                      routes,
 		"performance_items":           performanceMetrics,
@@ -75,9 +71,6 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 }
 
 func UpdateChannelMonitorSmartScheduleRouteConfig(c *gin.Context) {
-	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeGroupModel) {
-		return
-	}
 	channelId, ok := channelSmartScheduleRouteChannelId(c)
 	if !ok {
 		return
@@ -119,10 +112,45 @@ func UpdateChannelMonitorSmartScheduleRouteConfig(c *gin.Context) {
 	})
 }
 
-func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
-	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeGroupModel) {
+func UpdateChannelMonitorSmartScheduleChannelConfig(c *gin.Context) {
+	channelId, ok := channelSmartScheduleRouteChannelId(c)
+	if !ok {
 		return
 	}
+	if _, err := model.GetChannelById(channelId, false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var request channelSmartScheduleRouteConfigRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	if request.Excluded == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的调度设置"})
+		return
+	}
+	if err := initializeChannelSmartScheduleParticipation(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := model.SaveChannelSmartScheduleChannelConfig(channelId, *request.Excluded)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "channel.monitor_smart_schedule_channel_config_update", map[string]interface{}{
+		"id": channelId, "excluded": *request.Excluded,
+		"total": result.Total, "updated": result.Updated,
+	})
+	common.ApiSuccess(c, result)
+}
+
+func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
 	channelId, ok := channelSmartScheduleRouteChannelId(c)
 	if !ok {
 		return
@@ -167,19 +195,6 @@ func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
 		"priority":       result.Priority,
 		"weight":         result.Weight,
 	})
-}
-
-func requireChannelSmartScheduleScope(c *gin.Context, expectedScope string) bool {
-	actualScope := getChannelMonitorSettings().SmartScheduleScope
-	if actualScope == expectedScope {
-		return true
-	}
-	message := "当前为按渠道兼容模式，请使用渠道级调度操作"
-	if actualScope == channelMonitorSmartScheduleScopeGroupModel {
-		message = "当前为按分组和模型隔离模式，请使用路由级调度操作"
-	}
-	c.JSON(http.StatusConflict, gin.H{"success": false, "message": message})
-	return false
 }
 
 func channelSmartScheduleRouteChannelId(c *gin.Context) (int, bool) {

@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
@@ -159,120 +158,59 @@ func TestApplyChannelSmartScheduleRouteResultOnlyChangesTargetAbility(t *testing
 	assert.Equal(t, int(channelWeight), channel.GetWeight())
 }
 
-func TestChannelSmartScheduleRouteScopeSwitchPreservesIsolatedRouting(t *testing.T) {
+func TestMigrateChannelSmartScheduleToRouteOnlyRestoresSavedRouting(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	preserveChannelSmartScheduleRouteOptions(t)
+	common.OptionMapRWMutex.Lock()
+	common.OptionMap[channelSmartScheduleLegacyScopeOption] = "channel"
+	common.OptionMap["ChannelMonitorSmartScheduleEnabled"] = "true"
+	common.OptionMapRWMutex.Unlock()
+	require.NoError(t, db.Create(&Option{
+		Key: channelSmartScheduleLegacyScopeOption, Value: "channel",
+	}).Error)
 	channelPriority := int64(80)
 	channelWeight := uint(50)
 	isolatedPriority := int64(95)
-	degradedPriority := int64(0)
 	require.NoError(t, db.Create(&Channel{
-		Id: 1004, Name: "scope-switch", Status: common.ChannelStatusEnabled,
-		Group: "vip,standard", Models: "model-a",
+		Id: 1004, Name: "legacy route", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a",
 		Priority: &channelPriority, Weight: &channelWeight,
 	}).Error)
-	require.NoError(t, db.Create(&[]Ability{
-		{ChannelId: 1004, Group: "vip", Model: "model-a", Enabled: true, Priority: &isolatedPriority, Weight: 70},
-		{ChannelId: 1004, Group: "standard", Model: "model-a", Enabled: true, Priority: &degradedPriority, Weight: 0},
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: 1004, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &channelPriority, Weight: channelWeight,
 	}).Error)
-	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
-		{ChannelId: 1004, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
-		{
-			ChannelId: 1004, GroupName: "standard", ModelName: "model-a",
-			ParticipationSet: true, Revision: 1,
-			StabilityState:         ChannelSmartScheduleStabilityDegraded,
-			StabilitySavedPriority: 90, StabilitySavedWeight: 40,
-		},
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1004, GroupName: "vip", ModelName: "model-a",
+		ParticipationSet:   true,
+		ScopeRoutingSaved:  true,
+		ScopeSavedPriority: isolatedPriority,
+		ScopeSavedWeight:   70,
 	}).Error)
 
-	changed, err := SuspendChannelSmartScheduleRouteRouting()
-	require.NoError(t, err)
-	assert.True(t, changed)
-	var suspended []Ability
-	require.NoError(t, db.Where("channel_id = ?", 1004).Find(&suspended).Error)
-	require.Len(t, suspended, 2)
-	for _, ability := range suspended {
-		require.NotNil(t, ability.Priority)
-		assert.Equal(t, channelPriority, *ability.Priority)
-		assert.Equal(t, channelWeight, ability.Weight)
-	}
-	var degradedState ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 1004, "standard", "model-a",
-	).First(&degradedState).Error)
-	assert.True(t, degradedState.ScopeRoutingSaved)
-	assert.Equal(t, ChannelSmartScheduleStabilityDegraded, degradedState.StabilityState)
-	assert.Equal(t, int64(0), degradedState.ScopeSavedPriority)
-	assert.Equal(t, uint(0), degradedState.ScopeSavedWeight)
-
-	changed, err = ResumeChannelSmartScheduleRouteRouting()
-	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NoError(t, MigrateChannelSmartScheduleToRouteOnly())
 	var vip Ability
 	require.NoError(t, db.Where(&Ability{ChannelId: 1004, Group: "vip", Model: "model-a"}).First(&vip).Error)
 	require.NotNil(t, vip.Priority)
 	assert.Equal(t, isolatedPriority, *vip.Priority)
 	assert.Equal(t, uint(70), vip.Weight)
-	var standard Ability
-	require.NoError(t, db.Where(&Ability{ChannelId: 1004, Group: "standard", Model: "model-a"}).First(&standard).Error)
-	require.NotNil(t, standard.Priority)
-	assert.Equal(t, degradedPriority, *standard.Priority)
-	assert.Equal(t, uint(0), standard.Weight)
+	var state ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 1004, "standard", "model-a",
-	).First(&degradedState).Error)
-	assert.False(t, degradedState.ScopeRoutingSaved)
-	assert.Equal(t, ChannelSmartScheduleStabilityDegraded, degradedState.StabilityState)
-}
-
-func TestChannelSmartScheduleScopeOptionRollsBackWhenRoutingSwitchFails(t *testing.T) {
-	db := setupChannelSmartScheduleRouteTestDB(t)
-	preserveChannelSmartScheduleRouteOptions(t)
-	common.OptionMapRWMutex.Lock()
-	common.OptionMap[channelSmartScheduleScopeOption] = channelSmartScheduleScopeGroupModel
-	common.OptionMap[ChannelSmartScheduleControlRevisionOption] = "old-revision"
-	common.OptionMapRWMutex.Unlock()
-	require.NoError(t, db.Create(&[]Option{
-		{Key: channelSmartScheduleScopeOption, Value: channelSmartScheduleScopeGroupModel},
-		{Key: ChannelSmartScheduleControlRevisionOption, Value: "old-revision"},
-	}).Error)
-	channelPriority := int64(80)
-	channelWeight := uint(50)
-	routePriority := int64(95)
-	require.NoError(t, db.Create(&Channel{
-		Id: 1005, Name: "rollback", Status: common.ChannelStatusEnabled,
-		Group: "vip", Models: "model-a", Priority: &channelPriority, Weight: &channelWeight,
-	}).Error)
-	require.NoError(t, db.Create(&Ability{
-		ChannelId: 1005, Group: "vip", Model: "model-a", Enabled: true,
-		Priority: &routePriority, Weight: 70,
-	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1005, GroupName: "vip", ModelName: "model-a",
-		ParticipationSet: true, Revision: math.MaxInt64,
-	}).Error)
-
-	changed, err := UpdateOptionsBulkWithChannelSmartScheduleScope(map[string]string{
-		channelSmartScheduleScopeOption:           channelSmartScheduleScopeChannel,
-		ChannelSmartScheduleControlRevisionOption: "new-revision",
-	}, channelSmartScheduleScopeChannel)
-	require.Error(t, err)
-	assert.False(t, changed)
-
+		"channel_id = ? AND group_name = ? AND model_name = ?", 1004, "vip", "model-a",
+	).First(&state).Error)
+	assert.False(t, state.ScopeRoutingSaved)
 	var scopeOption Option
-	require.NoError(t, db.First(&scopeOption, "key = ?", channelSmartScheduleScopeOption).Error)
-	assert.Equal(t, channelSmartScheduleScopeGroupModel, scopeOption.Value)
-	var controlOption Option
-	require.NoError(t, db.First(&controlOption, "key = ?", ChannelSmartScheduleControlRevisionOption).Error)
-	assert.Equal(t, "old-revision", controlOption.Value)
-	var ability Ability
-	require.NoError(t, db.Where(&Ability{ChannelId: 1005, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, routePriority, *ability.Priority)
-	assert.Equal(t, uint(70), ability.Weight)
+	require.NoError(t, db.First(&scopeOption, "key = ?", channelSmartScheduleLegacyScopeOption).Error)
+	assert.Equal(t, channelSmartScheduleRouteOnlyScope, scopeOption.Value)
 	common.OptionMapRWMutex.RLock()
-	assert.Equal(t, channelSmartScheduleScopeGroupModel, common.OptionMap[channelSmartScheduleScopeOption])
-	assert.Equal(t, "old-revision", common.OptionMap[ChannelSmartScheduleControlRevisionOption])
+	assert.Equal(t, channelSmartScheduleRouteOnlyScope, common.OptionMap[channelSmartScheduleLegacyScopeOption])
 	common.OptionMapRWMutex.RUnlock()
+
+	require.NoError(t, MigrateChannelSmartScheduleToRouteOnly())
+	require.NoError(t, db.Where(&Ability{ChannelId: 1004, Group: "vip", Model: "model-a"}).First(&vip).Error)
+	require.NotNil(t, vip.Priority)
+	assert.Equal(t, isolatedPriority, *vip.Priority)
+	assert.Equal(t, uint(70), vip.Weight)
 }
 
 func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testing.T) {

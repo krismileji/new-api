@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,7 +12,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const ChannelSmartScheduleRouteInitializedOption = "ChannelMonitorSmartScheduleRouteInitialized"
+const (
+	ChannelSmartScheduleRouteInitializedOption = "ChannelMonitorSmartScheduleRouteInitialized"
+	channelSmartScheduleLegacyScopeOption      = "ChannelMonitorSmartScheduleScope"
+	channelSmartScheduleRouteOnlyScope         = "group_model"
+)
 
 type ChannelSmartScheduleRouteState struct {
 	Id               int64  `json:"id"`
@@ -87,6 +92,26 @@ type ChannelSmartScheduleRouteApplyOutcome struct {
 	Key            ChannelSmartScheduleRouteKey
 	Applied        bool
 	RoutingChanged bool
+}
+
+type ChannelSmartScheduleStabilityClearResult struct {
+	PreviousState string
+	Cleared       bool
+	Priority      int64
+	Weight        uint
+}
+
+type ChannelSmartScheduleStabilityUpdate struct {
+	State         string
+	Until         int64
+	Since         int64
+	SavedPriority int64
+	SavedWeight   uint
+}
+
+type ChannelSmartScheduleChannelConfigResult struct {
+	Total   int `json:"total"`
+	Updated int `json:"updated"`
 }
 
 func abilityPriority(ability Ability) int64 {
@@ -293,109 +318,126 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 	return state, err
 }
 
-// SuspendChannelSmartScheduleRouteRouting restores Ability routing to the
-// channel defaults while preserving each isolated route for a later resume.
-func SuspendChannelSmartScheduleRouteRouting() (routingChanged bool, err error) {
+func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result ChannelSmartScheduleChannelConfigResult, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		var controlOption Option
-		controlErr := lockForUpdate(tx).
-			Where(&Option{Key: ChannelSmartScheduleControlRevisionOption}).
-			First(&controlOption).Error
-		if controlErr != nil && !errors.Is(controlErr, gorm.ErrRecordNotFound) {
-			return controlErr
+		var abilities []Ability
+		if err := lockForUpdate(tx).Where("channel_id = ?", channelId).Find(&abilities).Error; err != nil {
+			return err
 		}
-		var switchErr error
-		routingChanged, switchErr = suspendChannelSmartScheduleRouteRoutingTx(tx)
-		return switchErr
-	})
-	return routingChanged, err
-}
-
-func suspendChannelSmartScheduleRouteRoutingTx(tx *gorm.DB) (routingChanged bool, err error) {
-	var channels []Channel
-	if err := lockForUpdate(tx).Select("id", "priority", "weight").Find(&channels).Error; err != nil {
-		return false, err
-	}
-	channelById := make(map[int]Channel, len(channels))
-	for _, channel := range channels {
-		channelById[channel.Id] = channel
-	}
-
-	var states []ChannelSmartScheduleRouteState
-	if err := lockForUpdate(tx).Find(&states).Error; err != nil {
-		return false, err
-	}
-	stateByKey := make(map[ChannelSmartScheduleRouteKey]*ChannelSmartScheduleRouteState, len(states))
-	for index := range states {
-		state := &states[index]
-		stateByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = state
-	}
-	var abilities []Ability
-	if err := lockForUpdate(tx).Find(&abilities).Error; err != nil {
-		return false, err
-	}
-
-	for _, ability := range abilities {
-		channel, exists := channelById[ability.ChannelId]
-		if !exists {
-			continue
+		result.Total = len(abilities)
+		if result.Total == 0 {
+			return nil
 		}
-		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
-		state := stateByKey[key]
-		created := state == nil
-		if created {
-			state = &ChannelSmartScheduleRouteState{
-				ChannelId: ability.ChannelId, GroupName: ability.Group, ModelName: ability.Model,
-				ParticipationSet: true, Excluded: true,
+
+		var states []ChannelSmartScheduleRouteState
+		if err := lockForUpdate(tx).Where("channel_id = ?", channelId).Find(&states).Error; err != nil {
+			return err
+		}
+		stateByKey := make(map[ChannelSmartScheduleRouteKey]*ChannelSmartScheduleRouteState, len(states))
+		for index := range states {
+			state := &states[index]
+			stateByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = state
+		}
+
+		now := common.GetTimestamp()
+		for _, ability := range abilities {
+			key := channelSmartScheduleRouteKey(channelId, ability.Group, ability.Model)
+			state := stateByKey[key]
+			created := state == nil
+			if created {
+				state = &ChannelSmartScheduleRouteState{
+					ChannelId: channelId,
+					GroupName: ability.Group,
+					ModelName: ability.Model,
+				}
 			}
-			stateByKey[key] = state
-		}
-		if !state.ScopeRoutingSaved {
+			wasParticipating := state.Participates()
+			if state.ParticipationSet && state.Excluded == excluded {
+				continue
+			}
 			if state.Revision == math.MaxInt64 {
-				return false, errors.New("智能调度路由修订号已达上限")
+				return errors.New("智能调度路由修订号已达上限")
 			}
-			state.ScopeRoutingSaved = true
-			state.ScopeSavedPriority = abilityPriority(ability)
-			state.ScopeSavedWeight = ability.Weight
+			state.ParticipationSet = true
+			state.Excluded = excluded
+			if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
+				state.StabilitySince = now
+			}
 			state.Revision++
 			if created {
 				if err := tx.Create(state).Error; err != nil {
-					return false, err
+					return err
 				}
 			} else if err := tx.Save(state).Error; err != nil {
-				return false, err
+				return err
 			}
+			result.Updated++
 		}
-
-		priority := channel.GetPriority()
-		weight := uint(channel.GetWeight())
-		if abilityPriority(ability) == priority && ability.Weight == weight {
-			continue
-		}
-		if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight); err != nil {
-			return false, err
-		}
-		routingChanged = true
-	}
-	return routingChanged, nil
+		return nil
+	})
+	return result, err
 }
 
-// ResumeChannelSmartScheduleRouteRouting restores the isolated Ability values
-// that were suspended when channel-compatible routing became active.
-func ResumeChannelSmartScheduleRouteRouting() (routingChanged bool, err error) {
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		var controlOption Option
-		controlErr := lockForUpdate(tx).
-			Where(&Option{Key: ChannelSmartScheduleControlRevisionOption}).
-			First(&controlOption).Error
-		if controlErr != nil && !errors.Is(controlErr, gorm.ErrRecordNotFound) {
-			return controlErr
+func MigrateChannelSmartScheduleToRouteOnly() error {
+	common.OptionMapRWMutex.RLock()
+	rawSmartScheduleEnabled := common.OptionMap["ChannelMonitorSmartScheduleEnabled"]
+	currentScope := common.OptionMap[channelSmartScheduleLegacyScopeOption]
+	common.OptionMapRWMutex.RUnlock()
+	smartScheduleEnabled, _ := strconv.ParseBool(rawSmartScheduleEnabled)
+	if err := InitializeChannelSmartScheduleParticipation(smartScheduleEnabled); err != nil {
+		return err
+	}
+	if err := InitializeChannelSmartScheduleRouteStates(); err != nil {
+		return err
+	}
+
+	if currentScope == channelSmartScheduleRouteOnlyScope {
+		return nil
+	}
+
+	controlRevision := common.GetUUID()
+	migrated := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var scopeOption Option
+		scopeErr := lockForUpdate(tx).
+			Where(&Option{Key: channelSmartScheduleLegacyScopeOption}).
+			First(&scopeOption).Error
+		if scopeErr == nil && scopeOption.Value == channelSmartScheduleRouteOnlyScope {
+			return nil
 		}
-		var switchErr error
-		routingChanged, switchErr = resumeChannelSmartScheduleRouteRoutingTx(tx)
-		return switchErr
+		if scopeErr != nil && !errors.Is(scopeErr, gorm.ErrRecordNotFound) {
+			return scopeErr
+		}
+		if _, err := resumeChannelSmartScheduleRouteRoutingTx(tx); err != nil {
+			return err
+		}
+		migrated = true
+		scopeOption.Key = channelSmartScheduleLegacyScopeOption
+		scopeOption.Value = channelSmartScheduleRouteOnlyScope
+		if errors.Is(scopeErr, gorm.ErrRecordNotFound) {
+			if err := tx.Create(&scopeOption).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Save(&scopeOption).Error; err != nil {
+			return err
+		}
+		controlOption := Option{Key: ChannelSmartScheduleControlRevisionOption}
+		if err := tx.FirstOrCreate(&controlOption, Option{Key: ChannelSmartScheduleControlRevisionOption}).Error; err != nil {
+			return err
+		}
+		controlOption.Value = controlRevision
+		return tx.Save(&controlOption).Error
 	})
-	return routingChanged, err
+	if err != nil {
+		return err
+	}
+	if !migrated {
+		return updateOptionMap(channelSmartScheduleLegacyScopeOption, channelSmartScheduleRouteOnlyScope)
+	}
+	if err := updateOptionMap(ChannelSmartScheduleControlRevisionOption, controlRevision); err != nil {
+		return err
+	}
+	return updateOptionMap(channelSmartScheduleLegacyScopeOption, channelSmartScheduleRouteOnlyScope)
 }
 
 func resumeChannelSmartScheduleRouteRoutingTx(tx *gorm.DB) (routingChanged bool, err error) {
@@ -434,84 +476,6 @@ func resumeChannelSmartScheduleRouteRoutingTx(tx *gorm.DB) (routingChanged bool,
 	}
 	return routingChanged, nil
 }
-
-// UpdateOptionsBulkWithChannelSmartScheduleScope commits the settings and
-// routing-layer switch together so readers never observe a half-switched scope.
-func UpdateOptionsBulkWithChannelSmartScheduleScope(values map[string]string, targetScope string) (scopeChanged bool, err error) {
-	if targetScope != channelSmartScheduleScopeChannel && targetScope != channelSmartScheduleScopeGroupModel {
-		return false, errors.New("智能调度范围无效")
-	}
-	if values[channelSmartScheduleScopeOption] != targetScope {
-		return false, errors.New("智能调度范围设置不一致")
-	}
-	if _, exists := values[ChannelSmartScheduleControlRevisionOption]; !exists {
-		return false, errors.New("智能调度控制修订号不能为空")
-	}
-	for key, value := range values {
-		if err := validateOptionValue(key, value); err != nil {
-			return false, err
-		}
-	}
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		currentScope := channelSmartScheduleScopeChannel
-		var scopeOption Option
-		scopeErr := lockForUpdate(tx).
-			Where(&Option{Key: channelSmartScheduleScopeOption}).
-			First(&scopeOption).Error
-		if scopeErr == nil && scopeOption.Value == channelSmartScheduleScopeGroupModel {
-			currentScope = channelSmartScheduleScopeGroupModel
-		} else if scopeErr != nil && !errors.Is(scopeErr, gorm.ErrRecordNotFound) {
-			return scopeErr
-		}
-
-		keys := make([]string, 0, len(values))
-		for key := range values {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			option := Option{Key: key}
-			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
-				return err
-			}
-			option.Value = values[key]
-			if err := tx.Save(&option).Error; err != nil {
-				return err
-			}
-		}
-
-		if currentScope == targetScope {
-			return nil
-		}
-		scopeChanged = true
-		if targetScope == channelSmartScheduleScopeGroupModel {
-			_, err = resumeChannelSmartScheduleRouteRoutingTx(tx)
-		} else {
-			_, err = suspendChannelSmartScheduleRouteRoutingTx(tx)
-		}
-		return err
-	})
-	if err != nil {
-		return false, err
-	}
-
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		if key != channelSmartScheduleScopeOption {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	keys = append(keys, channelSmartScheduleScopeOption)
-	for _, key := range keys {
-		if err := updateOptionMap(key, values[key]); err != nil {
-			return scopeChanged, err
-		}
-	}
-	return scopeChanged, nil
-}
-
 func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteResultUpdate) ([]ChannelSmartScheduleRouteApplyOutcome, error) {
 	if len(results) == 0 {
 		return nil, nil

@@ -42,10 +42,7 @@ func InitChannelCache() {
 	}
 	var abilities []*Ability
 	DB.Find(&abilities)
-	var newChannelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
-	if channelSmartScheduleRouteSelectionEnabled() {
-		newChannelSmartScheduleRouteCache = buildChannelSmartScheduleRouteCache(abilities, newChannelId2channel)
-	}
+	newChannelSmartScheduleRouteCache := buildChannelSmartScheduleRouteCache(abilities, newChannelId2channel)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true

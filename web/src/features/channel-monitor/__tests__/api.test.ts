@@ -25,16 +25,15 @@ import { api } from '@/lib/api'
 
 import {
   clearChannelMonitorSmartScheduleRouteStability,
-  clearChannelMonitorSmartScheduleStability,
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorGroupChannels,
-  updateChannelMonitorSmartScheduleConfig,
+  updateChannelMonitorSmartScheduleChannelConfig,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 
-test('updates only channel participation without sending a routing reset flag', async () => {
+test('updates all group-model route participation for one channel', async () => {
   const originalAdapter = api.defaults.adapter
   let requestConfig: AxiosRequestConfig | undefined
   const adapter: AxiosAdapter = async (config) => {
@@ -50,7 +49,7 @@ test('updates only channel participation without sending a routing reset flag', 
   api.defaults.adapter = adapter
 
   try {
-    await updateChannelMonitorSmartScheduleConfig({
+    await updateChannelMonitorSmartScheduleChannelConfig({
       channelId: 7,
       excluded: false,
     })
@@ -58,50 +57,14 @@ test('updates only channel participation without sending a routing reset flag', 
     api.defaults.adapter = originalAdapter
   }
 
-  assert.equal(requestConfig?.url, '/api/channel_monitor/channel/7/schedule')
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/routes'
+  )
   assert.equal(requestConfig?.method, 'put')
   assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
     excluded: false,
   })
-})
-
-test('posts the manual stability clear action for a channel', async () => {
-  const originalAdapter = api.defaults.adapter
-  let requestConfig: AxiosRequestConfig | undefined
-  const adapter: AxiosAdapter = async (config) => {
-    requestConfig = config
-    return {
-      data: {
-        success: true,
-        message: '',
-        data: {
-          cleared: true,
-          previous_state: 'degraded',
-          priority: 90,
-          weight: 35,
-        },
-      },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config,
-    }
-  }
-  api.defaults.adapter = adapter
-
-  try {
-    const response = await clearChannelMonitorSmartScheduleStability(7)
-    assert.equal(response.data.cleared, true)
-    assert.equal(response.data.previous_state, 'degraded')
-  } finally {
-    api.defaults.adapter = originalAdapter
-  }
-
-  assert.equal(
-    requestConfig?.url,
-    '/api/channel_monitor/channel/7/schedule/stability/clear'
-  )
-  assert.equal(requestConfig?.method, 'post')
 })
 
 test('loads and updates one group-model scheduling route', async () => {

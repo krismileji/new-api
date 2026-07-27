@@ -61,11 +61,13 @@ import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
   ChannelMonitorSuccessSummary,
+  ChannelMonitorSmartScheduleRoute,
 } from '../types'
 import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
 } from './channel-monitor-performance-value'
+import { ChannelMonitorSmartScheduleCell } from './channel-monitor-smart-schedule-cell'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessRateValue } from './channel-monitor-success-rate-value'
 import { GroupRatioValue } from './group-ratio-value'
@@ -81,6 +83,10 @@ type ChannelMonitorChannelViewProps = {
   performanceRangeLabel: string
   performanceLoading: boolean
   performanceError: boolean
+  smartScheduleRoutesByChannel: Map<number, ChannelMonitorSmartScheduleRoute[]>
+  smartSchedulePendingChannelId: number | null
+  onUpdateSmartSchedule: (channelId: number, excluded: boolean) => void
+  onOpenSmartSchedule: (channel: ChannelMonitorItem) => void
   onFetchUpstreamBalance: (channel: ChannelMonitorItem) => void
   onFetchUpstreamRatio: (channel: ChannelMonitorItem) => void
   onToggleStatus: (channel: ChannelMonitorItem) => void
@@ -257,7 +263,6 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
       {props.channel.last_balance_error ? (
         <span className='text-warning text-xs'>更新失败</span>
       ) : null}
-      <ChannelMonitorUpdateMeta timestamp={props.channel.last_balance_time} />
     </div>
   )
 }
@@ -315,6 +320,7 @@ export function ChannelMonitorChannelView(
               成功率（{props.performanceRangeLabel}）
             </TableHead>
             <TableHead>并发限制</TableHead>
+            <TableHead>智能调度</TableHead>
             <TableHead className='min-w-[112px]'>操作</TableHead>
           </TableRow>
         </TableHeader>
@@ -401,6 +407,12 @@ export function ChannelMonitorChannelView(
                         channel={channel}
                         onOpenCostHistory={props.onOpenCostHistory}
                       />
+                      {channel.upstream?.balance_sync_enabled &&
+                      channel.upstream_balance != null ? (
+                        <ChannelMonitorUpdateMeta
+                          timestamp={channel.last_balance_time}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </TableCell>
@@ -516,6 +528,18 @@ export function ChannelMonitorChannelView(
                   ) : (
                     <span className='text-muted-foreground text-sm'>不限</span>
                   )}
+                </TableCell>
+                <TableCell className='whitespace-normal'>
+                  <ChannelMonitorSmartScheduleCell
+                    routes={
+                      props.smartScheduleRoutesByChannel.get(channel.id) ?? []
+                    }
+                    pending={props.smartSchedulePendingChannelId === channel.id}
+                    onUpdate={(excluded) =>
+                      props.onUpdateSmartSchedule(channel.id, excluded)
+                    }
+                    onOpen={() => props.onOpenSmartSchedule(channel)}
+                  />
                 </TableCell>
                 <TableCell className='min-w-[112px]'>
                   <div className='inline-grid grid-cols-3 gap-0.5'>

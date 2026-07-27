@@ -149,7 +149,6 @@ describe('channel monitor settings schema', () => {
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
-
     for (const autoUpdateConsecutiveFailureLimit of [
       MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
       MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
@@ -264,6 +263,17 @@ describe('channel monitor settings schema', () => {
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
+    const groupPolicy = {
+      group: 'vip',
+      strategy: baseSettings.smartScheduleStrategy,
+      stabilityEnabled: baseSettings.smartScheduleStabilityEnabled,
+      scoring: baseSettings.smartScheduleScoring,
+      applyMode: baseSettings.smartScheduleApplyMode,
+      models: baseSettings.smartScheduleModels,
+      minSamples: baseSettings.smartScheduleMinSamples,
+      minSuccessRate: baseSettings.smartScheduleMinSuccessRate,
+      cooldownMinutes: baseSettings.smartScheduleCooldownMinutes,
+    }
 
     assert.equal(schema.safeParse(baseSettings).success, true)
     assert.equal(
@@ -343,6 +353,37 @@ describe('channel monitor settings schema', () => {
             tpsPercent: 50,
           },
         },
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            strategy: 'ratio',
+            stabilityEnabled: false,
+            models: [],
+          },
+        ],
+      }).success,
+      true
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          groupPolicy,
+          { ...groupPolicy, group: ' vip ', applyMode: 'priority_weight' },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [{ ...groupPolicy, minSamples: 0 }],
       }).success,
       false
     )

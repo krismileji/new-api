@@ -21,133 +21,133 @@ import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import type { ChannelMonitorItem } from '../../types'
+import type {
+  ChannelMonitorSmartScheduleRoute,
+  ChannelMonitorSmartScheduleRouteState,
+} from '../../types'
 import { ChannelMonitorSmartScheduleCell } from '../channel-monitor-smart-schedule-cell'
 
 const noop = () => {}
 
-function createChannel(overrides: Partial<ChannelMonitorItem>) {
-  return {
-    id: 7,
-    name: '测试渠道',
-    type: 1,
-    status: 1,
-    priority: 100,
-    weight: 80,
-    base_url: 'https://example.com',
-    models: 'test-model',
-    test_model: 'test-model',
-    groups: ['default'],
-    ratio: 1,
-    previous_ratio: null,
-    cost_ratio: 1,
-    previous_cost_ratio: null,
-    conversion_factor: 1,
-    remark: '',
-    channel_remark: '',
-    updated_time: 0,
-    updated_by: 0,
-    updated_by_username: '',
-    last_fetch_status: '',
-    last_fetch_error: '',
-    last_fetch_time: 0,
-    consecutive_failures: 0,
-    upstream_balance: null,
-    last_balance_time: 0,
-    last_balance_error: '',
-    today_cost_cny: 0,
-    today_cost_configured: false,
-    today_cost_complete: false,
-    today_cost_unresolved_count: 0,
-    concurrency_limit: 0,
-    concurrency_active: 0,
-    smart_schedule_excluded: false,
-    last_schedule_status: '',
-    last_schedule_error: '',
-    last_schedule_score: null,
-    last_schedule_priority: 0,
-    last_schedule_weight: 0,
-    last_schedule_time: 0,
-    upstream: null,
-    ...overrides,
-  } satisfies ChannelMonitorItem
+type RouteOverrides = Omit<
+  Partial<ChannelMonitorSmartScheduleRoute>,
+  'state'
+> & {
+  state?: Partial<ChannelMonitorSmartScheduleRouteState>
 }
 
-function renderCell(overrides: Partial<ChannelMonitorItem>) {
+function createRoute(
+  overrides: RouteOverrides = {}
+): ChannelMonitorSmartScheduleRoute {
+  const defaultState: ChannelMonitorSmartScheduleRouteState = {
+    id: 1,
+    channel_id: 7,
+    group: 'default',
+    model: 'model-a',
+    participation_set: true,
+    excluded: false,
+    last_schedule_status: 'succeeded',
+    last_schedule_error: '',
+    last_schedule_score: 0.8,
+    last_schedule_priority: 80,
+    last_schedule_weight: 60,
+    last_schedule_time: 1_752_777_845,
+    stability_state: '',
+    stability_until: 0,
+    stability_since: 0,
+    stability_saved_priority: 0,
+    stability_saved_weight: 0,
+  }
+  return {
+    channel_id: 7,
+    channel_name: '测试渠道',
+    channel_status: 1,
+    channel_priority: 100,
+    channel_weight: 100,
+    group: 'default',
+    model: 'model-a',
+    enabled: true,
+    priority: 80,
+    weight: 60,
+    ...overrides,
+    state: { ...defaultState, ...overrides.state },
+  }
+}
+
+function renderCell(
+  routes: ChannelMonitorSmartScheduleRoute[],
+  pending = false
+) {
   return renderToStaticMarkup(
     <ChannelMonitorSmartScheduleCell
-      channel={createChannel(overrides)}
-      pending={false}
-      clearPending={false}
+      routes={routes}
+      pending={pending}
       onUpdate={noop}
-      onClearStability={noop}
+      onOpen={noop}
     />
   )
 }
 
 describe('channel monitor smart schedule cell status', () => {
-  test('places the latest score after participation without a scheduled status row', () => {
-    const markup = renderCell({
-      last_schedule_status: 'succeeded',
-      last_schedule_score: 0.288,
-      last_schedule_time: 1_752_777_845,
-    })
+  test('shows an explicit empty state when the channel has no routes', () => {
+    const markup = renderCell([])
 
-    assert.match(markup, /参与调度[\s\S]*得分 28\.8/)
-    assert.doesNotMatch(markup, /已调度/)
+    assert.ok(markup.includes('暂无路由'))
   })
 
-  test('hides the skipped status and stale score for an excluded channel', () => {
-    const markup = renderCell({
-      smart_schedule_excluded: true,
-      last_schedule_status: 'skipped',
-      last_schedule_error: '已设为不参与智能调度',
-      last_schedule_score: 0.288,
-    })
+  test('summarizes participation and priority-weight ranges by group', () => {
+    const markup = renderCell([
+      createRoute(),
+      createRoute({
+        model: 'model-b',
+        priority: 90,
+        weight: 50,
+        state: { model: 'model-b', excluded: true },
+      }),
+      createRoute({
+        group: 'vip',
+        model: 'model-c',
+        priority: 100,
+        weight: 100,
+        state: { group: 'vip', model: 'model-c' },
+      }),
+    ])
 
-    assert.doesNotMatch(markup, /已跳过/)
-    assert.doesNotMatch(markup, /已设为不参与智能调度/)
-    assert.doesNotMatch(markup, /得分 28\.8/)
+    assert.ok(markup.includes('2/3 路由参与'))
+    assert.match(markup, /default[\s\S]*P80-90 \/ W50-60/)
+    assert.match(markup, /vip[\s\S]*P100 \/ W100/)
+    assert.ok(markup.includes('部分参与'))
+    assert.ok(markup.includes('查看 测试渠道 的智能调度详情'))
+    assert.ok(markup.includes('role="switch"'))
   })
 
-  test('places low-success degradation on a separate third row instead of a stale score', () => {
-    const markup = renderCell({
-      smart_schedule_excluded: true,
-      smart_schedule_stability_state: 'degraded',
-      smart_schedule_stability_until: 1_752_777_845,
-      last_schedule_score: 0.288,
-    })
+  test('shows route protection counts without a separate clear button', () => {
+    const markup = renderCell([
+      createRoute({ state: { stability_state: 'degraded' } }),
+      createRoute({
+        model: 'model-b',
+        state: { model: 'model-b', stability_state: 'probing' },
+      }),
+    ])
 
-    assert.match(
-      markup,
-      /参与调度[\s\S]*data-slot="smart-schedule-stability-status"[^>]*>低成功率降级/
-    )
-    assert.doesNotMatch(markup, /得分 28\.8/)
-    assert.match(markup, /手动解除/)
-    assert.match(markup, /aria-label="手动解除 测试渠道 的稳定性保护"/)
+    assert.ok(markup.includes('低成功率 1'))
+    assert.ok(markup.includes('稳定性试放 1'))
+    assert.equal(markup.includes('手动解除'), false)
   })
 
-  test('places stability probing on a separate third row', () => {
-    const markup = renderCell({
-      smart_schedule_stability_state: 'probing',
-    })
+  test('keeps participation configurable when the channel is disabled', () => {
+    const markup = renderCell([createRoute({ channel_status: 2 })])
+    const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-    assert.match(
-      markup,
-      /参与调度[\s\S]*data-slot="smart-schedule-stability-status"[^>]*>稳定性试放/
-    )
-    assert.match(markup, /手动解除/)
+    assert.ok(markup.includes('渠道禁用'))
+    assert.ok(switchElement)
+    assert.equal(switchElement.includes('aria-disabled="true"'), false)
   })
 
-  test('does not render a legacy task-status row for any schedule state', () => {
-    for (const status of ['', 'skipped', 'failed'] as const) {
-      const markup = renderCell({
-        last_schedule_status: status,
-        last_schedule_error: '渠道不支持已配置的基准模型',
-      })
+  test('disables participation while a participation update is pending', () => {
+    const markup = renderCell([createRoute()], true)
+    const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-      assert.doesNotMatch(markup, /等待首次调度|已跳过|失败/)
-      assert.doesNotMatch(markup, /渠道不支持已配置的基准模型/)
-    }
+    assert.ok(switchElement.includes('aria-disabled="true"'))
   })
 })

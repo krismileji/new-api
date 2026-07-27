@@ -16,11 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  CancelCircleIcon,
-  Refresh01Icon,
-  Settings02Icon,
-} from '@hugeicons/core-free-icons'
+import { Refresh01Icon, Settings02Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
@@ -68,26 +64,26 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
   clearChannelMonitorSmartScheduleRouteStability,
-  getChannelMonitorSmartScheduleRoutes,
   runChannelMonitorSmartSchedule,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+  getChannelMonitorSmartScheduleQueryOptions,
+} from '../lib/query-options'
+import { channelMonitorSmartScheduleRouteKey } from '../lib/smart-schedule-summary'
 import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteStability,
 } from '../types'
+import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
 
 type ChannelMonitorSmartSchedulePanelProps = {
   active: boolean
@@ -95,32 +91,6 @@ type ChannelMonitorSmartSchedulePanelProps = {
 }
 
 const ALL_FILTER_VALUE = '__all__'
-
-function routeKey(route: { channel_id: number; group: string; model: string }) {
-  return `${route.channel_id}\u0000${route.group}\u0000${route.model}`
-}
-
-function routeStateBadge(route: ChannelMonitorSmartScheduleRoute) {
-  if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
-    return <Badge variant='destructive'>渠道禁用</Badge>
-  }
-  if (!route.enabled) {
-    return <Badge variant='destructive'>路由禁用</Badge>
-  }
-  if (route.state.excluded) {
-    return <Badge variant='outline'>未参与</Badge>
-  }
-  if (route.state.stability_state === 'degraded') {
-    return <Badge variant='destructive'>低成功率</Badge>
-  }
-  if (route.state.stability_state === 'probing') {
-    return <Badge variant='warning'>稳定性试放</Badge>
-  }
-  if (route.state.last_schedule_status === 'failed') {
-    return <Badge variant='destructive'>调度失败</Badge>
-  }
-  return <Badge variant='secondary'>参与调度</Badge>
-}
 
 function formatPerformance(
   metric: ChannelMonitorSmartScheduleRoutePerformance | undefined
@@ -155,14 +125,12 @@ export function ChannelMonitorSmartSchedulePanel(
   const [clearTarget, setClearTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const query = useQuery({
-    queryKey: ['channel-monitor', 'smart-schedule', 'routes'],
-    queryFn: getChannelMonitorSmartScheduleRoutes,
+    ...getChannelMonitorSmartScheduleQueryOptions(),
     enabled: props.active,
-    refetchInterval: 60_000,
   })
   const invalidateSchedule = () => {
     queryClient.invalidateQueries({
-      queryKey: ['channel-monitor', 'smart-schedule', 'routes'],
+      queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
     })
     queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
   }
@@ -215,7 +183,7 @@ export function ChannelMonitorSmartSchedulePanel(
     () =>
       new Map(
         (data?.performance_items ?? []).map((metric) => [
-          routeKey(metric),
+          channelMonitorSmartScheduleRouteKey(metric),
           metric,
         ])
       ),
@@ -225,7 +193,7 @@ export function ChannelMonitorSmartSchedulePanel(
     () =>
       new Map(
         (data?.stability_items ?? []).map((metric) => [
-          routeKey(metric),
+          channelMonitorSmartScheduleRouteKey(metric),
           metric,
         ])
       ),
@@ -420,27 +388,18 @@ export function ChannelMonitorSmartSchedulePanel(
                 <TableHead>成功率</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>参与调度</TableHead>
-                <TableHead className='w-12'>操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredRoutes.map((route) => {
-                const key = routeKey(route)
+                const key = channelMonitorSmartScheduleRouteKey(route)
                 const updatePending =
                   updateMutation.isPending &&
                   updateMutation.variables != null &&
-                  routeKey({
+                  channelMonitorSmartScheduleRouteKey({
                     channel_id: updateMutation.variables.channelId,
                     group: updateMutation.variables.group,
                     model: updateMutation.variables.model,
-                  }) === key
-                const clearPending =
-                  clearMutation.isPending &&
-                  clearMutation.variables != null &&
-                  routeKey({
-                    channel_id: clearMutation.variables.channelId,
-                    group: clearMutation.variables.group,
-                    model: clearMutation.variables.model,
                   }) === key
                 return (
                   <TableRow key={key}>
@@ -490,7 +449,10 @@ export function ChannelMonitorSmartSchedulePanel(
                         className='flex min-w-[128px] flex-col items-start gap-1'
                         title={route.state.last_schedule_error || undefined}
                       >
-                        {routeStateBadge(route)}
+                        <ChannelMonitorSmartScheduleRouteState
+                          route={route}
+                          onProtectedStatusClick={() => setClearTarget(route)}
+                        />
                         {route.state.stability_until > 0 &&
                           route.state.stability_state === 'degraded' && (
                             <span className='text-muted-foreground text-xs'>
@@ -507,10 +469,7 @@ export function ChannelMonitorSmartSchedulePanel(
                         {updatePending && <Spinner className='size-4' />}
                         <Switch
                           checked={!route.state.excluded}
-                          disabled={
-                            updateMutation.isPending ||
-                            data?.scope !== 'group_model'
-                          }
+                          disabled={updateMutation.isPending}
                           onCheckedChange={(checked) =>
                             updateMutation.mutate({
                               channelId: route.channel_id,
@@ -522,33 +481,6 @@ export function ChannelMonitorSmartSchedulePanel(
                           aria-label={`${route.channel_name} ${route.group} ${route.model} 参与智能调度`}
                         />
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      {route.state.stability_state ? (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='icon-sm'
-                                disabled={clearMutation.isPending}
-                                onClick={() => setClearTarget(route)}
-                                aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性保护`}
-                              >
-                                {clearPending ? (
-                                  <Spinner />
-                                ) : (
-                                  <HugeiconsIcon icon={CancelCircleIcon} />
-                                )}
-                              </Button>
-                            }
-                          />
-                          <TooltipContent>解除稳定性保护</TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <span className='text-muted-foreground'>-</span>
-                      )}
                     </TableCell>
                   </TableRow>
                 )

@@ -18,11 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { queryOptions } from '@tanstack/react-query'
 
-import { getChannelMonitorOverview, getChannelMonitorPerformance } from '../api'
+import {
+  getChannelMonitorOverview,
+  getChannelMonitorPerformance,
+  getChannelMonitorSmartScheduleRoutes,
+} from '../api'
 import type { ChannelMonitorPerformanceRangeMinutes } from '../types'
 
 const CHANNEL_MONITOR_PERFORMANCE_STALE_TIME = 60_000
 const CHANNEL_MONITOR_REFETCH_INTERVAL = 60_000
+
+export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
+  'channel-monitor',
+  'smart-schedule',
+  'routes',
+] as const
 
 export function getChannelMonitorOverviewQueryOptions() {
   return queryOptions({
@@ -38,6 +48,15 @@ export function getChannelMonitorPerformanceQueryOptions(
   return queryOptions({
     queryKey: ['channel-monitor-performance', minutes],
     queryFn: () => getChannelMonitorPerformance(minutes),
+    staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
+    refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
+  })
+}
+
+export function getChannelMonitorSmartScheduleQueryOptions() {
+  return queryOptions({
+    queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+    queryFn: getChannelMonitorSmartScheduleRoutes,
     staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
     refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
   })

@@ -17,11 +17,10 @@
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
-| `GET` | `/schedule` | 隔离模式下返回分组模型路由、实际优先级/权重、调度状态和性能/成功率指标；其他范围返回 `409` |
+| `GET` | `/schedule` | 返回分组模型路由、实际优先级/权重、调度状态和性能/成功率指标 |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
-| `PUT` | `/channel/:id/schedule` | 更新参与状态；`excluded`，不修改当前路由或稳定性状态 |
-| `POST` | `/channel/:id/schedule/stability/clear` | 手动解除低成功率降级或稳定性试放，恢复保护前保存的路由 |
+| `PUT` | `/channel/:id/schedule/routes` | 批量更新该渠道全部分组模型路由的参与状态；`excluded`，不修改当前路由值或稳定性状态 |
 | `PUT` | `/channel/:id/schedule/route` | 更新一条分组模型路由的参与状态；`group`、`model`、`excluded` |
 | `POST` | `/channel/:id/schedule/route/stability/clear` | 手动解除一条分组模型路由的低成功率降级或稳定性试放；`group`、`model` |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
@@ -55,8 +54,8 @@
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
-| `smart_schedule_scope` | `ChannelMonitorSmartScheduleScope` | `channel` | `channel`、`group_model` |
 | `smart_schedule_groups` | `ChannelMonitorSmartScheduleGroups` | `[]` | 最多 100 个，每项最长 64 字符；空数组表示全部分组 |
+| `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个分组的完整独立策略 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
 | `smart_schedule_stability_enabled` | `ChannelMonitorSmartScheduleStabilityEnabled` | `false` | 布尔值 |
@@ -94,6 +93,29 @@
 
 旧客户端提交不含三个相对权重字段的完整评分对象时，后端自动补为 `true / 3 / 10` 后保存。关闭相对权重拉伸时仍需保留有效的开始和完整分差，便于再次开启。
 
+`smart_schedule_group_policies` 以分组名为唯一键。每项保存完整独立策略，即使所有值与默认策略相同也不会被删除。为兼容旧客户端，可以省略部分字段；后端会用本次请求处理后的默认策略补齐，保存和响应时均返回完整字段。`models: []` 表示该分组使用全部模型。`scoring` 一旦提供，仍须提交与全局评分相同结构的完整对象：
+
+```json
+[
+  {
+    "group": "vip",
+    "strategy": "first_token",
+    "apply_mode": "priority_weight",
+    "models": ["gpt-4.1", "claude-sonnet-4-5"],
+    "stability_enabled": true,
+    "min_samples": 20,
+    "min_success_rate": 95,
+    "cooldown_minutes": 10
+  },
+  {
+    "group": "default",
+    "strategy": "ratio",
+    "stability_enabled": false,
+    "models": []
+  }
+]
+```
+
 ## 系统任务
 
 | 任务类型 | 触发方式 | 说明 |
@@ -110,13 +132,15 @@
 
 自动迁移包含以下模型：
 
-- `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略、调度状态和并发限制。
-- `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度、稳定性和范围切换暂存状态。
+- `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制；旧渠道级调度字段仅用于升级迁移。
+- `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
 性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，页面只读取分钟表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
+
+升级时会把旧渠道级智能调度数据一次性迁移到 `ChannelSmartScheduleRouteState`，之后所有设置、接口、任务和选路都只使用分组模型路由。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

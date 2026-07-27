@@ -1,3 +1,4 @@
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,139 +17,109 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ShieldMinusIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useState } from 'react'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { formatTimestampToDate } from '@/lib/format'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 
-import type { ChannelMonitorItem } from '../types'
+import {
+  formatChannelMonitorSmartSchedulePriorityWeightRange,
+  summarizeChannelMonitorSmartScheduleChannel,
+} from '../lib/smart-schedule-summary'
+import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartScheduleCellProps = {
-  channel: ChannelMonitorItem
+  routes: readonly ChannelMonitorSmartScheduleRoute[]
   pending: boolean
-  clearPending: boolean
   onUpdate: (excluded: boolean) => void
-  onClearStability: () => void
+  onOpen: () => void
 }
 
 export function ChannelMonitorSmartScheduleCell(
   props: ChannelMonitorSmartScheduleCellProps
 ) {
-  const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false)
-  const participating = !props.channel.smart_schedule_excluded
-  const busy = props.pending || props.clearPending
-  const stabilityState = props.channel.smart_schedule_stability_state
-  const hasStabilityProtection =
-    stabilityState === 'degraded' || stabilityState === 'probing'
+  const summary = summarizeChannelMonitorSmartScheduleChannel(props.routes)
+  if (!summary) {
+    return <span className='text-muted-foreground text-sm'>暂无路由</span>
+  }
+
+  const participating = summary.participatingCount > 0
+  const partiallyParticipating =
+    participating && summary.participatingCount < summary.routeCount
+  const channelEnabled = props.routes.some(
+    (route) => route.channel_status === CHANNEL_STATUS.ENABLED
+  )
+  const visibleGroups = summary.groups.slice(0, 3)
+  const hiddenGroupCount = summary.groups.length - visibleGroups.length
 
   return (
-    <div className='flex w-full min-w-0 flex-col items-start gap-2'>
-      <div className='flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums'>
-        <span>
-          优先级 <strong>{props.channel.priority}</strong>
-        </span>
-        <span>
-          权重 <strong>{props.channel.weight}</strong>
-        </span>
-        {busy && <Spinner className='size-3.5' />}
-      </div>
-
-      <div className='flex flex-wrap items-center gap-2'>
-        <div className='flex items-center gap-2'>
+    <div className='flex min-w-[230px] flex-col gap-2'>
+      <div className='flex items-start gap-2'>
+        <button
+          type='button'
+          className='group focus-visible:ring-ring min-w-0 flex-1 rounded-md text-left outline-none focus-visible:ring-2'
+          onClick={props.onOpen}
+          aria-label={`查看 ${summary.channelName} 的智能调度详情`}
+        >
+          <div className='flex items-center gap-1.5'>
+            <span className='font-medium'>
+              {summary.participatingCount}/{summary.routeCount} 路由参与
+            </span>
+            <HugeiconsIcon
+              icon={ArrowRight01Icon}
+              className='text-muted-foreground transition-transform group-hover:translate-x-0.5'
+            />
+          </div>
+          <div className='mt-1 flex flex-col gap-1'>
+            {visibleGroups.map((group) => (
+              <div
+                key={group.group}
+                className='flex min-w-0 items-center justify-between gap-2 text-xs'
+              >
+                <span className='min-w-0 truncate' title={group.group}>
+                  {group.group}
+                </span>
+                <span className='shrink-0 font-mono tabular-nums'>
+                  {formatChannelMonitorSmartSchedulePriorityWeightRange(group)}
+                </span>
+              </div>
+            ))}
+            {hiddenGroupCount > 0 ? (
+              <span className='text-muted-foreground text-xs'>
+                还有 {hiddenGroupCount} 个分组
+              </span>
+            ) : null}
+          </div>
+        </button>
+        <div
+          className='flex shrink-0 items-center gap-1.5 pt-0.5'
+          onClick={(event) => event.stopPropagation()}
+        >
+          {props.pending ? <Spinner /> : null}
           <Switch
             checked={participating}
-            disabled={busy}
+            disabled={props.pending}
             onCheckedChange={(checked) => props.onUpdate(!checked)}
-            aria-label={`${participating ? '停止' : '启用'} ${props.channel.name} 的智能调度`}
+            aria-label={`${participating ? '取消' : '开启'} ${summary.channelName} 的智能调度参与`}
           />
-          <span className='text-xs'>参与调度</span>
         </div>
-        {participating &&
-        !props.channel.smart_schedule_stability_state &&
-        props.channel.last_schedule_score != null ? (
-          <span className='text-xs tabular-nums'>
-            得分 {(props.channel.last_schedule_score * 100).toFixed(1)}
-          </span>
+      </div>
+      <div className='flex flex-wrap items-center gap-1.5'>
+        <Badge variant={channelEnabled ? 'secondary' : 'outline'}>
+          {channelEnabled ? '可调度' : '渠道禁用'}
+        </Badge>
+        {partiallyParticipating ? (
+          <Badge variant='outline'>部分参与</Badge>
+        ) : null}
+        {summary.degradedCount > 0 ? (
+          <Badge variant='destructive'>低成功率 {summary.degradedCount}</Badge>
+        ) : null}
+        {summary.probingCount > 0 ? (
+          <Badge variant='warning'>稳定性试放 {summary.probingCount}</Badge>
         ) : null}
       </div>
-
-      {hasStabilityProtection ? (
-        <div className='flex flex-wrap items-center gap-2'>
-          {stabilityState === 'degraded' ? (
-            <span
-              data-slot='smart-schedule-stability-status'
-              className='text-destructive text-xs'
-            >
-              低成功率降级
-              {props.channel.smart_schedule_stability_until
-                ? `至 ${formatTimestampToDate(props.channel.smart_schedule_stability_until)}`
-                : ''}
-            </span>
-          ) : (
-            <span
-              data-slot='smart-schedule-stability-status'
-              className='text-xs text-amber-600 dark:text-amber-400'
-            >
-              稳定性试放
-            </span>
-          )}
-          <Button
-            type='button'
-            variant='outline'
-            size='xs'
-            disabled={busy}
-            onClick={() => setClearConfirmationOpen(true)}
-            aria-label={`手动解除 ${props.channel.name} 的稳定性保护`}
-          >
-            <HugeiconsIcon icon={ShieldMinusIcon} data-icon='inline-start' />
-            手动解除
-          </Button>
-        </div>
-      ) : null}
-
-      <AlertDialog
-        open={clearConfirmationOpen}
-        onOpenChange={setClearConfirmationOpen}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认手动解除稳定性保护？</AlertDialogTitle>
-            <AlertDialogDescription>
-              将立即清除“{props.channel.name}”的
-              {stabilityState === 'degraded' ? '低成功率降级' : '稳定性试放'}
-              状态，并恢复进入保护前保存的优先级和完整权重。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={props.clearPending}>
-              取消
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={props.clearPending}
-              onClick={() => {
-                props.onClearStability()
-                setClearConfirmationOpen(false)
-              }}
-            >
-              {props.clearPending ? '解除中...' : '确认解除'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

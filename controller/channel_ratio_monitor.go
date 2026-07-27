@@ -40,10 +40,6 @@ type groupRatioSyncRequest struct {
 	Coefficient *float64 `json:"coefficient"`
 }
 
-type channelSmartScheduleConfigUpdateRequest struct {
-	Excluded *bool `json:"excluded"`
-}
-
 type channelMonitorUpstreamRequest struct {
 	Type                        string                                      `json:"type"`
 	BaseURL                     string                                      `json:"base_url"`
@@ -83,51 +79,41 @@ type channelMonitorUpstreamConfig struct {
 }
 
 type channelMonitorItem struct {
-	Id                          int                           `json:"id"`
-	Name                        string                        `json:"name"`
-	Type                        int                           `json:"type"`
-	Status                      int                           `json:"status"`
-	StatusReason                string                        `json:"status_reason"`
-	Priority                    int64                         `json:"priority"`
-	Weight                      int                           `json:"weight"`
-	BaseURL                     string                        `json:"base_url"`
-	Models                      string                        `json:"models"`
-	TestModel                   *string                       `json:"test_model"`
-	Groups                      []string                      `json:"groups"`
-	Ratio                       *float64                      `json:"ratio"`
-	PreviousRatio               *float64                      `json:"previous_ratio"`
-	CostRatio                   *float64                      `json:"cost_ratio"`
-	PreviousCostRatio           *float64                      `json:"previous_cost_ratio"`
-	ConversionFactor            *float64                      `json:"conversion_factor"`
-	Remark                      string                        `json:"remark"`
-	ChannelRemark               string                        `json:"channel_remark"`
-	UpdatedTime                 int64                         `json:"updated_time"`
-	UpdatedBy                   int                           `json:"updated_by"`
-	UpdatedByUsername           string                        `json:"updated_by_username"`
-	LastFetchStatus             string                        `json:"last_fetch_status"`
-	LastFetchError              string                        `json:"last_fetch_error"`
-	LastFetchTime               int64                         `json:"last_fetch_time"`
-	ConsecutiveFailures         int                           `json:"consecutive_failures"`
-	UpstreamBalance             *float64                      `json:"upstream_balance"`
-	LastBalanceTime             int64                         `json:"last_balance_time"`
-	LastBalanceError            string                        `json:"last_balance_error"`
-	TodayCostCNY                float64                       `json:"today_cost_cny"`
-	TodayCostConfigured         bool                          `json:"today_cost_configured"`
-	TodayCostComplete           bool                          `json:"today_cost_complete"`
-	TodayCostUnresolvedCount    int64                         `json:"today_cost_unresolved_count"`
-	SmartScheduleExcluded       bool                          `json:"smart_schedule_excluded"`
-	LastScheduleStatus          string                        `json:"last_schedule_status"`
-	LastScheduleError           string                        `json:"last_schedule_error"`
-	LastScheduleScore           *float64                      `json:"last_schedule_score"`
-	LastSchedulePriority        int64                         `json:"last_schedule_priority"`
-	LastScheduleWeight          uint                          `json:"last_schedule_weight"`
-	LastScheduleTime            int64                         `json:"last_schedule_time"`
-	SmartScheduleStabilityState string                        `json:"smart_schedule_stability_state"`
-	SmartScheduleStabilityUntil int64                         `json:"smart_schedule_stability_until"`
-	SmartScheduleStabilitySince int64                         `json:"smart_schedule_stability_since"`
-	ConcurrencyLimit            int                           `json:"concurrency_limit"`
-	ConcurrencyActive           int                           `json:"concurrency_active"`
-	Upstream                    *channelMonitorUpstreamConfig `json:"upstream"`
+	Id                       int                           `json:"id"`
+	Name                     string                        `json:"name"`
+	Type                     int                           `json:"type"`
+	Status                   int                           `json:"status"`
+	StatusReason             string                        `json:"status_reason"`
+	Priority                 int64                         `json:"priority"`
+	Weight                   int                           `json:"weight"`
+	BaseURL                  string                        `json:"base_url"`
+	Models                   string                        `json:"models"`
+	TestModel                *string                       `json:"test_model"`
+	Groups                   []string                      `json:"groups"`
+	Ratio                    *float64                      `json:"ratio"`
+	PreviousRatio            *float64                      `json:"previous_ratio"`
+	CostRatio                *float64                      `json:"cost_ratio"`
+	PreviousCostRatio        *float64                      `json:"previous_cost_ratio"`
+	ConversionFactor         *float64                      `json:"conversion_factor"`
+	Remark                   string                        `json:"remark"`
+	ChannelRemark            string                        `json:"channel_remark"`
+	UpdatedTime              int64                         `json:"updated_time"`
+	UpdatedBy                int                           `json:"updated_by"`
+	UpdatedByUsername        string                        `json:"updated_by_username"`
+	LastFetchStatus          string                        `json:"last_fetch_status"`
+	LastFetchError           string                        `json:"last_fetch_error"`
+	LastFetchTime            int64                         `json:"last_fetch_time"`
+	ConsecutiveFailures      int                           `json:"consecutive_failures"`
+	UpstreamBalance          *float64                      `json:"upstream_balance"`
+	LastBalanceTime          int64                         `json:"last_balance_time"`
+	LastBalanceError         string                        `json:"last_balance_error"`
+	TodayCostCNY             float64                       `json:"today_cost_cny"`
+	TodayCostConfigured      bool                          `json:"today_cost_configured"`
+	TodayCostComplete        bool                          `json:"today_cost_complete"`
+	TodayCostUnresolvedCount int64                         `json:"today_cost_unresolved_count"`
+	ConcurrencyLimit         int                           `json:"concurrency_limit"`
+	ConcurrencyActive        int                           `json:"concurrency_active"`
+	Upstream                 *channelMonitorUpstreamConfig `json:"upstream"`
 }
 
 func validateChannelMonitorRatio(ratio *float64) bool {
@@ -469,19 +455,18 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			}
 		}
 		item := channelMonitorItem{
-			Id:                    channel.Id,
-			Name:                  channel.Name,
-			Type:                  channel.Type,
-			Status:                channel.Status,
-			StatusReason:          statusReason,
-			Priority:              channel.GetPriority(),
-			Weight:                channel.GetWeight(),
-			BaseURL:               channel.GetBaseURL(),
-			Models:                channel.Models,
-			TestModel:             channel.TestModel,
-			Groups:                groups,
-			ChannelRemark:         channelRemark,
-			SmartScheduleExcluded: true,
+			Id:            channel.Id,
+			Name:          channel.Name,
+			Type:          channel.Type,
+			Status:        channel.Status,
+			StatusReason:  statusReason,
+			Priority:      channel.GetPriority(),
+			Weight:        channel.GetWeight(),
+			BaseURL:       channel.GetBaseURL(),
+			Models:        channel.Models,
+			TestModel:     channel.TestModel,
+			Groups:        groups,
+			ChannelRemark: channelRemark,
 		}
 		if cost, exists := todayCostByChannel[channel.Id]; exists {
 			item.TodayCostCNY = channelMonitorCostCNY(cost.CostNanoCNY)
@@ -504,16 +489,6 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			item.UpstreamBalance = monitor.UpstreamBalance
 			item.LastBalanceTime = monitor.LastBalanceTime
 			item.LastBalanceError = monitor.LastBalanceError
-			item.SmartScheduleExcluded = !monitor.ParticipatesInSmartSchedule()
-			item.LastScheduleStatus = monitor.LastScheduleStatus
-			item.LastScheduleError = monitor.LastScheduleError
-			item.LastScheduleScore = monitor.LastScheduleScore
-			item.LastSchedulePriority = monitor.LastSchedulePriority
-			item.LastScheduleWeight = monitor.LastScheduleWeight
-			item.LastScheduleTime = monitor.LastScheduleTime
-			item.SmartScheduleStabilityState = monitor.SmartScheduleStabilityState
-			item.SmartScheduleStabilityUntil = monitor.SmartScheduleStabilityUntil
-			item.SmartScheduleStabilitySince = monitor.SmartScheduleStabilitySince
 			if monitor.UpdatedTime > 0 {
 				item.Ratio = &monitor.Ratio
 				item.PreviousRatio = monitor.PreviousRatio
@@ -552,86 +527,6 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			"group_coefficients": getChannelMonitorGroupCoefficients(),
 			"settings":           getChannelMonitorSettings(),
 		},
-	})
-}
-
-func UpdateChannelMonitorSmartScheduleConfig(c *gin.Context) {
-	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeChannel) {
-		return
-	}
-	channelId, err := strconv.Atoi(c.Param("id"))
-	if err != nil || channelId <= 0 {
-		common.ApiErrorMsg(c, "无效的渠道 ID")
-		return
-	}
-	if _, err := model.GetChannelById(channelId, false); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	var request channelSmartScheduleConfigUpdateRequest
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
-		return
-	}
-	if request.Excluded == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的调度设置"})
-		return
-	}
-	if err := initializeChannelSmartScheduleParticipation(); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	options := model.ChannelSmartScheduleConfigOptions{Excluded: *request.Excluded}
-	monitor, err := model.SaveChannelSmartScheduleConfig(channelId, options)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
-		"id": channelId, "excluded": options.Excluded,
-	})
-	common.ApiSuccess(c, gin.H{
-		"excluded": monitor.SmartScheduleExcluded,
-	})
-}
-
-func ClearChannelMonitorSmartScheduleStability(c *gin.Context) {
-	if !requireChannelSmartScheduleScope(c, channelMonitorSmartScheduleScopeChannel) {
-		return
-	}
-	channelId, err := strconv.Atoi(c.Param("id"))
-	if err != nil || channelId <= 0 {
-		common.ApiErrorMsg(c, "无效的渠道 ID")
-		return
-	}
-	if _, err := model.GetChannelById(channelId, false); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	result, err := model.ClearChannelSmartScheduleStability(
-		channelId,
-		channelMonitorSmartScheduleBaselinePriority,
-		channelMonitorSmartScheduleMinWeight,
-	)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if result.Cleared {
-		model.InitChannelCache()
-	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_stability_clear", map[string]interface{}{
-		"id": channelId, "previous_state": result.PreviousState, "cleared": result.Cleared,
-		"priority": result.Priority, "weight": result.Weight,
-	})
-	common.ApiSuccess(c, gin.H{
-		"cleared":        result.Cleared,
-		"previous_state": result.PreviousState,
-		"priority":       result.Priority,
-		"weight":         result.Weight,
 	})
 }
 

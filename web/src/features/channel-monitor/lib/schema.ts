@@ -21,7 +21,6 @@ import * as z from 'zod'
 import type {
   ChannelMonitorPolicyAction,
   ChannelMonitorSmartScheduleApplyMode,
-  ChannelMonitorSmartScheduleScope,
   ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorUpstreamAuthType,
   ChannelMonitorUpstreamType,
@@ -61,11 +60,6 @@ const channelMonitorSmartScheduleStrategies = [
   'smart',
 ] as const satisfies readonly ChannelMonitorSmartScheduleStrategy[]
 
-const channelMonitorSmartScheduleScopes = [
-  'channel',
-  'group_model',
-] as const satisfies readonly ChannelMonitorSmartScheduleScope[]
-
 const channelMonitorPolicyActions = [
   'none',
   'update_group_ratio',
@@ -84,6 +78,112 @@ const smartScheduleMetricPercentagesSchema = z.object({
   firstTokenPercent: smartSchedulePercentageSchema,
   tpsPercent: smartSchedulePercentageSchema,
 })
+
+const smartScheduleScoringSchema = z
+  .object({
+    stabilityPercent: smartSchedulePercentageSchema,
+    curveExponent: z.coerce
+      .number()
+      .finite('得分曲线指数必须是有效数字')
+      .min(0.1, '得分曲线指数不能小于 0.1')
+      .max(5, '得分曲线指数不能超过 5'),
+    relativeWeightEnabled: z.boolean(),
+    relativeWeightStartPercent: smartSchedulePercentageSchema,
+    relativeWeightFullPercent: smartSchedulePercentageSchema,
+    smart: smartScheduleMetricPercentagesSchema,
+    ratio: smartScheduleMetricPercentagesSchema,
+  })
+  .superRefine((values, context) => {
+    const scoringGroups = [
+      {
+        key: 'smart' as const,
+        label: '智能调度',
+        percentages: values.smart,
+      },
+      {
+        key: 'ratio' as const,
+        label: '按成本倍率调度',
+        percentages: values.ratio,
+      },
+    ]
+    for (const group of scoringGroups) {
+      const total =
+        group.percentages.costRatioPercent +
+        group.percentages.firstTokenPercent +
+        group.percentages.tpsPercent
+      if (Math.abs(total - 100) > 0.000001) {
+        context.addIssue({
+          code: 'custom',
+          path: [group.key, 'tpsPercent'],
+          message: `${group.label}的指标占比合计必须为 100%`,
+        })
+      }
+    }
+    if (values.ratio.costRatioPercent <= 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['ratio', 'costRatioPercent'],
+        message: '按成本倍率调度的成本倍率占比必须大于 0%',
+      })
+    }
+    if (values.relativeWeightFullPercent <= values.relativeWeightStartPercent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['relativeWeightFullPercent'],
+        message: '完整拉伸分差必须大于开始拉伸分差',
+      })
+    }
+  })
+
+const smartScheduleModelsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1, '基准模型不能为空')
+      .max(255, '基准模型不能超过 255 个字符')
+  )
+  .max(MAX_SMART_SCHEDULE_MODEL_COUNT, '基准模型不能超过 100 个')
+
+const smartScheduleMinSamplesSchema = z.coerce
+  .number()
+  .int('最少样本数必须是整数')
+  .min(1, '最少样本数不能小于 1')
+  .max(MAX_SMART_SCHEDULE_MIN_SAMPLES, '最少样本数不能超过 100000')
+
+const smartScheduleMinSuccessRateSchema = z.coerce
+  .number()
+  .finite('最低成功率必须是有效数字')
+  .min(0, '最低成功率不能小于 0%')
+  .max(100, '最低成功率不能超过 100%')
+
+const smartScheduleCooldownSchema = z.coerce
+  .number()
+  .int('降级时长必须是整数')
+  .min(1, '降级时长不能小于 1 分钟')
+  .max(MAX_SMART_SCHEDULE_COOLDOWN_MINUTES, '降级时长不能超过 525600 分钟')
+
+export function createChannelMonitorSmartSchedulePolicySchema() {
+  return z.object({
+    strategy: z.enum(channelMonitorSmartScheduleStrategies),
+    stabilityEnabled: z.boolean(),
+    scoring: smartScheduleScoringSchema,
+    applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
+    models: smartScheduleModelsSchema,
+    minSamples: smartScheduleMinSamplesSchema,
+    minSuccessRate: smartScheduleMinSuccessRateSchema,
+    cooldownMinutes: smartScheduleCooldownSchema,
+  })
+}
+
+const smartScheduleGroupPolicySchema =
+  createChannelMonitorSmartSchedulePolicySchema().extend({
+    group: z
+      .string()
+      .trim()
+      .min(1, '分组名称不能为空')
+      .max(64, '分组名称不能超过 64 个字符'),
+  })
 
 export function createChannelRatioSchema() {
   return z.object({
@@ -181,9 +281,6 @@ export function createChannelMonitorSettingsSchema() {
           '上游响应等待时间不能超过 600 秒'
         ),
       smartScheduleEnabled: z.boolean(),
-      smartScheduleScope: z
-        .enum(channelMonitorSmartScheduleScopes)
-        .default('channel'),
       smartScheduleGroups: z
         .array(
           z
@@ -193,6 +290,10 @@ export function createChannelMonitorSettingsSchema() {
             .max(64, '调度分组不能超过 64 个字符')
         )
         .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '调度分组不能超过 100 个')
+        .default([]),
+      smartScheduleGroupPolicies: z
+        .array(smartScheduleGroupPolicySchema)
+        .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '分组调度策略不能超过 100 个')
         .default([]),
       smartScheduleIntervalMinutes: z.coerce
         .number()
@@ -204,19 +305,7 @@ export function createChannelMonitorSettingsSchema() {
         ),
       smartScheduleStrategy: z.enum(channelMonitorSmartScheduleStrategies),
       smartScheduleStabilityEnabled: z.boolean(),
-      smartScheduleScoring: z.object({
-        stabilityPercent: smartSchedulePercentageSchema,
-        curveExponent: z.coerce
-          .number()
-          .finite('得分曲线指数必须是有效数字')
-          .min(0.1, '得分曲线指数不能小于 0.1')
-          .max(5, '得分曲线指数不能超过 5'),
-        relativeWeightEnabled: z.boolean(),
-        relativeWeightStartPercent: smartSchedulePercentageSchema,
-        relativeWeightFullPercent: smartSchedulePercentageSchema,
-        smart: smartScheduleMetricPercentagesSchema,
-        ratio: smartScheduleMetricPercentagesSchema,
-      }),
+      smartScheduleScoring: smartScheduleScoringSchema,
       smartScheduleApplyMode: z.enum(channelMonitorSmartScheduleApplyModes),
       smartSchedulePerformanceMinutes: z.union([
         z.literal(15),
@@ -224,33 +313,10 @@ export function createChannelMonitorSettingsSchema() {
         z.literal(360),
         z.literal(1440),
       ]),
-      smartScheduleModels: z
-        .array(
-          z
-            .string()
-            .trim()
-            .min(1, '基准模型不能为空')
-            .max(255, '基准模型不能超过 255 个字符')
-        )
-        .max(MAX_SMART_SCHEDULE_MODEL_COUNT, '基准模型不能超过 100 个'),
-      smartScheduleMinSamples: z.coerce
-        .number()
-        .int('最少样本数必须是整数')
-        .min(1, '最少样本数不能小于 1')
-        .max(MAX_SMART_SCHEDULE_MIN_SAMPLES, '最少样本数不能超过 100000'),
-      smartScheduleMinSuccessRate: z.coerce
-        .number()
-        .finite('最低成功率必须是有效数字')
-        .min(0, '最低成功率不能小于 0%')
-        .max(100, '最低成功率不能超过 100%'),
-      smartScheduleCooldownMinutes: z.coerce
-        .number()
-        .int('降级时长必须是整数')
-        .min(1, '降级时长不能小于 1 分钟')
-        .max(
-          MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
-          '降级时长不能超过 525600 分钟'
-        ),
+      smartScheduleModels: smartScheduleModelsSchema,
+      smartScheduleMinSamples: smartScheduleMinSamplesSchema,
+      smartScheduleMinSuccessRate: smartScheduleMinSuccessRateSchema,
+      smartScheduleCooldownMinutes: smartScheduleCooldownSchema,
       smartScheduleForceReset: z.boolean(),
     })
     .superRefine((values, context) => {
@@ -261,47 +327,20 @@ export function createChannelMonitorSettingsSchema() {
           message: '开启邮件通知时请填写通知邮箱',
         })
       }
-      const scoringGroups = [
-        {
-          key: 'smart' as const,
-          label: '智能调度',
-          percentages: values.smartScheduleScoring.smart,
-        },
-        {
-          key: 'ratio' as const,
-          label: '按成本倍率调度',
-          percentages: values.smartScheduleScoring.ratio,
-        },
-      ]
-      for (const group of scoringGroups) {
-        const total =
-          group.percentages.costRatioPercent +
-          group.percentages.firstTokenPercent +
-          group.percentages.tpsPercent
-        if (Math.abs(total - 100) > 0.000001) {
+      const configuredGroups = new Set<string>()
+      for (const [
+        index,
+        policy,
+      ] of values.smartScheduleGroupPolicies.entries()) {
+        if (configuredGroups.has(policy.group)) {
           context.addIssue({
             code: 'custom',
-            path: ['smartScheduleScoring', group.key, 'tpsPercent'],
-            message: `${group.label}的指标占比合计必须为 100%`,
+            path: ['smartScheduleGroupPolicies', index, 'group'],
+            message: '同一分组不能配置多个调度策略',
           })
+        } else {
+          configuredGroups.add(policy.group)
         }
-      }
-      if (values.smartScheduleScoring.ratio.costRatioPercent <= 0) {
-        context.addIssue({
-          code: 'custom',
-          path: ['smartScheduleScoring', 'ratio', 'costRatioPercent'],
-          message: '按成本倍率调度的成本倍率占比必须大于 0%',
-        })
-      }
-      if (
-        values.smartScheduleScoring.relativeWeightFullPercent <=
-        values.smartScheduleScoring.relativeWeightStartPercent
-      ) {
-        context.addIssue({
-          code: 'custom',
-          path: ['smartScheduleScoring', 'relativeWeightFullPercent'],
-          message: '完整拉伸分差必须大于开始拉伸分差',
-        })
       }
     })
 }
@@ -808,6 +847,13 @@ export type ChannelConcurrencyLimitFormValues = z.infer<
 export type ChannelMonitorSettingsFormValues = z.infer<
   ReturnType<typeof createChannelMonitorSettingsSchema>
 >
+
+export type ChannelMonitorSmartSchedulePolicyFormValues = z.infer<
+  ReturnType<typeof createChannelMonitorSmartSchedulePolicySchema>
+>
+
+export type ChannelMonitorSmartScheduleGroupPolicyFormValues =
+  ChannelMonitorSettingsFormValues['smartScheduleGroupPolicies'][number]
 
 export type ChannelGroupsFormValues = z.infer<
   ReturnType<typeof createChannelGroupsSchema>

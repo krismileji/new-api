@@ -28,6 +28,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
 import type {
   ChannelMonitorItem,
+  ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSuccessSummary,
 } from '../../types'
 import { ChannelMonitorChannelView } from '../channel-monitor-channel-view'
@@ -76,13 +77,6 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
     today_cost_unresolved_count: 0,
     concurrency_limit: 0,
     concurrency_active: 0,
-    smart_schedule_excluded: false,
-    last_schedule_status: '',
-    last_schedule_error: '',
-    last_schedule_score: null,
-    last_schedule_priority: 0,
-    last_schedule_weight: 0,
-    last_schedule_time: 0,
     upstream: {
       type: 'new_api',
       base_url: 'https://upstream.example.com',
@@ -104,11 +98,46 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
   } satisfies ChannelMonitorItem
 }
 
+function createSmartScheduleRoute(): ChannelMonitorSmartScheduleRoute {
+  return {
+    channel_id: 7,
+    channel_name: '测试渠道',
+    channel_status: 1,
+    channel_priority: 100,
+    channel_weight: 100,
+    group: 'default',
+    model: 'test-model',
+    enabled: true,
+    priority: 80,
+    weight: 60,
+    state: {
+      id: 1,
+      channel_id: 7,
+      group: 'default',
+      model: 'test-model',
+      participation_set: true,
+      excluded: false,
+      last_schedule_status: 'succeeded',
+      last_schedule_error: '',
+      last_schedule_score: 0.8,
+      last_schedule_priority: 80,
+      last_schedule_weight: 60,
+      last_schedule_time: 1_752_777_845,
+      stability_state: '',
+      stability_until: 0,
+      stability_since: 0,
+      stability_saved_priority: 0,
+      stability_saved_weight: 0,
+    },
+  }
+}
+
 function renderView(
   channel: ChannelMonitorItem,
   groupRatios: Record<string, number> = { default: 1 },
   groupCoefficients: Record<string, number> = { default: 1 },
-  successByChannel: Map<number, ChannelMonitorSuccessSummary> = new Map()
+  successByChannel: Map<number, ChannelMonitorSuccessSummary> = new Map(),
+  smartScheduleRoutes: ChannelMonitorSmartScheduleRoute[] = []
 ) {
   return renderToStaticMarkup(
     <I18nextProvider i18n={testI18n}>
@@ -122,6 +151,12 @@ function renderView(
         performanceRangeLabel='24 小时'
         performanceLoading={false}
         performanceError={false}
+        smartScheduleRoutesByChannel={
+          new Map([[channel.id, smartScheduleRoutes]])
+        }
+        smartSchedulePendingChannelId={null}
+        onUpdateSmartSchedule={noop}
+        onOpenSmartSchedule={noop}
         onFetchUpstreamBalance={noop}
         onFetchUpstreamRatio={noop}
         onToggleStatus={noop}
@@ -159,9 +194,9 @@ describe('channel monitor channel view timestamps', () => {
     assert.match(markup, /min-w-full/)
     assert.doesNotMatch(markup, /<colgroup>/)
     assert.match(headers[1] ?? '', /min-w-\[224px\]/)
-    assert.match(headers[7] ?? '', /min-w-\[112px\]/)
+    assert.match(headers[8] ?? '', /min-w-\[112px\]/)
     assert.match(cells[1] ?? '', /min-w-\[224px\]/)
-    assert.match(cells[7] ?? '', /min-w-\[112px\]/)
+    assert.match(cells[8] ?? '', /min-w-\[112px\]/)
   })
 
   test('shows ratio, group, and update time without updater attribution', () => {
@@ -169,7 +204,7 @@ describe('channel monitor channel view timestamps', () => {
     const markup = renderView(channel)
     const cells = getTableCells(markup)
 
-    assert.equal(cells.length, 8)
+    assert.equal(cells.length, 9)
     assert.doesNotMatch(markup, /<th\b[^>]*>更新时间<\/th>/)
     assert.doesNotMatch(markup, /<th\b[^>]*>倍率更新状态<\/th>/)
     assert.doesNotMatch(markup, /<th\b[^>]*>今日成本<\/th>/)
@@ -262,7 +297,7 @@ describe('channel monitor channel view timestamps', () => {
     const balanceTimestamp = formatTimestampToDate(channel.last_balance_time)
     const ratioTimestamp = formatTimestampToDate(channel.updated_time)
 
-    assert.equal(cells.length, 8)
+    assert.equal(cells.length, 9)
     assert.ok(cells[0]?.includes(`title="${longChannelName}"`))
     assert.ok(cells[1]?.includes(`title="更新：${balanceTimestamp}"`))
     assert.ok(cells[2]?.includes(`title="更新：${ratioTimestamp}"`))
@@ -311,12 +346,18 @@ describe('channel monitor channel view timestamps', () => {
     assert.equal(cells[2]?.includes('更新：'), false)
   })
 
-  test('shows today cost below the upstream balance in the same cell', () => {
+  test('places today cost between the upstream balance and update time', () => {
     const channel = createChannel()
     const cells = getTableCells(renderView(channel))
     const balanceCell = cells[1] ?? ''
 
     assert.ok(balanceCell.indexOf('42.5') < balanceCell.indexOf('今日成本'))
+    assert.ok(
+      balanceCell.indexOf('今日成本') <
+        balanceCell.indexOf(
+          `更新：${formatTimestampToDate(channel.last_balance_time)}`
+        )
+    )
     assert.ok(balanceCell.includes(formatChannelMonitorCost(1.23456)))
     assert.equal(balanceCell.includes('不完整'), false)
     assert.match(balanceCell, /<button\b/)
@@ -405,25 +446,29 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 
-  test('keeps smart scheduling controls out of the channel overview table', () => {
+  test('places group-model smart scheduling after the concurrency column', () => {
     const markup = renderView(
-      createChannel({
-        smart_schedule_excluded: true,
-        smart_schedule_stability_state: 'degraded',
-        smart_schedule_stability_until: 1_752_777_845,
-      })
+      createChannel(),
+      { default: 1 },
+      { default: 1 },
+      new Map(),
+      [createSmartScheduleRoute()]
     )
-    assert.equal(getTableCells(markup).length, 8)
-    assert.equal(
-      getTableHeaders(markup).some((header) => header.includes('智能调度')),
-      false
-    )
-    assert.equal(markup.includes('手动解除'), false)
+    const headers = getTableHeaders(markup)
+    const cells = getTableCells(markup)
+    const smartScheduleCell = cells[7] ?? ''
+
+    assert.equal(cells.length, 9)
+    assert.ok(headers[6]?.includes('并发限制'))
+    assert.ok(headers[7]?.includes('智能调度'))
+    assert.ok(smartScheduleCell.includes('1/1 路由参与'))
+    assert.match(smartScheduleCell, /default[\s\S]*P80 \/ W60/)
+    assert.ok(smartScheduleCell.includes('查看 测试渠道 的智能调度详情'))
   })
 
   test('keeps manual upstream ratio editing out of the operation column', () => {
     const cells = getTableCells(renderView(createChannel()))
-    const operationCell = cells[7] ?? ''
+    const operationCell = cells[8] ?? ''
 
     assert.equal(operationCell.includes('aria-label="修改渠道倍率"'), false)
     assert.equal(operationCell.includes('aria-label="记录渠道倍率"'), false)

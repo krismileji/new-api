@@ -1,0 +1,90 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+
+import { renderToStaticMarkup } from 'react-dom/server'
+
+import type { ChannelMonitorSmartScheduleRoute } from '../../types'
+import { ChannelMonitorSmartScheduleRouteState } from '../channel-monitor-smart-schedule-route-state'
+
+function createProtectedRoute(
+  stabilityState: 'degraded' | 'probing'
+): ChannelMonitorSmartScheduleRoute {
+  return {
+    channel_id: 7,
+    channel_name: '测试渠道',
+    channel_status: 2,
+    channel_priority: 100,
+    channel_weight: 100,
+    group: 'vip',
+    model: 'model-a',
+    enabled: false,
+    priority: 0,
+    weight: 0,
+    state: {
+      id: 1,
+      channel_id: 7,
+      group: 'vip',
+      model: 'model-a',
+      participation_set: true,
+      excluded: true,
+      last_schedule_status: 'succeeded',
+      last_schedule_error: '',
+      last_schedule_score: null,
+      last_schedule_priority: 0,
+      last_schedule_weight: 0,
+      last_schedule_time: 1_752_777_845,
+      stability_state: stabilityState,
+      stability_until: 1_752_777_845,
+      stability_since: 1_752_700_000,
+      stability_saved_priority: 95,
+      stability_saved_weight: 70,
+    },
+  }
+}
+
+describe('smart schedule route protection state', () => {
+  test('keeps low-success protection clickable when the route is unavailable and excluded', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteState
+        route={createProtectedRoute('degraded')}
+        onProtectedStatusClick={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('低成功率'))
+    assert.ok(markup.includes('解除 测试渠道 vip model-a 的低成功率保护'))
+    assert.equal(markup.includes('渠道禁用'), false)
+    assert.equal(markup.includes('未参与'), false)
+  })
+
+  test('keeps stability probing clickable when the route is unavailable and excluded', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteState
+        route={createProtectedRoute('probing')}
+        onProtectedStatusClick={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('稳定性试放'))
+    assert.ok(markup.includes('解除 测试渠道 vip model-a 的稳定性试放'))
+    assert.equal(markup.includes('路由禁用'), false)
+  })
+})

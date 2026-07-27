@@ -19,18 +19,6 @@ type channelSmartScheduleCachedRoute struct {
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
 
-const (
-	channelSmartScheduleScopeOption     = "ChannelMonitorSmartScheduleScope"
-	channelSmartScheduleScopeChannel    = "channel"
-	channelSmartScheduleScopeGroupModel = "group_model"
-)
-
-func channelSmartScheduleRouteSelectionEnabled() bool {
-	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	return common.OptionMap[channelSmartScheduleScopeOption] == channelSmartScheduleScopeGroupModel
-}
-
 func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]*Channel) map[string]map[string][]channelSmartScheduleCachedRoute {
 	cache := make(map[string]map[string][]channelSmartScheduleCachedRoute)
 	for _, ability := range abilities {

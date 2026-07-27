@@ -51,16 +51,6 @@ export type ChannelMonitorItem = {
   today_cost_unresolved_count: number
   concurrency_limit: number
   concurrency_active: number
-  smart_schedule_excluded: boolean
-  last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
-  last_schedule_error: string
-  last_schedule_score: number | null
-  last_schedule_priority: number
-  last_schedule_weight: number
-  last_schedule_time: number
-  smart_schedule_stability_state?: '' | 'degraded' | 'probing'
-  smart_schedule_stability_until?: number
-  smart_schedule_stability_since?: number
   upstream: ChannelMonitorUpstreamConfig | null
 }
 
@@ -480,6 +470,18 @@ export type ChannelMonitorSmartScheduleScoring = {
   ratio: ChannelMonitorSmartScheduleMetricPercentages
 }
 
+export type ChannelMonitorSmartScheduleGroupPolicy = {
+  group: string
+  strategy?: ChannelMonitorSmartScheduleStrategy
+  stability_enabled?: boolean
+  scoring?: ChannelMonitorSmartScheduleScoring
+  apply_mode?: ChannelMonitorSmartScheduleApplyMode
+  models?: string[]
+  min_samples?: number
+  min_success_rate?: number
+  cooldown_minutes?: number
+}
+
 export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
@@ -493,8 +495,8 @@ export type ChannelMonitorSettings = {
   probe_response_enabled: boolean
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
-  smart_schedule_scope: ChannelMonitorSmartScheduleScope
   smart_schedule_groups: string[]
+  smart_schedule_group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_interval_minutes: number
   smart_schedule_strategy: ChannelMonitorSmartScheduleStrategy
   smart_schedule_stability_enabled: boolean
@@ -518,12 +520,6 @@ export type ChannelMonitorSmartScheduleStrategy =
   | 'smart'
 
 export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
-
-export type ChannelMonitorSmartScheduleScope = 'channel' | 'group_model'
-
-export type ChannelMonitorSmartScheduleConfig = {
-  excluded: boolean
-}
 
 export type ChannelMonitorSmartScheduleStabilityClearResult = {
   cleared: boolean
@@ -591,7 +587,6 @@ export type ChannelMonitorSmartScheduleRouteStability = {
 export type ChannelMonitorSmartScheduleRouteResult = {
   generated_at: number
   range_minutes: number
-  scope: ChannelMonitorSmartScheduleScope
   enabled: boolean
   routes: ChannelMonitorSmartScheduleRoute[]
   performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
@@ -652,8 +647,8 @@ export type ChannelMonitorTaskResult = {
   scoring?: ChannelMonitorSmartScheduleScoring
   force_reset?: boolean
   apply_mode?: ChannelMonitorSmartScheduleApplyMode
-  scope?: ChannelMonitorSmartScheduleScope
   groups?: string[]
+  group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
   model?: string
   models?: string[]
   performance_minutes?: number

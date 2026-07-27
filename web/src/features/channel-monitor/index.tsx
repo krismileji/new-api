@@ -79,6 +79,7 @@ import {
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
   getChannelMonitorTodaySuccess,
+  updateChannelMonitorSmartScheduleChannelConfig,
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
@@ -87,8 +88,13 @@ import { ChannelMonitorModelPerformanceView } from './components/channel-monitor
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
 import {
   ChannelMonitorSettingsDialog,
-  type ChannelMonitorSettingsSection,
+  ChannelMonitorSmartScheduleSettingsSheet,
 } from './components/channel-monitor-settings-dialog'
+import { ChannelMonitorSmartScheduleChannelSheet } from './components/channel-monitor-smart-schedule-channel-sheet'
+import {
+  ChannelMonitorSmartScheduleOverviewCard,
+  ChannelMonitorSmartScheduleOverviewDialog,
+} from './components/channel-monitor-smart-schedule-overview'
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTaskHistoryDialog } from './components/channel-monitor-task-history-dialog'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
@@ -105,11 +111,13 @@ import { formatChannelMonitorCost, formatMonitorRatio } from './lib/format'
 import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
+  getChannelMonitorSmartScheduleQueryOptions,
 } from './lib/query-options'
 import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
 } from './lib/schema'
+import { groupChannelMonitorSmartScheduleRoutesByChannel } from './lib/smart-schedule-summary'
 import { sortChannelMonitorItems } from './lib/sort'
 import type {
   ChannelMonitorChannelPerformance,
@@ -117,6 +125,7 @@ import type {
   ChannelMonitorPerformanceMetric,
   ChannelMonitorPerformanceRangeMinutes,
   ChannelMonitorSettings,
+  ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSortMode,
   ChannelMonitorGroupSuccessMetric,
   ChannelMonitorSuccessDetailTarget,
@@ -169,6 +178,7 @@ const EMPTY_GROUP_COEFFICIENTS: Record<string, number> = {}
 const EMPTY_PERFORMANCE_METRICS: ChannelMonitorPerformanceMetric[] = []
 const EMPTY_SUCCESS_METRICS: ChannelMonitorSuccessMetric[] = []
 const EMPTY_GROUP_SUCCESS_METRICS: ChannelMonitorGroupSuccessMetric[] = []
+const EMPTY_SMART_SCHEDULE_ROUTES: ChannelMonitorSmartScheduleRoute[] = []
 const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   auto_update_interval_minutes: 0,
   auto_update_retry_count: 2,
@@ -182,7 +192,6 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   notification_email: '',
   probe_response_enabled: false,
   smart_schedule_enabled: false,
-  smart_schedule_scope: 'channel',
   smart_schedule_groups: [],
   smart_schedule_interval_minutes: 10,
   smart_schedule_strategy: 'smart',
@@ -243,8 +252,8 @@ export function ChannelMonitor() {
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsSection, setSettingsSection] =
-    useState<ChannelMonitorSettingsSection>('monitor')
+  const [smartScheduleSettingsOpen, setSmartScheduleSettingsOpen] =
+    useState(false)
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
   const [costHistoryOpen, setCostHistoryOpen] = useState(false)
   const [costHistoryChannel, setCostHistoryChannel] = useState<{
@@ -252,6 +261,11 @@ export function ChannelMonitor() {
     name: string
   } | null>(null)
   const [todaySuccessOpen, setTodaySuccessOpen] = useState(false)
+  const [smartScheduleOverviewOpen, setSmartScheduleOverviewOpen] =
+    useState(false)
+  const [smartScheduleChannelId, setSmartScheduleChannelId] = useState<
+    number | null
+  >(null)
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -291,6 +305,9 @@ export function ChannelMonitor() {
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const performanceQuery = useQuery(
     getChannelMonitorPerformanceQueryOptions(performanceRangeMinutes)
+  )
+  const smartScheduleQuery = useQuery(
+    getChannelMonitorSmartScheduleQueryOptions()
   )
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
@@ -351,6 +368,18 @@ export function ChannelMonitor() {
       queryClient.invalidateQueries({ queryKey: ['channels'] })
     },
   })
+  const smartScheduleChannelMutation = useMutation({
+    mutationFn: updateChannelMonitorSmartScheduleChannelConfig,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: (response) => {
+      toast.success(
+        `已更新 ${response.data.updated}/${response.data.total} 条路由的智能调度参与设置`
+      )
+    },
+    onSettled: () => {
+      smartScheduleQuery.refetch()
+    },
+  })
   const overview = query.data?.data
   const channels = overview?.channels ?? EMPTY_CHANNELS
   const channelOrder = overview?.channel_order ?? EMPTY_CHANNEL_ORDER
@@ -358,6 +387,20 @@ export function ChannelMonitor() {
   const groupCoefficients =
     overview?.group_coefficients ?? EMPTY_GROUP_COEFFICIENTS
   const settings = overview?.settings ?? DEFAULT_CHANNEL_MONITOR_SETTINGS
+  const smartScheduleResult = smartScheduleQuery.data?.data
+  const smartScheduleRoutes =
+    smartScheduleResult?.routes ?? EMPTY_SMART_SCHEDULE_ROUTES
+  const smartScheduleRoutesByChannel = useMemo(
+    () => groupChannelMonitorSmartScheduleRoutesByChannel(smartScheduleRoutes),
+    [smartScheduleRoutes]
+  )
+  const smartScheduleChannelRoutes =
+    smartScheduleChannelId == null
+      ? EMPTY_SMART_SCHEDULE_ROUTES
+      : (smartScheduleRoutesByChannel.get(smartScheduleChannelId) ??
+        EMPTY_SMART_SCHEDULE_ROUTES)
+  const smartScheduleChannel =
+    channels.find((channel) => channel.id === smartScheduleChannelId) ?? null
   const performanceMetrics =
     performanceQuery.data?.data.items ?? EMPTY_PERFORMANCE_METRICS
   const successMetrics =
@@ -607,9 +650,6 @@ export function ChannelMonitor() {
     ? performanceModelFilter
     : (performanceModelOptions[0]?.value ?? '')
 
-  const recordedCount = channels.filter(
-    (channel) => channel.cost_ratio != null
-  ).length
   const costOverview = costQuery.data?.data
   let costDescription = costOverview
     ? `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 结算时固化`
@@ -651,7 +691,7 @@ export function ChannelMonitor() {
   } else {
     pageContent = (
       <div className='flex flex-col gap-4'>
-        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
+        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
           <MonitorStatCard
             label='全部渠道'
             value={channels.length}
@@ -678,17 +718,11 @@ export function ChannelMonitor() {
             isError={todaySuccessQuery.isError}
             onOpen={() => setTodaySuccessOpen(true)}
           />
-          <MonitorStatCard
-            label='已记录倍率'
-            value={recordedCount}
-            description='已手动录入或从上游获取'
-            icon={ChartLineData01Icon}
-          />
-          <MonitorStatCard
-            label='本地分组'
-            value={groups.length}
-            description='当前可用的计费分组'
-            icon={Layers01Icon}
+          <ChannelMonitorSmartScheduleOverviewCard
+            result={smartScheduleResult}
+            isLoading={smartScheduleQuery.isLoading}
+            isError={smartScheduleQuery.isError}
+            onOpen={() => setSmartScheduleOverviewOpen(true)}
           />
         </div>
         <Tabs
@@ -890,6 +924,18 @@ export function ChannelMonitor() {
               performanceRangeLabel={performanceRangeLabel}
               performanceLoading={performanceQuery.isLoading}
               performanceError={performanceQuery.isError}
+              smartScheduleRoutesByChannel={smartScheduleRoutesByChannel}
+              smartSchedulePendingChannelId={
+                smartScheduleChannelMutation.isPending
+                  ? (smartScheduleChannelMutation.variables?.channelId ?? null)
+                  : null
+              }
+              onUpdateSmartSchedule={(channelId, excluded) =>
+                smartScheduleChannelMutation.mutate({ channelId, excluded })
+              }
+              onOpenSmartSchedule={(channel) =>
+                setSmartScheduleChannelId(channel.id)
+              }
               onFetchUpstreamBalance={(channel) =>
                 balanceFetchMutation.mutate(channel.id)
               }
@@ -968,8 +1014,7 @@ export function ChannelMonitor() {
                 })
               }
               onOpenScheduleSettings={() => {
-                setSettingsSection('schedule')
-                setSettingsOpen(true)
+                setSmartScheduleSettingsOpen(true)
               }}
               onEditChannels={setEditingGroupChannels}
               onEditGroup={setEditingGroup}
@@ -1010,11 +1055,8 @@ export function ChannelMonitor() {
               >
                 <LazyChannelMonitorSmartScheduleTab
                   active
-                  channels={channels}
-                  settings={settings}
                   onOpenSettings={() => {
-                    setSettingsSection('schedule')
-                    setSettingsOpen(true)
+                    setSmartScheduleSettingsOpen(true)
                   }}
                 />
               </Suspense>
@@ -1068,19 +1110,29 @@ export function ChannelMonitor() {
                 <Button
                   variant='outline'
                   size='icon'
-                  onClick={() => {
-                    setSettingsSection('monitor')
-                    setSettingsOpen(true)
-                  }}
+                  onClick={() => setSettingsOpen(true)}
                   aria-label='渠道监控设置'
                 >
                   <HugeiconsIcon icon={Settings02Icon} />
                 </Button>
               }
             />
-            <TooltipContent>
-              {autoUpdateLabel}；{smartScheduleLabel}
-            </TooltipContent>
+            <TooltipContent>{autoUpdateLabel}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={() => setSmartScheduleSettingsOpen(true)}
+                  aria-label='智能调度设置'
+                >
+                  <HugeiconsIcon icon={Route01Icon} />
+                </Button>
+              }
+            />
+            <TooltipContent>{smartScheduleLabel}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -1093,15 +1145,14 @@ export function ChannelMonitor() {
                     performanceQuery.refetch()
                     costQuery.refetch()
                     todaySuccessQuery.refetch()
-                    queryClient.invalidateQueries({
-                      queryKey: ['channel-monitor', 'smart-schedule', 'routes'],
-                    })
+                    smartScheduleQuery.refetch()
                   }}
                   disabled={
                     query.isFetching ||
                     performanceQuery.isFetching ||
                     costQuery.isFetching ||
-                    todaySuccessQuery.isFetching
+                    todaySuccessQuery.isFetching ||
+                    smartScheduleQuery.isFetching
                   }
                   aria-label='刷新'
                 >
@@ -1197,13 +1248,20 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settingsSection}:${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}:${settings.smart_schedule_enabled}:${settings.smart_schedule_scope}:${(settings.smart_schedule_groups ?? []).join(',')}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
+          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.probe_response_enabled}`}
+          settings={settings}
+          open
+          onOpenChange={setSettingsOpen}
+        />
+      )}
+      {smartScheduleSettingsOpen && (
+        <ChannelMonitorSmartScheduleSettingsSheet
+          key={`${settings.smart_schedule_enabled}:${(settings.smart_schedule_groups ?? []).join(',')}:${JSON.stringify(settings.smart_schedule_group_policies)}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           groupOptions={groups.map((group) => group.name)}
-          initialSection={settingsSection}
           open
-          onOpenChange={setSettingsOpen}
+          onOpenChange={setSmartScheduleSettingsOpen}
         />
       )}
       {taskHistoryOpen && (
@@ -1256,6 +1314,33 @@ export function ChannelMonitor() {
           channelOrder={channelOrder}
           open
           onOpenChange={setOrderDialogOpen}
+        />
+      )}
+      {smartScheduleOverviewOpen && (
+        <ChannelMonitorSmartScheduleOverviewDialog
+          result={smartScheduleResult}
+          isLoading={smartScheduleQuery.isLoading}
+          isError={smartScheduleQuery.isError}
+          open
+          onOpenChange={setSmartScheduleOverviewOpen}
+        />
+      )}
+      {smartScheduleChannelId != null && (
+        <ChannelMonitorSmartScheduleChannelSheet
+          channelName={
+            smartScheduleChannel?.name ?? `渠道 #${smartScheduleChannelId}`
+          }
+          routes={smartScheduleChannelRoutes}
+          performanceItems={smartScheduleResult?.performance_items ?? []}
+          stabilityItems={smartScheduleResult?.stability_items ?? []}
+          stabilityMetricsAvailable={
+            smartScheduleResult?.stability_metrics_available ?? false
+          }
+          rangeMinutes={smartScheduleResult?.range_minutes ?? 60}
+          open
+          onOpenChange={(open) => {
+            if (!open) setSmartScheduleChannelId(null)
+          }}
         />
       )}
       {successDetailTarget && (
