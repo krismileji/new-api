@@ -202,7 +202,8 @@ type validatedRequest struct {
 	request dto.Request
 }
 
-func isChannelMonitorProbeResponseEnabled() bool {
+// IsChannelMonitorProbeResponseEnabled reports whether local probe responses are enabled.
+func IsChannelMonitorProbeResponseEnabled() bool {
 	common.OptionMapRWMutex.RLock()
 	rawEnabled := common.OptionMap[OptionKey]
 	common.OptionMapRWMutex.RUnlock()
@@ -238,7 +239,7 @@ func tryChannelProbeResponse(c *gin.Context) bool {
 	default:
 		return false
 	}
-	if !isChannelMonitorProbeResponseEnabled() {
+	if !IsChannelMonitorProbeResponseEnabled() {
 		return false
 	}
 

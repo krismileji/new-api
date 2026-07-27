@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -499,20 +500,22 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
-	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
-		ChannelId:        channel.Id,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		ModelName:        info.OriginModelName,
-		TokenName:        "模型测试",
-		Quota:            quota,
-		Content:          "模型测试",
-		UseTimeSeconds:   int(consumedTime),
-		IsStream:         info.IsStream,
-		Group:            info.UsingGroup,
-		Other:            other,
-	})
+	if !channelprobe.IsChannelMonitorProbeResponseEnabled() {
+		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+		model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
+			ChannelId:        channel.Id,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			ModelName:        info.OriginModelName,
+			TokenName:        "模型测试",
+			Quota:            quota,
+			Content:          "模型测试",
+			UseTimeSeconds:   int(consumedTime),
+			IsStream:         info.IsStream,
+			Group:            info.UsingGroup,
+			Other:            other,
+		})
+	}
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
 		context:     c,
