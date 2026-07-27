@@ -62,7 +62,6 @@ import type {
   ChannelMonitorItem,
   ChannelMonitorSuccessSummary,
 } from '../types'
-import { ChannelMonitorFetchStatus } from './channel-monitor-fetch-status'
 import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
@@ -317,7 +316,6 @@ export function ChannelMonitorChannelView(
             <TableHead className='min-w-[224px] pl-[34px]'>上游余额</TableHead>
             <TableHead>今日成本</TableHead>
             <TableHead className='pl-[34px]'>成本倍率</TableHead>
-            <TableHead>倍率更新状态</TableHead>
             <TableHead>关联分组</TableHead>
             <TableHead>性能（{props.performanceRangeLabel}）</TableHead>
             <TableHead title='按真实上游调用统计，包含重试过程中的失败'>
@@ -439,7 +437,13 @@ export function ChannelMonitorChannelView(
                     ) : null}
                     <div className='col-start-2'>
                       <div className='flex items-center gap-2 whitespace-nowrap'>
-                        <span className='font-mono text-base font-semibold'>
+                        <span
+                          className={cn(
+                            'font-mono text-base font-semibold',
+                            channel.upstream?.ratio_sync_enabled === false &&
+                              'text-muted-foreground'
+                          )}
+                        >
                           {formatMonitorRatio(channel.cost_ratio)}
                         </span>
                         <RatioChangeBadge
@@ -461,9 +465,6 @@ export function ChannelMonitorChannelView(
                       ) : null}
                     </div>
                   </div>
-                </TableCell>
-                <TableCell className='whitespace-normal'>
-                  <ChannelMonitorFetchStatus channel={channel} />
                 </TableCell>
                 <TableCell className='whitespace-normal'>
                   {channel.groups.length === 0 ? (

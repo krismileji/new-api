@@ -162,9 +162,9 @@ describe('channel monitor channel view timestamps', () => {
     assert.match(markup, /min-w-full/)
     assert.doesNotMatch(markup, /<colgroup>/)
     assert.match(headers[1] ?? '', /min-w-\[224px\]/)
-    assert.match(headers[9] ?? '', /min-w-\[112px\]/)
+    assert.match(headers[8] ?? '', /min-w-\[112px\]/)
     assert.match(cells[1] ?? '', /min-w-\[224px\]/)
-    assert.match(cells[9] ?? '', /min-w-\[112px\]/)
+    assert.match(cells[8] ?? '', /min-w-\[112px\]/)
   })
 
   test('shows ratio, group, and update time without updater attribution', () => {
@@ -172,8 +172,9 @@ describe('channel monitor channel view timestamps', () => {
     const markup = renderView(channel)
     const cells = getTableCells(markup)
 
-    assert.equal(cells.length, 10)
+    assert.equal(cells.length, 9)
     assert.doesNotMatch(markup, /<th\b[^>]*>更新时间<\/th>/)
+    assert.doesNotMatch(markup, /<th\b[^>]*>倍率更新状态<\/th>/)
     assert.ok(markup.indexOf('上游余额') < markup.indexOf('今日成本'))
     assert.ok(markup.indexOf('今日成本') < markup.indexOf('成本倍率'))
     assert.ok(
@@ -214,9 +215,10 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(headers[3]?.includes('pl-[34px]'))
   })
 
-  test('does not show conversion or sync status details in the ratio cell', () => {
+  test('uses muted text only when ratio sync is disabled', () => {
     const channel = createChannel()
     assert.ok(channel.upstream)
+    const enabledCells = getTableCells(renderView(channel))
     const cells = getTableCells(
       renderView({
         ...channel,
@@ -230,6 +232,14 @@ describe('channel monitor channel view timestamps', () => {
 
     assert.equal(cells[3]?.includes('换算'), false)
     assert.equal(cells[3]?.includes('倍率同步已关闭'), false)
+    assert.match(
+      enabledCells[3] ?? '',
+      /class="font-mono text-base font-semibold"/
+    )
+    assert.match(
+      cells[3] ?? '',
+      /class="font-mono text-base font-semibold text-muted-foreground"/
+    )
     assert.ok(cells[3]?.includes('上游分组：default'))
   })
 
@@ -254,16 +264,13 @@ describe('channel monitor channel view timestamps', () => {
     )
     const balanceTimestamp = formatTimestampToDate(channel.last_balance_time)
     const ratioTimestamp = formatTimestampToDate(channel.updated_time)
-    const fetchTimestamp = formatTimestampToDate(channel.last_fetch_time)
 
-    assert.equal(cells.length, 10)
+    assert.equal(cells.length, 9)
     assert.ok(cells[0]?.includes(`title="${longChannelName}"`))
     assert.ok(cells[1]?.includes(`title="更新：${balanceTimestamp}"`))
     assert.ok(cells[3]?.includes(`title="更新：${ratioTimestamp}"`))
     assert.ok(cells[3]?.includes(`title="上游分组：${longUpstreamGroup}"`))
-    assert.ok(cells[4]?.includes('title="连续失败 942 次"'))
-    assert.ok(cells[4]?.includes(`title="最后尝试：${fetchTimestamp}"`))
-    assert.ok(cells[5]?.includes(`title="${longGroup}"`))
+    assert.ok(cells[4]?.includes(`title="${longGroup}"`))
     assert.doesNotMatch(cells[0] ?? '', /truncate/)
     assert.doesNotMatch(cells[1] ?? '', /truncate/)
     assert.ok(
@@ -272,7 +279,6 @@ describe('channel monitor channel view timestamps', () => {
       )
     )
     assert.doesNotMatch(cells[4] ?? '', /truncate/)
-    assert.doesNotMatch(cells[5] ?? '', /truncate/)
   })
 
   test('stacks related groups and orders them from lowest ratio to highest', () => {
@@ -283,7 +289,7 @@ describe('channel monitor channel view timestamps', () => {
         { premium: 1, default: 1, basic: 1 }
       )
     )
-    const groupCell = cells[5] ?? ''
+    const groupCell = cells[4] ?? ''
     const basicIndex = groupCell.indexOf('title="basic"')
     const defaultIndex = groupCell.indexOf('title="default"')
     const premiumIndex = groupCell.indexOf('title="premium"')
@@ -354,8 +360,8 @@ describe('channel monitor channel view timestamps', () => {
       )
     )
 
-    assert.ok(cells[8]?.includes('3/8'))
-    assert.ok(cells[8]?.includes('当前/上限'))
+    assert.ok(cells[7]?.includes('3/8'))
+    assert.ok(cells[7]?.includes('当前/上限'))
   })
 
   test('shows cache hit rate on the third line of the success rate cell', () => {
@@ -385,7 +391,7 @@ describe('channel monitor channel view timestamps', () => {
         successByChannel
       )
     )
-    const successCell = cells[7] ?? ''
+    const successCell = cells[6] ?? ''
 
     assert.match(successCell, /90%[\s\S]*9 \/ 10 次[\s\S]*缓存率[\s\S]*50%/)
     assert.ok(successCell.includes('缓存命中 1 / 2 次'))
@@ -395,13 +401,13 @@ describe('channel monitor channel view timestamps', () => {
     const markup = renderView(createChannel({ concurrency_limit: 0 }))
     const cells = getTableCells(markup)
 
-    assert.ok(cells[8]?.includes('不限'))
+    assert.ok(cells[7]?.includes('不限'))
     assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 
   test('keeps manual upstream ratio editing out of the operation column', () => {
     const cells = getTableCells(renderView(createChannel()))
-    const operationCell = cells[9] ?? ''
+    const operationCell = cells[8] ?? ''
 
     assert.equal(operationCell.includes('aria-label="修改渠道倍率"'), false)
     assert.equal(operationCell.includes('aria-label="记录渠道倍率"'), false)
