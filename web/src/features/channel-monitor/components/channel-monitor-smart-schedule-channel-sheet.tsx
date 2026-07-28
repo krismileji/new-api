@@ -79,6 +79,7 @@ type ChannelMonitorSmartScheduleChannelSheetProps = {
   rangeMinutes: number
   open: boolean
   onOpenChange: (open: boolean) => void
+  onOpenChangeComplete?: (open: boolean) => void
 }
 
 function formatPerformance(
@@ -182,7 +183,11 @@ export function ChannelMonitorSmartScheduleChannelSheet(
 
   return (
     <>
-      <Sheet open={props.open} onOpenChange={props.onOpenChange}>
+      <Sheet
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        onOpenChangeComplete={props.onOpenChangeComplete}
+      >
         <SheetContent
           side='right'
           className='flex max-h-screen w-full flex-col gap-0 overflow-hidden sm:max-w-2xl'

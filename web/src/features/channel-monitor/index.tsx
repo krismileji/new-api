@@ -252,6 +252,8 @@ export function ChannelMonitor() {
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [smartScheduleSettingsMounted, setSmartScheduleSettingsMounted] =
+    useState(false)
   const [smartScheduleSettingsOpen, setSmartScheduleSettingsOpen] =
     useState(false)
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
@@ -266,6 +268,8 @@ export function ChannelMonitor() {
   const [smartScheduleChannelId, setSmartScheduleChannelId] = useState<
     number | null
   >(null)
+  const [smartScheduleChannelOpen, setSmartScheduleChannelOpen] =
+    useState(false)
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -676,6 +680,11 @@ export function ChannelMonitor() {
     setCostHistoryOpen(true)
   }
 
+  const openSmartScheduleSettings = () => {
+    setSmartScheduleSettingsMounted(true)
+    setSmartScheduleSettingsOpen(true)
+  }
+
   let pageContent: ReactNode
   if (query.isLoading) {
     pageContent = <ChannelMonitorSkeleton />
@@ -933,9 +942,10 @@ export function ChannelMonitor() {
               onUpdateSmartSchedule={(channelId, excluded) =>
                 smartScheduleChannelMutation.mutate({ channelId, excluded })
               }
-              onOpenSmartSchedule={(channel) =>
+              onOpenSmartSchedule={(channel) => {
                 setSmartScheduleChannelId(channel.id)
-              }
+                setSmartScheduleChannelOpen(true)
+              }}
               onFetchUpstreamBalance={(channel) =>
                 balanceFetchMutation.mutate(channel.id)
               }
@@ -1013,9 +1023,7 @@ export function ChannelMonitor() {
                   groupName: group.name,
                 })
               }
-              onOpenScheduleSettings={() => {
-                setSmartScheduleSettingsOpen(true)
-              }}
+              onOpenScheduleSettings={openSmartScheduleSettings}
               onEditChannels={setEditingGroupChannels}
               onEditGroup={setEditingGroup}
               onSyncGroup={setSyncingGroup}
@@ -1055,9 +1063,7 @@ export function ChannelMonitor() {
               >
                 <LazyChannelMonitorSmartScheduleTab
                   active
-                  onOpenSettings={() => {
-                    setSmartScheduleSettingsOpen(true)
-                  }}
+                  onOpenSettings={openSmartScheduleSettings}
                 />
               </Suspense>
             ) : null}
@@ -1125,7 +1131,7 @@ export function ChannelMonitor() {
                 <Button
                   variant='outline'
                   size='icon'
-                  onClick={() => setSmartScheduleSettingsOpen(true)}
+                  onClick={openSmartScheduleSettings}
                   aria-label='智能调度设置'
                 >
                   <HugeiconsIcon icon={Route01Icon} />
@@ -1254,14 +1260,16 @@ export function ChannelMonitor() {
           onOpenChange={setSettingsOpen}
         />
       )}
-      {smartScheduleSettingsOpen && (
+      {smartScheduleSettingsMounted && (
         <ChannelMonitorSmartScheduleSettingsSheet
-          key={`${settings.smart_schedule_enabled}:${(settings.smart_schedule_groups ?? []).join(',')}:${JSON.stringify(settings.smart_schedule_group_policies)}:${settings.smart_schedule_interval_minutes}:${settings.smart_schedule_strategy}:${settings.smart_schedule_stability_enabled}:${JSON.stringify(settings.smart_schedule_scoring)}:${settings.smart_schedule_apply_mode}:${settings.smart_schedule_performance_minutes}:${(settings.smart_schedule_models ?? []).join(',')}:${settings.smart_schedule_min_samples}:${settings.smart_schedule_min_success_rate}:${settings.smart_schedule_cooldown_minutes}`}
           settings={settings}
           modelOptions={smartScheduleModelOptions}
           groupOptions={groups.map((group) => group.name)}
-          open
+          open={smartScheduleSettingsOpen}
           onOpenChange={setSmartScheduleSettingsOpen}
+          onOpenChangeComplete={(open) => {
+            if (!open) setSmartScheduleSettingsMounted(false)
+          }}
         />
       )}
       {taskHistoryOpen && (
@@ -1337,8 +1345,9 @@ export function ChannelMonitor() {
             smartScheduleResult?.stability_metrics_available ?? false
           }
           rangeMinutes={smartScheduleResult?.range_minutes ?? 60}
-          open
-          onOpenChange={(open) => {
+          open={smartScheduleChannelOpen}
+          onOpenChange={setSmartScheduleChannelOpen}
+          onOpenChangeComplete={(open) => {
             if (!open) setSmartScheduleChannelId(null)
           }}
         />

@@ -32,6 +32,7 @@ type SettingsSurfaceResult = {
   scheduleGroupsCompact: boolean
   scheduleSide: string | null
   scheduleTitle: string
+  scheduleUsesUnifiedTransition: boolean
 }
 
 test('uses separate settings surfaces with a centered group policy editor', () => {
@@ -56,6 +57,7 @@ test('uses separate settings surfaces with a centered group policy editor', () =
   assert.equal(result.generalHasSchedule, false)
   assert.equal(result.scheduleSide, 'right')
   assert.match(result.scheduleTitle, /智能调度设置/)
+  assert.equal(result.scheduleUsesUnifiedTransition, true)
   assert.equal(result.scheduleControlsAligned, true)
   assert.equal(result.scheduleGroupsCompact, true)
   assert.equal(result.policyDialogCentered, true)

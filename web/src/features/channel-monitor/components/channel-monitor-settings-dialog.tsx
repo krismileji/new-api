@@ -101,6 +101,7 @@ type ChannelMonitorSmartScheduleSettingsSheetProps = {
   groupOptions: string[]
   open: boolean
   onOpenChange: (open: boolean) => void
+  onOpenChangeComplete?: (open: boolean) => void
 }
 
 type ChannelMonitorSettingsFormProps = {
@@ -111,6 +112,7 @@ type ChannelMonitorSettingsFormProps = {
   mode: 'general' | 'schedule'
   open: boolean
   onOpenChange: (open: boolean) => void
+  onOpenChangeComplete?: (open: boolean) => void
 }
 
 const EMPTY_OPTIONS: string[] = []
@@ -406,7 +408,11 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
 
   if (props.mode === 'schedule') {
     return (
-      <Sheet open={props.open} onOpenChange={props.onOpenChange}>
+      <Sheet
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        onOpenChangeComplete={props.onOpenChangeComplete}
+      >
         <SheetContent
           side='right'
           className='w-full gap-0 sm:max-w-3xl lg:max-w-4xl'

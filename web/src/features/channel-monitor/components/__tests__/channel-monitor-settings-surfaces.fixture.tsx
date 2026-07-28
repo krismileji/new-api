@@ -149,6 +149,12 @@ const sheet = document.body.querySelector('[data-slot="sheet-content"]')
 assert.ok(sheet)
 const scheduleSide = sheet.getAttribute('data-side')
 const scheduleTitle = sheet.textContent ?? ''
+const scheduleUsesUnifiedTransition =
+  sheet.classList.contains('transition-[opacity,translate]') &&
+  sheet.classList.contains('duration-300') &&
+  sheet.classList.contains('data-starting-style:translate-x-full') &&
+  sheet.classList.contains('data-ending-style:translate-x-full') &&
+  sheet.classList.contains('motion-reduce:transition-none')
 const groupsFormItem = [
   ...sheet.querySelectorAll('[data-slot="form-item"]'),
 ].find(
@@ -215,6 +221,7 @@ process.stdout.write(
     scheduleGroupsCompact,
     scheduleSide,
     scheduleTitle,
+    scheduleUsesUnifiedTransition,
   })}\n`
 )
 
