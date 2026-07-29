@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Alert02Icon,
+  ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
   CloudDownloadIcon,
@@ -32,7 +33,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -78,11 +79,11 @@ import {
   isActiveChannelMonitorTask,
 } from '../lib/task-status'
 import type {
-  ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorTask,
   ChannelMonitorTaskKind,
   ChannelMonitorTaskStatus,
 } from '../types'
+import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
 const ACTIVE_REFRESH_INTERVAL_MS = 5000
@@ -92,17 +93,6 @@ const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
   running: '执行中',
   succeeded: '成功',
   failed: '失败',
-}
-
-const SMART_SCHEDULE_STRATEGY_LABELS: Record<
-  ChannelMonitorSmartScheduleStrategy | 'stability',
-  string
-> = {
-  ratio: '按成本倍率',
-  first_token: '按首字',
-  tps: '按 TPS',
-  stability: '按稳定性',
-  smart: '智能调度',
 }
 
 const STATUS_STYLES: Record<ChannelMonitorTaskStatus, string> = {
@@ -166,17 +156,52 @@ function FailureDot(props: { label: string }) {
   )
 }
 
+export function ChannelMonitorTaskRowDisclosure(props: {
+  adjustmentCount: number
+  truncated: boolean
+  expanded: boolean
+  controlsId: string
+  onToggle: () => void
+}) {
+  let label = props.expanded ? '收起调整明细' : '展开调整明细'
+  if (!props.expanded && props.adjustmentCount > 0) {
+    label = props.truncated
+      ? `展开调整明细，至少 ${props.adjustmentCount} 条`
+      : `展开调整明细，共 ${props.adjustmentCount} 条`
+  }
+
+  return (
+    <Button
+      type='button'
+      variant='ghost'
+      size='icon-xs'
+      className='text-muted-foreground hover:text-foreground ml-auto'
+      onClick={props.onToggle}
+      aria-label={label}
+      aria-expanded={props.expanded}
+      aria-controls={props.controlsId}
+    >
+      <HugeiconsIcon
+        icon={ArrowDown01Icon}
+        className={cn('transition-transform', props.expanded && 'rotate-180')}
+        aria-hidden='true'
+      />
+    </Button>
+  )
+}
+
 function ChannelTaskProgress(props: {
   task: ChannelMonitorTask
-  failuresExpanded: boolean
-  onToggleFailures: () => void
+  detailsExpanded: boolean
+  detailsId: string
+  onToggleDetails: () => void
 }) {
   const result = props.task.result
   if (result) {
     const failures = result.failures ?? []
     if (props.task.type === 'channel_smart_schedule') {
       return (
-        <div className='flex min-w-52 flex-wrap gap-x-3 gap-y-1 text-xs'>
+        <div className='flex min-w-52 flex-wrap items-center gap-x-3 gap-y-1 text-xs'>
           <span>
             更新 <strong>{result.updated}</strong>
           </span>
@@ -195,19 +220,13 @@ function ChannelTaskProgress(props: {
             失败 <strong>{result.failed}</strong>
             {result.failed > 0 && <FailureDot label='智能调度更新失败' />}
           </span>
-          {failures.length > 0 && (
-            <Button
-              type='button'
-              variant='link'
-              size='xs'
-              className='text-destructive h-auto p-0'
-              onClick={props.onToggleFailures}
-              aria-expanded={props.failuresExpanded}
-            >
-              <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
-              {props.failuresExpanded ? '收起失败原因' : '查看失败原因'}
-            </Button>
-          )}
+          <ChannelMonitorTaskRowDisclosure
+            adjustmentCount={result.adjustments?.length ?? 0}
+            truncated={result.adjustment_details_truncated === true}
+            expanded={props.detailsExpanded}
+            controlsId={props.detailsId}
+            onToggle={props.onToggleDetails}
+          />
         </div>
       )
     }
@@ -263,11 +282,12 @@ function ChannelTaskProgress(props: {
             variant='link'
             size='xs'
             className='text-destructive h-auto p-0'
-            onClick={props.onToggleFailures}
-            aria-expanded={props.failuresExpanded}
+            onClick={props.onToggleDetails}
+            aria-expanded={props.detailsExpanded}
+            aria-controls={props.detailsId}
           >
             <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
-            {props.failuresExpanded ? '收起失败原因' : '查看失败原因'}
+            {props.detailsExpanded ? '收起失败原因' : '查看失败原因'}
           </Button>
         )}
       </div>
@@ -283,37 +303,26 @@ function ChannelTaskProgress(props: {
   )
 }
 
-function ChannelTaskPolicyResult(props: { task: ChannelMonitorTask }) {
+export function ChannelMonitorTaskPolicySummary(props: {
+  task: ChannelMonitorTask
+}) {
   const result = props.task.result
   if (!result) return <span className='text-muted-foreground'>-</span>
   if (props.task.type === 'channel_smart_schedule') {
-    const applyModeLabel =
-      result.apply_mode === 'priority_weight'
-        ? '优先级分层 + 权重'
-        : '只调整权重'
-    let configuredModels = result.models ?? []
-    if (configuredModels.length === 0 && result.model) {
-      configuredModels = [result.model]
-    }
-    const modelSummary =
-      configuredModels.length > 0
-        ? `模型优先级 ${configuredModels.join(' → ')}`
-        : '全部模型汇总'
+    const groupPolicies = result.group_policies ?? []
+    const groupNames = groupPolicies.map((policy) => policy.group).join('、')
+    const policySummary =
+      groupPolicies.length > 0
+        ? `${groupPolicies.length} 个分组策略 · ${groupNames}`
+        : '未记录分组策略'
     return (
       <div className='flex min-w-48 flex-col gap-1 text-xs'>
-        <span>
-          {result.strategy
-            ? SMART_SCHEDULE_STRATEGY_LABELS[result.strategy]
-            : '智能调度'}{' '}
-          · {applyModeLabel}
-          {result.stability_enabled ? ' · 稳定性保护' : ''}
+        <span className='max-w-80 truncate' title={policySummary}>
+          {policySummary}
           {result.force_reset ? ' · 强制重算' : ''}
         </span>
-        <span
-          className='text-muted-foreground max-w-80 truncate'
-          title={modelSummary}
-        >
-          {modelSummary} · {result.performance_minutes ?? 0} 分钟
+        <span className='text-muted-foreground'>
+          按分组独立配置 · {result.performance_minutes ?? 0} 分钟统计范围
         </span>
       </div>
     )
@@ -332,15 +341,133 @@ function ChannelTaskPolicyResult(props: { task: ChannelMonitorTask }) {
   )
 }
 
+export function ChannelMonitorTaskHistoryEntry(props: {
+  task: ChannelMonitorTask
+  expanded: boolean
+  onToggleDetails: () => void
+}) {
+  const failures = props.task.result?.failures ?? []
+  const detailsId = `channel-monitor-task-details-${props.task.task_id}`
+  const canExpand =
+    props.task.type === 'channel_smart_schedule'
+      ? props.task.result !== null
+      : failures.length > 0
+  const detailsExpanded = props.expanded && canExpand
+
+  return (
+    <>
+      <TableRow
+        data-expandable={canExpand ? 'true' : undefined}
+        className={cn(
+          canExpand &&
+            'cursor-pointer focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-[-2px]'
+        )}
+        tabIndex={canExpand ? 0 : undefined}
+        aria-expanded={canExpand ? detailsExpanded : undefined}
+        aria-controls={canExpand ? detailsId : undefined}
+        onClick={
+          canExpand
+            ? (event) => {
+                const target = event.target as EventTarget & {
+                  closest?: (selectors: string) => Element | null
+                }
+                if (target.closest?.('button, a, input, select, textarea')) {
+                  return
+                }
+                props.onToggleDetails()
+              }
+            : undefined
+        }
+        onKeyDown={
+          canExpand
+            ? (event) => {
+                if (event.target !== event.currentTarget) return
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                props.onToggleDetails()
+              }
+            : undefined
+        }
+      >
+        <TableCell className='whitespace-nowrap'>
+          {formatTimestampToDate(props.task.created_at)}
+        </TableCell>
+        <TableCell>
+          <ChannelTaskStatusBadge task={props.task} />
+        </TableCell>
+        <TableCell>
+          <ChannelTaskProgress
+            task={props.task}
+            detailsExpanded={detailsExpanded}
+            detailsId={detailsId}
+            onToggleDetails={props.onToggleDetails}
+          />
+        </TableCell>
+        <TableCell>
+          <ChannelMonitorTaskPolicySummary task={props.task} />
+        </TableCell>
+        <TableCell className='whitespace-nowrap'>
+          {formatTaskDuration(props.task)}
+        </TableCell>
+        <TableCell
+          className={cn(
+            'max-w-56 truncate',
+            props.task.error && 'text-destructive'
+          )}
+          title={props.task.error || undefined}
+        >
+          {props.task.error || '-'}
+        </TableCell>
+      </TableRow>
+      {detailsExpanded && (
+        <TableRow className='bg-muted/20 hover:bg-muted/20'>
+          <TableCell colSpan={6} className='p-3 whitespace-normal'>
+            {props.task.type === 'channel_smart_schedule' ? (
+              <ChannelMonitorTaskAdjustmentDetails
+                task={props.task}
+                id={detailsId}
+              />
+            ) : (
+              <div
+                id={detailsId}
+                role='region'
+                aria-label='倍率更新失败原因'
+                className='flex flex-col gap-2'
+              >
+                {failures.map((failure) => (
+                  <Alert key={failure.channel_id} variant='destructive'>
+                    <HugeiconsIcon icon={Alert02Icon} />
+                    <AlertTitle>
+                      {failure.channel_name
+                        ? `${failure.channel_name}（ID ${failure.channel_id}）`
+                        : `渠道 ID ${failure.channel_id}`}
+                    </AlertTitle>
+                    <AlertDescription className='text-left break-all'>
+                      {failure.error || '上游倍率获取失败'}
+                    </AlertDescription>
+                  </Alert>
+                ))}
+                {props.task.result?.failure_details_truncated && (
+                  <p className='text-muted-foreground text-xs'>
+                    失败渠道较多，仅显示前 {failures.length} 条明细
+                  </p>
+                )}
+              </div>
+            )}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  )
+}
+
 export function ChannelMonitorTaskHistoryDialog(
   props: ChannelMonitorTaskHistoryDialogProps
 ) {
   const queryClient = useQueryClient()
   const [kind, setKind] = useState<ChannelMonitorTaskKind>(props.initialKind)
   const [page, setPage] = useState(1)
-  const [expandedFailureTaskId, setExpandedFailureTaskId] = useState<
-    string | null
-  >(null)
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const ratioUpdateMutation = useMutation({
     mutationFn: runChannelMonitorRatioUpdate,
     onError: handleChannelMonitorMutationError,
@@ -352,7 +479,7 @@ export function ChannelMonitorTaskHistoryDialog(
       )
       setKind('ratio')
       setPage(1)
-      setExpandedFailureTaskId(null)
+      setExpandedTaskId(null)
     },
     onSettled: () => {
       queryClient.invalidateQueries({
@@ -373,7 +500,7 @@ export function ChannelMonitorTaskHistoryDialog(
       )
       setKind('schedule')
       setPage(1)
-      setExpandedFailureTaskId(null)
+      setExpandedTaskId(null)
     },
     onSettled: () => {
       queryClient.invalidateQueries({
@@ -469,78 +596,18 @@ export function ChannelMonitorTaskHistoryDialog(
           </TableRow>
         </TableHeader>
         <TableBody>
-          {tasks.map((task) => {
-            const failures = task.result?.failures ?? []
-            const failuresExpanded =
-              expandedFailureTaskId === task.task_id && failures.length > 0
-            return (
-              <Fragment key={task.task_id}>
-                <TableRow>
-                  <TableCell className='whitespace-nowrap'>
-                    {formatTimestampToDate(task.created_at)}
-                  </TableCell>
-                  <TableCell>
-                    <ChannelTaskStatusBadge task={task} />
-                  </TableCell>
-                  <TableCell>
-                    <ChannelTaskProgress
-                      task={task}
-                      failuresExpanded={failuresExpanded}
-                      onToggleFailures={() =>
-                        setExpandedFailureTaskId((current) =>
-                          current === task.task_id ? null : task.task_id
-                        )
-                      }
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <ChannelTaskPolicyResult task={task} />
-                  </TableCell>
-                  <TableCell className='whitespace-nowrap'>
-                    {formatTaskDuration(task)}
-                  </TableCell>
-                  <TableCell
-                    className={cn(
-                      'max-w-56 truncate',
-                      task.error && 'text-destructive'
-                    )}
-                    title={task.error || undefined}
-                  >
-                    {task.error || '-'}
-                  </TableCell>
-                </TableRow>
-                {failuresExpanded && (
-                  <TableRow className='bg-muted/20 hover:bg-muted/20'>
-                    <TableCell colSpan={6} className='p-3 whitespace-normal'>
-                      <div className='flex flex-col gap-2'>
-                        {failures.map((failure) => (
-                          <Alert key={failure.channel_id} variant='destructive'>
-                            <HugeiconsIcon icon={Alert02Icon} />
-                            <AlertTitle>
-                              {failure.channel_name
-                                ? `${failure.channel_name}（ID ${failure.channel_id}）`
-                                : `渠道 ID ${failure.channel_id}`}
-                            </AlertTitle>
-                            <AlertDescription className='text-left break-all'>
-                              {failure.error ||
-                                (task.type === 'channel_smart_schedule'
-                                  ? '智能调度更新失败'
-                                  : '上游倍率获取失败')}
-                            </AlertDescription>
-                          </Alert>
-                        ))}
-                        {task.result?.failure_details_truncated && (
-                          <p className='text-muted-foreground text-xs'>
-                            失败渠道较多，仅显示前 {failures.length} 条明细
-                          </p>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            )
-          })}
+          {tasks.map((task) => (
+            <ChannelMonitorTaskHistoryEntry
+              key={task.task_id}
+              task={task}
+              expanded={expandedTaskId === task.task_id}
+              onToggleDetails={() =>
+                setExpandedTaskId((current) =>
+                  current === task.task_id ? null : task.task_id
+                )
+              }
+            />
+          ))}
         </TableBody>
       </Table>
     )
@@ -564,7 +631,7 @@ export function ChannelMonitorTaskHistoryDialog(
                 if (nextKind !== 'ratio' && nextKind !== 'schedule') return
                 setKind(nextKind)
                 setPage(1)
-                setExpandedFailureTaskId(null)
+                setExpandedTaskId(null)
               }}
               variant='outline'
               size='sm'

@@ -16,18 +16,44 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from '../constants'
 import type {
   ChannelMonitorSmartScheduleGroupPolicy,
   ChannelMonitorSmartScheduleScoring,
 } from '../types'
 import type {
-  ChannelMonitorSettingsFormValues,
   ChannelMonitorSmartScheduleGroupPolicyFormValues,
   ChannelMonitorSmartSchedulePolicyFormValues,
 } from './schema'
 
 type SmartScheduleScoringFormValues =
   ChannelMonitorSmartSchedulePolicyFormValues['scoring']
+
+export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmartSchedulePolicyFormValues =
+  {
+    strategy: 'smart',
+    stabilityEnabled: true,
+    jitterEnabled: true,
+    jitterTolerancePercent: 5,
+    jitterThresholdMultiplier: 3,
+    jitterAbsoluteToleranceMs: 1000,
+    jitterBaselineHours: 24,
+    scoring: channelMonitorSmartScheduleScoringToForm(
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING
+    ),
+    applyMode: 'priority_weight',
+    models: [],
+    minSamples: 5,
+    degradeStabilityScore: 90,
+    recoveryStabilityScore: 95,
+    fastFailurePenaltyPercent: 40,
+    fastFailureSeconds: 1,
+    slowFailureSeconds: 10,
+    cooldownMinutes: 30,
+    sampleMode: 'off',
+    explorationTrafficPercent: 3,
+    probeIntervalMinutes: 10,
+  }
 
 export function channelMonitorSmartScheduleScoringToForm(
   scoring: ChannelMonitorSmartScheduleScoring
@@ -74,26 +100,31 @@ export function channelMonitorSmartScheduleScoringToApi(
 }
 
 export function channelMonitorSmartScheduleGroupPoliciesToForm(
-  policies: ChannelMonitorSmartScheduleGroupPolicy[] = [],
-  defaults: ChannelMonitorSmartSchedulePolicyFormValues
+  policies: ChannelMonitorSmartScheduleGroupPolicy[] = []
 ): ChannelMonitorSmartScheduleGroupPolicyFormValues[] {
-  return policies.map((policy) =>
-    createChannelMonitorSmartScheduleGroupPolicy(
-      policy.group,
-      resolveChannelMonitorSmartScheduleGroupPolicy(defaults, {
-        strategy: policy.strategy,
-        stabilityEnabled: policy.stability_enabled,
-        scoring: policy.scoring
-          ? channelMonitorSmartScheduleScoringToForm(policy.scoring)
-          : undefined,
-        applyMode: policy.apply_mode,
-        models: policy.models,
-        minSamples: policy.min_samples,
-        minSuccessRate: policy.min_success_rate,
-        cooldownMinutes: policy.cooldown_minutes,
-      })
-    )
-  )
+  return policies.map((policy) => ({
+    group: policy.group,
+    strategy: policy.strategy,
+    stabilityEnabled: policy.stability_enabled,
+    jitterEnabled: policy.jitter_enabled,
+    jitterTolerancePercent: policy.jitter_tolerance_percent,
+    jitterThresholdMultiplier: policy.jitter_threshold_multiplier,
+    jitterAbsoluteToleranceMs: policy.jitter_absolute_tolerance_ms,
+    jitterBaselineHours: policy.jitter_baseline_hours,
+    scoring: channelMonitorSmartScheduleScoringToForm(policy.scoring),
+    applyMode: policy.apply_mode,
+    models: [...policy.models],
+    minSamples: policy.min_samples,
+    degradeStabilityScore: policy.degrade_stability_score,
+    recoveryStabilityScore: policy.recovery_stability_score,
+    fastFailurePenaltyPercent: policy.fast_failure_penalty_percent,
+    fastFailureSeconds: policy.fast_failure_seconds,
+    slowFailureSeconds: policy.slow_failure_seconds,
+    cooldownMinutes: policy.cooldown_minutes,
+    sampleMode: policy.sample_mode,
+    explorationTrafficPercent: policy.exploration_traffic_percent,
+    probeIntervalMinutes: policy.probe_interval_minutes,
+  }))
 }
 
 export function channelMonitorSmartScheduleGroupPoliciesToApi(
@@ -103,44 +134,25 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     group: policy.group,
     strategy: policy.strategy,
     stability_enabled: policy.stabilityEnabled,
+    jitter_enabled: policy.jitterEnabled,
+    jitter_tolerance_percent: policy.jitterTolerancePercent,
+    jitter_threshold_multiplier: policy.jitterThresholdMultiplier,
+    jitter_absolute_tolerance_ms: policy.jitterAbsoluteToleranceMs,
+    jitter_baseline_hours: policy.jitterBaselineHours,
     scoring: channelMonitorSmartScheduleScoringToApi(policy.scoring),
     apply_mode: policy.applyMode,
     models: policy.models,
     min_samples: policy.minSamples,
-    min_success_rate: policy.minSuccessRate,
+    degrade_stability_score: policy.degradeStabilityScore,
+    recovery_stability_score: policy.recoveryStabilityScore,
+    fast_failure_penalty_percent: policy.fastFailurePenaltyPercent,
+    fast_failure_seconds: policy.fastFailureSeconds,
+    slow_failure_seconds: policy.slowFailureSeconds,
     cooldown_minutes: policy.cooldownMinutes,
+    sample_mode: policy.sampleMode,
+    exploration_traffic_percent: policy.explorationTrafficPercent,
+    probe_interval_minutes: policy.probeIntervalMinutes,
   }))
-}
-
-export function getChannelMonitorSmartScheduleDefaultPolicy(
-  values: ChannelMonitorSettingsFormValues
-): ChannelMonitorSmartSchedulePolicyFormValues {
-  return {
-    strategy: values.smartScheduleStrategy,
-    stabilityEnabled: values.smartScheduleStabilityEnabled,
-    scoring: cloneScoring(values.smartScheduleScoring),
-    applyMode: values.smartScheduleApplyMode,
-    models: [...values.smartScheduleModels],
-    minSamples: Number(values.smartScheduleMinSamples),
-    minSuccessRate: Number(values.smartScheduleMinSuccessRate),
-    cooldownMinutes: Number(values.smartScheduleCooldownMinutes),
-  }
-}
-
-export function resolveChannelMonitorSmartScheduleGroupPolicy(
-  defaults: ChannelMonitorSmartSchedulePolicyFormValues,
-  override?: Partial<ChannelMonitorSmartSchedulePolicyFormValues>
-): ChannelMonitorSmartSchedulePolicyFormValues {
-  return {
-    strategy: override?.strategy ?? defaults.strategy,
-    stabilityEnabled: override?.stabilityEnabled ?? defaults.stabilityEnabled,
-    scoring: cloneScoring(override?.scoring ?? defaults.scoring),
-    applyMode: override?.applyMode ?? defaults.applyMode,
-    models: [...(override?.models ?? defaults.models)],
-    minSamples: override?.minSamples ?? defaults.minSamples,
-    minSuccessRate: override?.minSuccessRate ?? defaults.minSuccessRate,
-    cooldownMinutes: override?.cooldownMinutes ?? defaults.cooldownMinutes,
-  }
 }
 
 export function createChannelMonitorSmartScheduleGroupPolicy(
@@ -151,12 +163,24 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     group,
     strategy: policy.strategy,
     stabilityEnabled: policy.stabilityEnabled,
+    jitterEnabled: policy.jitterEnabled,
+    jitterTolerancePercent: policy.jitterTolerancePercent,
+    jitterThresholdMultiplier: policy.jitterThresholdMultiplier,
+    jitterAbsoluteToleranceMs: policy.jitterAbsoluteToleranceMs,
+    jitterBaselineHours: policy.jitterBaselineHours,
     scoring: cloneScoring(policy.scoring),
     applyMode: policy.applyMode,
     models: [...policy.models],
     minSamples: policy.minSamples,
-    minSuccessRate: policy.minSuccessRate,
+    degradeStabilityScore: policy.degradeStabilityScore,
+    recoveryStabilityScore: policy.recoveryStabilityScore,
+    fastFailurePenaltyPercent: policy.fastFailurePenaltyPercent,
+    fastFailureSeconds: policy.fastFailureSeconds,
+    slowFailureSeconds: policy.slowFailureSeconds,
     cooldownMinutes: policy.cooldownMinutes,
+    sampleMode: policy.sampleMode,
+    explorationTrafficPercent: policy.explorationTrafficPercent,
+    probeIntervalMinutes: policy.probeIntervalMinutes,
   }
 }
 

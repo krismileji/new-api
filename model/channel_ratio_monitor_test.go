@@ -412,30 +412,3 @@ func TestGetChannelRatioMonitorTasksFiltersOrdersAndPaginatesRuns(t *testing.T) 
 	require.Len(t, result, 1)
 	assert.Equal(t, "monitor-oldest", result[0].TaskID)
 }
-
-func TestDropLegacyChannelSmartScheduleGroupColumnPreservesMonitorData(t *testing.T) {
-	resetChannelRatioMonitorTables(t)
-	require.NoError(t, dropLegacyChannelSmartScheduleGroupColumn())
-	t.Cleanup(func() {
-		require.NoError(t, dropLegacyChannelSmartScheduleGroupColumn())
-	})
-
-	require.NoError(t, DB.Create(&ChannelRatioMonitor{
-		ChannelId:   33,
-		Ratio:       1.25,
-		UpdatedTime: 100,
-	}).Error)
-	legacyModel := &channelRatioMonitorLegacyScheduleGroup{}
-	require.NoError(t, DB.Migrator().AddColumn(legacyModel, "SmartScheduleGroup"))
-	require.True(t, DB.Migrator().HasColumn(legacyModel, "SmartScheduleGroup"))
-	require.NoError(t, DB.Table("channel_ratio_monitors").
-		Where("channel_id = ?", 33).
-		Update("smart_schedule_group", "vip").Error)
-
-	require.NoError(t, dropLegacyChannelSmartScheduleGroupColumn())
-	assert.False(t, DB.Migrator().HasColumn(legacyModel, "SmartScheduleGroup"))
-	monitor, err := GetChannelRatioMonitor(33)
-	require.NoError(t, err)
-	assert.Equal(t, 1.25, monitor.Ratio)
-	assert.Equal(t, int64(100), monitor.UpdatedTime)
-}

@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { placeChannelMonitorSmartScheduleRoutes } from '../../lib/smart-schedule-summary'
 import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRouteState,
@@ -57,6 +58,22 @@ function createRoute(
     stability_since: 0,
     stability_saved_priority: 0,
     stability_saved_weight: 0,
+    exploration_active: false,
+    exploration_since: 0,
+    exploration_saved_priority: 0,
+    exploration_saved_weight: 0,
+    probe_window_start: 0,
+    probe_last_time: 0,
+    probe_last_success: false,
+    probe_last_error: '',
+    probe_sample_count: 0,
+    probe_success_count: 0,
+    probe_failure_duration_sample_count: 0,
+    probe_average_failure_duration_ms: null,
+    probe_first_token_sample_count: 0,
+    probe_average_first_token_ms: null,
+    probe_tps_sample_count: 0,
+    probe_average_tps: null,
   }
   return {
     channel_id: 7,
@@ -76,14 +93,21 @@ function createRoute(
 
 function renderCell(
   routes: ChannelMonitorSmartScheduleRoute[],
-  pending = false
+  pending = false,
+  groupRatios: Readonly<Record<string, number>> = {
+    default: 1,
+    vip: 0.5,
+  }
 ) {
   return renderToStaticMarkup(
     <ChannelMonitorSmartScheduleCell
       routes={routes}
+      groupRatios={groupRatios}
+      placements={placeChannelMonitorSmartScheduleRoutes(routes)}
       pending={pending}
       onUpdate={noop}
       onOpen={noop}
+      onClearStability={noop}
     />
   )
 }
@@ -95,7 +119,7 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(markup.includes('暂无路由'))
   })
 
-  test('summarizes participation and priority-weight ranges by group', () => {
+  test('summarizes participation and highlights group-model routing roles', () => {
     const markup = renderCell([
       createRoute(),
       createRoute({
@@ -114,14 +138,21 @@ describe('channel monitor smart schedule cell status', () => {
     ])
 
     assert.ok(markup.includes('2/3 路由参与'))
-    assert.match(markup, /default[\s\S]*P80-90 \/ W50-60/)
-    assert.match(markup, /vip[\s\S]*P100 \/ W100/)
-    assert.ok(markup.includes('部分参与'))
+    assert.ok(markup.includes('2 可调度'))
+    assert.match(markup, /vip \/ model-c[\s\S]*P100 \/ W100/)
+    assert.ok(markup.includes('主候选'))
+    assert.ok(markup.includes('预计 100.0%'))
+    assert.ok(markup.includes('还有 1 条分组模型路由'))
+    assert.equal(markup.includes('部分参与'), false)
+    assert.equal(markup.includes('渠道禁用'), false)
     assert.ok(markup.includes('查看 测试渠道 的智能调度详情'))
     assert.ok(markup.includes('role="switch"'))
+    assert.ok(
+      markup.indexOf('vip / model-c') < markup.indexOf('default / model-a')
+    )
   })
 
-  test('shows route protection counts without a separate clear button', () => {
+  test('makes protected route text the manual recovery entry point', () => {
     const markup = renderCell([
       createRoute({ state: { stability_state: 'degraded' } }),
       createRoute({
@@ -130,8 +161,13 @@ describe('channel monitor smart schedule cell status', () => {
       }),
     ])
 
-    assert.ok(markup.includes('低成功率 1'))
-    assert.ok(markup.includes('稳定性试放 1'))
+    assert.ok(markup.includes('稳定性降级'))
+    assert.ok(markup.includes('稳定性试放'))
+    assert.ok(markup.includes('查看 default model-a 的智能调度详情'))
+    assert.ok(markup.includes('的稳定性降级保护'))
+    assert.ok(markup.includes('的稳定性试放保护'))
+    const protectedBadges = markup.match(/<button[^>]*data-slot="badge"[^>]*>/g)
+    assert.equal(protectedBadges?.length, 2)
     assert.equal(markup.includes('手动解除'), false)
   })
 
@@ -139,9 +175,22 @@ describe('channel monitor smart schedule cell status', () => {
     const markup = renderCell([createRoute({ channel_status: 2 })])
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-    assert.ok(markup.includes('渠道禁用'))
+    assert.equal(markup.includes('渠道禁用'), false)
+    assert.ok(markup.includes('不可调度'))
     assert.ok(switchElement)
     assert.equal(switchElement.includes('aria-disabled="true"'), false)
+  })
+
+  test('shows an uninitialized route as not participating', () => {
+    const markup = renderCell([
+      createRoute({ state: { participation_set: false, excluded: false } }),
+    ])
+    const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
+
+    assert.ok(markup.includes('0/1 路由参与'))
+    assert.ok(markup.includes('0 可调度'))
+    assert.ok(markup.includes('未参与'))
+    assert.ok(switchElement.includes('aria-checked="false"'))
   })
 
   test('disables participation while a participation update is pending', () => {

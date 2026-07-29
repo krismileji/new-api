@@ -24,7 +24,10 @@ import { useForm } from 'react-hook-form'
 
 import { Form } from '@/components/ui/form'
 
-import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
+import type {
+  ChannelMonitorSettingsFormValues,
+  ChannelMonitorSmartSchedulePolicyFormValues,
+} from '../../lib/schema'
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
   ChannelMonitorConsecutiveFailureLimitField,
@@ -32,6 +35,7 @@ import {
 } from '../channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
 import { ChannelMonitorSmartScheduleGroupPolicies } from '../channel-monitor-smart-schedule-group-policies'
+import { ChannelMonitorSmartScheduleGroupPolicyFields } from '../channel-monitor-smart-schedule-group-policy-fields'
 
 function CostRetentionFieldFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
@@ -66,49 +70,14 @@ function ProbeResponseFieldsFixture() {
   )
 }
 
-type SmartScheduleFieldsFixtureProps = {
-  strategy?: 'smart' | 'ratio'
-  stabilityEnabled?: boolean
-  relativeWeightEnabled?: boolean
-  ratioPercentages?: {
-    costRatioPercent: number | string
-    firstTokenPercent: number | string
-    tpsPercent: number | string
-  }
-}
-
-function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
+function SmartScheduleFieldsFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
-      smartScheduleGroups: [],
+      smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartScheduleStrategy: props.strategy ?? 'smart',
-      smartScheduleStabilityEnabled: props.stabilityEnabled ?? false,
-      smartScheduleScoring: {
-        stabilityPercent: 50,
-        curveExponent: 1,
-        relativeWeightEnabled: props.relativeWeightEnabled ?? true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
-        smart: {
-          costRatioPercent: 40,
-          firstTokenPercent: 40,
-          tpsPercent: 20,
-        },
-        ratio: props.ratioPercentages ?? {
-          costRatioPercent: 70,
-          firstTokenPercent: 20,
-          tpsPercent: 10,
-        },
-      },
-      smartScheduleApplyMode: 'weight',
       smartSchedulePerformanceMinutes: 60,
-      smartScheduleModels: [],
-      smartScheduleMinSamples: 10,
-      smartScheduleMinSuccessRate: 80,
-      smartScheduleCooldownMinutes: 30,
       smartScheduleForceReset: false,
     } as unknown as ChannelMonitorSettingsFormValues,
   })
@@ -123,16 +92,23 @@ function SmartScheduleFieldsFixture(props: SmartScheduleFieldsFixtureProps) {
   )
 }
 
-function SmartScheduleGroupPoliciesFixture(props: { configured: boolean }) {
+function SmartScheduleGroupPoliciesFixture(props: {
+  configured: boolean
+  sampleMode?: ChannelMonitorSmartSchedulePolicyFormValues['sampleMode']
+}) {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
-      smartScheduleGroups: ['default'],
       smartScheduleGroupPolicies: props.configured
         ? [
             {
               group: 'vip',
               strategy: 'ratio',
               stabilityEnabled: false,
+              jitterEnabled: true,
+              jitterTolerancePercent: 5,
+              jitterThresholdMultiplier: 3,
+              jitterAbsoluteToleranceMs: 1000,
+              jitterBaselineHours: 24,
               scoring: {
                 stabilityPercent: 50,
                 curveExponent: 1,
@@ -153,14 +129,46 @@ function SmartScheduleGroupPoliciesFixture(props: { configured: boolean }) {
               applyMode: 'priority_weight',
               models: [],
               minSamples: 5,
-              minSuccessRate: 80,
+              degradeStabilityScore: 90,
+              recoveryStabilityScore: 95,
+              fastFailurePenaltyPercent: 40,
+              fastFailureSeconds: 1,
+              slowFailureSeconds: 10,
               cooldownMinutes: 30,
+              sampleMode: props.sampleMode ?? 'traffic',
+              explorationTrafficPercent: 3,
+              probeIntervalMinutes: 10,
             },
           ]
         : [],
-      smartScheduleStrategy: 'smart',
-      smartScheduleStabilityEnabled: true,
-      smartScheduleScoring: {
+    } as unknown as ChannelMonitorSettingsFormValues,
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorSmartScheduleGroupPolicies
+        form={form}
+        groupOptions={['default', 'vip']}
+        modelOptions={['model-a', 'model-b']}
+      />
+    </Form>
+  )
+}
+
+function SmartScheduleGroupPolicyFieldsFixture(props: {
+  applyMode: ChannelMonitorSmartSchedulePolicyFormValues['applyMode']
+  sampleMode: ChannelMonitorSmartSchedulePolicyFormValues['sampleMode']
+  jitterEnabled?: boolean
+}) {
+  const form = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
+    defaultValues: {
+      strategy: 'smart',
+      stabilityEnabled: true,
+      jitterEnabled: props.jitterEnabled ?? true,
+      jitterTolerancePercent: 5,
+      jitterThresholdMultiplier: 3,
+      jitterAbsoluteToleranceMs: 1000,
+      jitterBaselineHours: 24,
+      scoring: {
         stabilityPercent: 50,
         curveExponent: 1,
         relativeWeightEnabled: true,
@@ -177,19 +185,25 @@ function SmartScheduleGroupPoliciesFixture(props: { configured: boolean }) {
           tpsPercent: 10,
         },
       },
-      smartScheduleApplyMode: 'weight',
-      smartScheduleModels: [],
-      smartScheduleMinSamples: 5,
-      smartScheduleMinSuccessRate: 80,
-      smartScheduleCooldownMinutes: 30,
-    } as unknown as ChannelMonitorSettingsFormValues,
+      applyMode: props.applyMode,
+      models: [],
+      minSamples: 5,
+      degradeStabilityScore: 90,
+      recoveryStabilityScore: 95,
+      fastFailurePenaltyPercent: 40,
+      fastFailureSeconds: 1,
+      slowFailureSeconds: 10,
+      cooldownMinutes: 30,
+      sampleMode: props.sampleMode,
+      explorationTrafficPercent: 3,
+      probeIntervalMinutes: 15,
+    },
   })
   return (
     <Form {...form}>
-      <ChannelMonitorSmartScheduleGroupPolicies
+      <ChannelMonitorSmartScheduleGroupPolicyFields
         form={form}
-        groupOptions={['default', 'vip']}
-        modelOptions={['model-a', 'model-b']}
+        modelOptions={['model-a']}
       />
     </Form>
   )
@@ -227,140 +241,212 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('渠道连通性测试不经过此拦截'))
   })
 
-  test('shows the bounded upstream response wait setting in smart scheduling', () => {
+  test('top-aligns runtime settings without repeating response wait help', () => {
     const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
 
     assert.ok(markup.includes('上游响应等待时间'))
     assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
     assert.match(markup, /value="60"/)
-    assert.ok(markup.includes('0 表示不限制'))
-    assert.ok(markup.includes('收到响应头后停止计时'))
-    assert.ok(markup.includes('不限制后续流式输出'))
+    assert.match(
+      markup,
+      /<div(?=[^>]*data-slot="smart-schedule-runtime-fields")(?=[^>]*class="[^"]*\bitems-start\b[^"]*")[^>]*>/
+    )
+    assert.equal(markup.includes('0 表示不限制'), false)
+    assert.ok(markup.includes('aria-label="查看“上游响应等待时间”说明"'))
   })
 
-  test('separates global runtime controls from group-overridable policies', () => {
+  test('separates global runtime controls from explicit group policies', () => {
     const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
     const runtimeSettingsIndex = markup.indexOf('运行设置')
-    const defaultPolicyIndex = markup.indexOf('默认策略')
+    const groupPolicyIndex = markup.indexOf('分组策略')
     const forceResetIndex = markup.indexOf('强制重置优先级和权重')
 
     assert.ok(runtimeSettingsIndex >= 0)
-    assert.ok(runtimeSettingsIndex < defaultPolicyIndex)
-    assert.ok(markup.includes('对全部分组统一生效，不随分组策略变化'))
-    assert.ok(forceResetIndex > defaultPolicyIndex)
+    assert.ok(runtimeSettingsIndex < groupPolicyIndex)
+    assert.ok(markup.includes('控制所有已配置分组的执行频率'))
+    assert.ok(forceResetIndex > groupPolicyIndex)
   })
 
-  test('shows only group-model scheduling with selectable groups and models', () => {
+  test('only exposes explicitly configured groups to smart scheduling', () => {
     const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
 
-    assert.ok(markup.includes('按分组和模型分别调整参与路由'))
-    assert.ok(markup.includes('参与分组'))
-    assert.ok(markup.includes('不选择表示全部分组'))
-    assert.ok(markup.includes('全部分组'))
-    assert.ok(markup.includes('参与模型'))
-    assert.ok(markup.includes('每个分组和模型独立调度'))
-    assert.equal(markup.includes('调度范围'), false)
-    assert.equal(markup.includes('按渠道（兼容模式）'), false)
-    assert.equal(markup.includes('基准模型优先级'), false)
+    assert.ok(markup.includes('只调度下方已配置策略的分组'))
+    assert.ok(markup.includes('未配置分组不会参与智能调度'))
+    assert.equal(markup.includes('参与分组'), false)
+    assert.equal(markup.includes('默认策略'), false)
   })
 
-  test('shows configurable scoring percentages with stability defaulting to half', () => {
-    const markup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
-    const ratioMarkup = renderToStaticMarkup(
-      <SmartScheduleFieldsFixture strategy='ratio' />
+  test('provides accessible help for every visible smart schedule setting', () => {
+    const globalMarkup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
+    const trafficPolicyMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='traffic'
+      />
     )
-
-    assert.ok(markup.includes('智能调度指标占比'))
-    assert.ok(markup.includes('当前合计：100%'))
-    assert.ok(markup.includes('启用后占最终得分的 50%'))
-    assert.ok(markup.includes('得分曲线指数'))
-    assert.ok(markup.includes('大于 1 会进一步压低中低分渠道'))
-    assert.match(
-      markup,
-      /id="channel-monitor-smartScheduleScoring-smart-firstTokenPercent"[^>]*value="40"/
-    )
-    assert.match(
-      markup,
-      /id="channel-monitor-smartScheduleScoring-smart-tpsPercent"[^>]*value="20"/
-    )
-    assert.match(
-      ratioMarkup,
-      /id="channel-monitor-smartScheduleScoring-ratio-firstTokenPercent"[^>]*value="20"/
-    )
-    assert.match(
-      ratioMarkup,
-      /id="channel-monitor-smartScheduleScoring-ratio-tpsPercent"[^>]*value="10"/
-    )
-  })
-
-  test('shows configurable relative weight thresholds only when enabled', () => {
-    const enabledMarkup = renderToStaticMarkup(<SmartScheduleFieldsFixture />)
-    const disabledMarkup = renderToStaticMarkup(
-      <SmartScheduleFieldsFixture relativeWeightEnabled={false} />
-    )
-
-    assert.ok(enabledMarkup.includes('相对权重拉伸'))
-    assert.ok(enabledMarkup.includes('aria-label="相对权重拉伸"'))
-    assert.ok(enabledMarkup.includes('开始拉伸分差'))
-    assert.ok(enabledMarkup.includes('完整拉伸分差'))
-    assert.match(
-      enabledMarkup,
-      /id="channel-monitor-smartScheduleScoring-relativeWeightStartPercent"[^>]*value="3"/
-    )
-    assert.match(
-      enabledMarkup,
-      /id="channel-monitor-smartScheduleScoring-relativeWeightFullPercent"[^>]*value="10"/
-    )
-    assert.ok(enabledMarkup.includes('任何分差都会开始拉伸'))
-    assert.equal(disabledMarkup.includes('开始拉伸分差'), false)
-    assert.equal(disabledMarkup.includes('完整拉伸分差'), false)
-  })
-
-  test('describes low-flow probing before restoring the full saved weight', () => {
-    const markup = renderToStaticMarkup(
-      <SmartScheduleFieldsFixture stabilityEnabled />
-    )
-
-    assert.ok(markup.includes('以不超过 10 的小流量权重用新样本试放'))
-    assert.ok(markup.includes('达标后再恢复完整权重'))
-  })
-
-  test('adds temporary string percentages numerically in the displayed total', () => {
-    const markup = renderToStaticMarkup(
-      <SmartScheduleFieldsFixture
-        strategy='ratio'
-        ratioPercentages={{
-          costRatioPercent: '70',
-          firstTokenPercent: '15',
-          tpsPercent: '25',
-        }}
+    const probePolicyMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='probe'
       />
     )
 
-    assert.ok(markup.includes('当前合计：110%'))
+    for (const label of [
+      '智能调度',
+      '调度间隔',
+      '统计范围',
+      '上游响应等待时间',
+      '强制重置优先级和权重',
+    ]) {
+      assert.ok(globalMarkup.includes(`aria-label="查看“${label}”说明"`))
+    }
+    for (const label of [
+      '调度方式',
+      '调整方式',
+      '参与模型',
+      '样本补充方式',
+      '稳定性保护',
+      '稳定性占比',
+      '降级稳定性得分',
+      '恢复稳定性得分',
+      '最少样本',
+      '快速失败惩罚',
+      '快速失败界限',
+      '慢失败界限',
+      '降级时长',
+      '成功延迟抖动',
+      '允许抖动',
+      '判定倍率',
+      '绝对容差',
+      '基线学习周期',
+      '成本倍率',
+      '首字时间',
+      'TPS',
+      '得分曲线指数',
+      '相对权重拉伸',
+      '开始拉伸分差',
+      '完整拉伸分差',
+    ]) {
+      assert.ok(trafficPolicyMarkup.includes(`aria-label="查看“${label}”说明"`))
+    }
+    assert.ok(
+      trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')
+    )
+    assert.ok(probePolicyMarkup.includes('aria-label="查看“探测间隔”说明"'))
   })
 
-  test('shows the empty state before any independent group policy is configured', () => {
+  test('shows the empty state before any group scheduling policy is configured', () => {
     const markup = renderToStaticMarkup(
       <SmartScheduleGroupPoliciesFixture configured={false} />
     )
 
-    assert.ok(markup.includes('尚未配置独立分组策略'))
+    assert.ok(markup.includes('尚未配置分组调度策略'))
+    assert.ok(markup.includes('智能调度不会处理任何分组'))
     assert.ok(markup.includes('新增分组策略'))
   })
 
-  test('summarizes effective group policy and participation in a table row', () => {
+  test('summarizes each explicitly configured group policy in a table row', () => {
     const markup = renderToStaticMarkup(
       <SmartScheduleGroupPoliciesFixture configured />
     )
 
     assert.ok(markup.includes('vip'))
-    assert.equal(markup.includes('独立配置'), false)
     assert.ok(markup.includes('按成本倍率'))
     assert.ok(markup.includes('优先级分层 + 权重'))
+    assert.ok(markup.includes('探索流量 3%'))
     assert.ok(markup.includes('全部模型'))
-    assert.ok(markup.includes('未参与调度'))
+    assert.equal(markup.includes('未参与调度'), false)
     assert.ok(markup.includes('aria-label="编辑分组策略 vip"'))
-    assert.ok(markup.includes('aria-label="删除分组策略并使用默认策略 vip"'))
+    assert.ok(markup.includes('aria-label="删除分组调度策略 vip"'))
+  })
+
+  test('summarizes timed probing with its configured interval', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPoliciesFixture configured sampleMode='probe' />
+    )
+
+    assert.ok(markup.includes('样本补充'))
+    assert.ok(markup.includes('每 10 分钟文本探测'))
+    assert.equal(markup.includes('探索流量 3%'), false)
+  })
+
+  test('shows traffic percentage only while traffic exploration is selected', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='traffic'
+      />
+    )
+
+    assert.ok(markup.includes('aria-label="分组样本补充方式"'))
+    assert.ok(markup.includes('关闭'))
+    assert.ok(markup.includes('探索流量'))
+    assert.ok(markup.includes('定时探测'))
+    assert.ok(markup.includes('目标探索流量'))
+    assert.equal(markup.includes('探测间隔'), false)
+  })
+
+  test('shows the probe interval and disables traffic exploration in weight-only mode', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='weight'
+        sampleMode='probe'
+      />
+    )
+
+    assert.ok(markup.includes('探测间隔'))
+    assert.ok(markup.includes('value="15"'))
+    assert.equal(markup.includes('目标探索流量'), false)
+    assert.match(markup, /<button[^>]*disabled=""[^>]*>探索流量<\/button>/)
+    assert.ok(markup.includes('不改变真实业务请求的路由'))
+    assert.ok(markup.includes('固定使用 /v1/responses 流式请求'))
+    assert.ok(markup.includes('非文本模型会跳过'))
+    assert.ok(markup.includes('需要先将调整方式设为'))
+  })
+
+  test('shows bounded successful latency jitter controls while enabled', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+      />
+    )
+
+    assert.ok(markup.includes('成功延迟抖动'))
+    assert.ok(markup.includes('aria-label="成功延迟抖动"'))
+    assert.ok(markup.includes('允许偶发的慢成功'))
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="jitterTolerancePercent")(?=[^>]*min="0")(?=[^>]*max="50")(?=[^>]*value="5")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="jitterThresholdMultiplier")(?=[^>]*min="1.01")(?=[^>]*max="20")(?=[^>]*value="3")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="jitterAbsoluteToleranceMs")(?=[^>]*min="0")(?=[^>]*max="60000")(?=[^>]*value="1000")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="jitterBaselineHours")(?=[^>]*min="1")(?=[^>]*max="720")(?=[^>]*value="24")[^>]*>/
+    )
+    assert.ok(markup.includes('慢请求阈值取'))
+  })
+
+  test('hides successful latency jitter tuning while disabled', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+        jitterEnabled={false}
+      />
+    )
+
+    assert.ok(markup.includes('成功延迟抖动'))
+    assert.equal(markup.includes('name="jitterTolerancePercent"'), false)
+    assert.equal(markup.includes('name="jitterThresholdMultiplier"'), false)
+    assert.equal(markup.includes('name="jitterAbsoluteToleranceMs"'), false)
+    assert.equal(markup.includes('name="jitterBaselineHours"'), false)
   })
 })

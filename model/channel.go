@@ -804,28 +804,31 @@ func DisableChannelByTag(tag string) error {
 
 func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *string, group *string, priority *int64, weight *uint, paramOverride *string, headerOverride *string) error {
 	updateData := Channel{}
-	shouldReCreateAbilities := false
+	shouldUpdateAbilities := false
 	updatedTag := tag
 	// 如果 newTag 不为空且不等于 tag，则更新 tag
 	if newTag != nil && *newTag != tag {
 		updateData.Tag = newTag
 		updatedTag = *newTag
+		shouldUpdateAbilities = true
 	}
 	if modelMapping != nil {
 		updateData.ModelMapping = modelMapping
 	}
 	if models != nil && *models != "" {
-		shouldReCreateAbilities = true
+		shouldUpdateAbilities = true
 		updateData.Models = *models
 	}
 	if group != nil && *group != "" {
-		shouldReCreateAbilities = true
+		shouldUpdateAbilities = true
 		updateData.Group = *group
 	}
 	if priority != nil {
+		shouldUpdateAbilities = true
 		updateData.Priority = priority
 	}
 	if weight != nil {
+		shouldUpdateAbilities = true
 		updateData.Weight = weight
 	}
 	if paramOverride != nil {
@@ -839,20 +842,15 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 	if err != nil {
 		return err
 	}
-	if shouldReCreateAbilities {
+	if shouldUpdateAbilities {
 		channels, err := GetChannelsByTag(updatedTag, false, false)
-		if err == nil {
-			for _, channel := range channels {
-				err = channel.UpdateAbilities(nil)
-				if err != nil {
-					common.SysLog(fmt.Sprintf("failed to update abilities: channel_id=%d, tag=%s, error=%v", channel.Id, channel.GetTag(), err))
-				}
-			}
-		}
-	} else {
-		err := UpdateAbilityByTag(tag, newTag, priority, weight)
 		if err != nil {
 			return err
+		}
+		for _, channel := range channels {
+			if err = channel.UpdateAbilities(nil); err != nil {
+				return fmt.Errorf("更新渠道 %d 的能力失败: %w", channel.Id, err)
+			}
 		}
 	}
 	return nil
@@ -1065,15 +1063,14 @@ func BatchSetChannelTag(ids []int, tag *string) error {
 		return err
 	}
 
-	// update ability status
-	channels, err := GetChannelsByIds(ids)
-	if err != nil {
+	var channels []Channel
+	if err = tx.Where("id IN ?", ids).Find(&channels).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	for _, channel := range channels {
-		err = channel.UpdateAbilities(tx)
+	for index := range channels {
+		err = channels[index].UpdateAbilities(tx)
 		if err != nil {
 			tx.Rollback()
 			return err

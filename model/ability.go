@@ -268,9 +268,16 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 			}
 		}()
 	}
+	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id)
+	if err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
 
 	// First delete all abilities of this channel
-	err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	err = tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 	if err != nil {
 		if isNewTx {
 			tx.Rollback()
@@ -282,6 +289,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
+	activeRoutes := make(map[ChannelSmartScheduleRouteKey]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
 		for _, group := range groups_ {
@@ -290,6 +298,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				continue
 			}
 			abilitySet[key] = struct{}{}
+			activeRoutes[channelSmartScheduleRouteKey(channel.Id, group, model)] = struct{}{}
 			ability := Ability{
 				Group:     group,
 				Model:     model,
@@ -298,6 +307,10 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				Priority:  channel.Priority,
 				Weight:    uint(channel.GetWeight()),
 				Tag:       channel.Tag,
+			}
+			if routing, ok := routingByKey[channelSmartScheduleRouteKey(channel.Id, group, model)]; ok {
+				ability.Priority = routing.priority
+				ability.Weight = routing.weight
 			}
 			abilities = append(abilities, ability)
 		}
@@ -313,6 +326,12 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				return err
 			}
 		}
+	}
+	if err = deleteObsoleteChannelSmartScheduleRouteStates(tx, channel.Id, activeRoutes); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
 	}
 
 	// 如果是新创建的事务，需要提交
@@ -354,50 +373,36 @@ func FixAbility() (int, int, error) {
 	}
 	defer fixLock.Unlock()
 
-	// truncate abilities table
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		err := DB.Exec("DELETE FROM abilities").Error
-		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
-			return 0, 0, err
-		}
-	} else {
-		err := DB.Exec("TRUNCATE TABLE abilities").Error
-		if err != nil {
-			common.SysLog(fmt.Sprintf("Truncate abilities failed: %s", err.Error()))
-			return 0, 0, err
-		}
-	}
 	var channels []*Channel
 	// Find all channels
 	err := DB.Model(&Channel{}).Find(&channels).Error
 	if err != nil {
 		return 0, 0, err
 	}
-	if len(channels) == 0 {
-		return 0, 0, nil
-	}
 	successCount := 0
 	failCount := 0
-	for _, chunk := range lo.Chunk(channels, 50) {
-		ids := lo.Map(chunk, func(c *Channel, _ int) int { return c.Id })
-		// Delete all abilities of this channel
-		err = DB.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		channelIDs = append(channelIDs, channel.Id)
+		err = channel.UpdateAbilities(nil)
 		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
-			failCount += len(chunk)
+			common.SysLog(fmt.Sprintf("Update abilities for channel %d failed: %s", channel.Id, err.Error()))
+			failCount++
 			continue
 		}
-		// Then add new abilities
-		for _, channel := range chunk {
-			err = channel.AddAbilities(nil)
-			if err != nil {
-				common.SysLog(fmt.Sprintf("Add abilities for channel %d failed: %s", channel.Id, err.Error()))
-				failCount++
-			} else {
-				successCount++
+		successCount++
+	}
+	if err = DB.Transaction(func(tx *gorm.DB) error {
+		if len(channelIDs) == 0 {
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Ability{}).Error; err != nil {
+				return err
 			}
+		} else if err := tx.Where("channel_id NOT IN ?", channelIDs).Delete(&Ability{}).Error; err != nil {
+			return err
 		}
+		return deleteChannelSmartScheduleRouteStatesForMissingChannels(tx, channelIDs)
+	}); err != nil {
+		return successCount, failCount, err
 	}
 	InitChannelCache()
 	return successCount, failCount, nil

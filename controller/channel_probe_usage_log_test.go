@@ -96,4 +96,28 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 			assert.Equal(t, test.wantConsumeLogs, consumeLogCount)
 		})
 	}
+
+	t.Run("smart schedule probe records dedicated usage log and uses target group", func(t *testing.T) {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[channelprobe.OptionKey] = "true"
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Delete(&model.Log{}).Error)
+
+		probeCtx := withChannelSmartScheduleProbeTestContext(context.Background(), "vip")
+		result := testChannel(probeCtx, channel, user.Id, "gpt-3.5-turbo", "", false)
+
+		require.NoError(t, result.localErr)
+		require.NotNil(t, result.context)
+		assert.Nil(t, result.firstResponseMilliseconds)
+		assert.Nil(t, result.tokensPerSecond)
+		assert.Equal(t, "vip", common.GetContextKeyString(result.context, constant.ContextKeyUsingGroup))
+		var consumeLog model.Log
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
+		assert.Equal(t, "智能调度探测", consumeLog.TokenName)
+		assert.Equal(t, "智能调度定时探测", consumeLog.Content)
+		assert.Equal(t, "vip", consumeLog.Group)
+		var other map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
+		assert.Equal(t, true, other[model.ChannelMonitorSmartScheduleProbeLogKey])
+	})
 }

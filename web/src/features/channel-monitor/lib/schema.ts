@@ -21,6 +21,7 @@ import * as z from 'zod'
 import type {
   ChannelMonitorPolicyAction,
   ChannelMonitorSmartScheduleApplyMode,
+  ChannelMonitorSmartScheduleSampleMode,
   ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorUpstreamAuthType,
   ChannelMonitorUpstreamType,
@@ -47,6 +48,12 @@ export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
+export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
+export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
+export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
+export const MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER = 20
+export const MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS = 60_000
+export const MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS = 720
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -59,6 +66,12 @@ const channelMonitorSmartScheduleStrategies = [
   'tps',
   'smart',
 ] as const satisfies readonly ChannelMonitorSmartScheduleStrategy[]
+
+const channelMonitorSmartScheduleSampleModes = [
+  'off',
+  'traffic',
+  'probe',
+] as const satisfies readonly ChannelMonitorSmartScheduleSampleMode[]
 
 const channelMonitorPolicyActions = [
   'none',
@@ -151,11 +164,62 @@ const smartScheduleMinSamplesSchema = z.coerce
   .min(1, '最少样本数不能小于 1')
   .max(MAX_SMART_SCHEDULE_MIN_SAMPLES, '最少样本数不能超过 100000')
 
-const smartScheduleMinSuccessRateSchema = z.coerce
+const smartScheduleStabilityScoreSchema = z.coerce
   .number()
-  .finite('最低成功率必须是有效数字')
-  .min(0, '最低成功率不能小于 0%')
-  .max(100, '最低成功率不能超过 100%')
+  .finite('稳定性得分必须是有效数字')
+  .min(0, '稳定性得分不能小于 0%')
+  .max(100, '稳定性得分不能超过 100%')
+
+const smartScheduleFastFailurePenaltySchema = z.coerce
+  .number()
+  .finite('快速失败惩罚必须是有效数字')
+  .min(0, '快速失败惩罚不能小于 0%')
+  .max(100, '快速失败惩罚不能超过 100%')
+
+const smartScheduleFailureSecondsSchema = z.coerce
+  .number()
+  .finite('失败耗时界限必须是有效数字')
+  .gt(0, '失败耗时界限必须大于 0 秒')
+  .max(60, '失败耗时界限不能超过 60 秒')
+
+const smartScheduleFastFailureSecondsSchema = z.coerce
+  .number()
+  .finite('快速失败界限必须是有效数字')
+  .gt(0, '快速失败界限必须大于 0 秒')
+  .lt(60, '快速失败界限必须小于 60 秒')
+
+const smartScheduleJitterToleranceSchema = z.coerce
+  .number()
+  .finite('允许抖动必须是有效数字')
+  .min(0, '允许抖动不能小于 0%')
+  .max(MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT, '允许抖动不能超过 50%')
+
+const smartScheduleJitterThresholdMultiplierSchema = z.coerce
+  .number()
+  .finite('抖动判定倍率必须是有效数字')
+  .gt(1, '抖动判定倍率必须大于 1')
+  .max(
+    MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER,
+    '抖动判定倍率不能超过 20'
+  )
+
+const smartScheduleJitterAbsoluteToleranceSchema = z.coerce
+  .number()
+  .int('抖动绝对容差必须是整数')
+  .min(0, '抖动绝对容差不能小于 0 毫秒')
+  .max(
+    MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS,
+    '抖动绝对容差不能超过 60000 毫秒'
+  )
+
+const smartScheduleJitterBaselineHoursSchema = z.coerce
+  .number()
+  .int('抖动基线学习周期必须是整数')
+  .min(1, '抖动基线学习周期不能小于 1 小时')
+  .max(
+    MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS,
+    '抖动基线学习周期不能超过 720 小时'
+  )
 
 const smartScheduleCooldownSchema = z.coerce
   .number()
@@ -163,27 +227,94 @@ const smartScheduleCooldownSchema = z.coerce
   .min(1, '降级时长不能小于 1 分钟')
   .max(MAX_SMART_SCHEDULE_COOLDOWN_MINUTES, '降级时长不能超过 525600 分钟')
 
-export function createChannelMonitorSmartSchedulePolicySchema() {
-  return z.object({
-    strategy: z.enum(channelMonitorSmartScheduleStrategies),
-    stabilityEnabled: z.boolean(),
-    scoring: smartScheduleScoringSchema,
-    applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
-    models: smartScheduleModelsSchema,
-    minSamples: smartScheduleMinSamplesSchema,
-    minSuccessRate: smartScheduleMinSuccessRateSchema,
-    cooldownMinutes: smartScheduleCooldownSchema,
-  })
+const smartScheduleExplorationTrafficSchema = z.coerce
+  .number()
+  .finite('探索流量必须是有效数字')
+  .gt(0, '探索流量必须大于 0%')
+  .max(MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT, '探索流量不能超过 20%')
+
+const smartScheduleProbeIntervalSchema = z.coerce
+  .number()
+  .int('探测间隔必须是整数')
+  .min(1, '探测间隔不能小于 1 分钟')
+  .max(
+    MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
+    '探测间隔不能超过 525600 分钟'
+  )
+
+const smartSchedulePolicyShape = {
+  strategy: z.enum(channelMonitorSmartScheduleStrategies),
+  stabilityEnabled: z.boolean(),
+  jitterEnabled: z.boolean(),
+  jitterTolerancePercent: smartScheduleJitterToleranceSchema,
+  jitterThresholdMultiplier: smartScheduleJitterThresholdMultiplierSchema,
+  jitterAbsoluteToleranceMs: smartScheduleJitterAbsoluteToleranceSchema,
+  jitterBaselineHours: smartScheduleJitterBaselineHoursSchema,
+  scoring: smartScheduleScoringSchema,
+  applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
+  models: smartScheduleModelsSchema,
+  minSamples: smartScheduleMinSamplesSchema,
+  degradeStabilityScore: smartScheduleStabilityScoreSchema,
+  recoveryStabilityScore: smartScheduleStabilityScoreSchema,
+  fastFailurePenaltyPercent: smartScheduleFastFailurePenaltySchema,
+  fastFailureSeconds: smartScheduleFastFailureSecondsSchema,
+  slowFailureSeconds: smartScheduleFailureSecondsSchema,
+  cooldownMinutes: smartScheduleCooldownSchema,
+  sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
+  explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
+  probeIntervalMinutes: smartScheduleProbeIntervalSchema,
 }
 
-const smartScheduleGroupPolicySchema =
-  createChannelMonitorSmartSchedulePolicySchema().extend({
+function validateSmartSchedulePolicy(
+  values: {
+    applyMode: ChannelMonitorSmartScheduleApplyMode
+    sampleMode: ChannelMonitorSmartScheduleSampleMode
+    degradeStabilityScore: number
+    recoveryStabilityScore: number
+    fastFailureSeconds: number
+    slowFailureSeconds: number
+  },
+  context: z.RefinementCtx
+) {
+  if (values.applyMode === 'weight' && values.sampleMode === 'traffic') {
+    context.addIssue({
+      code: 'custom',
+      path: ['sampleMode'],
+      message: '探索流量只适用于优先级分层 + 权重',
+    })
+  }
+  if (values.recoveryStabilityScore <= values.degradeStabilityScore) {
+    context.addIssue({
+      code: 'custom',
+      path: ['recoveryStabilityScore'],
+      message: '恢复稳定性得分必须大于降级得分',
+    })
+  }
+  if (values.slowFailureSeconds <= values.fastFailureSeconds) {
+    context.addIssue({
+      code: 'custom',
+      path: ['slowFailureSeconds'],
+      message: '慢失败界限必须大于快速失败界限',
+    })
+  }
+}
+
+export function createChannelMonitorSmartSchedulePolicySchema() {
+  return z
+    .object(smartSchedulePolicyShape)
+    .superRefine(validateSmartSchedulePolicy)
+}
+
+const smartScheduleGroupPolicySchema = z
+  .object({
+    ...smartSchedulePolicyShape,
     group: z
       .string()
       .trim()
       .min(1, '分组名称不能为空')
       .max(64, '分组名称不能超过 64 个字符'),
   })
+  .superRefine(validateSmartSchedulePolicy)
 
 export function createChannelRatioSchema() {
   return z.object({
@@ -281,16 +412,6 @@ export function createChannelMonitorSettingsSchema() {
           '上游响应等待时间不能超过 600 秒'
         ),
       smartScheduleEnabled: z.boolean(),
-      smartScheduleGroups: z
-        .array(
-          z
-            .string()
-            .trim()
-            .min(1, '调度分组不能为空')
-            .max(64, '调度分组不能超过 64 个字符')
-        )
-        .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '调度分组不能超过 100 个')
-        .default([]),
       smartScheduleGroupPolicies: z
         .array(smartScheduleGroupPolicySchema)
         .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '分组调度策略不能超过 100 个')
@@ -303,20 +424,12 @@ export function createChannelMonitorSettingsSchema() {
           MAX_AUTO_UPDATE_INTERVAL_MINUTES,
           '智能调度间隔不能超过 525600 分钟'
         ),
-      smartScheduleStrategy: z.enum(channelMonitorSmartScheduleStrategies),
-      smartScheduleStabilityEnabled: z.boolean(),
-      smartScheduleScoring: smartScheduleScoringSchema,
-      smartScheduleApplyMode: z.enum(channelMonitorSmartScheduleApplyModes),
       smartSchedulePerformanceMinutes: z.union([
         z.literal(15),
         z.literal(60),
         z.literal(360),
         z.literal(1440),
       ]),
-      smartScheduleModels: smartScheduleModelsSchema,
-      smartScheduleMinSamples: smartScheduleMinSamplesSchema,
-      smartScheduleMinSuccessRate: smartScheduleMinSuccessRateSchema,
-      smartScheduleCooldownMinutes: smartScheduleCooldownSchema,
       smartScheduleForceReset: z.boolean(),
     })
     .superRefine((values, context) => {
@@ -325,6 +438,16 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['notificationEmail'],
           message: '开启邮件通知时请填写通知邮箱',
+        })
+      }
+      if (
+        values.smartScheduleEnabled &&
+        values.smartScheduleGroupPolicies.length === 0
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['smartScheduleGroupPolicies'],
+          message: '启用智能调度前请至少配置一个分组策略',
         })
       }
       const configuredGroups = new Set<string>()

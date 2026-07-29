@@ -17,6 +17,11 @@ import (
 
 const channelMonitorMinuteSeconds = int64(60)
 
+const (
+	ChannelMonitorSmartScheduleProbeLogKey = "channel_monitor_smart_schedule_probe"
+	ChannelMonitorChannelTestLogKey        = "channel_monitor_channel_test"
+)
+
 // ChannelMonitorMinuteMetric stores one minute of channel-monitor metrics for
 // one channel/model/group/API-key combination. It is deliberately kept in the
 // primary database so the dashboard does not rescan the log database.
@@ -32,13 +37,21 @@ type ChannelMonitorMinuteMetric struct {
 	APIKeyId    int    `gorm:"not null"`
 	APIKeyName  string `gorm:"size:255;not null"`
 
-	ActualSuccessCount int64 `gorm:"not null"`
-	ActualFailureCount int64 `gorm:"not null"`
-	FinalSuccessCount  int64 `gorm:"not null"`
-	FinalFailureCount  int64 `gorm:"not null"`
-	CacheHitCount      int64 `gorm:"not null"`
-	CacheSampleCount   int64 `gorm:"not null"`
-	CacheWriteCount    int64 `gorm:"not null"`
+	ActualSuccessCount          int64 `gorm:"not null"`
+	ActualFailureCount          int64 `gorm:"not null"`
+	FinalSuccessCount           int64 `gorm:"not null"`
+	FinalFailureCount           int64 `gorm:"not null"`
+	RetryFailureCount           int64 `gorm:"not null;default:0"`
+	RetryFailureDurationTotalMs int64 `gorm:"not null;default:0"`
+	RetryFailureUnder1sCount    int64 `gorm:"column:retry_failure_under_1s_count;not null;default:0"`
+	RetryFailure1To3sCount      int64 `gorm:"column:retry_failure_1_to_3s_count;not null;default:0"`
+	RetryFailure3To10sCount     int64 `gorm:"column:retry_failure_3_to_10s_count;not null;default:0"`
+	RetryFailure10To30sCount    int64 `gorm:"column:retry_failure_10_to_30s_count;not null;default:0"`
+	RetryFailure30To60sCount    int64 `gorm:"column:retry_failure_30_to_60s_count;not null;default:0"`
+	RetryFailureOver60sCount    int64 `gorm:"column:retry_failure_over_60s_count;not null;default:0"`
+	CacheHitCount               int64 `gorm:"not null"`
+	CacheSampleCount            int64 `gorm:"not null"`
+	CacheWriteCount             int64 `gorm:"not null"`
 
 	SampleCount           int64   `gorm:"not null"`
 	FirstTokenSampleCount int64   `gorm:"not null"`
@@ -53,18 +66,21 @@ type ChannelMonitorMinuteMetric struct {
 }
 
 type channelMonitorMinuteLog struct {
-	ChannelId        int
-	ModelName        string
-	GroupName        string `gorm:"column:group_name"`
-	TokenId          int
-	TokenName        string
-	Type             int
-	IsRetryAttempt   bool
-	IsStream         bool
-	CompletionTokens int
-	UseTime          int
-	Other            string
-	CreatedAt        int64
+	ChannelId         int
+	ModelName         string
+	GroupName         string `gorm:"column:group_name"`
+	TokenId           int
+	TokenName         string
+	Type              int
+	IsRetryAttempt    bool
+	IsStream          bool
+	CompletionTokens  int
+	UseTime           int
+	Other             string
+	CreatedAt         int64
+	RequestId         string
+	AttemptDurationMs int64
+	FinalRetrySummary bool
 }
 
 type channelMonitorMinuteLogOther struct {
@@ -74,6 +90,10 @@ type channelMonitorMinuteLogOther struct {
 	CacheCreationTokens   *float64 `json:"cache_creation_tokens"`
 	CacheCreationTokens5m *float64 `json:"cache_creation_tokens_5m"`
 	CacheCreationTokens1h *float64 `json:"cache_creation_tokens_1h"`
+	AttemptDurationMs     *int64   `json:"channel_monitor_attempt_duration_ms"`
+	FinalRetrySummary     bool     `json:"channel_monitor_final_retry_summary"`
+	SmartScheduleProbe    bool     `json:"channel_monitor_smart_schedule_probe"`
+	ChannelTest           bool     `json:"channel_monitor_channel_test"`
 }
 
 type channelMonitorMinuteAggregateKey struct {
@@ -129,9 +149,15 @@ func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog)
 		aggregate.ActualSuccessCount++
 		aggregate.FinalSuccessCount++
 	} else if log.Type == LogTypeError {
-		aggregate.ActualFailureCount++
-		if !log.IsRetryAttempt {
+		if log.FinalRetrySummary {
 			aggregate.FinalFailureCount++
+		} else {
+			aggregate.ActualFailureCount++
+			if log.IsRetryAttempt {
+				aggregate.addRetryFailureDuration(log.AttemptDurationMs)
+			} else {
+				aggregate.FinalFailureCount++
+			}
 		}
 	}
 
@@ -195,12 +221,71 @@ func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog)
 	}
 }
 
-func aggregateChannelMonitorMinuteLogs(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorMinuteMetric, error) {
+func (aggregate *ChannelMonitorMinuteMetric) addRetryFailureDuration(durationMs int64) {
+	if durationMs < 0 {
+		durationMs = 0
+	}
+	aggregate.RetryFailureCount++
+	if durationMs > math.MaxInt64-aggregate.RetryFailureDurationTotalMs {
+		aggregate.RetryFailureDurationTotalMs = math.MaxInt64
+	} else {
+		aggregate.RetryFailureDurationTotalMs += durationMs
+	}
+	switch {
+	case durationMs < 1000:
+		aggregate.RetryFailureUnder1sCount++
+	case durationMs < 3000:
+		aggregate.RetryFailure1To3sCount++
+	case durationMs < 10000:
+		aggregate.RetryFailure3To10sCount++
+	case durationMs < 30000:
+		aggregate.RetryFailure10To30sCount++
+	case durationMs < 60000:
+		aggregate.RetryFailure30To60sCount++
+	default:
+		aggregate.RetryFailureOver60sCount++
+	}
+}
+
+func (aggregate *ChannelMonitorMinuteMetric) removeRetryFailureDuration(durationMs int64) {
+	if aggregate.RetryFailureCount <= 0 {
+		return
+	}
+	if durationMs < 0 {
+		durationMs = 0
+	}
+	aggregate.RetryFailureCount--
+	if durationMs >= aggregate.RetryFailureDurationTotalMs {
+		aggregate.RetryFailureDurationTotalMs = 0
+	} else {
+		aggregate.RetryFailureDurationTotalMs -= durationMs
+	}
+	switch {
+	case durationMs < 1000 && aggregate.RetryFailureUnder1sCount > 0:
+		aggregate.RetryFailureUnder1sCount--
+	case durationMs < 3000 && aggregate.RetryFailure1To3sCount > 0:
+		aggregate.RetryFailure1To3sCount--
+	case durationMs < 10000 && aggregate.RetryFailure3To10sCount > 0:
+		aggregate.RetryFailure3To10sCount--
+	case durationMs < 30000 && aggregate.RetryFailure10To30sCount > 0:
+		aggregate.RetryFailure10To30sCount--
+	case durationMs < 60000 && aggregate.RetryFailure30To60sCount > 0:
+		aggregate.RetryFailure30To60sCount--
+	case durationMs >= 60000 && aggregate.RetryFailureOver60sCount > 0:
+		aggregate.RetryFailureOver60sCount--
+	}
+}
+
+func aggregateChannelMonitorMinuteLogs(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, error) {
 	if startTimestamp >= endTimestamp {
-		return []ChannelMonitorMinuteMetric{}, nil
+		return []ChannelMonitorMinuteMetric{}, []ChannelMonitorMinuteDurationBucket{}, nil
 	}
 	groupColumn := channelMonitorLogGroupColumn()
-	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, completion_tokens, use_time, other, created_at"
+	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, completion_tokens, use_time, other, created_at, request_id"
 	rows, err := LOG_DB.WithContext(ctx).
 		Model(&Log{}).
 		Select(selectColumns).
@@ -210,11 +295,18 @@ func aggregateChannelMonitorMinuteLogs(ctx context.Context, startTimestamp int64
 		Order("created_at ASC").
 		Rows()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	aggregates := make(map[channelMonitorMinuteAggregateKey]*ChannelMonitorMinuteMetric)
+	durationBuckets := make(map[channelMonitorMinuteDurationBucketKey]*ChannelMonitorMinuteDurationBucket)
+	type pendingRetry struct {
+		aggregate  *ChannelMonitorMinuteMetric
+		durationMs int64
+	}
+	retriesByRequest := make(map[string][]pendingRetry)
+	finalSummariesByRequest := make(map[string][]pendingRetry)
 	for rows.Next() {
 		var log channelMonitorMinuteLog
 		if err := rows.Scan(
@@ -230,9 +322,29 @@ func aggregateChannelMonitorMinuteLogs(ctx context.Context, startTimestamp int64
 			&log.UseTime,
 			&log.Other,
 			&log.CreatedAt,
+			&log.RequestId,
 		); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
+		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
+			continue
+		}
+		durationMs := int64(log.UseTime)
+		if durationMs < 0 {
+			durationMs = 0
+		} else if durationMs > math.MaxInt64/1000 {
+			durationMs = math.MaxInt64
+		} else {
+			durationMs *= 1000
+		}
+		if parsed {
+			if parsedOther.AttemptDurationMs != nil && *parsedOther.AttemptDurationMs >= 0 {
+				durationMs = *parsedOther.AttemptDurationMs
+			}
+			log.FinalRetrySummary = parsedOther.FinalRetrySummary
+		}
+		log.AttemptDurationMs = durationMs
 		modelName := channelMonitorMinuteMetricNames(log.ModelName, 255)
 		groupName := channelMonitorMinuteMetricNames(log.GroupName, 255)
 		apiKeyName := channelMonitorMinuteMetricNames(log.TokenName, 255)
@@ -264,16 +376,86 @@ func aggregateChannelMonitorMinuteLogs(ctx context.Context, startTimestamp int64
 			aggregate.APIKeyName = apiKeyName
 		}
 		aggregate.addLog(log)
+		if log.Type == LogTypeConsume && log.IsStream && modelName != "" && parsed &&
+			parsedOther.FirstResponseTime != nil && *parsedOther.FirstResponseTime > 0 &&
+			!math.IsNaN(*parsedOther.FirstResponseTime) && !math.IsInf(*parsedOther.FirstResponseTime, 0) {
+			bucketIndex := channelMonitorDurationBucketIndex(*parsedOther.FirstResponseTime)
+			bucketKey := channelMonitorMinuteDurationBucketKey{
+				MinuteStart: key.MinuteStart,
+				ChannelId:   log.ChannelId,
+				ModelKey:    modelKey,
+				GroupKey:    groupKey,
+				BucketIndex: bucketIndex,
+			}
+			bucket := durationBuckets[bucketKey]
+			if bucket == nil {
+				bucket = &ChannelMonitorMinuteDurationBucket{
+					MinuteStart: key.MinuteStart,
+					ChannelId:   log.ChannelId,
+					ModelKey:    modelKey,
+					GroupKey:    groupKey,
+					BucketIndex: bucketIndex,
+					ModelName:   modelName,
+					GroupName:   groupName,
+				}
+				durationBuckets[bucketKey] = bucket
+			}
+			bucket.Count++
+			bucket.TotalMs += *parsedOther.FirstResponseTime
+		}
+		if log.Type != LogTypeError || log.RequestId == "" {
+			continue
+		}
+		if log.FinalRetrySummary {
+			finalSummariesByRequest[log.RequestId] = append(
+				finalSummariesByRequest[log.RequestId],
+				pendingRetry{aggregate: aggregate, durationMs: durationMs},
+			)
+			continue
+		}
+		if log.IsRetryAttempt {
+			retriesByRequest[log.RequestId] = append(
+				retriesByRequest[log.RequestId],
+				pendingRetry{aggregate: aggregate, durationMs: durationMs},
+			)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	for requestId, summaries := range finalSummariesByRequest {
+		retries := retriesByRequest[requestId]
+		for _, summary := range summaries {
+			matchedIndex := -1
+			for index := len(retries) - 1; index >= 0; index-- {
+				retry := retries[index]
+				if retry.durationMs != summary.durationMs ||
+					retry.aggregate.ChannelId != summary.aggregate.ChannelId ||
+					retry.aggregate.ModelKey != summary.aggregate.ModelKey ||
+					retry.aggregate.GroupKey != summary.aggregate.GroupKey ||
+					retry.aggregate.APIKeyKey != summary.aggregate.APIKeyKey {
+					continue
+				}
+				matchedIndex = index
+				break
+			}
+			if matchedIndex < 0 {
+				continue
+			}
+			retries[matchedIndex].aggregate.removeRetryFailureDuration(retries[matchedIndex].durationMs)
+			retries = append(retries[:matchedIndex], retries[matchedIndex+1:]...)
+		}
 	}
 
 	metrics := make([]ChannelMonitorMinuteMetric, 0, len(aggregates))
 	for _, aggregate := range aggregates {
 		metrics = append(metrics, *aggregate)
 	}
-	return metrics, nil
+	buckets := make([]ChannelMonitorMinuteDurationBucket, 0, len(durationBuckets))
+	for _, bucket := range durationBuckets {
+		buckets = append(buckets, *bucket)
+	}
+	return metrics, buckets, nil
 }
 
 // AggregateChannelMonitorMinuteRange replaces the selected minute range with
@@ -284,19 +466,31 @@ func AggregateChannelMonitorMinuteRange(ctx context.Context, startTimestamp int6
 	if startTimestamp >= endTimestamp {
 		return 0, nil
 	}
-	metrics, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
+	metrics, durationBuckets, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
 	if err != nil {
 		return 0, err
 	}
 	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		hasDurationBuckets := tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{})
+		if hasDurationBuckets {
+			if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
+				Delete(&ChannelMonitorMinuteDurationBucket{}).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
 			Delete(&ChannelMonitorMinuteMetric{}).Error; err != nil {
 			return err
 		}
-		if len(metrics) == 0 {
-			return nil
+		if len(metrics) > 0 {
+			if err := tx.CreateInBatches(metrics, 500).Error; err != nil {
+				return err
+			}
 		}
-		return tx.CreateInBatches(metrics, 500).Error
+		if hasDurationBuckets && len(durationBuckets) > 0 {
+			return tx.CreateInBatches(durationBuckets, 500).Error
+		}
+		return nil
 	})
 	if err != nil {
 		return 0, err

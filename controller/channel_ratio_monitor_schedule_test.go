@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -13,12 +15,73 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func channelSmartScheduleTestGroupPolicy(
+	group string,
+	strategy string,
+	stabilityEnabled bool,
+	applyMode string,
+	models []string,
+	minSamples int,
+	degradeStabilityScore float64,
+	cooldownMinutes int,
+) channelSmartScheduleGroupPolicy {
+	scoring := defaultChannelSmartScheduleScoring()
+	sampleMode := channelMonitorSmartScheduleSampleOff
+	explorationTrafficPercent := 3.0
+	probeIntervalMinutes := 10
+	recoveryStabilityScore := math.Min(degradeStabilityScore+5, 100)
+	fastFailurePenaltyPercent := 40.0
+	fastFailureSeconds := 1.0
+	slowFailureSeconds := 10.0
+	jitterEnabled := true
+	jitterTolerancePercent := 5.0
+	jitterThresholdMultiplier := 3.0
+	jitterAbsoluteToleranceMs := 1000
+	jitterBaselineHours := 24
+	if models == nil {
+		models = []string{}
+	}
+	return channelSmartScheduleGroupPolicy{
+		Group:                     group,
+		Strategy:                  &strategy,
+		StabilityEnabled:          &stabilityEnabled,
+		Scoring:                   &scoring,
+		ApplyMode:                 &applyMode,
+		Models:                    &models,
+		MinSamples:                &minSamples,
+		DegradeStabilityScore:     &degradeStabilityScore,
+		RecoveryStabilityScore:    &recoveryStabilityScore,
+		FastFailurePenaltyPercent: &fastFailurePenaltyPercent,
+		FastFailureSeconds:        &fastFailureSeconds,
+		SlowFailureSeconds:        &slowFailureSeconds,
+		JitterEnabled:             &jitterEnabled,
+		JitterTolerancePercent:    &jitterTolerancePercent,
+		JitterThresholdMultiplier: &jitterThresholdMultiplier,
+		JitterAbsoluteToleranceMs: &jitterAbsoluteToleranceMs,
+		JitterBaselineHours:       &jitterBaselineHours,
+		CooldownMinutes:           &cooldownMinutes,
+		SampleMode:                &sampleMode,
+		ExplorationTrafficPercent: &explorationTrafficPercent,
+		ProbeIntervalMinutes:      &probeIntervalMinutes,
+	}
+}
+
+func channelSmartScheduleTestGroupPoliciesJSON(t *testing.T, policies ...channelSmartScheduleGroupPolicy) string {
+	serialized, err := common.Marshal(policies)
+	require.NoError(t, err)
+	return string(serialized)
+}
+
 func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:   "true",
-		channelMonitorSmartScheduleStrategyOption:  channelMonitorSmartScheduleStrategyRatio,
-		channelMonitorSmartScheduleApplyModeOption: channelMonitorSmartScheduleApplyWeight,
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, nil, 5, 80, 30,
+			),
+		),
 	})
 	priority := int64(100)
 	weight := uint(90)
@@ -33,7 +96,7 @@ func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.
 		{ChannelId: 11, Ratio: 1, UpdatedTime: 1},
 		{ChannelId: 12, Ratio: 3, UpdatedTime: 1},
 		{ChannelId: 13},
-		{ChannelId: 14, Ratio: 2, UpdatedTime: 1, SmartScheduleExcluded: true},
+		{ChannelId: 14, Ratio: 2, UpdatedTime: 1},
 	}).Error)
 	abilities := make([]model.Ability, 0, len(channels))
 	for _, channel := range channels {
@@ -47,6 +110,12 @@ func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.
 		})
 	}
 	require.NoError(t, db.Create(&abilities).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 11, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 12, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 13, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 14, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Excluded: true},
+	}).Error)
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, true)
 	require.NoError(t, err)
@@ -83,9 +152,13 @@ func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.
 func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:   "true",
-		channelMonitorSmartScheduleStrategyOption:  channelMonitorSmartScheduleStrategyRatio,
-		channelMonitorSmartScheduleApplyModeOption: channelMonitorSmartScheduleApplyWeight,
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, nil, 5, 80, 30,
+			),
+		),
 	})
 	firstPriority := int64(100)
 	firstWeight := uint(80)
@@ -103,6 +176,10 @@ func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *t
 	require.NoError(t, db.Create(&[]model.Ability{
 		{ChannelId: 21, Group: "vip", Model: "model-a", Enabled: true, Priority: &firstPriority, Weight: firstWeight},
 		{ChannelId: 22, Group: "vip", Model: "model-a", Enabled: true, Priority: &secondPriority, Weight: secondWeight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 21, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
+		{ChannelId: 22, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
 	}).Error)
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, true)
@@ -128,14 +205,13 @@ func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *t
 func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:     "true",
-		channelMonitorSmartScheduleStrategyOption:    channelMonitorSmartScheduleStrategyRatio,
-		channelMonitorSmartScheduleStabilityOption:   "true",
-		channelMonitorSmartScheduleApplyModeOption:   channelMonitorSmartScheduleApplyPriorityWeight,
-		channelMonitorSmartScheduleModelsOption:      `["model-a"]`,
-		channelMonitorSmartScheduleSamplesOption:     "2",
-		channelMonitorSmartScheduleSuccessRateOption: "80",
-		channelMonitorSmartScheduleCooldownOption:    "30",
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, true,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+			),
+		),
 	})
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -239,13 +315,13 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *t
 func TestRunChannelSmartScheduleClearsProbeStateAfterSuccessfulNewSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:     "true",
-		channelMonitorSmartScheduleStrategyOption:    channelMonitorSmartScheduleStrategyRatio,
-		channelMonitorSmartScheduleStabilityOption:   "true",
-		channelMonitorSmartScheduleApplyModeOption:   channelMonitorSmartScheduleApplyPriorityWeight,
-		channelMonitorSmartScheduleModelsOption:      `["model-a"]`,
-		channelMonitorSmartScheduleSamplesOption:     "2",
-		channelMonitorSmartScheduleSuccessRateOption: "80",
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, true,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+			),
+		),
 	})
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -305,6 +381,221 @@ func TestRunChannelSmartScheduleClearsProbeStateAfterSuccessfulNewSamples(t *tes
 	assert.Equal(t, uint(30), ability.Weight)
 }
 
+func TestRunChannelSmartScheduleKeepsProbingBetweenStabilityThresholds(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 10, 80, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t, policy,
+		),
+	})
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+
+	priority := int64(90)
+	probeWeight := uint(channelMonitorSmartScheduleMinWeight)
+	restoredWeight := uint(35)
+	probeStartedAt := time.Now().Unix()
+	probeStartedAt = probeStartedAt - probeStartedAt%60 - 60
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 35, Name: "recovering", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &restoredWeight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 35, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: probeWeight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 35, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:         model.ChannelSmartScheduleStabilityProbing,
+		StabilitySince:         probeStartedAt,
+		StabilitySavedPriority: priority,
+		StabilitySavedWeight:   restoredWeight,
+	}).Error)
+
+	logs := make([]model.Log, 0, 10)
+	for index := range 7 {
+		logs = append(logs, model.Log{
+			ChannelId: 35, Group: "vip", ModelName: "model-a",
+			CreatedAt: probeStartedAt + int64(index), Type: model.LogTypeConsume,
+		})
+	}
+	for index, durationMs := range []int64{500, 500, 20_000} {
+		other, err := common.Marshal(map[string]any{
+			"channel_monitor_attempt_duration_ms": durationMs,
+		})
+		require.NoError(t, err)
+		logs = append(logs, model.Log{
+			ChannelId: 35, Group: "vip", ModelName: "model-a",
+			CreatedAt: probeStartedAt + int64(10+index), Type: model.LogTypeError,
+			IsRetryAttempt: true, RequestId: fmt.Sprintf("probing-%d", index), Other: string(other),
+		})
+	}
+	require.NoError(t, db.Create(&logs).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(probeStartedAt, probeStartedAt+60))
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	assert.Zero(t, result.Failed)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 35, "vip", "model-a",
+	).First(&state).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityProbing, state.StabilityState)
+	assert.Contains(t, state.LastScheduleError, "稳定性得分 82.0%")
+	assert.Contains(t, state.LastScheduleError, "尚未达到恢复阈值 85.0%")
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 35, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, probeWeight, ability.Weight)
+}
+
+func TestChannelSmartScheduleStabilityScorePenalizesSlowRetryFailuresMore(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		FastFailurePenaltyPercent: 40,
+		FastFailureSeconds:        1,
+		SlowFailureSeconds:        10,
+	}
+	fastScore, fastSamples := channelSmartScheduleStabilityScore(
+		8, 2, 0,
+		[]model.ChannelMonitorFailureDurationBucket{{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 2}},
+		policy,
+	)
+	slowScore, slowSamples := channelSmartScheduleStabilityScore(
+		8, 2, 0,
+		[]model.ChannelMonitorFailureDurationBucket{{LowerBoundMs: 10000, UpperBoundMs: 30000, Count: 2}},
+		policy,
+	)
+
+	require.NotNil(t, fastScore)
+	require.NotNil(t, slowScore)
+	assert.Equal(t, int64(10), fastSamples)
+	assert.Equal(t, int64(10), slowSamples)
+	assert.InDelta(t, 0.92, *fastScore, 1e-9)
+	assert.InDelta(t, 0.80, *slowScore, 1e-9)
+	assert.Greater(t, *fastScore, *slowScore)
+}
+
+func TestChannelSmartScheduleStabilityScoreFullyPenalizesFinalFailure(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		FastFailurePenaltyPercent: 40,
+		FastFailureSeconds:        1,
+		SlowFailureSeconds:        10,
+	}
+	fastBucket := []model.ChannelMonitorFailureDurationBucket{
+		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 1},
+	}
+	retryScore, retrySamples := channelSmartScheduleStabilityScore(9, 1, 0, fastBucket, policy)
+	finalScore, finalSamples := channelSmartScheduleStabilityScore(9, 1, 1, fastBucket, policy)
+
+	require.NotNil(t, retryScore)
+	require.NotNil(t, finalScore)
+	assert.Equal(t, int64(10), retrySamples)
+	assert.Equal(t, int64(10), finalSamples)
+	assert.InDelta(t, 0.96, *retryScore, 1e-9)
+	assert.InDelta(t, 0.90, *finalScore, 1e-9)
+	assert.Less(t, *finalScore, *retryScore)
+}
+
+func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		StabilityEnabled:          true,
+		JitterEnabled:             true,
+		JitterTolerancePercent:    5,
+		JitterThresholdMultiplier: 3,
+		JitterAbsoluteToleranceMs: 1000,
+	}
+	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
+		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 99, TotalMs: 29700},
+		{LowerBoundMs: 10000, UpperBoundMs: 15000, Count: 1, TotalMs: 10000},
+	}, 300, 20, policy)
+
+	assert.True(t, measurement.Available)
+	assert.InDelta(t, 1300, measurement.ThresholdMs, 1e-9)
+	assert.Equal(t, int64(100), measurement.SampleCount)
+	assert.Equal(t, int64(1), measurement.SlowCount)
+	assert.Equal(t, int64(5), measurement.AllowedCount)
+	assert.Zero(t, measurement.Penalty)
+}
+
+func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		StabilityEnabled:          true,
+		JitterEnabled:             true,
+		JitterTolerancePercent:    5,
+		JitterThresholdMultiplier: 3,
+		JitterAbsoluteToleranceMs: 1000,
+	}
+	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
+		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 80, TotalMs: 24000},
+		{LowerBoundMs: 5000, UpperBoundMs: 10000, Count: 20, TotalMs: 120000},
+	}, 300, 20, policy)
+	baseScore := 1.0
+	adjusted := channelSmartScheduleApplyJitterPenalty(&baseScore, 100, measurement.Penalty)
+
+	assert.Equal(t, int64(20), measurement.SlowCount)
+	assert.Equal(t, int64(5), measurement.AllowedCount)
+	assert.InDelta(t, 15, measurement.Penalty, 1e-9)
+	require.NotNil(t, adjusted)
+	assert.InDelta(t, 0.85, *adjusted, 1e-9)
+}
+
+func TestChannelSmartScheduleJitterRequiresDistributionSamples(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		StabilityEnabled:          true,
+		JitterEnabled:             true,
+		JitterTolerancePercent:    0,
+		JitterThresholdMultiplier: 3,
+		JitterAbsoluteToleranceMs: 1000,
+		RecoveryStabilityScore:    80,
+		JitterBaselineHours:       24,
+		MinSamples:                5,
+	}
+	p50 := 10_000.0
+	stability := 1.0
+	performance := &channelSmartSchedulePerformance{
+		FirstTokenSampleCount:         1000,
+		FirstTokenDurationSampleCount: 1,
+		FirstTokenP50Ms:               &p50,
+		FirstTokenDurationBuckets: []model.ChannelMonitorDurationBucket{
+			{LowerBoundMs: 10_000, UpperBoundMs: 15_000, Count: 1, TotalMs: 10_000},
+		},
+		Stability:            &stability,
+		StabilitySampleCount: 1000,
+	}
+	baseline := 300.0
+	state := model.ChannelSmartScheduleRouteState{JitterBaselineFirstTokenMs: &baseline}
+
+	channelSmartScheduleApplyJitterMeasurement(performance, state, policy)
+	update := channelSmartScheduleJitterBaselineUpdate(performance, model.ChannelSmartScheduleRouteState{}, policy, 200)
+
+	assert.False(t, performance.JitterAvailable)
+	assert.InDelta(t, 1, *performance.Stability, 1e-9)
+	assert.Nil(t, update)
+}
+
+func TestChannelSmartScheduleJitterBaselineLearnsGradually(t *testing.T) {
+	current := 300.0
+	learned, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 3700, 24)
+
+	assert.True(t, changed)
+	assert.InDelta(t, 325, learned, 1e-9)
+	capped, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 86500, 24)
+	assert.True(t, changed)
+	assert.InDelta(t, 330, capped, 1e-9)
+}
+
 func TestPlanChannelSmartScheduleWeightOnlyKeepsPriorityCohorts(t *testing.T) {
 	ratioOne := 1.0
 	ratioTwo := 2.0
@@ -354,6 +645,21 @@ func TestPlanChannelSmartSchedulePriorityWeightUsesQualityTiersAndDamping(t *tes
 	assert.Equal(t, uint(50), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
 	assert.Equal(t, uint(20), items[3].TargetWeight)
+}
+
+func TestPlanChannelSmartSchedulePriorityWeightKeepsEqualScoresInSameTier(t *testing.T) {
+	ratio := 1.0
+	plan := planChannelSmartSchedule([]channelSmartScheduleCandidate{
+		{ChannelId: 3, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
+		{ChannelId: 1, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
+		{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
+	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyPriorityWeight, 5, false)
+
+	require.Len(t, plan.Items, 3)
+	for _, item := range plan.Items {
+		assert.Equal(t, int64(100), item.TargetPriority)
+		assert.Equal(t, uint(80), item.TargetWeight)
+	}
 }
 
 func TestPlanChannelSmartScheduleUsesLinearScoreCurveByDefault(t *testing.T) {
@@ -813,13 +1119,19 @@ func TestPlanChannelSmartScheduleRelativeWeightStretching(t *testing.T) {
 	}
 }
 
-func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t *testing.T) {
+func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExploration(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 2, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleTraffic
+	policy.SampleMode = &sampleMode
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:   "true",
-		channelMonitorSmartScheduleStrategyOption:  channelMonitorSmartScheduleStrategyFirstToken,
-		channelMonitorSmartScheduleApplyModeOption: channelMonitorSmartScheduleApplyPriorityWeight,
-		channelMonitorSmartScheduleSamplesOption:   "2",
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			policy,
+		),
 	})
 	priorityLow := int64(20)
 	priorityHigh := int64(100)
@@ -827,14 +1139,17 @@ func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t 
 	require.NoError(t, db.Create(&[]model.Channel{
 		{Id: 61, Name: "insufficient", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weight},
 		{Id: 62, Name: "measured", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityHigh, Weight: &weight},
+		{Id: 63, Name: "waiting", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weight},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{ChannelId: 61, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityLow, Weight: weight},
 		{ChannelId: 62, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityHigh, Weight: weight},
+		{ChannelId: 63, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityLow, Weight: weight},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
 		{ChannelId: 61, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 		{ChannelId: 62, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 63, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	completedMinute := time.Now().Unix()
 	completedMinute = completedMinute - completedMinute%60 - 60
@@ -842,6 +1157,7 @@ func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t 
 	require.NoError(t, db.Create(&[]model.Log{
 		{ChannelId: 61, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
 		{ChannelId: 62, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 63, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":600}`},
 		{ChannelId: 62, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
 	}).Error)
 	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
@@ -853,13 +1169,88 @@ func TestRunChannelSmartScheduleUsesExplorationBaselineForInsufficientSamples(t 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 61, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(80), *ability.Priority)
-	assert.Equal(t, uint(10), ability.Weight)
+	assert.Equal(t, int64(100), *ability.Priority)
+	assert.Equal(t, uint(2), ability.Weight)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 61, "vip", "model-a",
 	).First(&state).Error)
-	assert.Contains(t, state.LastScheduleError, "使用探索基线")
+	assert.True(t, state.ExplorationActive)
+	assert.Equal(t, priorityLow, state.ExplorationSavedPriority)
+	assert.Equal(t, weight, state.ExplorationSavedWeight)
+	assert.Contains(t, state.LastScheduleError, "探索采样中")
+	assert.Contains(t, state.LastScheduleError, "目标流量 3.0%")
+	ability = model.Ability{}
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 63, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priorityLow, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
+	state = model.ChannelSmartScheduleRouteState{}
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 63, "vip", "model-a",
+	).First(&state).Error)
+	assert.False(t, state.ExplorationActive)
+	assert.Contains(t, state.LastScheduleError, "等待同一分组和模型中的当前探索完成")
+}
+
+func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 2, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleTraffic
+	policy.SampleMode = &sampleMode
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			policy,
+		),
+	})
+	priorityHigh := int64(100)
+	priorityLow := int64(20)
+	weightHigh := uint(50)
+	explorationWeight := uint(2)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 64, Name: "exploring", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weightHigh},
+		{Id: 65, Name: "measured", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityHigh, Weight: &weightHigh},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 64, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityHigh, Weight: explorationWeight},
+		{ChannelId: 65, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityHigh, Weight: weightHigh},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 64, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			ExplorationActive: true, ExplorationSince: time.Now().Unix() - 60,
+			ExplorationSavedPriority: priorityLow, ExplorationSavedWeight: weightHigh,
+		},
+		{ChannelId: 65, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	completedMinute := time.Now().Unix()
+	completedMinute = completedMinute - completedMinute%60 - 60
+	logTime := completedMinute + 1
+	require.NoError(t, db.Create(&[]model.Log{
+		{ChannelId: 64, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
+		{ChannelId: 64, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":500}`},
+		{ChannelId: 65, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+		{ChannelId: 65, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
+	}).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
+
+	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 64, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, int64(90), *ability.Priority)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 64, "vip", "model-a",
+	).First(&state).Error)
+	assert.False(t, state.ExplorationActive)
+	assert.Zero(t, state.ExplorationSince)
+	assert.NotNil(t, state.LastScheduleScore)
 }
 
 func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *testing.T) {

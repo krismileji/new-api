@@ -472,14 +472,26 @@ export type ChannelMonitorSmartScheduleScoring = {
 
 export type ChannelMonitorSmartScheduleGroupPolicy = {
   group: string
-  strategy?: ChannelMonitorSmartScheduleStrategy
-  stability_enabled?: boolean
-  scoring?: ChannelMonitorSmartScheduleScoring
-  apply_mode?: ChannelMonitorSmartScheduleApplyMode
-  models?: string[]
-  min_samples?: number
-  min_success_rate?: number
-  cooldown_minutes?: number
+  strategy: ChannelMonitorSmartScheduleStrategy
+  stability_enabled: boolean
+  jitter_enabled: boolean
+  jitter_tolerance_percent: number
+  jitter_threshold_multiplier: number
+  jitter_absolute_tolerance_ms: number
+  jitter_baseline_hours: number
+  scoring: ChannelMonitorSmartScheduleScoring
+  apply_mode: ChannelMonitorSmartScheduleApplyMode
+  models: string[]
+  min_samples: number
+  degrade_stability_score: number
+  recovery_stability_score: number
+  fast_failure_penalty_percent: number
+  fast_failure_seconds: number
+  slow_failure_seconds: number
+  cooldown_minutes: number
+  sample_mode: ChannelMonitorSmartScheduleSampleMode
+  exploration_traffic_percent: number
+  probe_interval_minutes: number
 }
 
 export type ChannelMonitorSettings = {
@@ -495,19 +507,9 @@ export type ChannelMonitorSettings = {
   probe_response_enabled: boolean
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
-  smart_schedule_groups: string[]
-  smart_schedule_group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
+  smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_interval_minutes: number
-  smart_schedule_strategy: ChannelMonitorSmartScheduleStrategy
-  smart_schedule_stability_enabled: boolean
-  smart_schedule_scoring?: ChannelMonitorSmartScheduleScoring
-  smart_schedule_apply_mode: ChannelMonitorSmartScheduleApplyMode
   smart_schedule_performance_minutes: ChannelMonitorSmartSchedulePerformanceRangeMinutes
-  smart_schedule_model: string
-  smart_schedule_models: string[]
-  smart_schedule_min_samples: number
-  smart_schedule_min_success_rate: number
-  smart_schedule_cooldown_minutes: number
   smart_schedule_force_reset_task_created?: boolean
   smart_schedule_force_reset_task_id?: string
   smart_schedule_force_reset_task_error?: string
@@ -520,6 +522,8 @@ export type ChannelMonitorSmartScheduleStrategy =
   | 'smart'
 
 export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
+
+export type ChannelMonitorSmartScheduleSampleMode = 'off' | 'traffic' | 'probe'
 
 export type ChannelMonitorSmartScheduleStabilityClearResult = {
   cleared: boolean
@@ -546,6 +550,22 @@ export type ChannelMonitorSmartScheduleRouteState = {
   stability_since: number
   stability_saved_priority: number
   stability_saved_weight: number
+  exploration_active: boolean
+  exploration_since: number
+  exploration_saved_priority: number
+  exploration_saved_weight: number
+  probe_window_start: number
+  probe_last_time: number
+  probe_last_success: boolean
+  probe_last_error: string
+  probe_sample_count: number
+  probe_success_count: number
+  probe_failure_duration_sample_count: number
+  probe_average_failure_duration_ms: number | null
+  probe_first_token_sample_count: number
+  probe_average_first_token_ms: number | null
+  probe_tps_sample_count: number
+  probe_average_tps: number | null
 }
 
 export type ChannelMonitorSmartScheduleRoute = {
@@ -580,8 +600,28 @@ export type ChannelMonitorSmartScheduleRouteStability = {
   model: string
   success_count: number
   failure_count: number
+  final_failure_count: number
+  retry_failure_count: number
   sample_count: number
   success_rate: number
+  stability_score: number | null
+  average_retry_failure_duration_ms: number
+  retry_failure_duration_buckets: ChannelMonitorFailureDurationBucket[]
+  jitter_available: boolean
+  first_token_baseline_ms: number | null
+  first_token_p50_ms: number | null
+  first_token_p95_ms: number | null
+  jitter_threshold_ms: number | null
+  jitter_sample_count: number
+  jitter_slow_count: number
+  jitter_allowed_count: number
+  jitter_penalty: number
+}
+
+export type ChannelMonitorFailureDurationBucket = {
+  lower_bound_ms: number
+  upper_bound_ms: number
+  count: number
 }
 
 export type ChannelMonitorSmartScheduleRouteResult = {
@@ -642,26 +682,32 @@ export type ChannelMonitorTaskResult = {
   groups_skipped?: number
   retried?: number
   recovered_after_retry?: number
-  strategy?: ChannelMonitorSmartScheduleStrategy | 'stability'
-  stability_enabled?: boolean
-  scoring?: ChannelMonitorSmartScheduleScoring
   force_reset?: boolean
-  apply_mode?: ChannelMonitorSmartScheduleApplyMode
-  groups?: string[]
   group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
-  model?: string
-  models?: string[]
   performance_minutes?: number
-  min_samples?: number
-  min_success_rate?: number
-  cooldown_minutes?: number
   planned?: number
   unchanged?: number
   skipped?: number
   failures?: ChannelMonitorTaskFailure[]
   failure_details_truncated?: boolean
+  adjustments?: ChannelMonitorTaskAdjustment[]
+  adjustment_details_truncated?: boolean
   email_status?: 'sent' | 'failed'
   email_error?: string
+}
+
+export type ChannelMonitorTaskAdjustment = {
+  channel_id: number
+  channel_name: string
+  group: string
+  model: string
+  action: 'updated' | 'unchanged' | 'skipped' | 'failed'
+  old_priority: number
+  new_priority: number
+  old_weight: number
+  new_weight: number
+  score?: number
+  reason: string
 }
 
 export type ChannelMonitorTaskFailure = {

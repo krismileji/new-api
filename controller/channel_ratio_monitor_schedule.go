@@ -17,16 +17,22 @@ import (
 
 const (
 	channelMonitorSmartScheduleTaskType                          = "channel_smart_schedule"
+	channelSmartScheduleAdjustmentUpdated                        = "updated"
+	channelSmartScheduleAdjustmentUnchanged                      = "unchanged"
+	channelSmartScheduleAdjustmentSkipped                        = "skipped"
+	channelSmartScheduleAdjustmentFailed                         = "failed"
 	channelMonitorSmartScheduleMinWeight                         = 10
 	channelMonitorSmartScheduleMaxWeight                         = 100
 	channelMonitorSmartScheduleWeightStep                        = 5
 	channelMonitorSmartScheduleMinWeightChange                   = 10
 	channelMonitorSmartScheduleMaxWeightChange                   = 20
 	channelMonitorSmartScheduleSingleMetricMaxWeightChange       = 30
+	channelMonitorSmartScheduleFallbackMinSamples                = 5
 	channelMonitorSmartScheduleBaselinePriority            int64 = 80
 	channelMonitorSmartScheduleDegradedPriority            int64 = 0
 	channelMonitorSmartScheduleDegradedWeight              uint  = 0
 	maxChannelSmartScheduleTaskFailureDetails                    = 100
+	maxChannelSmartScheduleTaskAdjustmentDetails                 = 500
 )
 
 type channelSmartScheduleTaskHandler struct{}
@@ -36,12 +42,30 @@ type channelSmartScheduleTaskPayload struct {
 }
 
 type channelSmartSchedulePerformance struct {
-	FirstTokenSampleCount int
-	TPSSampleCount        int
-	AverageFirstTokenMs   *float64
-	AverageTPS            *float64
-	StabilitySampleCount  int64
-	Stability             *float64
+	FirstTokenSampleCount                int
+	FirstTokenDurationSampleCount        int64
+	TPSSampleCount                       int
+	AverageFirstTokenMs                  *float64
+	WinsorizedAverageFirstTokenMs        *float64
+	FirstTokenP50Ms                      *float64
+	FirstTokenP95Ms                      *float64
+	FirstTokenDurationBuckets            []model.ChannelMonitorDurationBucket
+	AverageTPS                           *float64
+	StabilitySampleCount                 int64
+	Stability                            *float64
+	StabilitySuccessCount                int64
+	StabilityFailureCount                int64
+	StabilityFinalFailureCount           int64
+	StabilityRetryFailureCount           int64
+	StabilityRetryFailureDurationTotalMs float64
+	StabilityFailureDurationBuckets      []model.ChannelMonitorFailureDurationBucket
+	JitterAvailable                      bool
+	JitterBaselineMs                     *float64
+	JitterThresholdMs                    *float64
+	JitterSampleCount                    int64
+	JitterSlowCount                      int64
+	JitterAllowedCount                   int64
+	JitterPenalty                        float64
 }
 
 type channelSmartScheduleCandidate struct {
@@ -78,28 +102,34 @@ type channelSmartScheduleTaskFailure struct {
 	Error       string `json:"error"`
 }
 
+type channelSmartScheduleTaskAdjustment struct {
+	ChannelId   int      `json:"channel_id"`
+	ChannelName string   `json:"channel_name"`
+	Group       string   `json:"group"`
+	Model       string   `json:"model"`
+	Action      string   `json:"action"`
+	OldPriority int64    `json:"old_priority"`
+	NewPriority int64    `json:"new_priority"`
+	OldWeight   uint     `json:"old_weight"`
+	NewWeight   uint     `json:"new_weight"`
+	Score       *float64 `json:"score,omitempty"`
+	Reason      string   `json:"reason"`
+}
+
 type channelSmartScheduleTaskResult struct {
-	Strategy                string                            `json:"strategy"`
-	StabilityEnabled        bool                              `json:"stability_enabled"`
-	Scoring                 channelSmartScheduleScoring       `json:"scoring"`
-	ForceReset              bool                              `json:"force_reset"`
-	ApplyMode               string                            `json:"apply_mode"`
-	Groups                  []string                          `json:"groups,omitempty"`
-	GroupPolicies           smartScheduleGroupPolicies        `json:"group_policies,omitempty"`
-	Model                   string                            `json:"model"`
-	Models                  []string                          `json:"models,omitempty"`
-	PerformanceMinutes      int                               `json:"performance_minutes"`
-	MinSamples              int                               `json:"min_samples"`
-	MinSuccessRate          float64                           `json:"min_success_rate"`
-	CooldownMinutes         int                               `json:"cooldown_minutes"`
-	Total                   int                               `json:"total"`
-	Planned                 int                               `json:"planned"`
-	Updated                 int                               `json:"updated"`
-	Unchanged               int                               `json:"unchanged"`
-	Skipped                 int                               `json:"skipped"`
-	Failed                  int                               `json:"failed"`
-	Failures                []channelSmartScheduleTaskFailure `json:"failures,omitempty"`
-	FailureDetailsTruncated bool                              `json:"failure_details_truncated,omitempty"`
+	ForceReset                 bool                                 `json:"force_reset"`
+	GroupPolicies              smartScheduleGroupPolicies           `json:"group_policies,omitempty"`
+	PerformanceMinutes         int                                  `json:"performance_minutes"`
+	Total                      int                                  `json:"total"`
+	Planned                    int                                  `json:"planned"`
+	Updated                    int                                  `json:"updated"`
+	Unchanged                  int                                  `json:"unchanged"`
+	Skipped                    int                                  `json:"skipped"`
+	Failed                     int                                  `json:"failed"`
+	Failures                   []channelSmartScheduleTaskFailure    `json:"failures,omitempty"`
+	FailureDetailsTruncated    bool                                 `json:"failure_details_truncated,omitempty"`
+	Adjustments                []channelSmartScheduleTaskAdjustment `json:"adjustments,omitempty"`
+	AdjustmentDetailsTruncated bool                                 `json:"adjustment_details_truncated,omitempty"`
 }
 
 func init() {
@@ -111,7 +141,8 @@ func (channelSmartScheduleTaskHandler) Type() string {
 }
 
 func (channelSmartScheduleTaskHandler) Enabled() bool {
-	return getChannelMonitorSettings().SmartScheduleEnabled
+	settings := getChannelMonitorSettings()
+	return settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0
 }
 
 func (channelSmartScheduleTaskHandler) Interval() time.Duration {
@@ -143,7 +174,12 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 }
 
 func RunChannelMonitorSmartSchedule(c *gin.Context) {
-	if !getChannelMonitorSettings().SmartScheduleEnabled {
+	settings := getChannelMonitorSettings()
+	if len(settings.SmartScheduleGroupPolicies) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度已禁用，请先配置至少一个完整的分组策略"})
+		return
+	}
+	if !settings.SmartScheduleEnabled {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度已禁用"})
 		return
 	}
@@ -166,12 +202,8 @@ func RunChannelMonitorSmartSchedule(c *gin.Context) {
 	})
 }
 
-func (result *channelSmartScheduleTaskResult) recordFailure(channelId int, channelName string, failure error) {
+func (result *channelSmartScheduleTaskResult) recordFailure(channelId int, channelName string, failure error) string {
 	result.Failed++
-	if len(result.Failures) >= maxChannelSmartScheduleTaskFailureDetails {
-		result.FailureDetailsTruncated = true
-		return
-	}
 	message := "智能调度更新失败"
 	if failure != nil && failure.Error() != "" {
 		message = failure.Error()
@@ -184,11 +216,73 @@ func (result *channelSmartScheduleTaskResult) recordFailure(channelId int, chann
 	if len(nameRunes) > 128 {
 		channelName = string(nameRunes[:128])
 	}
+	if len(result.Failures) >= maxChannelSmartScheduleTaskFailureDetails {
+		result.FailureDetailsTruncated = true
+		return message
+	}
 	result.Failures = append(result.Failures, channelSmartScheduleTaskFailure{
 		ChannelId:   channelId,
 		ChannelName: channelName,
 		Error:       message,
 	})
+	return message
+}
+
+func (result *channelSmartScheduleTaskResult) recordAdjustment(adjustment channelSmartScheduleTaskAdjustment) {
+	nameRunes := []rune(adjustment.ChannelName)
+	if len(nameRunes) > 128 {
+		adjustment.ChannelName = string(nameRunes[:128])
+	}
+	groupRunes := []rune(adjustment.Group)
+	if len(groupRunes) > 128 {
+		adjustment.Group = string(groupRunes[:128])
+	}
+	modelRunes := []rune(adjustment.Model)
+	if len(modelRunes) > 128 {
+		adjustment.Model = string(modelRunes[:128])
+	}
+	reasonRunes := []rune(adjustment.Reason)
+	if len(reasonRunes) > 255 {
+		adjustment.Reason = string(reasonRunes[:255])
+	}
+	result.Adjustments = append(result.Adjustments, adjustment)
+}
+
+func (result *channelSmartScheduleTaskResult) finalizeAdjustments() {
+	sort.SliceStable(result.Adjustments, func(i int, j int) bool {
+		left := result.Adjustments[i]
+		right := result.Adjustments[j]
+		if left.Action != right.Action {
+			return channelSmartScheduleAdjustmentActionOrder(left.Action) < channelSmartScheduleAdjustmentActionOrder(right.Action)
+		}
+		if left.Group != right.Group {
+			return left.Group < right.Group
+		}
+		if left.Model != right.Model {
+			return left.Model < right.Model
+		}
+		return left.ChannelId < right.ChannelId
+	})
+	if len(result.Adjustments) <= maxChannelSmartScheduleTaskAdjustmentDetails {
+		return
+	}
+	result.Adjustments = result.Adjustments[:maxChannelSmartScheduleTaskAdjustmentDetails]
+	result.AdjustmentDetailsTruncated = true
+}
+
+func channelSmartScheduleAdjustmentActionOrder(action string) int {
+	switch action {
+	case channelSmartScheduleAdjustmentFailed:
+		return 0
+	case channelSmartScheduleAdjustmentUpdated:
+		return 1
+	case channelSmartScheduleAdjustmentSkipped:
+		return 2
+	case channelSmartScheduleAdjustmentUnchanged:
+		return 3
+	default:
+		return 4
+	}
 }
 
 func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(processed, total int), forceReset bool) (channelSmartScheduleTaskResult, error) {
@@ -197,24 +291,19 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	}
 	settings := getChannelMonitorSettings()
 	result := channelSmartScheduleTaskResult{
-		Strategy:           settings.SmartScheduleStrategy,
-		StabilityEnabled:   settings.SmartScheduleStabilityEnabled,
-		Scoring:            settings.SmartScheduleScoring,
 		ForceReset:         forceReset,
-		ApplyMode:          settings.SmartScheduleApplyMode,
-		Groups:             settings.SmartScheduleGroups,
 		GroupPolicies:      settings.SmartScheduleGroupPolicies,
-		Model:              settings.SmartScheduleModel,
-		Models:             settings.SmartScheduleModels,
 		PerformanceMinutes: settings.SmartSchedulePerformanceMinutes,
-		MinSamples:         settings.SmartScheduleMinSamples,
-		MinSuccessRate:     settings.SmartScheduleMinSuccessRate,
-		CooldownMinutes:    settings.SmartScheduleCooldownMinutes,
+	}
+	if len(settings.SmartScheduleGroupPolicies) == 0 {
+		return result, fmt.Errorf("智能调度已禁用，请先配置至少一个完整的分组策略")
 	}
 	if !settings.SmartScheduleEnabled {
 		return result, fmt.Errorf("智能调度已禁用")
 	}
-	return runChannelSmartScheduleByRouteOnce(ctx, reportProgress, forceReset, settings, result)
+	result, err := runChannelSmartScheduleByRouteOnce(ctx, reportProgress, forceReset, settings, result)
+	result.finalizeAdjustments()
+	return result, err
 }
 func channelSmartScheduleSavedTarget(priority int64, weight uint) (int64, uint) {
 	if priority <= channelMonitorSmartScheduleDegradedPriority {
@@ -243,7 +332,7 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 		Skipped: make(map[int]string),
 	}
 	if minSamples <= 0 {
-		minSamples = defaultChannelMonitorSmartScheduleSamples
+		minSamples = channelMonitorSmartScheduleFallbackMinSamples
 	}
 	if validateChannelSmartScheduleScoring(scoring) != nil {
 		scoring = defaultChannelSmartScheduleScoring()
@@ -427,7 +516,11 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 				if tier >= len(priorities) {
 					tier = len(priorities) - 1
 				}
-				items[index].TargetPriority = priorities[tier]
+				targetPriority := priorities[tier]
+				if index > 0 && math.Abs(items[index].Score-items[index-1].Score) <= channelMonitorRatioEpsilon {
+					targetPriority = items[index-1].TargetPriority
+				}
+				items[index].TargetPriority = targetPriority
 			}
 		}
 		plan.Items = append(plan.Items, items...)
@@ -528,7 +621,7 @@ func channelSmartScheduleCandidateNeedsExploration(candidate channelSmartSchedul
 
 func channelSmartScheduleCandidateNeedsExplorationWithScoring(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int, scoring channelSmartScheduleScoring) bool {
 	if minSamples <= 0 {
-		minSamples = defaultChannelMonitorSmartScheduleSamples
+		minSamples = channelMonitorSmartScheduleFallbackMinSamples
 	}
 	if stabilityEnabled && candidate.StabilityAvailable &&
 		(candidate.Stability == nil || candidate.StabilitySampleCount < int64(minSamples)) {

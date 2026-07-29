@@ -77,6 +77,7 @@ import { getPricing } from '@/features/pricing/api'
 
 import { getChannels } from '../../api'
 import {
+  CHANNEL_TEST_DEFAULTS,
   channelsQueryKeys,
   formatResponseTime,
   handleTestChannel,
@@ -151,7 +152,7 @@ const POSITIVE_INTEGER_PATTERN = /^\d+$/
 const EMPTY_CHANNELS: BatchTestChannel[] = []
 const EMPTY_PRICED_MODELS: string[] = []
 const ENDPOINT_TYPE_OPTIONS = [
-  { value: 'auto', label: '自动检测（默认）' },
+  { value: 'auto', label: '自动检测' },
   { value: 'openai', label: 'OpenAI Chat (/v1/chat/completions)' },
   { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
   {
@@ -295,7 +296,7 @@ async function runBatchTestTask(
         channelName: task.channelName,
         testModel: task.model,
         endpointType: options.endpointType,
-        stream: options.stream || undefined,
+        stream: options.stream,
         silent: true,
       },
       (success, responseTime, error, errorCode) => {
@@ -380,8 +381,12 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   const [testMode, setTestMode] = useState<BatchTestMode>('batch')
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
-  const [endpointType, setEndpointType] = useState('auto')
-  const [isStreamTest, setIsStreamTest] = useState(false)
+  const [endpointType, setEndpointType] = useState<string>(
+    CHANNEL_TEST_DEFAULTS.endpointType
+  )
+  const [isStreamTest, setIsStreamTest] = useState<boolean>(
+    CHANNEL_TEST_DEFAULTS.stream
+  )
   const [repeatConcurrencyInput, setRepeatConcurrencyInput] = useState(
     DEFAULT_REPEAT_CONCURRENCY
   )
@@ -536,7 +541,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   const effectiveStreamTest = !streamDisabled && isStreamTest
   const selectedEndpointLabel =
     ENDPOINT_TYPE_OPTIONS.find((option) => option.value === endpointType)
-      ?.label ?? '自动检测（默认）'
+      ?.label ?? 'OpenAI Responses (/v1/responses)'
 
   const clearResults = () => {
     setResults({})
@@ -574,8 +579,8 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     setTestMode('batch')
     setSelectedChannelIds([])
     setSelectedModels([])
-    setEndpointType('auto')
-    setIsStreamTest(false)
+    setEndpointType(CHANNEL_TEST_DEFAULTS.endpointType)
+    setIsStreamTest(CHANNEL_TEST_DEFAULTS.stream)
     setRepeatConcurrencyInput(DEFAULT_REPEAT_CONCURRENCY)
     setRepeatIterationsInput(DEFAULT_REPEAT_ITERATIONS)
     setResults({})
@@ -628,8 +633,8 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     let succeeded = 0
     let failed = 0
     const requestOptions: BatchTestRequestOptions = {
-      endpointType: endpointType === 'auto' ? undefined : endpointType,
-      stream: effectiveStreamTest || undefined,
+      endpointType,
+      stream: effectiveStreamTest,
     }
 
     try {
@@ -1062,7 +1067,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             >
               <SelectValue
                 className='min-w-0 truncate'
-                placeholder='自动检测（默认）'
+                placeholder='OpenAI Responses (/v1/responses)'
               />
             </SelectTrigger>
             <SelectContent

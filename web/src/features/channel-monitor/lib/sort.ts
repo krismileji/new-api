@@ -16,23 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { CHANNEL_STATUS } from '@/features/channels/constants'
-
 import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
   ChannelMonitorSortMode,
 } from '../types'
-
-function compareChannelEnabledStatus(
-  first: ChannelMonitorItem,
-  second: ChannelMonitorItem
-) {
-  const firstEnabled = first.status === CHANNEL_STATUS.ENABLED
-  const secondEnabled = second.status === CHANNEL_STATUS.ENABLED
-  if (firstEnabled === secondEnabled) return 0
-  return firstEnabled ? -1 : 1
-}
 
 function compareChannelNames(
   first: ChannelMonitorItem,
@@ -70,15 +58,10 @@ export function sortChannelMonitorItems(
   performanceByChannel: ReadonlyMap<number, ChannelMonitorChannelPerformance>
 ) {
   if (sortMode === 'custom') {
-    return orderChannelsByCustomOrder(channels, channelOrder).sort(
-      compareChannelEnabledStatus
-    )
+    return orderChannelsByCustomOrder(channels, channelOrder)
   }
 
   return [...channels].sort((first, second) => {
-    const statusComparison = compareChannelEnabledStatus(first, second)
-    if (statusComparison !== 0) return statusComparison
-
     if (sortMode === 'channel_asc' || sortMode === 'channel_desc') {
       const comparison = compareChannelNames(first, second)
       return sortMode === 'channel_asc' ? comparison : -comparison

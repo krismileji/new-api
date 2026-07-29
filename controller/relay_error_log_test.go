@@ -75,4 +75,8 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	assert.True(t, logs[0].IsRetryAttempt)
 	assert.Equal(t, "standard", logs[0].Group)
 	assert.Contains(t, logs[0].Content, "temporary upstream failure")
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+	_, recorded := other["channel_monitor_attempt_duration_ms"]
+	assert.False(t, recorded)
 }

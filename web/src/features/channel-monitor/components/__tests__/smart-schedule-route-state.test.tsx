@@ -56,12 +56,28 @@ function createProtectedRoute(
       stability_since: 1_752_700_000,
       stability_saved_priority: 95,
       stability_saved_weight: 70,
+      exploration_active: false,
+      exploration_since: 0,
+      exploration_saved_priority: 0,
+      exploration_saved_weight: 0,
+      probe_window_start: 0,
+      probe_last_time: 0,
+      probe_last_success: false,
+      probe_last_error: '',
+      probe_sample_count: 0,
+      probe_success_count: 0,
+      probe_failure_duration_sample_count: 0,
+      probe_average_failure_duration_ms: null,
+      probe_first_token_sample_count: 0,
+      probe_average_first_token_ms: null,
+      probe_tps_sample_count: 0,
+      probe_average_tps: null,
     },
   }
 }
 
 describe('smart schedule route protection state', () => {
-  test('keeps low-success protection clickable when the route is unavailable and excluded', () => {
+  test('keeps stability degradation clickable when the route is unavailable and excluded', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSmartScheduleRouteState
         route={createProtectedRoute('degraded')}
@@ -69,8 +85,12 @@ describe('smart schedule route protection state', () => {
       />
     )
 
-    assert.ok(markup.includes('低成功率'))
-    assert.ok(markup.includes('解除 测试渠道 vip model-a 的低成功率保护'))
+    assert.ok(markup.includes('稳定性降级'))
+    assert.ok(markup.includes('解除 测试渠道 vip model-a 的稳定性降级保护'))
+    assert.match(
+      markup,
+      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的稳定性降级保护"[^>]*>/
+    )
     assert.equal(markup.includes('渠道禁用'), false)
     assert.equal(markup.includes('未参与'), false)
   })
@@ -85,6 +105,10 @@ describe('smart schedule route protection state', () => {
 
     assert.ok(markup.includes('稳定性试放'))
     assert.ok(markup.includes('解除 测试渠道 vip model-a 的稳定性试放'))
+    assert.match(
+      markup,
+      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的稳定性试放"[^>]*>/
+    )
     assert.equal(markup.includes('路由禁用'), false)
   })
 })

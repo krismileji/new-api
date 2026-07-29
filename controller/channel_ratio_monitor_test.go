@@ -283,22 +283,22 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 
 func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:   "true",
-		channelMonitorSmartScheduleIntervalOption:  "25",
-		channelMonitorSmartScheduleStrategyOption:  channelMonitorSmartScheduleStrategyTPS,
-		channelMonitorSmartScheduleStabilityOption: "true",
+		channelMonitorSmartScheduleEnabledOption:  "true",
+		channelMonitorSmartScheduleIntervalOption: "25",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyTPS, true,
+				channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+			),
+		),
 	})
 
 	settings := getChannelMonitorSettings()
 	assert.True(t, settings.SmartScheduleEnabled)
 	assert.Equal(t, 25, settings.SmartScheduleIntervalMinutes)
-	assert.Equal(t, channelMonitorSmartScheduleStrategyTPS, settings.SmartScheduleStrategy)
-	assert.True(t, settings.SmartScheduleStabilityEnabled)
-	assert.Equal(t, channelMonitorSmartScheduleApplyWeight, settings.SmartScheduleApplyMode)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRange, settings.SmartSchedulePerformanceMinutes)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleSamples, settings.SmartScheduleMinSamples)
-	assert.Equal(t, float64(defaultChannelMonitorSmartScheduleSuccessRate), settings.SmartScheduleMinSuccessRate)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleCooldown, settings.SmartScheduleCooldownMinutes)
+	require.Len(t, settings.SmartScheduleGroupPolicies, 1)
+	assert.Equal(t, "vip", settings.SmartScheduleGroupPolicies[0].Group)
 
 	handler := channelSmartScheduleTaskHandler{}
 	assert.True(t, handler.Enabled())
@@ -306,85 +306,55 @@ func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 	assert.Equal(t, channelMonitorSmartScheduleTaskType, handler.Type())
 }
 
-func TestLegacyStabilityStrategyMigratesToStabilitySwitch(t *testing.T) {
+func TestChannelSmartScheduleSettingsRejectIncompleteStoredPolicies(t *testing.T) {
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleStrategyOption: legacyChannelMonitorSmartScheduleStrategyStability,
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: `[{"group":"vip","strategy":"ratio"}]`,
 	})
 
 	settings := getChannelMonitorSettings()
-	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, settings.SmartScheduleStrategy)
-	assert.True(t, settings.SmartScheduleStabilityEnabled)
-}
-
-func TestChannelSmartScheduleSettingsReadOrderedModelsAndLegacyFallback(t *testing.T) {
-	tests := []struct {
-		name       string
-		values     map[string]string
-		wantModel  string
-		wantModels []string
-	}{
-		{
-			name: "ordered models take precedence",
-			values: map[string]string{
-				channelMonitorSmartScheduleModelOption:  "legacy-model",
-				channelMonitorSmartScheduleModelsOption: `["model-b","model-a"]`,
-			},
-			wantModel:  "model-b",
-			wantModels: []string{"model-b", "model-a"},
-		},
-		{
-			name: "empty ordered list does not restore legacy model",
-			values: map[string]string{
-				channelMonitorSmartScheduleModelOption:  "legacy-model",
-				channelMonitorSmartScheduleModelsOption: `[]`,
-			},
-			wantModels: []string{},
-		},
-		{
-			name: "legacy model becomes one item list",
-			values: map[string]string{
-				channelMonitorSmartScheduleModelOption: "gpt-4o-mini",
-			},
-			wantModel:  "gpt-4o-mini",
-			wantModels: []string{"gpt-4o-mini"},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			useChannelMonitorOptionMap(t, test.values)
-
-			settings := getChannelMonitorSettings()
-			assert.Equal(t, test.wantModel, settings.SmartScheduleModel)
-			assert.Equal(t, test.wantModels, settings.SmartScheduleModels)
-		})
-	}
-}
-
-func TestChannelSmartScheduleSettingsUseConfigurableScoringDefaults(t *testing.T) {
-	useChannelMonitorOptionMap(t, map[string]string{})
-
-	settings := getChannelMonitorSettings()
-	assert.Empty(t, settings.SmartScheduleGroups)
+	assert.False(t, settings.SmartScheduleEnabled)
 	assert.Empty(t, settings.SmartScheduleGroupPolicies)
-	assert.Equal(t, defaultChannelSmartScheduleScoring(), settings.SmartScheduleScoring)
-	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.CostRatioPercent)
-	assert.Equal(t, 40.0, settings.SmartScheduleScoring.Smart.FirstTokenPercent)
-	assert.Equal(t, 20.0, settings.SmartScheduleScoring.Smart.TPSPercent)
-	assert.Equal(t, 70.0, settings.SmartScheduleScoring.Ratio.CostRatioPercent)
-	assert.Equal(t, 20.0, settings.SmartScheduleScoring.Ratio.FirstTokenPercent)
-	assert.Equal(t, 10.0, settings.SmartScheduleScoring.Ratio.TPSPercent)
+	assert.False(t, (channelSmartScheduleTaskHandler{}).Enabled())
+}
 
+func TestSavingFirstGroupPolicyDoesNotImplicitlyEnableScheduling(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleScoringOption: `{"stability_percent":60,"curve_exponent":1.5,"smart":{"cost_ratio_percent":50,"first_token_percent":25,"tps_percent":25},"ratio":{"cost_ratio_percent":80,"first_token_percent":10,"tps_percent":10}}`,
+		channelMonitorSmartScheduleEnabledOption: "true",
 	})
-	settings = getChannelMonitorSettings()
-	assert.Equal(t, 60.0, settings.SmartScheduleScoring.StabilityPercent)
-	assert.Equal(t, 1.5, settings.SmartScheduleScoring.CurveExponent)
-	assert.True(t, settings.SmartScheduleScoring.RelativeWeightEnabled)
-	assert.Equal(t, 3.0, settings.SmartScheduleScoring.RelativeWeightStartPercent)
-	assert.Equal(t, 10.0, settings.SmartScheduleScoring.RelativeWeightFullPercent)
-	assert.Equal(t, 50.0, settings.SmartScheduleScoring.Smart.CostRatioPercent)
-	assert.Equal(t, 80.0, settings.SmartScheduleScoring.Ratio.CostRatioPercent)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+			),
+		},
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	for _, removedKey := range []string{
+		"smart_schedule_groups",
+		"smart_schedule_strategy",
+		"smart_schedule_stability_enabled",
+		"smart_schedule_scoring",
+		"smart_schedule_apply_mode",
+		"smart_schedule_model",
+		"smart_schedule_models",
+		"smart_schedule_min_samples",
+		"smart_schedule_min_success_rate",
+		"smart_schedule_cooldown_minutes",
+	} {
+		assert.NotContains(t, recorder.Body.String(), `"`+removedKey+`"`)
+	}
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Data.SmartScheduleEnabled)
+	var enabledOption model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleEnabledOption).First(&enabledOption).Error)
+	assert.Equal(t, "false", enabledOption.Value)
 }
 
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
@@ -395,25 +365,121 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		common.SetRelayResponseHeaderTimeoutSeconds(originalRelayTimeout)
 	})
 
-	tooManySmartScheduleModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
-	tooManySmartScheduleGroups := make([]string, maxChannelMonitorSmartScheduleGroupCount+1)
-	invalidSmartScoring := defaultChannelSmartScheduleScoring()
-	invalidSmartScoring.Smart.TPSPercent = 40
-	invalidStabilityScoring := defaultChannelSmartScheduleScoring()
-	invalidStabilityScoring.StabilityPercent = 101
-	invalidCurveScoring := defaultChannelSmartScheduleScoring()
-	invalidCurveScoring.CurveExponent = 0
-	invalidRatioScoring := defaultChannelSmartScheduleScoring()
-	invalidRatioScoring.Ratio = channelSmartScheduleMetricPercentages{
+	invalidStrategy := channelSmartScheduleTestGroupPolicy(
+		"vip", "invalid", false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidApplyMode := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false, "invalid", []string{}, 5, 80, 30,
+	)
+	invalidSmartScoring := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidSmartScoring.Scoring.Smart.TPSPercent = 40
+	invalidStabilityScoring := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidStabilityScoring.Scoring.StabilityPercent = 101
+	invalidCurveScoring := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidCurveScoring.Scoring.CurveExponent = 0
+	invalidRatioScoring := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidRatioScoring.Scoring.Ratio = channelSmartScheduleMetricPercentages{
 		FirstTokenPercent: 50,
 		TPSPercent:        50,
 	}
-	invalidRelativeWeightStart := defaultChannelSmartScheduleScoring()
-	invalidRelativeWeightStart.RelativeWeightStartPercent = -1
-	invalidRelativeWeightRange := defaultChannelSmartScheduleScoring()
-	invalidRelativeWeightRange.RelativeWeightFullPercent = invalidRelativeWeightRange.RelativeWeightStartPercent
+	invalidRelativeWeightStart := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidRelativeWeightStart.Scoring.RelativeWeightStartPercent = -1
+	invalidRelativeWeightRange := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidRelativeWeightRange.Scoring.RelativeWeightFullPercent = invalidRelativeWeightRange.Scoring.RelativeWeightStartPercent
+	tooManyModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
+	invalidModels := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, tooManyModels, 5, 80, 30,
+	)
+	invalidMinSamples := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 0, 80, 30,
+	)
+	invalidSuccessRate := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 101, 30,
+	)
+	invalidJitterTolerance := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidJitterToleranceValue := 51.0
+	invalidJitterTolerance.JitterTolerancePercent = &invalidJitterToleranceValue
+	invalidJitterMultiplier := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidJitterMultiplierValue := 1.0
+	invalidJitterMultiplier.JitterThresholdMultiplier = &invalidJitterMultiplierValue
+	invalidJitterAbsoluteTolerance := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidJitterAbsoluteToleranceValue := 60001
+	invalidJitterAbsoluteTolerance.JitterAbsoluteToleranceMs = &invalidJitterAbsoluteToleranceValue
+	invalidJitterBaselineHours := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidJitterBaselineHoursValue := 0
+	invalidJitterBaselineHours.JitterBaselineHours = &invalidJitterBaselineHoursValue
+	invalidCooldown := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 0,
+	)
+	invalidExplorationTraffic := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{}, 5, 80, 30,
+	)
+	invalidExplorationPercent := 21.0
+	invalidExplorationTraffic.ExplorationTrafficPercent = &invalidExplorationPercent
+	invalidSampleMode := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	unsupportedSampleMode := "invalid"
+	invalidSampleMode.SampleMode = &unsupportedSampleMode
+	invalidProbeInterval := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	zeroProbeInterval := 0
+	invalidProbeInterval.ProbeIntervalMinutes = &zeroProbeInterval
+	invalidTrafficApplyMode := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	trafficSampleMode := channelMonitorSmartScheduleSampleTraffic
+	invalidTrafficApplyMode.SampleMode = &trafficSampleMode
+	tooManyPolicies := make([]channelSmartScheduleGroupPolicy, maxChannelMonitorSmartScheduleGroupCount+1)
+	for index := range tooManyPolicies {
+		tooManyPolicies[index] = channelSmartScheduleTestGroupPolicy(
+			fmt.Sprintf("group-%d", index), channelMonitorSmartScheduleStrategyRatio, false,
+			channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+		)
+	}
 	invalidRequests := []map[string]any{
 		{},
+		{"smart_schedule_groups": []string{"vip"}},
+		{"smart_schedule_strategy": channelMonitorSmartScheduleStrategyRatio},
 		{"auto_update_interval_minutes": -1},
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
@@ -427,32 +493,39 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"notification_email": strings.Repeat("a", maxChannelMonitorNotificationEmailLength) + "@example.com"},
 		{"relay_response_header_timeout_seconds": -1},
 		{"relay_response_header_timeout_seconds": common.MaxRelayResponseHeaderTimeoutSeconds + 1},
-		{"smart_schedule_groups": []string{strings.Repeat("g", maxChannelMonitorSmartScheduleGroupLength+1)}},
-		{"smart_schedule_groups": tooManySmartScheduleGroups},
+		{"smart_schedule_enabled": true},
 		{"smart_schedule_group_policies": []map[string]any{{"group": ""}}},
-		{"smart_schedule_group_policies": []map[string]any{{"group": "vip", "strategy": "invalid"}}},
-		{"smart_schedule_group_policies": []map[string]any{{"group": "vip", "min_success_rate": 101}}},
-		{"smart_schedule_group_policies": []map[string]any{{"group": "vip", "strategy": "ratio"}, {"group": " vip ", "apply_mode": "weight"}}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{channelSmartScheduleTestGroupPolicy(
+			strings.Repeat("g", maxChannelMonitorSmartScheduleGroupLength+1), channelMonitorSmartScheduleStrategyRatio,
+			false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+		)}},
+		{"smart_schedule_group_policies": tooManyPolicies},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidStrategy}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidApplyMode}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSmartScoring}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidStabilityScoring}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidCurveScoring}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRatioScoring}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightStart}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightRange}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidModels}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidMinSamples}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSuccessRate}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterTolerance}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterMultiplier}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterAbsoluteTolerance}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterBaselineHours}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidCooldown}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidExplorationTraffic}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSampleMode}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidProbeInterval}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidTrafficApplyMode}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
+			channelSmartScheduleTestGroupPolicy("vip", channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30),
+			channelSmartScheduleTestGroupPolicy(" vip ", channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30),
+		}},
 		{"smart_schedule_interval_minutes": 0},
-		{"smart_schedule_strategy": "invalid"},
-		{"smart_schedule_strategy": "stability"},
-		{"smart_schedule_scoring": invalidSmartScoring},
-		{"smart_schedule_scoring": invalidStabilityScoring},
-		{"smart_schedule_scoring": invalidCurveScoring},
-		{"smart_schedule_scoring": invalidRatioScoring},
-		{"smart_schedule_scoring": invalidRelativeWeightStart},
-		{"smart_schedule_scoring": invalidRelativeWeightRange},
-		{"smart_schedule_apply_mode": "invalid"},
 		{"smart_schedule_performance_minutes": 30},
-		{"smart_schedule_model": strings.Repeat("m", maxChannelMonitorSmartScheduleModelLength+1)},
-		{"smart_schedule_models": []string{strings.Repeat("m", maxChannelMonitorSmartScheduleModelLength+1)}},
-		{"smart_schedule_models": tooManySmartScheduleModels},
-		{"smart_schedule_min_samples": 0},
-		{"smart_schedule_min_samples": maxChannelMonitorSmartScheduleMinSamples + 1},
-		{"smart_schedule_min_success_rate": -1},
-		{"smart_schedule_min_success_rate": maxChannelMonitorSmartScheduleSuccessRate + 1},
-		{"smart_schedule_cooldown_minutes": 0},
-		{"smart_schedule_cooldown_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 	}
 	for _, request := range invalidRequests {
 		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -483,30 +556,36 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"notification_email":                    "alerts@example.com",
 		"probe_response_enabled":                true,
 		"smart_schedule_enabled":                true,
-		"smart_schedule_groups":                 []string{" vip ", "default", "vip"},
 		"smart_schedule_group_policies": []map[string]any{
 			{
 				"group": " vip ", "strategy": channelMonitorSmartScheduleStrategyRatio,
 				"stability_enabled": false, "scoring": validScoring,
 				"apply_mode":  channelMonitorSmartScheduleApplyWeight,
 				"models":      []string{" gpt-4o-mini ", "gpt-4o-mini"},
-				"min_samples": 8, "min_success_rate": 90, "cooldown_minutes": 45,
+				"min_samples": 8, "degrade_stability_score": 90, "recovery_stability_score": 95,
+				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
+				"jitter_enabled": true, "jitter_tolerance_percent": 5, "jitter_threshold_multiplier": 3,
+				"jitter_absolute_tolerance_ms": 1000, "jitter_baseline_hours": 24,
+				"cooldown_minutes":            45,
+				"sample_mode":                 channelMonitorSmartScheduleSampleOff,
+				"exploration_traffic_percent": 3, "probe_interval_minutes": 10,
 			},
 			{
-				"group": "default",
+				"group": "default", "strategy": channelMonitorSmartScheduleStrategySmart,
+				"stability_enabled": true, "scoring": validScoring,
+				"apply_mode":  channelMonitorSmartScheduleApplyPriorityWeight,
+				"models":      []string{"claude-3-5-sonnet", "gpt-4o-mini"},
+				"min_samples": 8, "degrade_stability_score": 75.5, "recovery_stability_score": 85,
+				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
+				"jitter_enabled": true, "jitter_tolerance_percent": 5, "jitter_threshold_multiplier": 3,
+				"jitter_absolute_tolerance_ms": 1000, "jitter_baseline_hours": 24,
+				"cooldown_minutes":            45,
+				"sample_mode":                 channelMonitorSmartScheduleSampleTraffic,
+				"exploration_traffic_percent": 5, "probe_interval_minutes": 5,
 			},
 		},
 		"smart_schedule_interval_minutes":    10,
-		"smart_schedule_strategy":            channelMonitorSmartScheduleStrategySmart,
-		"smart_schedule_stability_enabled":   true,
-		"smart_schedule_scoring":             validScoring,
-		"smart_schedule_apply_mode":          channelMonitorSmartScheduleApplyPriorityWeight,
 		"smart_schedule_performance_minutes": 360,
-		"smart_schedule_model":               "legacy-model",
-		"smart_schedule_models":              []string{" claude-3-5-sonnet ", "gpt-4o-mini", "claude-3-5-sonnet"},
-		"smart_schedule_min_samples":         8,
-		"smart_schedule_min_success_rate":    75.5,
-		"smart_schedule_cooldown_minutes":    45,
 	}
 	request["relay_response_header_timeout_seconds"] = 60
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -527,12 +606,17 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 60, response.Data.RelayHeaderTimeoutSeconds)
 	assert.Equal(t, 60, common.GetRelayResponseHeaderTimeoutSeconds())
 	assert.True(t, response.Data.SmartScheduleEnabled)
-	assert.Equal(t, []string{"vip", "default"}, response.Data.SmartScheduleGroups)
 	require.Len(t, response.Data.SmartScheduleGroupPolicies, 2)
 	defaultGroupPolicy := response.Data.SmartScheduleGroupPolicies[0]
 	assert.Equal(t, "default", defaultGroupPolicy.Group)
 	require.NotNil(t, defaultGroupPolicy.Strategy)
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, *defaultGroupPolicy.Strategy)
+	require.NotNil(t, defaultGroupPolicy.SampleMode)
+	assert.Equal(t, channelMonitorSmartScheduleSampleTraffic, *defaultGroupPolicy.SampleMode)
+	require.NotNil(t, defaultGroupPolicy.ExplorationTrafficPercent)
+	assert.Equal(t, 5.0, *defaultGroupPolicy.ExplorationTrafficPercent)
+	require.NotNil(t, defaultGroupPolicy.ProbeIntervalMinutes)
+	assert.Equal(t, 5, *defaultGroupPolicy.ProbeIntervalMinutes)
 	require.NotNil(t, defaultGroupPolicy.StabilityEnabled)
 	assert.True(t, *defaultGroupPolicy.StabilityEnabled)
 	require.NotNil(t, defaultGroupPolicy.Scoring)
@@ -543,8 +627,26 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, []string{"claude-3-5-sonnet", "gpt-4o-mini"}, *defaultGroupPolicy.Models)
 	require.NotNil(t, defaultGroupPolicy.MinSamples)
 	assert.Equal(t, 8, *defaultGroupPolicy.MinSamples)
-	require.NotNil(t, defaultGroupPolicy.MinSuccessRate)
-	assert.Equal(t, 75.5, *defaultGroupPolicy.MinSuccessRate)
+	require.NotNil(t, defaultGroupPolicy.DegradeStabilityScore)
+	assert.Equal(t, 75.5, *defaultGroupPolicy.DegradeStabilityScore)
+	require.NotNil(t, defaultGroupPolicy.RecoveryStabilityScore)
+	assert.Equal(t, 85.0, *defaultGroupPolicy.RecoveryStabilityScore)
+	require.NotNil(t, defaultGroupPolicy.FastFailurePenaltyPercent)
+	assert.Equal(t, 40.0, *defaultGroupPolicy.FastFailurePenaltyPercent)
+	require.NotNil(t, defaultGroupPolicy.FastFailureSeconds)
+	assert.Equal(t, 1.0, *defaultGroupPolicy.FastFailureSeconds)
+	require.NotNil(t, defaultGroupPolicy.SlowFailureSeconds)
+	assert.Equal(t, 10.0, *defaultGroupPolicy.SlowFailureSeconds)
+	require.NotNil(t, defaultGroupPolicy.JitterEnabled)
+	assert.True(t, *defaultGroupPolicy.JitterEnabled)
+	require.NotNil(t, defaultGroupPolicy.JitterTolerancePercent)
+	assert.Equal(t, 5.0, *defaultGroupPolicy.JitterTolerancePercent)
+	require.NotNil(t, defaultGroupPolicy.JitterThresholdMultiplier)
+	assert.Equal(t, 3.0, *defaultGroupPolicy.JitterThresholdMultiplier)
+	require.NotNil(t, defaultGroupPolicy.JitterAbsoluteToleranceMs)
+	assert.Equal(t, 1000, *defaultGroupPolicy.JitterAbsoluteToleranceMs)
+	require.NotNil(t, defaultGroupPolicy.JitterBaselineHours)
+	assert.Equal(t, 24, *defaultGroupPolicy.JitterBaselineHours)
 	require.NotNil(t, defaultGroupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *defaultGroupPolicy.CooldownMinutes)
 
@@ -562,21 +664,14 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, []string{"gpt-4o-mini"}, *groupPolicy.Models)
 	require.NotNil(t, groupPolicy.MinSamples)
 	assert.Equal(t, 8, *groupPolicy.MinSamples)
-	require.NotNil(t, groupPolicy.MinSuccessRate)
-	assert.Equal(t, 90.0, *groupPolicy.MinSuccessRate)
+	require.NotNil(t, groupPolicy.DegradeStabilityScore)
+	assert.Equal(t, 90.0, *groupPolicy.DegradeStabilityScore)
+	require.NotNil(t, groupPolicy.RecoveryStabilityScore)
+	assert.Equal(t, 95.0, *groupPolicy.RecoveryStabilityScore)
 	require.NotNil(t, groupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *groupPolicy.CooldownMinutes)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
-	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, response.Data.SmartScheduleStrategy)
-	assert.True(t, response.Data.SmartScheduleStabilityEnabled)
-	assert.Equal(t, validScoring, response.Data.SmartScheduleScoring)
-	assert.Equal(t, channelMonitorSmartScheduleApplyPriorityWeight, response.Data.SmartScheduleApplyMode)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceMinutes)
-	assert.Equal(t, "claude-3-5-sonnet", response.Data.SmartScheduleModel)
-	assert.Equal(t, []string{"claude-3-5-sonnet", "gpt-4o-mini"}, response.Data.SmartScheduleModels)
-	assert.Equal(t, 8, response.Data.SmartScheduleMinSamples)
-	assert.Equal(t, 75.5, response.Data.SmartScheduleMinSuccessRate)
-	assert.Equal(t, 45, response.Data.SmartScheduleCooldownMinutes)
 
 	var option model.Option
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateIntervalOption).First(&option).Error)
@@ -609,49 +704,16 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleEnabledOption).First(&option).Error)
 	assert.Equal(t, "true", option.Value)
 	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleGroupsOption).First(&option).Error)
-	assert.JSONEq(t, `["vip","default"]`, option.Value)
-	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleGroupPoliciesOption).First(&option).Error)
 	var storedGroupPolicies smartScheduleGroupPolicies
 	require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedGroupPolicies))
 	assert.Equal(t, response.Data.SmartScheduleGroupPolicies, storedGroupPolicies)
 	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStrategyOption).First(&option).Error)
-	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, option.Value)
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
+	assert.Equal(t, "10", option.Value)
 	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStabilityOption).First(&option).Error)
-	assert.Equal(t, "true", option.Value)
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleScoringOption).First(&option).Error)
-	var storedScoring channelSmartScheduleScoring
-	require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedScoring))
-	assert.Equal(t, validScoring, storedScoring)
-
-	legacyScoring := validScoring
-	legacyScoring.RelativeWeightEnabled = false
-	legacyScoring.RelativeWeightStartPercent = 0
-	legacyScoring.RelativeWeightFullPercent = 0
-	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_scoring": legacyScoring,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-	assert.Equal(t, normalizeChannelSmartScheduleScoring(legacyScoring), response.Data.SmartScheduleScoring)
-
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleModelOption).First(&option).Error)
-	assert.Equal(t, "claude-3-5-sonnet", option.Value)
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleModelsOption).First(&option).Error)
-	assert.JSONEq(t, `["claude-3-5-sonnet","gpt-4o-mini"]`, option.Value)
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleSuccessRateOption).First(&option).Error)
-	assert.Equal(t, "75.5", option.Value)
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleCooldownOption).First(&option).Error)
-	assert.Equal(t, "45", option.Value)
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRangeOption).First(&option).Error)
+	assert.Equal(t, "360", option.Value)
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"email_notification_enabled": false,
 		"notification_email":         "",
@@ -665,155 +727,27 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
 	assert.False(t, response.Data.EmailNotificationEnabled)
 	assert.Empty(t, response.Data.NotificationEmail)
-	assert.True(t, response.Data.SmartScheduleStabilityEnabled)
-	assert.Equal(t, "claude-3-5-sonnet", response.Data.SmartScheduleModel)
-	assert.Equal(t, []string{"claude-3-5-sonnet", "gpt-4o-mini"}, response.Data.SmartScheduleModels)
+	assert.True(t, response.Data.SmartScheduleEnabled)
+	require.Len(t, response.Data.SmartScheduleGroupPolicies, 2)
 }
 
-func TestChannelSmartScheduleInitializationDefaultsToExcludedAndPreservesParticipation(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption: "false",
-	})
-	require.NoError(t, db.Create([]model.Channel{
-		{Id: 41, Name: "configured channel", Status: common.ChannelStatusEnabled, Group: "vip"},
-		{Id: 42, Name: "new channel", Status: common.ChannelStatusEnabled, Group: "vip"},
-	}).Error)
-	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
-		ChannelId:             41,
-		Ratio:                 1.25,
-		UpdatedTime:           100,
-		SmartScheduleExcluded: false,
-	}).Error)
-
-	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled": true,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-
-	for _, channelId := range []int{41, 42} {
-		var monitor model.ChannelRatioMonitor
-		require.NoError(t, db.Where("channel_id = ?", channelId).First(&monitor).Error)
-		assert.True(t, monitor.SmartScheduleParticipationSet)
-		assert.True(t, monitor.SmartScheduleExcluded)
-	}
-	var configuredMonitor model.ChannelRatioMonitor
-	require.NoError(t, db.Where("channel_id = ?", 41).First(&configuredMonitor).Error)
-	assert.Equal(t, 1.25, configuredMonitor.Ratio)
-
-	require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).
-		Where("channel_id = ?", 41).
-		Update("smart_schedule_excluded", false).Error)
-	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled":          true,
-		"smart_schedule_interval_minutes": 20,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NoError(t, db.Where("channel_id = ?", 41).First(&configuredMonitor).Error)
-	assert.False(t, configuredMonitor.SmartScheduleExcluded)
-
-	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled": false,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled": true,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.NoError(t, db.Where("channel_id = ?", 41).First(&configuredMonitor).Error)
-	assert.False(t, configuredMonitor.SmartScheduleExcluded)
-}
-
-func TestChannelSmartScheduleInitializationAdoptsLegacyParticipationAfterPriorUse(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption: "false",
-	})
-	require.NoError(t, db.Create([]model.Channel{
-		{Id: 45, Name: "legacy participating", Status: common.ChannelStatusEnabled, Group: "vip"},
-		{Id: 46, Name: "legacy excluded", Status: common.ChannelStatusEnabled, Group: "vip"},
-	}).Error)
-	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
-		{ChannelId: 45, LastScheduleStatus: model.ChannelSmartScheduleStatusSucceeded, LastScheduleTime: 100},
-		{ChannelId: 46, SmartScheduleExcluded: true},
-	}).Error)
-
-	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled": true,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-
-	var participating model.ChannelRatioMonitor
-	require.NoError(t, db.Where("channel_id = ?", 45).First(&participating).Error)
-	assert.True(t, participating.SmartScheduleParticipationSet)
-	assert.False(t, participating.SmartScheduleExcluded)
-	var excluded model.ChannelRatioMonitor
-	require.NoError(t, db.Where("channel_id = ?", 46).First(&excluded).Error)
-	assert.True(t, excluded.SmartScheduleParticipationSet)
-	assert.True(t, excluded.SmartScheduleExcluded)
-}
-
-func TestDisablingChannelSmartScheduleStabilityFreezesDegradedChannels(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:   "true",
-		channelMonitorSmartScheduleStabilityOption: "true",
-	})
-	priority := int64(0)
-	weight := uint(0)
-	require.NoError(t, db.Create(&model.Channel{
-		Id: 43, Name: "degraded", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a",
-		Priority: &priority, Weight: &weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.Ability{
-		Group: "vip", Model: "model-a", ChannelId: 43, Enabled: true, Priority: &priority, Weight: weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
-		ChannelId:                   43,
-		SmartScheduleStabilityState: model.ChannelSmartScheduleStabilityDegraded,
-		SmartScheduleStabilityUntil: time.Now().Add(time.Hour).Unix(),
-		SmartScheduleSavedPriority:  90,
-		SmartScheduleSavedWeight:    35,
-	}).Error)
-
-	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_stability_enabled": false,
-	})
-	UpdateChannelMonitorSettings(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-
-	channel, err := model.GetChannelById(43, false)
-	require.NoError(t, err)
-	assert.Zero(t, channel.GetPriority())
-	assert.Zero(t, channel.GetWeight())
-	monitor, err := model.GetChannelRatioMonitor(43)
-	require.NoError(t, err)
-	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, monitor.SmartScheduleStabilityState)
-	assert.NotZero(t, monitor.SmartScheduleStabilityUntil)
-	assert.Equal(t, int64(90), monitor.SmartScheduleSavedPriority)
-	assert.Equal(t, uint(35), monitor.SmartScheduleSavedWeight)
-}
-
-func TestForceResetSmartScheduleQueuesOneTimeTaskAndKeepsParticipation(t *testing.T) {
+func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	require.NoError(t, db.Create([]model.Channel{
 		{Id: 51, Name: "first", Status: common.ChannelStatusEnabled, Group: "vip"},
 		{Id: 52, Name: "second", Status: common.ChannelStatusEnabled, Group: "vip"},
 	}).Error)
-	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
-		{ChannelId: 51, SmartScheduleParticipationSet: true, SmartScheduleExcluded: false},
-		{ChannelId: 52, SmartScheduleParticipationSet: true, SmartScheduleExcluded: false},
-	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"smart_schedule_enabled":     true,
 		"smart_schedule_force_reset": true,
+		"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+			),
+		},
 	})
 	UpdateChannelMonitorSettings(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -825,12 +759,6 @@ func TestForceResetSmartScheduleQueuesOneTimeTaskAndKeepsParticipation(t *testin
 	assert.True(t, *response.Data.SmartScheduleForceResetTaskCreated)
 	assert.NotEmpty(t, response.Data.SmartScheduleForceResetTaskId)
 	assert.Empty(t, response.Data.SmartScheduleForceResetTaskError)
-
-	for _, channelId := range []int{51, 52} {
-		monitor, err := model.GetChannelRatioMonitor(channelId)
-		require.NoError(t, err)
-		assert.False(t, monitor.SmartScheduleExcluded)
-	}
 
 	task, err := model.GetActiveSystemTask(channelMonitorSmartScheduleTaskType)
 	require.NoError(t, err)
@@ -862,6 +790,21 @@ func TestRunChannelSmartScheduleRejectsManualRunWhileDisabled(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "智能调度已禁用")
+}
+
+func TestRunChannelSmartScheduleRejectsManualRunWithoutGroupPolicy(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+	})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/schedule/run", nil)
+	RunChannelMonitorSmartSchedule(ctx)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "请先配置至少一个完整的分组策略")
+	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.ErrorContains(t, err, "请先配置至少一个完整的分组策略")
 }
 
 func TestRunChannelMonitorRatioUpdateReusesActiveTask(t *testing.T) {

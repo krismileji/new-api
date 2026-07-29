@@ -69,32 +69,9 @@ describe('channel monitor settings schema', () => {
       probeResponseEnabled: true,
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
+      smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartScheduleStrategy: 'smart',
-      smartScheduleStabilityEnabled: false,
-      smartScheduleScoring: {
-        stabilityPercent: 50,
-        curveExponent: 1,
-        relativeWeightEnabled: true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
-        smart: {
-          costRatioPercent: 40,
-          firstTokenPercent: 40,
-          tpsPercent: 20,
-        },
-        ratio: {
-          costRatioPercent: 70,
-          firstTokenPercent: 20,
-          tpsPercent: 10,
-        },
-      },
-      smartScheduleApplyMode: 'weight',
       smartSchedulePerformanceMinutes: 60,
-      smartScheduleModels: [],
-      smartScheduleMinSamples: 5,
-      smartScheduleMinSuccessRate: 80,
-      smartScheduleCooldownMinutes: 30,
       smartScheduleForceReset: false,
     })
 
@@ -120,32 +97,9 @@ describe('channel monitor settings schema', () => {
       probeResponseEnabled: false,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: false,
+      smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartScheduleStrategy: 'smart' as const,
-      smartScheduleStabilityEnabled: false,
-      smartScheduleScoring: {
-        stabilityPercent: 50,
-        curveExponent: 1,
-        relativeWeightEnabled: true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
-        smart: {
-          costRatioPercent: 40,
-          firstTokenPercent: 40,
-          tpsPercent: 20,
-        },
-        ratio: {
-          costRatioPercent: 70,
-          firstTokenPercent: 20,
-          tpsPercent: 10,
-        },
-      },
-      smartScheduleApplyMode: 'weight' as const,
       smartSchedulePerformanceMinutes: 60 as const,
-      smartScheduleModels: [],
-      smartScheduleMinSamples: 5,
-      smartScheduleMinSuccessRate: 80,
-      smartScheduleCooldownMinutes: 30,
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
@@ -220,7 +174,47 @@ describe('channel monitor settings schema', () => {
     }
   })
 
-  test('requires valid configurable smart schedule percentages', () => {
+  test('requires a complete explicit policy for every scheduled group', () => {
+    const scoring = {
+      stabilityPercent: 50,
+      curveExponent: 1,
+      relativeWeightEnabled: true,
+      relativeWeightStartPercent: 3,
+      relativeWeightFullPercent: 10,
+      smart: {
+        costRatioPercent: 40,
+        firstTokenPercent: 40,
+        tpsPercent: 20,
+      },
+      ratio: {
+        costRatioPercent: 70,
+        firstTokenPercent: 20,
+        tpsPercent: 10,
+      },
+    }
+    const groupPolicy = {
+      group: 'vip',
+      strategy: 'smart' as const,
+      stabilityEnabled: true,
+      jitterEnabled: true,
+      jitterTolerancePercent: 5,
+      jitterThresholdMultiplier: 3,
+      jitterAbsoluteToleranceMs: 1000,
+      jitterBaselineHours: 24,
+      scoring,
+      applyMode: 'priority_weight' as const,
+      models: [],
+      minSamples: 5,
+      degradeStabilityScore: 90,
+      recoveryStabilityScore: 95,
+      fastFailurePenaltyPercent: 40,
+      fastFailureSeconds: 1,
+      slowFailureSeconds: 10,
+      cooldownMinutes: 30,
+      sampleMode: 'traffic' as const,
+      explorationTrafficPercent: 3,
+      probeIntervalMinutes: 10,
+    }
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
@@ -234,125 +228,263 @@ describe('channel monitor settings schema', () => {
       probeResponseEnabled: false,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: true,
+      smartScheduleGroupPolicies: [groupPolicy],
       smartScheduleIntervalMinutes: 10,
-      smartScheduleStrategy: 'smart' as const,
-      smartScheduleStabilityEnabled: true,
-      smartScheduleScoring: {
-        stabilityPercent: 50,
-        curveExponent: 1,
-        relativeWeightEnabled: true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
-        smart: {
-          costRatioPercent: 40,
-          firstTokenPercent: 40,
-          tpsPercent: 20,
-        },
-        ratio: {
-          costRatioPercent: 70,
-          firstTokenPercent: 20,
-          tpsPercent: 10,
-        },
-      },
-      smartScheduleApplyMode: 'weight' as const,
       smartSchedulePerformanceMinutes: 60 as const,
-      smartScheduleModels: [],
-      smartScheduleMinSamples: 5,
-      smartScheduleMinSuccessRate: 80,
-      smartScheduleCooldownMinutes: 30,
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
-    const groupPolicy = {
-      group: 'vip',
-      strategy: baseSettings.smartScheduleStrategy,
-      stabilityEnabled: baseSettings.smartScheduleStabilityEnabled,
-      scoring: baseSettings.smartScheduleScoring,
-      applyMode: baseSettings.smartScheduleApplyMode,
-      models: baseSettings.smartScheduleModels,
-      minSamples: baseSettings.smartScheduleMinSamples,
-      minSuccessRate: baseSettings.smartScheduleMinSuccessRate,
-      cooldownMinutes: baseSettings.smartScheduleCooldownMinutes,
-    }
 
     assert.equal(schema.safeParse(baseSettings).success, true)
+    for (const jitterTolerancePercent of [0, 50]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterTolerancePercent },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const jitterTolerancePercent of [-0.1, 50.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterTolerancePercent },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const jitterThresholdMultiplier of [1.01, 20]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterThresholdMultiplier },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const jitterThresholdMultiplier of [1, 20.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterThresholdMultiplier },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const jitterAbsoluteToleranceMs of [0, 60_000]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterAbsoluteToleranceMs },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const jitterAbsoluteToleranceMs of [-1, 1.5, 60_001]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterAbsoluteToleranceMs },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const jitterBaselineHours of [1, 720]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [{ ...groupPolicy, jitterBaselineHours }],
+        }).success,
+        true
+      )
+    }
+    for (const jitterBaselineHours of [0, 1.5, 721]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [{ ...groupPolicy, jitterBaselineHours }],
+        }).success,
+        false
+      )
+    }
     assert.equal(
       schema.safeParse({
         ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          smart: {
-            costRatioPercent: 50,
-            firstTokenPercent: 30,
-            tpsPercent: 30,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            scoring: {
+              ...scoring,
+              smart: {
+                costRatioPercent: 50,
+                firstTokenPercent: 30,
+                tpsPercent: 30,
+              },
+            },
           },
-        },
+        ],
       }).success,
       false
     )
     assert.equal(
       schema.safeParse({
         ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          stabilityPercent: 101,
-        },
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, recoveryStabilityScore: 90 },
+        ],
       }).success,
       false
     )
     assert.equal(
       schema.safeParse({
         ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          curveExponent: 5.1,
-        },
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, fastFailureSeconds: 10, slowFailureSeconds: 10 },
+        ],
       }).success,
       false
     )
     assert.equal(
       schema.safeParse({
         ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          relativeWeightStartPercent: -0.1,
-        },
-      }).success,
-      false
-    )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          relativeWeightStartPercent: 10,
-          relativeWeightFullPercent: 10,
-        },
-      }).success,
-      false
-    )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          relativeWeightStartPercent: 0,
-          relativeWeightFullPercent: 100,
-        },
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, fastFailureSeconds: 59.9, slowFailureSeconds: 60 },
+        ],
       }).success,
       true
     )
     assert.equal(
       schema.safeParse({
         ...baseSettings,
-        smartScheduleScoring: {
-          ...baseSettings.smartScheduleScoring,
-          ratio: {
-            costRatioPercent: 0,
-            firstTokenPercent: 50,
-            tpsPercent: 50,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, fastFailureSeconds: 60 },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, applyMode: 'weight', sampleMode: 'traffic' },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            applyMode: 'weight',
+            sampleMode: 'probe',
+            probeIntervalMinutes: 15,
           },
-        },
+        ],
+      }).success,
+      true
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, sampleMode: 'probe', probeIntervalMinutes: 0 },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, scoring: { ...scoring, stabilityPercent: 101 } },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, scoring: { ...scoring, curveExponent: 5.1 } },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            scoring: { ...scoring, relativeWeightStartPercent: -0.1 },
+          },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            scoring: {
+              ...scoring,
+              relativeWeightStartPercent: 10,
+              relativeWeightFullPercent: 10,
+            },
+          },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            scoring: {
+              ...scoring,
+              relativeWeightStartPercent: 0,
+              relativeWeightFullPercent: 100,
+            },
+          },
+        ],
+      }).success,
+      true
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          {
+            ...groupPolicy,
+            scoring: {
+              ...scoring,
+              ratio: {
+                costRatioPercent: 0,
+                firstTokenPercent: 50,
+                tpsPercent: 50,
+              },
+            },
+          },
+        ],
       }).success,
       false
     )
@@ -370,6 +502,25 @@ describe('channel monitor settings schema', () => {
       }).success,
       true
     )
+    const missingPolicyResult = schema.safeParse({
+      ...baseSettings,
+      smartScheduleGroupPolicies: [],
+    })
+    assert.equal(missingPolicyResult.success, false)
+    if (!missingPolicyResult.success) {
+      assert.equal(
+        missingPolicyResult.error.issues[0]?.message,
+        '启用智能调度前请至少配置一个分组策略'
+      )
+    }
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleEnabled: false,
+        smartScheduleGroupPolicies: [],
+      }).success,
+      true
+    )
     assert.equal(
       schema.safeParse({
         ...baseSettings,
@@ -384,6 +535,24 @@ describe('channel monitor settings schema', () => {
       schema.safeParse({
         ...baseSettings,
         smartScheduleGroupPolicies: [{ ...groupPolicy, minSamples: 0 }],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, explorationTrafficPercent: 0 },
+        ],
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, explorationTrafficPercent: 20.1 },
+        ],
       }).success,
       false
     )

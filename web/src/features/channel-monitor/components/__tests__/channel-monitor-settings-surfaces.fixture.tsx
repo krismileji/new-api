@@ -83,18 +83,49 @@ const settings = {
   probe_response_enabled: false,
   relay_response_header_timeout_seconds: 60,
   smart_schedule_enabled: true,
-  smart_schedule_groups: ['default', 'vip'],
-  smart_schedule_group_policies: [{ group: 'vip', strategy: 'ratio' }],
+  smart_schedule_group_policies: [
+    {
+      group: 'vip',
+      strategy: 'ratio',
+      stability_enabled: true,
+      jitter_enabled: true,
+      jitter_tolerance_percent: 5,
+      jitter_threshold_multiplier: 3,
+      jitter_absolute_tolerance_ms: 1000,
+      jitter_baseline_hours: 24,
+      scoring: {
+        stability_percent: 50,
+        curve_exponent: 1,
+        relative_weight_enabled: true,
+        relative_weight_start_percent: 3,
+        relative_weight_full_percent: 10,
+        smart: {
+          cost_ratio_percent: 40,
+          first_token_percent: 40,
+          tps_percent: 20,
+        },
+        ratio: {
+          cost_ratio_percent: 70,
+          first_token_percent: 20,
+          tps_percent: 10,
+        },
+      },
+      apply_mode: 'priority_weight',
+      models: [],
+      min_samples: 5,
+      degrade_stability_score: 90,
+      recovery_stability_score: 95,
+      fast_failure_penalty_percent: 40,
+      fast_failure_seconds: 1,
+      slow_failure_seconds: 10,
+      cooldown_minutes: 30,
+      sample_mode: 'traffic',
+      exploration_traffic_percent: 3,
+      probe_interval_minutes: 10,
+    },
+  ],
   smart_schedule_interval_minutes: 10,
-  smart_schedule_strategy: 'smart',
-  smart_schedule_stability_enabled: true,
-  smart_schedule_apply_mode: 'weight',
   smart_schedule_performance_minutes: 60,
-  smart_schedule_model: 'model-a',
-  smart_schedule_models: ['model-a'],
-  smart_schedule_min_samples: 5,
-  smart_schedule_min_success_rate: 80,
-  smart_schedule_cooldown_minutes: 30,
 } satisfies ChannelMonitorSettings
 
 async function renderSettingsSurface(surface: 'general' | 'schedule') {
@@ -149,35 +180,34 @@ const sheet = document.body.querySelector('[data-slot="sheet-content"]')
 assert.ok(sheet)
 const scheduleSide = sheet.getAttribute('data-side')
 const scheduleTitle = sheet.textContent ?? ''
+const scheduleHeader = sheet.querySelector('[data-slot="sheet-header"]')
+const scheduleForm = sheet.querySelector(
+  '#channel-monitor-smart-schedule-settings-form'
+)
+const scheduleFooter = sheet.querySelector('[data-slot="sheet-footer"]')
+const scheduleUsesChannelDrawerLayout =
+  sheet.classList.contains('h-dvh') &&
+  sheet.classList.contains('w-full') &&
+  sheet.classList.contains('overflow-hidden') &&
+  sheet.classList.contains('p-0') &&
+  sheet.classList.contains('sm:max-w-5xl') &&
+  scheduleHeader?.classList.contains('border-b') === true &&
+  scheduleHeader.classList.contains('sm:px-6') &&
+  scheduleForm?.classList.contains('overflow-y-auto') === true &&
+  scheduleForm.classList.contains('sm:px-6') &&
+  scheduleFooter?.classList.contains('border-t') === true &&
+  scheduleFooter.classList.contains('sm:px-6')
 const scheduleUsesUnifiedTransition =
   sheet.classList.contains('transition-[opacity,translate]') &&
   sheet.classList.contains('duration-300') &&
   sheet.classList.contains('data-starting-style:translate-x-full') &&
   sheet.classList.contains('data-ending-style:translate-x-full') &&
   sheet.classList.contains('motion-reduce:transition-none')
-const groupsFormItem = [
-  ...sheet.querySelectorAll('[data-slot="form-item"]'),
-].find(
-  (item) =>
-    item.querySelector('[data-slot="form-label"]')?.textContent === '参与分组'
-)
-assert.ok(groupsFormItem)
-const groupsControl = groupsFormItem.querySelector(
-  '[data-slot="combobox-chips"]'
-)
-assert.ok(groupsControl)
-const scheduleControlsAligned =
-  groupsFormItem.parentElement?.classList.contains('grid') === true &&
-  groupsFormItem.classList.contains('min-w-0') &&
-  groupsControl.classList.contains('h-8') &&
-  groupsControl.classList.contains('min-h-8')
-const scheduleGroupsCompact =
-  groupsControl.textContent?.includes('已选择 2 个分组')
-const groupPoliciesTab = [...sheet.querySelectorAll('[role="tab"]')].find(
-  (tab) => tab.textContent?.includes('分组策略')
-) as HTMLElement | undefined
-assert.ok(groupPoliciesTab)
-await act(async () => groupPoliciesTab.click())
+const scheduleHasExplicitPolicyScope =
+  scheduleTitle.includes('只有已配置策略的分组参与智能调度') &&
+  scheduleTitle.includes('未配置分组不会参与智能调度')
+const scheduleHasNoImplicitPolicyControls =
+  !scheduleTitle.includes('参与分组') && !scheduleTitle.includes('默认策略')
 
 const policyTable = sheet.querySelector('table')
 assert.ok(policyTable)
@@ -199,13 +229,58 @@ const policyDialogScrollArea = policyDialog.querySelector(
 )
 const policyDialogBlocksHorizontalOverflow =
   policyDialogScrollArea?.classList.contains('overflow-x-hidden') === true
+const policyDialogText = policyDialog.textContent ?? ''
+const policyDialogHasGroupSettingHelp =
+  policyDialog.querySelector('button[aria-label="查看“分组”说明"]') !== null
+const policyDialogHasCompletePolicyControls = [
+  '调度方式',
+  '调整方式',
+  '参与模型',
+  '样本补充方式',
+  '探索流量',
+  '定时探测',
+  '稳定性保护',
+  '稳定性占比',
+  '降级稳定性得分',
+  '恢复稳定性得分',
+  '最少样本',
+  '快速失败惩罚',
+  '快速失败界限',
+  '慢失败界限',
+  '降级时长',
+  '成功延迟抖动',
+  '允许抖动',
+  '判定倍率',
+  '绝对容差',
+  '基线学习周期',
+  '智能调度指标占比',
+  '得分曲线指数',
+  '相对权重拉伸',
+].every((label) => policyDialogText.includes(label))
+const fastFailureInput = policyDialog.querySelector(
+  'input[name="fastFailureSeconds"]'
+)
+const stabilityFailureGrid = fastFailureInput?.closest(
+  '[class*="lg:grid-cols-4"]'
+)
+const policyDialogStabilityInputsAligned =
+  stabilityFailureGrid?.classList.contains('items-start') === true &&
+  [
+    'fastFailurePenaltyPercent',
+    'fastFailureSeconds',
+    'slowFailureSeconds',
+    'cooldownMinutes',
+  ].every((name) => stabilityFailureGrid.querySelector(`input[name="${name}"]`))
+const policyDialogExplainsExplicitScope = policyDialogText.includes(
+  '保存策略后，该分组才会进入智能调度'
+)
 const savePolicyButton = [...policyDialog.querySelectorAll('button')].find(
   (button) => button.textContent?.includes('保存分组策略')
 )
 assert.ok(savePolicyButton)
 await act(async () => savePolicyButton.click())
 const policyRows = [...sheet.querySelectorAll('tbody tr')]
-const matchingDefaultPolicyVisible =
+const newPolicyVisible =
   policyRows.length === 2 &&
   policyRows.some((row) => row.textContent?.includes('default'))
 
@@ -216,11 +291,16 @@ process.stdout.write(
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,
     policyTableScrollable,
-    matchingDefaultPolicyVisible,
-    scheduleControlsAligned,
-    scheduleGroupsCompact,
+    newPolicyVisible,
+    policyDialogExplainsExplicitScope,
+    policyDialogHasGroupSettingHelp,
+    policyDialogHasCompletePolicyControls,
+    policyDialogStabilityInputsAligned,
+    scheduleHasExplicitPolicyScope,
+    scheduleHasNoImplicitPolicyControls,
     scheduleSide,
     scheduleTitle,
+    scheduleUsesChannelDrawerLayout,
     scheduleUsesUnifiedTransition,
   })}\n`
 )

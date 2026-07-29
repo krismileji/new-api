@@ -50,12 +50,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import {
-  Form,
-  FormDescription,
-  FormItem,
-  FormLabel,
-} from '@/components/ui/form'
+import { Form, FormDescription, FormItem } from '@/components/ui/form'
 import {
   Select,
   SelectContent,
@@ -85,14 +80,14 @@ import {
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
 import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
   createChannelMonitorSmartScheduleGroupPolicy,
-  getChannelMonitorSmartScheduleDefaultPolicy,
-  resolveChannelMonitorSmartScheduleGroupPolicy,
 } from '../lib/smart-schedule-group-policy'
 import {
   getChannelMonitorSmartScheduleApplyModeLabel,
   getChannelMonitorSmartScheduleStrategyLabel,
 } from '../lib/smart-schedule-options'
+import { ChannelMonitorSettingLabel } from './channel-monitor-setting-label'
 import { ChannelMonitorSmartScheduleGroupPolicyFields } from './channel-monitor-smart-schedule-group-policy-fields'
 
 type ChannelMonitorSmartScheduleGroupPoliciesProps = {
@@ -101,20 +96,33 @@ type ChannelMonitorSmartScheduleGroupPoliciesProps = {
   modelOptions: string[]
 }
 
-type GroupPolicyRow = {
-  override: ChannelMonitorSmartScheduleGroupPolicyFormValues
-  effective: ChannelMonitorSmartSchedulePolicyFormValues
-  participates: boolean
-}
-
 const EMPTY_GROUP_POLICIES: ChannelMonitorSmartScheduleGroupPolicyFormValues[] =
   []
-const EMPTY_GROUPS: string[] = []
 
 function groupPolicyModelSummary(models: string[]): string {
   if (models.length === 0) return '全部模型'
   if (models.length === 1) return models[0] ?? '全部模型'
   return `${models[0]} 等 ${models.length} 个`
+}
+
+function GroupPolicySampleModeBadge(props: {
+  policy: ChannelMonitorSmartScheduleGroupPolicyFormValues
+}) {
+  if (props.policy.sampleMode === 'traffic') {
+    return (
+      <Badge variant='warning'>
+        探索流量 {props.policy.explorationTrafficPercent}%
+      </Badge>
+    )
+  }
+  if (props.policy.sampleMode === 'probe') {
+    return (
+      <Badge variant='secondary'>
+        每 {props.policy.probeIntervalMinutes} 分钟文本探测
+      </Badge>
+    )
+  }
+  return <Badge variant='outline'>关闭</Badge>
 }
 
 export function ChannelMonitorSmartScheduleGroupPolicies(
@@ -128,27 +136,6 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
     name: 'smartScheduleGroupPolicies',
   })
   const groupPolicies = watchedGroupPolicies ?? EMPTY_GROUP_POLICIES
-  const watchedSelectedGroups = useWatch({
-    control: props.form.control,
-    name: 'smartScheduleGroups',
-  })
-  const selectedGroups = watchedSelectedGroups ?? EMPTY_GROUPS
-  useWatch({
-    control: props.form.control,
-    name: [
-      'smartScheduleStrategy',
-      'smartScheduleStabilityEnabled',
-      'smartScheduleScoring',
-      'smartScheduleApplyMode',
-      'smartScheduleModels',
-      'smartScheduleMinSamples',
-      'smartScheduleMinSuccessRate',
-      'smartScheduleCooldownMinutes',
-    ],
-  })
-  const defaultPolicy = getChannelMonitorSmartScheduleDefaultPolicy(
-    props.form.getValues()
-  )
   const configuredGroups = useMemo(
     () => new Set(groupPolicies.map((policy) => policy.group)),
     [groupPolicies]
@@ -162,47 +149,32 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
     }
     return groups
   }, [configuredGroups, editingGroup, props.groupOptions])
-  const rows = useMemo<GroupPolicyRow[]>(
+  const rows = useMemo(
     () =>
-      groupPolicies
-        .map((override) => ({
-          override,
-          effective: resolveChannelMonitorSmartScheduleGroupPolicy(
-            defaultPolicy,
-            override
-          ),
-          participates:
-            selectedGroups.length === 0 ||
-            selectedGroups.includes(override.group),
-        }))
-        .sort((left, right) =>
-          left.override.group.localeCompare(right.override.group, 'zh-CN')
-        ),
-    [defaultPolicy, groupPolicies, selectedGroups]
+      [...groupPolicies].sort((left, right) =>
+        left.group.localeCompare(right.group, 'zh-CN')
+      ),
+    [groupPolicies]
   )
   const policyForm = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     resolver: zodResolver(
       createChannelMonitorSmartSchedulePolicySchema()
     ) as Resolver<ChannelMonitorSmartSchedulePolicyFormValues>,
-    defaultValues: defaultPolicy,
+    defaultValues: CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
   })
 
   const openEditor = (group?: string) => {
     const targetGroup = group ?? availableGroups[0] ?? ''
-    const override = groupPolicies.find(
-      (policy) => policy.group === targetGroup
-    )
+    const policy = groupPolicies.find((policy) => policy.group === targetGroup)
     setEditingGroup(group ?? null)
     setDraftGroup(targetGroup)
-    policyForm.reset(
-      resolveChannelMonitorSmartScheduleGroupPolicy(defaultPolicy, override)
-    )
+    policyForm.reset(policy ?? CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE)
     setEditorOpen(true)
   }
 
   const changeDraftGroup = (group: string) => {
     setDraftGroup(group)
-    policyForm.reset(defaultPolicy)
+    policyForm.reset(CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE)
   }
 
   const removePolicy = (group: string) => {
@@ -239,7 +211,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
         <div>
           <h3 className='text-sm font-medium'>分组策略</h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            未配置的分组使用默认策略；已添加的分组保存各自完整策略
+            只有已配置策略的分组参与智能调度；删除策略后该分组立即退出调度范围
           </p>
         </div>
         <Button
@@ -259,9 +231,9 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
             <EmptyMedia variant='icon'>
               <HugeiconsIcon icon={Settings02Icon} />
             </EmptyMedia>
-            <EmptyTitle>尚未配置独立分组策略</EmptyTitle>
+            <EmptyTitle>尚未配置分组调度策略</EmptyTitle>
             <EmptyDescription>
-              新增后可分别设置每个分组的调度方式、模型和稳定性规则
+              智能调度不会处理任何分组。新增策略后，该分组才会进入调度范围
             </EmptyDescription>
           </EmptyHeader>
           {availableGroups.length > 0 && (
@@ -285,50 +257,47 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                 <TableHead>分组</TableHead>
                 <TableHead>调度方式</TableHead>
                 <TableHead>调整方式</TableHead>
+                <TableHead>样本补充</TableHead>
                 <TableHead>模型范围</TableHead>
                 <TableHead>稳定性</TableHead>
                 <TableHead className='w-24 text-right'>操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.override.group}>
+              {rows.map((policy) => (
+                <TableRow key={policy.group}>
                   <TableCell>
-                    <div className='flex max-w-44 flex-col items-start gap-1'>
-                      <span
-                        className='max-w-full truncate font-medium'
-                        title={row.override.group}
-                      >
-                        {row.override.group}
-                      </span>
-                      <div className='flex flex-wrap gap-1'>
-                        {!row.participates && (
-                          <Badge variant='warning'>未参与调度</Badge>
-                        )}
-                      </div>
-                    </div>
+                    <span
+                      className='block max-w-44 truncate font-medium'
+                      title={policy.group}
+                    >
+                      {policy.group}
+                    </span>
                   </TableCell>
                   <TableCell>
                     {getChannelMonitorSmartScheduleStrategyLabel(
-                      row.effective.strategy
+                      policy.strategy
                     )}
                   </TableCell>
                   <TableCell>
                     {getChannelMonitorSmartScheduleApplyModeLabel(
-                      row.effective.applyMode
+                      policy.applyMode
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <GroupPolicySampleModeBadge policy={policy} />
                   </TableCell>
                   <TableCell>
                     <span
                       className='block max-w-48 truncate'
-                      title={row.effective.models.join(', ') || '全部模型'}
+                      title={policy.models.join(', ') || '全部模型'}
                     >
-                      {groupPolicyModelSummary(row.effective.models)}
+                      {groupPolicyModelSummary(policy.models)}
                     </span>
                   </TableCell>
                   <TableCell>
-                    {row.effective.stabilityEnabled
-                      ? `${row.effective.minSuccessRate}% / ${row.effective.minSamples} 次`
+                    {policy.stabilityEnabled
+                      ? `降级 ${policy.degradeStabilityScore}% · 恢复 ${policy.recoveryStabilityScore}% · ${policy.minSamples} 次`
                       : '关闭'}
                   </TableCell>
                   <TableCell>
@@ -340,8 +309,8 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                               type='button'
                               variant='ghost'
                               size='icon-sm'
-                              onClick={() => openEditor(row.override.group)}
-                              aria-label={`编辑分组策略 ${row.override.group}`}
+                              onClick={() => openEditor(policy.group)}
+                              aria-label={`编辑分组策略 ${policy.group}`}
                             >
                               <HugeiconsIcon icon={Edit02Icon} />
                             </Button>
@@ -356,14 +325,14 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                               type='button'
                               variant='ghost'
                               size='icon-sm'
-                              onClick={() => removePolicy(row.override.group)}
-                              aria-label={`删除分组策略并使用默认策略 ${row.override.group}`}
+                              onClick={() => removePolicy(policy.group)}
+                              aria-label={`删除分组调度策略 ${policy.group}`}
                             >
                               <HugeiconsIcon icon={Delete02Icon} />
                             </Button>
                           }
                         />
-                        <TooltipContent>删除并使用默认策略</TooltipContent>
+                        <TooltipContent>删除策略</TooltipContent>
                       </Tooltip>
                     </div>
                   </TableCell>
@@ -387,7 +356,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
               {editingGroup ? `编辑 ${editingGroup} 分组策略` : '新增分组策略'}
             </DialogTitle>
             <DialogDescription>
-              保存后该分组使用自己的完整配置，不会随默认策略变化
+              该分组的调度方式、模型范围、评分和稳定性规则独立保存
             </DialogDescription>
           </DialogHeader>
 
@@ -397,7 +366,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
               className='flex min-h-0 min-w-0 flex-col gap-5 overflow-x-hidden overflow-y-auto pr-1'
             >
               <FormItem>
-                <FormLabel>分组</FormLabel>
+                <ChannelMonitorSettingLabel label='分组' helpKey='group' />
                 <Select
                   items={availableGroups.map((group) => ({
                     value: group,
@@ -423,7 +392,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   </SelectContent>
                 </Select>
                 <FormDescription>
-                  分组是否实际参与调度仍由上方“参与分组”控制
+                  保存策略后，该分组才会进入智能调度
                 </FormDescription>
               </FormItem>
 
@@ -444,7 +413,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   setEditorOpen(false)
                 }}
               >
-                删除策略并使用默认
+                删除策略
               </Button>
             )}
             <Button

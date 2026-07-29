@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Route01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   useForm,
@@ -26,6 +28,12 @@ import {
 } from 'react-hook-form'
 import { toast } from 'sonner'
 
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -44,6 +52,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
 import {
   InputGroup,
@@ -52,6 +61,7 @@ import {
 } from '@/components/ui/input-group'
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -63,7 +73,6 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { updateChannelMonitorSettings } from '../api'
-import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from '../constants'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   createChannelMonitorSettingsSchema,
@@ -76,12 +85,12 @@ import {
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   type ChannelMonitorSettingsFormValues,
-  type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
 import {
-  channelMonitorSmartScheduleGroupPoliciesToApi,
-  channelMonitorSmartScheduleGroupPoliciesToForm,
-} from '../lib/smart-schedule-group-policy'
+  createChannelMonitorSettingsUpdatePayload,
+  type ChannelMonitorSettingsUpdateMode,
+} from '../lib/settings-update'
+import { channelMonitorSmartScheduleGroupPoliciesToForm } from '../lib/smart-schedule-group-policy'
 import type { ChannelMonitorSettings } from '../types'
 import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
@@ -109,7 +118,7 @@ type ChannelMonitorSettingsFormProps = {
   modelOptions: string[]
   groupOptions: string[]
   initialSection: ChannelMonitorSettingsSection
-  mode: 'general' | 'schedule'
+  mode: ChannelMonitorSettingsUpdateMode
   open: boolean
   onOpenChange: (open: boolean) => void
   onOpenChangeComplete?: (open: boolean) => void
@@ -225,47 +234,6 @@ export function ChannelMonitorSmartScheduleSettingsSheet(
 
 function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
   const queryClient = useQueryClient()
-  let smartScheduleModels = props.settings.smart_schedule_models ?? []
-  if (smartScheduleModels.length === 0 && props.settings.smart_schedule_model) {
-    smartScheduleModels = [props.settings.smart_schedule_model]
-  }
-  const smartScheduleScoring =
-    props.settings.smart_schedule_scoring ??
-    DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING
-  const smartScheduleDefaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues =
-    {
-      strategy: props.settings.smart_schedule_strategy,
-      stabilityEnabled:
-        props.settings.smart_schedule_stability_enabled ?? false,
-      scoring: {
-        stabilityPercent: smartScheduleScoring.stability_percent,
-        curveExponent: smartScheduleScoring.curve_exponent,
-        relativeWeightEnabled:
-          smartScheduleScoring.relative_weight_enabled ??
-          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_enabled,
-        relativeWeightStartPercent:
-          smartScheduleScoring.relative_weight_start_percent ??
-          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_start_percent,
-        relativeWeightFullPercent:
-          smartScheduleScoring.relative_weight_full_percent ??
-          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.relative_weight_full_percent,
-        smart: {
-          costRatioPercent: smartScheduleScoring.smart.cost_ratio_percent,
-          firstTokenPercent: smartScheduleScoring.smart.first_token_percent,
-          tpsPercent: smartScheduleScoring.smart.tps_percent,
-        },
-        ratio: {
-          costRatioPercent: smartScheduleScoring.ratio.cost_ratio_percent,
-          firstTokenPercent: smartScheduleScoring.ratio.first_token_percent,
-          tpsPercent: smartScheduleScoring.ratio.tps_percent,
-        },
-      },
-      applyMode: props.settings.smart_schedule_apply_mode,
-      models: smartScheduleModels,
-      minSamples: props.settings.smart_schedule_min_samples,
-      minSuccessRate: props.settings.smart_schedule_min_success_rate,
-      cooldownMinutes: props.settings.smart_schedule_cooldown_minutes,
-    }
   const form = useForm<ChannelMonitorSettingsFormValues>({
     resolver: zodResolver(
       createChannelMonitorSettingsSchema()
@@ -291,25 +259,14 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       relayResponseHeaderTimeoutSeconds:
         props.settings.relay_response_header_timeout_seconds ?? 0,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
-      smartScheduleGroups: props.settings.smart_schedule_groups ?? [],
       smartScheduleGroupPolicies:
         channelMonitorSmartScheduleGroupPoliciesToForm(
-          props.settings.smart_schedule_group_policies,
-          smartScheduleDefaultPolicy
+          props.settings.smart_schedule_group_policies
         ),
       smartScheduleIntervalMinutes:
         props.settings.smart_schedule_interval_minutes,
-      smartScheduleStrategy: smartScheduleDefaultPolicy.strategy,
-      smartScheduleStabilityEnabled:
-        smartScheduleDefaultPolicy.stabilityEnabled,
-      smartScheduleScoring: smartScheduleDefaultPolicy.scoring,
-      smartScheduleApplyMode: smartScheduleDefaultPolicy.applyMode,
       smartSchedulePerformanceMinutes:
         props.settings.smart_schedule_performance_minutes,
-      smartScheduleModels: smartScheduleDefaultPolicy.models,
-      smartScheduleMinSamples: smartScheduleDefaultPolicy.minSamples,
-      smartScheduleMinSuccessRate: smartScheduleDefaultPolicy.minSuccessRate,
-      smartScheduleCooldownMinutes: smartScheduleDefaultPolicy.cooldownMinutes,
       smartScheduleForceReset: false,
     },
   })
@@ -347,63 +304,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
     },
   })
   const handleSubmit = form.handleSubmit((values) => {
-    mutation.mutate({
-      auto_update_interval_minutes: values.autoUpdateIntervalMinutes,
-      auto_update_retry_count: values.autoUpdateRetryCount,
-      auto_update_consecutive_failure_limit:
-        values.autoUpdateConsecutiveFailureLimit,
-      auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,
-      auto_enable_on_cost_ratio_recovery: values.autoEnableOnCostRatioRecovery,
-      auto_enable_on_balance_recovery: values.autoEnableOnBalanceRecovery,
-      cost_retention_days: values.costRetentionDays,
-      email_notification_enabled: values.emailNotificationEnabled,
-      notification_email: values.notificationEmail,
-      probe_response_enabled: values.probeResponseEnabled,
-      relay_response_header_timeout_seconds:
-        values.relayResponseHeaderTimeoutSeconds,
-      smart_schedule_enabled: values.smartScheduleEnabled,
-      smart_schedule_groups: values.smartScheduleGroups,
-      smart_schedule_group_policies:
-        channelMonitorSmartScheduleGroupPoliciesToApi(
-          values.smartScheduleGroupPolicies
-        ),
-      smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
-      smart_schedule_strategy: values.smartScheduleStrategy,
-      smart_schedule_stability_enabled: values.smartScheduleStabilityEnabled,
-      smart_schedule_scoring: {
-        stability_percent: values.smartScheduleScoring.stabilityPercent,
-        curve_exponent: values.smartScheduleScoring.curveExponent,
-        relative_weight_enabled:
-          values.smartScheduleScoring.relativeWeightEnabled,
-        relative_weight_start_percent:
-          values.smartScheduleScoring.relativeWeightStartPercent,
-        relative_weight_full_percent:
-          values.smartScheduleScoring.relativeWeightFullPercent,
-        smart: {
-          cost_ratio_percent:
-            values.smartScheduleScoring.smart.costRatioPercent,
-          first_token_percent:
-            values.smartScheduleScoring.smart.firstTokenPercent,
-          tps_percent: values.smartScheduleScoring.smart.tpsPercent,
-        },
-        ratio: {
-          cost_ratio_percent:
-            values.smartScheduleScoring.ratio.costRatioPercent,
-          first_token_percent:
-            values.smartScheduleScoring.ratio.firstTokenPercent,
-          tps_percent: values.smartScheduleScoring.ratio.tpsPercent,
-        },
-      },
-      smart_schedule_apply_mode: values.smartScheduleApplyMode,
-      smart_schedule_performance_minutes:
-        values.smartSchedulePerformanceMinutes,
-      smart_schedule_model: values.smartScheduleModels[0] ?? '',
-      smart_schedule_models: values.smartScheduleModels,
-      smart_schedule_min_samples: values.smartScheduleMinSamples,
-      smart_schedule_min_success_rate: values.smartScheduleMinSuccessRate,
-      smart_schedule_cooldown_minutes: values.smartScheduleCooldownMinutes,
-      smart_schedule_force_reset: values.smartScheduleForceReset,
-    })
+    mutation.mutate(
+      createChannelMonitorSettingsUpdatePayload(props.mode, values)
+    )
   })
 
   if (props.mode === 'schedule') {
@@ -413,44 +316,50 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         onOpenChange={props.onOpenChange}
         onOpenChangeComplete={props.onOpenChangeComplete}
       >
-        <SheetContent
-          side='right'
-          className='w-full gap-0 sm:max-w-3xl lg:max-w-4xl'
-        >
-          <SheetHeader className='shrink-0 border-b px-5 py-4 pr-14'>
-            <SheetTitle>智能调度设置</SheetTitle>
-            <SheetDescription>配置默认策略和分组独立策略</SheetDescription>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+          <SheetHeader className={sideDrawerHeaderClassName()}>
+            <SheetTitle className='flex items-center gap-3'>
+              <IconBadge tone='info' size='title'>
+                <HugeiconsIcon icon={Route01Icon} aria-hidden='true' />
+              </IconBadge>
+              <span>智能调度设置</span>
+            </SheetTitle>
+            <SheetDescription className='mt-1'>
+              按分组配置独立的调度方式、模型范围和稳定性规则
+            </SheetDescription>
           </SheetHeader>
 
           <Form {...form}>
             <form
-              className='flex min-h-0 flex-1 flex-col'
+              id='channel-monitor-smart-schedule-settings-form'
+              className={sideDrawerFormClassName('gap-5')}
               onSubmit={handleSubmit}
             >
-              <div className='min-h-0 flex-1 overflow-y-auto px-5 py-5'>
-                <ChannelMonitorSmartScheduleFields
-                  form={form}
-                  modelOptions={props.modelOptions}
-                  groupOptions={props.groupOptions}
-                />
-              </div>
-
-              <SheetFooter className='shrink-0 flex-row justify-end border-t px-5 py-4'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  onClick={() => props.onOpenChange(false)}
-                  disabled={mutation.isPending}
-                >
-                  取消
-                </Button>
-                <Button type='submit' disabled={mutation.isPending}>
-                  {mutation.isPending && <Spinner data-icon='inline-start' />}
-                  保存
-                </Button>
-              </SheetFooter>
+              <ChannelMonitorSmartScheduleFields
+                form={form}
+                modelOptions={props.modelOptions}
+                groupOptions={props.groupOptions}
+              />
             </form>
           </Form>
+
+          <SheetFooter className={sideDrawerFooterClassName()}>
+            <SheetClose
+              render={
+                <Button variant='outline' disabled={mutation.isPending} />
+              }
+            >
+              取消
+            </SheetClose>
+            <Button
+              form='channel-monitor-smart-schedule-settings-form'
+              type='submit'
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending && <Spinner data-icon='inline-start' />}
+              保存
+            </Button>
+          </SheetFooter>
         </SheetContent>
       </Sheet>
     )

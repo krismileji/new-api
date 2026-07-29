@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -37,13 +36,20 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context                   *gin.Context
+	localErr                  error
+	newAPIError               *types.NewAPIError
+	requestDispatched         bool
+	originalModelName         string
+	firstResponseMilliseconds *float64
+	tokensPerSecond           *float64
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
+	if strings.EqualFold(normalized, "auto") {
+		normalized = ""
+	}
 	if normalized != "" {
 		return normalized
 	}
@@ -173,6 +179,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
+	applyChannelSmartScheduleProbeTestContext(ctx, c)
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -233,7 +240,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
+	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	if isSmartScheduleProbe {
+		if responseRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {
+			responseRequest.MaxOutputTokens = lo.ToPtr(uint(16))
+		}
+	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -292,7 +305,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	if !isSmartScheduleProbe {
+		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	}
 
 	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
 	if err != nil {
@@ -429,12 +444,15 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+	requestDispatched := true
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			context:           c,
+			localErr:          err,
+			newAPIError:       types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			requestDispatched: requestDispatched,
+			originalModelName: info.OriginModelName,
 		}
 	}
 	var httpResp *http.Response
@@ -453,74 +471,106 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				err,
 			))
 			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				context:           c,
+				localErr:          err,
+				newAPIError:       types.NewOpenAIError(err, types.ErrorCodeBadResponse, httpResp.StatusCode),
+				requestDispatched: requestDispatched,
+				originalModelName: info.OriginModelName,
 			}
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    respErr,
-			newAPIError: respErr,
+			context:           c,
+			localErr:          respErr,
+			newAPIError:       respErr,
+			requestDispatched: requestDispatched,
+			originalModelName: info.OriginModelName,
 		}
 	}
 	usage, usageErr := coerceTestUsage(usageA, isStream, info.GetEstimatePromptTokens())
 	if usageErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    usageErr,
-			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:           c,
+			localErr:          usageErr,
+			newAPIError:       types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			requestDispatched: requestDispatched,
+			originalModelName: info.OriginModelName,
 		}
 	}
 	result := w.Result()
 	respBody, err := readTestResponseBody(result.Body, isStream)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			context:           c,
+			localErr:          err,
+			newAPIError:       types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			requestDispatched: requestDispatched,
+			originalModelName: info.OriginModelName,
 		}
 	}
 	if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    bodyErr,
-			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:           c,
+			localErr:          bodyErr,
+			newAPIError:       types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			requestDispatched: requestDispatched,
+			originalModelName: info.OriginModelName,
 		}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
+	probeElapsed := time.Since(tik)
+	var firstResponseMilliseconds *float64
+	if info.IsStream && info.HasSendResponse() {
+		value := float64(info.FirstResponseTime.Sub(info.StartTime)) / float64(time.Millisecond)
+		firstResponseMilliseconds = &value
+	}
+	var tokensPerSecond *float64
+	if info.IsStream && usage.CompletionTokens > 0 && probeElapsed > 0 {
+		value := float64(usage.CompletionTokens) / probeElapsed.Seconds()
+		tokensPerSecond = &value
+	}
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	_, pointerUsage := usageA.(*dto.Usage)
 	_, valueUsage := usageA.(dto.Usage)
 	service.RecordChannelTestDailyCost(c, info, quota, tieredResult, usage, pointerUsage || valueUsage)
-	tok := time.Now()
-	milliseconds := tok.Sub(tik).Milliseconds()
-	consumedTime := float64(milliseconds) / 1000.0
-	if !channelprobe.IsChannelMonitorProbeResponseEnabled() {
+	consumedTime := time.Since(tik).Seconds()
+	if isSmartScheduleProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
 		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+		tokenName := "模型测试"
+		content := "模型测试"
+		if isSmartScheduleProbe {
+			other[model.ChannelMonitorSmartScheduleProbeLogKey] = true
+			tokenName = "智能调度探测"
+			content = "智能调度定时探测"
+		}
 		model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 			ChannelId:        channel.Id,
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
 			ModelName:        info.OriginModelName,
-			TokenName:        "模型测试",
+			TokenName:        tokenName,
 			Quota:            quota,
-			Content:          "模型测试",
+			Content:          content,
 			UseTimeSeconds:   int(consumedTime),
 			IsStream:         info.IsStream,
 			Group:            info.UsingGroup,
 			Other:            other,
 		})
 	}
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	if !isSmartScheduleProbe {
+		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	}
 	return testResult{
-		context:     c,
-		localErr:    nil,
-		newAPIError: nil,
+		context:                   c,
+		localErr:                  nil,
+		newAPIError:               nil,
+		requestDispatched:         requestDispatched,
+		originalModelName:         info.OriginModelName,
+		firstResponseMilliseconds: firstResponseMilliseconds,
+		tokensPerSecond:           tokensPerSecond,
 	}
 }
 
@@ -548,22 +598,48 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usa
 
 	quota := 0
 	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
+		if priceData.CompletionRatio < 0 || priceData.ModelRatio < 0 {
+			return 0, nil
+		}
+		quota, clamp := common.QuotaRoundChecked(
+			(float64(usage.PromptTokens) + float64(usage.CompletionTokens)*priceData.CompletionRatio) * priceData.ModelRatio,
+		)
+		if clamp != nil && info != nil && info.QuotaClamp == nil {
+			info.QuotaClamp = clamp
+		}
+		if clamp != nil && clamp.Kind == common.QuotaClampNaN {
+			return 0, nil
+		}
 		if priceData.ModelRatio != 0 && quota <= 0 {
 			quota = 1
 		}
 		return quota, nil
 	}
 
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	if priceData.ModelPrice < 0 {
+		return 0, nil
+	}
+	quota, clamp := common.QuotaFromFloatChecked(priceData.ModelPrice * common.QuotaPerUnit)
+	if clamp != nil && info != nil && info.QuotaClamp == nil {
+		info.QuotaClamp = clamp
+	}
+	return quota, nil
 }
 
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
+	other[model.ChannelMonitorChannelTestLogKey] = true
 	if tieredResult != nil {
 		service.InjectTieredBillingInfo(other, info, tieredResult)
+	}
+	if info != nil && info.QuotaClamp != nil {
+		adminInfo, _ := other["admin_info"].(map[string]interface{})
+		if adminInfo == nil {
+			adminInfo = make(map[string]interface{})
+			other["admin_info"] = adminInfo
+		}
+		adminInfo["quota_saturation"] = info.QuotaClamp.AuditMap()
 	}
 	return other
 }
@@ -851,8 +927,16 @@ func TestChannel(c *gin.Context) {
 	//	}
 	//}()
 	testModel := c.Query("model")
-	endpointType := c.Query("endpoint_type")
-	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	endpointType := strings.TrimSpace(c.Query("endpoint_type"))
+	if endpointType == "" {
+		endpointType = string(constant.EndpointTypeOpenAIResponse)
+	}
+	isStream := true
+	if streamValue, exists := c.GetQuery("stream"); exists {
+		if parsedStream, parseErr := strconv.ParseBool(streamValue); parseErr == nil {
+			isStream = parsedStream
+		}
+	}
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -864,6 +948,11 @@ func TestChannel(c *gin.Context) {
 		requestCtx = c.Request.Context()
 	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
+	recordManualChannelSmartScheduleProbeResult(
+		channel,
+		result,
+		float64(time.Since(tik))/float64(time.Millisecond),
+	)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,

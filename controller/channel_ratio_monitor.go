@@ -399,10 +399,6 @@ func getChannelMonitorOperator(c *gin.Context) (int, string) {
 }
 
 func GetChannelMonitorOverview(c *gin.Context) {
-	if err := initializeChannelSmartScheduleParticipation(); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {
 		common.ApiError(c, err)

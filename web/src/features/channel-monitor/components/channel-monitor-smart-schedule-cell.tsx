@@ -1,4 +1,3 @@
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,82 +16,168 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import {
-  formatChannelMonitorSmartSchedulePriorityWeightRange,
+  channelMonitorSmartScheduleRouteKey,
+  compareChannelMonitorSmartScheduleRoutesByPool,
+  getChannelMonitorSmartScheduleRouteDisplayStatus,
   summarizeChannelMonitorSmartScheduleChannel,
+  type ChannelMonitorSmartScheduleRouteDisplayStatus,
+  type ChannelMonitorSmartScheduleRoutePlacement,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartScheduleCellProps = {
   routes: readonly ChannelMonitorSmartScheduleRoute[]
+  effectiveRoutes?: readonly ChannelMonitorSmartScheduleRoute[]
+  groupRatios: Readonly<Record<string, number>>
+  placements: ReadonlyMap<string, ChannelMonitorSmartScheduleRoutePlacement>
   pending: boolean
   onUpdate: (excluded: boolean) => void
   onOpen: () => void
+  onClearStability: (route: ChannelMonitorSmartScheduleRoute) => void
+}
+
+const ROUTE_STATUS_LABEL: Record<
+  ChannelMonitorSmartScheduleRouteDisplayStatus,
+  string
+> = {
+  degraded: '稳定性降级',
+  probing: '稳定性试放',
+  exploring: '探索采样',
+  failed: '最近失败',
+  primary: '主候选',
+  candidate: '候选',
+  standby: '备用',
+  excluded: '未参与',
+  unavailable: '不可调度',
 }
 
 export function ChannelMonitorSmartScheduleCell(
   props: ChannelMonitorSmartScheduleCellProps
 ) {
-  const summary = summarizeChannelMonitorSmartScheduleChannel(props.routes)
+  const summary = summarizeChannelMonitorSmartScheduleChannel(
+    props.routes,
+    props.groupRatios
+  )
   if (!summary) {
     return <span className='text-muted-foreground text-sm'>暂无路由</span>
   }
 
   const participating = summary.participatingCount > 0
-  const partiallyParticipating =
-    participating && summary.participatingCount < summary.routeCount
-  const channelEnabled = props.routes.some(
-    (route) => route.channel_status === CHANNEL_STATUS.ENABLED
+  const effectiveRoutes = props.effectiveRoutes ?? props.routes
+  const effectiveSummary = summarizeChannelMonitorSmartScheduleChannel(
+    effectiveRoutes,
+    props.groupRatios
   )
-  const visibleGroups = summary.groups.slice(0, 3)
-  const hiddenGroupCount = summary.groups.length - visibleGroups.length
+  const highlightedRoutes = [...effectiveRoutes]
+    .sort((first, second) =>
+      compareChannelMonitorSmartScheduleRoutesByPool(
+        first,
+        second,
+        props.placements,
+        props.groupRatios
+      )
+    )
+    .slice(0, 2)
+  const hiddenRouteCount = effectiveRoutes.length - highlightedRoutes.length
 
   return (
-    <div className='flex min-w-[230px] flex-col gap-2'>
+    <div className='flex min-w-[280px] flex-col gap-1'>
       <div className='flex items-start gap-2'>
-        <button
-          type='button'
-          className='group focus-visible:ring-ring min-w-0 flex-1 rounded-md text-left outline-none focus-visible:ring-2'
-          onClick={props.onOpen}
-          aria-label={`查看 ${summary.channelName} 的智能调度详情`}
-        >
-          <div className='flex items-center gap-1.5'>
-            <span className='font-medium'>
+        <div className='min-w-0 flex-1'>
+          <button
+            type='button'
+            className='group focus-visible:ring-ring flex w-full items-center gap-1.5 rounded-md text-left outline-none focus-visible:ring-2'
+            onClick={props.onOpen}
+            aria-label={`查看 ${summary.channelName} 的智能调度详情`}
+          >
+            <span className='font-medium tabular-nums'>
               {summary.participatingCount}/{summary.routeCount} 路由参与
+            </span>
+            <span className='text-muted-foreground text-xs tabular-nums'>
+              · {effectiveSummary?.activeCount ?? 0} 可调度
             </span>
             <HugeiconsIcon
               icon={ArrowRight01Icon}
               className='text-muted-foreground transition-transform group-hover:translate-x-0.5'
             />
-          </div>
+          </button>
           <div className='mt-1 flex flex-col gap-1'>
-            {visibleGroups.map((group) => (
-              <div
-                key={group.group}
-                className='flex min-w-0 items-center justify-between gap-2 text-xs'
-              >
-                <span className='min-w-0 truncate' title={group.group}>
-                  {group.group}
-                </span>
-                <span className='shrink-0 font-mono tabular-nums'>
-                  {formatChannelMonitorSmartSchedulePriorityWeightRange(group)}
-                </span>
-              </div>
-            ))}
-            {hiddenGroupCount > 0 ? (
+            {effectiveRoutes.length === 0 ? (
               <span className='text-muted-foreground text-xs'>
-                还有 {hiddenGroupCount} 个分组
+                当前无已配置策略路由
+              </span>
+            ) : null}
+            {highlightedRoutes.map((route) => {
+              const placement = props.placements.get(
+                channelMonitorSmartScheduleRouteKey(route)
+              )
+              const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
+                route,
+                placement
+              )
+              const protectedRoute =
+                status === 'degraded' || status === 'probing'
+              return (
+                <div
+                  key={channelMonitorSmartScheduleRouteKey(route)}
+                  className='bg-muted/40 flex min-w-0 flex-col gap-1 rounded-md px-2 py-1.5 text-xs'
+                >
+                  <button
+                    type='button'
+                    className='hover:text-foreground focus-visible:ring-ring flex min-w-0 items-center justify-between gap-2 rounded-sm text-left transition-colors outline-none focus-visible:ring-2'
+                    onClick={props.onOpen}
+                    aria-label={`查看 ${route.group} ${route.model} 的智能调度详情`}
+                  >
+                    <span
+                      className='min-w-0 truncate font-medium'
+                      title={`${route.group} / ${route.model}`}
+                    >
+                      {route.group} / {route.model}
+                    </span>
+                    <span className='shrink-0 font-mono tabular-nums'>
+                      P{route.priority} / W{route.weight}
+                    </span>
+                  </button>
+                  <div className='text-muted-foreground flex items-center justify-between gap-2'>
+                    {protectedRoute ? (
+                      <Badge
+                        render={<button type='button' />}
+                        variant={
+                          status === 'degraded' ? 'destructive' : 'warning'
+                        }
+                        className='cursor-pointer'
+                        onClick={() => props.onClearStability(route)}
+                        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的${ROUTE_STATUS_LABEL[status]}保护`}
+                      >
+                        {ROUTE_STATUS_LABEL[status]}
+                      </Badge>
+                    ) : (
+                      <span>{ROUTE_STATUS_LABEL[status]}</span>
+                    )}
+                    {placement?.estimatedShare != null ? (
+                      <span className='font-mono tabular-nums'>
+                        预计 {(placement.estimatedShare * 100).toFixed(1)}%
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })}
+            {hiddenRouteCount > 0 ? (
+              <span className='text-muted-foreground text-xs'>
+                还有 {hiddenRouteCount} 条分组模型路由
               </span>
             ) : null}
           </div>
-        </button>
+        </div>
         <div
           className='flex shrink-0 items-center gap-1.5 pt-0.5'
           onClick={(event) => event.stopPropagation()}
@@ -105,20 +190,6 @@ export function ChannelMonitorSmartScheduleCell(
             aria-label={`${participating ? '取消' : '开启'} ${summary.channelName} 的智能调度参与`}
           />
         </div>
-      </div>
-      <div className='flex flex-wrap items-center gap-1.5'>
-        <Badge variant={channelEnabled ? 'secondary' : 'outline'}>
-          {channelEnabled ? '可调度' : '渠道禁用'}
-        </Badge>
-        {partiallyParticipating ? (
-          <Badge variant='outline'>部分参与</Badge>
-        ) : null}
-        {summary.degradedCount > 0 ? (
-          <Badge variant='destructive'>低成功率 {summary.degradedCount}</Badge>
-        ) : null}
-        {summary.probingCount > 0 ? (
-          <Badge variant='warning'>稳定性试放 {summary.probingCount}</Badge>
-        ) : null}
       </div>
     </div>
   )

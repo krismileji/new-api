@@ -4,16 +4,15 @@ import (
 	"errors"
 	"math"
 
-	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
 
 const (
-	channelMonitorSmartScheduleScoringOption = "ChannelMonitorSmartScheduleScoring"
-	channelMonitorScorePercentageTotal       = 100.0
-	channelMonitorMinScoreCurveExponent      = 0.1
-	channelMonitorMaxScoreCurveExponent      = 5.0
-	channelMonitorDefaultWeightSpreadStart   = 3.0
-	channelMonitorDefaultWeightSpreadFull    = 10.0
+	channelMonitorScorePercentageTotal     = 100.0
+	channelMonitorMinScoreCurveExponent    = 0.1
+	channelMonitorMaxScoreCurveExponent    = 5.0
+	channelMonitorDefaultWeightSpreadStart = 3.0
+	channelMonitorDefaultWeightSpreadFull  = 10.0
 )
 
 type channelSmartScheduleMetricPercentages struct {
@@ -50,33 +49,6 @@ func defaultChannelSmartScheduleScoring() channelSmartScheduleScoring {
 			TPSPercent:        10,
 		},
 	}
-}
-
-func parseChannelSmartScheduleScoring(raw string) channelSmartScheduleScoring {
-	defaults := defaultChannelSmartScheduleScoring()
-	if raw == "" {
-		return defaults
-	}
-	var scoring channelSmartScheduleScoring
-	if common.UnmarshalJsonStr(raw, &scoring) != nil {
-		return defaults
-	}
-	scoring = normalizeChannelSmartScheduleScoring(scoring)
-	if validateChannelSmartScheduleScoring(scoring) != nil {
-		return defaults
-	}
-	return scoring
-}
-
-func normalizeChannelSmartScheduleScoring(scoring channelSmartScheduleScoring) channelSmartScheduleScoring {
-	if scoring.RelativeWeightStartPercent != 0 || scoring.RelativeWeightFullPercent != 0 {
-		return scoring
-	}
-	defaults := defaultChannelSmartScheduleScoring()
-	scoring.RelativeWeightEnabled = defaults.RelativeWeightEnabled
-	scoring.RelativeWeightStartPercent = defaults.RelativeWeightStartPercent
-	scoring.RelativeWeightFullPercent = defaults.RelativeWeightFullPercent
-	return scoring
 }
 
 func validateChannelSmartScheduleScoring(scoring channelSmartScheduleScoring) error {
@@ -158,4 +130,179 @@ type channelSmartScheduleScorePart struct {
 	Score     float64
 	Percent   float64
 	Available bool
+}
+
+type channelSmartScheduleJitterMeasurement struct {
+	Available    bool
+	BaselineMs   float64
+	ThresholdMs  float64
+	SampleCount  int64
+	SlowCount    int64
+	AllowedCount int64
+	Penalty      float64
+}
+
+func channelSmartScheduleMeasureJitter(
+	buckets []model.ChannelMonitorDurationBucket,
+	baselineMs float64,
+	minSamples int,
+	policy channelSmartSchedulePolicy,
+) channelSmartScheduleJitterMeasurement {
+	measurement := channelSmartScheduleJitterMeasurement{BaselineMs: baselineMs}
+	if !policy.StabilityEnabled || !policy.JitterEnabled || minSamples <= 0 ||
+		math.IsNaN(baselineMs) || math.IsInf(baselineMs, 0) || baselineMs <= 0 {
+		return measurement
+	}
+	thresholdMs := math.Max(
+		baselineMs*policy.JitterThresholdMultiplier,
+		baselineMs+float64(policy.JitterAbsoluteToleranceMs),
+	)
+	if math.IsNaN(thresholdMs) || math.IsInf(thresholdMs, 0) || thresholdMs <= 0 {
+		return measurement
+	}
+	measurement.ThresholdMs = thresholdMs
+	for _, bucket := range buckets {
+		if bucket.Count <= 0 {
+			continue
+		}
+		measurement.SampleCount += bucket.Count
+		lowerMs := float64(bucket.LowerBoundMs)
+		upperMs := float64(bucket.UpperBoundMs)
+		switch {
+		case lowerMs >= thresholdMs:
+			measurement.SlowCount += bucket.Count
+		case bucket.UpperBoundMs > 0 && upperMs > thresholdMs && bucket.TotalMs > 0:
+			// A bucket can straddle the dynamic threshold. Count only the
+			// samples that must be above it given the bucket's total duration,
+			// which deliberately favors avoiding false jitter releases.
+			excessTotal := bucket.TotalMs - float64(bucket.Count)*thresholdMs
+			if excessTotal > 0 {
+				count := int64(math.Ceil(excessTotal / (upperMs - thresholdMs)))
+				measurement.SlowCount += min(max(count, int64(0)), bucket.Count)
+			}
+		}
+	}
+	if measurement.SampleCount < int64(minSamples) {
+		return measurement
+	}
+	measurement.Available = true
+	allowed := int64(math.Floor(
+		float64(measurement.SampleCount) * policy.JitterTolerancePercent / channelMonitorScorePercentageTotal,
+	))
+	measurement.AllowedCount = min(max(allowed, int64(1)), measurement.SampleCount)
+	measurement.Penalty = float64(max(measurement.SlowCount-measurement.AllowedCount, int64(0)))
+	return measurement
+}
+
+func channelSmartScheduleApplyJitterPenalty(score *float64, sampleCount int64, penalty float64) *float64 {
+	if score == nil || sampleCount <= 0 || math.IsNaN(penalty) || math.IsInf(penalty, 0) || penalty <= 0 {
+		return score
+	}
+	value := *score - penalty/float64(sampleCount)
+	if value < 0 {
+		value = 0
+	} else if value > 1 {
+		value = 1
+	}
+	return &value
+}
+
+func channelSmartScheduleLearnJitterBaseline(
+	current *float64,
+	currentUpdatedAt int64,
+	observedMs float64,
+	now int64,
+	learningHours int,
+) (float64, bool) {
+	if math.IsNaN(observedMs) || math.IsInf(observedMs, 0) || observedMs <= 0 || now <= 0 {
+		return 0, false
+	}
+	if current == nil || math.IsNaN(*current) || math.IsInf(*current, 0) || *current <= 0 {
+		return observedMs, true
+	}
+	if learningHours <= 0 || currentUpdatedAt <= 0 || now <= currentUpdatedAt {
+		return *current, false
+	}
+	alpha := math.Min(1, float64(now-currentUpdatedAt)/float64(learningHours*60*60))
+	learned := *current + (observedMs-*current)*alpha
+	learned = min(max(learned, *current*0.9), *current*1.1)
+	return learned, true
+}
+
+func channelSmartScheduleRetryFailurePenalty(durationMs float64, policy channelSmartSchedulePolicy) float64 {
+	basePenalty := policy.FastFailurePenaltyPercent / channelMonitorScorePercentageTotal
+	if basePenalty < 0 {
+		basePenalty = 0
+	} else if basePenalty > 1 {
+		basePenalty = 1
+	}
+	fastMs := policy.FastFailureSeconds * 1000
+	slowMs := policy.SlowFailureSeconds * 1000
+	if math.IsNaN(durationMs) || math.IsInf(durationMs, 0) || durationMs < 0 ||
+		fastMs <= 0 || slowMs <= fastMs {
+		return basePenalty
+	}
+	if durationMs <= fastMs {
+		return basePenalty
+	}
+	if durationMs >= slowMs {
+		return 1
+	}
+	progress := (durationMs - fastMs) / (slowMs - fastMs)
+	return basePenalty + (1-basePenalty)*progress
+}
+
+func channelSmartScheduleStabilityScore(
+	successCount int64,
+	failureCount int64,
+	finalFailureCount int64,
+	buckets []model.ChannelMonitorFailureDurationBucket,
+	policy channelSmartSchedulePolicy,
+) (*float64, int64) {
+	if successCount < 0 {
+		successCount = 0
+	}
+	if failureCount < 0 {
+		failureCount = 0
+	}
+	sampleCount := successCount + failureCount
+	if sampleCount <= 0 {
+		return nil, 0
+	}
+	if finalFailureCount < 0 {
+		finalFailureCount = 0
+	} else if finalFailureCount > failureCount {
+		finalFailureCount = failureCount
+	}
+	retryFailureLimit := failureCount - finalFailureCount
+	retryFailureCount := int64(0)
+	penalty := float64(finalFailureCount)
+	for _, bucket := range buckets {
+		count := bucket.Count
+		if count <= 0 || retryFailureCount >= retryFailureLimit {
+			continue
+		}
+		if count > retryFailureLimit-retryFailureCount {
+			count = retryFailureLimit - retryFailureCount
+		}
+		durationMs := float64(bucket.LowerBoundMs)
+		if bucket.UpperBoundMs > bucket.LowerBoundMs {
+			durationMs = float64(bucket.LowerBoundMs+bucket.UpperBoundMs) / 2
+		} else if durationMs < policy.SlowFailureSeconds*1000 {
+			durationMs = policy.SlowFailureSeconds * 1000
+		}
+		penalty += float64(count) * channelSmartScheduleRetryFailurePenalty(durationMs, policy)
+		retryFailureCount += count
+	}
+	if retryFailureCount < retryFailureLimit {
+		penalty += float64(retryFailureLimit-retryFailureCount) *
+			channelSmartScheduleRetryFailurePenalty(0, policy)
+	}
+	score := 1 - penalty/float64(sampleCount)
+	if score < 0 {
+		score = 0
+	} else if score > 1 {
+		score = 1
+	}
+	return &score, sampleCount
 }

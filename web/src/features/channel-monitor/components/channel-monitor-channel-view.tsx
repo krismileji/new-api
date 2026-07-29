@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils'
 
 import { getChannelMonitorStatusLabel } from '../constants'
 import { formatChannelMonitorCost, formatMonitorRatio } from '../lib/format'
+import type { ChannelMonitorSmartScheduleRoutePlacement } from '../lib/smart-schedule-summary'
 import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
@@ -84,9 +85,20 @@ type ChannelMonitorChannelViewProps = {
   performanceLoading: boolean
   performanceError: boolean
   smartScheduleRoutesByChannel: Map<number, ChannelMonitorSmartScheduleRoute[]>
-  smartSchedulePendingChannelId: number | null
+  effectiveSmartScheduleRoutesByChannel: Map<
+    number,
+    ChannelMonitorSmartScheduleRoute[]
+  >
+  smartSchedulePlacements: ReadonlyMap<
+    string,
+    ChannelMonitorSmartScheduleRoutePlacement
+  >
+  smartScheduleUpdatePending: boolean
   onUpdateSmartSchedule: (channelId: number, excluded: boolean) => void
   onOpenSmartSchedule: (channel: ChannelMonitorItem) => void
+  onClearSmartScheduleStability: (
+    route: ChannelMonitorSmartScheduleRoute
+  ) => void
   onFetchUpstreamBalance: (channel: ChannelMonitorItem) => void
   onFetchUpstreamRatio: (channel: ChannelMonitorItem) => void
   onToggleStatus: (channel: ChannelMonitorItem) => void
@@ -249,17 +261,19 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
       className='flex flex-col items-start gap-0.5 whitespace-nowrap'
       title={titleParts.join('；')}
     >
-      <span
-        className={cn(
-          'font-mono font-semibold',
-          balanceWarning && 'text-destructive'
-        )}
-      >
-        {upstreamBalanceFormatter.format(props.channel.upstream_balance)}
-      </span>
-      {balanceWarning ? (
-        <span className='text-destructive text-xs'>低于预警值</span>
-      ) : null}
+      <div className='flex items-center gap-1.5'>
+        <span
+          className={cn(
+            'font-mono font-semibold',
+            balanceWarning && 'text-destructive'
+          )}
+        >
+          {upstreamBalanceFormatter.format(props.channel.upstream_balance)}
+        </span>
+        {balanceWarning ? (
+          <Badge variant='destructive'>低于预警值</Badge>
+        ) : null}
+      </div>
       {props.channel.last_balance_error ? (
         <span className='text-warning text-xs'>更新失败</span>
       ) : null}
@@ -280,7 +294,6 @@ function ChannelTodayCostCell(props: {
       className='mt-1 h-auto max-w-full min-w-0 justify-start gap-1.5 p-0 text-left text-xs font-normal'
       title='查看每日成本详情'
     >
-      <span className='text-muted-foreground shrink-0'>今日成本</span>
       {!props.channel.today_cost_configured ? (
         <span className='text-muted-foreground text-xs'>未配置</span>
       ) : (
@@ -534,11 +547,19 @@ export function ChannelMonitorChannelView(
                     routes={
                       props.smartScheduleRoutesByChannel.get(channel.id) ?? []
                     }
-                    pending={props.smartSchedulePendingChannelId === channel.id}
+                    effectiveRoutes={
+                      props.effectiveSmartScheduleRoutesByChannel.get(
+                        channel.id
+                      ) ?? []
+                    }
+                    groupRatios={props.groupRatios}
+                    placements={props.smartSchedulePlacements}
+                    pending={props.smartScheduleUpdatePending}
                     onUpdate={(excluded) =>
                       props.onUpdateSmartSchedule(channel.id, excluded)
                     }
                     onOpen={() => props.onOpenSmartSchedule(channel)}
+                    onClearStability={props.onClearSmartScheduleStability}
                   />
                 </TableCell>
                 <TableCell className='min-w-[112px]'>

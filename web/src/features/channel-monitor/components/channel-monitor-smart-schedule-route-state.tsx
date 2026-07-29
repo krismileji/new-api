@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { Badge } from '@/components/ui/badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 
+import { channelMonitorSmartScheduleRouteParticipates } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartScheduleRouteStateProps = {
@@ -32,33 +33,40 @@ export function ChannelMonitorSmartScheduleRouteState(
   const route = props.route
   if (route.state.stability_state === 'degraded') {
     return (
-      <button
-        type='button'
-        className='focus-visible:ring-ring rounded-md outline-none focus-visible:ring-2'
+      <Badge
+        render={<button type='button' />}
+        variant='destructive'
+        className='cursor-pointer'
         onClick={props.onProtectedStatusClick}
-        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的低成功率保护`}
+        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`}
       >
-        <Badge variant='destructive'>低成功率</Badge>
-      </button>
+        稳定性降级
+      </Badge>
     )
   }
   if (route.state.stability_state === 'probing') {
     return (
-      <button
-        type='button'
-        className='focus-visible:ring-ring rounded-md outline-none focus-visible:ring-2'
+      <Badge
+        render={<button type='button' />}
+        variant='warning'
+        className='cursor-pointer'
         onClick={props.onProtectedStatusClick}
         aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`}
       >
-        <Badge variant='warning'>稳定性试放</Badge>
-      </button>
+        稳定性试放
+      </Badge>
     )
+  }
+  if (route.state.exploration_active) {
+    return <Badge variant='warning'>探索采样</Badge>
   }
   if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
     return <Badge variant='destructive'>渠道禁用</Badge>
   }
   if (!route.enabled) return <Badge variant='destructive'>路由禁用</Badge>
-  if (route.state.excluded) return <Badge variant='outline'>未参与</Badge>
+  if (!channelMonitorSmartScheduleRouteParticipates(route)) {
+    return <Badge variant='outline'>未参与</Badge>
+  }
   if (route.state.last_schedule_status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>
   }

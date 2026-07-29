@@ -18,7 +18,12 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	DB = db
-	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(
+		&ChannelDailyCost{},
+		&ChannelDailyAPIKeyCost{},
+		&ChannelMonitorMinuteMetric{},
+		&ChannelMonitorMinuteDurationBucket{},
+	))
 	t.Cleanup(func() {
 		DB = originalDB
 		require.NoError(t, sqlDB.Close())
@@ -39,12 +44,17 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 		{MinuteStart: cutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", APIKeyKey: "old"},
 		{MinuteStart: cutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", APIKeyKey: "keep"},
 	}).Error)
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteDurationBucket{
+		{MinuteStart: cutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", BucketIndex: 1, Count: 1, TotalMs: 30},
+		{MinuteStart: cutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", BucketIndex: 2, Count: 1, TotalMs: 70},
+	}).Error)
 
 	result, err := DeleteChannelMonitorCostsBefore(context.Background(), cutoff, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)
 	assert.Equal(t, int64(2), result.APIKeyRowsDeleted)
 	assert.Equal(t, int64(1), result.MinuteRowsDeleted)
+	assert.Equal(t, int64(1), result.DurationBucketRowsDeleted)
 
 	var channelRows []ChannelDailyCost
 	require.NoError(t, db.Order("channel_id ASC").Find(&channelRows).Error)
@@ -60,6 +70,11 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	require.NoError(t, db.Find(&minuteRows).Error)
 	require.Len(t, minuteRows, 1)
 	assert.Equal(t, 2, minuteRows[0].ChannelId)
+
+	var durationBucketRows []ChannelMonitorMinuteDurationBucket
+	require.NoError(t, db.Find(&durationBucketRows).Error)
+	require.Len(t, durationBucketRows, 1)
+	assert.Equal(t, 2, durationBucketRows[0].ChannelId)
 }
 
 func TestDeleteChannelMonitorCostsBeforeRejectsInvalidArguments(t *testing.T) {

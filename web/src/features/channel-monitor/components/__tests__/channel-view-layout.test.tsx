@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { after, describe, test } from 'node:test'
 
+import { Window } from 'happy-dom'
 import { createInstance } from 'i18next'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
@@ -26,6 +27,7 @@ import { I18nextProvider } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
+import { placeChannelMonitorSmartScheduleRoutes } from '../../lib/smart-schedule-summary'
 import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleRoute,
@@ -34,6 +36,35 @@ import type {
 import { ChannelMonitorChannelView } from '../channel-monitor-channel-view'
 
 const noop = () => {}
+const domWindow = new Window()
+const domGlobals = [
+  'window',
+  'document',
+  'navigator',
+  'HTMLElement',
+  'Node',
+  'Element',
+  'Event',
+  'CustomEvent',
+  'MutationObserver',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'getComputedStyle',
+] as const
+
+for (const key of domGlobals) {
+  Object.defineProperty(globalThis, key, {
+    configurable: true,
+    value: domWindow[key],
+  })
+}
+
+const { act } = await import('react')
+const { createRoot } = await import('react-dom/client')
+const reactTestGlobals = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean
+}
+reactTestGlobals.IS_REACT_ACT_ENVIRONMENT = true
 const testI18n = createInstance()
 
 await testI18n.init({
@@ -128,6 +159,22 @@ function createSmartScheduleRoute(): ChannelMonitorSmartScheduleRoute {
       stability_since: 0,
       stability_saved_priority: 0,
       stability_saved_weight: 0,
+      exploration_active: false,
+      exploration_since: 0,
+      exploration_saved_priority: 0,
+      exploration_saved_weight: 0,
+      probe_window_start: 0,
+      probe_last_time: 0,
+      probe_last_success: false,
+      probe_last_error: '',
+      probe_sample_count: 0,
+      probe_success_count: 0,
+      probe_failure_duration_sample_count: 0,
+      probe_average_failure_duration_ms: null,
+      probe_first_token_sample_count: 0,
+      probe_average_first_token_ms: null,
+      probe_tps_sample_count: 0,
+      probe_average_tps: null,
     },
   }
 }
@@ -154,9 +201,16 @@ function renderView(
         smartScheduleRoutesByChannel={
           new Map([[channel.id, smartScheduleRoutes]])
         }
-        smartSchedulePendingChannelId={null}
+        effectiveSmartScheduleRoutesByChannel={
+          new Map([[channel.id, smartScheduleRoutes]])
+        }
+        smartSchedulePlacements={placeChannelMonitorSmartScheduleRoutes(
+          smartScheduleRoutes
+        )}
+        smartScheduleUpdatePending={false}
         onUpdateSmartSchedule={noop}
         onOpenSmartSchedule={noop}
+        onClearSmartScheduleStability={noop}
         onFetchUpstreamBalance={noop}
         onFetchUpstreamRatio={noop}
         onToggleStatus={noop}
@@ -346,19 +400,22 @@ describe('channel monitor channel view timestamps', () => {
     assert.equal(cells[2]?.includes('更新：'), false)
   })
 
-  test('places today cost between the upstream balance and update time', () => {
+  test('places the cost amount between upstream balance and update time without a prefix', () => {
     const channel = createChannel()
     const cells = getTableCells(renderView(channel))
     const balanceCell = cells[1] ?? ''
 
-    assert.ok(balanceCell.indexOf('42.5') < balanceCell.indexOf('今日成本'))
+    const costText = formatChannelMonitorCost(1.23456)
+
+    assert.doesNotMatch(balanceCell, />\s*今日成本\s*</)
+    assert.ok(balanceCell.indexOf('42.5') < balanceCell.indexOf(costText))
     assert.ok(
-      balanceCell.indexOf('今日成本') <
+      balanceCell.indexOf(costText) <
         balanceCell.indexOf(
           `更新：${formatTimestampToDate(channel.last_balance_time)}`
         )
     )
-    assert.ok(balanceCell.includes(formatChannelMonitorCost(1.23456)))
+    assert.ok(balanceCell.includes(costText))
     assert.equal(balanceCell.includes('不完整'), false)
     assert.match(balanceCell, /<button\b/)
     assert.ok(balanceCell.includes('查看渠道 测试渠道 的今日成本详情'))
@@ -369,10 +426,29 @@ describe('channel monitor channel view timestamps', () => {
       renderView(createChannel({ today_cost_configured: false }))
     )
 
-    assert.ok(cells[1]?.includes('今日成本'))
+    assert.doesNotMatch(cells[1] ?? '', />\s*今日成本\s*</)
     assert.ok(cells[1]?.includes('未配置'))
     assert.match(cells[1] ?? '', /<button\b/)
     assert.ok(cells[1]?.includes('查看渠道 测试渠道 的今日成本详情'))
+  })
+
+  test('shows the low-balance warning badge immediately after the balance', () => {
+    const channel = createChannel()
+    assert.ok(channel.upstream)
+    const cells = getTableCells(
+      renderView(
+        createChannel({
+          upstream_balance: 4.5,
+          upstream: {
+            ...channel.upstream,
+            balance_warning_threshold: 5,
+          },
+        })
+      )
+    )
+    const balanceCell = cells[1] ?? ''
+
+    assert.match(balanceCell, /4\.5[\s\S]*data-slot="badge"[\s\S]*低于预警值/)
   })
 
   test('keeps zero visible without exposing unresolved settlements', () => {
@@ -462,8 +538,116 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(headers[6]?.includes('并发限制'))
     assert.ok(headers[7]?.includes('智能调度'))
     assert.ok(smartScheduleCell.includes('1/1 路由参与'))
-    assert.match(smartScheduleCell, /default[\s\S]*P80 \/ W60/)
+    assert.match(smartScheduleCell, /default \/ test-model[\s\S]*P80 \/ W60/)
+    assert.ok(smartScheduleCell.includes('预计 100.0%'))
     assert.ok(smartScheduleCell.includes('查看 测试渠道 的智能调度详情'))
+  })
+
+  test('disables every channel participation switch while an update is pending', async () => {
+    const primaryChannel = createChannel({ id: 7, name: '主渠道' })
+    const standbyChannel = createChannel({ id: 8, name: '备用渠道' })
+    const primaryRoute = {
+      ...createSmartScheduleRoute(),
+      channel_name: primaryChannel.name,
+    }
+    const standbyRoute = {
+      ...createSmartScheduleRoute(),
+      channel_id: standbyChannel.id,
+      channel_name: standbyChannel.name,
+      state: {
+        ...createSmartScheduleRoute().state,
+        id: 2,
+        channel_id: standbyChannel.id,
+      },
+    }
+    const routesByChannel = new Map([
+      [primaryChannel.id, [primaryRoute]],
+      [standbyChannel.id, [standbyRoute]],
+    ])
+    const placements = placeChannelMonitorSmartScheduleRoutes([
+      primaryRoute,
+      standbyRoute,
+    ])
+    const updates: Array<{ channelId: number; excluded: boolean }> = []
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+
+    const renderChannelView = (pending: boolean) => (
+      <I18nextProvider i18n={testI18n}>
+        <ChannelMonitorChannelView
+          channels={[primaryChannel, standbyChannel]}
+          groupRatios={{ default: 1 }}
+          groupCoefficients={{ default: 1 }}
+          performanceByChannel={new Map()}
+          successByChannel={new Map()}
+          successMetricsAvailable={false}
+          performanceRangeLabel='24 小时'
+          performanceLoading={false}
+          performanceError={false}
+          smartScheduleRoutesByChannel={routesByChannel}
+          effectiveSmartScheduleRoutesByChannel={routesByChannel}
+          smartSchedulePlacements={placements}
+          smartScheduleUpdatePending={pending}
+          onUpdateSmartSchedule={(channelId, excluded) =>
+            updates.push({ channelId, excluded })
+          }
+          onOpenSmartSchedule={noop}
+          onClearSmartScheduleStability={noop}
+          onFetchUpstreamBalance={noop}
+          onFetchUpstreamRatio={noop}
+          onToggleStatus={noop}
+          onTestConnection={noop}
+          onEditConcurrency={noop}
+          onEditGroups={noop}
+          onConfigureUpstream={noop}
+          onViewHistory={noop}
+          onOpenCostHistory={noop}
+          onOpenSuccessDetail={noop}
+          fetchingBalanceChannelId={null}
+          fetchingRatioChannelId={null}
+          updatingStatusChannelId={null}
+        />
+      </I18nextProvider>
+    )
+
+    await act(async () => {
+      root.render(renderChannelView(false))
+    })
+
+    const primarySwitch = container.querySelector<HTMLElement>(
+      '[aria-label="取消 主渠道 的智能调度参与"]'
+    )
+    const standbySwitch = container.querySelector<HTMLElement>(
+      '[aria-label="取消 备用渠道 的智能调度参与"]'
+    )
+    assert.ok(primarySwitch)
+    assert.ok(standbySwitch)
+    assert.equal(primarySwitch.hasAttribute('data-disabled'), false)
+    assert.equal(standbySwitch.hasAttribute('data-disabled'), false)
+
+    await act(async () => {
+      standbySwitch.click()
+    })
+    assert.deepEqual(updates, [
+      { channelId: standbyChannel.id, excluded: true },
+    ])
+
+    await act(async () => {
+      root.render(renderChannelView(true))
+    })
+    assert.equal(primarySwitch.hasAttribute('data-disabled'), true)
+    assert.equal(standbySwitch.hasAttribute('data-disabled'), true)
+
+    await act(async () => {
+      primarySwitch.click()
+    })
+    assert.deepEqual(updates, [
+      { channelId: standbyChannel.id, excluded: true },
+    ])
+
+    await act(async () => root.unmount())
+    container.remove()
   })
 
   test('keeps manual upstream ratio editing out of the operation column', () => {
@@ -490,4 +674,8 @@ describe('channel monitor channel view timestamps', () => {
     )
     assert.ok(markup.includes('tabindex="0"'))
   })
+})
+
+after(() => {
+  domWindow.close()
 })

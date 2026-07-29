@@ -208,6 +208,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	retryRouting := newRelayRetryRouting()
 	finalRetryLogPending := false
+	finalRetryAttemptDuration := time.Duration(0)
 
 	for retryParam.GetRetry() <= common.RetryTimes {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -240,7 +241,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		addUsedChannel(c, channel.Id)
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		attemptStartedAt := time.Now()
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
+		attemptDuration := time.Since(attemptStartedAt)
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -255,21 +258,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			retryParam.IncreaseRetry()
 			retryRouting.exclude(channel.Id)
 		}
-		processChannelError(c,
+		processChannelErrorWithTiming(c,
 			*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 				common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-			newAPIError, shouldRetry)
+			newAPIError, shouldRetry, &attemptDuration, false)
 		finalRetryLogPending = shouldRetry
+		if shouldRetry {
+			finalRetryAttemptDuration = attemptDuration
+		}
 
 		if !shouldRetry {
 			break
 		}
 	}
 	if newAPIError != nil && finalRetryLogPending {
-		processChannelError(c,
+		processChannelErrorWithTiming(c,
 			*types.NewChannelError(c.GetInt("channel_id"), c.GetInt("channel_type"), c.GetString("channel_name"),
 				common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey), "", false),
-			newAPIError, false)
+			newAPIError, false, &finalRetryAttemptDuration, true)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -401,13 +407,19 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
-	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
-	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
-		gopool.Go(func() {
-			service.DisableChannel(channelError, err.ErrorWithStatusCode())
-		})
+	processChannelErrorWithTiming(c, channelError, err, isRetryAttempt, nil, false)
+}
+
+func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool, attemptDuration *time.Duration, finalRetrySummary bool) {
+	if !finalRetrySummary {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
+		// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
+		if service.ShouldDisableChannel(err) && channelError.AutoBan {
+			gopool.Go(func() {
+				service.DisableChannel(channelError, err.ErrorWithStatusCode())
+			})
+		}
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
@@ -431,6 +443,16 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		if attemptDuration != nil {
+			attemptDurationMs := attemptDuration.Milliseconds()
+			if attemptDurationMs < 0 {
+				attemptDurationMs = 0
+			}
+			other["channel_monitor_attempt_duration_ms"] = attemptDurationMs
+		}
+		if finalRetrySummary {
+			other["channel_monitor_final_retry_summary"] = true
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)

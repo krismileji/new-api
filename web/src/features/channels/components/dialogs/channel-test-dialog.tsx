@@ -89,6 +89,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 
 import { updateChannel } from '../../api'
 import {
+  CHANNEL_TEST_DEFAULTS,
   channelsQueryKeys,
   formatResponseTime,
   handleTestChannel,
@@ -188,7 +189,7 @@ function getLatestChannelTestCachePatch(
 }
 
 const endpointTypeOptions: Array<{ value: string; label: string }> = [
-  { value: 'auto', label: 'Auto detect (default)' },
+  { value: 'auto', label: '自动检测' },
   { value: 'openai', label: 'OpenAI (/v1/chat/completions)' },
   { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
   {
@@ -353,8 +354,12 @@ function ChannelTestDialogContent({
   const batchProgressToastIdRef = useRef<ReturnType<
     typeof toast.loading
   > | null>(null)
-  const [endpointType, setEndpointType] = useState('auto')
-  const [isStreamTest, setIsStreamTest] = useState(false)
+  const [endpointType, setEndpointType] = useState<string>(
+    CHANNEL_TEST_DEFAULTS.endpointType
+  )
+  const [isStreamTest, setIsStreamTest] = useState<boolean>(
+    CHANNEL_TEST_DEFAULTS.stream
+  )
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -420,8 +425,8 @@ function ChannelTestDialogContent({
 
   const resetState = useCallback(() => {
     batchStopRequestedRef.current = true
-    setEndpointType('auto')
-    setIsStreamTest(false)
+    setEndpointType(CHANNEL_TEST_DEFAULTS.endpointType)
+    setIsStreamTest(CHANNEL_TEST_DEFAULTS.stream)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -581,8 +586,8 @@ function ChannelTestDialogContent({
           {
             channelName: currentRow.name,
             testModel: model,
-            endpointType: endpointType === 'auto' ? undefined : endpointType,
-            stream: effectiveStreamTest || undefined,
+            endpointType,
+            stream: effectiveStreamTest,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -1025,7 +1030,7 @@ function ChannelTestDialogContent({
                 <SelectTrigger id='endpoint-type' className='w-full min-w-0'>
                   <SelectValue
                     className='min-w-0 truncate'
-                    placeholder={t('Auto detect (default)')}
+                    placeholder={t('OpenAI Responses (/v1/responses)')}
                   />
                 </SelectTrigger>
                 <SelectContent

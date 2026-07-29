@@ -54,64 +54,56 @@
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
-| `smart_schedule_groups` | `ChannelMonitorSmartScheduleGroups` | `[]` | 最多 100 个，每项最长 64 字符；空数组表示全部分组 |
-| `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个分组的完整独立策略 |
+| `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个完整分组策略；未配置分组不参与调度 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
-| `smart_schedule_strategy` | `ChannelMonitorSmartScheduleStrategy` | `smart` | `smart`、`ratio`、`first_token`、`tps` |
-| `smart_schedule_stability_enabled` | `ChannelMonitorSmartScheduleStabilityEnabled` | `false` | 布尔值 |
-| `smart_schedule_scoring` | `ChannelMonitorSmartScheduleScoring` | 见下方 | 稳定性、策略指标百分比、得分曲线指数和相对权重拉伸 |
-| `smart_schedule_apply_mode` | `ChannelMonitorSmartScheduleApplyMode` | `weight` | `weight`、`priority_weight` |
 | `smart_schedule_performance_minutes` | `ChannelMonitorSmartSchedulePerformanceMinutes` | `60` | `15`、`60`、`360`、`1440` |
-| `smart_schedule_models` | `ChannelMonitorSmartScheduleModels` | `[]` | 最多 100 个，每项最长 255 字符 |
-| `smart_schedule_min_samples` | `ChannelMonitorSmartScheduleMinSamples` | `5` | `1..100000` |
-| `smart_schedule_min_success_rate` | `ChannelMonitorSmartScheduleMinSuccessRate` | `80` | `0..100` |
-| `smart_schedule_cooldown_minutes` | `ChannelMonitorSmartScheduleCooldownMinutes` | `30` | `1..525600` |
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
 
-`smart_schedule_scoring` 必须提交完整对象；两个策略的指标占比各自合计为 `100%`，曲线指数范围为 `0.1..5`。相对权重拉伸的两个分差范围均为 `0..100`，且完整拉伸分差必须大于开始拉伸分差：
+`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
-```json
-{
-  "stability_percent": 50,
-  "curve_exponent": 1,
-  "relative_weight_enabled": true,
-  "relative_weight_start_percent": 3,
-  "relative_weight_full_percent": 10,
-  "smart": {
-    "cost_ratio_percent": 40,
-    "first_token_percent": 40,
-    "tps_percent": 20
-  },
-  "ratio": {
-    "cost_ratio_percent": 70,
-    "first_token_percent": 20,
-    "tps_percent": 10
-  }
-}
-```
-
-旧客户端提交不含三个相对权重字段的完整评分对象时，后端自动补为 `true / 3 / 10` 后保存。关闭相对权重拉伸时仍需保留有效的开始和完整分差，便于再次开启。
-
-`smart_schedule_group_policies` 以分组名为唯一键。每项保存完整独立策略，即使所有值与默认策略相同也不会被删除。为兼容旧客户端，可以省略部分字段；后端会用本次请求处理后的默认策略补齐，保存和响应时均返回完整字段。`models: []` 表示该分组使用全部模型。`scoring` 一旦提供，仍须提交与全局评分相同结构的完整对象：
+评分对象的两组业务指标占比各自必须合计为 `100%`；曲线指数范围为 `0.1..5`。相对权重拉伸的两个分差范围均为 `0..100`，且完整拉伸分差必须大于开始拉伸分差。完整策略示例：
 
 ```json
 [
   {
     "group": "vip",
-    "strategy": "first_token",
+    "strategy": "smart",
     "apply_mode": "priority_weight",
-    "models": ["gpt-4.1", "claude-sonnet-4-5"],
+    "models": ["gpt-4.1"],
     "stability_enabled": true,
     "min_samples": 20,
-    "min_success_rate": 95,
-    "cooldown_minutes": 10
-  },
-  {
-    "group": "default",
-    "strategy": "ratio",
-    "stability_enabled": false,
-    "models": []
+    "degrade_stability_score": 90,
+    "recovery_stability_score": 95,
+    "fast_failure_penalty_percent": 40,
+    "fast_failure_seconds": 1,
+    "slow_failure_seconds": 10,
+    "jitter_enabled": true,
+    "jitter_tolerance_percent": 5,
+    "jitter_threshold_multiplier": 3,
+    "jitter_absolute_tolerance_ms": 1000,
+    "jitter_baseline_hours": 24,
+    "cooldown_minutes": 30,
+    "sample_mode": "probe",
+    "exploration_traffic_percent": 3,
+    "probe_interval_minutes": 10,
+    "scoring": {
+      "stability_percent": 50,
+      "curve_exponent": 1,
+      "relative_weight_enabled": true,
+      "relative_weight_start_percent": 3,
+      "relative_weight_full_percent": 10,
+      "smart": {
+        "cost_ratio_percent": 40,
+        "first_token_percent": 40,
+        "tps_percent": 20
+      },
+      "ratio": {
+        "cost_ratio_percent": 70,
+        "first_token_percent": 20,
+        "tps_percent": 10
+      }
+    }
   }
 ]
 ```
@@ -122,6 +114,7 @@
 | --- | --- | --- |
 | `channel_ratio_monitor` | 设置的更新间隔或手动 API | 更新倍率和余额、执行策略、通知和恢复 |
 | `channel_smart_schedule` | 设置的调度间隔、手动 API 或强制重置 | 计算并应用优先级和权重 |
+| `channel_smart_schedule_probe` | 启用定时探测的分组所配置的最短探测间隔 | 为到期文本路由补充流式 Responses 样本；渠道并发已满时跳过 |
 | `channel_monitor_cost_retention` | 默认每天一次 | 删除超出保留期的日成本数据 |
 
 同类型业务任务已经排队或运行时，手动触发会返回现有任务并标记 `created=false`。任务结果限制失败明细数量，避免单次大规模故障无限放大任务记录。
@@ -132,15 +125,14 @@
 
 自动迁移包含以下模型：
 
-- `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制；旧渠道级调度字段仅用于升级迁移。
+- `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制。
 - `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
+- `ChannelMonitorMinuteDurationBucket`：按分钟保存首字延迟分布，供异常抖动判断和稳健延迟评分使用。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
 性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，页面只读取分钟表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
-
-升级时会把旧渠道级智能调度数据一次性迁移到 `ChannelSmartScheduleRouteState`，之后所有设置、接口、任务和选路都只使用分组模型路由。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

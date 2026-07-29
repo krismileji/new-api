@@ -32,17 +32,8 @@ const (
 	channelMonitorGroupCoefficientsOption                  = "ChannelMonitorGroupCoefficients"
 	channelMonitorChannelOrderOption                       = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption               = "ChannelMonitorSmartScheduleEnabled"
-	channelMonitorSmartScheduleGroupsOption                = "ChannelMonitorSmartScheduleGroups"
 	channelMonitorSmartScheduleIntervalOption              = "ChannelMonitorSmartScheduleIntervalMinutes"
-	channelMonitorSmartScheduleStrategyOption              = "ChannelMonitorSmartScheduleStrategy"
-	channelMonitorSmartScheduleStabilityOption             = "ChannelMonitorSmartScheduleStabilityEnabled"
-	channelMonitorSmartScheduleApplyModeOption             = "ChannelMonitorSmartScheduleApplyMode"
 	channelMonitorSmartScheduleRangeOption                 = "ChannelMonitorSmartSchedulePerformanceMinutes"
-	channelMonitorSmartScheduleModelOption                 = "ChannelMonitorSmartScheduleModel"
-	channelMonitorSmartScheduleModelsOption                = "ChannelMonitorSmartScheduleModels"
-	channelMonitorSmartScheduleSamplesOption               = "ChannelMonitorSmartScheduleMinSamples"
-	channelMonitorSmartScheduleSuccessRateOption           = "ChannelMonitorSmartScheduleMinSuccessRate"
-	channelMonitorSmartScheduleCooldownOption              = "ChannelMonitorSmartScheduleCooldownMinutes"
 	channelMonitorSmartScheduleControlRevisionOption       = model.ChannelSmartScheduleControlRevisionOption
 	channelMonitorPolicyActionNone                         = "none"
 	channelMonitorPolicyActionUpdateGroupRatio             = "update_group_ratio"
@@ -52,9 +43,11 @@ const (
 	channelMonitorSmartScheduleStrategyFirstToken          = "first_token"
 	channelMonitorSmartScheduleStrategyTPS                 = "tps"
 	channelMonitorSmartScheduleStrategySmart               = "smart"
-	legacyChannelMonitorSmartScheduleStrategyStability     = "stability"
 	channelMonitorSmartScheduleApplyWeight                 = "weight"
 	channelMonitorSmartScheduleApplyPriorityWeight         = "priority_weight"
+	channelMonitorSmartScheduleSampleOff                   = "off"
+	channelMonitorSmartScheduleSampleTraffic               = "traffic"
+	channelMonitorSmartScheduleSampleProbe                 = "probe"
 	maxChannelMonitorAutoUpdateIntervalMinutes             = 525600
 	maxChannelMonitorAutoUpdateRetryCount                  = 10
 	minChannelMonitorAutoUpdateConsecutiveFailureLimit     = 1
@@ -69,76 +62,54 @@ const (
 	maxChannelMonitorSmartScheduleGroupLength              = 64
 	maxChannelMonitorSmartScheduleMinSamples               = 100000
 	maxChannelMonitorSmartScheduleSuccessRate              = 100
+	maxChannelMonitorSmartScheduleExplorationPercent       = 20
 	defaultChannelMonitorAutoUpdateRetryCount              = 2
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit = 2
 	defaultChannelMonitorCostRetentionDays                 = 120
 	defaultChannelMonitorGroupCoefficient                  = 1
 	defaultChannelMonitorSmartScheduleInterval             = 10
 	defaultChannelMonitorSmartScheduleRange                = 60
-	defaultChannelMonitorSmartScheduleSamples              = 5
-	defaultChannelMonitorSmartScheduleSuccessRate          = 80
-	defaultChannelMonitorSmartScheduleCooldown             = 30
 )
 
 type channelMonitorSettings struct {
-	AutoUpdateIntervalMinutes          int                         `json:"auto_update_interval_minutes"`
-	AutoUpdateRetryCount               int                         `json:"auto_update_retry_count"`
-	AutoUpdateConsecutiveFailureLimit  int                         `json:"auto_update_consecutive_failure_limit"`
-	AutoDisableOnUpdateFailure         bool                        `json:"auto_disable_on_update_failure"`
-	AutoEnableOnCostRatioRecovery      bool                        `json:"auto_enable_on_cost_ratio_recovery"`
-	AutoEnableOnBalanceRecovery        bool                        `json:"auto_enable_on_balance_recovery"`
-	CostRetentionDays                  int                         `json:"cost_retention_days"`
-	EmailNotificationEnabled           bool                        `json:"email_notification_enabled"`
-	NotificationEmail                  string                      `json:"notification_email"`
-	ProbeResponseEnabled               bool                        `json:"probe_response_enabled"`
-	RelayHeaderTimeoutSeconds          int                         `json:"relay_response_header_timeout_seconds"`
-	SmartScheduleEnabled               bool                        `json:"smart_schedule_enabled"`
-	SmartScheduleGroups                []string                    `json:"smart_schedule_groups"`
-	SmartScheduleGroupPolicies         smartScheduleGroupPolicies  `json:"smart_schedule_group_policies"`
-	SmartScheduleIntervalMinutes       int                         `json:"smart_schedule_interval_minutes"`
-	SmartScheduleStrategy              string                      `json:"smart_schedule_strategy"`
-	SmartScheduleStabilityEnabled      bool                        `json:"smart_schedule_stability_enabled"`
-	SmartScheduleScoring               channelSmartScheduleScoring `json:"smart_schedule_scoring"`
-	SmartScheduleApplyMode             string                      `json:"smart_schedule_apply_mode"`
-	SmartSchedulePerformanceMinutes    int                         `json:"smart_schedule_performance_minutes"`
-	SmartScheduleModel                 string                      `json:"smart_schedule_model"`
-	SmartScheduleModels                []string                    `json:"smart_schedule_models"`
-	SmartScheduleMinSamples            int                         `json:"smart_schedule_min_samples"`
-	SmartScheduleMinSuccessRate        float64                     `json:"smart_schedule_min_success_rate"`
-	SmartScheduleCooldownMinutes       int                         `json:"smart_schedule_cooldown_minutes"`
-	SmartScheduleControlRevision       string                      `json:"-"`
-	SmartScheduleForceResetTaskCreated *bool                       `json:"smart_schedule_force_reset_task_created,omitempty"`
-	SmartScheduleForceResetTaskId      string                      `json:"smart_schedule_force_reset_task_id,omitempty"`
-	SmartScheduleForceResetTaskError   string                      `json:"smart_schedule_force_reset_task_error,omitempty"`
+	AutoUpdateIntervalMinutes          int                        `json:"auto_update_interval_minutes"`
+	AutoUpdateRetryCount               int                        `json:"auto_update_retry_count"`
+	AutoUpdateConsecutiveFailureLimit  int                        `json:"auto_update_consecutive_failure_limit"`
+	AutoDisableOnUpdateFailure         bool                       `json:"auto_disable_on_update_failure"`
+	AutoEnableOnCostRatioRecovery      bool                       `json:"auto_enable_on_cost_ratio_recovery"`
+	AutoEnableOnBalanceRecovery        bool                       `json:"auto_enable_on_balance_recovery"`
+	CostRetentionDays                  int                        `json:"cost_retention_days"`
+	EmailNotificationEnabled           bool                       `json:"email_notification_enabled"`
+	NotificationEmail                  string                     `json:"notification_email"`
+	ProbeResponseEnabled               bool                       `json:"probe_response_enabled"`
+	RelayHeaderTimeoutSeconds          int                        `json:"relay_response_header_timeout_seconds"`
+	SmartScheduleEnabled               bool                       `json:"smart_schedule_enabled"`
+	SmartScheduleGroupPolicies         smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
+	SmartScheduleIntervalMinutes       int                        `json:"smart_schedule_interval_minutes"`
+	SmartSchedulePerformanceMinutes    int                        `json:"smart_schedule_performance_minutes"`
+	SmartScheduleControlRevision       string                     `json:"-"`
+	SmartScheduleForceResetTaskCreated *bool                      `json:"smart_schedule_force_reset_task_created,omitempty"`
+	SmartScheduleForceResetTaskId      string                     `json:"smart_schedule_force_reset_task_id,omitempty"`
+	SmartScheduleForceResetTaskError   string                     `json:"smart_schedule_force_reset_task_error,omitempty"`
 }
 
 type channelMonitorSettingsUpdateRequest struct {
-	AutoUpdateIntervalMinutes         *int                         `json:"auto_update_interval_minutes"`
-	AutoUpdateRetryCount              *int                         `json:"auto_update_retry_count"`
-	AutoUpdateConsecutiveFailureLimit *int                         `json:"auto_update_consecutive_failure_limit"`
-	AutoDisableOnUpdateFailure        *bool                        `json:"auto_disable_on_update_failure"`
-	AutoEnableOnCostRatioRecovery     *bool                        `json:"auto_enable_on_cost_ratio_recovery"`
-	AutoEnableOnBalanceRecovery       *bool                        `json:"auto_enable_on_balance_recovery"`
-	CostRetentionDays                 *int                         `json:"cost_retention_days"`
-	EmailNotificationEnabled          *bool                        `json:"email_notification_enabled"`
-	NotificationEmail                 *string                      `json:"notification_email"`
-	ProbeResponseEnabled              *bool                        `json:"probe_response_enabled"`
-	RelayHeaderTimeoutSeconds         *int                         `json:"relay_response_header_timeout_seconds"`
-	SmartScheduleEnabled              *bool                        `json:"smart_schedule_enabled"`
-	SmartScheduleGroups               *[]string                    `json:"smart_schedule_groups"`
-	SmartScheduleGroupPolicies        *smartScheduleGroupPolicies  `json:"smart_schedule_group_policies"`
-	SmartScheduleIntervalMinutes      *int                         `json:"smart_schedule_interval_minutes"`
-	SmartScheduleStrategy             *string                      `json:"smart_schedule_strategy"`
-	SmartScheduleStabilityEnabled     *bool                        `json:"smart_schedule_stability_enabled"`
-	SmartScheduleScoring              *channelSmartScheduleScoring `json:"smart_schedule_scoring"`
-	SmartScheduleApplyMode            *string                      `json:"smart_schedule_apply_mode"`
-	SmartSchedulePerformanceMinutes   *int                         `json:"smart_schedule_performance_minutes"`
-	SmartScheduleModel                *string                      `json:"smart_schedule_model"`
-	SmartScheduleModels               *[]string                    `json:"smart_schedule_models"`
-	SmartScheduleMinSamples           *int                         `json:"smart_schedule_min_samples"`
-	SmartScheduleMinSuccessRate       *float64                     `json:"smart_schedule_min_success_rate"`
-	SmartScheduleCooldownMinutes      *int                         `json:"smart_schedule_cooldown_minutes"`
-	SmartScheduleForceReset           *bool                        `json:"smart_schedule_force_reset"`
+	AutoUpdateIntervalMinutes         *int                        `json:"auto_update_interval_minutes"`
+	AutoUpdateRetryCount              *int                        `json:"auto_update_retry_count"`
+	AutoUpdateConsecutiveFailureLimit *int                        `json:"auto_update_consecutive_failure_limit"`
+	AutoDisableOnUpdateFailure        *bool                       `json:"auto_disable_on_update_failure"`
+	AutoEnableOnCostRatioRecovery     *bool                       `json:"auto_enable_on_cost_ratio_recovery"`
+	AutoEnableOnBalanceRecovery       *bool                       `json:"auto_enable_on_balance_recovery"`
+	CostRetentionDays                 *int                        `json:"cost_retention_days"`
+	EmailNotificationEnabled          *bool                       `json:"email_notification_enabled"`
+	NotificationEmail                 *string                     `json:"notification_email"`
+	ProbeResponseEnabled              *bool                       `json:"probe_response_enabled"`
+	RelayHeaderTimeoutSeconds         *int                        `json:"relay_response_header_timeout_seconds"`
+	SmartScheduleEnabled              *bool                       `json:"smart_schedule_enabled"`
+	SmartScheduleGroupPolicies        *smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
+	SmartScheduleIntervalMinutes      *int                        `json:"smart_schedule_interval_minutes"`
+	SmartSchedulePerformanceMinutes   *int                        `json:"smart_schedule_performance_minutes"`
+	SmartScheduleForceReset           *bool                       `json:"smart_schedule_force_reset"`
 }
 
 type channelMonitorOrderUpdateRequest struct {
@@ -159,19 +130,9 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
 	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
-	rawSmartScheduleGroups := common.OptionMap[channelMonitorSmartScheduleGroupsOption]
 	rawSmartScheduleGroupPolicies := common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption]
 	rawSmartScheduleInterval := common.OptionMap[channelMonitorSmartScheduleIntervalOption]
-	rawSmartScheduleStrategy := common.OptionMap[channelMonitorSmartScheduleStrategyOption]
-	rawSmartScheduleStabilityEnabled := common.OptionMap[channelMonitorSmartScheduleStabilityOption]
-	rawSmartScheduleScoring := common.OptionMap[channelMonitorSmartScheduleScoringOption]
-	rawSmartScheduleApplyMode := common.OptionMap[channelMonitorSmartScheduleApplyModeOption]
 	rawSmartScheduleRange := common.OptionMap[channelMonitorSmartScheduleRangeOption]
-	rawSmartScheduleModel := common.OptionMap[channelMonitorSmartScheduleModelOption]
-	rawSmartScheduleModels, hasSmartScheduleModels := common.OptionMap[channelMonitorSmartScheduleModelsOption]
-	rawSmartScheduleSamples := common.OptionMap[channelMonitorSmartScheduleSamplesOption]
-	rawSmartScheduleSuccessRate := common.OptionMap[channelMonitorSmartScheduleSuccessRateOption]
-	rawSmartScheduleCooldown := common.OptionMap[channelMonitorSmartScheduleCooldownOption]
 	rawSmartScheduleControlRevision := common.OptionMap[channelMonitorSmartScheduleControlRevisionOption]
 	common.OptionMapRWMutex.RUnlock()
 
@@ -225,10 +186,6 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil {
 		smartScheduleEnabled = false
 	}
-	smartScheduleStabilityEnabled, err := strconv.ParseBool(rawSmartScheduleStabilityEnabled)
-	if err != nil {
-		smartScheduleStabilityEnabled = strings.TrimSpace(rawSmartScheduleStrategy) == legacyChannelMonitorSmartScheduleStrategyStability
-	}
 	smartScheduleInterval, err := strconv.Atoi(rawSmartScheduleInterval)
 	if err != nil || smartScheduleInterval <= 0 || smartScheduleInterval > maxChannelMonitorAutoUpdateIntervalMinutes {
 		smartScheduleInterval = defaultChannelMonitorSmartScheduleInterval
@@ -237,49 +194,9 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil || !isChannelMonitorPerformanceRangeSupported(smartScheduleRange) {
 		smartScheduleRange = defaultChannelMonitorSmartScheduleRange
 	}
-	smartScheduleSamples, err := strconv.Atoi(rawSmartScheduleSamples)
-	if err != nil || smartScheduleSamples <= 0 || smartScheduleSamples > maxChannelMonitorSmartScheduleMinSamples {
-		smartScheduleSamples = defaultChannelMonitorSmartScheduleSamples
-	}
-	smartScheduleSuccessRate, err := strconv.ParseFloat(rawSmartScheduleSuccessRate, 64)
-	if err != nil || math.IsNaN(smartScheduleSuccessRate) || math.IsInf(smartScheduleSuccessRate, 0) ||
-		smartScheduleSuccessRate < 0 || smartScheduleSuccessRate > maxChannelMonitorSmartScheduleSuccessRate {
-		smartScheduleSuccessRate = defaultChannelMonitorSmartScheduleSuccessRate
-	}
-	smartScheduleCooldown, err := strconv.Atoi(rawSmartScheduleCooldown)
-	if err != nil || smartScheduleCooldown <= 0 || smartScheduleCooldown > maxChannelMonitorAutoUpdateIntervalMinutes {
-		smartScheduleCooldown = defaultChannelMonitorSmartScheduleCooldown
-	}
-	smartScheduleModels := make([]string, 0)
-	modelsConfigured := false
-	if hasSmartScheduleModels {
-		var storedModels []string
-		if common.UnmarshalJsonStr(rawSmartScheduleModels, &storedModels) == nil && storedModels != nil {
-			normalizedModels, normalizeErr := normalizeChannelMonitorSmartScheduleModels(storedModels)
-			if normalizeErr == nil {
-				smartScheduleModels = normalizedModels
-				modelsConfigured = true
-			}
-		}
-	}
-	if !modelsConfigured {
-		legacyModels, normalizeErr := normalizeChannelMonitorSmartScheduleModels([]string{rawSmartScheduleModel})
-		if normalizeErr == nil {
-			smartScheduleModels = legacyModels
-		}
-	}
-	smartScheduleModel := ""
-	if len(smartScheduleModels) > 0 {
-		smartScheduleModel = smartScheduleModels[0]
-	}
-	smartScheduleGroups := make([]string, 0)
-	if rawSmartScheduleGroups != "" {
-		var storedGroups []string
-		if common.UnmarshalJsonStr(rawSmartScheduleGroups, &storedGroups) == nil {
-			if normalizedGroups, normalizeErr := normalizeChannelMonitorSmartScheduleGroups(storedGroups); normalizeErr == nil {
-				smartScheduleGroups = normalizedGroups
-			}
-		}
+	smartScheduleGroupPolicies := parseChannelSmartScheduleGroupPolicies(rawSmartScheduleGroupPolicies)
+	if len(smartScheduleGroupPolicies) == 0 {
+		smartScheduleEnabled = false
 	}
 	settings := channelMonitorSettings{
 		AutoUpdateIntervalMinutes:         interval,
@@ -294,60 +211,17 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		ProbeResponseEnabled:              probeResponseEnabled,
 		RelayHeaderTimeoutSeconds:         relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:              smartScheduleEnabled,
-		SmartScheduleGroups:               smartScheduleGroups,
-		SmartScheduleGroupPolicies:        parseChannelSmartScheduleGroupPolicies(rawSmartScheduleGroupPolicies),
+		SmartScheduleGroupPolicies:        smartScheduleGroupPolicies,
 		SmartScheduleIntervalMinutes:      smartScheduleInterval,
-		SmartScheduleStrategy:             normalizeChannelMonitorSmartScheduleStrategy(rawSmartScheduleStrategy),
-		SmartScheduleStabilityEnabled:     smartScheduleStabilityEnabled,
-		SmartScheduleScoring:              parseChannelSmartScheduleScoring(rawSmartScheduleScoring),
-		SmartScheduleApplyMode:            normalizeChannelMonitorSmartScheduleApplyMode(rawSmartScheduleApplyMode),
 		SmartSchedulePerformanceMinutes:   smartScheduleRange,
-		SmartScheduleModel:                smartScheduleModel,
-		SmartScheduleModels:               smartScheduleModels,
-		SmartScheduleMinSamples:           smartScheduleSamples,
-		SmartScheduleMinSuccessRate:       smartScheduleSuccessRate,
-		SmartScheduleCooldownMinutes:      smartScheduleCooldown,
 		SmartScheduleControlRevision:      rawSmartScheduleControlRevision,
 	}
-	settings.SmartScheduleGroupPolicies = materializeChannelSmartScheduleGroupPolicies(
-		settings.SmartScheduleGroupPolicies,
-		channelSmartSchedulePolicyFromSettings(settings),
-	)
 	return settings
-}
-
-func initializeChannelSmartScheduleParticipation() error {
-	return model.InitializeChannelSmartScheduleParticipation(
-		getChannelMonitorSettings().SmartScheduleEnabled,
-	)
-}
-
-func normalizeChannelMonitorSmartScheduleGroups(groups []string) ([]string, error) {
-	if len(groups) > maxChannelMonitorSmartScheduleGroupCount {
-		return nil, fmt.Errorf("智能调度分组不能超过 %d 个", maxChannelMonitorSmartScheduleGroupCount)
-	}
-	normalized := make([]string, 0, len(groups))
-	seen := make(map[string]struct{}, len(groups))
-	for _, group := range groups {
-		group = strings.TrimSpace(group)
-		if group == "" {
-			continue
-		}
-		if utf8.RuneCountInString(group) > maxChannelMonitorSmartScheduleGroupLength {
-			return nil, fmt.Errorf("智能调度分组不能超过 %d 个字符", maxChannelMonitorSmartScheduleGroupLength)
-		}
-		if _, exists := seen[group]; exists {
-			continue
-		}
-		seen[group] = struct{}{}
-		normalized = append(normalized, group)
-	}
-	return normalized, nil
 }
 
 func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, error) {
 	if len(models) > maxChannelMonitorSmartScheduleModelCount {
-		return nil, fmt.Errorf("智能调度基准模型不能超过 %d 个", maxChannelMonitorSmartScheduleModelCount)
+		return nil, fmt.Errorf("分组调度参与模型不能超过 %d 个", maxChannelMonitorSmartScheduleModelCount)
 	}
 	normalizedModels := make([]string, 0, len(models))
 	seenModels := make(map[string]struct{}, len(models))
@@ -357,7 +231,7 @@ func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, erro
 			continue
 		}
 		if utf8.RuneCountInString(modelName) > maxChannelMonitorSmartScheduleModelLength {
-			return nil, fmt.Errorf("智能调度基准模型不能超过 %d 个字符", maxChannelMonitorSmartScheduleModelLength)
+			return nil, fmt.Errorf("分组调度参与模型不能超过 %d 个字符", maxChannelMonitorSmartScheduleModelLength)
 		}
 		if _, exists := seenModels[modelName]; exists {
 			continue
@@ -368,26 +242,25 @@ func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, erro
 	return normalizedModels, nil
 }
 
-func normalizeChannelMonitorSmartScheduleStrategy(strategy string) string {
-	strategy = strings.TrimSpace(strategy)
+func isChannelMonitorSmartScheduleStrategySupported(strategy string) bool {
 	switch strategy {
 	case channelMonitorSmartScheduleStrategyRatio,
 		channelMonitorSmartScheduleStrategyFirstToken,
 		channelMonitorSmartScheduleStrategyTPS,
 		channelMonitorSmartScheduleStrategySmart:
-		return strategy
+		return true
 	default:
-		return channelMonitorSmartScheduleStrategySmart
+		return false
 	}
 }
 
-func normalizeChannelMonitorSmartScheduleApplyMode(mode string) string {
-	switch strings.TrimSpace(mode) {
+func isChannelMonitorSmartScheduleApplyModeSupported(mode string) bool {
+	switch mode {
 	case channelMonitorSmartScheduleApplyWeight,
 		channelMonitorSmartScheduleApplyPriorityWeight:
-		return strings.TrimSpace(mode)
+		return true
 	default:
-		return channelMonitorSmartScheduleApplyWeight
+		return false
 	}
 }
 
@@ -565,25 +438,15 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ProbeResponseEnabled == nil &&
 		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
-		request.SmartScheduleGroups == nil &&
 		request.SmartScheduleGroupPolicies == nil &&
 		request.SmartScheduleIntervalMinutes == nil &&
-		request.SmartScheduleStrategy == nil &&
-		request.SmartScheduleStabilityEnabled == nil &&
-		request.SmartScheduleScoring == nil &&
-		request.SmartScheduleApplyMode == nil &&
 		request.SmartSchedulePerformanceMinutes == nil &&
-		request.SmartScheduleModel == nil &&
-		request.SmartScheduleModels == nil &&
-		request.SmartScheduleMinSamples == nil &&
-		request.SmartScheduleMinSuccessRate == nil &&
-		request.SmartScheduleCooldownMinutes == nil &&
 		request.SmartScheduleForceReset == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的设置"})
 		return
 	}
 	settings := getChannelMonitorSettings()
-	values := make(map[string]string, 27)
+	values := make(map[string]string, 18)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -683,20 +546,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartScheduleEnabled = *request.SmartScheduleEnabled
 		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
-	if request.SmartScheduleGroups != nil {
-		groups, err := normalizeChannelMonitorSmartScheduleGroups(*request.SmartScheduleGroups)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-		serializedGroups, err := common.Marshal(groups)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		settings.SmartScheduleGroups = groups
-		values[channelMonitorSmartScheduleGroupsOption] = string(serializedGroups)
-	}
 	if request.SmartScheduleIntervalMinutes != nil && (*request.SmartScheduleIntervalMinutes <= 0 ||
 		*request.SmartScheduleIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -709,42 +558,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartScheduleIntervalMinutes = *request.SmartScheduleIntervalMinutes
 		values[channelMonitorSmartScheduleIntervalOption] = strconv.Itoa(settings.SmartScheduleIntervalMinutes)
 	}
-	if request.SmartScheduleStrategy != nil {
-		strategy := strings.TrimSpace(*request.SmartScheduleStrategy)
-		if normalizeChannelMonitorSmartScheduleStrategy(strategy) != strategy {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度方式无效"})
-			return
-		}
-		settings.SmartScheduleStrategy = strategy
-		values[channelMonitorSmartScheduleStrategyOption] = strategy
-	}
-	if request.SmartScheduleStabilityEnabled != nil {
-		settings.SmartScheduleStabilityEnabled = *request.SmartScheduleStabilityEnabled
-		values[channelMonitorSmartScheduleStabilityOption] = strconv.FormatBool(settings.SmartScheduleStabilityEnabled)
-	}
-	if request.SmartScheduleScoring != nil {
-		scoring := normalizeChannelSmartScheduleScoring(*request.SmartScheduleScoring)
-		if err := validateChannelSmartScheduleScoring(scoring); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-		serializedScoring, err := common.Marshal(scoring)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		settings.SmartScheduleScoring = scoring
-		values[channelMonitorSmartScheduleScoringOption] = string(serializedScoring)
-	}
-	if request.SmartScheduleApplyMode != nil {
-		mode := strings.TrimSpace(*request.SmartScheduleApplyMode)
-		if normalizeChannelMonitorSmartScheduleApplyMode(mode) != mode {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度调整方式无效"})
-			return
-		}
-		settings.SmartScheduleApplyMode = mode
-		values[channelMonitorSmartScheduleApplyModeOption] = mode
-	}
 	if request.SmartSchedulePerformanceMinutes != nil &&
 		!isChannelMonitorPerformanceRangeSupported(*request.SmartSchedulePerformanceMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度统计范围无效"})
@@ -754,73 +567,12 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartSchedulePerformanceMinutes = *request.SmartSchedulePerformanceMinutes
 		values[channelMonitorSmartScheduleRangeOption] = strconv.Itoa(settings.SmartSchedulePerformanceMinutes)
 	}
-	var requestedSmartScheduleModels []string
-	updateSmartScheduleModels := false
-	if request.SmartScheduleModels != nil {
-		requestedSmartScheduleModels = *request.SmartScheduleModels
-		updateSmartScheduleModels = true
-	} else if request.SmartScheduleModel != nil {
-		requestedSmartScheduleModels = []string{*request.SmartScheduleModel}
-		updateSmartScheduleModels = true
-	}
-	if updateSmartScheduleModels {
-		smartScheduleModels, err := normalizeChannelMonitorSmartScheduleModels(requestedSmartScheduleModels)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-		serializedModels, err := common.Marshal(smartScheduleModels)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		smartScheduleModel := ""
-		if len(smartScheduleModels) > 0 {
-			smartScheduleModel = smartScheduleModels[0]
-		}
-		settings.SmartScheduleModel = smartScheduleModel
-		settings.SmartScheduleModels = smartScheduleModels
-		values[channelMonitorSmartScheduleModelOption] = smartScheduleModel
-		values[channelMonitorSmartScheduleModelsOption] = string(serializedModels)
-	}
-	if request.SmartScheduleMinSamples != nil && (*request.SmartScheduleMinSamples <= 0 ||
-		*request.SmartScheduleMinSamples > maxChannelMonitorSmartScheduleMinSamples) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度最少样本数必须在 1 到 100000 之间"})
-		return
-	}
-	if request.SmartScheduleMinSamples != nil {
-		settings.SmartScheduleMinSamples = *request.SmartScheduleMinSamples
-		values[channelMonitorSmartScheduleSamplesOption] = strconv.Itoa(settings.SmartScheduleMinSamples)
-	}
-	if request.SmartScheduleMinSuccessRate != nil &&
-		(math.IsNaN(*request.SmartScheduleMinSuccessRate) || math.IsInf(*request.SmartScheduleMinSuccessRate, 0) ||
-			*request.SmartScheduleMinSuccessRate < 0 || *request.SmartScheduleMinSuccessRate > maxChannelMonitorSmartScheduleSuccessRate) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度最低成功率必须在 0% 到 100% 之间"})
-		return
-	}
-	if request.SmartScheduleMinSuccessRate != nil {
-		settings.SmartScheduleMinSuccessRate = *request.SmartScheduleMinSuccessRate
-		values[channelMonitorSmartScheduleSuccessRateOption] = strconv.FormatFloat(settings.SmartScheduleMinSuccessRate, 'f', -1, 64)
-	}
-	if request.SmartScheduleCooldownMinutes != nil && (*request.SmartScheduleCooldownMinutes <= 0 ||
-		*request.SmartScheduleCooldownMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度降级时长必须在 1 到 525600 分钟之间"})
-		return
-	}
-	if request.SmartScheduleCooldownMinutes != nil {
-		settings.SmartScheduleCooldownMinutes = *request.SmartScheduleCooldownMinutes
-		values[channelMonitorSmartScheduleCooldownOption] = strconv.Itoa(settings.SmartScheduleCooldownMinutes)
-	}
 	if request.SmartScheduleGroupPolicies != nil {
 		groupPolicies, err := normalizeChannelSmartScheduleGroupPolicies(*request.SmartScheduleGroupPolicies)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 			return
 		}
-		groupPolicies = materializeChannelSmartScheduleGroupPolicies(
-			groupPolicies,
-			channelSmartSchedulePolicyFromSettings(settings),
-		)
 		serializedGroupPolicies, err := common.Marshal(groupPolicies)
 		if err != nil {
 			common.ApiError(c, err)
@@ -828,36 +580,38 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.SmartScheduleGroupPolicies = groupPolicies
 		values[channelMonitorSmartScheduleGroupPoliciesOption] = string(serializedGroupPolicies)
+		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
 	forceResetSmartSchedule := request.SmartScheduleForceReset != nil && *request.SmartScheduleForceReset
 	if forceResetSmartSchedule && !settings.SmartScheduleEnabled {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "启用智能调度后才能强制重置"})
 		return
 	}
+	if (request.SmartScheduleEnabled != nil || request.SmartScheduleGroupPolicies != nil || forceResetSmartSchedule) &&
+		settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "启用智能调度前请至少配置一个完整的分组策略"})
+		return
+	}
 	smartScheduleSettingsChanged := request.SmartScheduleEnabled != nil ||
-		request.SmartScheduleGroups != nil ||
 		request.SmartScheduleGroupPolicies != nil ||
 		request.SmartScheduleIntervalMinutes != nil ||
-		request.SmartScheduleStrategy != nil ||
-		request.SmartScheduleStabilityEnabled != nil ||
-		request.SmartScheduleScoring != nil ||
-		request.SmartScheduleApplyMode != nil ||
-		request.SmartSchedulePerformanceMinutes != nil ||
-		request.SmartScheduleModel != nil ||
-		request.SmartScheduleModels != nil ||
-		request.SmartScheduleMinSamples != nil ||
-		request.SmartScheduleMinSuccessRate != nil ||
-		request.SmartScheduleCooldownMinutes != nil || forceResetSmartSchedule
+		request.SmartSchedulePerformanceMinutes != nil || forceResetSmartSchedule
 	if smartScheduleSettingsChanged {
-		if err := initializeChannelSmartScheduleParticipation(); err != nil {
-			common.ApiError(c, err)
-			return
-		}
 		values[channelMonitorSmartScheduleControlRevisionOption] = common.GetUUID()
 	}
 	if err := model.UpdateOptionsBulk(values); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if request.SmartScheduleEnabled != nil || request.SmartScheduleGroupPolicies != nil {
+		routingChanged, err := model.ClearChannelSmartScheduleExplorations()
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if routingChanged {
+			model.InitChannelCache()
+		}
 	}
 	forceResetTaskCreated := false
 	forceResetTaskId := ""
@@ -889,19 +643,9 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"notification_email_configured":         settings.NotificationEmail != "",
 		"probe_response_enabled":                settings.ProbeResponseEnabled,
 		"smart_schedule_enabled":                settings.SmartScheduleEnabled,
-		"smart_schedule_groups":                 settings.SmartScheduleGroups,
 		"smart_schedule_group_policies":         settings.SmartScheduleGroupPolicies,
 		"smart_schedule_interval_minutes":       settings.SmartScheduleIntervalMinutes,
-		"smart_schedule_strategy":               settings.SmartScheduleStrategy,
-		"smart_schedule_stability_enabled":      settings.SmartScheduleStabilityEnabled,
-		"smart_schedule_scoring":                settings.SmartScheduleScoring,
-		"smart_schedule_apply_mode":             settings.SmartScheduleApplyMode,
 		"smart_schedule_performance_minutes":    settings.SmartSchedulePerformanceMinutes,
-		"smart_schedule_model":                  settings.SmartScheduleModel,
-		"smart_schedule_models":                 settings.SmartScheduleModels,
-		"smart_schedule_min_samples":            settings.SmartScheduleMinSamples,
-		"smart_schedule_min_success_rate":       settings.SmartScheduleMinSuccessRate,
-		"smart_schedule_cooldown_minutes":       settings.SmartScheduleCooldownMinutes,
 		"smart_schedule_force_reset":            forceResetSmartSchedule,
 		"smart_schedule_force_reset_created":    forceResetTaskCreated,
 		"smart_schedule_force_reset_task_id":    forceResetTaskId,

@@ -348,7 +348,7 @@ export async function syncChannelMonitorGroupRatio(request: {
 }
 
 export async function updateChannelMonitorSettings(
-  settings: ChannelMonitorSettings & {
+  settings: Partial<ChannelMonitorSettings> & {
     smart_schedule_force_reset?: boolean
   }
 ) {

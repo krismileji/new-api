@@ -21,15 +21,20 @@ import { describe, test } from 'node:test'
 
 import type { ChannelMonitorSmartSchedulePolicyFormValues } from '../schema'
 import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
   channelMonitorSmartScheduleGroupPoliciesToApi,
   channelMonitorSmartScheduleGroupPoliciesToForm,
   createChannelMonitorSmartScheduleGroupPolicy,
-  resolveChannelMonitorSmartScheduleGroupPolicy,
 } from '../smart-schedule-group-policy'
 
 const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   strategy: 'smart',
   stabilityEnabled: true,
+  jitterEnabled: true,
+  jitterTolerancePercent: 5,
+  jitterThresholdMultiplier: 3,
+  jitterAbsoluteToleranceMs: 1000,
+  jitterBaselineHours: 24,
   scoring: {
     stabilityPercent: 50,
     curveExponent: 1,
@@ -50,28 +55,19 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   applyMode: 'weight',
   models: ['model-a'],
   minSamples: 5,
-  minSuccessRate: 80,
+  degradeStabilityScore: 90,
+  recoveryStabilityScore: 95,
+  fastFailurePenaltyPercent: 40,
+  fastFailureSeconds: 1,
+  slowFailureSeconds: 10,
   cooldownMinutes: 30,
+  sampleMode: 'probe',
+  explorationTrafficPercent: 3,
+  probeIntervalMinutes: 15,
 }
 
 describe('smart schedule group policy', () => {
-  test('resolves omitted fields from the current default policy', () => {
-    const effective = resolveChannelMonitorSmartScheduleGroupPolicy(
-      defaultPolicy,
-      {
-        strategy: 'ratio',
-        stabilityEnabled: false,
-      }
-    )
-
-    assert.equal(effective.strategy, 'ratio')
-    assert.equal(effective.stabilityEnabled, false)
-    assert.equal(effective.applyMode, 'weight')
-    assert.deepEqual(effective.models, ['model-a'])
-    assert.equal(effective.minSuccessRate, 80)
-  })
-
-  test('creates a complete independent policy even when values match defaults', () => {
+  test('creates a complete independent policy', () => {
     assert.deepEqual(
       createChannelMonitorSmartScheduleGroupPolicy('vip', defaultPolicy),
       {
@@ -97,57 +93,50 @@ describe('smart schedule group policy', () => {
     )
   })
 
-  test('keeps a saved group policy unchanged after defaults change', () => {
-    const savedPolicy = createChannelMonitorSmartScheduleGroupPolicy(
-      'vip',
-      defaultPolicy
-    )
-    const effective = resolveChannelMonitorSmartScheduleGroupPolicy(
-      {
-        ...defaultPolicy,
-        strategy: 'ratio',
-        minSuccessRate: 95,
-        models: ['model-b'],
-      },
-      savedPolicy
-    )
-
-    assert.deepEqual(effective, defaultPolicy)
-  })
-
-  test('fills legacy partial policies from defaults when loading the form', () => {
-    const formPolicies = channelMonitorSmartScheduleGroupPoliciesToForm(
-      [
-        {
-          group: 'vip',
-          strategy: 'ratio',
-          stability_enabled: false,
-          models: [],
-        },
-      ],
-      defaultPolicy
-    )
-
-    assert.deepEqual(formPolicies[0], {
-      group: 'vip',
-      ...defaultPolicy,
-      strategy: 'ratio',
-      stabilityEnabled: false,
-      models: [],
-    })
-  })
-
   test('preserves a complete independent policy across API mapping', () => {
-    const formPolicies = channelMonitorSmartScheduleGroupPoliciesToForm(
-      [
-        {
-          group: 'vip',
-          stability_enabled: false,
-          models: [],
+    const formPolicies = channelMonitorSmartScheduleGroupPoliciesToForm([
+      {
+        group: 'vip',
+        strategy: defaultPolicy.strategy,
+        stability_enabled: false,
+        jitter_enabled: defaultPolicy.jitterEnabled,
+        jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
+        jitter_threshold_multiplier: defaultPolicy.jitterThresholdMultiplier,
+        jitter_absolute_tolerance_ms: defaultPolicy.jitterAbsoluteToleranceMs,
+        jitter_baseline_hours: defaultPolicy.jitterBaselineHours,
+        scoring: {
+          stability_percent: defaultPolicy.scoring.stabilityPercent,
+          curve_exponent: defaultPolicy.scoring.curveExponent,
+          relative_weight_enabled: defaultPolicy.scoring.relativeWeightEnabled,
+          relative_weight_start_percent:
+            defaultPolicy.scoring.relativeWeightStartPercent,
+          relative_weight_full_percent:
+            defaultPolicy.scoring.relativeWeightFullPercent,
+          smart: {
+            cost_ratio_percent: defaultPolicy.scoring.smart.costRatioPercent,
+            first_token_percent: defaultPolicy.scoring.smart.firstTokenPercent,
+            tps_percent: defaultPolicy.scoring.smart.tpsPercent,
+          },
+          ratio: {
+            cost_ratio_percent: defaultPolicy.scoring.ratio.costRatioPercent,
+            first_token_percent: defaultPolicy.scoring.ratio.firstTokenPercent,
+            tps_percent: defaultPolicy.scoring.ratio.tpsPercent,
+          },
         },
-      ],
-      defaultPolicy
-    )
+        apply_mode: defaultPolicy.applyMode,
+        models: [],
+        min_samples: defaultPolicy.minSamples,
+        degrade_stability_score: defaultPolicy.degradeStabilityScore,
+        recovery_stability_score: defaultPolicy.recoveryStabilityScore,
+        fast_failure_penalty_percent: defaultPolicy.fastFailurePenaltyPercent,
+        fast_failure_seconds: defaultPolicy.fastFailureSeconds,
+        slow_failure_seconds: defaultPolicy.slowFailureSeconds,
+        cooldown_minutes: defaultPolicy.cooldownMinutes,
+        sample_mode: defaultPolicy.sampleMode,
+        exploration_traffic_percent: defaultPolicy.explorationTrafficPercent,
+        probe_interval_minutes: defaultPolicy.probeIntervalMinutes,
+      },
+    ])
     const apiPolicies =
       channelMonitorSmartScheduleGroupPoliciesToApi(formPolicies)
 
@@ -155,8 +144,89 @@ describe('smart schedule group policy', () => {
     assert.deepEqual(formPolicies[0]?.models, [])
     assert.equal(apiPolicies[0]?.strategy, 'smart')
     assert.equal(apiPolicies[0]?.stability_enabled, false)
+    assert.equal(formPolicies[0]?.jitterEnabled, true)
+    assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
+    assert.equal(formPolicies[0]?.jitterThresholdMultiplier, 3)
+    assert.equal(formPolicies[0]?.jitterAbsoluteToleranceMs, 1000)
+    assert.equal(formPolicies[0]?.jitterBaselineHours, 24)
+    assert.equal(apiPolicies[0]?.jitter_enabled, true)
+    assert.equal(apiPolicies[0]?.jitter_tolerance_percent, 5)
+    assert.equal(apiPolicies[0]?.jitter_threshold_multiplier, 3)
+    assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_ms, 1000)
+    assert.equal(apiPolicies[0]?.jitter_baseline_hours, 24)
     assert.deepEqual(apiPolicies[0]?.models, [])
     assert.equal(apiPolicies[0]?.min_samples, 5)
-    assert.equal(apiPolicies[0]?.min_success_rate, 80)
+    assert.equal(apiPolicies[0]?.degrade_stability_score, 90)
+    assert.equal(apiPolicies[0]?.recovery_stability_score, 95)
+    assert.equal(apiPolicies[0]?.fast_failure_penalty_percent, 40)
+    assert.equal(apiPolicies[0]?.fast_failure_seconds, 1)
+    assert.equal(apiPolicies[0]?.slow_failure_seconds, 10)
+    assert.equal(apiPolicies[0]?.sample_mode, 'probe')
+    assert.equal(apiPolicies[0]?.exploration_traffic_percent, 3)
+    assert.equal(apiPolicies[0]?.probe_interval_minutes, 15)
+  })
+
+  test('uses a complete editor template without creating a runtime policy', () => {
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.strategy,
+      'smart'
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.applyMode,
+      'priority_weight'
+    )
+    assert.deepEqual(CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.models, [])
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.sampleMode,
+      'off'
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.degradeStabilityScore,
+      90
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.recoveryStabilityScore,
+      95
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterEnabled,
+      true
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterTolerancePercent,
+      5
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterThresholdMultiplier,
+      3
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterAbsoluteToleranceMs,
+      1000
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterBaselineHours,
+      24
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailurePenaltyPercent,
+      40
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSeconds,
+      1
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.slowFailureSeconds,
+      10
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.explorationTrafficPercent,
+      3
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.probeIntervalMinutes,
+      10
+    )
   })
 })

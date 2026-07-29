@@ -317,11 +317,6 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
-	if common.IsMasterNode {
-		if err := model.MigrateChannelSmartScheduleToRouteOnly(); err != nil {
-			return fmt.Errorf("迁移智能调度路由失败: %w", err)
-		}
-	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

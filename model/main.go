@@ -306,6 +306,7 @@ func migrateDB() error {
 		&ChannelDailyCost{},
 		&ChannelDailyAPIKeyCost{},
 		&ChannelMonitorMinuteMetric{},
+		&ChannelMonitorMinuteDurationBucket{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -316,9 +317,6 @@ func migrateDB() error {
 		return err
 	}
 	if err := InitializeExternalIdentityClaims(); err != nil {
-		return err
-	}
-	if err := dropLegacyChannelSmartScheduleGroupColumn(); err != nil {
 		return err
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
@@ -378,6 +376,7 @@ func migrateDBFast() error {
 		{&ChannelDailyCost{}, "ChannelDailyCost"},
 		{&ChannelDailyAPIKeyCost{}, "ChannelDailyAPIKeyCost"},
 		{&ChannelMonitorMinuteMetric{}, "ChannelMonitorMinuteMetric"},
+		{&ChannelMonitorMinuteDurationBucket{}, "ChannelMonitorMinuteDurationBucket"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -408,9 +407,6 @@ func migrateDBFast() error {
 	if err := InitializeExternalIdentityClaims(); err != nil {
 		return err
 	}
-	if err := dropLegacyChannelSmartScheduleGroupColumn(); err != nil {
-		return err
-	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -422,24 +418,6 @@ func migrateDBFast() error {
 	}
 	common.SysLog("database migrated")
 	return nil
-}
-
-// SQLite needs the removed field in the migration schema while GORM rebuilds
-// the table for DropColumn. This type is not part of the runtime data model.
-type channelRatioMonitorLegacyScheduleGroup struct {
-	SmartScheduleGroup string `gorm:"type:varchar(64)"`
-}
-
-func (channelRatioMonitorLegacyScheduleGroup) TableName() string {
-	return "channel_ratio_monitors"
-}
-
-func dropLegacyChannelSmartScheduleGroupColumn() error {
-	legacyModel := &channelRatioMonitorLegacyScheduleGroup{}
-	if !DB.Migrator().HasTable(legacyModel) || !DB.Migrator().HasColumn(legacyModel, "SmartScheduleGroup") {
-		return nil
-	}
-	return DB.Migrator().DropColumn(legacyModel, "SmartScheduleGroup")
 }
 
 func migrateLOGDB() error {

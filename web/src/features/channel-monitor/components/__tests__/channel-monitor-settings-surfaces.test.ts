@@ -26,42 +26,59 @@ type SettingsSurfaceResult = {
   generalTitle: string
   policyDialogBlocksHorizontalOverflow: boolean
   policyDialogCentered: boolean
+  policyDialogExplainsExplicitScope: boolean
+  policyDialogHasGroupSettingHelp: boolean
+  policyDialogHasCompletePolicyControls: boolean
+  policyDialogStabilityInputsAligned: boolean
   policyTableScrollable: boolean
-  matchingDefaultPolicyVisible: boolean
-  scheduleControlsAligned: boolean
-  scheduleGroupsCompact: boolean
+  newPolicyVisible: boolean
+  scheduleHasExplicitPolicyScope: boolean
+  scheduleHasNoImplicitPolicyControls: boolean
   scheduleSide: string | null
   scheduleTitle: string
+  scheduleUsesChannelDrawerLayout: boolean
   scheduleUsesUnifiedTransition: boolean
 }
 
-test('uses separate settings surfaces with a centered group policy editor', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./channel-monitor-settings-surfaces.fixture.tsx', import.meta.url)
-  )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
+test(
+  'uses separate settings surfaces with a centered group policy editor',
+  { timeout: 15_000 },
+  () => {
+    const fixturePath = fileURLToPath(
+      new URL(
+        './channel-monitor-settings-surfaces.fixture.tsx',
+        import.meta.url
+      )
+    )
+    const execution = spawnSync(process.execPath, [fixturePath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
 
-  assert.equal(
-    execution.status,
-    0,
-    execution.stderr || execution.stdout || 'settings surface fixture failed'
-  )
-  const output = execution.stdout.trim().split(/\r?\n/).at(-1)
-  assert.ok(output)
-  const result = JSON.parse(output) as SettingsSurfaceResult
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || 'settings surface fixture failed'
+    )
+    const output = execution.stdout.trim().split(/\r?\n/).at(-1)
+    assert.ok(output)
+    const result = JSON.parse(output) as SettingsSurfaceResult
 
-  assert.match(result.generalTitle, /渠道监控设置/)
-  assert.equal(result.generalHasSchedule, false)
-  assert.equal(result.scheduleSide, 'right')
-  assert.match(result.scheduleTitle, /智能调度设置/)
-  assert.equal(result.scheduleUsesUnifiedTransition, true)
-  assert.equal(result.scheduleControlsAligned, true)
-  assert.equal(result.scheduleGroupsCompact, true)
-  assert.equal(result.policyDialogCentered, true)
-  assert.equal(result.policyDialogBlocksHorizontalOverflow, true)
-  assert.equal(result.policyTableScrollable, true)
-  assert.equal(result.matchingDefaultPolicyVisible, true)
-})
+    assert.match(result.generalTitle, /渠道监控设置/)
+    assert.equal(result.generalHasSchedule, false)
+    assert.equal(result.scheduleSide, 'right')
+    assert.match(result.scheduleTitle, /智能调度设置/)
+    assert.equal(result.scheduleUsesChannelDrawerLayout, true)
+    assert.equal(result.scheduleUsesUnifiedTransition, true)
+    assert.equal(result.scheduleHasExplicitPolicyScope, true)
+    assert.equal(result.scheduleHasNoImplicitPolicyControls, true)
+    assert.equal(result.policyDialogCentered, true)
+    assert.equal(result.policyDialogBlocksHorizontalOverflow, true)
+    assert.equal(result.policyDialogHasCompletePolicyControls, true)
+    assert.equal(result.policyDialogStabilityInputsAligned, true)
+    assert.equal(result.policyDialogExplainsExplicitScope, true)
+    assert.equal(result.policyDialogHasGroupSettingHelp, true)
+    assert.equal(result.policyTableScrollable, true)
+    assert.equal(result.newPolicyVisible, true)
+  }
+)
