@@ -42,11 +42,13 @@ import {
 
 import type { UpstreamChannel } from '../types'
 import {
+  isOfficialUpstreamChannel,
+  orderUpstreamChannelsForSelection,
+} from './channel-selector-order'
+import {
   CHANNEL_STATUS_CONFIG,
   DEFAULT_ENDPOINT,
   ENDPOINT_OPTIONS,
-  MODELS_DEV_PRESET_ID,
-  OFFICIAL_CHANNEL_ID,
 } from './constants'
 
 type ChannelSelectorDialogProps = {
@@ -58,14 +60,6 @@ type ChannelSelectorDialogProps = {
   channelEndpoints: Record<number, string>
   onChannelEndpointsChange: (endpoints: Record<number, string>) => void
   onConfirm: (selectedIds: number[]) => void
-}
-
-// Synthesized presets from `controller/ratio_sync.go` always carry stable
-// negative IDs, so matching by ID alone is reliable and self-documenting.
-function isOfficialChannel(channel: UpstreamChannel): boolean {
-  return (
-    channel.id === OFFICIAL_CHANNEL_ID || channel.id === MODELS_DEV_PRESET_ID
-  )
 }
 
 export function ChannelSelectorDialog({
@@ -149,7 +143,7 @@ export function ChannelSelectorDialog({
         cell: ({ row }) => {
           const name = row.getValue('name') as string
           const channel = row.original
-          const isOfficial = isOfficialChannel(channel)
+          const isOfficial = isOfficialUpstreamChannel(channel)
 
           return (
             <div className='flex items-center gap-2'>
@@ -284,13 +278,7 @@ export function ChannelSelectorDialog({
   }, [channels, search])
 
   const sortedChannels = useMemo(() => {
-    return [...filteredChannels].sort((a, b) => {
-      const aIsOfficial = isOfficialChannel(a)
-      const bIsOfficial = isOfficialChannel(b)
-      if (aIsOfficial && !bIsOfficial) return -1
-      if (!aIsOfficial && bIsOfficial) return 1
-      return 0
-    })
+    return orderUpstreamChannelsForSelection(filteredChannels)
   }, [filteredChannels])
 
   const { table } = useDataTable({

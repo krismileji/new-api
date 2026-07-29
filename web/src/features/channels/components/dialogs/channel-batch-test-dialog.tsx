@@ -90,6 +90,7 @@ import {
   getChannelsSupportingModels,
   getSelectableChannelIds,
   getSelectableModelNames,
+  orderBatchTestChannels,
   retainCompatibleChannelIds,
 } from './channel-batch-test-selection'
 
@@ -415,7 +416,13 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     staleTime: 5 * 60_000,
   })
 
-  const channels = props.channels ?? channelsQuery.data ?? EMPTY_CHANNELS
+  const channels = useMemo(
+    () =>
+      orderBatchTestChannels(
+        props.channels ?? channelsQuery.data ?? EMPTY_CHANNELS
+      ),
+    [channelsQuery.data, props.channels]
+  )
   const pricedModels = pricedModelsQuery.data ?? EMPTY_PRICED_MODELS
   const selectableModels = useMemo(
     () => getSelectableModelNames(pricedModels, channels),

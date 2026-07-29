@@ -24,6 +24,7 @@ import {
   getChannelsSupportingModels,
   getSelectableChannelIds,
   getSelectableModelNames,
+  orderBatchTestChannels,
   retainCompatibleChannelIds,
 } from '../channel-batch-test-selection'
 
@@ -35,6 +36,20 @@ const channels = [
 ]
 
 describe('channel batch test selection', () => {
+  test('shows enabled channels first while preserving their existing order', () => {
+    const ordered = orderBatchTestChannels([
+      { id: 4, status: 2 },
+      { id: 3, status: 1 },
+      { id: 2, status: 3 },
+      { id: 1, status: 1 },
+    ])
+
+    assert.deepEqual(
+      ordered.map((channel) => channel.id),
+      [3, 1, 4, 2]
+    )
+  })
+
   test('shows the configured channel remark in selection text', () => {
     assert.deepEqual(
       createBatchTestChannelOption({

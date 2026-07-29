@@ -28,6 +28,7 @@ import {
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
 import type { Channel, ChannelSettings, ChannelOtherSettings } from '../types'
+import { compareChannelStatusesEnabledFirst } from './channel-status-order'
 
 // ============================================================================
 // Channel Type Utilities
@@ -714,6 +715,12 @@ export function aggregateChannelsByTag(
     } else if (tagRow.status === undefined) {
       tagRow.status = channel.status
     }
+  }
+
+  for (const tagRow of tagMap.values()) {
+    tagRow.children.sort((first, second) =>
+      compareChannelStatusesEnabledFirst(first.status, second.status)
+    )
   }
 
   return result

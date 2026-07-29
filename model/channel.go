@@ -102,6 +102,15 @@ func NewChannelSortOptions(sortBy string, sortOrder string, idSort bool) Channel
 }
 
 func (options ChannelSortOptions) Apply(query *gorm.DB) *gorm.DB {
+	query = query.Order(clause.OrderByColumn{
+		Column: clause.Column{
+			Name: fmt.Sprintf(
+				"CASE WHEN status = %d THEN 0 ELSE 1 END",
+				common.ChannelStatusEnabled,
+			),
+			Raw: true,
+		},
+	})
 	if columnName, ok := channelSortColumns[options.SortBy]; ok {
 		return query.Order(clause.OrderByColumn{
 			Column: clause.Column{Name: columnName},

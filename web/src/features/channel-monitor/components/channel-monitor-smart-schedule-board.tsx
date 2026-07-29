@@ -52,6 +52,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -566,6 +567,12 @@ export function ChannelMonitorSmartScheduleBoard(
           routesByPool.get(`${poolSummary.group}\u0000${poolSummary.model}`) ??
           []
         ).sort((first, second) => {
+          const statusOrder = compareChannelStatusesEnabledFirst(
+            first.channel_status,
+            second.channel_status
+          )
+          if (statusOrder !== 0) return statusOrder
+
           const firstRatio = channelsById.get(first.channel_id)?.cost_ratio
           const secondRatio = channelsById.get(second.channel_id)?.cost_ratio
           if (firstRatio == null && secondRatio != null) return 1

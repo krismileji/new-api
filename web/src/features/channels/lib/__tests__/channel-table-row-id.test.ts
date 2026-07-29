@@ -20,13 +20,42 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { Channel } from '../../types'
-import { getChannelTableRowId, type TagRow } from '../channel-utils'
+import {
+  aggregateChannelsByTag,
+  getChannelTableRowId,
+  type TagRow,
+} from '../channel-utils'
 
 function channel(id: number): Channel {
   return { id } as Channel
 }
 
 describe('channel table row identity', () => {
+  test('keeps enabled child channels first inside each tag', () => {
+    const channels = [
+      { id: 4, status: 2 },
+      { id: 3, status: 1 },
+      { id: 2, status: 3 },
+      { id: 1, status: 1 },
+    ].map((item) => ({
+      ...item,
+      tag: '生产',
+      used_quota: 0,
+      response_time: 0,
+      priority: 0,
+      weight: 0,
+      group: 'default',
+    })) as Channel[]
+
+    const rows = aggregateChannelsByTag(channels)
+    const tagRow = rows[0] as TagRow
+
+    assert.deepEqual(
+      tagRow.children.map((child) => child.id),
+      [3, 1, 4, 2]
+    )
+  })
+
   test('keeps each channel identity when priority updates reorder the rows', () => {
     const first = channel(101)
     const updated = channel(202)

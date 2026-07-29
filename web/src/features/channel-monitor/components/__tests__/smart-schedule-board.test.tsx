@@ -22,6 +22,8 @@ import { describe, test } from 'node:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { CHANNEL_STATUS } from '@/features/channels/constants'
+
 import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleRoute,
@@ -192,6 +194,7 @@ function renderBoard(
   options: {
     result?: ChannelMonitorSmartScheduleRouteResult
     groupRatios?: Readonly<Record<string, number>>
+    channels?: ChannelMonitorItem[]
   } = {}
 ) {
   const queryClient = new QueryClient()
@@ -200,13 +203,15 @@ function renderBoard(
       <ChannelMonitorSmartScheduleBoard
         active
         result={options.result ?? createResult()}
-        channels={[
-          createChannel(1, '高速渠道', 0.8, '主线路'),
-          createChannel(2, '恢复中渠道', 1.1, '备用供应商'),
-          createChannel(3, '备用渠道', 1.2, '低频备用'),
-          createChannel(4, '未参与渠道', 1.3, '手动暂停'),
-          createChannel(5, '默认分组渠道', 1, '默认线路'),
-        ]}
+        channels={
+          options.channels ?? [
+            createChannel(1, '高速渠道', 0.8, '主线路'),
+            createChannel(2, '恢复中渠道', 1.1, '备用供应商'),
+            createChannel(3, '备用渠道', 1.2, '低频备用'),
+            createChannel(4, '未参与渠道', 1.3, '手动暂停'),
+            createChannel(5, '默认分组渠道', 1, '默认线路'),
+          ]
+        }
         groupPolicies={[
           {
             group: 'vip',
@@ -338,6 +343,34 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('最近探测'))
     assert.ok(markup.includes('2xl:grid-cols-2'))
     assert.ok(markup.indexOf('主线路') < markup.indexOf('备用供应商'))
+  })
+
+  test('orders pool channels by enabled status before cost ratio', () => {
+    const enabledChannel = createChannel(11, '启用高倍率', 1.5, '启用线路')
+    const disabledChannel = {
+      ...createChannel(12, '禁用低倍率', 0.5, '禁用线路'),
+      status: CHANNEL_STATUS.MANUAL_DISABLED,
+    }
+    const result = createResult()
+    result.routes = [
+      createRoute(enabledChannel.id, {
+        channel_name: enabledChannel.name,
+      }),
+      createRoute(disabledChannel.id, {
+        channel_name: disabledChannel.name,
+        channel_status: CHANNEL_STATUS.MANUAL_DISABLED,
+        state: {
+          stability_state: 'degraded',
+        } as ChannelMonitorSmartScheduleRoute['state'],
+      }),
+    ]
+
+    const markup = renderBoard({
+      result,
+      channels: [disabledChannel, enabledChannel],
+    })
+
+    assert.ok(markup.indexOf('启用线路') < markup.indexOf('禁用线路'))
   })
 
   test('opens the lowest-ratio group without prioritizing a group that needs attention', () => {

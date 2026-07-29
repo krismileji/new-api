@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { orderChannelsEnabledFirst } from '../../lib/channel-status-order'
+
 type ChannelWithModels = {
   models?: string | null
 }
@@ -37,6 +39,12 @@ export type BatchTestChannelOption = {
   label: string
   channelLabel: string
   remark: string
+}
+
+export function orderBatchTestChannels<T extends SelectableChannel>(
+  channels: readonly T[]
+): T[] {
+  return orderChannelsEnabledFirst(channels)
 }
 
 function parseConfiguredModels(models?: string | null): Set<string> {

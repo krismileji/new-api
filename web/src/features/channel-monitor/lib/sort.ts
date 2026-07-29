@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
+
 import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
@@ -58,10 +60,19 @@ export function sortChannelMonitorItems(
   performanceByChannel: ReadonlyMap<number, ChannelMonitorChannelPerformance>
 ) {
   if (sortMode === 'custom') {
-    return orderChannelsByCustomOrder(channels, channelOrder)
+    return orderChannelsByCustomOrder(channels, channelOrder).sort(
+      (first, second) =>
+        compareChannelStatusesEnabledFirst(first.status, second.status)
+    )
   }
 
   return [...channels].sort((first, second) => {
+    const statusComparison = compareChannelStatusesEnabledFirst(
+      first.status,
+      second.status
+    )
+    if (statusComparison !== 0) return statusComparison
+
     if (sortMode === 'channel_asc' || sortMode === 'channel_desc') {
       const comparison = compareChannelNames(first, second)
       return sortMode === 'channel_asc' ? comparison : -comparison

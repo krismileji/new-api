@@ -147,6 +147,7 @@ describe('channel monitor smart schedule cell status', () => {
     assert.equal(markup.includes('渠道禁用'), false)
     assert.ok(markup.includes('查看 测试渠道 的智能调度详情'))
     assert.ok(markup.includes('role="switch"'))
+    assert.ok(markup.indexOf('role="switch"') < markup.indexOf('2/3 路由参与'))
     assert.ok(
       markup.indexOf('vip / model-c') < markup.indexOf('default / model-a')
     )
