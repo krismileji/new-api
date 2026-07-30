@@ -9,6 +9,7 @@ import (
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,14 @@ func TestDoRequestCancelsUpstreamWithClientRequest(t *testing.T) {
 	}
 	select {
 	case requestErr := <-requestDone:
-		assert.Error(t, requestErr)
+		require.Error(t, requestErr)
+		var apiErr *types.NewAPIError
+		require.ErrorAs(t, requestErr, &apiErr)
+		assert.ErrorIs(t, requestErr, context.Canceled)
+		assert.True(t, types.IsClientGoneError(apiErr))
+		assert.Equal(t, types.StatusClientClosedRequest, apiErr.StatusCode)
+		assert.True(t, types.IsSkipRetryError(apiErr))
+		assert.False(t, types.IsRecordErrorLog(apiErr))
 	case <-testContext.Done():
 		require.FailNow(t, "relay request did not return after cancellation")
 	}

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -79,4 +80,8 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 	_, recorded := other["channel_monitor_attempt_duration_ms"]
 	assert.False(t, recorded)
+
+	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", false, "", false), types.NewClientGoneError(context.Canceled), false)
+	require.NoError(t, db.Find(&logs).Error)
+	assert.Len(t, logs, 1)
 }
