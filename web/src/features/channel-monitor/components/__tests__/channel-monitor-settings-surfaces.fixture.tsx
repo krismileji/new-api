@@ -146,7 +146,7 @@ async function renderSettingsSurface(surface: 'general' | 'schedule') {
         ) : (
           <ChannelMonitorSmartScheduleSettingsSheet
             settings={settings}
-            modelOptions={['model-a']}
+            modelOptionsByGroup={new Map([['default', ['model-a']]])}
             groupOptions={['default', 'vip']}
             open
             onOpenChange={() => {}}

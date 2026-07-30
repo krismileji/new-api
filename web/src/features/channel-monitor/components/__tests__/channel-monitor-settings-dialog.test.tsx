@@ -85,7 +85,7 @@ function SmartScheduleFieldsFixture() {
     <Form {...form}>
       <ChannelMonitorSmartScheduleFields
         form={form}
-        modelOptions={[]}
+        modelOptionsByGroup={new Map()}
         groupOptions={['default', 'vip']}
       />
     </Form>
@@ -148,7 +148,12 @@ function SmartScheduleGroupPoliciesFixture(props: {
       <ChannelMonitorSmartScheduleGroupPolicies
         form={form}
         groupOptions={['default', 'vip']}
-        modelOptions={['model-a', 'model-b']}
+        modelOptionsByGroup={
+          new Map([
+            ['default', ['model-a']],
+            ['vip', ['model-b']],
+          ])
+        }
       />
     </Form>
   )
@@ -187,6 +192,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       },
       applyMode: props.applyMode,
       models: [],
+      modelOrder: [],
       minSamples: 5,
       degradeStabilityScore: 90,
       recoveryStabilityScore: 95,
@@ -304,6 +310,7 @@ describe('channel monitor settings dialog', () => {
       '调度方式',
       '调整方式',
       '参与模型',
+      '模型卡片顺序',
       '样本补充方式',
       '稳定性保护',
       '稳定性占比',

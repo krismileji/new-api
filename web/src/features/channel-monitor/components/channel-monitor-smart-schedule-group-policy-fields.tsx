@@ -16,10 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Refresh01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo } from 'react'
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 
 import { MultiSelect } from '@/components/multi-select'
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormDescription,
@@ -63,6 +66,7 @@ import {
   ChannelMonitorSettingLabel,
   type ChannelMonitorSettingHelpKey,
 } from './channel-monitor-setting-label'
+import { ChannelMonitorSmartScheduleModelOrder } from './channel-monitor-smart-schedule-model-order'
 
 type ChannelMonitorSmartScheduleGroupPolicyFieldsProps = {
   form: UseFormReturn<ChannelMonitorSmartSchedulePolicyFormValues>
@@ -171,7 +175,7 @@ function GroupPolicyMetricFields(props: {
 export function ChannelMonitorSmartScheduleGroupPolicyFields(
   props: ChannelMonitorSmartScheduleGroupPolicyFieldsProps
 ) {
-  const modelOptions = useMemo(
+  const modelSelectOptions = useMemo(
     () => props.modelOptions.map((model) => ({ value: model, label: model })),
     [props.modelOptions]
   )
@@ -198,6 +202,10 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
   const relativeWeightEnabled = useWatch({
     control: props.form.control,
     name: 'scoring.relativeWeightEnabled',
+  })
+  const selectedModels = useWatch({
+    control: props.form.control,
+    name: 'models',
   })
   let sampleModeDescription = '不主动补充样本，样本不足的渠道保持当前路由'
   if (sampleMode === 'traffic') {
@@ -314,7 +322,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             <ChannelMonitorSettingLabel label='参与模型' helpKey='models' />
             <FormControl>
               <MultiSelect
-                options={modelOptions}
+                options={modelSelectOptions}
                 selected={field.value}
                 onChange={field.onChange}
                 placeholder='全部模型'
@@ -323,6 +331,47 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               />
             </FormControl>
             <FormDescription>不选择表示该分组的全部模型</FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={props.form.control}
+        name='modelOrder'
+        render={({ field }) => (
+          <FormItem className='min-w-0'>
+            <div className='flex min-h-8 flex-wrap items-center justify-between gap-2'>
+              <ChannelMonitorSettingLabel
+                label='模型卡片顺序'
+                helpKey='modelOrder'
+              />
+              {field.value.length > 0 ? (
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => field.onChange([])}
+                >
+                  <HugeiconsIcon
+                    icon={Refresh01Icon}
+                    data-icon='inline-start'
+                    aria-hidden='true'
+                  />
+                  恢复名称排序
+                </Button>
+              ) : null}
+            </div>
+            <ChannelMonitorSmartScheduleModelOrder
+              models={
+                selectedModels.length > 0 ? selectedModels : props.modelOptions
+              }
+              value={field.value}
+              onChange={field.onChange}
+            />
+            <FormDescription>
+              仅影响智能调度看板展示，不改变模型范围和调度计算
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

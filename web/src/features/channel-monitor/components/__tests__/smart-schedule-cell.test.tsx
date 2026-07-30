@@ -21,7 +21,6 @@ import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { placeChannelMonitorSmartScheduleRoutes } from '../../lib/smart-schedule-summary'
 import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRouteState,
@@ -94,82 +93,71 @@ function createRoute(
 function renderCell(
   routes: ChannelMonitorSmartScheduleRoute[],
   pending = false,
-  groupRatios: Readonly<Record<string, number>> = {
-    default: 1,
-    vip: 0.5,
-  }
+  selectedGroupModel: Pick<
+    ChannelMonitorSmartScheduleRoute,
+    'group' | 'model'
+  > | null = { group: 'default', model: 'model-a' }
 ) {
   return renderToStaticMarkup(
     <ChannelMonitorSmartScheduleCell
+      channelName='测试渠道'
       routes={routes}
-      groupRatios={groupRatios}
-      placements={placeChannelMonitorSmartScheduleRoutes(routes)}
+      selectedGroupModel={selectedGroupModel}
       pending={pending}
       onUpdate={noop}
-      onOpen={noop}
-      onClearStability={noop}
     />
   )
 }
 
 describe('channel monitor smart schedule cell status', () => {
-  test('shows an explicit empty state when the channel has no routes', () => {
+  test('shows fixed priority and weight placeholders when the channel has no routes', () => {
     const markup = renderCell([])
+    const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-    assert.ok(markup.includes('暂无路由'))
+    assert.match(markup, /优先级[\s\S]*—[\s\S]*权重[\s\S]*—/)
+    assert.ok(switchElement.includes('aria-disabled="true"'))
   })
 
-  test('summarizes participation and highlights group-model routing roles', () => {
-    const markup = renderCell([
-      createRoute(),
-      createRoute({
-        model: 'model-b',
-        priority: 90,
-        weight: 50,
-        state: { model: 'model-b', excluded: true },
-      }),
-      createRoute({
-        group: 'vip',
-        model: 'model-c',
-        priority: 100,
-        weight: 100,
-        state: { group: 'vip', model: 'model-c' },
-      }),
-    ])
-
-    assert.ok(markup.includes('2/3 路由参与'))
-    assert.ok(markup.includes('2 可调度'))
-    assert.match(markup, /vip \/ model-c[\s\S]*P100 \/ W100/)
-    assert.ok(markup.includes('主候选'))
-    assert.ok(markup.includes('预计 100.0%'))
-    assert.ok(markup.includes('还有 1 条分组模型路由'))
-    assert.equal(markup.includes('部分参与'), false)
-    assert.equal(markup.includes('渠道禁用'), false)
-    assert.ok(markup.includes('查看 测试渠道 的智能调度详情'))
-    assert.ok(markup.includes('role="switch"'))
-    assert.ok(markup.indexOf('role="switch"') < markup.indexOf('2/3 路由参与'))
-    assert.ok(
-      markup.indexOf('vip / model-c') < markup.indexOf('default / model-a')
+  test('shows only the selected group-model priority and weight', () => {
+    const markup = renderCell(
+      [
+        createRoute(),
+        createRoute({
+          model: 'model-b',
+          priority: 90,
+          weight: 50,
+          state: { model: 'model-b', excluded: true },
+        }),
+        createRoute({
+          group: 'vip',
+          model: 'model-c',
+          priority: 100,
+          weight: 100,
+          state: { group: 'vip', model: 'model-c' },
+        }),
+      ],
+      false,
+      { group: 'default', model: 'model-b' }
     )
+
+    assert.match(markup, /优先级[\s\S]*90[\s\S]*权重[\s\S]*50/)
+    assert.equal(markup.includes('路由参与'), false)
+    assert.equal(markup.includes('可调度'), false)
+    assert.equal(markup.includes('主候选'), false)
+    assert.equal(markup.includes('预计'), false)
+    assert.equal(markup.includes('还有'), false)
+    assert.equal(markup.includes('智能调度详情'), false)
+    assert.ok(markup.includes('role="switch"'))
+    assert.ok(markup.indexOf('role="switch"') < markup.indexOf('优先级'))
   })
 
-  test('makes protected route text the manual recovery entry point', () => {
+  test('keeps route protection details out of the compact cell', () => {
     const markup = renderCell([
       createRoute({ state: { stability_state: 'degraded' } }),
-      createRoute({
-        model: 'model-b',
-        state: { model: 'model-b', stability_state: 'probing' },
-      }),
     ])
 
-    assert.ok(markup.includes('稳定性降级'))
-    assert.ok(markup.includes('稳定性试放'))
-    assert.ok(markup.includes('查看 default model-a 的智能调度详情'))
-    assert.ok(markup.includes('的稳定性降级保护'))
-    assert.ok(markup.includes('的稳定性试放保护'))
-    const protectedBadges = markup.match(/<button[^>]*data-slot="badge"[^>]*>/g)
-    assert.equal(protectedBadges?.length, 2)
-    assert.equal(markup.includes('手动解除'), false)
+    assert.equal(markup.includes('稳定性降级'), false)
+    assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
   })
 
   test('keeps participation configurable when the channel is disabled', () => {
@@ -177,9 +165,19 @@ describe('channel monitor smart schedule cell status', () => {
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
     assert.equal(markup.includes('渠道禁用'), false)
-    assert.ok(markup.includes('不可调度'))
+    assert.equal(markup.includes('不可调度'), false)
+    assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
     assert.ok(switchElement)
     assert.equal(switchElement.includes('aria-disabled="true"'), false)
+  })
+
+  test('shows placeholders when the selected group-model is absent', () => {
+    const markup = renderCell([createRoute()], false, {
+      group: 'vip',
+      model: 'model-b',
+    })
+
+    assert.match(markup, /优先级[\s\S]*—[\s\S]*权重[\s\S]*—/)
   })
 
   test('shows an uninitialized route as not participating', () => {
@@ -188,9 +186,6 @@ describe('channel monitor smart schedule cell status', () => {
     ])
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-    assert.ok(markup.includes('0/1 路由参与'))
-    assert.ok(markup.includes('0 可调度'))
-    assert.ok(markup.includes('未参与'))
     assert.ok(switchElement.includes('aria-checked="false"'))
   })
 

@@ -63,6 +63,7 @@ import {
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
+import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-model-order'
 import {
   channelMonitorSmartScheduleRouteKey,
   channelMonitorSmartScheduleRouteParticipates,
@@ -85,6 +86,7 @@ import type {
   ChannelMonitorSmartScheduleRouteResult,
 } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
+import { ChannelMonitorSmartSchedulePoolLayout } from './channel-monitor-smart-schedule-pool-layout'
 import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
 
 type ChannelMonitorSmartScheduleBoardProps = {
@@ -98,7 +100,6 @@ type ChannelMonitorSmartScheduleBoardProps = {
   isError: boolean
   onOpenSettings: () => void
   onOpenHistory: () => void
-  onOpenChannel: (channelId: number) => void
 }
 
 type SchedulePoolView = {
@@ -113,7 +114,6 @@ type RouteRowProps = {
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   updatePending: boolean
   updateDisabled: boolean
-  onOpenChannel: (channelId: number) => void
   onParticipationChange: (
     route: ChannelMonitorSmartScheduleRoute,
     checked: boolean
@@ -209,13 +209,9 @@ function ScheduleRouteRow(props: RouteRowProps) {
       )}
     >
       <div className='min-w-0'>
-        <button
-          type='button'
-          className='hover:text-primary focus-visible:ring-ring/50 max-w-full truncate text-left font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3'
-          onClick={() => props.onOpenChannel(props.route.channel_id)}
-        >
+        <div className='truncate font-medium'>
           {props.route.channel_name}
-        </button>
+        </div>
         <div className='text-muted-foreground mt-0.5 flex min-w-0 items-center gap-2 text-xs'>
           <span className='shrink-0'>ID {props.route.channel_id}</span>
           <span aria-hidden='true'>·</span>
@@ -291,7 +287,6 @@ function SchedulePoolCard(props: {
   placements: ReadonlyMap<string, ChannelMonitorSmartScheduleRoutePlacement>
   updateRouteKey: string | null
   updateDisabled: boolean
-  onOpenChannel: (channelId: number) => void
   onParticipationChange: (
     route: ChannelMonitorSmartScheduleRoute,
     checked: boolean
@@ -365,7 +360,6 @@ function SchedulePoolCard(props: {
         placement={props.placements.get(key)}
         updatePending={props.updateRouteKey === key}
         updateDisabled={props.updateDisabled}
-        onOpenChannel={props.onOpenChannel}
         onParticipationChange={props.onParticipationChange}
         onClearProtection={props.onClearProtection}
       />
@@ -594,9 +588,13 @@ export function ChannelMonitorSmartScheduleBoard(
           props.groupRatios
         )
         if (groupOrder !== 0) return groupOrder
-        return first.summary.model.localeCompare(second.summary.model)
+        return compareChannelMonitorSmartScheduleModels(
+          first.summary.model,
+          second.summary.model,
+          policyByGroup.get(first.summary.group)?.model_order
+        )
       })
-  }, [channelsById, poolSummaries, props.groupRatios, routes])
+  }, [channelsById, policyByGroup, poolSummaries, props.groupRatios, routes])
   const poolCountByGroup = useMemo(() => {
     const counts = new Map<string, number>()
     for (const pool of pools) {
@@ -938,12 +936,7 @@ export function ChannelMonitorSmartScheduleBoard(
             })}
           </nav>
 
-          <div
-            className={cn(
-              'grid min-w-0 items-start gap-4',
-              visiblePools.length > 1 && '2xl:grid-cols-2'
-            )}
-          >
+          <ChannelMonitorSmartSchedulePoolLayout>
             {visiblePools.map((pool) => (
               <SchedulePoolCard
                 key={`${pool.summary.group}\u0000${pool.summary.model}`}
@@ -954,7 +947,6 @@ export function ChannelMonitorSmartScheduleBoard(
                 placements={placements}
                 updateRouteKey={updateRouteKey}
                 updateDisabled={updateMutation.isPending}
-                onOpenChannel={props.onOpenChannel}
                 onParticipationChange={(route, checked) =>
                   updateMutation.mutate({
                     channelId: route.channel_id,
@@ -966,7 +958,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 onClearProtection={setClearTarget}
               />
             ))}
-          </div>
+          </ChannelMonitorSmartSchedulePoolLayout>
         </div>
       ) : null}
 

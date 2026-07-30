@@ -57,7 +57,6 @@ import { cn } from '@/lib/utils'
 
 import { getChannelMonitorStatusLabel } from '../constants'
 import { formatChannelMonitorCost, formatMonitorRatio } from '../lib/format'
-import type { ChannelMonitorSmartScheduleRoutePlacement } from '../lib/smart-schedule-summary'
 import type {
   ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
@@ -85,20 +84,12 @@ type ChannelMonitorChannelViewProps = {
   performanceLoading: boolean
   performanceError: boolean
   smartScheduleRoutesByChannel: Map<number, ChannelMonitorSmartScheduleRoute[]>
-  effectiveSmartScheduleRoutesByChannel: Map<
-    number,
-    ChannelMonitorSmartScheduleRoute[]
-  >
-  smartSchedulePlacements: ReadonlyMap<
-    string,
-    ChannelMonitorSmartScheduleRoutePlacement
-  >
+  smartScheduleSelectedGroupModel: Pick<
+    ChannelMonitorSmartScheduleRoute,
+    'group' | 'model'
+  > | null
   smartScheduleUpdatePending: boolean
   onUpdateSmartSchedule: (channelId: number, excluded: boolean) => void
-  onOpenSmartSchedule: (channel: ChannelMonitorItem) => void
-  onClearSmartScheduleStability: (
-    route: ChannelMonitorSmartScheduleRoute
-  ) => void
   onFetchUpstreamBalance: (channel: ChannelMonitorItem) => void
   onFetchUpstreamRatio: (channel: ChannelMonitorItem) => void
   onToggleStatus: (channel: ChannelMonitorItem) => void
@@ -544,22 +535,15 @@ export function ChannelMonitorChannelView(
                 </TableCell>
                 <TableCell className='whitespace-normal'>
                   <ChannelMonitorSmartScheduleCell
+                    channelName={channel.name}
                     routes={
                       props.smartScheduleRoutesByChannel.get(channel.id) ?? []
                     }
-                    effectiveRoutes={
-                      props.effectiveSmartScheduleRoutesByChannel.get(
-                        channel.id
-                      ) ?? []
-                    }
-                    groupRatios={props.groupRatios}
-                    placements={props.smartSchedulePlacements}
+                    selectedGroupModel={props.smartScheduleSelectedGroupModel}
                     pending={props.smartScheduleUpdatePending}
                     onUpdate={(excluded) =>
                       props.onUpdateSmartSchedule(channel.id, excluded)
                     }
-                    onOpen={() => props.onOpenSmartSchedule(channel)}
-                    onClearStability={props.onClearSmartScheduleStability}
                   />
                 </TableCell>
                 <TableCell className='min-w-[112px]'>

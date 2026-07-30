@@ -26,6 +26,7 @@ type channelSmartScheduleGroupPolicy struct {
 	Scoring                   *channelSmartScheduleScoring `json:"scoring,omitempty"`
 	ApplyMode                 *string                      `json:"apply_mode,omitempty"`
 	Models                    *[]string                    `json:"models,omitempty"`
+	ModelOrder                []string                     `json:"model_order,omitempty"`
 	MinSamples                *int                         `json:"min_samples,omitempty"`
 	DegradeStabilityScore     *float64                     `json:"degrade_stability_score,omitempty"`
 	RecoveryStabilityScore    *float64                     `json:"recovery_stability_score,omitempty"`
@@ -129,11 +130,16 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("分组调度调整方式无效")
 		}
 		policy.ApplyMode = &applyMode
-		models, err := normalizeChannelMonitorSmartScheduleModels(*policy.Models)
+		models, err := normalizeChannelMonitorSmartScheduleModels(*policy.Models, "参与模型")
 		if err != nil {
 			return nil, err
 		}
 		policy.Models = &models
+		modelOrder, err := normalizeChannelMonitorSmartScheduleModels(policy.ModelOrder, "模型卡片顺序")
+		if err != nil {
+			return nil, err
+		}
+		policy.ModelOrder = modelOrder
 		if *policy.MinSamples <= 0 || *policy.MinSamples > maxChannelMonitorSmartScheduleMinSamples {
 			return nil, errors.New("分组调度最少样本数必须在 1 到 100000 之间")
 		}

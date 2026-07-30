@@ -58,7 +58,7 @@ const PERFORMANCE_RANGE_OPTIONS = [
 
 type ChannelMonitorSmartScheduleFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
-  modelOptions: string[]
+  modelOptionsByGroup: ReadonlyMap<string, string[]>
   groupOptions: string[]
 }
 
@@ -230,7 +230,7 @@ export function ChannelMonitorSmartScheduleFields(
             <ChannelMonitorSmartScheduleGroupPolicies
               form={props.form}
               groupOptions={props.groupOptions}
-              modelOptions={props.modelOptions}
+              modelOptionsByGroup={props.modelOptionsByGroup}
             />
             <FormMessage />
           </FormItem>

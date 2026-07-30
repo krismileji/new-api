@@ -106,7 +106,7 @@ type ChannelMonitorSettingsDialogProps = {
 
 type ChannelMonitorSmartScheduleSettingsSheetProps = {
   settings: ChannelMonitorSettings
-  modelOptions: string[]
+  modelOptionsByGroup: ReadonlyMap<string, string[]>
   groupOptions: string[]
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -115,7 +115,7 @@ type ChannelMonitorSmartScheduleSettingsSheetProps = {
 
 type ChannelMonitorSettingsFormProps = {
   settings: ChannelMonitorSettings
-  modelOptions: string[]
+  modelOptionsByGroup: ReadonlyMap<string, string[]>
   groupOptions: string[]
   initialSection: ChannelMonitorSettingsSection
   mode: ChannelMonitorSettingsUpdateMode
@@ -125,6 +125,7 @@ type ChannelMonitorSettingsFormProps = {
 }
 
 const EMPTY_OPTIONS: string[] = []
+const EMPTY_MODEL_OPTIONS_BY_GROUP: ReadonlyMap<string, string[]> = new Map()
 
 export function ChannelMonitorCostRetentionField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -212,7 +213,7 @@ export function ChannelMonitorSettingsDialog(
   return (
     <ChannelMonitorSettingsForm
       {...props}
-      modelOptions={EMPTY_OPTIONS}
+      modelOptionsByGroup={EMPTY_MODEL_OPTIONS_BY_GROUP}
       groupOptions={EMPTY_OPTIONS}
       initialSection={props.initialSection ?? 'monitor'}
       mode='general'
@@ -337,7 +338,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
             >
               <ChannelMonitorSmartScheduleFields
                 form={form}
-                modelOptions={props.modelOptions}
+                modelOptionsByGroup={props.modelOptionsByGroup}
                 groupOptions={props.groupOptions}
               />
             </form>

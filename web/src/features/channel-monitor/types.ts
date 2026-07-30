@@ -482,6 +482,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   scoring: ChannelMonitorSmartScheduleScoring
   apply_mode: ChannelMonitorSmartScheduleApplyMode
   models: string[]
+  model_order?: string[]
   min_samples: number
   degrade_stability_score: number
   recovery_stability_score: number

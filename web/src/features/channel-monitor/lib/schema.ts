@@ -253,6 +253,7 @@ const smartSchedulePolicyShape = {
   scoring: smartScheduleScoringSchema,
   applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
   models: smartScheduleModelsSchema,
+  modelOrder: smartScheduleModelsSchema.default([]),
   minSamples: smartScheduleMinSamplesSchema,
   degradeStabilityScore: smartScheduleStabilityScoreSchema,
   recoveryStabilityScore: smartScheduleStabilityScoreSchema,

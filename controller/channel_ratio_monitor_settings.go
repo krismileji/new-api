@@ -219,9 +219,9 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	return settings
 }
 
-func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, error) {
+func normalizeChannelMonitorSmartScheduleModels(models []string, fieldName string) ([]string, error) {
 	if len(models) > maxChannelMonitorSmartScheduleModelCount {
-		return nil, fmt.Errorf("分组调度参与模型不能超过 %d 个", maxChannelMonitorSmartScheduleModelCount)
+		return nil, fmt.Errorf("分组调度%s不能超过 %d 个", fieldName, maxChannelMonitorSmartScheduleModelCount)
 	}
 	normalizedModels := make([]string, 0, len(models))
 	seenModels := make(map[string]struct{}, len(models))
@@ -231,7 +231,7 @@ func normalizeChannelMonitorSmartScheduleModels(models []string) ([]string, erro
 			continue
 		}
 		if utf8.RuneCountInString(modelName) > maxChannelMonitorSmartScheduleModelLength {
-			return nil, fmt.Errorf("分组调度参与模型不能超过 %d 个字符", maxChannelMonitorSmartScheduleModelLength)
+			return nil, fmt.Errorf("分组调度%s中的模型名称不能超过 %d 个字符", fieldName, maxChannelMonitorSmartScheduleModelLength)
 		}
 		if _, exists := seenModels[modelName]; exists {
 			continue

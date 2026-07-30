@@ -54,6 +54,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   },
   applyMode: 'weight',
   models: ['model-a'],
+  modelOrder: ['model-c', 'model-a'],
   minSamples: 5,
   degradeStabilityScore: 90,
   recoveryStabilityScore: 95,
@@ -125,6 +126,7 @@ describe('smart schedule group policy', () => {
         },
         apply_mode: defaultPolicy.applyMode,
         models: [],
+        model_order: ['model-c', 'model-a'],
         min_samples: defaultPolicy.minSamples,
         degrade_stability_score: defaultPolicy.degradeStabilityScore,
         recovery_stability_score: defaultPolicy.recoveryStabilityScore,
@@ -142,8 +144,10 @@ describe('smart schedule group policy', () => {
 
     assert.equal(formPolicies[0]?.stabilityEnabled, false)
     assert.deepEqual(formPolicies[0]?.models, [])
+    assert.deepEqual(formPolicies[0]?.modelOrder, ['model-c', 'model-a'])
     assert.equal(apiPolicies[0]?.strategy, 'smart')
     assert.equal(apiPolicies[0]?.stability_enabled, false)
+    assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
     assert.equal(formPolicies[0]?.jitterThresholdMultiplier, 3)

@@ -409,6 +409,11 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, tooManyModels, 5, 80, 30,
 	)
+	invalidModelOrder := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	invalidModelOrder.ModelOrder = tooManyModels
 	invalidMinSamples := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 0, 80, 30,
@@ -509,6 +514,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightStart}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightRange}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidModels}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidModelOrder}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidMinSamples}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSuccessRate}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterTolerance}},
@@ -575,6 +581,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"stability_enabled": true, "scoring": validScoring,
 				"apply_mode":  channelMonitorSmartScheduleApplyPriorityWeight,
 				"models":      []string{"claude-3-5-sonnet", "gpt-4o-mini"},
+				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
 				"min_samples": 8, "degrade_stability_score": 75.5, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5, "jitter_threshold_multiplier": 3,
@@ -625,6 +632,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, channelMonitorSmartScheduleApplyPriorityWeight, *defaultGroupPolicy.ApplyMode)
 	require.NotNil(t, defaultGroupPolicy.Models)
 	assert.Equal(t, []string{"claude-3-5-sonnet", "gpt-4o-mini"}, *defaultGroupPolicy.Models)
+	assert.Equal(t, []string{"gpt-4o-mini", "claude-3-5-sonnet"}, defaultGroupPolicy.ModelOrder)
 	require.NotNil(t, defaultGroupPolicy.MinSamples)
 	assert.Equal(t, 8, *defaultGroupPolicy.MinSamples)
 	require.NotNil(t, defaultGroupPolicy.DegradeStabilityScore)

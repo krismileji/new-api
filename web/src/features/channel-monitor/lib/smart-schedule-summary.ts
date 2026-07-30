@@ -69,6 +69,13 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   candidateCount: number
 }
 
+export type ChannelMonitorSmartScheduleDisplayOption = {
+  value: string
+  label: string
+  group: string
+  model: string
+}
+
 export type ChannelMonitorSmartSchedulePoolStatus =
   | '稳定性降级'
   | '稳定性试放'
@@ -496,6 +503,20 @@ export function summarizeChannelMonitorSmartSchedulePools(
     )
     return groupOrder || first.model.localeCompare(second.model)
   })
+}
+
+export function getChannelMonitorSmartScheduleDisplayOptions(
+  routes: readonly ChannelMonitorSmartScheduleRoute[],
+  groupRatios: Readonly<Record<string, number>> = EMPTY_GROUP_RATIOS
+): ChannelMonitorSmartScheduleDisplayOption[] {
+  return summarizeChannelMonitorSmartSchedulePools(routes, groupRatios).map(
+    (pool) => ({
+      value: JSON.stringify([pool.group, pool.model]),
+      label: `${pool.group} / ${pool.model}`,
+      group: pool.group,
+      model: pool.model,
+    })
+  )
 }
 
 export function getChannelMonitorSmartSchedulePoolStatus(pool: {

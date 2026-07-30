@@ -26,6 +26,7 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import type {
   ChannelMonitorItem,
+  ChannelMonitorSmartScheduleGroupPolicy,
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRouteResult,
 } from '../../types'
@@ -195,6 +196,7 @@ function renderBoard(
     result?: ChannelMonitorSmartScheduleRouteResult
     groupRatios?: Readonly<Record<string, number>>
     channels?: ChannelMonitorItem[]
+    groupPolicies?: ChannelMonitorSmartScheduleGroupPolicy[]
   } = {}
 ) {
   const queryClient = new QueryClient()
@@ -212,93 +214,96 @@ function renderBoard(
             createChannel(5, '默认分组渠道', 1, '默认线路'),
           ]
         }
-        groupPolicies={[
-          {
-            group: 'vip',
-            strategy: 'smart',
-            stability_enabled: true,
-            jitter_enabled: true,
-            jitter_tolerance_percent: 5,
-            jitter_threshold_multiplier: 3,
-            jitter_absolute_tolerance_ms: 1000,
-            jitter_baseline_hours: 24,
-            scoring: {
-              stability_percent: 50,
-              curve_exponent: 1,
-              relative_weight_enabled: true,
-              relative_weight_start_percent: 3,
-              relative_weight_full_percent: 10,
-              smart: {
-                cost_ratio_percent: 40,
-                first_token_percent: 40,
-                tps_percent: 20,
+        groupPolicies={
+          options.groupPolicies ?? [
+            {
+              group: 'vip',
+              strategy: 'smart',
+              stability_enabled: true,
+              jitter_enabled: true,
+              jitter_tolerance_percent: 5,
+              jitter_threshold_multiplier: 3,
+              jitter_absolute_tolerance_ms: 1000,
+              jitter_baseline_hours: 24,
+              scoring: {
+                stability_percent: 50,
+                curve_exponent: 1,
+                relative_weight_enabled: true,
+                relative_weight_start_percent: 3,
+                relative_weight_full_percent: 10,
+                smart: {
+                  cost_ratio_percent: 40,
+                  first_token_percent: 40,
+                  tps_percent: 20,
+                },
+                ratio: {
+                  cost_ratio_percent: 70,
+                  first_token_percent: 20,
+                  tps_percent: 10,
+                },
               },
-              ratio: {
-                cost_ratio_percent: 70,
-                first_token_percent: 20,
-                tps_percent: 10,
-              },
+              apply_mode: 'priority_weight',
+              models: [],
+              model_order: [],
+              min_samples: 5,
+              degrade_stability_score: 90,
+              recovery_stability_score: 95,
+              fast_failure_penalty_percent: 40,
+              fast_failure_seconds: 1,
+              slow_failure_seconds: 10,
+              cooldown_minutes: 30,
+              sample_mode: 'traffic',
+              exploration_traffic_percent: 3,
+              probe_interval_minutes: 10,
             },
-            apply_mode: 'priority_weight',
-            models: [],
-            min_samples: 5,
-            degrade_stability_score: 90,
-            recovery_stability_score: 95,
-            fast_failure_penalty_percent: 40,
-            fast_failure_seconds: 1,
-            slow_failure_seconds: 10,
-            cooldown_minutes: 30,
-            sample_mode: 'traffic',
-            exploration_traffic_percent: 3,
-            probe_interval_minutes: 10,
-          },
-          {
-            group: 'default',
-            strategy: 'ratio',
-            stability_enabled: false,
-            jitter_enabled: true,
-            jitter_tolerance_percent: 5,
-            jitter_threshold_multiplier: 3,
-            jitter_absolute_tolerance_ms: 1000,
-            jitter_baseline_hours: 24,
-            scoring: {
-              stability_percent: 50,
-              curve_exponent: 1,
-              relative_weight_enabled: true,
-              relative_weight_start_percent: 3,
-              relative_weight_full_percent: 10,
-              smart: {
-                cost_ratio_percent: 40,
-                first_token_percent: 40,
-                tps_percent: 20,
+            {
+              group: 'default',
+              strategy: 'ratio',
+              stability_enabled: false,
+              jitter_enabled: true,
+              jitter_tolerance_percent: 5,
+              jitter_threshold_multiplier: 3,
+              jitter_absolute_tolerance_ms: 1000,
+              jitter_baseline_hours: 24,
+              scoring: {
+                stability_percent: 50,
+                curve_exponent: 1,
+                relative_weight_enabled: true,
+                relative_weight_start_percent: 3,
+                relative_weight_full_percent: 10,
+                smart: {
+                  cost_ratio_percent: 40,
+                  first_token_percent: 40,
+                  tps_percent: 20,
+                },
+                ratio: {
+                  cost_ratio_percent: 70,
+                  first_token_percent: 20,
+                  tps_percent: 10,
+                },
               },
-              ratio: {
-                cost_ratio_percent: 70,
-                first_token_percent: 20,
-                tps_percent: 10,
-              },
+              apply_mode: 'weight',
+              models: ['model-standard'],
+              model_order: [],
+              min_samples: 5,
+              degrade_stability_score: 90,
+              recovery_stability_score: 95,
+              fast_failure_penalty_percent: 40,
+              fast_failure_seconds: 1,
+              slow_failure_seconds: 10,
+              cooldown_minutes: 30,
+              sample_mode: 'probe',
+              exploration_traffic_percent: 3,
+              probe_interval_minutes: 15,
             },
-            apply_mode: 'weight',
-            models: ['model-standard'],
-            min_samples: 5,
-            degrade_stability_score: 90,
-            recovery_stability_score: 95,
-            fast_failure_penalty_percent: 40,
-            fast_failure_seconds: 1,
-            slow_failure_seconds: 10,
-            cooldown_minutes: 30,
-            sample_mode: 'probe',
-            exploration_traffic_percent: 3,
-            probe_interval_minutes: 15,
-          },
-        ]}
+          ]
+        }
         groupRatios={options.groupRatios ?? { default: 1, vip: 0.5 }}
         intervalMinutes={10}
         isLoading={false}
         isError={false}
         onOpenHistory={noop}
         onOpenSettings={noop}
-        onOpenChannel={noop}
       />
     </QueryClientProvider>
   )
@@ -371,6 +376,62 @@ describe('channel monitor smart schedule board', () => {
     })
 
     assert.ok(markup.indexOf('启用线路') < markup.indexOf('禁用线路'))
+  })
+
+  test('orders model pool cards by the configured order before the name fallback', () => {
+    const result = createResult()
+    result.routes = [
+      createRoute(11, { channel_name: 'Alpha 渠道', model: 'model-alpha' }),
+      createRoute(12, { channel_name: 'Beta 渠道', model: 'model-beta' }),
+      createRoute(13, { channel_name: 'Gamma 渠道', model: 'model-gamma' }),
+      createRoute(14, { channel_name: 'Zeta 渠道', model: 'model-zeta' }),
+    ]
+    const groupPolicy = {
+      group: 'vip',
+      strategy: 'smart',
+      stability_enabled: true,
+      jitter_enabled: true,
+      jitter_tolerance_percent: 5,
+      jitter_threshold_multiplier: 3,
+      jitter_absolute_tolerance_ms: 1000,
+      jitter_baseline_hours: 24,
+      scoring: {
+        stability_percent: 50,
+        curve_exponent: 1,
+        relative_weight_enabled: true,
+        relative_weight_start_percent: 3,
+        relative_weight_full_percent: 10,
+        smart: {
+          cost_ratio_percent: 40,
+          first_token_percent: 40,
+          tps_percent: 20,
+        },
+        ratio: {
+          cost_ratio_percent: 70,
+          first_token_percent: 20,
+          tps_percent: 10,
+        },
+      },
+      apply_mode: 'priority_weight',
+      models: [],
+      model_order: ['model-zeta', 'model-beta'],
+      min_samples: 5,
+      degrade_stability_score: 90,
+      recovery_stability_score: 95,
+      fast_failure_penalty_percent: 40,
+      fast_failure_seconds: 1,
+      slow_failure_seconds: 10,
+      cooldown_minutes: 30,
+      sample_mode: 'traffic',
+      exploration_traffic_percent: 3,
+      probe_interval_minutes: 10,
+    } satisfies ChannelMonitorSmartScheduleGroupPolicy
+
+    const markup = renderBoard({ result, groupPolicies: [groupPolicy] })
+
+    assert.ok(markup.indexOf('model-zeta') < markup.indexOf('model-beta'))
+    assert.ok(markup.indexOf('model-beta') < markup.indexOf('model-alpha'))
+    assert.ok(markup.indexOf('model-alpha') < markup.indexOf('model-gamma'))
   })
 
   test('opens the lowest-ratio group without prioritizing a group that needs attention', () => {

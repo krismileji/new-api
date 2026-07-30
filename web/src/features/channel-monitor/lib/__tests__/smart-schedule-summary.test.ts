@@ -26,6 +26,7 @@ import {
   compareChannelMonitorSmartScheduleGroupsByRatio,
   compareChannelMonitorSmartScheduleRoutesByAttention,
   compareChannelMonitorSmartScheduleRoutesByPool,
+  getChannelMonitorSmartScheduleDisplayOptions,
   getChannelMonitorSmartSchedulePoolStatus,
   placeChannelMonitorSmartScheduleRoutes,
 } from '../smart-schedule-summary'
@@ -277,6 +278,33 @@ describe('smart schedule route placement', () => {
 })
 
 describe('smart schedule route ordering', () => {
+  test('deduplicates display options and orders them by group ratio then model', () => {
+    const options = getChannelMonitorSmartScheduleDisplayOptions(
+      [
+        createRoute(1, 'default', 'model-b', 100, 100),
+        createRoute(2, 'vip', 'model-c', 100, 100),
+        createRoute(3, 'vip', 'model-a', 100, 100),
+        createRoute(4, 'vip', 'model-a', 90, 50),
+        createRoute(5, 'premium', 'model-a', 100, 100),
+      ],
+      { vip: 0.5, default: 1, premium: 1.5 }
+    )
+
+    assert.deepEqual(
+      options.map((option) => ({
+        group: option.group,
+        model: option.model,
+        label: option.label,
+      })),
+      [
+        { group: 'vip', model: 'model-a', label: 'vip / model-a' },
+        { group: 'vip', model: 'model-c', label: 'vip / model-c' },
+        { group: 'default', model: 'model-b', label: 'default / model-b' },
+        { group: 'premium', model: 'model-a', label: 'premium / model-a' },
+      ]
+    )
+  })
+
   test('orders groups by ratio ascending and then by group name', () => {
     const groups = ['standard', 'premium', 'default', 'vip'].sort(
       (first, second) =>

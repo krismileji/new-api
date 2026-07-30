@@ -93,11 +93,12 @@ import { ChannelMonitorSmartScheduleGroupPolicyFields } from './channel-monitor-
 type ChannelMonitorSmartScheduleGroupPoliciesProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   groupOptions: string[]
-  modelOptions: string[]
+  modelOptionsByGroup: ReadonlyMap<string, string[]>
 }
 
 const EMPTY_GROUP_POLICIES: ChannelMonitorSmartScheduleGroupPolicyFormValues[] =
   []
+const EMPTY_MODEL_OPTIONS: string[] = []
 
 function groupPolicyModelSummary(models: string[]): string {
   if (models.length === 0) return '全部模型'
@@ -398,7 +399,10 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
 
               <ChannelMonitorSmartScheduleGroupPolicyFields
                 form={policyForm}
-                modelOptions={props.modelOptions}
+                modelOptions={
+                  props.modelOptionsByGroup.get(draftGroup) ??
+                  EMPTY_MODEL_OPTIONS
+                }
               />
             </div>
           </Form>

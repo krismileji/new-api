@@ -27,7 +27,6 @@ import { I18nextProvider } from 'react-i18next'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
-import { placeChannelMonitorSmartScheduleRoutes } from '../../lib/smart-schedule-summary'
 import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleRoute,
@@ -201,16 +200,12 @@ function renderView(
         smartScheduleRoutesByChannel={
           new Map([[channel.id, smartScheduleRoutes]])
         }
-        effectiveSmartScheduleRoutesByChannel={
-          new Map([[channel.id, smartScheduleRoutes]])
-        }
-        smartSchedulePlacements={placeChannelMonitorSmartScheduleRoutes(
-          smartScheduleRoutes
-        )}
+        smartScheduleSelectedGroupModel={{
+          group: 'default',
+          model: 'test-model',
+        }}
         smartScheduleUpdatePending={false}
         onUpdateSmartSchedule={noop}
-        onOpenSmartSchedule={noop}
-        onClearSmartScheduleStability={noop}
         onFetchUpstreamBalance={noop}
         onFetchUpstreamRatio={noop}
         onToggleStatus={noop}
@@ -537,10 +532,11 @@ describe('channel monitor channel view timestamps', () => {
     assert.equal(cells.length, 9)
     assert.ok(headers[6]?.includes('并发限制'))
     assert.ok(headers[7]?.includes('智能调度'))
-    assert.ok(smartScheduleCell.includes('1/1 路由参与'))
-    assert.match(smartScheduleCell, /default \/ test-model[\s\S]*P80 \/ W60/)
-    assert.ok(smartScheduleCell.includes('预计 100.0%'))
-    assert.ok(smartScheduleCell.includes('查看 测试渠道 的智能调度详情'))
+    assert.match(smartScheduleCell, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
+    assert.equal(smartScheduleCell.includes('路由参与'), false)
+    assert.equal(smartScheduleCell.includes('预计'), false)
+    assert.equal(smartScheduleCell.includes('default / test-model'), false)
+    assert.equal(smartScheduleCell.includes('智能调度详情'), false)
   })
 
   test('disables every channel participation switch while an update is pending', async () => {
@@ -564,10 +560,6 @@ describe('channel monitor channel view timestamps', () => {
       [primaryChannel.id, [primaryRoute]],
       [standbyChannel.id, [standbyRoute]],
     ])
-    const placements = placeChannelMonitorSmartScheduleRoutes([
-      primaryRoute,
-      standbyRoute,
-    ])
     const updates: Array<{ channelId: number; excluded: boolean }> = []
     const container = document.createElement('div')
     document.body.append(container)
@@ -586,14 +578,14 @@ describe('channel monitor channel view timestamps', () => {
           performanceLoading={false}
           performanceError={false}
           smartScheduleRoutesByChannel={routesByChannel}
-          effectiveSmartScheduleRoutesByChannel={routesByChannel}
-          smartSchedulePlacements={placements}
+          smartScheduleSelectedGroupModel={{
+            group: 'default',
+            model: 'test-model',
+          }}
           smartScheduleUpdatePending={pending}
           onUpdateSmartSchedule={(channelId, excluded) =>
             updates.push({ channelId, excluded })
           }
-          onOpenSmartSchedule={noop}
-          onClearSmartScheduleStability={noop}
           onFetchUpstreamBalance={noop}
           onFetchUpstreamRatio={noop}
           onToggleStatus={noop}
