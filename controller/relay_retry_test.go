@@ -62,18 +62,32 @@ func TestShouldRetryHonorsSkipRetryAndSpecificChannel(t *testing.T) {
 	require.False(t, shouldRetry(ctx, apiErr, 1))
 }
 
-func TestRetryStopsWhenClientRequestIsCanceled(t *testing.T) {
+func TestRetryStopsOnlyForClassifiedClientGone(t *testing.T) {
+	originalRanges := operation_setting.AutomaticRetryStatusCodeRanges
+	t.Cleanup(func() {
+		operation_setting.AutomaticRetryStatusCodeRanges = originalRanges
+	})
+	operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{
+		{Start: http.StatusServiceUnavailable, End: http.StatusServiceUnavailable},
+	}
+
 	requestContext, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(requestContext)
-	apiErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	upstreamErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	assert.True(t, shouldRetry(ctx, upstreamErr, 1))
+	assert.False(t, shouldRetry(ctx, types.NewClientGoneError(context.Canceled), 1))
 
-	assert.False(t, shouldRetry(ctx, apiErr, 1))
-
-	taskErr := &dto.TaskError{StatusCode: http.StatusServiceUnavailable}
-	assert.False(t, shouldRetryTaskRelay(ctx, 1, taskErr, 1))
+	assert.True(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		StatusCode: http.StatusServiceUnavailable,
+		Error:      errors.New("upstream unavailable"),
+	}, 1))
+	assert.False(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		StatusCode: http.StatusInternalServerError,
+		Error:      types.NewClientGoneError(context.Canceled),
+	}, 1))
 }
 
 func TestShouldRetry500UsesConfiguredBudget(t *testing.T) {

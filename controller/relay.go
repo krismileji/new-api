@@ -92,12 +92,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
-			if types.IsClientGoneError(newAPIError) {
-				if !c.Writer.Written() {
-					c.Status(newAPIError.StatusCode)
-				}
-				return
-			}
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
@@ -289,7 +283,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
-	if newAPIError != nil && !types.IsClientGoneError(newAPIError) {
+	if newAPIError != nil {
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
@@ -381,9 +375,6 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
-	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
-		return false
-	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -417,9 +408,6 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool, attemptDuration *time.Duration, finalRetrySummary bool) {
-	if types.IsClientGoneError(err) {
-		return
-	}
 	if !finalRetrySummary {
 		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
@@ -725,7 +713,7 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if taskErr == nil {
 		return false
 	}
-	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+	if types.IsClientGoneError(taskErr.Error) {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {

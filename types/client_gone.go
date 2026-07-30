@@ -1,5 +1,10 @@
 package types
 
+import (
+	"context"
+	"errors"
+)
+
 const (
 	ErrorCodeClientGone       ErrorCode = "client_gone"
 	StatusClientClosedRequest           = 499
@@ -15,6 +20,18 @@ func NewClientGoneError(err error) *NewAPIError {
 	)
 }
 
-func IsClientGoneError(err *NewAPIError) bool {
-	return err != nil && err.GetErrorCode() == ErrorCodeClientGone
+func NewClientGoneErrorFromContext(ctx context.Context, err error) *NewAPIError {
+	if ctx == nil || err == nil {
+		return nil
+	}
+	contextErr := ctx.Err()
+	if contextErr == nil || !errors.Is(err, contextErr) {
+		return nil
+	}
+	return NewClientGoneError(contextErr)
+}
+
+func IsClientGoneError(err error) bool {
+	var apiErr *NewAPIError
+	return errors.As(err, &apiErr) && apiErr.GetErrorCode() == ErrorCodeClientGone
 }

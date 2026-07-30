@@ -509,9 +509,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	req = req.WithContext(c.Request.Context())
 	resp, err := client.Do(req)
 	if err != nil {
-		if requestErr := c.Request.Context().Err(); requestErr != nil && errors.Is(err, requestErr) {
-			logger.LogInfo(c, "request ended before upstream response: reason=client_gone, error="+requestErr.Error())
-			return nil, types.NewClientGoneError(requestErr)
+		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
+			return nil, clientGoneErr
 		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
