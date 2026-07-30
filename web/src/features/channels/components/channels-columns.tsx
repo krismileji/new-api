@@ -75,6 +75,10 @@ import {
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
+import {
+  formatChannelDefaultRoutingBatchConfirmation,
+  getChannelDefaultRoutingCopy,
+} from '../lib/channel-default-routing-copy'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -188,7 +192,6 @@ function PriorityCell({ channel }: { channel: Channel }) {
 }
 
 function TagPriorityCell({ channel }: { channel: TagRow }) {
-  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const priority = channel.priority
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -209,12 +212,14 @@ function TagPriorityCell({ channel }: { channel: TagRow }) {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={t('Confirm Batch Update')}
-        desc={t(
-          'This will update the priority to {{value}} for all {{count}} channel(s) with tag "{{tag}}". Continue?',
-          { value: pendingValue, count: channelCount, tag }
+        title='确认批量更新渠道默认值'
+        desc={formatChannelDefaultRoutingBatchConfirmation(
+          'priority',
+          pendingValue,
+          channelCount,
+          tag
         )}
-        confirmText={t('Update')}
+        confirmText='更新默认值'
         handleConfirm={() => {
           if (pendingValue !== null) {
             handleUpdateTagField(tag, 'priority', pendingValue, queryClient)
@@ -277,7 +282,6 @@ function WeightCell({ channel }: { channel: Channel }) {
 }
 
 function TagWeightCell({ channel }: { channel: TagRow }) {
-  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const weight = channel.weight
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -298,12 +302,14 @@ function TagWeightCell({ channel }: { channel: TagRow }) {
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={t('Confirm Batch Update')}
-        desc={t(
-          'This will update the weight to {{value}} for all {{count}} channel(s) with tag "{{tag}}". Continue?',
-          { value: pendingValue, count: channelCount, tag }
+        title='确认批量更新渠道默认值'
+        desc={formatChannelDefaultRoutingBatchConfirmation(
+          'weight',
+          pendingValue,
+          channelCount,
+          tag
         )}
-        confirmText={t('Update')}
+        confirmText='更新默认值'
         handleConfirm={() => {
           if (pendingValue !== null) {
             handleUpdateTagField(tag, 'weight', pendingValue, queryClient)
@@ -1072,19 +1078,19 @@ export function useChannelsColumns(
       // Priority column
       {
         accessorKey: 'priority',
-        header: t('Priority'),
+        header: getChannelDefaultRoutingCopy('priority').label,
         meta: { mobileHidden: true },
         cell: ({ row }) => <PriorityCell channel={row.original} />,
-        size: 100,
+        size: 120,
       },
 
       // Weight column
       {
         accessorKey: 'weight',
-        header: t('Weight'),
+        header: getChannelDefaultRoutingCopy('weight').label,
         meta: { mobileHidden: true },
         cell: ({ row }) => <WeightCell channel={row.original} />,
-        size: 90,
+        size: 100,
         enableSorting: false,
       },
 

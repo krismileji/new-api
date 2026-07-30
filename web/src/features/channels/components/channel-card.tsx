@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
 import type { Channel } from '../types'
+import { ChannelDefaultRoutingLabel } from './channel-default-routing-label'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
 
@@ -137,8 +138,11 @@ function ChannelCardComponent({
             grid with content-sized columns keeps Priority/Weight and
             Response/Last Tested aligned without wasting horizontal space. */}
           <div className='grid shrink-0 grid-cols-[auto_auto] items-center gap-x-3 gap-y-1'>
-            <span className={labelClass}>{t('Priority')}</span>
-            <span className={labelClass}>{t('Weight')}</span>
+            <ChannelDefaultRoutingLabel
+              field='priority'
+              className={labelClass}
+            />
+            <ChannelDefaultRoutingLabel field='weight' className={labelClass} />
             <div className='flex justify-start'>{priorityCell}</div>
             <div className='flex justify-start'>{weightCell}</div>
             <span className={cn('mt-2', labelClass)}>

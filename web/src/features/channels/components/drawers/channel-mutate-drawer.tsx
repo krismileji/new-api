@@ -172,6 +172,7 @@ import {
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
 import type { Channel } from '../../types'
+import { ChannelDefaultRoutingLabel } from '../channel-default-routing-label'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
@@ -3635,7 +3636,10 @@ export function ChannelMutateDrawer({
                                 name='priority'
                                 render={({ field }) => (
                                   <FormItem>
-                                    <FormLabel>{t('Priority')}</FormLabel>
+                                    <ChannelDefaultRoutingLabel
+                                      field='priority'
+                                      formLabel
+                                    />
                                     <FormControl>
                                       <Input
                                         type='number'
@@ -3659,7 +3663,10 @@ export function ChannelMutateDrawer({
                                 name='weight'
                                 render={({ field }) => (
                                   <FormItem>
-                                    <FormLabel>{t('Weight')}</FormLabel>
+                                    <ChannelDefaultRoutingLabel
+                                      field='weight'
+                                      formLabel
+                                    />
                                     <FormControl>
                                       <Input
                                         type='number'

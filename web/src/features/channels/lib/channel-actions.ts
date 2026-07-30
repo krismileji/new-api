@@ -42,6 +42,10 @@ import {
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type { ChannelTestResponse, CopyChannelParams } from '../types'
+import {
+  formatChannelDefaultRoutingUpdateMessage,
+  type ChannelDefaultRoutingField,
+} from './channel-default-routing-copy'
 
 // ============================================================================
 // Query Keys
@@ -209,7 +213,7 @@ export async function handleDeleteChannel(
  */
 export async function handleUpdateChannelField(
   id: number,
-  fieldName: string,
+  fieldName: ChannelDefaultRoutingField,
   value: number,
   queryClient?: QueryClient,
   onSuccess?: () => void
@@ -217,15 +221,7 @@ export async function handleUpdateChannelField(
   try {
     const response = await updateChannel(id, { [fieldName]: value })
     if (response.success) {
-      // Show success toast with field name
-      const fieldLabel =
-        fieldName.charAt(0).toUpperCase() + fieldName.slice(1).toLowerCase()
-      toast.success(
-        i18next.t('{{field}} updated to {{value}}', {
-          field: fieldLabel,
-          value,
-        })
-      )
+      toast.success(formatChannelDefaultRoutingUpdateMessage(fieldName, value))
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
@@ -250,15 +246,8 @@ export async function handleUpdateTagField(
     const params = { tag, [fieldName]: value }
     const response = await editTagChannels(params)
     if (response.success) {
-      // Show success toast with field name
-      const fieldLabel =
-        fieldName.charAt(0).toUpperCase() + fieldName.slice(1).toLowerCase()
       toast.success(
-        i18next.t('{{field}} updated to {{value}} for tag: {{tag}}', {
-          field: fieldLabel,
-          value,
-          tag,
-        })
+        formatChannelDefaultRoutingUpdateMessage(fieldName, value, tag)
       )
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
