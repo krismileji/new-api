@@ -193,6 +193,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		reportProgress = func(int, int) {}
 	}
 	settings := getChannelMonitorSettings()
+	requestTimeout := settings.upstreamRequestTimeout()
 	emailChanges := make([]channelRatioMonitorEmailChange, 0)
 	balanceWarnings := make([]channelRatioMonitorBalanceWarning, 0)
 	disabledChannels := make([]channelRatioMonitorDisabledChannel, 0)
@@ -338,7 +339,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				if fetchMonitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
 					fetchMonitor.UpstreamBalanceSyncDisabled = true
 				}
-				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, true, 0, "系统自动更新")
+				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, true, 0, "系统自动更新")
 				ratioUpdated = err == nil
 				if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
 					balance := *outcome.Result.Balance.Amount
@@ -346,7 +347,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 			} else {
 				var balanceResult service.ChannelMonitorUpstreamBalanceResult
-				balanceResult, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy)
+				balanceResult, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 				if balanceResult.Amount != nil {
 					balance := *balanceResult.Amount
 					recordedBalance = &balance

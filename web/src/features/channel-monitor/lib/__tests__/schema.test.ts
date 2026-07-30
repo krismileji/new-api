@@ -25,9 +25,11 @@ import {
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
 } from '../schema'
 
 describe('channel concurrency limit schema', () => {
@@ -59,6 +61,7 @@ describe('channel monitor settings schema', () => {
     const settings = createChannelMonitorSettingsSchema().parse({
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: true,
       autoEnableOnCostRatioRecovery: true,
@@ -77,16 +80,18 @@ describe('channel monitor settings schema', () => {
 
     assert.equal(settings.autoEnableOnCostRatioRecovery, true)
     assert.equal(settings.autoEnableOnBalanceRecovery, true)
+    assert.equal(settings.upstreamRequestTimeoutSeconds, 30)
     assert.equal(settings.autoUpdateConsecutiveFailureLimit, 2)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
   })
 
-  test('accepts retention boundaries and rejects invalid retention days', () => {
+  test('accepts bounded general settings and rejects values outside their ranges', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
       autoEnableOnCostRatioRecovery: false,
@@ -125,6 +130,28 @@ describe('channel monitor settings schema', () => {
           ...baseSettings,
           autoUpdateConsecutiveFailureLimit,
         }).success,
+        false
+      )
+    }
+
+    for (const upstreamRequestTimeoutSeconds of [
+      MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+      MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+    ]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, upstreamRequestTimeoutSeconds })
+          .upstreamRequestTimeoutSeconds,
+        upstreamRequestTimeoutSeconds
+      )
+    }
+    for (const upstreamRequestTimeoutSeconds of [
+      MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS - 1,
+      1.5,
+      MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, upstreamRequestTimeoutSeconds })
+          .success,
         false
       )
     }
@@ -218,6 +245,7 @@ describe('channel monitor settings schema', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
       autoEnableOnCostRatioRecovery: false,

@@ -36,6 +36,9 @@ export const MAX_CUSTOM_UPSTREAM_ENTRIES = 32
 export const MAX_CUSTOM_UPSTREAM_BODY_BYTES = 49_152
 export const MAX_AUTO_UPDATE_INTERVAL_MINUTES = 525_600
 export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
+export const MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 1
+export const MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 600
+export const DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 30
 export const MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 1
 export const MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 100
 export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 2
@@ -368,6 +371,17 @@ export function createChannelMonitorSettingsSchema() {
         .int('失败重试次数必须是整数')
         .min(0, '失败重试次数不能小于 0')
         .max(MAX_AUTO_UPDATE_RETRY_COUNT, '失败重试次数不能超过 10 次'),
+      upstreamRequestTimeoutSeconds: z.coerce
+        .number()
+        .int('上游请求超时时间必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+          '上游请求超时时间不能小于 1 秒'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+          '上游请求超时时间不能超过 600 秒'
+        ),
       autoUpdateConsecutiveFailureLimit: z.coerce
         .number()
         .int('连续失败停止次数必须是整数')

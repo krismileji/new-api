@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,6 +22,7 @@ import (
 const (
 	channelMonitorAutoUpdateIntervalOption                 = "ChannelMonitorAutoUpdateIntervalMinutes"
 	channelMonitorAutoUpdateRetryCountOption               = "ChannelMonitorAutoUpdateRetryCount"
+	channelMonitorUpstreamRequestTimeoutOption             = "ChannelMonitorUpstreamRequestTimeoutSeconds"
 	channelMonitorAutoUpdateConsecutiveFailureLimitOption  = "ChannelMonitorAutoUpdateConsecutiveFailureLimit"
 	channelMonitorAutoDisableOnUpdateFailureOption         = "ChannelMonitorAutoDisableOnUpdateFailure"
 	channelMonitorAutoEnableOnCostRatioRecoveryOption      = "ChannelMonitorAutoEnableOnCostRatioRecovery"
@@ -50,6 +52,8 @@ const (
 	channelMonitorSmartScheduleSampleProbe                 = "probe"
 	maxChannelMonitorAutoUpdateIntervalMinutes             = 525600
 	maxChannelMonitorAutoUpdateRetryCount                  = 10
+	minChannelMonitorUpstreamRequestTimeoutSeconds         = 1
+	maxChannelMonitorUpstreamRequestTimeoutSeconds         = 600
 	minChannelMonitorAutoUpdateConsecutiveFailureLimit     = 1
 	maxChannelMonitorAutoUpdateConsecutiveFailureLimit     = 100
 	minChannelMonitorCostRetentionDays                     = 1
@@ -64,6 +68,7 @@ const (
 	maxChannelMonitorSmartScheduleSuccessRate              = 100
 	maxChannelMonitorSmartScheduleExplorationPercent       = 20
 	defaultChannelMonitorAutoUpdateRetryCount              = 2
+	defaultChannelMonitorUpstreamRequestTimeoutSeconds     = 30
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit = 2
 	defaultChannelMonitorCostRetentionDays                 = 120
 	defaultChannelMonitorGroupCoefficient                  = 1
@@ -74,6 +79,7 @@ const (
 type channelMonitorSettings struct {
 	AutoUpdateIntervalMinutes          int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount               int                        `json:"auto_update_retry_count"`
+	UpstreamRequestTimeoutSeconds      int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit  int                        `json:"auto_update_consecutive_failure_limit"`
 	AutoDisableOnUpdateFailure         bool                       `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery      bool                       `json:"auto_enable_on_cost_ratio_recovery"`
@@ -96,6 +102,7 @@ type channelMonitorSettings struct {
 type channelMonitorSettingsUpdateRequest struct {
 	AutoUpdateIntervalMinutes         *int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount              *int                        `json:"auto_update_retry_count"`
+	UpstreamRequestTimeoutSeconds     *int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit *int                        `json:"auto_update_consecutive_failure_limit"`
 	AutoDisableOnUpdateFailure        *bool                       `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery     *bool                       `json:"auto_enable_on_cost_ratio_recovery"`
@@ -120,6 +127,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	common.OptionMapRWMutex.RLock()
 	rawInterval := common.OptionMap[channelMonitorAutoUpdateIntervalOption]
 	rawRetryCount := common.OptionMap[channelMonitorAutoUpdateRetryCountOption]
+	rawUpstreamRequestTimeout := common.OptionMap[channelMonitorUpstreamRequestTimeoutOption]
 	rawConsecutiveFailureLimit := common.OptionMap[channelMonitorAutoUpdateConsecutiveFailureLimitOption]
 	rawAutoDisableOnUpdateFailure := common.OptionMap[channelMonitorAutoDisableOnUpdateFailureOption]
 	rawAutoEnableOnCostRatioRecovery := common.OptionMap[channelMonitorAutoEnableOnCostRatioRecoveryOption]
@@ -143,6 +151,11 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	retryCount, err := strconv.Atoi(rawRetryCount)
 	if err != nil || retryCount < 0 || retryCount > maxChannelMonitorAutoUpdateRetryCount {
 		retryCount = defaultChannelMonitorAutoUpdateRetryCount
+	}
+	upstreamRequestTimeoutSeconds, err := strconv.Atoi(rawUpstreamRequestTimeout)
+	if err != nil || upstreamRequestTimeoutSeconds < minChannelMonitorUpstreamRequestTimeoutSeconds ||
+		upstreamRequestTimeoutSeconds > maxChannelMonitorUpstreamRequestTimeoutSeconds {
+		upstreamRequestTimeoutSeconds = defaultChannelMonitorUpstreamRequestTimeoutSeconds
 	}
 	consecutiveFailureLimit, err := strconv.Atoi(rawConsecutiveFailureLimit)
 	if err != nil || consecutiveFailureLimit < minChannelMonitorAutoUpdateConsecutiveFailureLimit ||
@@ -201,6 +214,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	settings := channelMonitorSettings{
 		AutoUpdateIntervalMinutes:         interval,
 		AutoUpdateRetryCount:              retryCount,
+		UpstreamRequestTimeoutSeconds:     upstreamRequestTimeoutSeconds,
 		AutoUpdateConsecutiveFailureLimit: consecutiveFailureLimit,
 		AutoDisableOnUpdateFailure:        autoDisableOnUpdateFailure,
 		AutoEnableOnCostRatioRecovery:     autoEnableOnCostRatioRecovery,
@@ -217,6 +231,10 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		SmartScheduleControlRevision:      rawSmartScheduleControlRevision,
 	}
 	return settings
+}
+
+func (settings channelMonitorSettings) upstreamRequestTimeout() time.Duration {
+	return time.Duration(settings.UpstreamRequestTimeoutSeconds) * time.Second
 }
 
 func normalizeChannelMonitorSmartScheduleModels(models []string, fieldName string) ([]string, error) {
@@ -428,6 +446,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if request.AutoUpdateIntervalMinutes == nil &&
 		request.AutoUpdateRetryCount == nil &&
+		request.UpstreamRequestTimeoutSeconds == nil &&
 		request.AutoUpdateConsecutiveFailureLimit == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
 		request.AutoEnableOnCostRatioRecovery == nil &&
@@ -446,7 +465,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		return
 	}
 	settings := getChannelMonitorSettings()
-	values := make(map[string]string, 18)
+	values := make(map[string]string, 19)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -470,6 +489,19 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoUpdateRetryCount != nil {
 		settings.AutoUpdateRetryCount = *request.AutoUpdateRetryCount
 		values[channelMonitorAutoUpdateRetryCountOption] = strconv.Itoa(settings.AutoUpdateRetryCount)
+	}
+	if request.UpstreamRequestTimeoutSeconds != nil &&
+		(*request.UpstreamRequestTimeoutSeconds < minChannelMonitorUpstreamRequestTimeoutSeconds ||
+			*request.UpstreamRequestTimeoutSeconds > maxChannelMonitorUpstreamRequestTimeoutSeconds) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "上游请求超时时间必须在 1 到 600 秒之间",
+		})
+		return
+	}
+	if request.UpstreamRequestTimeoutSeconds != nil {
+		settings.UpstreamRequestTimeoutSeconds = *request.UpstreamRequestTimeoutSeconds
+		values[channelMonitorUpstreamRequestTimeoutOption] = strconv.Itoa(settings.UpstreamRequestTimeoutSeconds)
 	}
 	if request.AutoUpdateConsecutiveFailureLimit != nil &&
 		(*request.AutoUpdateConsecutiveFailureLimit < minChannelMonitorAutoUpdateConsecutiveFailureLimit ||
@@ -634,6 +666,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	auditDetails := map[string]interface{}{
 		"auto_update_interval_minutes":          settings.AutoUpdateIntervalMinutes,
 		"auto_update_retry_count":               settings.AutoUpdateRetryCount,
+		"upstream_request_timeout_seconds":      settings.UpstreamRequestTimeoutSeconds,
 		"auto_update_consecutive_failure_limit": settings.AutoUpdateConsecutiveFailureLimit,
 		"auto_disable_on_update_failure":        settings.AutoDisableOnUpdateFailure,
 		"auto_enable_on_cost_ratio_recovery":    settings.AutoEnableOnCostRatioRecovery,

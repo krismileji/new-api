@@ -197,30 +197,33 @@ func newChannelMonitorControllerContext(t *testing.T, method string, target stri
 
 func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 	tests := []struct {
-		name             string
-		values           map[string]string
-		wantInterval     int
-		wantRetryCount   int
-		wantFailureLimit int
-		wantAutoDisable  bool
-		wantEmailEnabled bool
-		wantProbeEnabled bool
-		wantRelayTimeout int
-		wantEnabled      bool
-		wantTaskInterval time.Duration
+		name               string
+		values             map[string]string
+		wantInterval       int
+		wantRetryCount     int
+		wantRequestTimeout int
+		wantFailureLimit   int
+		wantAutoDisable    bool
+		wantEmailEnabled   bool
+		wantProbeEnabled   bool
+		wantRelayTimeout   int
+		wantEnabled        bool
+		wantTaskInterval   time.Duration
 	}{
 		{
-			name:             "missing values are disabled",
-			values:           map[string]string{},
-			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
-			wantFailureLimit: defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
-			wantTaskInterval: time.Minute,
+			name:               "missing values are disabled",
+			values:             map[string]string{},
+			wantRetryCount:     defaultChannelMonitorAutoUpdateRetryCount,
+			wantRequestTimeout: defaultChannelMonitorUpstreamRequestTimeoutSeconds,
+			wantFailureLimit:   defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
+			wantTaskInterval:   time.Minute,
 		},
 		{
 			name: "valid values",
 			values: map[string]string{
 				channelMonitorAutoUpdateIntervalOption:                "30",
 				channelMonitorAutoUpdateRetryCountOption:              "4",
+				channelMonitorUpstreamRequestTimeoutOption:            "45",
 				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "5",
 				channelMonitorAutoDisableOnUpdateFailureOption:        "true",
 				channelMonitorEmailNotificationOption:                 "true",
@@ -228,21 +231,23 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorProbeResponseOption:                     "true",
 				common.RelayResponseHeaderTimeoutOptionKey:            "60",
 			},
-			wantInterval:     30,
-			wantRetryCount:   4,
-			wantFailureLimit: 5,
-			wantAutoDisable:  true,
-			wantEmailEnabled: true,
-			wantProbeEnabled: true,
-			wantRelayTimeout: 60,
-			wantEnabled:      true,
-			wantTaskInterval: 30 * time.Minute,
+			wantInterval:       30,
+			wantRetryCount:     4,
+			wantRequestTimeout: 45,
+			wantFailureLimit:   5,
+			wantAutoDisable:    true,
+			wantEmailEnabled:   true,
+			wantProbeEnabled:   true,
+			wantRelayTimeout:   60,
+			wantEnabled:        true,
+			wantTaskInterval:   30 * time.Minute,
 		},
 		{
 			name: "invalid values use safe defaults",
 			values: map[string]string{
 				channelMonitorAutoUpdateIntervalOption:                "525601",
 				channelMonitorAutoUpdateRetryCountOption:              "11",
+				channelMonitorUpstreamRequestTimeoutOption:            "601",
 				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "101",
 				channelMonitorAutoDisableOnUpdateFailureOption:        "invalid",
 				channelMonitorEmailNotificationOption:                 "invalid",
@@ -250,9 +255,10 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				channelMonitorProbeResponseOption:                     "invalid",
 				common.RelayResponseHeaderTimeoutOptionKey:            "601",
 			},
-			wantRetryCount:   defaultChannelMonitorAutoUpdateRetryCount,
-			wantFailureLimit: defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
-			wantTaskInterval: time.Minute,
+			wantRetryCount:     defaultChannelMonitorAutoUpdateRetryCount,
+			wantRequestTimeout: defaultChannelMonitorUpstreamRequestTimeoutSeconds,
+			wantFailureLimit:   defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
+			wantTaskInterval:   time.Minute,
 		},
 	}
 
@@ -262,6 +268,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			settings := getChannelMonitorSettings()
 			assert.Equal(t, test.wantInterval, settings.AutoUpdateIntervalMinutes)
 			assert.Equal(t, test.wantRetryCount, settings.AutoUpdateRetryCount)
+			assert.Equal(t, test.wantRequestTimeout, settings.UpstreamRequestTimeoutSeconds)
 			assert.Equal(t, test.wantFailureLimit, settings.AutoUpdateConsecutiveFailureLimit)
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
 			assert.Equal(t, test.wantEmailEnabled, settings.EmailNotificationEnabled)
@@ -489,6 +496,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
 		{"auto_update_retry_count": maxChannelMonitorAutoUpdateRetryCount + 1},
+		{"upstream_request_timeout_seconds": minChannelMonitorUpstreamRequestTimeoutSeconds - 1},
+		{"upstream_request_timeout_seconds": maxChannelMonitorUpstreamRequestTimeoutSeconds + 1},
 		{"auto_update_consecutive_failure_limit": 0},
 		{"auto_update_consecutive_failure_limit": maxChannelMonitorAutoUpdateConsecutiveFailureLimit + 1},
 		{"cost_retention_days": minChannelMonitorCostRetentionDays - 1},
@@ -555,6 +564,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	request := map[string]any{
 		"auto_update_interval_minutes":          15,
 		"auto_update_retry_count":               3,
+		"upstream_request_timeout_seconds":      45,
 		"auto_update_consecutive_failure_limit": 5,
 		"auto_disable_on_update_failure":        true,
 		"cost_retention_days":                   365,
@@ -604,6 +614,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.True(t, response.Success)
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
 	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
 	assert.Equal(t, 365, response.Data.CostRetentionDays)
@@ -688,6 +699,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateRetryCountOption).First(&option).Error)
 	assert.Equal(t, "3", option.Value)
 	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorUpstreamRequestTimeoutOption).First(&option).Error)
+	assert.Equal(t, "45", option.Value)
+	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateConsecutiveFailureLimitOption).First(&option).Error)
 	assert.Equal(t, "5", option.Value)
 	option = model.Option{}
@@ -731,6 +745,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
 	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
 	assert.False(t, response.Data.EmailNotificationEnabled)
@@ -2193,6 +2208,9 @@ func TestResolveChannelMonitorUpstreamRequestDoesNotReuseCredentialsAcrossHosts(
 }
 
 func TestResolveChannelMonitorUpstreamRequestIncludesChannelProxy(t *testing.T) {
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorUpstreamRequestTimeoutOption: "45",
+	})
 	channel := &model.Channel{Id: 21}
 	channel.SetSetting(dto.ChannelSettings{Proxy: "socks5://127.0.0.1:1080"})
 
@@ -2204,6 +2222,7 @@ func TestResolveChannelMonitorUpstreamRequestIncludesChannelProxy(t *testing.T) 
 	}, true)
 	require.NoError(t, err)
 	assert.Equal(t, "socks5://127.0.0.1:1080", config.Proxy)
+	assert.Equal(t, 45*time.Second, config.RequestTimeout)
 }
 
 func TestPlanChannelMonitorPolicyActions(t *testing.T) {

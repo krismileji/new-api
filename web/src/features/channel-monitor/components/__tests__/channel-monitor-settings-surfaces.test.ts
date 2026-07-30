@@ -65,6 +65,7 @@ test(
     const result = JSON.parse(output) as SettingsSurfaceResult
 
     assert.match(result.generalTitle, /渠道监控设置/)
+    assert.match(result.generalTitle, /上游请求超时/)
     assert.equal(result.generalHasSchedule, false)
     assert.equal(result.scheduleSide, 'right')
     assert.match(result.scheduleTitle, /智能调度设置/)

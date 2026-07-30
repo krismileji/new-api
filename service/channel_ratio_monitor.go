@@ -32,7 +32,7 @@ const (
 
 	maxUpstreamGroupRatioResponseBytes = 1 << 20
 	maxUpstreamGroupRatio              = 1_000_000
-	upstreamGroupRatioTimeout          = 15 * time.Second
+	defaultUpstreamRequestTimeout      = 30 * time.Second
 	upstreamGroupApplyTimeout          = 30 * time.Second
 )
 
@@ -67,10 +67,25 @@ type ChannelMonitorUpstreamConfig struct {
 	Password       string
 	ChannelKeys    []string
 	Proxy          string
+	RequestTimeout time.Duration
 	SkipBalance    bool
 	CostConversion ChannelMonitorCostConversion
 	CustomConfig   ChannelMonitorCustomUpstreamConfig
 	CustomDebug    bool
+}
+
+func channelMonitorUpstreamRequestTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultUpstreamRequestTimeout
+	}
+	return timeout
+}
+
+func continueChannelMonitorUpstreamRequest(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, defaultUpstreamRequestTimeout)
 }
 
 type NewAPIGroupRatioConfig struct {
@@ -235,6 +250,9 @@ func NormalizeNewAPIBaseURL(value string) (string, error) {
 }
 
 func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMonitorUpstreamConfig) (NewAPIGroupRatioResult, error) {
+	requestContext, cancel := context.WithTimeout(ctx, channelMonitorUpstreamRequestTimeout(config.RequestTimeout))
+	defer cancel()
+
 	client, err := NewSSRFProtectedHTTPClientWithProxy(config.Proxy)
 	if err != nil {
 		return NewAPIGroupRatioResult{}, err
@@ -249,12 +267,12 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			UserID:      config.UserID,
 			AccessToken: config.AccessToken,
 		}
-		result, err = fetchNewAPIGroupRatio(ctx, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+		result, err = fetchNewAPIGroupRatio(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
 		if err != nil {
 			return result, err
 		}
 		if !config.SkipBalance {
-			balance, balanceErr := fetchNewAPIUpstreamBalance(ctx, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+			balance, balanceErr := fetchNewAPIUpstreamBalance(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
 			if balanceErr != nil {
 				result.Balance.Error = balanceErr.Error()
 			} else {
@@ -262,7 +280,7 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			}
 		}
 	case Sub2APIUpstreamType:
-		result, err = fetchSub2APIGroupRatio(ctx, client, Sub2APIGroupRatioConfig{
+		result, err = fetchSub2APIGroupRatio(requestContext, client, Sub2APIGroupRatioConfig{
 			BaseURL:     config.BaseURL,
 			Group:       config.Group,
 			AuthType:    config.AuthType,
@@ -278,7 +296,7 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 		}
 	case CustomUpstreamType:
 		result, err = fetchChannelMonitorCustomUpstreamRatio(
-			ctx,
+			requestContext,
 			client,
 			config.BaseURL,
 			config.CustomConfig,
@@ -305,20 +323,23 @@ func applyChannelMonitorCostConversion(result NewAPIGroupRatioResult, config Cha
 }
 
 func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonitorUpstreamConfig) (ChannelMonitorUpstreamBalanceResult, error) {
+	requestContext, cancel := context.WithTimeout(ctx, channelMonitorUpstreamRequestTimeout(config.RequestTimeout))
+	defer cancel()
+
 	client, err := NewSSRFProtectedHTTPClientWithProxy(config.Proxy)
 	if err != nil {
 		return ChannelMonitorUpstreamBalanceResult{}, err
 	}
 	switch config.Type {
 	case NewAPIUpstreamType:
-		return fetchNewAPIUpstreamBalance(ctx, client, NewAPIGroupRatioConfig{
+		return fetchNewAPIUpstreamBalance(requestContext, client, NewAPIGroupRatioConfig{
 			BaseURL:     config.BaseURL,
 			AuthType:    config.AuthType,
 			UserID:      config.UserID,
 			AccessToken: config.AccessToken,
 		}, ValidateSSRFProtectedFetchURL)
 	case Sub2APIUpstreamType:
-		return fetchSub2APIUpstreamBalance(ctx, client, Sub2APIGroupRatioConfig{
+		return fetchSub2APIUpstreamBalance(requestContext, client, Sub2APIGroupRatioConfig{
 			BaseURL:     config.BaseURL,
 			AuthType:    config.AuthType,
 			AccessToken: config.AccessToken,
@@ -329,7 +350,7 @@ func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonit
 		}, ValidateSSRFProtectedFetchURL)
 	case CustomUpstreamType:
 		return fetchChannelMonitorCustomUpstreamBalance(
-			ctx,
+			requestContext,
 			client,
 			config.BaseURL,
 			config.CustomConfig,
@@ -349,7 +370,7 @@ func fetchNewAPIUpstreamBalance(ctx context.Context, client *http.Client, config
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("New API 公开认证无法获取上游余额")
 	}
 
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	userBody, err := requestNewAPIUser(
 		requestContext,
@@ -559,7 +580,7 @@ func fetchNewAPIGroupRatio(ctx context.Context, client *http.Client, config NewA
 		return NewAPIGroupRatioResult{}, errors.New("上游自动分组没有固定倍率，无法用于倍率监控")
 	}
 
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 
 	errorsByEndpoint := make([]string, 0, len(endpoints))
@@ -601,7 +622,7 @@ func fetchNewAPIUpstreamGroups(ctx context.Context, client *http.Client, config 
 	if err != nil {
 		return ChannelMonitorUpstreamGroupsResult{}, err
 	}
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 
 	errorsByEndpoint := make([]string, 0, len(endpoints))
@@ -1016,7 +1037,7 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 }
 
 func fetchSub2APIKeyGroupRatio(ctx context.Context, client *http.Client, config Sub2APIGroupRatioConfig, validateURL func(string) error) (NewAPIGroupRatioResult, error) {
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	result := NewAPIGroupRatioResult{Endpoint: "/v1/sub2api/billing"}
 	var resolvedRatio *float64
@@ -1064,7 +1085,7 @@ func fetchSub2APIKeyBalance(ctx context.Context, client *http.Client, config Sub
 	if len(config.ChannelKeys) == 0 {
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("Sub2API API Key 认证没有可用的渠道 API Key")
 	}
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	body, err := requestSub2APIKeyEndpoint(
 		requestContext,
@@ -1160,11 +1181,13 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 	}
 	config.BaseURL = baseURL
 	config.AccessToken = accessToken
-	timeout := upstreamGroupRatioTimeout
+	var requestContext context.Context
+	var cancel context.CancelFunc
 	if len(channelKeys) > 0 {
-		timeout = upstreamGroupApplyTimeout
+		requestContext, cancel = context.WithTimeout(ctx, upstreamGroupApplyTimeout)
+	} else {
+		requestContext, cancel = continueChannelMonitorUpstreamRequest(ctx)
 	}
-	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result, err := fetchSub2APIUpstreamGroupsWithToken(requestContext, client, baseURL, accessToken, validateURL)
 	if err != nil {
@@ -1280,7 +1303,7 @@ func fetchSub2APIUpstreamBalance(ctx context.Context, client *http.Client, confi
 }
 
 func fetchSub2APIUpstreamBalanceWithToken(ctx context.Context, client *http.Client, baseURL string, accessToken string, validateURL func(string) error) (ChannelMonitorUpstreamBalanceResult, error) {
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	result, err := fetchSub2APIProfileBalance(requestContext, client, baseURL, accessToken, validateURL)
 	if err != nil {

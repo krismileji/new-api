@@ -47,6 +47,7 @@ export function createChannelMonitorSettingsUpdatePayload(
   return {
     auto_update_interval_minutes: values.autoUpdateIntervalMinutes,
     auto_update_retry_count: values.autoUpdateRetryCount,
+    upstream_request_timeout_seconds: values.upstreamRequestTimeoutSeconds,
     auto_update_consecutive_failure_limit:
       values.autoUpdateConsecutiveFailureLimit,
     auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,

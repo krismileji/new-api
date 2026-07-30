@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -39,6 +40,35 @@ func TestNormalizeNewAPIBaseURL(t *testing.T) {
 			assert.Equal(t, test.want, got)
 		})
 	}
+}
+
+func TestChannelMonitorUpstreamRequestTimeoutUsesConfiguredAndDefaultValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{name: "default", want: 30 * time.Second},
+		{name: "configured above default", timeout: 60 * time.Second, want: 60 * time.Second},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, channelMonitorUpstreamRequestTimeout(test.timeout))
+		})
+	}
+}
+
+func TestContinueChannelMonitorUpstreamRequestKeepsExistingDeadline(t *testing.T) {
+	deadline := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
+	requestContext, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+
+	nestedContext, nestedCancel := continueChannelMonitorUpstreamRequest(requestContext)
+	defer nestedCancel()
+	nestedDeadline, hasDeadline := nestedContext.Deadline()
+	require.True(t, hasDeadline)
+	assert.Equal(t, deadline, nestedDeadline)
 }
 
 func TestFetchNewAPIGroupRatioFromPublicPricing(t *testing.T) {

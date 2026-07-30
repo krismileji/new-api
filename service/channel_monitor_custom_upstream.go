@@ -578,7 +578,7 @@ func requestChannelMonitorCustomUpstream(ctx context.Context, client *http.Clien
 		contentType = "application/x-www-form-urlencoded"
 	}
 
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestContext, config.Method, requestURL, body)
 	if err != nil {

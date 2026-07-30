@@ -186,7 +186,7 @@ func loginSub2APIAccount(ctx context.Context, client *http.Client, baseURL strin
 			return "", 0, err
 		}
 	}
-	requestContext, cancel := context.WithTimeout(ctx, upstreamGroupRatioTimeout)
+	requestContext, cancel := continueChannelMonitorUpstreamRequest(ctx)
 	defer cancel()
 	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodPost, requestURL, bytes.NewReader(requestBody))
 	if err != nil {

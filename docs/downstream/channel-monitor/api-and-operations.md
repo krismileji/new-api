@@ -44,6 +44,7 @@
 | --- | --- | ---: | --- |
 | `auto_update_interval_minutes` | `ChannelMonitorAutoUpdateIntervalMinutes` | `0` | `0..525600`，`0` 关闭 |
 | `auto_update_retry_count` | `ChannelMonitorAutoUpdateRetryCount` | `2` | `0..10` |
+| `upstream_request_timeout_seconds` | `ChannelMonitorUpstreamRequestTimeoutSeconds` | `30` | `1..600` 秒；倍率与余额刷新单次尝试的总超时 |
 | `auto_update_consecutive_failure_limit` | `ChannelMonitorAutoUpdateConsecutiveFailureLimit` | `2` | `1..100`；倍率与余额分别计数，达到后停止对应自动更新 |
 | `auto_disable_on_update_failure` | `ChannelMonitorAutoDisableOnUpdateFailure` | `false` | 布尔值 |
 | `auto_enable_on_cost_ratio_recovery` | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `false` | 布尔值 |
@@ -59,6 +60,8 @@
 | `smart_schedule_performance_minutes` | `ChannelMonitorSmartSchedulePerformanceMinutes` | `60` | `15`、`60`、`360`、`1440` |
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
+
+`upstream_request_timeout_seconds` 同时用于自动更新、手动刷新和上游配置测试。一次倍率刷新中包含的登录、倍率和余额子请求共享同一个总超时预算；自动更新若超时，会按 `auto_update_retry_count` 为下一次尝试重新分配完整预算。该设置与中继请求的 `relay_response_header_timeout_seconds` 相互独立。
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 

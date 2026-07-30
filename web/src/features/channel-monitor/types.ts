@@ -498,6 +498,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
 export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
+  upstream_request_timeout_seconds?: number
   auto_update_consecutive_failure_limit: number
   auto_disable_on_update_failure: boolean
   auto_enable_on_cost_ratio_recovery: boolean

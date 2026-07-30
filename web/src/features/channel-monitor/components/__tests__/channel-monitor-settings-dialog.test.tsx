@@ -32,6 +32,7 @@ import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-resp
 import {
   ChannelMonitorConsecutiveFailureLimitField,
   ChannelMonitorCostRetentionField,
+  ChannelMonitorUpstreamRequestTimeoutField,
 } from '../channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
 import { ChannelMonitorSmartScheduleGroupPolicies } from '../channel-monitor-smart-schedule-group-policies'
@@ -55,6 +56,17 @@ function ConsecutiveFailureLimitFieldFixture() {
   return (
     <Form {...form}>
       <ChannelMonitorConsecutiveFailureLimitField form={form} />
+    </Form>
+  )
+}
+
+function UpstreamRequestTimeoutFieldFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { upstreamRequestTimeoutSeconds: 30 },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorUpstreamRequestTimeoutField form={form} />
     </Form>
   )
 }
@@ -223,6 +235,15 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /type="number"[^>]*min="1"[^>]*max="100"/)
     assert.match(markup, /value="3"/)
     assert.ok(markup.includes('倍率和余额分别连续失败'))
+  })
+
+  test('shows the configured upstream request timeout for ratio and balance updates', () => {
+    const markup = renderToStaticMarkup(<UpstreamRequestTimeoutFieldFixture />)
+
+    assert.ok(markup.includes('上游请求超时'))
+    assert.match(markup, /type="number"[^>]*min="1"[^>]*max="600"/)
+    assert.match(markup, /value="30"/)
+    assert.ok(markup.includes('单次倍率或余额更新超过该时间会终止'))
   })
 
   test('shows persisted cost retention days with bounded numeric input', () => {
