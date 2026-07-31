@@ -62,9 +62,11 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
     effective_weight_percent: 100,
   }
   return {
-    version: 1,
+    version: 2,
     strategy: 'ratio',
     minimum_samples: 5,
+    sample_scope: 'channel_model',
+    sample_group_count: 2,
     inputs: {
       cost_ratio: { value: 1, sample_count: 1 },
       first_token_ms: { value: null, sample_count: 0 },

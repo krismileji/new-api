@@ -41,7 +41,7 @@ func manualProbeTestPolicy(group string, models []string, sampleMode string) cha
 	return policy
 }
 
-func TestRecordManualChannelSmartScheduleProbeResultUsesEveryParticipatingConfiguredGroup(t *testing.T) {
+func TestRecordManualChannelSmartScheduleProbeResultStoresOneSharedSampleForEligibleModel(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policies := []channelSmartScheduleGroupPolicy{
 		manualProbeTestPolicy("vip", []string{"model-a"}, channelMonitorSmartScheduleSampleProbe),
@@ -83,29 +83,36 @@ func TestRecordManualChannelSmartScheduleProbeResultUsesEveryParticipatingConfig
 
 	firstTokenMs := 125.0
 	tps := 30.0
-	recordManualChannelSmartScheduleProbeResult(&channel, testResult{
+	manualResult := testResult{
 		requestDispatched:         true,
 		originalModelName:         "model-a",
 		firstResponseMilliseconds: &firstTokenMs,
 		tokensPerSecond:           &tps,
-	}, 400)
+	}
+	recordManualChannelSmartScheduleProbeResultForGroup(&channel, manualResult, 400, "excluded")
+	var sampleCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
+	assert.Zero(t, sampleCount)
+	recordManualChannelSmartScheduleProbeResult(&channel, manualResult, 400)
 
-	var states []model.ChannelSmartScheduleRouteState
-	require.NoError(t, db.Order("group_name ASC").Find(&states).Error)
-	require.Len(t, states, len(groups))
-	byGroup := make(map[string]model.ChannelSmartScheduleRouteState, len(states))
-	for _, state := range states {
-		byGroup[state.GroupName] = state
-	}
-	for _, group := range []string{"vip", "shared", "traffic", "off", "degraded"} {
-		assert.Equal(t, int64(1), byGroup[group].ProbeSampleCount)
-		assert.Equal(t, int64(1), byGroup[group].ProbeSuccessCount)
-		assert.Equal(t, int64(1), byGroup[group].ProbeFirstTokenSampleCount)
-		assert.Equal(t, int64(1), byGroup[group].ProbeTPSSampleCount)
-		assert.Equal(t, int64(1), byGroup[group].ManualTestMetricsSince(0).SampleCount)
-	}
-	for _, group := range []string{"excluded", "disabled", "wrong-model", "unconfigured"} {
-		assert.Zero(t, byGroup[group].ProbeSampleCount)
+	var samples []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Find(&samples).Error)
+	require.Len(t, samples, 1)
+	sharedSample := samples[0]
+	assert.Equal(t, channel.Id, sharedSample.ChannelId)
+	assert.Equal(t, "model-a", sharedSample.ModelName)
+	assert.Equal(t, int64(1), sharedSample.SampleCount)
+	assert.Equal(t, int64(1), sharedSample.SuccessCount)
+	assert.Equal(t, int64(1), sharedSample.FirstTokenSampleCount)
+	assert.Equal(t, int64(1), sharedSample.TPSSampleCount)
+	assert.Equal(t, int64(1), sharedSample.ManualTestMetricsSince(0).SampleCount)
+
+	routes, err := model.GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	require.Len(t, routes, len(groups))
+	for _, route := range routes {
+		assert.Equal(t, sharedSample.Id, route.SharedSamples.Id)
+		assert.Equal(t, int64(1), route.SharedSamples.SampleCount)
 	}
 
 	localFailure := errors.New("local request conversion failed")
@@ -119,22 +126,25 @@ func TestRecordManualChannelSmartScheduleProbeResultUsesEveryParticipatingConfig
 		originalModelName: "model-a",
 	}, 850)
 
-	var vipState model.ChannelSmartScheduleRouteState
+	var reloadedSample model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "model-a",
-	).First(&vipState).Error)
-	assert.Equal(t, int64(3), vipState.ProbeSampleCount)
-	assert.Equal(t, int64(1), vipState.ProbeSuccessCount)
-	assert.Equal(t, int64(2), vipState.ProbeFailureDurationSampleCount)
-	require.NotNil(t, vipState.ProbeAverageFailureDurationMs)
-	assert.InDelta(t, 675, *vipState.ProbeAverageFailureDurationMs, 1e-9)
+		"channel_id = ? AND model_name = ?", channel.Id, "model-a",
+	).First(&reloadedSample).Error)
+	assert.Equal(t, sharedSample.Id, reloadedSample.Id)
+	assert.Equal(t, int64(3), reloadedSample.SampleCount)
+	assert.Equal(t, int64(1), reloadedSample.SuccessCount)
+	assert.Equal(t, int64(2), reloadedSample.FailureDurationSampleCount)
+	require.NotNil(t, reloadedSample.AverageFailureDurationMs)
+	assert.InDelta(t, 675, *reloadedSample.AverageFailureDurationMs, 1e-9)
+	require.NoError(t, db.Find(&samples).Error)
+	require.Len(t, samples, 1)
 
 	var logCount int64
 	require.NoError(t, db.Model(&model.Log{}).Count(&logCount).Error)
 	assert.Zero(t, logCount)
 }
 
-func TestManualChannelTestRecordsOneProbeSampleWithoutDuplicateConsumeLog(t *testing.T) {
+func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
@@ -192,14 +202,14 @@ func TestManualChannelTestRecordsOneProbeSampleWithoutDuplicateConsumeLog(t *tes
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success, recorder.Body.String())
 
-	var state model.ChannelSmartScheduleRouteState
+	var state model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "default", "model-a",
+		"channel_id = ? AND model_name = ?", channel.Id, "model-a",
 	).First(&state).Error)
-	assert.Equal(t, int64(1), state.ProbeSampleCount)
-	assert.Equal(t, int64(1), state.ProbeSuccessCount)
-	assert.Zero(t, state.ProbeFirstTokenSampleCount)
-	assert.Zero(t, state.ProbeTPSSampleCount)
+	assert.Equal(t, int64(1), state.SampleCount)
+	assert.Equal(t, int64(1), state.SuccessCount)
+	assert.Zero(t, state.FirstTokenSampleCount)
+	assert.Zero(t, state.TPSSampleCount)
 
 	var consumeLogCount int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)

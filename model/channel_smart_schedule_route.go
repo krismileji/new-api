@@ -13,22 +13,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var channelSmartScheduleRouteProbeFields = []string{
-	"ProbeWindowStart",
-	"ProbeLastTime",
-	"ProbeLastSuccess",
-	"ProbeLastError",
-	"ProbeSampleCount",
-	"ProbeSuccessCount",
-	"ProbeFailureDurationSampleCount",
-	"ProbeAverageFailureDurationMs",
-	"ProbeFirstTokenSampleCount",
-	"ProbeAverageFirstTokenMs",
-	"ProbeTPSSampleCount",
-	"ProbeAverageTPS",
-	"ProbeSamples",
-}
-
 type ChannelSmartScheduleRouteState struct {
 	Id               int64  `json:"id"`
 	ChannelId        int    `json:"channel_id" gorm:"not null;uniqueIndex:idx_channel_smart_schedule_route"`
@@ -67,23 +51,6 @@ type ChannelSmartScheduleRouteState struct {
 	ManualPrimarySaved                 bool  `json:"-"`
 	ManualPrimarySavedPriority         int64 `json:"-" gorm:"bigint"`
 	ManualPrimarySavedWeight           uint  `json:"-"`
-
-	ProbeWindowStart                int64    `json:"probe_window_start" gorm:"bigint"`
-	ProbeLastTime                   int64    `json:"probe_last_time" gorm:"bigint;index"`
-	ProbeLastSuccess                bool     `json:"probe_last_success"`
-	ProbeLastError                  string   `json:"probe_last_error" gorm:"type:varchar(255)"`
-	ProbeSampleCount                int64    `json:"probe_sample_count" gorm:"bigint"`
-	ProbeSuccessCount               int64    `json:"probe_success_count" gorm:"bigint"`
-	ProbeFailureDurationSampleCount int64    `json:"probe_failure_duration_sample_count" gorm:"bigint"`
-	ProbeAverageFailureDurationMs   *float64 `json:"probe_average_failure_duration_ms"`
-	ProbeFirstTokenSampleCount      int64    `json:"probe_first_token_sample_count" gorm:"bigint"`
-	ProbeAverageFirstTokenMs        *float64 `json:"probe_average_first_token_ms"`
-	ProbeTPSSampleCount             int64    `json:"probe_tps_sample_count" gorm:"bigint"`
-	ProbeAverageTPS                 *float64 `json:"probe_average_tps"`
-	// ProbeSamples is an internal rolling JSON sample buffer. Leaving the
-	// string type unbounded lets each supported dialect choose its long-text
-	// equivalent instead of truncating high-frequency probe history.
-	ProbeSamples string `json:"-"`
 }
 
 const ChannelSmartScheduleManualPrimaryMaxMinutes = 525600
@@ -102,8 +69,8 @@ func (state ChannelSmartScheduleRouteState) Participates() bool {
 	return state.ParticipationSet && !state.Excluded
 }
 
-func saveChannelSmartScheduleRouteStateWithoutProbeTx(tx *gorm.DB, state *ChannelSmartScheduleRouteState) error {
-	return tx.Omit(channelSmartScheduleRouteProbeFields...).Save(state).Error
+func saveChannelSmartScheduleRouteStateTx(tx *gorm.DB, state *ChannelSmartScheduleRouteState) error {
+	return tx.Save(state).Error
 }
 
 type ChannelSmartScheduleRouteKey struct {
@@ -113,17 +80,18 @@ type ChannelSmartScheduleRouteKey struct {
 }
 
 type ChannelSmartScheduleRoute struct {
-	ChannelId       int                            `json:"channel_id"`
-	ChannelName     string                         `json:"channel_name"`
-	ChannelStatus   int                            `json:"channel_status"`
-	ChannelPriority int64                          `json:"channel_priority"`
-	ChannelWeight   uint                           `json:"channel_weight"`
-	Group           string                         `json:"group"`
-	Model           string                         `json:"model"`
-	Enabled         bool                           `json:"enabled"`
-	Priority        int64                          `json:"priority"`
-	Weight          uint                           `json:"weight"`
-	State           ChannelSmartScheduleRouteState `json:"state"`
+	ChannelId       int                                  `json:"channel_id"`
+	ChannelName     string                               `json:"channel_name"`
+	ChannelStatus   int                                  `json:"channel_status"`
+	ChannelPriority int64                                `json:"channel_priority"`
+	ChannelWeight   uint                                 `json:"channel_weight"`
+	Group           string                               `json:"group"`
+	Model           string                               `json:"model"`
+	Enabled         bool                                 `json:"enabled"`
+	Priority        int64                                `json:"priority"`
+	Weight          uint                                 `json:"weight"`
+	State           ChannelSmartScheduleRouteState       `json:"state"`
+	SharedSamples   ChannelSmartScheduleModelSampleState `json:"shared_samples"`
 }
 
 type ChannelSmartScheduleRouteResultUpdate struct {
@@ -179,168 +147,6 @@ type ChannelSmartScheduleExplorationUpdate struct {
 	Since         int64
 	SavedPriority int64
 	SavedWeight   uint
-}
-
-type ChannelSmartScheduleProbeResult struct {
-	ChannelId    int
-	Group        string
-	Model        string
-	Source       string
-	SampleId     string
-	WindowStart  int64
-	Time         int64
-	Success      bool
-	Error        string
-	DurationMs   *float64
-	FirstTokenMs *float64
-	TPS          *float64
-}
-
-type ChannelSmartScheduleProbeMetrics struct {
-	WindowStart                   int64
-	SampleCount                   int64
-	SuccessCount                  int64
-	FailureCount                  int64
-	FailureDurationSampleCount    int64
-	FailureDurationTotalMs        float64
-	FailureDurationBuckets        []ChannelMonitorFailureDurationBucket
-	FirstTokenSampleCount         int64
-	AverageFirstTokenMs           *float64
-	FirstTokenP50Ms               *float64
-	FirstTokenP95Ms               *float64
-	WinsorizedAverageFirstTokenMs *float64
-	FirstTokenDurationBuckets     []ChannelMonitorDurationBucket
-	TPSSampleCount                int64
-	AverageTPS                    *float64
-}
-
-type channelSmartScheduleProbeSample struct {
-	Time              int64    `json:"time"`
-	Success           bool     `json:"success"`
-	Source            string   `json:"source,omitempty"`
-	SampleId          string   `json:"sample_id,omitempty"`
-	FailureDurationMs *float64 `json:"failure_duration_ms,omitempty"`
-	FirstTokenMs      *float64 `json:"first_token_ms,omitempty"`
-	TPS               *float64 `json:"tps,omitempty"`
-}
-
-const (
-	channelSmartScheduleMaxProbeSamples            = 1500
-	ChannelSmartScheduleSampleSourceScheduledProbe = "scheduled_probe"
-	ChannelSmartScheduleSampleSourceManualTest     = "manual_test"
-)
-
-func (state ChannelSmartScheduleRouteState) ProbeMetricsSince(windowStart int64) ChannelSmartScheduleProbeMetrics {
-	return state.probeMetricsSince(windowStart, "")
-}
-
-func (state ChannelSmartScheduleRouteState) ManualTestMetricsSince(windowStart int64) ChannelSmartScheduleProbeMetrics {
-	return state.probeMetricsSince(windowStart, ChannelSmartScheduleSampleSourceManualTest)
-}
-
-func (state ChannelSmartScheduleRouteState) probeMetricsSince(
-	windowStart int64,
-	source string,
-) ChannelSmartScheduleProbeMetrics {
-	if strings.TrimSpace(state.ProbeSamples) == "" {
-		return ChannelSmartScheduleProbeMetrics{}
-	}
-	var samples []channelSmartScheduleProbeSample
-	if err := common.UnmarshalJsonStr(state.ProbeSamples, &samples); err != nil {
-		return ChannelSmartScheduleProbeMetrics{}
-	}
-	if source != "" {
-		filtered := samples[:0]
-		for _, sample := range samples {
-			if sample.Source == source {
-				filtered = append(filtered, sample)
-			}
-		}
-		samples = filtered
-	}
-	return channelSmartScheduleCalculateProbeMetrics(samples, windowStart)
-}
-
-func channelSmartScheduleCalculateProbeMetrics(
-	samples []channelSmartScheduleProbeSample,
-	windowStart int64,
-) ChannelSmartScheduleProbeMetrics {
-	metrics := ChannelSmartScheduleProbeMetrics{}
-	var firstTokenTotal float64
-	var tpsTotal float64
-	failureBucketCounts := [6]int64{}
-	firstTokenBuckets := make(map[int]ChannelMonitorDurationBucket)
-	for _, sample := range samples {
-		if sample.Time < windowStart {
-			continue
-		}
-		if metrics.WindowStart == 0 || sample.Time < metrics.WindowStart {
-			metrics.WindowStart = sample.Time
-		}
-		metrics.SampleCount++
-		if sample.Success {
-			metrics.SuccessCount++
-		} else {
-			metrics.FailureCount++
-			if sample.FailureDurationMs != nil && *sample.FailureDurationMs >= 0 &&
-				!math.IsNaN(*sample.FailureDurationMs) && !math.IsInf(*sample.FailureDurationMs, 0) {
-				metrics.FailureDurationSampleCount++
-				metrics.FailureDurationTotalMs += *sample.FailureDurationMs
-				durationMs := *sample.FailureDurationMs
-				switch {
-				case durationMs < 1000:
-					failureBucketCounts[0]++
-				case durationMs < 3000:
-					failureBucketCounts[1]++
-				case durationMs < 10000:
-					failureBucketCounts[2]++
-				case durationMs < 30000:
-					failureBucketCounts[3]++
-				case durationMs < 60000:
-					failureBucketCounts[4]++
-				default:
-					failureBucketCounts[5]++
-				}
-			}
-		}
-		if sample.Success && sample.FirstTokenMs != nil && *sample.FirstTokenMs > 0 &&
-			!math.IsNaN(*sample.FirstTokenMs) && !math.IsInf(*sample.FirstTokenMs, 0) {
-			metrics.FirstTokenSampleCount++
-			firstTokenTotal += *sample.FirstTokenMs
-			bucketIndex := channelMonitorDurationBucketIndex(*sample.FirstTokenMs)
-			bucket := firstTokenBuckets[bucketIndex]
-			bucket.Count++
-			bucket.TotalMs += *sample.FirstTokenMs
-			firstTokenBuckets[bucketIndex] = bucket
-		}
-		if sample.Success && sample.TPS != nil && *sample.TPS > 0 &&
-			!math.IsNaN(*sample.TPS) && !math.IsInf(*sample.TPS, 0) {
-			metrics.TPSSampleCount++
-			tpsTotal += *sample.TPS
-		}
-	}
-	if metrics.FirstTokenSampleCount > 0 {
-		value := firstTokenTotal / float64(metrics.FirstTokenSampleCount)
-		metrics.AverageFirstTokenMs = &value
-	}
-	metrics.FirstTokenDurationBuckets = channelMonitorDurationBucketsFromAggregates(firstTokenBuckets)
-	_, metrics.FirstTokenP50Ms, metrics.FirstTokenP95Ms,
-		metrics.WinsorizedAverageFirstTokenMs = SummarizeChannelMonitorDurationBuckets(
-		metrics.FirstTokenDurationBuckets,
-	)
-	if metrics.TPSSampleCount > 0 {
-		value := tpsTotal / float64(metrics.TPSSampleCount)
-		metrics.AverageTPS = &value
-	}
-	metrics.FailureDurationBuckets = []ChannelMonitorFailureDurationBucket{
-		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: failureBucketCounts[0]},
-		{LowerBoundMs: 1000, UpperBoundMs: 3000, Count: failureBucketCounts[1]},
-		{LowerBoundMs: 3000, UpperBoundMs: 10000, Count: failureBucketCounts[2]},
-		{LowerBoundMs: 10000, UpperBoundMs: 30000, Count: failureBucketCounts[3]},
-		{LowerBoundMs: 30000, UpperBoundMs: 60000, Count: failureBucketCounts[4]},
-		{LowerBoundMs: 60000, UpperBoundMs: 0, Count: failureBucketCounts[5]},
-	}
-	return metrics
 }
 
 type ChannelSmartScheduleChannelConfigResult struct {
@@ -417,6 +223,10 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 	if err := DB.Find(&states).Error; err != nil {
 		return nil, err
 	}
+	sharedSampleStates, err := GetChannelSmartScheduleModelSampleStates()
+	if err != nil {
+		return nil, err
+	}
 	channelById := make(map[int]Channel, len(channels))
 	for _, channel := range channels {
 		channelById[channel.Id] = channel
@@ -425,6 +235,10 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 	for _, state := range states {
 		stateByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = state
 	}
+	sharedSamplesByModel := make(map[channelSmartScheduleModelKey]ChannelSmartScheduleModelSampleState, len(sharedSampleStates))
+	for _, state := range sharedSampleStates {
+		sharedSamplesByModel[channelSmartScheduleModelKey{channelId: state.ChannelId, modelName: state.ModelName}] = state
+	}
 	routes := make([]ChannelSmartScheduleRoute, 0, len(abilities))
 	for _, ability := range abilities {
 		channel, exists := channelById[ability.ChannelId]
@@ -432,6 +246,12 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 			continue
 		}
 		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
+		modelKey := channelSmartScheduleModelKey{channelId: ability.ChannelId, modelName: ability.Model}
+		sharedSamples := sharedSamplesByModel[modelKey]
+		if sharedSamples.ChannelId == 0 {
+			sharedSamples.ChannelId = ability.ChannelId
+			sharedSamples.ModelName = ability.Model
+		}
 		routes = append(routes, ChannelSmartScheduleRoute{
 			ChannelId:       ability.ChannelId,
 			ChannelName:     channel.Name,
@@ -444,6 +264,7 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 			Priority:        abilityPriority(ability),
 			Weight:          ability.Weight,
 			State:           stateByKey[key],
+			SharedSamples:   sharedSamples,
 		})
 	}
 	sort.Slice(routes, func(i int, j int) bool {
@@ -519,7 +340,7 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 		if created {
 			return tx.Create(&state).Error
 		}
-		return saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, &state)
+		return saveChannelSmartScheduleRouteStateTx(tx, &state)
 	})
 	return state, routingChanged, err
 }
@@ -600,7 +421,7 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 				if err := tx.Create(state).Error; err != nil {
 					return err
 				}
-			} else if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, state); err != nil {
+			} else if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 				return err
 			}
 			result.Updated++
@@ -684,7 +505,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
 			targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 			targetState.Revision++
-			if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, targetState); err != nil {
+			if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
 				return err
 			}
 			result.State = *targetState
@@ -777,7 +598,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 		targetState.LastScheduleWeight = manualWeight
 		targetState.LastScheduleTime = now
 		targetState.Revision++
-		if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, targetState); err != nil {
+		if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
 			return err
 		}
 		result.State = *targetState
@@ -852,7 +673,7 @@ func restoreChannelSmartScheduleRoutePrimaryTx(
 	state.ManualPrimarySavedPriority = 0
 	state.ManualPrimarySavedWeight = 0
 	state.Revision++
-	if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, state); err != nil {
+	if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 		return false, err
 	}
 	return routingChanged, nil
@@ -891,127 +712,13 @@ func ClearChannelSmartScheduleExplorations() (routingChanged bool, err error) {
 			state.ExplorationSavedPriority = 0
 			state.ExplorationSavedWeight = 0
 			state.Revision++
-			if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, state); err != nil {
+			if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	return routingChanged, err
-}
-
-func SaveChannelSmartScheduleProbeResult(result ChannelSmartScheduleProbeResult) (state ChannelSmartScheduleRouteState, err error) {
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockForUpdate(tx).Where(&ChannelSmartScheduleRouteState{
-			ChannelId: result.ChannelId, GroupName: result.Group, ModelName: result.Model,
-		}).First(&state).Error; err != nil {
-			return err
-		}
-		probeTime := result.Time
-		if probeTime <= 0 {
-			probeTime = common.GetTimestamp()
-		}
-		windowStart := result.WindowStart
-		if windowStart <= 0 || windowStart > probeTime {
-			windowStart = probeTime
-		}
-		source := strings.TrimSpace(result.Source)
-		if source == "" {
-			source = ChannelSmartScheduleSampleSourceScheduledProbe
-		}
-		if source != ChannelSmartScheduleSampleSourceScheduledProbe &&
-			source != ChannelSmartScheduleSampleSourceManualTest {
-			return errors.New("智能调度样本来源无效")
-		}
-		sampleId := strings.TrimSpace(result.SampleId)
-
-		var samples []channelSmartScheduleProbeSample
-		if strings.TrimSpace(state.ProbeSamples) != "" {
-			if err := common.UnmarshalJsonStr(state.ProbeSamples, &samples); err != nil {
-				return fmt.Errorf("解析智能调度探测样本失败: %w", err)
-			}
-		}
-		retained := samples[:0]
-		for _, sample := range samples {
-			if sample.Time >= windowStart && sample.Time <= probeTime {
-				if sampleId != "" && sample.SampleId == sampleId && sample.Source == source {
-					return nil
-				}
-				retained = append(retained, sample)
-			}
-		}
-		sample := channelSmartScheduleProbeSample{
-			Time: probeTime, Success: result.Success, Source: source, SampleId: sampleId,
-		}
-		if !result.Success && result.DurationMs != nil && *result.DurationMs >= 0 &&
-			!math.IsNaN(*result.DurationMs) && !math.IsInf(*result.DurationMs, 0) {
-			value := *result.DurationMs
-			sample.FailureDurationMs = &value
-		}
-		if result.Success && result.FirstTokenMs != nil && *result.FirstTokenMs > 0 &&
-			!math.IsNaN(*result.FirstTokenMs) && !math.IsInf(*result.FirstTokenMs, 0) {
-			value := *result.FirstTokenMs
-			sample.FirstTokenMs = &value
-		}
-		if result.Success && result.TPS != nil && *result.TPS > 0 &&
-			!math.IsNaN(*result.TPS) && !math.IsInf(*result.TPS, 0) {
-			value := *result.TPS
-			sample.TPS = &value
-		}
-		samples = append(retained, sample)
-		sort.SliceStable(samples, func(i, j int) bool {
-			return samples[i].Time < samples[j].Time
-		})
-		if len(samples) > channelSmartScheduleMaxProbeSamples {
-			samples = samples[len(samples)-channelSmartScheduleMaxProbeSamples:]
-		}
-		rawSamples, err := common.Marshal(samples)
-		if err != nil {
-			return fmt.Errorf("保存智能调度探测样本失败: %w", err)
-		}
-		metrics := channelSmartScheduleCalculateProbeMetrics(samples, windowStart)
-
-		state.ProbeLastTime = probeTime
-		state.ProbeLastSuccess = result.Success
-		message := strings.TrimSpace(result.Error)
-		messageRunes := []rune(message)
-		if len(messageRunes) > 255 {
-			message = string(messageRunes[:255])
-		}
-		state.ProbeLastError = message
-		state.ProbeSamples = string(rawSamples)
-		state.ProbeWindowStart = metrics.WindowStart
-		state.ProbeSampleCount = metrics.SampleCount
-		state.ProbeSuccessCount = metrics.SuccessCount
-		state.ProbeFailureDurationSampleCount = metrics.FailureDurationSampleCount
-		state.ProbeAverageFailureDurationMs = nil
-		if metrics.FailureDurationSampleCount > 0 {
-			value := metrics.FailureDurationTotalMs / float64(metrics.FailureDurationSampleCount)
-			state.ProbeAverageFailureDurationMs = &value
-		}
-		state.ProbeFirstTokenSampleCount = metrics.FirstTokenSampleCount
-		state.ProbeAverageFirstTokenMs = metrics.AverageFirstTokenMs
-		state.ProbeTPSSampleCount = metrics.TPSSampleCount
-		state.ProbeAverageTPS = metrics.AverageTPS
-		return tx.Model(&ChannelSmartScheduleRouteState{}).
-			Where("id = ?", state.Id).
-			Updates(map[string]any{
-				"probe_window_start":                  state.ProbeWindowStart,
-				"probe_last_time":                     state.ProbeLastTime,
-				"probe_last_success":                  state.ProbeLastSuccess,
-				"probe_last_error":                    state.ProbeLastError,
-				"probe_sample_count":                  state.ProbeSampleCount,
-				"probe_success_count":                 state.ProbeSuccessCount,
-				"probe_failure_duration_sample_count": state.ProbeFailureDurationSampleCount,
-				"probe_average_failure_duration_ms":   state.ProbeAverageFailureDurationMs,
-				"probe_first_token_sample_count":      state.ProbeFirstTokenSampleCount,
-				"probe_average_first_token_ms":        state.ProbeAverageFirstTokenMs,
-				"probe_tps_sample_count":              state.ProbeTPSSampleCount,
-				"probe_average_tps":                   state.ProbeAverageTPS,
-				"probe_samples":                       state.ProbeSamples,
-			}).Error
-	})
-	return state, err
 }
 
 func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteResultUpdate) ([]ChannelSmartScheduleRouteApplyOutcome, error) {
@@ -1120,7 +827,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				if err := tx.Create(&state).Error; err != nil {
 					return err
 				}
-			} else if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, &state); err != nil {
+			} else if err := saveChannelSmartScheduleRouteStateTx(tx, &state); err != nil {
 				return err
 			}
 			outcome.Applied = true
@@ -1181,7 +888,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		state.LastScheduleTime = now
 		state.Revision++
 		result.Cleared = true
-		return saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, &state)
+		return saveChannelSmartScheduleRouteStateTx(tx, &state)
 	})
 	return result, err
 }

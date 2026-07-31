@@ -6,7 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ChannelSmartScheduleScoreDetailsVersion = 1
+const ChannelSmartScheduleScoreDetailsVersion = 2
 
 type ChannelSmartScheduleScoreInput struct {
 	Value       *float64 `json:"value"`
@@ -75,16 +75,18 @@ type ChannelSmartScheduleScoreDecision struct {
 }
 
 type ChannelSmartScheduleScoreDetails struct {
-	Version       int                                       `json:"version"`
-	Strategy      string                                    `json:"strategy"`
-	MinSamples    int                                       `json:"minimum_samples"`
-	Inputs        ChannelSmartScheduleScoreInputs           `json:"inputs"`
-	Cohort        ChannelSmartScheduleScoreCohort           `json:"cohort"`
-	Components    ChannelSmartScheduleScoreComponents       `json:"components"`
-	BusinessScore *float64                                  `json:"business_score"`
-	Stability     ChannelSmartScheduleStabilityScoreDetails `json:"stability"`
-	FinalScore    *float64                                  `json:"final_score"`
-	Decision      ChannelSmartScheduleScoreDecision         `json:"decision"`
+	Version          int                                       `json:"version"`
+	Strategy         string                                    `json:"strategy"`
+	MinSamples       int                                       `json:"minimum_samples"`
+	SampleScope      string                                    `json:"sample_scope"`
+	SampleGroupCount int                                       `json:"sample_group_count"`
+	Inputs           ChannelSmartScheduleScoreInputs           `json:"inputs"`
+	Cohort           ChannelSmartScheduleScoreCohort           `json:"cohort"`
+	Components       ChannelSmartScheduleScoreComponents       `json:"components"`
+	BusinessScore    *float64                                  `json:"business_score"`
+	Stability        ChannelSmartScheduleStabilityScoreDetails `json:"stability"`
+	FinalScore       *float64                                  `json:"final_score"`
+	Decision         ChannelSmartScheduleScoreDecision         `json:"decision"`
 }
 
 // ChannelSmartScheduleScoreDetailsJSON is persisted as portable TEXT while

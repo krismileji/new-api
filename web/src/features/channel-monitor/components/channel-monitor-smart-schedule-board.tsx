@@ -298,24 +298,47 @@ function ScheduleRouteRow(props: RouteRowProps) {
         className='sm:col-span-2'
         snapshotLabel='最近一次调度快照'
       />
-      {props.route.state.probe_last_time > 0 ? (
+      {props.route.shared_samples.last_time > 0 ? (
         <div className='border-border/70 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-xs sm:col-span-2'>
           <Badge
             variant={
-              props.route.state.probe_last_success ? 'secondary' : 'destructive'
+              props.route.shared_samples.last_success
+                ? 'secondary'
+                : 'destructive'
             }
           >
-            {props.route.state.probe_last_success ? '探测成功' : '探测失败'}
+            {props.route.shared_samples.last_success ? '样本成功' : '样本失败'}
           </Badge>
           <span className='text-muted-foreground'>
-            最近探测 {formatTimestampToDate(props.route.state.probe_last_time)}
+            渠道 + 模型共享 · 最近样本{' '}
+            {formatTimestampToDate(props.route.shared_samples.last_time)}
           </span>
-          {props.route.state.probe_last_error ? (
+          {props.route.shared_samples.last_error ? (
             <span
               className='text-destructive min-w-0 truncate'
-              title={props.route.state.probe_last_error}
+              title={props.route.shared_samples.last_error}
             >
-              {props.route.state.probe_last_error}
+              {props.route.shared_samples.last_error}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {props.route.shared_samples.sample_count > 0 ? (
+        <div className='border-border/70 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-t pt-2 text-xs sm:col-span-2'>
+          <span className='font-medium'>渠道 + 模型共享样本</span>
+          <span className='text-muted-foreground'>
+            {props.route.shared_samples.sample_count} 次 · 成功{' '}
+            {props.route.shared_samples.success_count} 次
+          </span>
+          {props.route.shared_samples.average_first_token_ms != null ? (
+            <span className='font-mono tabular-nums'>
+              首字均值{' '}
+              {props.route.shared_samples.average_first_token_ms.toFixed(0)} ms
+            </span>
+          ) : null}
+          {props.route.shared_samples.average_tps != null ? (
+            <span className='font-mono tabular-nums'>
+              TPS {props.route.shared_samples.average_tps.toFixed(2)}
             </span>
           ) : null}
         </div>

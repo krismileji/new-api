@@ -40,6 +40,7 @@ type channelSmartScheduleTaskPayload struct {
 }
 
 type channelSmartSchedulePerformance struct {
+	SampleGroupCount                     int
 	FirstTokenSampleCount                int
 	FirstTokenDurationSampleCount        int64
 	TPSSampleCount                       int
@@ -68,6 +69,7 @@ type channelSmartSchedulePerformance struct {
 
 type channelSmartScheduleCandidate struct {
 	ChannelId             int
+	SampleGroupCount      int
 	CurrentPriority       int64
 	CurrentWeight         uint
 	Ratio                 *float64

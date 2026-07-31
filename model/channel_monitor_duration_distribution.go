@@ -196,7 +196,6 @@ func SummarizeChannelMonitorDurationBuckets(
 
 type channelMonitorDurationAggregateRow struct {
 	ChannelId   int
-	GroupName   string
 	ModelName   string
 	BucketIndex int
 	Count       int64
@@ -215,22 +214,19 @@ func getChannelMonitorRouteDurationBuckets(
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteDurationBucket{}).
 		Select(
-			"channel_id, group_name, model_name, bucket_index, "+
+			"channel_id, model_name, bucket_index, "+
 				"SUM(count) AS count, SUM(total_ms) AS total_ms",
 		).
 		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp)
 	if filter.ChannelId > 0 {
 		query = query.Where("channel_id = ?", filter.ChannelId)
 	}
-	if filter.Group != "" {
-		query = query.Where("group_name = ?", filter.Group)
-	}
 	if filter.ModelName != "" {
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
 	var rows []channelMonitorDurationAggregateRow
 	err := query.
-		Group("channel_id, group_name, model_name, bucket_index").
+		Group("channel_id, model_name, bucket_index").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -243,7 +239,6 @@ func getChannelMonitorRouteDurationBuckets(
 		}
 		key := channelMonitorRouteMetricKey{
 			channelId: row.ChannelId,
-			groupName: row.GroupName,
 			modelName: row.ModelName,
 		}
 		byIndex := aggregates[key]

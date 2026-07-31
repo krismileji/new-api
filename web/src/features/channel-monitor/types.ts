@@ -563,6 +563,8 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
   version: number
   strategy: ChannelMonitorSmartScheduleStrategy
   minimum_samples: number
+  sample_scope: 'channel_model'
+  sample_group_count: number
   inputs: {
     cost_ratio: ChannelMonitorSmartScheduleScoreMetricInput
     first_token_ms: ChannelMonitorSmartScheduleScoreMetricInput
@@ -671,18 +673,24 @@ export type ChannelMonitorSmartScheduleRouteState = {
   exploration_saved_weight: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean
-  probe_window_start: number
-  probe_last_time: number
-  probe_last_success: boolean
-  probe_last_error: string
-  probe_sample_count: number
-  probe_success_count: number
-  probe_failure_duration_sample_count: number
-  probe_average_failure_duration_ms: number | null
-  probe_first_token_sample_count: number
-  probe_average_first_token_ms: number | null
-  probe_tps_sample_count: number
-  probe_average_tps: number | null
+}
+
+export type ChannelMonitorSmartScheduleSharedSamples = {
+  id: number
+  channel_id: number
+  model: string
+  window_start: number
+  last_time: number
+  last_success: boolean
+  last_error: string
+  sample_count: number
+  success_count: number
+  failure_duration_sample_count: number
+  average_failure_duration_ms: number | null
+  first_token_sample_count: number
+  average_first_token_ms: number | null
+  tps_sample_count: number
+  average_tps: number | null
 }
 
 export type ChannelMonitorSmartScheduleRoute = {
@@ -697,16 +705,21 @@ export type ChannelMonitorSmartScheduleRoute = {
   priority: number
   weight: number
   state: ChannelMonitorSmartScheduleRouteState
+  shared_samples: ChannelMonitorSmartScheduleSharedSamples
 }
 
 export type ChannelMonitorSmartScheduleRoutePerformance = {
   channel_id: number
-  group: string
   model: string
+  group_count: number
   sample_count: number
   first_token_sample_count: number
+  first_token_duration_sample_count: number
   tps_sample_count: number
   average_first_token_ms: number | null
+  first_token_p50_ms: number | null
+  first_token_p95_ms: number | null
+  winsorized_average_first_token_ms: number | null
   average_tps: number | null
   last_used_time: number
 }
@@ -715,6 +728,7 @@ export type ChannelMonitorSmartScheduleRouteStability = {
   channel_id: number
   group: string
   model: string
+  group_count: number
   success_count: number
   failure_count: number
   final_failure_count: number
@@ -744,6 +758,7 @@ export type ChannelMonitorFailureDurationBucket = {
 export type ChannelMonitorSmartScheduleRouteResult = {
   generated_at: number
   range_minutes: number
+  sample_scope: 'channel_model'
   enabled: boolean
   routes: ChannelMonitorSmartScheduleRoute[]
   performance_items: ChannelMonitorSmartScheduleRoutePerformance[]

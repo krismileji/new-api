@@ -19,7 +19,7 @@
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
 | `POST` | `/schedule/model-test` | 测试指定分组模型在参与调度的渠道上的可用性；支持流式首字与 TPS |
-| `GET` | `/schedule` | 返回分组模型路由、实际优先级/权重、调度状态和性能/成功率指标 |
+| `GET` | `/schedule` | 返回分组模型路由、实际优先级/权重、独立调度状态和渠道模型共享观测指标 |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
 | `PUT` | `/channel/:id/schedule/routes` | 批量更新该渠道全部分组模型路由的参与状态；`excluded`，不修改当前路由值或稳定性状态 |
@@ -70,6 +70,8 @@
 `email_notification_types` 控制通知邮件中的分类和主题统计；未勾选的事件仍会写入任务执行记录，但不会触发或进入邮件。`POST /settings/email-preview` 使用同一套邮件构建逻辑生成示例，响应的 `data.subject` 和 `data.html` 就是当前选择对应的最终主题与 HTML 内容。
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
+
+`GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本；相同渠道模型的多条分组路由返回相同的 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。
 
 评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。抖动阈值倍数范围为 `(1, 20]`，绝对容差使用秒且范围为 `0..60`，基准学习周期使用分钟且范围为 `1..43200`。完整策略示例：
 
@@ -170,7 +172,7 @@
 
 `channel_smart_schedule` 任务结果的 `adjustments` 逐条返回渠道、分组、模型、得分、新旧优先级与权重、动作和原因。每条 `score_details` 是执行时固化的评分解释，包含原始输入及样本数、同池归一化范围、配置/有效权重、业务与稳定性贡献、最终得分、选主结果及选择/调整原因。完整明细按任务和顺序保存在 `channel_smart_schedule_execution_details` 的独立 `TEXT` 行中，`system_tasks.result` 只保存汇总；查询任务列表时再组装返回，避免单个任务汇总超过数据库 `TEXT` 限制。固定路由还包含 `manual_primary: true`、`manual_primary_until` 和 `manual_primary_allow_stability_degrade`，便于在独立的执行记录页面核对本轮选主是来自评分还是管理员固定，以及固定是否允许稳定性保护。固定、续期和解除的管理审计明细使用 `allow_stability_degrade` 保存操作时的选项值；未传时按默认 `true` 记录。
 
-`POST /api/channel_monitor/schedule/model-test` 请求体包含 `group`、`model`、可选的 `stream`、`endpoint_type` 和 `channel_ids`。`stream` 默认 `true`，`endpoint_type` 默认 `auto`；`channel_ids` 为空时测试整个调度池，传单个 ID 可用于重试。后端最多并发测试 `4` 条渠道并遵守渠道并发上限，只实际请求正在参与调度且渠道和路由均可用的项。响应逐条返回 `success`、`failure` 或 `skipped`，以及总耗时、可用时的流式首字时间和 TPS、错误与错误码；实际发出的成功和失败测试都会写入所选分组的手动测试样本。
+`POST /api/channel_monitor/schedule/model-test` 请求体包含 `group`、`model`、可选的 `stream`、`endpoint_type` 和 `channel_ids`。`stream` 默认 `true`，`endpoint_type` 默认 `auto`；`channel_ids` 为空时测试整个调度池，传单个 ID 可用于重试。后端最多并发测试 `4` 条渠道并遵守渠道并发上限，只实际请求正在参与调度且渠道和路由均可用的项。响应逐条返回 `success`、`failure` 或 `skipped`，以及总耗时、可用时的流式首字时间和 TPS、错误与错误码；所选分组只用于验证测试资格和发起请求，实际发出的成功和失败结果各写一份渠道模型共享手动测试样本。
 
 倍率和余额分别记录连续失败次数。任一项连续失败 `2` 次后，定时任务会暂停该项的后续上游请求，另一项不受影响；管理员手动刷新成功或修改相关上游配置后会恢复自动请求。
 
@@ -180,13 +182,14 @@
 
 - `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制。
 - `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
+- `ChannelSmartScheduleModelSampleState`：每个渠道、模型唯一的一份手动测试和定时探测滚动样本。
 - `ChannelSmartScheduleExecutionDetail`：按任务和路由保存智能调度执行时的评分与调整解释。
 - `ChannelMonitorMinuteDurationBucket`：按分钟保存首字延迟分布，供异常抖动判断和稳健延迟评分使用。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
-性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，页面只读取分钟表。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
+性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

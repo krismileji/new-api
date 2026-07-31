@@ -258,6 +258,12 @@ export function ChannelMonitorSmartScheduleScoreDetails(
         <div className='bg-muted/15 border-t'>
           <div className='flex flex-wrap items-center gap-2 px-3 py-2 text-xs'>
             <Badge variant='outline'>{STRATEGY_LABELS[details.strategy]}</Badge>
+            <Badge variant='secondary'>渠道 + 模型共享样本</Badge>
+            {details.sample_group_count > 0 ? (
+              <span className='text-muted-foreground'>
+                业务样本覆盖 {details.sample_group_count} 个分组
+              </span>
+            ) : null}
             <span className='text-muted-foreground'>
               性能与稳定性指标最低 {details.minimum_samples} 个样本
             </span>

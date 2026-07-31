@@ -250,28 +250,47 @@ func runChannelSmartScheduleProbeOnce(
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceMinutes*60)
 	type dueProbe struct {
-		route  model.ChannelSmartScheduleRoute
-		policy channelSmartSchedulePolicy
+		routes []model.ChannelSmartScheduleRoute
 	}
-	due := make([]dueProbe, 0, len(selectedRoutes))
+	probesByModel := make(map[channelSmartScheduleModelKey]dueProbe)
+	probeOrder := make([]channelSmartScheduleModelKey, 0)
 	for _, route := range selectedRoutes {
-		policy := policyByGroup[route.Group]
-		if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() ||
-			route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded {
+		key := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
+		probe, exists := probesByModel[key]
+		if !exists {
+			probeOrder = append(probeOrder, key)
+		}
+		probe.routes = append(probe.routes, route)
+		probesByModel[key] = probe
+	}
+	result.Total = len(probeOrder)
+	due := make([]dueProbe, 0, len(probeOrder))
+	for _, key := range probeOrder {
+		probe := probesByModel[key]
+		eligibleRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(probe.routes))
+		minimumIntervalMinutes := 0
+		for _, route := range probe.routes {
+			if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() ||
+				route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded ||
+				(route.State.StabilityState != "" && route.State.StabilityState != model.ChannelSmartScheduleStabilityProbing) {
+				continue
+			}
+			eligibleRoutes = append(eligibleRoutes, route)
+			intervalMinutes := policyByGroup[route.Group].ProbeIntervalMinutes
+			if minimumIntervalMinutes == 0 || intervalMinutes < minimumIntervalMinutes {
+				minimumIntervalMinutes = intervalMinutes
+			}
+		}
+		if len(eligibleRoutes) == 0 {
 			result.Skipped++
 			continue
 		}
-		if route.State.StabilityState != "" &&
-			route.State.StabilityState != model.ChannelSmartScheduleStabilityProbing {
+		if eligibleRoutes[0].SharedSamples.LastTime > 0 &&
+			now-eligibleRoutes[0].SharedSamples.LastTime < int64(minimumIntervalMinutes*60) {
 			result.Skipped++
 			continue
 		}
-		if route.State.ProbeLastTime > 0 &&
-			now-route.State.ProbeLastTime < int64(policy.ProbeIntervalMinutes*60) {
-			result.Skipped++
-			continue
-		}
-		due = append(due, dueProbe{route: route, policy: policy})
+		due = append(due, dueProbe{routes: eligibleRoutes})
 	}
 	if len(due) == 0 {
 		reportProgress(result.Total, result.Total)
@@ -281,11 +300,12 @@ func runChannelSmartScheduleProbeOnce(
 	channelIds := make([]int, 0, len(due))
 	seenChannelIds := make(map[int]struct{}, len(due))
 	for _, item := range due {
-		if _, exists := seenChannelIds[item.route.ChannelId]; exists {
+		channelId := item.routes[0].ChannelId
+		if _, exists := seenChannelIds[channelId]; exists {
 			continue
 		}
-		seenChannelIds[item.route.ChannelId] = struct{}{}
-		channelIds = append(channelIds, item.route.ChannelId)
+		seenChannelIds[channelId] = struct{}{}
+		channelIds = append(channelIds, channelId)
 	}
 	channels, err := model.GetChannelsByIds(channelIds)
 	if err != nil {
@@ -297,11 +317,11 @@ func runChannelSmartScheduleProbeOnce(
 	}
 	probeable := make([]dueProbe, 0, len(due))
 	for _, item := range due {
-		channel := channelById[item.route.ChannelId]
+		channel := channelById[item.routes[0].ChannelId]
 		if channel == nil {
-			return result, fmt.Errorf("智能调度探测渠道 %d 不存在", item.route.ChannelId)
+			return result, fmt.Errorf("智能调度探测渠道 %d 不存在", item.routes[0].ChannelId)
 		}
-		if !channelSmartScheduleSupportsTextProbe(channel, item.route.Model) {
+		if !channelSmartScheduleSupportsTextProbe(channel, item.routes[0].Model) {
 			result.Skipped++
 			continue
 		}
@@ -322,19 +342,26 @@ func runChannelSmartScheduleProbeOnce(
 			return result, ctx.Err()
 		default:
 		}
-		currentRoute, channel, currentPolicy, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(item.route)
-		if eligibilityErr != nil {
-			return result, eligibilityErr
+		var route model.ChannelSmartScheduleRoute
+		var channel *model.Channel
+		for _, candidateRoute := range item.routes {
+			currentRoute, currentChannel, _, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(candidateRoute)
+			if eligibilityErr != nil {
+				return result, eligibilityErr
+			}
+			if eligible && channelSmartScheduleSupportsTextProbe(currentChannel, currentRoute.Model) {
+				route = currentRoute
+				channel = currentChannel
+				break
+			}
 		}
-		if !eligible || !channelSmartScheduleSupportsTextProbe(channel, item.route.Model) {
+		if channel == nil {
 			result.Skipped++
 			processed++
 			reportProgress(processed, result.Total)
 			continue
 		}
-		item.route = currentRoute
-		item.policy = currentPolicy
-		probeCtx := withChannelSmartScheduleProbeTestContext(ctx, item.route.Group)
+		probeCtx := withChannelSmartScheduleProbeTestContext(ctx, route.Group)
 		lease, acquired, _, acquireErr := service.AcquireChannelConcurrency(probeCtx, channel.Id)
 		if acquireErr != nil {
 			return result, fmt.Errorf("获取智能调度探测渠道 %d 并发配额失败: %w", channel.Id, acquireErr)
@@ -347,7 +374,7 @@ func runChannelSmartScheduleProbeOnce(
 		}
 		probeStartedAt := time.Now()
 		probeResult := testChannel(
-			probeCtx, channel, testUserID, item.route.Model,
+			probeCtx, channel, testUserID, route.Model,
 			string(constant.EndpointTypeOpenAIResponse), true,
 		)
 		lease.Release()
@@ -376,14 +403,10 @@ func runChannelSmartScheduleProbeOnce(
 				message = string(messageRunes[:255])
 			}
 		}
-		windowStart := performanceStart
-		if item.policy.StabilityEnabled && item.route.State.StabilitySince > windowStart {
-			windowStart = item.route.State.StabilitySince
-		}
-		_, saveErr := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: item.route.ChannelId, Group: item.route.Group, Model: item.route.Model,
+		_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: route.ChannelId, Model: route.Model,
 			Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
-			WindowStart: windowStart, Time: probeTime, Success: succeeded, Error: message,
+			WindowStart: performanceStart, Time: probeTime, Success: succeeded, Error: message,
 			DurationMs:   &probeDurationMs,
 			FirstTokenMs: probeResult.firstResponseMilliseconds,
 			TPS:          probeResult.tokensPerSecond,
@@ -398,19 +421,19 @@ func runChannelSmartScheduleProbeOnce(
 			recordChannelSmartScheduleProbeError(
 				probeResult.context,
 				testUserID,
-				item.route,
+				route,
 				probeResult.newAPIError,
 				message,
 				probeDurationMs,
 			)
 			common.SysError(fmt.Sprintf(
-				"智能调度探测失败: channel_id=%d name=%s group=%s model=%s err=%s",
-				item.route.ChannelId, item.route.ChannelName, item.route.Group, item.route.Model, message,
+				"智能调度共享探测失败: channel_id=%d name=%s model=%s request_group=%s err=%s",
+				route.ChannelId, route.ChannelName, route.Model, route.Group, message,
 			))
 			if len(result.Failures) < maxChannelSmartScheduleTaskFailureDetails {
 				result.Failures = append(result.Failures, channelSmartScheduleProbeFailure{
-					ChannelId: item.route.ChannelId, ChannelName: item.route.ChannelName,
-					Group: item.route.Group, Model: item.route.Model, Error: message,
+					ChannelId: route.ChannelId, ChannelName: route.ChannelName,
+					Group: route.Group, Model: route.Model, Error: message,
 				})
 			}
 		}
@@ -518,23 +541,19 @@ func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute)
 	return current, channel, policy, true, nil
 }
 
-func channelSmartScheduleMergeProbePerformance(
+func channelSmartScheduleMergeSharedSamplePerformance(
 	performance *channelSmartSchedulePerformance,
-	state model.ChannelSmartScheduleRouteState,
+	state model.ChannelSmartScheduleModelSampleState,
 	windowStart int64,
-	sources ...string,
 ) *channelSmartSchedulePerformance {
-	metrics := state.ProbeMetricsSince(windowStart)
-	if len(sources) == 1 && sources[0] == model.ChannelSmartScheduleSampleSourceManualTest {
-		metrics = state.ManualTestMetricsSince(windowStart)
-	}
+	metrics := state.MetricsSince(windowStart)
 	if metrics.SampleCount <= 0 {
 		return performance
 	}
 	if performance == nil {
 		performance = &channelSmartSchedulePerformance{}
 	}
-	performance.AverageFirstTokenMs, performance.FirstTokenSampleCount = channelSmartScheduleMergeProbeAverage(
+	performance.AverageFirstTokenMs, performance.FirstTokenSampleCount = channelSmartScheduleMergeSharedSampleAverage(
 		performance.AverageFirstTokenMs,
 		performance.FirstTokenSampleCount,
 		metrics.AverageFirstTokenMs,
@@ -548,7 +567,7 @@ func channelSmartScheduleMergeProbePerformance(
 		performance.WinsorizedAverageFirstTokenMs = model.SummarizeChannelMonitorDurationBuckets(
 		performance.FirstTokenDurationBuckets,
 	)
-	performance.AverageTPS, performance.TPSSampleCount = channelSmartScheduleMergeProbeAverage(
+	performance.AverageTPS, performance.TPSSampleCount = channelSmartScheduleMergeSharedSampleAverage(
 		performance.AverageTPS,
 		performance.TPSSampleCount,
 		metrics.AverageTPS,
@@ -579,7 +598,7 @@ func channelSmartScheduleMergeProbePerformance(
 	return performance
 }
 
-func channelSmartScheduleMergeProbeAverage(
+func channelSmartScheduleMergeSharedSampleAverage(
 	current *float64,
 	currentCount int,
 	probe *float64,

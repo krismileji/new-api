@@ -71,9 +71,11 @@ func channelSmartScheduleNewScoreDetails(
 		costSamples = 1
 	}
 	details := &model.ChannelSmartScheduleScoreDetails{
-		Version:    model.ChannelSmartScheduleScoreDetailsVersion,
-		Strategy:   strategy,
-		MinSamples: minSamples,
+		Version:          model.ChannelSmartScheduleScoreDetailsVersion,
+		Strategy:         strategy,
+		MinSamples:       minSamples,
+		SampleScope:      model.ChannelSmartScheduleSampleScopeChannelModel,
+		SampleGroupCount: candidate.SampleGroupCount,
 		Inputs: model.ChannelSmartScheduleScoreInputs{
 			CostRatio: model.ChannelSmartScheduleScoreInput{
 				Value: channelSmartScheduleCopyFloat(candidate.Ratio), SampleCount: costSamples,

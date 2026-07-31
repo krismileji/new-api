@@ -202,7 +202,7 @@ func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *t
 	}
 }
 
-func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyProbeSamples(t *testing.T) {
+func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyNewSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
@@ -1169,14 +1169,14 @@ func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testin
 	windowStart := now - 3600
 	failureDurationMs := 500.0
 	for index := 0; index < 2; index++ {
-		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 66, Group: "vip", Model: "model-a",
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 66, Model: "model-a",
 			WindowStart: windowStart, Time: now - int64(2-index), Success: false,
 			DurationMs: &failureDurationMs,
 		})
 		require.NoError(t, err)
-		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 67, Group: "vip", Model: "model-a",
+		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 67, Model: "model-a",
 			WindowStart: windowStart, Time: now - int64(2-index), Success: true,
 		})
 		require.NoError(t, err)
@@ -1247,13 +1247,13 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	now := common.GetTimestamp()
 	failureDurationMs := 500.0
 	for index := 0; index < 2; index++ {
-		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 68, Group: "vip", Model: "model-a", WindowStart: now - 3600,
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 68, Model: "model-a", WindowStart: now - 3600,
 			Time: now - int64(2-index), Success: false, DurationMs: &failureDurationMs,
 		})
 		require.NoError(t, err)
-		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 69, Group: "vip", Model: "model-a", WindowStart: now - 3600,
+		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 69, Model: "model-a", WindowStart: now - 3600,
 			Time: now - int64(2-index), Success: true,
 		})
 		require.NoError(t, err)

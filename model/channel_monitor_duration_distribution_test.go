@@ -27,7 +27,7 @@ func TestSummarizeChannelMonitorDurationBucketsCapsSingleSlowOutlierAtP95(t *tes
 	assert.InDelta(t, 300.5, *winsorizedAverage, 1e-9)
 }
 
-func TestAggregateChannelMonitorMinuteFirstTokenBucketsUseOnlyValidBusinessSuccessesAndIsolateRoutes(t *testing.T) {
+func TestAggregateChannelMonitorMinuteFirstTokenBucketsShareChannelModelAcrossGroups(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	require.NoError(t, db.Create(&[]Log{
 		{ChannelId: 1, Group: "vip", ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume, IsStream: true, Other: `{"frt":300}`},
@@ -43,28 +43,26 @@ func TestAggregateChannelMonitorMinuteFirstTokenBucketsUseOnlyValidBusinessSucce
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 	metrics, err := GetChannelMonitorRoutePerformanceMetrics(context.Background(), 120, 180)
 	require.NoError(t, err)
-	require.Len(t, metrics, 3)
+	require.Len(t, metrics, 2)
 
-	byRoute := make(map[string]ChannelMonitorRoutePerformanceMetric, len(metrics))
+	byModel := make(map[string]ChannelMonitorRoutePerformanceMetric, len(metrics))
 	for _, metric := range metrics {
-		byRoute[metric.GroupName+"/"+metric.ModelName] = metric
+		byModel[metric.ModelName] = metric
 	}
-	vipModelA := byRoute["vip/model-a"]
-	assert.Equal(t, 2, vipModelA.FirstTokenSampleCount)
-	assert.Equal(t, int64(2), vipModelA.FirstTokenDurationSampleCount)
-	require.Len(t, vipModelA.FirstTokenDurationBuckets, 1)
-	assert.Equal(t, int64(2), vipModelA.FirstTokenDurationBuckets[0].Count)
-	assert.InDelta(t, 620, vipModelA.FirstTokenDurationBuckets[0].TotalMs, 1e-9)
-	require.NotNil(t, vipModelA.FirstTokenP50Ms)
-	assert.InDelta(t, 350, *vipModelA.FirstTokenP50Ms, 1e-9)
+	modelA := byModel["model-a"]
+	assert.Equal(t, 2, modelA.GroupCount)
+	assert.Equal(t, 3, modelA.FirstTokenSampleCount)
+	assert.Equal(t, int64(3), modelA.FirstTokenDurationSampleCount)
+	require.Len(t, modelA.FirstTokenDurationBuckets, 2)
+	assert.Equal(t, int64(2), modelA.FirstTokenDurationBuckets[0].Count)
+	assert.InDelta(t, 620, modelA.FirstTokenDurationBuckets[0].TotalMs, 1e-9)
+	assert.Equal(t, int64(1), modelA.FirstTokenDurationBuckets[1].Count)
+	assert.InDelta(t, 2000, modelA.FirstTokenDurationBuckets[1].TotalMs, 1e-9)
+	require.NotNil(t, modelA.FirstTokenP50Ms)
+	assert.InDelta(t, 350, *modelA.FirstTokenP50Ms, 1e-9)
 
-	standardModelA := byRoute["standard/model-a"]
-	assert.Equal(t, 1, standardModelA.FirstTokenSampleCount)
-	assert.Equal(t, int64(1), standardModelA.FirstTokenDurationSampleCount)
-	require.Len(t, standardModelA.FirstTokenDurationBuckets, 1)
-	assert.InDelta(t, 2000, standardModelA.FirstTokenDurationBuckets[0].TotalMs, 1e-9)
-
-	vipModelB := byRoute["vip/model-b"]
+	vipModelB := byModel["model-b"]
+	assert.Equal(t, 1, vipModelB.GroupCount)
 	assert.Equal(t, 1, vipModelB.FirstTokenSampleCount)
 	assert.Equal(t, int64(1), vipModelB.FirstTokenDurationSampleCount)
 	require.Len(t, vipModelB.FirstTokenDurationBuckets, 1)
@@ -119,20 +117,20 @@ func TestAggregateChannelMonitorMinuteRangeReplacesFirstTokenBuckets(t *testing.
 	assert.InDelta(t, 2000, buckets[0].TotalMs, 1e-9)
 }
 
-func TestChannelSmartScheduleProbeMetricsExposeFirstTokenDistribution(t *testing.T) {
-	samples := make([]channelSmartScheduleProbeSample, 0, 20)
+func TestChannelSmartScheduleSampleMetricsExposeFirstTokenDistribution(t *testing.T) {
+	samples := make([]channelSmartScheduleSample, 0, 20)
 	fast := 300.0
 	for index := 0; index < 19; index++ {
-		samples = append(samples, channelSmartScheduleProbeSample{
+		samples = append(samples, channelSmartScheduleSample{
 			Time: int64(index + 1), Success: true, FirstTokenMs: &fast,
 		})
 	}
 	slow := 10_000.0
-	samples = append(samples, channelSmartScheduleProbeSample{
+	samples = append(samples, channelSmartScheduleSample{
 		Time: 20, Success: true, FirstTokenMs: &slow,
 	})
 
-	metrics := channelSmartScheduleCalculateProbeMetrics(samples, 1)
+	metrics := channelSmartScheduleCalculateSampleMetrics(samples, 1)
 
 	assert.Equal(t, int64(20), metrics.FirstTokenSampleCount)
 	require.NotNil(t, metrics.FirstTokenP50Ms)

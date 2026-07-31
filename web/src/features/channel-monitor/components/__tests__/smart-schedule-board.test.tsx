@@ -96,6 +96,23 @@ function createRoute(
     enabled: true,
     priority: 100,
     weight: 100,
+    shared_samples: {
+      id: 0,
+      channel_id: channelId,
+      model,
+      window_start: 0,
+      last_time: 0,
+      last_success: false,
+      last_error: '',
+      sample_count: 0,
+      success_count: 0,
+      failure_duration_sample_count: 0,
+      average_failure_duration_ms: null,
+      first_token_sample_count: 0,
+      average_first_token_ms: null,
+      tps_sample_count: 0,
+      average_tps: null,
+    },
     ...overrides,
     state: {
       id: channelId,
@@ -121,18 +138,6 @@ function createRoute(
       exploration_saved_weight: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: false,
-      probe_window_start: 0,
-      probe_last_time: 0,
-      probe_last_success: false,
-      probe_last_error: '',
-      probe_sample_count: 0,
-      probe_success_count: 0,
-      probe_failure_duration_sample_count: 0,
-      probe_average_failure_duration_ms: null,
-      probe_first_token_sample_count: 0,
-      probe_average_first_token_ms: null,
-      probe_tps_sample_count: 0,
-      probe_average_tps: null,
       ...overrides.state,
     },
   }
@@ -142,22 +147,29 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
   return {
     generated_at: 1_752_777_845,
     range_minutes: 60,
+    sample_scope: 'channel_model',
     enabled: true,
     routes: [
       createRoute(1, {
         channel_name: '高速渠道',
         weight: 75,
-        state: {
-          probe_window_start: 1_752_700_000,
-          probe_last_time: 1_752_777_845,
-          probe_last_success: true,
-          probe_sample_count: 5,
-          probe_success_count: 5,
-          probe_first_token_sample_count: 5,
-          probe_average_first_token_ms: 420,
-          probe_tps_sample_count: 5,
-          probe_average_tps: 18.5,
-        } as ChannelMonitorSmartScheduleRoute['state'],
+        shared_samples: {
+          id: 1,
+          channel_id: 1,
+          model: 'model-fast',
+          window_start: 1_752_700_000,
+          last_time: 1_752_777_845,
+          last_success: true,
+          last_error: '',
+          sample_count: 5,
+          success_count: 5,
+          failure_duration_sample_count: 0,
+          average_failure_duration_ms: null,
+          first_token_sample_count: 5,
+          average_first_token_ms: 420,
+          tps_sample_count: 5,
+          average_tps: 18.5,
+        },
       }),
       createRoute(2, {
         channel_name: '恢复中渠道',
@@ -344,8 +356,8 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('75.0%'))
     assert.ok(markup.includes('25.0%'))
     assert.ok(markup.includes('transition-[width]'))
-    assert.ok(markup.includes('探测成功'))
-    assert.ok(markup.includes('最近探测'))
+    assert.ok(markup.includes('样本成功'))
+    assert.ok(markup.includes('渠道 + 模型共享 · 最近样本'))
     assert.ok(markup.includes('2xl:grid-cols-2'))
     assert.ok(markup.indexOf('主线路') < markup.indexOf('备用供应商'))
   })

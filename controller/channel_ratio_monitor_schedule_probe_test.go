@@ -54,7 +54,7 @@ func TestChannelSmartScheduleProbeHandlerUsesMinimumGroupInterval(t *testing.T) 
 	assert.Equal(t, 5*time.Minute, handler.Interval())
 }
 
-func TestChannelSmartScheduleMergeProbePerformanceCombinesBusinessAndProbeSamples(t *testing.T) {
+func TestChannelSmartScheduleMergeSharedSamplePerformanceCombinesBusinessAndSharedSamples(t *testing.T) {
 	firstToken := 200.0
 	tps := 10.0
 	probeFirstToken := 100.0
@@ -77,15 +77,15 @@ func TestChannelSmartScheduleMergeProbePerformanceCombinesBusinessAndProbeSample
 		StabilitySuccessCount: 1,
 		StabilityFailureCount: 1,
 	}
-	state := model.ChannelSmartScheduleRouteState{
-		ProbeSamples: string(rawProbeSamples),
+	state := model.ChannelSmartScheduleModelSampleState{
+		SamplesJSON: model.ChannelSmartScheduleSamplesJSON(rawProbeSamples),
 	}
-	probeMetrics := state.ProbeMetricsSince(90)
+	probeMetrics := state.MetricsSince(90)
 	assert.Equal(t, int64(2), probeMetrics.SampleCount)
 	assert.Equal(t, int64(2), probeMetrics.FirstTokenSampleCount)
 	require.NotNil(t, probeMetrics.AverageFirstTokenMs)
 
-	merged := channelSmartScheduleMergeProbePerformance(performance, state, 90)
+	merged := channelSmartScheduleMergeSharedSamplePerformance(performance, state, 90)
 	require.NotNil(t, merged)
 	assert.Equal(t, 4, merged.FirstTokenSampleCount)
 	assert.Equal(t, int64(3), merged.FirstTokenDurationSampleCount)
@@ -99,14 +99,14 @@ func TestChannelSmartScheduleMergeProbePerformanceCombinesBusinessAndProbeSample
 	assert.Equal(t, int64(1), merged.StabilityFailureCount)
 	assert.Nil(t, merged.Stability)
 
-	windowed := channelSmartScheduleMergeProbePerformance(nil, state, 101)
+	windowed := channelSmartScheduleMergeSharedSamplePerformance(nil, state, 101)
 	require.NotNil(t, windowed)
 	assert.Equal(t, 1, windowed.FirstTokenSampleCount)
 	assert.Equal(t, int64(1), windowed.StabilitySampleCount)
-	assert.Nil(t, channelSmartScheduleMergeProbePerformance(nil, state, 111))
+	assert.Nil(t, channelSmartScheduleMergeSharedSamplePerformance(nil, state, 111))
 }
 
-func TestChannelSmartScheduleMergeProbePerformanceCanSelectManualSamples(t *testing.T) {
+func TestChannelSmartScheduleModelSampleStateCanSelectManualSamples(t *testing.T) {
 	rawSamples, err := common.Marshal([]map[string]any{
 		{
 			"time": int64(100), "success": true,
@@ -120,26 +120,25 @@ func TestChannelSmartScheduleMergeProbePerformanceCanSelectManualSamples(t *test
 		},
 	})
 	require.NoError(t, err)
-	state := model.ChannelSmartScheduleRouteState{ProbeSamples: string(rawSamples)}
+	state := model.ChannelSmartScheduleModelSampleState{
+		SamplesJSON: model.ChannelSmartScheduleSamplesJSON(rawSamples),
+	}
 
-	all := channelSmartScheduleMergeProbePerformance(nil, state, 90)
+	all := channelSmartScheduleMergeSharedSamplePerformance(nil, state, 90)
 	require.NotNil(t, all)
 	assert.Equal(t, int64(2), all.StabilitySampleCount)
 	assert.Equal(t, int64(1), all.StabilitySuccessCount)
 	assert.Equal(t, int64(1), all.StabilityFailureCount)
 	assert.Equal(t, 1, all.FirstTokenSampleCount)
 
-	manual := channelSmartScheduleMergeProbePerformance(
-		nil, state, 90, model.ChannelSmartScheduleSampleSourceManualTest,
-	)
-	require.NotNil(t, manual)
-	assert.Equal(t, int64(1), manual.StabilitySampleCount)
-	assert.Zero(t, manual.StabilitySuccessCount)
-	assert.Equal(t, int64(1), manual.StabilityFailureCount)
+	manual := state.ManualTestMetricsSince(90)
+	assert.Equal(t, int64(1), manual.SampleCount)
+	assert.Zero(t, manual.SuccessCount)
+	assert.Equal(t, int64(1), manual.FailureCount)
 	assert.Zero(t, manual.FirstTokenSampleCount)
 }
 
-func TestRunChannelSmartScheduleUsesProbeSamplesInFormalScoring(t *testing.T) {
+func TestRunChannelSmartScheduleUsesSharedScheduledSamplesInFormalScoring(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
@@ -172,8 +171,8 @@ func TestRunChannelSmartScheduleUsesProbeSamplesInFormalScoring(t *testing.T) {
 		{ChannelId: 1402, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	for _, probeTime := range []int64{now - 60, now - 30} {
-		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 1401, Group: "vip", Model: "model-a",
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 1401, Model: "model-a",
 			WindowStart: now - 3600, Time: probeTime, Success: true, FirstTokenMs: &probeFirstToken,
 		})
 		require.NoError(t, err)
@@ -193,6 +192,113 @@ func TestRunChannelSmartScheduleUsesProbeSamplesInFormalScoring(t *testing.T) {
 	require.Len(t, abilities, 2)
 	assert.Less(t, abilities[0].Weight, abilities[1].Weight)
 	assert.NotZero(t, abilities[0].Weight)
+}
+
+func TestRunChannelSmartScheduleSharesSamplesAcrossGroupsWithIndependentStrategies(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = false
+	constant.ErrorLogEnabled = false
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+	probeMode := channelMonitorSmartScheduleSampleProbe
+	offMode := channelMonitorSmartScheduleSampleOff
+	goldPolicy := channelSmartScheduleTestGroupPolicy(
+		"gold", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	goldPolicy.SampleMode = &probeMode
+	silverPolicy := channelSmartScheduleTestGroupPolicy(
+		"silver", channelMonitorSmartScheduleStrategyTPS, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	silverPolicy.SampleMode = &offMode
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t, goldPolicy, silverPolicy,
+		),
+	})
+
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1403, Name: "fast first token", Group: "gold,silver", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 1404, Name: "high throughput", Group: "gold,silver", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1403, Group: "gold", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1404, Group: "gold", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1403, Group: "silver", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1404, Group: "silver", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1403, GroupName: "gold", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1404, GroupName: "gold", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1403, GroupName: "silver", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1404, GroupName: "silver", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	now := common.GetTimestamp()
+	for index := range 2 {
+		fastFirstTokenMs := 100.0
+		fastFirstTokenTPS := 10.0
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 1403, Model: "model-a", WindowStart: now - 60,
+			Time: now - int64(2-index), Success: true,
+			FirstTokenMs: &fastFirstTokenMs, TPS: &fastFirstTokenTPS,
+		})
+		require.NoError(t, err)
+		highThroughputFirstTokenMs := 500.0
+		highThroughputTPS := 50.0
+		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 1404, Model: "model-a", WindowStart: now - 60,
+			Time: now - int64(2-index), Success: true,
+			FirstTokenMs: &highThroughputFirstTokenMs, TPS: &highThroughputTPS,
+		})
+		require.NoError(t, err)
+	}
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, 4, result.Planned)
+	var sampleStates []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Order("channel_id ASC").Find(&sampleStates).Error)
+	require.Len(t, sampleStates, 2)
+	routes, err := model.GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	require.Len(t, routes, 4)
+	sharedSampleByChannel := make(map[int]int64)
+	for _, route := range routes {
+		if existingId, exists := sharedSampleByChannel[route.ChannelId]; exists {
+			assert.Equal(t, existingId, route.SharedSamples.Id)
+		} else {
+			sharedSampleByChannel[route.ChannelId] = route.SharedSamples.Id
+		}
+		assert.Equal(t, int64(2), route.SharedSamples.SampleCount)
+	}
+
+	var abilities []model.Ability
+	require.NoError(t, db.Find(&abilities).Error)
+	type routeKey struct {
+		group     string
+		channelId int
+	}
+	abilityByRoute := make(map[routeKey]model.Ability, len(abilities))
+	for _, ability := range abilities {
+		abilityByRoute[routeKey{group: ability.Group, channelId: ability.ChannelId}] = ability
+	}
+	assert.Greater(t,
+		abilityByRoute[routeKey{group: "gold", channelId: 1403}].Weight,
+		abilityByRoute[routeKey{group: "gold", channelId: 1404}].Weight,
+	)
+	assert.Less(t,
+		abilityByRoute[routeKey{group: "silver", channelId: 1403}].Weight,
+		abilityByRoute[routeKey{group: "silver", channelId: 1404}].Weight,
+	)
 }
 
 func TestRunChannelSmartScheduleUsesProbeStabilityWithoutLogMetrics(t *testing.T) {
@@ -234,15 +340,15 @@ func TestRunChannelSmartScheduleUsesProbeStabilityWithoutLogMetrics(t *testing.T
 		{ChannelId: 1412, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	for index, succeeded := range []bool{true, false} {
-		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 1411, Group: "vip", Model: "model-a",
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 1411, Model: "model-a",
 			WindowStart: now - 3600, Time: now - int64(60-index*30), Success: succeeded,
 		})
 		require.NoError(t, err)
 	}
 	for index := range 2 {
-		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId: 1412, Group: "vip", Model: "model-a",
+		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 1412, Model: "model-a",
 			WindowStart: now - 3600, Time: now - int64(60-index*30), Success: true,
 		})
 		require.NoError(t, err)
@@ -266,7 +372,9 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	t.Cleanup(func() {
 		constant.StreamingTimeout = originalStreamingTimeout
 	})
+	requestCount := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
 		body, err := io.ReadAll(r.Body)
 		if !assert.NoError(t, err) {
 			return
@@ -305,16 +413,16 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	channel := model.Channel{
 		Id: 1421, Type: constant.ChannelTypeOpenAI, Key: "sk-probe", Name: "probe channel",
 		Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL),
-		Models: "gpt-3.5-turbo", Group: "vip", Priority: &priority, Weight: &weight,
+		Models: "gpt-3.5-turbo", Group: "vip,zeta", Priority: &priority, Weight: &weight,
 	}
 	require.NoError(t, db.Create(&channel).Error)
-	require.NoError(t, db.Create(&model.Ability{
-		ChannelId: channel.Id, Group: "vip", Model: "gpt-3.5-turbo", Enabled: true,
-		Priority: &priority, Weight: weight,
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: channel.Id, Group: "vip", Model: "gpt-3.5-turbo", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: channel.Id, Group: "zeta", Model: "gpt-3.5-turbo", Enabled: true, Priority: &priority, Weight: weight},
 	}).Error)
-	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
-		ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-3.5-turbo",
-		ParticipationSet: true, Revision: 5,
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-3.5-turbo", ParticipationSet: true, Revision: 5},
+		{ChannelId: channel.Id, GroupName: "zeta", ModelName: "gpt-3.5-turbo", ParticipationSet: true, Revision: 7},
 	}).Error)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
@@ -324,16 +432,23 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	policy.SampleMode = &probeMode
 	probeInterval := 1
 	policy.ProbeIntervalMinutes = &probeInterval
+	zetaPolicy := channelSmartScheduleTestGroupPolicy(
+		"zeta", channelMonitorSmartScheduleStrategyTPS, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"gpt-3.5-turbo"}, 1, 80, 30,
+	)
+	zetaPolicy.SampleMode = &probeMode
+	zetaProbeInterval := 5
+	zetaPolicy.ProbeIntervalMinutes = &zetaProbeInterval
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
-			t, policy,
+			t, policy, zetaPolicy,
 		),
 	})
 	previousFirstToken := 100.0
 	previousTPS := 10.0
-	_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-		ChannelId: channel.Id, Group: "vip", Model: "gpt-3.5-turbo",
+	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId: channel.Id, Model: "gpt-3.5-turbo",
 		WindowStart: common.GetTimestamp() - 3600, Time: common.GetTimestamp() - 120,
 		Success: true, FirstTokenMs: &previousFirstToken, TPS: &previousTPS,
 	})
@@ -345,17 +460,27 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	assert.Equal(t, 1, result.Probed)
 	assert.Equal(t, 1, result.Succeeded)
 	assert.Zero(t, result.Failed)
-	var state model.ChannelSmartScheduleRouteState
+	assert.Equal(t, 1, requestCount)
+	var state model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "gpt-3.5-turbo",
+		"channel_id = ? AND model_name = ?", channel.Id, "gpt-3.5-turbo",
 	).First(&state).Error)
-	assert.Equal(t, int64(2), state.ProbeSampleCount)
-	assert.Equal(t, int64(2), state.ProbeSuccessCount)
-	assert.Equal(t, int64(2), state.ProbeFirstTokenSampleCount)
-	require.NotNil(t, state.ProbeAverageFirstTokenMs)
-	assert.Equal(t, int64(2), state.ProbeTPSSampleCount)
-	require.NotNil(t, state.ProbeAverageTPS)
-	assert.Equal(t, int64(5), state.Revision)
+	assert.Equal(t, int64(2), state.SampleCount)
+	assert.Equal(t, int64(2), state.SuccessCount)
+	assert.Equal(t, int64(2), state.FirstTokenSampleCount)
+	require.NotNil(t, state.AverageFirstTokenMs)
+	assert.Equal(t, int64(2), state.TPSSampleCount)
+	require.NotNil(t, state.AverageTPS)
+	var routeStates []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Order("group_name ASC").Find(&routeStates).Error)
+	require.Len(t, routeStates, 2)
+	assert.Equal(t, int64(5), routeStates[0].Revision)
+	assert.Equal(t, int64(7), routeStates[1].Revision)
+	routes, err := model.GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	require.Len(t, routes, 2)
+	assert.Equal(t, state.Id, routes[0].SharedSamples.Id)
+	assert.Equal(t, state.Id, routes[1].SharedSamples.Id)
 	var consumeLog model.Log
 	require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
 	assert.Equal(t, "智能调度探测", consumeLog.TokenName)
@@ -404,12 +529,11 @@ func TestRunChannelSmartScheduleProbeSkipsNonTextModelsWithoutUpstreamRequest(t 
 	assert.Zero(t, result.Failed)
 	assert.Equal(t, 1, result.Skipped)
 
-	var state model.ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?",
-		channel.Id, "vip", "text-embedding-3-small",
-	).First(&state).Error)
-	assert.Zero(t, state.ProbeLastTime)
+	var sampleCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).
+		Where("channel_id = ? AND model_name = ?", channel.Id, "text-embedding-3-small").
+		Count(&sampleCount).Error)
+	assert.Zero(t, sampleCount)
 }
 
 func TestChannelSmartScheduleTextProbeRequiresResponsesProtocol(t *testing.T) {
@@ -453,13 +577,9 @@ func TestRunChannelSmartScheduleProbeSkipsUnsupportedResponseChannels(t *testing
 	assert.Zero(t, result.Failed)
 	assert.Equal(t, 2, result.Skipped)
 
-	var states []model.ChannelSmartScheduleRouteState
-	require.NoError(t, db.Order("channel_id ASC").Find(&states).Error)
-	require.Len(t, states, 2)
-	for _, state := range states {
-		assert.Zero(t, state.ProbeLastTime)
-		assert.Zero(t, state.ProbeSampleCount)
-	}
+	var sampleCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
+	assert.Zero(t, sampleCount)
 	var errorLogCount int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&errorLogCount).Error)
 	assert.Zero(t, errorLogCount)

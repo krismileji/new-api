@@ -312,7 +312,7 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	assert.Equal(t, weight, silverCheap.Weight)
 }
 
-func TestGetChannelMonitorSmartScheduleRoutesUsesProbeStabilityWithoutLogs(t *testing.T) {
+func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -349,14 +349,14 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesProbeStabilityWithoutLogs(t *te
 		ChannelId: 1305, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
 	}).Error)
 	now := common.GetTimestamp()
-	_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-		ChannelId: 1305, Group: "vip", Model: "model-a",
+	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1305, Model: "model-a",
 		WindowStart: now - 3600, Time: now - 60, Success: true,
 	})
 	require.NoError(t, err)
 	fastFailureDurationMs := 500.0
-	_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-		ChannelId: 1305, Group: "vip", Model: "model-a",
+	_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1305, Model: "model-a",
 		WindowStart: now - 3600, Time: now - 30, Success: false,
 		DurationMs: &fastFailureDurationMs,
 	})
@@ -446,8 +446,8 @@ func TestRunChannelSmartScheduleUsesManualSamplesInEverySampleMode(t *testing.T)
 				{channelId: 1312, success: true},
 				{channelId: 1312, success: false},
 			} {
-				_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-					ChannelId: sample.channelId, Group: "vip", Model: "model-a",
+				_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+					ChannelId: sample.channelId, Model: "model-a",
 					Source:      model.ChannelSmartScheduleSampleSourceManualTest,
 					WindowStart: now - 60, Time: now - int64(4-index), Success: sample.success,
 				})

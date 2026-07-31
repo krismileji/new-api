@@ -175,24 +175,33 @@ func TestChannelSmartScheduleModelTestReturnsEveryRouteAndRecordsSelectedGroup(t
 	assert.Contains(t, calledChannels, 2601)
 	assert.Contains(t, calledChannels, 2602)
 
-	var successfulState model.ChannelSmartScheduleRouteState
+	var successfulState model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 2601, "vip", "model-a",
+		"channel_id = ? AND model_name = ?", 2601, "model-a",
 	).First(&successfulState).Error)
-	assert.Equal(t, int64(1), successfulState.ProbeSampleCount)
-	assert.Equal(t, int64(1), successfulState.ProbeSuccessCount)
+	assert.Equal(t, int64(1), successfulState.SampleCount)
+	assert.Equal(t, int64(1), successfulState.SuccessCount)
 	assert.Equal(t, int64(1), successfulState.ManualTestMetricsSince(0).SampleCount)
-	var failedState model.ChannelSmartScheduleRouteState
+	var failedState model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 2602, "vip", "model-a",
+		"channel_id = ? AND model_name = ?", 2602, "model-a",
 	).First(&failedState).Error)
-	assert.Equal(t, int64(1), failedState.ProbeSampleCount)
-	assert.Zero(t, failedState.ProbeSuccessCount)
-	var unrelatedGroupState model.ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 2601, "shared", "model-a",
-	).First(&unrelatedGroupState).Error)
-	assert.Zero(t, unrelatedGroupState.ProbeSampleCount)
+	assert.Equal(t, int64(1), failedState.SampleCount)
+	assert.Zero(t, failedState.SuccessCount)
+	var sampleCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
+	assert.Equal(t, int64(2), sampleCount)
+	routes, err := model.GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	sharedSampleIds := make(map[string]int64)
+	for _, route := range routes {
+		if route.ChannelId == 2601 && route.Model == "model-a" {
+			sharedSampleIds[route.Group] = route.SharedSamples.Id
+			assert.Equal(t, int64(1), route.SharedSamples.SampleCount)
+		}
+	}
+	assert.Equal(t, successfulState.Id, sharedSampleIds["vip"])
+	assert.Equal(t, successfulState.Id, sharedSampleIds["shared"])
 
 	callsMutex.Lock()
 	calls = calls[:0]

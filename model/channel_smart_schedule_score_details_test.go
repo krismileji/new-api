@@ -34,8 +34,11 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	}).Error)
 
 	details := &ChannelSmartScheduleScoreDetails{
-		Version:  ChannelSmartScheduleScoreDetailsVersion,
-		Strategy: "smart", MinSamples: 20,
+		Version:          ChannelSmartScheduleScoreDetailsVersion,
+		Strategy:         "smart",
+		MinSamples:       20,
+		SampleScope:      ChannelSmartScheduleSampleScopeChannelModel,
+		SampleGroupCount: 2,
 		Inputs: ChannelSmartScheduleScoreInputs{
 			CostRatio:    ChannelSmartScheduleScoreInput{Value: &ratio, SampleCount: 1},
 			FirstTokenMs: ChannelSmartScheduleScoreInput{Value: &firstToken, SampleCount: 24},
@@ -85,6 +88,7 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	raw, err := common.Marshal(routes[0])
 	require.NoError(t, err)
 	serialized := string(raw)
-	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":1`)
+	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":2`)
+	assert.Contains(t, serialized, `"sample_scope":"channel_model"`)
 	assert.False(t, strings.Contains(serialized, `"last_schedule_score_details":"{`))
 }

@@ -60,6 +60,7 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		message = result.newAPIError.Error()
 	}
 
+	eligibleGroup := ""
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		if group != "" && configured.Group != group {
 			continue
@@ -84,34 +85,34 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 			!route.State.Participates() {
 			continue
 		}
-		routeWindowStart := windowStart
-		if policy.StabilityEnabled && route.State.StabilitySince > routeWindowStart {
-			routeWindowStart = route.State.StabilitySince
-		}
-		var sampleDurationMs *float64
-		if !math.IsNaN(durationMs) && !math.IsInf(durationMs, 0) && durationMs >= 0 {
-			value := durationMs
-			sampleDurationMs = &value
-		}
-		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
-			ChannelId:    channel.Id,
-			Group:        configured.Group,
-			Model:        modelName,
-			Source:       model.ChannelSmartScheduleSampleSourceManualTest,
-			SampleId:     sampleId,
-			WindowStart:  routeWindowStart,
-			Time:         probeTime,
-			Success:      succeeded,
-			Error:        message,
-			DurationMs:   sampleDurationMs,
-			FirstTokenMs: result.firstResponseMilliseconds,
-			TPS:          result.tokensPerSecond,
-		})
-		if err != nil {
-			common.SysError(fmt.Sprintf(
-				"保存手动渠道测试探测样本失败: channel_id=%d group=%s model=%s err=%s",
-				channel.Id, configured.Group, modelName, err.Error(),
-			))
-		}
+		eligibleGroup = configured.Group
+		break
+	}
+	if eligibleGroup == "" {
+		return
+	}
+	var sampleDurationMs *float64
+	if !math.IsNaN(durationMs) && !math.IsInf(durationMs, 0) && durationMs >= 0 {
+		value := durationMs
+		sampleDurationMs = &value
+	}
+	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId:    channel.Id,
+		Model:        modelName,
+		Source:       model.ChannelSmartScheduleSampleSourceManualTest,
+		SampleId:     sampleId,
+		WindowStart:  windowStart,
+		Time:         probeTime,
+		Success:      succeeded,
+		Error:        message,
+		DurationMs:   sampleDurationMs,
+		FirstTokenMs: result.firstResponseMilliseconds,
+		TPS:          result.tokensPerSecond,
+	})
+	if err != nil {
+		common.SysError(fmt.Sprintf(
+			"保存手动渠道测试共享样本失败: channel_id=%d model=%s matched_group=%s err=%s",
+			channel.Id, modelName, eligibleGroup, err.Error(),
+		))
 	}
 }

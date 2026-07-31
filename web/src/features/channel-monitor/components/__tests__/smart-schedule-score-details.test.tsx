@@ -26,9 +26,11 @@ import { ChannelMonitorSmartScheduleScoreDetails as ScoreDetails } from '../chan
 
 function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
   return {
-    version: 1,
+    version: 2,
     strategy: 'smart',
     minimum_samples: 5,
+    sample_scope: 'channel_model',
+    sample_group_count: 3,
     inputs: {
       cost_ratio: { value: 0.84, sample_count: 1 },
       first_token_ms: { value: 500, sample_count: 30 },
@@ -107,6 +109,8 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('评分计算'))
     assert.ok(markup.includes('本次执行快照'))
     assert.ok(markup.includes('智能综合'))
+    assert.ok(markup.includes('渠道 + 模型共享样本'))
+    assert.ok(markup.includes('业务样本覆盖 3 个分组'))
     assert.ok(markup.includes('最低 5 个样本'))
     assert.ok(markup.includes('归一化候选层 P100'))
     assert.ok(markup.includes('x0.8400'))

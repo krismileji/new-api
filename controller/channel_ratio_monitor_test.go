@@ -141,6 +141,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.Ability{},
 		&model.ChannelRatioMonitor{},
 		&model.ChannelSmartScheduleRouteState{},
+		&model.ChannelSmartScheduleModelSampleState{},
 		&model.ChannelRatioHistory{},
 		&model.ChannelDailyCost{},
 		&model.ChannelDailyAPIKeyCost{},

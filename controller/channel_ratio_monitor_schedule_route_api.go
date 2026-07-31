@@ -58,6 +58,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                generatedAt,
 			"range_minutes":               settings.SmartSchedulePerformanceMinutes,
+			"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
 			"enabled":                     settings.SmartScheduleEnabled,
 			"routes":                      routes,
 			"performance_items":           []model.ChannelMonitorRoutePerformanceMetric{},
@@ -74,22 +75,21 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	performanceByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
+	performanceByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
 	for _, metric := range performanceMetrics {
-		key := channelSmartScheduleRouteKey{
-			channelId: metric.ChannelId, group: metric.GroupName, model: metric.ModelName,
-		}
-		performanceByRoute[key] = metric
+		key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+		performanceByModel[key] = metric
 	}
 	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
 	probeMetricsAvailable := false
-	manualMetricsAvailable := false
+	sharedMetricsAvailable := false
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		policy := configured.policy()
 		policyByGroup[configured.Group] = policy
 		probeMetricsAvailable = probeMetricsAvailable || policy.SampleMode == channelMonitorSmartScheduleSampleProbe
 	}
 	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
+	stabilityByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRouteStabilityMetric)
 	stabilityByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric)
 	if logStabilityAvailable {
 		var stabilityMetrics []model.ChannelMonitorRouteStabilityMetric
@@ -101,10 +101,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			return
 		}
 		for _, metric := range stabilityMetrics {
-			key := channelSmartScheduleRouteKey{
-				channelId: metric.ChannelId, group: metric.GroupName, model: metric.ModelName,
-			}
-			stabilityByRoute[key] = metric
+			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			stabilityByModel[key] = metric
 		}
 	}
 	for _, route := range routes {
@@ -112,12 +110,13 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) {
 			continue
 		}
+		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		manualMetricsAvailable = manualMetricsAvailable ||
-			route.State.ManualTestMetricsSince(startTimestamp).SampleCount > 0
-		metric, hasMetric := stabilityByRoute[key]
+		sharedMetricsAvailable = sharedMetricsAvailable ||
+			route.SharedSamples.MetricsSince(startTimestamp).SampleCount > 0
+		metric, hasMetric := stabilityByModel[modelKey]
 		var performance *channelSmartSchedulePerformance
-		if performanceMetric, exists := performanceByRoute[key]; exists {
+		if performanceMetric, exists := performanceByModel[modelKey]; exists {
 			performance = channelSmartScheduleSetPerformanceMetric(nil, performanceMetric)
 		}
 		if hasMetric {
@@ -129,7 +128,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			performance = nil
 			if logStabilityAvailable {
 				metric, err = model.GetChannelMonitorRouteStabilityMetric(
-					c.Request.Context(), windowStart, route.ChannelId, route.Group, route.Model,
+					c.Request.Context(), windowStart, route.ChannelId, route.Model,
 				)
 				if err != nil {
 					common.ApiError(c, err)
@@ -139,7 +138,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			}
 			if policy.JitterEnabled {
 				performanceMetric, performanceErr := model.GetChannelMonitorRoutePerformanceMetric(
-					c.Request.Context(), windowStart, route.ChannelId, route.Group, route.Model,
+					c.Request.Context(), windowStart, route.ChannelId, route.Model,
 				)
 				if performanceErr != nil {
 					common.ApiError(c, performanceErr)
@@ -148,13 +147,9 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 				performance = channelSmartScheduleSetPerformanceMetric(performance, performanceMetric)
 			}
 		}
-		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe {
-			performance = channelSmartScheduleMergeProbePerformance(performance, route.State, windowStart)
-		} else {
-			performance = channelSmartScheduleMergeProbePerformance(
-				performance, route.State, windowStart, model.ChannelSmartScheduleSampleSourceManualTest,
-			)
-		}
+		performance = channelSmartScheduleMergeSharedSamplePerformance(
+			performance, route.SharedSamples, windowStart,
+		)
 		if performance == nil {
 			continue
 		}
@@ -179,6 +174,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			ChannelId:                     route.ChannelId,
 			GroupName:                     route.Group,
 			ModelName:                     route.Model,
+			GroupCount:                    performance.SampleGroupCount,
 			SuccessCount:                  performance.StabilitySuccessCount,
 			FailureCount:                  performance.StabilityFailureCount,
 			FinalFailureCount:             performance.StabilityFinalFailureCount,
@@ -221,10 +217,11 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                generatedAt,
 		"range_minutes":               settings.SmartSchedulePerformanceMinutes,
+		"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
 		"enabled":                     settings.SmartScheduleEnabled,
 		"routes":                      routes,
 		"performance_items":           performanceMetrics,
-		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable || manualMetricsAvailable,
+		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable || sharedMetricsAvailable,
 		"stability_items":             stabilityMetrics,
 	})
 }

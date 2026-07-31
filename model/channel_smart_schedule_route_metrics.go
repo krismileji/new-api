@@ -8,8 +8,8 @@ import (
 
 type ChannelMonitorRoutePerformanceMetric struct {
 	ChannelId                     int                            `json:"channel_id"`
-	GroupName                     string                         `json:"group"`
 	ModelName                     string                         `json:"model"`
+	GroupCount                    int                            `json:"group_count"`
 	SampleCount                   int                            `json:"sample_count"`
 	FirstTokenSampleCount         int                            `json:"first_token_sample_count"`
 	FirstTokenDurationSampleCount int64                          `json:"first_token_duration_sample_count"`
@@ -27,6 +27,7 @@ type ChannelMonitorRouteStabilityMetric struct {
 	ChannelId                     int                                   `json:"channel_id"`
 	GroupName                     string                                `json:"group"`
 	ModelName                     string                                `json:"model"`
+	GroupCount                    int                                   `json:"group_count"`
 	SuccessCount                  int64                                 `json:"success_count"`
 	FailureCount                  int64                                 `json:"failure_count"`
 	FinalFailureCount             int64                                 `json:"final_failure_count"`
@@ -55,7 +56,6 @@ type ChannelMonitorFailureDurationBucket struct {
 
 type channelMonitorRouteMetricKey struct {
 	channelId int
-	groupName string
 	modelName string
 }
 
@@ -71,8 +71,8 @@ func getChannelMonitorRoutePerformanceMetrics(
 	}
 	type performanceAggregate struct {
 		ChannelId             int
-		GroupName             string
 		ModelName             string
+		GroupCount            int
 		SampleCount           int64
 		FirstTokenSampleCount int64
 		TPSSampleCount        int64
@@ -83,7 +83,7 @@ func getChannelMonitorRoutePerformanceMetrics(
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(
-			"channel_id, group_name, model_name, "+
+			"channel_id, model_name, COUNT(DISTINCT group_name) AS group_count, "+
 				"SUM(sample_count) AS sample_count, "+
 				"SUM(first_token_sample_count) AS first_token_sample_count, "+
 				"SUM(tps_sample_count) AS tps_sample_count, "+
@@ -96,15 +96,12 @@ func getChannelMonitorRoutePerformanceMetrics(
 	if filter.ChannelId > 0 {
 		query = query.Where("channel_id = ?", filter.ChannelId)
 	}
-	if filter.Group != "" {
-		query = query.Where("group_name = ?", filter.Group)
-	}
 	if filter.ModelName != "" {
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
 	var aggregates []performanceAggregate
 	err := query.
-		Group("channel_id, group_name, model_name").
+		Group("channel_id, model_name").
 		Scan(&aggregates).Error
 	if err != nil {
 		return nil, err
@@ -119,8 +116,8 @@ func getChannelMonitorRoutePerformanceMetrics(
 	for _, aggregate := range aggregates {
 		metric := ChannelMonitorRoutePerformanceMetric{
 			ChannelId:                 aggregate.ChannelId,
-			GroupName:                 aggregate.GroupName,
 			ModelName:                 aggregate.ModelName,
+			GroupCount:                aggregate.GroupCount,
 			SampleCount:               int(aggregate.SampleCount),
 			FirstTokenSampleCount:     int(aggregate.FirstTokenSampleCount),
 			TPSSampleCount:            int(aggregate.TPSSampleCount),
@@ -137,7 +134,6 @@ func getChannelMonitorRoutePerformanceMetrics(
 		}
 		key := channelMonitorRouteMetricKey{
 			channelId: aggregate.ChannelId,
-			groupName: aggregate.GroupName,
 			modelName: aggregate.ModelName,
 		}
 		if buckets := durationBucketsByRoute[key]; len(buckets) > 0 {
@@ -148,9 +144,6 @@ func getChannelMonitorRoutePerformanceMetrics(
 		result = append(result, metric)
 	}
 	sort.Slice(result, func(i int, j int) bool {
-		if result[i].GroupName != result[j].GroupName {
-			return result[i].GroupName < result[j].GroupName
-		}
 		if result[i].ModelName != result[j].ModelName {
 			return result[i].ModelName < result[j].ModelName
 		}
@@ -169,12 +162,10 @@ func GetChannelMonitorRoutePerformanceMetric(
 	ctx context.Context,
 	startTimestamp int64,
 	channelId int,
-	groupName string,
 	modelName string,
 ) (ChannelMonitorRoutePerformanceMetric, error) {
 	metrics, err := getChannelMonitorRoutePerformanceMetrics(ctx, startTimestamp, 0, ChannelMonitorSuccessFilter{
 		ChannelId: channelId,
-		Group:     groupName,
 		ModelName: modelName,
 	})
 	if err != nil {
@@ -182,7 +173,7 @@ func GetChannelMonitorRoutePerformanceMetric(
 	}
 	if len(metrics) == 0 {
 		return ChannelMonitorRoutePerformanceMetric{
-			ChannelId: channelId, GroupName: groupName, ModelName: modelName,
+			ChannelId: channelId, ModelName: modelName,
 			FirstTokenDurationBuckets: []ChannelMonitorDurationBucket{},
 		}, nil
 	}
@@ -191,8 +182,8 @@ func GetChannelMonitorRoutePerformanceMetric(
 
 type channelMonitorRouteStabilityAggregate struct {
 	ChannelId                   int
-	GroupName                   string
 	ModelName                   string
+	GroupCount                  int
 	ActualSuccessCount          int64
 	ActualFailureCount          int64
 	FinalFailureCount           int64
@@ -219,7 +210,7 @@ func getChannelMonitorRouteStabilityAggregates(
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(
-			"channel_id, group_name, model_name, "+
+			"channel_id, model_name, COUNT(DISTINCT group_name) AS group_count, "+
 				"SUM(actual_success_count) AS actual_success_count, "+
 				"SUM(actual_failure_count) AS actual_failure_count, "+
 				"SUM(final_failure_count) AS final_failure_count, "+
@@ -236,14 +227,11 @@ func getChannelMonitorRouteStabilityAggregates(
 	if filter.ChannelId > 0 {
 		query = query.Where("channel_id = ?", filter.ChannelId)
 	}
-	if filter.Group != "" {
-		query = query.Where("group_name = ?", filter.Group)
-	}
 	if filter.ModelName != "" {
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
 	var aggregates []channelMonitorRouteStabilityAggregate
-	if err := query.Group("channel_id, group_name, model_name").Scan(&aggregates).Error; err != nil {
+	if err := query.Group("channel_id, model_name").Scan(&aggregates).Error; err != nil {
 		return nil, err
 	}
 	return aggregates, nil
@@ -257,8 +245,8 @@ func channelMonitorRouteStabilityMetric(aggregate channelMonitorRouteStabilityAg
 	sampleCount := max(aggregate.ActualSuccessCount, 0) + failureCount
 	metric := ChannelMonitorRouteStabilityMetric{
 		ChannelId:         aggregate.ChannelId,
-		GroupName:         strings.TrimSpace(aggregate.GroupName),
 		ModelName:         strings.TrimSpace(aggregate.ModelName),
+		GroupCount:        aggregate.GroupCount,
 		SuccessCount:      max(aggregate.ActualSuccessCount, 0),
 		FailureCount:      failureCount,
 		FinalFailureCount: finalFailureCount,
@@ -292,15 +280,12 @@ func GetChannelMonitorRouteStabilityMetrics(ctx context.Context, startTimestamp 
 	metrics := make([]ChannelMonitorRouteStabilityMetric, 0, len(aggregates))
 	for _, aggregate := range aggregates {
 		metric := channelMonitorRouteStabilityMetric(aggregate)
-		if metric.ChannelId <= 0 || metric.GroupName == "" || metric.ModelName == "" {
+		if metric.ChannelId <= 0 || metric.ModelName == "" {
 			continue
 		}
 		metrics = append(metrics, metric)
 	}
 	sort.Slice(metrics, func(i int, j int) bool {
-		if metrics[i].GroupName != metrics[j].GroupName {
-			return metrics[i].GroupName < metrics[j].GroupName
-		}
 		if metrics[i].ModelName != metrics[j].ModelName {
 			return metrics[i].ModelName < metrics[j].ModelName
 		}
@@ -309,10 +294,9 @@ func GetChannelMonitorRouteStabilityMetrics(ctx context.Context, startTimestamp 
 	return metrics, nil
 }
 
-func GetChannelMonitorRouteStabilityMetric(ctx context.Context, startTimestamp int64, channelId int, groupName string, modelName string) (ChannelMonitorRouteStabilityMetric, error) {
+func GetChannelMonitorRouteStabilityMetric(ctx context.Context, startTimestamp int64, channelId int, modelName string) (ChannelMonitorRouteStabilityMetric, error) {
 	aggregates, err := getChannelMonitorRouteStabilityAggregates(ctx, startTimestamp, 0, ChannelMonitorSuccessFilter{
 		ChannelId: channelId,
-		Group:     groupName,
 		ModelName: modelName,
 	})
 	if err != nil {
@@ -320,7 +304,7 @@ func GetChannelMonitorRouteStabilityMetric(ctx context.Context, startTimestamp i
 	}
 	if len(aggregates) == 0 {
 		return ChannelMonitorRouteStabilityMetric{
-			ChannelId: channelId, GroupName: groupName, ModelName: modelName,
+			ChannelId: channelId, ModelName: modelName,
 			RetryFailureDurationBuckets: []ChannelMonitorFailureDurationBucket{},
 		}, nil
 	}

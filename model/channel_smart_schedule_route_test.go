@@ -11,6 +11,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -31,6 +33,7 @@ func setupChannelSmartScheduleRouteTestDB(t *testing.T) *gorm.DB {
 		&Ability{},
 		&ChannelRatioMonitor{},
 		&ChannelSmartScheduleRouteState{},
+		&ChannelSmartScheduleModelSampleState{},
 	))
 	t.Cleanup(func() {
 		DB = originalDB
@@ -44,30 +47,22 @@ func setupChannelSmartScheduleRouteTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func updateProbeFieldsDuringRouteStateSave(
-	t *testing.T,
-	db *gorm.DB,
-	callbackName string,
-	channelId int,
-	group string,
-	modelName string,
-) *int {
-	t.Helper()
-	updates := 0
-	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
-		if tx.Statement.Table != "channel_smart_schedule_route_states" {
-			return
-		}
-		updates++
-		require.NoError(t, tx.Exec(
-			"UPDATE channel_smart_schedule_route_states SET probe_last_error = ?, probe_sample_count = ?, probe_samples = ? WHERE channel_id = ? AND group_name = ? AND model_name = ?",
-			"最新探测结果", 91, `[{"time":91,"success":false}]`, channelId, group, modelName,
-		).Error)
-	}))
-	t.Cleanup(func() {
-		require.NoError(t, db.Callback().Update().Remove(callbackName))
-	})
-	return &updates
+func TestChannelSmartScheduleSamplesJSONUsesCrossDatabaseTextType(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialector gorm.Dialector
+		want      string
+	}{
+		{name: "sqlite", dialector: sqlite.Open(":memory:"), want: "TEXT"},
+		{name: "mysql", dialector: mysql.Open(""), want: "LONGTEXT"},
+		{name: "postgres", dialector: postgres.Open(""), want: "TEXT"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &gorm.DB{Config: &gorm.Config{Dialector: test.dialector}}
+			assert.Equal(t, test.want, ChannelSmartScheduleSamplesJSON("").GormDBDataType(db, nil))
+		})
+	}
 }
 
 func TestUpdateAbilitiesPreservesParticipatingSmartScheduleRouteRouting(t *testing.T) {
@@ -521,12 +516,11 @@ func TestApplyChannelSmartScheduleRouteResultOnlyChangesTargetAbility(t *testing
 	assert.Equal(t, int(channelWeight), channel.GetWeight())
 }
 
-func TestApplyChannelSmartScheduleRouteResultPersistsJitterBaselineWithoutOverwritingProbeState(t *testing.T) {
+func TestApplyChannelSmartScheduleRouteResultPersistsJitterBaselineWithoutChangingSharedSamples(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	priority := int64(80)
 	weight := uint(50)
 	oldBaseline := 300.0
-	probeAverage := 250.0
 	require.NoError(t, db.Create(&Ability{
 		ChannelId: 1010, Group: "vip", Model: "model-a", Enabled: true,
 		Priority: &priority, Weight: weight,
@@ -535,10 +529,13 @@ func TestApplyChannelSmartScheduleRouteResultPersistsJitterBaselineWithoutOverwr
 		ChannelId: 1010, GroupName: "vip", ModelName: "model-a",
 		ParticipationSet: true, Revision: 1,
 		JitterBaselineFirstTokenMs: &oldBaseline, JitterBaselineUpdatedAt: 100,
-		ProbeWindowStart: 90, ProbeLastTime: 120, ProbeLastSuccess: true,
-		ProbeSampleCount: 3, ProbeSuccessCount: 2,
-		ProbeFirstTokenSampleCount: 2, ProbeAverageFirstTokenMs: &probeAverage,
-		ProbeSamples: `[{"time":120,"success":true,"first_token_ms":250}]`,
+	}).Error)
+	probeAverage := 250.0
+	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
+		ChannelId: 1010, ModelName: "model-a", LastTime: 120, LastSuccess: true,
+		SampleCount: 3, SuccessCount: 2, FirstTokenSampleCount: 2,
+		AverageFirstTokenMs: &probeAverage,
+		SamplesJSON:         `[{"time":120,"success":true,"first_token_ms":250}]`,
 	}).Error)
 
 	newBaseline := 320.0
@@ -562,12 +559,15 @@ func TestApplyChannelSmartScheduleRouteResultPersistsJitterBaselineWithoutOverwr
 	require.NotNil(t, state.JitterBaselineFirstTokenMs)
 	assert.InDelta(t, newBaseline, *state.JitterBaselineFirstTokenMs, 1e-9)
 	assert.Equal(t, int64(200), state.JitterBaselineUpdatedAt)
-	assert.Equal(t, int64(90), state.ProbeWindowStart)
-	assert.Equal(t, int64(120), state.ProbeLastTime)
-	assert.Equal(t, int64(3), state.ProbeSampleCount)
-	require.NotNil(t, state.ProbeAverageFirstTokenMs)
-	assert.InDelta(t, probeAverage, *state.ProbeAverageFirstTokenMs, 1e-9)
-	assert.NotEmpty(t, state.ProbeSamples)
+	var samples ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Where(&ChannelSmartScheduleModelSampleState{
+		ChannelId: 1010, ModelName: "model-a",
+	}).First(&samples).Error)
+	assert.Equal(t, int64(120), samples.LastTime)
+	assert.Equal(t, int64(3), samples.SampleCount)
+	require.NotNil(t, samples.AverageFirstTokenMs)
+	assert.InDelta(t, probeAverage, *samples.AverageFirstTokenMs, 1e-9)
+	assert.NotEmpty(t, samples.SamplesJSON)
 }
 
 func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testing.T) {
@@ -592,11 +592,7 @@ func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testi
 		StabilityState:         ChannelSmartScheduleStabilityDegraded,
 		StabilitySavedPriority: 95, StabilitySavedWeight: 45,
 		JitterBaselineFirstTokenMs: &jitterBaseline, JitterBaselineUpdatedAt: 123,
-		ProbeLastError: "旧探测结果", ProbeSampleCount: 2,
 	}).Error)
-	probeWrites := updateProbeFieldsDuringRouteStateSave(
-		t, db, "test:clear_route_stability_keeps_probe", 1003, "vip", "model-a",
-	)
 
 	result, err := ClearChannelSmartScheduleRouteStability(1003, "vip", "model-a", 80, 10)
 	require.NoError(t, err)
@@ -621,10 +617,6 @@ func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testi
 	).First(&state).Error)
 	assert.Nil(t, state.JitterBaselineFirstTokenMs)
 	assert.Zero(t, state.JitterBaselineUpdatedAt)
-	assert.Equal(t, "最新探测结果", state.ProbeLastError)
-	assert.Equal(t, int64(91), state.ProbeSampleCount)
-	assert.Equal(t, `[{"time":91,"success":false}]`, state.ProbeSamples)
-	assert.Equal(t, 1, *probeWrites)
 }
 
 func TestClearChannelSmartScheduleExplorationsRestoresSavedRouteValues(t *testing.T) {
@@ -646,11 +638,7 @@ func TestClearChannelSmartScheduleExplorationsRestoresSavedRouteValues(t *testin
 		ParticipationSet: true, Revision: 1,
 		ExplorationActive: true, ExplorationSince: 123,
 		ExplorationSavedPriority: 20, ExplorationSavedWeight: 40,
-		ProbeLastError: "旧探测结果", ProbeSampleCount: 2,
 	}).Error)
-	probeWrites := updateProbeFieldsDuringRouteStateSave(
-		t, db, "test:clear_exploration_keeps_probe", 1005, "vip", "model-a",
-	)
 
 	changed, err := ClearChannelSmartScheduleExplorations()
 	require.NoError(t, err)
@@ -668,36 +656,6 @@ func TestClearChannelSmartScheduleExplorationsRestoresSavedRouteValues(t *testin
 	assert.Zero(t, state.ExplorationSince)
 	assert.Zero(t, state.ExplorationSavedPriority)
 	assert.Zero(t, state.ExplorationSavedWeight)
-	assert.Equal(t, "最新探测结果", state.ProbeLastError)
-	assert.Equal(t, int64(91), state.ProbeSampleCount)
-	assert.Equal(t, `[{"time":91,"success":false}]`, state.ProbeSamples)
-	assert.Equal(t, 1, *probeWrites)
-}
-
-func TestSaveChannelSmartScheduleRouteConfigDoesNotOverwriteProbeFields(t *testing.T) {
-	db := setupChannelSmartScheduleRouteTestDB(t)
-	priority := int64(80)
-	require.NoError(t, db.Create(&Ability{
-		ChannelId: 1008, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 50,
-	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1008, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-		ProbeLastError: "旧探测结果", ProbeSampleCount: 2,
-	}).Error)
-	probeWrites := updateProbeFieldsDuringRouteStateSave(
-		t, db, "test:route_config_keeps_probe", 1008, "vip", "model-a",
-	)
-
-	state, _, err := SaveChannelSmartScheduleRouteConfig(1008, "vip", "model-a", true)
-	require.NoError(t, err)
-	assert.True(t, state.Excluded)
-	var stored ChannelSmartScheduleRouteState
-	require.NoError(t, db.First(&stored, state.Id).Error)
-	assert.True(t, stored.Excluded)
-	assert.Equal(t, "最新探测结果", stored.ProbeLastError)
-	assert.Equal(t, int64(91), stored.ProbeSampleCount)
-	assert.Equal(t, `[{"time":91,"success":false}]`, stored.ProbeSamples)
-	assert.Equal(t, 1, *probeWrites)
 }
 
 func TestSaveChannelSmartScheduleRouteConfigReportsRestoredExplorationRouting(t *testing.T) {
@@ -724,35 +682,7 @@ func TestSaveChannelSmartScheduleRouteConfigReportsRestoredExplorationRouting(t 
 	assert.Equal(t, uint(50), ability.Weight)
 }
 
-func TestSaveChannelSmartScheduleChannelConfigDoesNotOverwriteProbeFields(t *testing.T) {
-	db := setupChannelSmartScheduleRouteTestDB(t)
-	priority := int64(80)
-	require.NoError(t, db.Create(&Ability{
-		ChannelId: 1009, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 50,
-	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1009, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-		ProbeLastError: "旧探测结果", ProbeSampleCount: 2,
-	}).Error)
-	probeWrites := updateProbeFieldsDuringRouteStateSave(
-		t, db, "test:channel_config_keeps_probe", 1009, "vip", "model-a",
-	)
-
-	result, err := SaveChannelSmartScheduleChannelConfig(1009, true)
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Updated)
-	var stored ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 1009, "vip", "model-a",
-	).First(&stored).Error)
-	assert.True(t, stored.Excluded)
-	assert.Equal(t, "最新探测结果", stored.ProbeLastError)
-	assert.Equal(t, int64(91), stored.ProbeSampleCount)
-	assert.Equal(t, `[{"time":91,"success":false}]`, stored.ProbeSamples)
-	assert.Equal(t, 1, *probeWrites)
-}
-
-func TestSaveChannelSmartScheduleProbeResultAggregatesWindowWithoutOverwritingScheduleState(t *testing.T) {
+func TestSaveChannelSmartScheduleModelSampleAggregatesWindowWithoutOverwritingRouteState(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	score := 0.75
 	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
@@ -765,141 +695,136 @@ func TestSaveChannelSmartScheduleProbeResultAggregatesWindowWithoutOverwritingSc
 	}).Error)
 	firstTokenFast := 100.0
 	tpsSlow := 20.0
-	state, err := SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1006, Group: "vip", Model: "model-a",
+	state, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1006, Model: "model-a",
 		WindowStart: 100, Time: 200, Success: true,
 		FirstTokenMs: &firstTokenFast, TPS: &tpsSlow,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), state.ProbeSampleCount)
-	assert.Equal(t, int64(1), state.ProbeSuccessCount)
+	assert.Equal(t, int64(1), state.SampleCount)
+	assert.Equal(t, int64(1), state.SuccessCount)
 
 	firstTokenSlow := 300.0
 	tpsFast := 40.0
-	state, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1006, Group: "vip", Model: "model-a",
+	state, err = SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1006, Model: "model-a",
 		WindowStart: 100, Time: 210, Success: true,
 		FirstTokenMs: &firstTokenSlow, TPS: &tpsFast,
 	})
 	require.NoError(t, err)
-	state, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1006, Group: "vip", Model: "model-a",
+	state, err = SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1006, Model: "model-a",
 		WindowStart: 100, Time: 220, Success: false, Error: "上游暂不可用",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), state.ProbeSampleCount)
-	assert.Equal(t, int64(2), state.ProbeSuccessCount)
-	assert.Equal(t, int64(2), state.ProbeFirstTokenSampleCount)
-	require.NotNil(t, state.ProbeAverageFirstTokenMs)
-	assert.InDelta(t, 200, *state.ProbeAverageFirstTokenMs, 1e-9)
-	assert.Equal(t, int64(2), state.ProbeTPSSampleCount)
-	require.NotNil(t, state.ProbeAverageTPS)
-	assert.InDelta(t, 30, *state.ProbeAverageTPS, 1e-9)
-	assert.False(t, state.ProbeLastSuccess)
-	assert.Equal(t, "上游暂不可用", state.ProbeLastError)
+	assert.Equal(t, int64(3), state.SampleCount)
+	assert.Equal(t, int64(2), state.SuccessCount)
+	assert.Equal(t, int64(2), state.FirstTokenSampleCount)
+	require.NotNil(t, state.AverageFirstTokenMs)
+	assert.InDelta(t, 200, *state.AverageFirstTokenMs, 1e-9)
+	assert.Equal(t, int64(2), state.TPSSampleCount)
+	require.NotNil(t, state.AverageTPS)
+	assert.InDelta(t, 30, *state.AverageTPS, 1e-9)
+	assert.False(t, state.LastSuccess)
+	assert.Equal(t, "上游暂不可用", state.LastError)
 
 	var stored ChannelSmartScheduleRouteState
-	require.NoError(t, db.First(&stored, state.Id).Error)
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 1006, "vip", "model-a",
+	).First(&stored).Error)
 	assert.Equal(t, ChannelSmartScheduleStatusSucceeded, stored.LastScheduleStatus)
 	assert.Equal(t, "保留调度结果", stored.LastScheduleError)
 	require.NotNil(t, stored.LastScheduleScore)
 	assert.InDelta(t, score, *stored.LastScheduleScore, 1e-9)
 	assert.Equal(t, ChannelSmartScheduleStabilityProbing, stored.StabilityState)
 	assert.Equal(t, int64(7), stored.Revision)
-	assert.NotEmpty(t, stored.ProbeSamples)
+	assert.NotEmpty(t, state.SamplesJSON)
 
-	state, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1006, Group: "vip", Model: "model-a",
+	state, err = SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1006, Model: "model-a",
 		WindowStart: 205, Time: 300, Success: false, Error: "新窗口失败",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(210), state.ProbeWindowStart)
-	assert.Equal(t, int64(3), state.ProbeSampleCount)
-	assert.Equal(t, int64(1), state.ProbeSuccessCount)
-	assert.Equal(t, int64(1), state.ProbeFirstTokenSampleCount)
-	require.NotNil(t, state.ProbeAverageFirstTokenMs)
-	assert.InDelta(t, 300, *state.ProbeAverageFirstTokenMs, 1e-9)
-	assert.Equal(t, int64(1), state.ProbeTPSSampleCount)
-	require.NotNil(t, state.ProbeAverageTPS)
-	assert.InDelta(t, 40, *state.ProbeAverageTPS, 1e-9)
-	assert.Equal(t, int64(7), state.Revision)
+	assert.Equal(t, int64(210), state.WindowStart)
+	assert.Equal(t, int64(3), state.SampleCount)
+	assert.Equal(t, int64(1), state.SuccessCount)
+	assert.Equal(t, int64(1), state.FirstTokenSampleCount)
+	require.NotNil(t, state.AverageFirstTokenMs)
+	assert.InDelta(t, 300, *state.AverageFirstTokenMs, 1e-9)
+	assert.Equal(t, int64(1), state.TPSSampleCount)
+	require.NotNil(t, state.AverageTPS)
+	assert.InDelta(t, 40, *state.AverageTPS, 1e-9)
 
-	latest := state.ProbeMetricsSince(221)
+	latest := state.MetricsSince(221)
 	assert.Equal(t, int64(300), latest.WindowStart)
 	assert.Equal(t, int64(1), latest.SampleCount)
 	assert.Zero(t, latest.SuccessCount)
 	assert.Nil(t, latest.AverageFirstTokenMs)
 }
 
-func TestSaveChannelSmartScheduleProbeResultKeepsNewestBoundedSamples(t *testing.T) {
+func TestSaveChannelSmartScheduleModelSampleKeepsNewestBoundedSamples(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
-	samples := make([]channelSmartScheduleProbeSample, 0, channelSmartScheduleMaxProbeSamples)
-	for index := 1; index <= channelSmartScheduleMaxProbeSamples; index++ {
-		samples = append(samples, channelSmartScheduleProbeSample{Time: int64(index), Success: true})
+	samples := make([]channelSmartScheduleSample, 0, channelSmartScheduleMaxSamples)
+	for index := 1; index <= channelSmartScheduleMaxSamples; index++ {
+		samples = append(samples, channelSmartScheduleSample{Time: int64(index), Success: true})
 	}
 	rawSamples, err := common.Marshal(samples)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1007, GroupName: "vip", ModelName: "model-a",
-		ParticipationSet: true, Revision: 4, ProbeSamples: string(rawSamples),
+	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
+		ChannelId: 1007, ModelName: "model-a", SamplesJSON: ChannelSmartScheduleSamplesJSON(rawSamples),
 	}).Error)
 
-	state, err := SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1007, Group: "vip", Model: "model-a",
-		WindowStart: 1, Time: channelSmartScheduleMaxProbeSamples + 1, Success: false,
+	state, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1007, Model: "model-a",
+		WindowStart: 1, Time: channelSmartScheduleMaxSamples + 1, Success: false,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(channelSmartScheduleMaxProbeSamples), state.ProbeSampleCount)
-	assert.Equal(t, int64(2), state.ProbeWindowStart)
-	assert.Equal(t, int64(channelSmartScheduleMaxProbeSamples-1), state.ProbeSuccessCount)
-	assert.Equal(t, int64(4), state.Revision)
+	assert.Equal(t, int64(channelSmartScheduleMaxSamples), state.SampleCount)
+	assert.Equal(t, int64(2), state.WindowStart)
+	assert.Equal(t, int64(channelSmartScheduleMaxSamples-1), state.SuccessCount)
 
-	metrics := state.ProbeMetricsSince(channelSmartScheduleMaxProbeSamples)
+	metrics := state.MetricsSince(channelSmartScheduleMaxSamples)
 	assert.Equal(t, int64(2), metrics.SampleCount)
 	assert.Equal(t, int64(1), metrics.SuccessCount)
 }
 
-func TestSaveChannelSmartScheduleProbeResultSeparatesAndDeduplicatesManualSamples(t *testing.T) {
-	db := setupChannelSmartScheduleRouteTestDB(t)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1008, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-	}).Error)
-
-	state, err := SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1008, Group: "vip", Model: "model-a",
+func TestSaveChannelSmartScheduleModelSampleSeparatesAndDeduplicatesManualSamples(t *testing.T) {
+	setupChannelSmartScheduleRouteTestDB(t)
+	state, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1008, Model: "model-a",
 		Source:   ChannelSmartScheduleSampleSourceScheduledProbe,
 		SampleId: "scheduled-1", WindowStart: 100, Time: 100, Success: true,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), state.ProbeSampleCount)
+	assert.Equal(t, int64(1), state.SampleCount)
 
 	failureDurationMs := 750.0
-	manualResult := ChannelSmartScheduleProbeResult{
-		ChannelId: 1008, Group: "vip", Model: "model-a",
+	manualResult := ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1008, Model: "model-a",
 		Source:   ChannelSmartScheduleSampleSourceManualTest,
 		SampleId: "manual-1", WindowStart: 100, Time: 110, Success: false,
 		DurationMs: &failureDurationMs,
 	}
-	state, err = SaveChannelSmartScheduleProbeResult(manualResult)
+	state, err = SaveChannelSmartScheduleModelSample(manualResult)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), state.ProbeSampleCount)
+	assert.Equal(t, int64(2), state.SampleCount)
 
 	manualResult.Success = true
-	state, err = SaveChannelSmartScheduleProbeResult(manualResult)
+	state, err = SaveChannelSmartScheduleModelSample(manualResult)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), state.ProbeSampleCount)
-	assert.Equal(t, int64(1), state.ProbeSuccessCount)
+	assert.Equal(t, int64(2), state.SampleCount)
+	assert.Equal(t, int64(1), state.SuccessCount)
 
 	firstTokenMs := 125.0
 	tps := 40.0
-	state, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1008, Group: "vip", Model: "model-a",
+	state, err = SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1008, Model: "model-a",
 		Source:   ChannelSmartScheduleSampleSourceManualTest,
 		SampleId: "manual-2", WindowStart: 100, Time: 120, Success: true,
 		FirstTokenMs: &firstTokenMs, TPS: &tps,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), state.ProbeSampleCount)
+	assert.Equal(t, int64(3), state.SampleCount)
 
 	manualMetrics := state.ManualTestMetricsSince(100)
 	assert.Equal(t, int64(2), manualMetrics.SampleCount)
@@ -908,11 +833,97 @@ func TestSaveChannelSmartScheduleProbeResultSeparatesAndDeduplicatesManualSample
 	assert.Equal(t, int64(1), manualMetrics.FirstTokenSampleCount)
 	assert.Equal(t, int64(1), manualMetrics.TPSSampleCount)
 
-	_, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
-		ChannelId: 1008, Group: "vip", Model: "model-a",
+	_, err = SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1008, Model: "model-a",
 		Source: "unknown", WindowStart: 100, Time: 130, Success: true,
 	})
 	assert.ErrorContains(t, err, "样本来源无效")
+}
+
+func TestSaveChannelSmartScheduleModelSampleKeepsNewerStateWhenOlderResultArrivesLate(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	newerFirstTokenMs := 200.0
+	_, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1012, Model: "model-a", Source: ChannelSmartScheduleSampleSourceManualTest,
+		SampleId: "newer", WindowStart: 100, Time: 200, Success: true,
+		FirstTokenMs: &newerFirstTokenMs,
+	})
+	require.NoError(t, err)
+
+	olderDurationMs := 3_000.0
+	state, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1012, Model: "model-a", Source: ChannelSmartScheduleSampleSourceScheduledProbe,
+		SampleId: "older", WindowStart: 100, Time: 150, Success: false,
+		Error: "older failure", DurationMs: &olderDurationMs,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), state.SampleCount)
+	assert.Equal(t, int64(1), state.SuccessCount)
+	assert.Equal(t, int64(200), state.LastTime)
+	assert.True(t, state.LastSuccess)
+	assert.Empty(t, state.LastError)
+
+	var stored ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND model_name = ?", 1012, "model-a",
+	).First(&stored).Error)
+	assert.Equal(t, int64(2), stored.SampleCount)
+	assert.Equal(t, int64(200), stored.LastTime)
+}
+
+func TestGetChannelSmartScheduleRoutesSharesSamplesAcrossGroupsButKeepsRouteStateIndependent(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	priority := int64(80)
+	require.NoError(t, db.Create(&Channel{
+		Id: 1011, Name: "shared-samples", Status: common.ChannelStatusEnabled,
+		Group: "vip,standard", Models: "model-a", Priority: &priority,
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1011, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 60},
+		{ChannelId: 1011, Group: "standard", Model: "model-a", Enabled: true, Priority: &priority, Weight: 40},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 1011, GroupName: "vip", ModelName: "model-a",
+			ParticipationSet: true, Revision: 3, LastScheduleStatus: ChannelSmartScheduleStatusSucceeded,
+		},
+		{
+			ChannelId: 1011, GroupName: "standard", ModelName: "model-a",
+			ParticipationSet: true, Revision: 7, StabilityState: ChannelSmartScheduleStabilityProbing,
+		},
+	}).Error)
+	firstTokenMs := 240.0
+	_, err := SaveChannelSmartScheduleModelSample(ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1011, Model: "model-a", Source: ChannelSmartScheduleSampleSourceManualTest,
+		SampleId: "shared-manual-1", WindowStart: 100, Time: 120, Success: true,
+		FirstTokenMs: &firstTokenMs,
+	})
+	require.NoError(t, err)
+
+	_, _, err = SaveChannelSmartScheduleRouteConfig(1011, "vip", "model-a", true)
+	require.NoError(t, err)
+	routes, err := GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	require.Len(t, routes, 2)
+	routeByGroup := make(map[string]ChannelSmartScheduleRoute, len(routes))
+	for _, route := range routes {
+		routeByGroup[route.Group] = route
+	}
+	vip := routeByGroup["vip"]
+	standard := routeByGroup["standard"]
+	assert.True(t, vip.State.Excluded)
+	assert.Equal(t, int64(4), vip.State.Revision)
+	assert.False(t, standard.State.Excluded)
+	assert.Equal(t, int64(7), standard.State.Revision)
+	assert.Equal(t, ChannelSmartScheduleStabilityProbing, standard.State.StabilityState)
+	assert.Equal(t, vip.SharedSamples.Id, standard.SharedSamples.Id)
+	assert.Equal(t, int64(1), vip.SharedSamples.SampleCount)
+	assert.Equal(t, int64(1), standard.SharedSamples.SampleCount)
+	require.NotNil(t, vip.SharedSamples.AverageFirstTokenMs)
+	require.NotNil(t, standard.SharedSamples.AverageFirstTokenMs)
+	assert.InDelta(t, firstTokenMs, *vip.SharedSamples.AverageFirstTokenMs, 1e-9)
+	assert.InDelta(t, firstTokenMs, *standard.SharedSamples.AverageFirstTokenMs, 1e-9)
 }
 
 func TestRouteCacheSelectsAbilityPriorityWithinGroupAndModel(t *testing.T) {
