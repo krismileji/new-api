@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/empty'
 
 import type { ChannelMonitorTask, ChannelMonitorTaskAdjustment } from '../types'
+import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
 
 const ACTION_LABELS: Record<ChannelMonitorTaskAdjustment['action'], string> = {
   updated: '已调整',
@@ -182,6 +183,11 @@ export function ChannelMonitorTaskAdjustmentDetails(props: {
               <span className='text-foreground font-medium'>调整原因：</span>
               {adjustment.reason || '未记录调整原因'}
             </p>
+            <ChannelMonitorSmartScheduleScoreDetails
+              details={adjustment.score_details}
+              className='lg:col-span-3'
+              snapshotLabel='本次执行快照'
+            />
           </li>
         ))}
       </ol>

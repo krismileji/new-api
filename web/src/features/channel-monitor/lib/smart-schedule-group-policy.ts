@@ -35,9 +35,9 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmart
     stabilityEnabled: true,
     jitterEnabled: true,
     jitterTolerancePercent: 5,
-    jitterThresholdMultiplier: 3,
-    jitterAbsoluteToleranceMs: 1000,
-    jitterBaselineHours: 24,
+    jitterThresholdMultiplier: 5,
+    jitterAbsoluteToleranceSeconds: 10,
+    jitterBaselineMinutes: 60,
     scoring: channelMonitorSmartScheduleScoringToForm(
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING
     ),
@@ -61,10 +61,9 @@ export function channelMonitorSmartScheduleScoringToForm(
 ): SmartScheduleScoringFormValues {
   return {
     stabilityPercent: scoring.stability_percent,
-    curveExponent: scoring.curve_exponent,
-    relativeWeightEnabled: scoring.relative_weight_enabled,
-    relativeWeightStartPercent: scoring.relative_weight_start_percent,
-    relativeWeightFullPercent: scoring.relative_weight_full_percent,
+    primaryTrafficPercent: scoring.primary_traffic_percent ?? 90,
+    primarySwitchThresholdPercent:
+      scoring.primary_switch_threshold_percent ?? 3,
     smart: {
       costRatioPercent: scoring.smart.cost_ratio_percent,
       firstTokenPercent: scoring.smart.first_token_percent,
@@ -83,10 +82,8 @@ export function channelMonitorSmartScheduleScoringToApi(
 ): ChannelMonitorSmartScheduleScoring {
   return {
     stability_percent: scoring.stabilityPercent,
-    curve_exponent: scoring.curveExponent,
-    relative_weight_enabled: scoring.relativeWeightEnabled,
-    relative_weight_start_percent: scoring.relativeWeightStartPercent,
-    relative_weight_full_percent: scoring.relativeWeightFullPercent,
+    primary_traffic_percent: scoring.primaryTrafficPercent,
+    primary_switch_threshold_percent: scoring.primarySwitchThresholdPercent,
     smart: {
       cost_ratio_percent: scoring.smart.costRatioPercent,
       first_token_percent: scoring.smart.firstTokenPercent,
@@ -110,8 +107,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     jitterEnabled: policy.jitter_enabled,
     jitterTolerancePercent: policy.jitter_tolerance_percent,
     jitterThresholdMultiplier: policy.jitter_threshold_multiplier,
-    jitterAbsoluteToleranceMs: policy.jitter_absolute_tolerance_ms,
-    jitterBaselineHours: policy.jitter_baseline_hours,
+    jitterAbsoluteToleranceSeconds: policy.jitter_absolute_tolerance_seconds,
+    jitterBaselineMinutes: policy.jitter_baseline_minutes,
     scoring: channelMonitorSmartScheduleScoringToForm(policy.scoring),
     applyMode: policy.apply_mode,
     models: [...policy.models],
@@ -139,8 +136,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     jitter_enabled: policy.jitterEnabled,
     jitter_tolerance_percent: policy.jitterTolerancePercent,
     jitter_threshold_multiplier: policy.jitterThresholdMultiplier,
-    jitter_absolute_tolerance_ms: policy.jitterAbsoluteToleranceMs,
-    jitter_baseline_hours: policy.jitterBaselineHours,
+    jitter_absolute_tolerance_seconds: policy.jitterAbsoluteToleranceSeconds,
+    jitter_baseline_minutes: policy.jitterBaselineMinutes,
     scoring: channelMonitorSmartScheduleScoringToApi(policy.scoring),
     apply_mode: policy.applyMode,
     models: policy.models,
@@ -169,8 +166,8 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     jitterEnabled: policy.jitterEnabled,
     jitterTolerancePercent: policy.jitterTolerancePercent,
     jitterThresholdMultiplier: policy.jitterThresholdMultiplier,
-    jitterAbsoluteToleranceMs: policy.jitterAbsoluteToleranceMs,
-    jitterBaselineHours: policy.jitterBaselineHours,
+    jitterAbsoluteToleranceSeconds: policy.jitterAbsoluteToleranceSeconds,
+    jitterBaselineMinutes: policy.jitterBaselineMinutes,
     scoring: cloneScoring(policy.scoring),
     applyMode: policy.applyMode,
     models: [...policy.models],
@@ -193,10 +190,10 @@ function cloneScoring(
 ): SmartScheduleScoringFormValues {
   return {
     stabilityPercent: Number(scoring.stabilityPercent),
-    curveExponent: Number(scoring.curveExponent),
-    relativeWeightEnabled: scoring.relativeWeightEnabled,
-    relativeWeightStartPercent: Number(scoring.relativeWeightStartPercent),
-    relativeWeightFullPercent: Number(scoring.relativeWeightFullPercent),
+    primaryTrafficPercent: Number(scoring.primaryTrafficPercent),
+    primarySwitchThresholdPercent: Number(
+      scoring.primarySwitchThresholdPercent
+    ),
     smart: {
       costRatioPercent: Number(scoring.smart.costRatioPercent),
       firstTokenPercent: Number(scoring.smart.firstTokenPercent),

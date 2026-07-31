@@ -29,7 +29,9 @@ import type {
   ChannelMonitorPerformanceRangeMinutes,
   ChannelMonitorPerformanceResult,
   ChannelMonitorSettings,
+  ChannelMonitorSmartScheduleModelTestResult,
   ChannelMonitorSmartScheduleStabilityClearResult,
+  ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
@@ -196,6 +198,29 @@ export async function getChannelMonitorSmartScheduleRoutes() {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export async function testChannelMonitorSmartScheduleModel(request: {
+  group: string
+  model: string
+  stream: boolean
+  endpointType: string
+  channelIds?: number[]
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleModelTestResult>
+  >(
+    '/api/channel_monitor/schedule/model-test',
+    {
+      group: request.group,
+      model: request.model,
+      stream: request.stream,
+      endpoint_type: request.endpointType,
+      channel_ids: request.channelIds,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
 export async function runChannelMonitorRatioUpdate() {
   const response = await api.post<
     ChannelMonitorApiResponse<ChannelMonitorTaskRunResult>
@@ -238,6 +263,28 @@ export async function updateChannelMonitorSmartScheduleRouteConfig(request: {
       group: request.group,
       model: request.model,
       excluded: request.excluded,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function updateChannelMonitorSmartScheduleRoutePrimary(request: {
+  channelId: number
+  group: string
+  model: string
+  durationMinutes: number
+  allowStabilityDegrade: boolean
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelMonitorSmartSchedulePrimaryUpdateResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/primary`,
+    {
+      group: request.group,
+      model: request.model,
+      duration_minutes: request.durationMinutes,
+      allow_stability_degrade: request.allowStabilityDegrade,
     },
     channelMonitorRequestConfig()
   )

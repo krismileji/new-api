@@ -119,6 +119,8 @@ function createRoute(
       exploration_since: 0,
       exploration_saved_priority: 0,
       exploration_saved_weight: 0,
+      manual_primary_until: 0,
+      manual_primary_allow_stability_degrade: false,
       probe_window_start: 0,
       probe_last_time: 0,
       probe_last_success: false,
@@ -222,15 +224,13 @@ function renderBoard(
               stability_enabled: true,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_threshold_multiplier: 3,
-              jitter_absolute_tolerance_ms: 1000,
-              jitter_baseline_hours: 24,
+              jitter_threshold_multiplier: 5,
+              jitter_absolute_tolerance_seconds: 10,
+              jitter_baseline_minutes: 60,
               scoring: {
                 stability_percent: 50,
-                curve_exponent: 1,
-                relative_weight_enabled: true,
-                relative_weight_start_percent: 3,
-                relative_weight_full_percent: 10,
+                primary_traffic_percent: 90,
+                primary_switch_threshold_percent: 3,
                 smart: {
                   cost_ratio_percent: 40,
                   first_token_percent: 40,
@@ -262,15 +262,13 @@ function renderBoard(
               stability_enabled: false,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_threshold_multiplier: 3,
-              jitter_absolute_tolerance_ms: 1000,
-              jitter_baseline_hours: 24,
+              jitter_threshold_multiplier: 5,
+              jitter_absolute_tolerance_seconds: 10,
+              jitter_baseline_minutes: 60,
               scoring: {
                 stability_percent: 50,
-                curve_exponent: 1,
-                relative_weight_enabled: true,
-                relative_weight_start_percent: 3,
-                relative_weight_full_percent: 10,
+                primary_traffic_percent: 90,
+                primary_switch_threshold_percent: 3,
                 smart: {
                   cost_ratio_percent: 40,
                   first_token_percent: 40,
@@ -336,11 +334,13 @@ describe('channel monitor smart schedule board', () => {
     assert.match(markup, /vip[\s\S]*x0\.5[\s\S]*1 池/)
     assert.match(markup, /default[\s\S]*x1[\s\S]*1 池/)
     assert.ok(markup.includes('model-fast'))
-    assert.ok(markup.includes('候选层 P100 · 2 条'))
+    assert.ok(markup.includes('测试 vip model-fast 调度池模型'))
+    assert.ok(markup.includes('流入层 P100 · 2 条'))
     assert.ok(markup.includes('主线路'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('探索流量 3%'))
     assert.ok(markup.includes('预计流量'))
+    assert.ok(markup.includes('最终得分'))
     assert.ok(markup.includes('75.0%'))
     assert.ok(markup.includes('25.0%'))
     assert.ok(markup.includes('transition-[width]'))
@@ -392,15 +392,13 @@ describe('channel monitor smart schedule board', () => {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_threshold_multiplier: 3,
-      jitter_absolute_tolerance_ms: 1000,
-      jitter_baseline_hours: 24,
+      jitter_threshold_multiplier: 5,
+      jitter_absolute_tolerance_seconds: 10,
+      jitter_baseline_minutes: 60,
       scoring: {
         stability_percent: 50,
-        curve_exponent: 1,
-        relative_weight_enabled: true,
-        relative_weight_start_percent: 3,
-        relative_weight_full_percent: 10,
+        primary_traffic_percent: 90,
+        primary_switch_threshold_percent: 3,
         smart: {
           cost_ratio_percent: 40,
           first_token_percent: 40,
@@ -489,8 +487,26 @@ describe('channel monitor smart schedule board', () => {
       /<button[^>]*data-slot="badge"[^>]*aria-label="解除 恢复中渠道 vip model-fast 的稳定性降级保护"[^>]*>/
     )
     assert.ok(markup.includes('备用与未参与路由'))
-    assert.ok(markup.includes('备用 1'))
+    assert.ok(markup.includes('第一备用 1'))
     assert.ok(markup.includes('未参与 1'))
     assert.match(markup, /data-slot="collapsible-trigger"/)
+  })
+
+  test('exposes fixed-primary expiry, editing, and clear actions on the route', () => {
+    const result = createResult()
+    result.routes[0] = createRoute(1, {
+      channel_name: '高速渠道',
+      state: {
+        manual_primary_until: 1_752_800_000,
+        manual_primary_allow_stability_degrade: true,
+      } as ChannelMonitorSmartScheduleRoute['state'],
+    })
+
+    const markup = renderBoard({ result })
+
+    assert.ok(markup.includes('管理员固定至'))
+    assert.ok(markup.includes('允许稳定性降级'))
+    assert.ok(markup.includes('重新设置 高速渠道 的固定时长'))
+    assert.ok(markup.includes('解除 高速渠道 的主渠道固定'))
   })
 })

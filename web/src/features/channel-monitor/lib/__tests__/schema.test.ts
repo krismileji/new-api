@@ -204,10 +204,8 @@ describe('channel monitor settings schema', () => {
   test('requires a complete explicit policy for every scheduled group', () => {
     const scoring = {
       stabilityPercent: 50,
-      curveExponent: 1,
-      relativeWeightEnabled: true,
-      relativeWeightStartPercent: 3,
-      relativeWeightFullPercent: 10,
+      primaryTrafficPercent: 90,
+      primarySwitchThresholdPercent: 3,
       smart: {
         costRatioPercent: 40,
         firstTokenPercent: 40,
@@ -225,9 +223,9 @@ describe('channel monitor settings schema', () => {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 3,
-      jitterAbsoluteToleranceMs: 1000,
-      jitterBaselineHours: 24,
+      jitterThresholdMultiplier: 5,
+      jitterAbsoluteToleranceSeconds: 10,
+      jitterBaselineMinutes: 60,
       scoring,
       applyMode: 'priority_weight' as const,
       models: [],
@@ -308,42 +306,46 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
-    for (const jitterAbsoluteToleranceMs of [0, 60_000]) {
+    for (const jitterAbsoluteToleranceSeconds of [0, 1.5, 60]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterAbsoluteToleranceMs },
+            { ...groupPolicy, jitterAbsoluteToleranceSeconds },
           ],
         }).success,
         true
       )
     }
-    for (const jitterAbsoluteToleranceMs of [-1, 1.5, 60_001]) {
+    for (const jitterAbsoluteToleranceSeconds of [-1, 61]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterAbsoluteToleranceMs },
+            { ...groupPolicy, jitterAbsoluteToleranceSeconds },
           ],
         }).success,
         false
       )
     }
-    for (const jitterBaselineHours of [1, 720]) {
+    for (const jitterBaselineMinutes of [1, 43_200]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
-          smartScheduleGroupPolicies: [{ ...groupPolicy, jitterBaselineHours }],
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterBaselineMinutes },
+          ],
         }).success,
         true
       )
     }
-    for (const jitterBaselineHours of [0, 1.5, 721]) {
+    for (const jitterBaselineMinutes of [0, 1.5, 43_201]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
-          smartScheduleGroupPolicies: [{ ...groupPolicy, jitterBaselineHours }],
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, jitterBaselineMinutes },
+          ],
         }).success,
         false
       )
@@ -444,59 +446,62 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleGroupPolicies: [
-          { ...groupPolicy, scoring: { ...scoring, curveExponent: 5.1 } },
-        ],
-      }).success,
-      false
-    )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleGroupPolicies: [
-          {
-            ...groupPolicy,
-            scoring: { ...scoring, relativeWeightStartPercent: -0.1 },
-          },
-        ],
-      }).success,
-      false
-    )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleGroupPolicies: [
-          {
-            ...groupPolicy,
-            scoring: {
-              ...scoring,
-              relativeWeightStartPercent: 10,
-              relativeWeightFullPercent: 10,
+    for (const primaryTrafficPercent of [51, 51.5, 99]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            {
+              ...groupPolicy,
+              scoring: { ...scoring, primaryTrafficPercent },
             },
-          },
-        ],
-      }).success,
-      false
-    )
-    assert.equal(
-      schema.safeParse({
-        ...baseSettings,
-        smartScheduleGroupPolicies: [
-          {
-            ...groupPolicy,
-            scoring: {
-              ...scoring,
-              relativeWeightStartPercent: 0,
-              relativeWeightFullPercent: 100,
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const primaryTrafficPercent of [50, 100]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            {
+              ...groupPolicy,
+              scoring: { ...scoring, primaryTrafficPercent },
             },
-          },
-        ],
-      }).success,
-      true
-    )
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const primarySwitchThresholdPercent of [0, 100]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            {
+              ...groupPolicy,
+              scoring: { ...scoring, primarySwitchThresholdPercent },
+            },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const primarySwitchThresholdPercent of [-0.1, 100.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            {
+              ...groupPolicy,
+              scoring: { ...scoring, primarySwitchThresholdPercent },
+            },
+          ],
+        }).success,
+        false
+      )
+    }
     assert.equal(
       schema.safeParse({
         ...baseSettings,

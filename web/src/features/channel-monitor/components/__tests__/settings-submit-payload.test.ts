@@ -43,15 +43,13 @@ const formValues = {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 3,
-      jitterAbsoluteToleranceMs: 1000,
-      jitterBaselineHours: 24,
+      jitterThresholdMultiplier: 5,
+      jitterAbsoluteToleranceSeconds: 10,
+      jitterBaselineMinutes: 60,
       scoring: {
         stabilityPercent: 50,
-        curveExponent: 2,
-        relativeWeightEnabled: true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
+        primaryTrafficPercent: 90,
+        primarySwitchThresholdPercent: 3,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -99,8 +97,14 @@ describe('channel monitor settings submit payload', () => {
     ])
     assert.equal(payload.smart_schedule_group_policies?.[0]?.group, 'vip')
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.scoring?.curve_exponent,
-      2
+      payload.smart_schedule_group_policies?.[0]?.scoring
+        ?.primary_traffic_percent,
+      90
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.scoring
+        ?.primary_switch_threshold_percent,
+      3
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.sample_mode,
@@ -140,15 +144,16 @@ describe('channel monitor settings submit payload', () => {
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.jitter_threshold_multiplier,
-      3
+      5
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.jitter_absolute_tolerance_ms,
-      1000
+      payload.smart_schedule_group_policies?.[0]
+        ?.jitter_absolute_tolerance_seconds,
+      10
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.jitter_baseline_hours,
-      24
+      payload.smart_schedule_group_policies?.[0]?.jitter_baseline_minutes,
+      60
     )
     assert.equal('smart_schedule_groups' in payload, false)
     assert.equal('smart_schedule_strategy' in payload, false)

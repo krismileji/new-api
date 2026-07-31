@@ -16,23 +16,21 @@ import (
 )
 
 const (
-	channelMonitorSmartScheduleTaskType                          = "channel_smart_schedule"
-	channelSmartScheduleAdjustmentUpdated                        = "updated"
-	channelSmartScheduleAdjustmentUnchanged                      = "unchanged"
-	channelSmartScheduleAdjustmentSkipped                        = "skipped"
-	channelSmartScheduleAdjustmentFailed                         = "failed"
-	channelMonitorSmartScheduleMinWeight                         = 10
-	channelMonitorSmartScheduleMaxWeight                         = 100
-	channelMonitorSmartScheduleWeightStep                        = 5
-	channelMonitorSmartScheduleMinWeightChange                   = 10
-	channelMonitorSmartScheduleMaxWeightChange                   = 20
-	channelMonitorSmartScheduleSingleMetricMaxWeightChange       = 30
-	channelMonitorSmartScheduleFallbackMinSamples                = 5
-	channelMonitorSmartScheduleBaselinePriority            int64 = 80
-	channelMonitorSmartScheduleDegradedPriority            int64 = 0
-	channelMonitorSmartScheduleDegradedWeight              uint  = 0
-	maxChannelSmartScheduleTaskFailureDetails                    = 100
-	maxChannelSmartScheduleTaskAdjustmentDetails                 = 500
+	channelMonitorSmartScheduleTaskType                    = "channel_smart_schedule"
+	channelSmartScheduleAdjustmentUpdated                  = "updated"
+	channelSmartScheduleAdjustmentUnchanged                = "unchanged"
+	channelSmartScheduleAdjustmentSkipped                  = "skipped"
+	channelSmartScheduleAdjustmentFailed                   = "failed"
+	channelMonitorSmartScheduleMinWeight                   = 10
+	channelMonitorSmartScheduleMaxWeight                   = 100
+	channelMonitorSmartScheduleAllocationWeightTotal       = 1000
+	channelMonitorSmartScheduleAllocationScoreFloor        = 0.01
+	channelMonitorSmartScheduleFallbackMinSamples          = 5
+	channelMonitorSmartScheduleBaselinePriority      int64 = 80
+	channelMonitorSmartScheduleDegradedPriority      int64 = 0
+	channelMonitorSmartScheduleDegradedWeight        uint  = 0
+	maxChannelSmartScheduleTaskFailureDetails              = 100
+	maxChannelSmartScheduleTaskAdjustmentDetails           = 500
 )
 
 type channelSmartScheduleTaskHandler struct{}
@@ -80,11 +78,13 @@ type channelSmartScheduleCandidate struct {
 	StabilitySampleCount  int64
 	Stability             *float64
 	StabilityAvailable    bool
+	ManualPrimary         bool
 }
 
 type channelSmartSchedulePlanItem struct {
 	ChannelId       int
 	Score           float64
+	ScoreDetails    *model.ChannelSmartScheduleScoreDetails
 	CurrentPriority int64
 	CurrentWeight   uint
 	TargetPriority  int64
@@ -94,6 +94,7 @@ type channelSmartSchedulePlanItem struct {
 type channelSmartSchedulePlan struct {
 	Items   []channelSmartSchedulePlanItem
 	Skipped map[int]string
+	Details map[int]*model.ChannelSmartScheduleScoreDetails
 }
 
 type channelSmartScheduleTaskFailure struct {
@@ -103,17 +104,21 @@ type channelSmartScheduleTaskFailure struct {
 }
 
 type channelSmartScheduleTaskAdjustment struct {
-	ChannelId   int      `json:"channel_id"`
-	ChannelName string   `json:"channel_name"`
-	Group       string   `json:"group"`
-	Model       string   `json:"model"`
-	Action      string   `json:"action"`
-	OldPriority int64    `json:"old_priority"`
-	NewPriority int64    `json:"new_priority"`
-	OldWeight   uint     `json:"old_weight"`
-	NewWeight   uint     `json:"new_weight"`
-	Score       *float64 `json:"score,omitempty"`
-	Reason      string   `json:"reason"`
+	ChannelId                          int                                     `json:"channel_id"`
+	ChannelName                        string                                  `json:"channel_name"`
+	Group                              string                                  `json:"group"`
+	Model                              string                                  `json:"model"`
+	Action                             string                                  `json:"action"`
+	OldPriority                        int64                                   `json:"old_priority"`
+	NewPriority                        int64                                   `json:"new_priority"`
+	OldWeight                          uint                                    `json:"old_weight"`
+	NewWeight                          uint                                    `json:"new_weight"`
+	Score                              *float64                                `json:"score,omitempty"`
+	ScoreDetails                       *model.ChannelSmartScheduleScoreDetails `json:"score_details,omitempty"`
+	Reason                             string                                  `json:"reason"`
+	ManualPrimary                      bool                                    `json:"manual_primary,omitempty"`
+	ManualPrimaryUntil                 int64                                   `json:"manual_primary_until,omitempty"`
+	ManualPrimaryAllowStabilityDegrade bool                                    `json:"manual_primary_allow_stability_degrade,omitempty"`
 }
 
 type channelSmartScheduleTaskResult struct {
@@ -161,16 +166,32 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, channelSmartScheduleTaskResult{}, err)
 		return
 	}
-	summary, err := runChannelSmartScheduleOnce(
+	summary, runErr := runChannelSmartScheduleOnce(
 		ctx,
 		service.NewSystemTaskProgressReporter(task, runnerID),
 		payload.ForceReset,
 	)
-	if err != nil {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
-		return
+	detailInputs := make([]model.ChannelSmartScheduleExecutionDetailInput, 0, len(summary.Adjustments))
+	for index, adjustment := range summary.Adjustments {
+		detailInputs = append(detailInputs, model.ChannelSmartScheduleExecutionDetailInput{
+			AdjustmentIndex: index,
+			Payload:         adjustment,
+		})
 	}
-	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+	if err := model.SaveChannelSmartScheduleExecutionDetails(task.TaskID, detailInputs); err != nil {
+		if runErr == nil {
+			runErr = fmt.Errorf("保存智能调度执行评分明细失败: %w", err)
+		} else {
+			runErr = fmt.Errorf("%w（保存智能调度执行评分明细失败：%v）", runErr, err)
+		}
+	}
+	storedSummary := summary
+	storedSummary.Adjustments = nil
+	status := model.SystemTaskStatusSucceeded
+	if runErr != nil {
+		status = model.SystemTaskStatusFailed
+	}
+	finishSystemTaskHandler(task, runnerID, status, storedSummary, runErr)
 }
 
 func RunChannelMonitorSmartSchedule(c *gin.Context) {
@@ -330,6 +351,7 @@ func planChannelSmartSchedule(candidates []channelSmartScheduleCandidate, strate
 func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, applyMode string, minSamples int, forceReset bool, scoring channelSmartScheduleScoring) channelSmartSchedulePlan {
 	plan := channelSmartSchedulePlan{
 		Skipped: make(map[int]string),
+		Details: make(map[int]*model.ChannelSmartScheduleScoreDetails),
 	}
 	if minSamples <= 0 {
 		minSamples = channelMonitorSmartScheduleFallbackMinSamples
@@ -337,25 +359,28 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 	if validateChannelSmartScheduleScoring(scoring) != nil {
 		scoring = defaultChannelSmartScheduleScoring()
 	}
-	singleMetricStrategy := strategy == channelMonitorSmartScheduleStrategyRatio ||
-		strategy == channelMonitorSmartScheduleStrategyFirstToken ||
-		strategy == channelMonitorSmartScheduleStrategyTPS
-	maxWeightChange := uint(channelMonitorSmartScheduleMaxWeightChange)
-	if singleMetricStrategy {
-		maxWeightChange = channelMonitorSmartScheduleSingleMetricMaxWeightChange
-	}
-
 	type cohort struct {
 		Candidates []channelSmartScheduleCandidate
 	}
+	manualPrimaryPriority := int64(0)
+	for _, candidate := range candidates {
+		if candidate.CurrentPriority > manualPrimaryPriority {
+			manualPrimaryPriority = candidate.CurrentPriority
+		}
+	}
 	cohorts := make(map[int64]*cohort)
 	for _, candidate := range candidates {
-		if reason := channelSmartScheduleCandidateSkipReasonWithScoring(candidate, strategy, stabilityEnabled, minSamples, scoring); reason != "" {
+		details := channelSmartScheduleNewScoreDetails(
+			candidate, strategy, stabilityEnabled, applyMode, minSamples, forceReset, scoring,
+		)
+		plan.Details[candidate.ChannelId] = details
+		if reason := channelSmartScheduleCandidateSkipReasonWithScoring(candidate, strategy, stabilityEnabled, minSamples, scoring); reason != "" && !candidate.ManualPrimary {
 			plan.Skipped[candidate.ChannelId] = reason
+			channelSmartScheduleSetAdjustmentReason(details, reason)
 			continue
 		}
 		var key int64
-		if applyMode == channelMonitorSmartScheduleApplyWeight && !forceReset {
+		if applyMode == channelMonitorSmartScheduleApplyWeight {
 			key = candidate.CurrentPriority
 		}
 		scheduleCohort := cohorts[key]
@@ -367,161 +392,90 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 	}
 
 	for _, scheduleCohort := range cohorts {
-		if len(scheduleCohort.Candidates) < 2 {
+		if len(scheduleCohort.Candidates) < 2 &&
+			(len(scheduleCohort.Candidates) == 0 || !scheduleCohort.Candidates[0].ManualPrimary) {
 			reason := "可调渠道不足 2 个"
-			if applyMode == channelMonitorSmartScheduleApplyWeight && !forceReset {
+			if applyMode == channelMonitorSmartScheduleApplyWeight {
 				reason = "同优先级可调渠道不足 2 个"
 			}
 			for _, candidate := range scheduleCohort.Candidates {
 				plan.Skipped[candidate.ChannelId] = reason
+				channelSmartScheduleSetAdjustmentReason(plan.Details[candidate.ChannelId], reason)
 			}
 			continue
 		}
-		ratioMin, ratioMax := math.Inf(1), math.Inf(-1)
-		firstTokenMin, firstTokenMax := math.Inf(1), math.Inf(-1)
-		tpsMin, tpsMax := math.Inf(1), math.Inf(-1)
-		firstTokenAvailableCount := 0
-		tpsAvailableCount := 0
-		for _, candidate := range scheduleCohort.Candidates {
-			if candidate.Ratio != nil {
-				ratioMin = math.Min(ratioMin, *candidate.Ratio)
-				ratioMax = math.Max(ratioMax, *candidate.Ratio)
-			}
-			if candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples {
-				firstTokenMin = math.Min(firstTokenMin, *candidate.FirstTokenMs)
-				firstTokenMax = math.Max(firstTokenMax, *candidate.FirstTokenMs)
-				firstTokenAvailableCount++
-			}
-			if candidate.TPS != nil && candidate.TPSSampleCount >= minSamples {
-				tpsMin = math.Min(tpsMin, *candidate.TPS)
-				tpsMax = math.Max(tpsMax, *candidate.TPS)
-				tpsAvailableCount++
-			}
-		}
+		normalization := channelSmartScheduleBuildNormalization(scheduleCohort.Candidates, minSamples)
 
 		items := make([]channelSmartSchedulePlanItem, 0, len(scheduleCohort.Candidates))
-		scoreMin := math.Inf(1)
-		scoreMax := math.Inf(-1)
 		for _, candidate := range scheduleCohort.Candidates {
-			ratioScore := 0.0
-			if candidate.Ratio != nil {
-				ratioScore = channelSmartScheduleLowerIsBetterScore(*candidate.Ratio, ratioMin, ratioMax)
-			}
-			firstTokenScore := 0.0
-			if candidate.FirstTokenMs != nil {
-				firstTokenScore = channelSmartScheduleLowerIsBetterScore(*candidate.FirstTokenMs, firstTokenMin, firstTokenMax)
-			}
-			tpsScore := 0.0
-			if candidate.TPS != nil {
-				tpsScore = channelSmartScheduleHigherIsBetterScore(*candidate.TPS, tpsMin, tpsMax)
-			}
-			businessScore := 0.0
-			switch strategy {
-			case channelMonitorSmartScheduleStrategyRatio:
-				businessScore = channelSmartScheduleWeightedScore(
-					channelSmartScheduleScorePart{
-						Score: ratioScore, Percent: scoring.Ratio.CostRatioPercent,
-						Available: candidate.Ratio != nil,
-					},
-					channelSmartScheduleScorePart{
-						Score: firstTokenScore, Percent: scoring.Ratio.FirstTokenPercent,
-						Available: candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples && firstTokenAvailableCount >= 2,
-					},
-					channelSmartScheduleScorePart{
-						Score: tpsScore, Percent: scoring.Ratio.TPSPercent,
-						Available: candidate.TPS != nil && candidate.TPSSampleCount >= minSamples && tpsAvailableCount >= 2,
-					},
-				)
-			case channelMonitorSmartScheduleStrategyFirstToken:
-				businessScore = firstTokenScore
-			case channelMonitorSmartScheduleStrategyTPS:
-				businessScore = tpsScore
-			case channelMonitorSmartScheduleStrategySmart:
-				businessScore = channelSmartScheduleWeightedScore(
-					channelSmartScheduleScorePart{
-						Score: ratioScore, Percent: scoring.Smart.CostRatioPercent,
-						Available: candidate.Ratio != nil,
-					},
-					channelSmartScheduleScorePart{
-						Score: firstTokenScore, Percent: scoring.Smart.FirstTokenPercent,
-						Available: candidate.FirstTokenMs != nil && candidate.FirstTokenSampleCount >= minSamples,
-					},
-					channelSmartScheduleScorePart{
-						Score: tpsScore, Percent: scoring.Smart.TPSPercent,
-						Available: candidate.TPS != nil && candidate.TPSSampleCount >= minSamples,
-					},
-				)
-			default:
+			score, details, valid := channelSmartScheduleScoreCandidate(
+				candidate, strategy, stabilityEnabled, applyMode, minSamples, forceReset, scoring, normalization,
+			)
+			if !valid {
 				continue
 			}
-			score := businessScore
-			if stabilityEnabled && candidate.Stability != nil && candidate.StabilitySampleCount >= int64(minSamples) {
-				stabilityScore := *candidate.Stability
-				if stabilityScore < 0 {
-					stabilityScore = 0
-				} else if stabilityScore > 1 {
-					stabilityScore = 1
-				}
-				stabilityWeight := scoring.StabilityPercent / channelMonitorScorePercentageTotal
-				score = (1-stabilityWeight)*score + stabilityWeight*stabilityScore
+			if applyMode == channelMonitorSmartScheduleApplyWeight {
+				priority := candidate.CurrentPriority
+				details.Cohort.Priority = &priority
 			}
-			if score < 0 {
-				score = 0
-			} else if score > 1 {
-				score = 1
-			}
-			scoreMin = math.Min(scoreMin, score)
-			scoreMax = math.Max(scoreMax, score)
+			plan.Details[candidate.ChannelId] = details
 			targetPriority := candidate.CurrentPriority
-			if forceReset && applyMode == channelMonitorSmartScheduleApplyWeight {
-				targetPriority = channelMonitorSmartScheduleBaselinePriority
+			if candidate.ManualPrimary && applyMode == channelMonitorSmartScheduleApplyWeight {
+				targetPriority = manualPrimaryPriority
 			}
 			items = append(items, channelSmartSchedulePlanItem{
 				ChannelId:       candidate.ChannelId,
 				Score:           score,
+				ScoreDetails:    details,
 				CurrentPriority: candidate.CurrentPriority,
 				CurrentWeight:   candidate.CurrentWeight,
 				TargetPriority:  targetPriority,
 			})
 		}
-		for index := range items {
-			weightScore := channelSmartScheduleWeightScore(
-				items[index].Score,
-				scoreMin,
-				scoreMax,
-				scoring,
-			)
-			targetWeight := uint(math.Round((channelMonitorSmartScheduleMinWeight+weightScore*(channelMonitorSmartScheduleMaxWeight-channelMonitorSmartScheduleMinWeight))/channelMonitorSmartScheduleWeightStep) * channelMonitorSmartScheduleWeightStep)
-			if targetWeight < channelMonitorSmartScheduleMinWeight {
-				targetWeight = channelMonitorSmartScheduleMinWeight
-			} else if targetWeight > channelMonitorSmartScheduleMaxWeight {
-				targetWeight = channelMonitorSmartScheduleMaxWeight
-			}
-			if !forceReset {
-				targetWeight = channelSmartScheduleDampedWeight(items[index].CurrentWeight, targetWeight, maxWeightChange)
-			}
-			items[index].TargetWeight = targetWeight
-		}
 
-		sort.Slice(items, func(i int, j int) bool {
-			if math.Abs(items[i].Score-items[j].Score) > channelMonitorRatioEpsilon {
-				return items[i].Score > items[j].Score
+		currentPrimaryId := channelSmartScheduleCurrentPrimaryId(items)
+		cohortManualPrimaryId := 0
+		for _, candidate := range scheduleCohort.Candidates {
+			if candidate.ManualPrimary {
+				cohortManualPrimaryId = candidate.ChannelId
+				break
 			}
-			return items[i].ChannelId < items[j].ChannelId
-		})
-		if applyMode == channelMonitorSmartScheduleApplyPriorityWeight {
-			priorities := []int64{100, 90, 80}
-			for index := range items {
-				tier := index * len(priorities) / len(items)
-				if tier >= len(priorities) {
-					tier = len(priorities) - 1
-				}
-				targetPriority := priorities[tier]
-				if index > 0 && math.Abs(items[index].Score-items[index-1].Score) <= channelMonitorRatioEpsilon {
-					targetPriority = items[index-1].TargetPriority
-				}
-				items[index].TargetPriority = targetPriority
-			}
+		}
+		rawWinnerId := 0
+		if ranked := channelSmartScheduleRankedItemIndexes(items, currentPrimaryId); len(ranked) > 0 {
+			rawWinnerId = items[ranked[0]].ChannelId
+		}
+		effectivePrimaryId := channelSmartScheduleEffectivePrimaryId(
+			items,
+			currentPrimaryId,
+			scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
+			forceReset,
+		)
+		if cohortManualPrimaryId > 0 {
+			effectivePrimaryId = cohortManualPrimaryId
+		}
+		if applyMode == channelMonitorSmartScheduleApplyWeight {
+			channelSmartScheduleAssignPrimaryTrafficWeights(
+				items,
+				effectivePrimaryId,
+				scoring.PrimaryTrafficPercent,
+			)
+		} else if applyMode == channelMonitorSmartScheduleApplyPriorityWeight {
+			channelSmartScheduleAssignPriorityWeightTargets(items, effectivePrimaryId)
+		}
+		selectionReason := channelSmartScheduleSelectionReason(
+			items, currentPrimaryId, rawWinnerId, effectivePrimaryId, cohortManualPrimaryId,
+			scoring.PrimarySwitchThresholdPercent, forceReset,
+		)
+		for index := range items {
+			details := items[index].ScoreDetails
+			details.Decision.CurrentPrimaryChannelId = currentPrimaryId
+			details.Decision.RawWinnerChannelId = rawWinnerId
+			details.Decision.SelectedPrimaryChannelId = effectivePrimaryId
+			details.Decision.SelectedPrimary = items[index].ChannelId == effectivePrimaryId
+			details.Decision.ManualPrimaryChannelId = cohortManualPrimaryId
+			details.Decision.SelectionReason = selectionReason
+			channelSmartScheduleSetAdjustmentReason(details, details.Decision.AdjustmentReason)
 		}
 		plan.Items = append(plan.Items, items...)
 	}
@@ -532,37 +486,194 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 	return plan
 }
 
-func channelSmartScheduleWeightScore(score, scoreMin, scoreMax float64, scoring channelSmartScheduleScoring) float64 {
-	if math.IsNaN(score) || math.IsInf(score, 0) {
+func channelSmartScheduleCurrentPrimaryId(items []channelSmartSchedulePlanItem) int {
+	if len(items) == 0 {
 		return 0
 	}
-	if score < 0 {
-		score = 0
-	} else if score > 1 {
-		score = 1
+	primary := items[0]
+	matchingRoutingValues := 1
+	for _, item := range items[1:] {
+		if item.CurrentPriority > primary.CurrentPriority ||
+			(item.CurrentPriority == primary.CurrentPriority && item.CurrentWeight > primary.CurrentWeight) {
+			primary = item
+			matchingRoutingValues = 1
+			continue
+		}
+		if item.CurrentPriority == primary.CurrentPriority && item.CurrentWeight == primary.CurrentWeight {
+			matchingRoutingValues++
+		}
 	}
-	absoluteScore := math.Pow(score, scoring.CurveExponent)
-	if !scoring.RelativeWeightEnabled || scoreMax-scoreMin <= channelMonitorRatioEpsilon ||
-		scoring.RelativeWeightFullPercent <= scoring.RelativeWeightStartPercent {
-		return absoluteScore
+	if matchingRoutingValues > 1 {
+		return 0
 	}
-	relativeScore := (score - scoreMin) / (scoreMax - scoreMin)
-	if relativeScore < 0 {
-		relativeScore = 0
-	} else if relativeScore > 1 {
-		relativeScore = 1
+	return primary.ChannelId
+}
+
+func channelSmartScheduleEffectivePrimaryId(
+	items []channelSmartSchedulePlanItem,
+	currentPrimaryId int,
+	switchThreshold float64,
+	forceReset bool,
+) int {
+	ranked := channelSmartScheduleRankedItemIndexes(items, currentPrimaryId)
+	if len(ranked) == 0 {
+		return 0
 	}
-	relativeScore = math.Pow(relativeScore, scoring.CurveExponent)
-	spreadPercent := (scoreMax - scoreMin) * channelMonitorScorePercentageTotal
-	blend := (spreadPercent - scoring.RelativeWeightStartPercent) /
-		(scoring.RelativeWeightFullPercent - scoring.RelativeWeightStartPercent)
-	if blend <= 0 {
-		return absoluteScore
+	rawWinner := items[ranked[0]]
+	if forceReset || rawWinner.ChannelId == currentPrimaryId {
+		return rawWinner.ChannelId
 	}
-	if blend > 1 {
-		blend = 1
+	currentIndex := -1
+	for index := range items {
+		if items[index].ChannelId == currentPrimaryId {
+			currentIndex = index
+			break
+		}
 	}
-	return absoluteScore + (relativeScore-absoluteScore)*blend
+	if currentIndex < 0 {
+		return rawWinner.ChannelId
+	}
+	if math.IsNaN(switchThreshold) || math.IsInf(switchThreshold, 0) || switchThreshold < 0 {
+		switchThreshold = 0
+	}
+	if rawWinner.Score-items[currentIndex].Score+channelMonitorRatioEpsilon >= switchThreshold {
+		return rawWinner.ChannelId
+	}
+	return currentPrimaryId
+}
+
+func channelSmartScheduleRankedItemIndexes(items []channelSmartSchedulePlanItem, preferredChannelId int) []int {
+	ranked := make([]int, len(items))
+	for index := range items {
+		ranked[index] = index
+	}
+	sort.Slice(ranked, func(i int, j int) bool {
+		left := items[ranked[i]]
+		right := items[ranked[j]]
+		if math.Abs(left.Score-right.Score) > channelMonitorRatioEpsilon {
+			return left.Score > right.Score
+		}
+		if left.ChannelId == preferredChannelId || right.ChannelId == preferredChannelId {
+			return left.ChannelId == preferredChannelId
+		}
+		return left.ChannelId < right.ChannelId
+	})
+	return ranked
+}
+
+func channelSmartScheduleAssignPrimaryTrafficWeights(
+	items []channelSmartSchedulePlanItem,
+	primaryChannelId int,
+	primaryTrafficPercent float64,
+) {
+	primaryIndex := -1
+	otherIndexes := make([]int, 0, len(items)-1)
+	for index := range items {
+		if items[index].ChannelId == primaryChannelId {
+			primaryIndex = index
+			continue
+		}
+		otherIndexes = append(otherIndexes, index)
+	}
+	if primaryIndex < 0 {
+		return
+	}
+	if math.IsNaN(primaryTrafficPercent) || math.IsInf(primaryTrafficPercent, 0) {
+		primaryTrafficPercent = 0
+	}
+	primaryTrafficPercent = min(max(primaryTrafficPercent, 0), channelMonitorScorePercentageTotal)
+	primaryWeight := uint(math.Round(
+		channelMonitorSmartScheduleAllocationWeightTotal * primaryTrafficPercent / channelMonitorScorePercentageTotal,
+	))
+	items[primaryIndex].TargetWeight = primaryWeight
+	channelSmartScheduleAssignProportionalWeights(
+		items,
+		otherIndexes,
+		uint(channelMonitorSmartScheduleAllocationWeightTotal)-primaryWeight,
+	)
+}
+
+func channelSmartScheduleAssignPriorityWeightTargets(items []channelSmartSchedulePlanItem, primaryChannelId int) {
+	for index := range items {
+		items[index].TargetPriority = 80
+	}
+	ranked := channelSmartScheduleRankedItemIndexes(items, primaryChannelId)
+	if len(ranked) == 0 {
+		return
+	}
+	primaryIndex := -1
+	remainingIndexes := make([]int, 0, len(items)-1)
+	for _, index := range ranked {
+		if items[index].ChannelId == primaryChannelId {
+			primaryIndex = index
+			continue
+		}
+		remainingIndexes = append(remainingIndexes, index)
+	}
+	if primaryIndex < 0 {
+		return
+	}
+	items[primaryIndex].TargetPriority = 100
+	items[primaryIndex].TargetWeight = channelMonitorSmartScheduleAllocationWeightTotal
+	if len(remainingIndexes) > 0 {
+		items[remainingIndexes[0]].TargetPriority = 90
+		items[remainingIndexes[0]].TargetWeight = channelMonitorSmartScheduleAllocationWeightTotal
+		remainingIndexes = remainingIndexes[1:]
+	}
+	channelSmartScheduleAssignProportionalWeights(
+		items,
+		remainingIndexes,
+		channelMonitorSmartScheduleAllocationWeightTotal,
+	)
+}
+
+func channelSmartScheduleAssignProportionalWeights(
+	items []channelSmartSchedulePlanItem,
+	indexes []int,
+	totalWeight uint,
+) {
+	if len(indexes) == 0 {
+		return
+	}
+	type remainder struct {
+		Index     int
+		Fraction  float64
+		ChannelId int
+	}
+	effectiveScores := make([]float64, len(indexes))
+	scoreTotal := 0.0
+	for position, index := range indexes {
+		score := items[index].Score
+		if math.IsNaN(score) || math.IsInf(score, 0) || score < channelMonitorSmartScheduleAllocationScoreFloor {
+			score = channelMonitorSmartScheduleAllocationScoreFloor
+		}
+		effectiveScores[position] = score
+		scoreTotal += score
+	}
+	remainders := make([]remainder, 0, len(indexes))
+	assignedWeight := uint(0)
+	for position, index := range indexes {
+		exactWeight := float64(totalWeight) * effectiveScores[position] / scoreTotal
+		weight := uint(math.Floor(exactWeight))
+		items[index].TargetWeight = weight
+		assignedWeight += weight
+		remainders = append(remainders, remainder{
+			Index: index, Fraction: exactWeight - float64(weight), ChannelId: items[index].ChannelId,
+		})
+	}
+	sort.Slice(remainders, func(i int, j int) bool {
+		if math.Abs(remainders[i].Fraction-remainders[j].Fraction) > channelMonitorRatioEpsilon {
+			return remainders[i].Fraction > remainders[j].Fraction
+		}
+		return remainders[i].ChannelId < remainders[j].ChannelId
+	})
+	remainingWeight := uint(0)
+	if assignedWeight < totalWeight {
+		remainingWeight = totalWeight - assignedWeight
+	}
+	for index := uint(0); index < remainingWeight; index++ {
+		items[remainders[index%uint(len(remainders))].Index].TargetWeight++
+	}
 }
 
 func channelSmartScheduleCandidateSkipReason(candidate channelSmartScheduleCandidate, strategy string, stabilityEnabled bool, minSamples int) string {
@@ -657,28 +768,4 @@ func channelSmartScheduleHigherIsBetterScore(value float64, minimum float64, max
 		return 1
 	}
 	return (value - minimum) / (maximum - minimum)
-}
-
-func channelSmartScheduleDampedWeight(current uint, target uint, maxWeightChange uint) uint {
-	if current == 0 {
-		return target
-	}
-	if current > target {
-		difference := current - target
-		if difference < channelMonitorSmartScheduleMinWeightChange {
-			return current
-		}
-		if difference > maxWeightChange {
-			return current - maxWeightChange
-		}
-		return target
-	}
-	difference := target - current
-	if difference < channelMonitorSmartScheduleMinWeightChange {
-		return current
-	}
-	if difference > maxWeightChange {
-		return current + maxWeightChange
-	}
-	return target
 }

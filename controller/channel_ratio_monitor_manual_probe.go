@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -15,12 +16,24 @@ func recordManualChannelSmartScheduleProbeResult(
 	result testResult,
 	durationMs float64,
 ) {
-	if channel == nil || !result.requestDispatched ||
-		math.IsNaN(durationMs) || math.IsInf(durationMs, 0) || durationMs < 0 {
+	recordManualChannelSmartScheduleProbeResultForGroup(channel, result, durationMs, "")
+}
+
+func recordManualChannelSmartScheduleProbeResultForGroup(
+	channel *model.Channel,
+	result testResult,
+	durationMs float64,
+	group string,
+) {
+	if channel == nil {
 		return
 	}
+	group = strings.TrimSpace(group)
 	modelName := strings.TrimSpace(result.originalModelName)
-	if modelName == "" || !channelSmartScheduleSupportsTextProbe(channel, modelName) {
+	if modelName == "" && result.context != nil {
+		modelName = strings.TrimSpace(common.GetContextKeyString(result.context, constant.ContextKeyOriginalModel))
+	}
+	if modelName == "" {
 		return
 	}
 
@@ -30,6 +43,15 @@ func recordManualChannelSmartScheduleProbeResult(
 	}
 	probeTime := common.GetTimestamp()
 	windowStart := probeTime - int64(settings.SmartSchedulePerformanceMinutes*60)
+	sampleId := ""
+	if result.context != nil {
+		sampleId = strings.TrimSpace(result.context.GetString(common.RequestIdKey))
+		if sampleId == "" && result.context.Request != nil {
+			if value, ok := result.context.Request.Context().Value(common.RequestIdKey).(string); ok {
+				sampleId = strings.TrimSpace(value)
+			}
+		}
+	}
 	succeeded := result.localErr == nil && result.newAPIError == nil
 	message := ""
 	if result.localErr != nil {
@@ -39,9 +61,11 @@ func recordManualChannelSmartScheduleProbeResult(
 	}
 
 	for _, configured := range settings.SmartScheduleGroupPolicies {
+		if group != "" && configured.Group != group {
+			continue
+		}
 		policy := configured.policy()
-		if policy.SampleMode != channelMonitorSmartScheduleSampleProbe ||
-			(len(policy.Models) > 0 && !slices.Contains(policy.Models, modelName)) {
+		if len(policy.Models) > 0 && !slices.Contains(policy.Models, modelName) {
 			continue
 		}
 		route, _, found, err := model.LookupChannelSmartScheduleProbeRoute(
@@ -57,24 +81,29 @@ func recordManualChannelSmartScheduleProbeResult(
 			continue
 		}
 		if !found || route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled ||
-			!route.State.Participates() ||
-			route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded ||
-			(route.State.StabilityState != "" && route.State.StabilityState != model.ChannelSmartScheduleStabilityProbing) {
+			!route.State.Participates() {
 			continue
 		}
 		routeWindowStart := windowStart
 		if policy.StabilityEnabled && route.State.StabilitySince > routeWindowStart {
 			routeWindowStart = route.State.StabilitySince
 		}
+		var sampleDurationMs *float64
+		if !math.IsNaN(durationMs) && !math.IsInf(durationMs, 0) && durationMs >= 0 {
+			value := durationMs
+			sampleDurationMs = &value
+		}
 		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
 			ChannelId:    channel.Id,
 			Group:        configured.Group,
 			Model:        modelName,
+			Source:       model.ChannelSmartScheduleSampleSourceManualTest,
+			SampleId:     sampleId,
 			WindowStart:  routeWindowStart,
 			Time:         probeTime,
 			Success:      succeeded,
 			Error:        message,
-			DurationMs:   &durationMs,
+			DurationMs:   sampleDurationMs,
 			FirstTokenMs: result.firstResponseMilliseconds,
 			TPS:          result.tokensPerSecond,
 		})

@@ -26,10 +26,8 @@ import type {
 export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmartScheduleScoring =
   {
     stability_percent: 50,
-    curve_exponent: 1,
-    relative_weight_enabled: true,
-    relative_weight_start_percent: 3,
-    relative_weight_full_percent: 10,
+    primary_traffic_percent: 90,
+    primary_switch_threshold_percent: 3,
     smart: {
       cost_ratio_percent: 40,
       first_token_percent: 40,

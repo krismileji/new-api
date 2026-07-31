@@ -187,7 +187,7 @@ func channelSmartScheduleJitterBaselineUpdate(
 		state.JitterBaselineUpdatedAt,
 		*performance.FirstTokenP50Ms,
 		now,
-		policy.JitterBaselineHours,
+		policy.JitterBaselineMinutes,
 	)
 	if !changed {
 		return nil
@@ -206,6 +206,10 @@ func runChannelSmartScheduleByRouteOnce(
 	result channelSmartScheduleTaskResult,
 ) (channelSmartScheduleTaskResult, error) {
 	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+		return result, err
+	}
+	manualRoutingChanged, err := model.ClearExpiredChannelSmartScheduleRoutePrimaries(common.GetTimestamp())
+	if err != nil {
 		return result, err
 	}
 	routes, err := model.GetChannelSmartScheduleRoutes()
@@ -232,7 +236,7 @@ func runChannelSmartScheduleByRouteOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
-	cacheDirty := false
+	cacheDirty := manualRoutingChanged
 	defer func() {
 		if cacheDirty {
 			model.InitChannelCache()
@@ -290,16 +294,25 @@ func runChannelSmartScheduleByRouteOnce(
 	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
 	jitterUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleJitterUpdate)
 	explorationUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleExplorationUpdate)
+	scoreDetailsByRoute := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleScoreDetails, len(selectedRoutes))
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
 	for _, route := range selectedRoutes {
 		policy := policyByGroup[route.Group]
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
 		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
+		manualPrimary := route.State.ManualPrimaryUntil > now
 		degradeStabilityScore := policy.DegradeStabilityScore / 100
 		recoveryStabilityScore := policy.RecoveryStabilityScore / 100
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		routeByKey[key] = route
-		routeStabilityAvailable := logStabilityAvailable || policy.SampleMode == channelMonitorSmartScheduleSampleProbe
+		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
+			channelSmartScheduleCandidate{ChannelId: route.ChannelId, ManualPrimary: manualPrimary},
+			policy.Strategy, policy.StabilityEnabled, policy.ApplyMode, policy.MinSamples,
+			forceReset, policy.Scoring,
+		)
+		routeStabilityAvailable := logStabilityAvailable ||
+			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			route.State.ManualTestMetricsSince(performanceStart).SampleCount > 0
 		currentPriority := route.Priority
 		currentWeight := route.Weight
 		if forceReset && route.ChannelStatus == common.ChannelStatusEnabled && route.Enabled && route.State.Participates() && route.State.StabilityState == "" {
@@ -314,13 +327,18 @@ func runChannelSmartScheduleByRouteOnce(
 				reason = "该分组和模型路由已禁用，未参与本次调度"
 			}
 			result.Skipped++
+			channelSmartScheduleSetAdjustmentReason(scoreDetailsByRoute[key], reason)
 			result.recordAdjustment(channelSmartScheduleTaskAdjustment{
 				ChannelId: route.ChannelId, ChannelName: route.ChannelName,
 				Group: route.Group, Model: route.Model,
 				Action:      channelSmartScheduleAdjustmentSkipped,
 				OldPriority: route.Priority, NewPriority: route.Priority,
 				OldWeight: route.Weight, NewWeight: route.Weight,
-				Reason: reason,
+				ScoreDetails:                       scoreDetailsByRoute[key],
+				Reason:                             reason,
+				ManualPrimary:                      manualPrimary,
+				ManualPrimaryUntil:                 route.State.ManualPrimaryUntil,
+				ManualPrimaryAllowStabilityDegrade: route.State.ManualPrimaryAllowStabilityDegrade,
 			})
 			continue
 		}
@@ -415,8 +433,12 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe {
 			performance = channelSmartScheduleMergeProbePerformance(performance, route.State, probeWindowStart)
-			performanceByRoute[key] = performance
+		} else {
+			performance = channelSmartScheduleMergeProbePerformance(
+				performance, route.State, probeWindowStart, model.ChannelSmartScheduleSampleSourceManualTest,
+			)
 		}
+		performanceByRoute[key] = performance
 		if performance != nil {
 			performance.Stability, performance.StabilitySampleCount = channelSmartScheduleStabilityScore(
 				performance.StabilitySuccessCount,
@@ -430,6 +452,25 @@ func runChannelSmartScheduleByRouteOnce(
 				jitterUpdates[key] = update
 			}
 		}
+		candidate := channelSmartScheduleCandidate{
+			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
+			StabilityAvailable: routeStabilityAvailable, ManualPrimary: manualPrimary,
+		}
+		if performance != nil {
+			candidate.FirstTokenMs = performance.AverageFirstTokenMs
+			if policy.JitterEnabled && performance.WinsorizedAverageFirstTokenMs != nil {
+				candidate.FirstTokenMs = performance.WinsorizedAverageFirstTokenMs
+			}
+			candidate.TPS = performance.AverageTPS
+			candidate.FirstTokenSampleCount = performance.FirstTokenSampleCount
+			candidate.TPSSampleCount = performance.TPSSampleCount
+			candidate.Stability = performance.Stability
+			candidate.StabilitySampleCount = performance.StabilitySampleCount
+		}
+		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
+			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
+			policy.MinSamples, forceReset, policy.Scoring,
+		)
 
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
 			if performance == nil || performance.Stability == nil ||
@@ -495,7 +536,9 @@ func runChannelSmartScheduleByRouteOnce(
 			stabilityUpdates[key] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
-		if policy.StabilityEnabled && route.State.StabilityState == "" && performance != nil && performance.Stability != nil &&
+		if (!manualPrimary || route.State.ManualPrimaryAllowStabilityDegrade) &&
+			policy.StabilityEnabled && route.State.StabilityState == "" &&
+			performance != nil && performance.Stability != nil &&
 			performance.StabilitySampleCount >= int64(policy.MinSamples) &&
 			*performance.Stability < degradeStabilityScore {
 			savedPriority, savedWeight := channelSmartScheduleSavedTarget(currentPriority, currentWeight)
@@ -545,21 +588,11 @@ func runChannelSmartScheduleByRouteOnce(
 				ratio = &value
 			}
 		}
-		candidate := channelSmartScheduleCandidate{
-			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
-			Ratio: ratio, StabilityAvailable: routeStabilityAvailable,
-		}
-		if performance != nil {
-			candidate.FirstTokenMs = performance.AverageFirstTokenMs
-			if policy.JitterEnabled && performance.WinsorizedAverageFirstTokenMs != nil {
-				candidate.FirstTokenMs = performance.WinsorizedAverageFirstTokenMs
-			}
-			candidate.TPS = performance.AverageTPS
-			candidate.FirstTokenSampleCount = performance.FirstTokenSampleCount
-			candidate.TPSSampleCount = performance.TPSSampleCount
-			candidate.Stability = performance.Stability
-			candidate.StabilitySampleCount = performance.StabilitySampleCount
-		}
+		candidate.Ratio = ratio
+		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
+			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
+			policy.MinSamples, forceReset, policy.Scoring,
+		)
 		reason := channelSmartScheduleCandidateSkipReasonWithScoring(
 			candidate, policy.Strategy, policy.StabilityEnabled,
 			policy.MinSamples, policy.Scoring,
@@ -671,6 +704,26 @@ func runChannelSmartScheduleByRouteOnce(
 
 	for poolKey, candidates := range poolCandidates {
 		policy := policyByGroup[poolKey.group]
+		if policy.ApplyMode == channelMonitorSmartScheduleApplyWeight {
+			manualIndex := -1
+			topPriority := int64(0)
+			hasTopPriority := false
+			for index := range candidates {
+				if candidates[index].ManualPrimary {
+					if manualIndex < 0 {
+						manualIndex = index
+					}
+					continue
+				}
+				if !hasTopPriority || candidates[index].CurrentPriority > topPriority {
+					topPriority = candidates[index].CurrentPriority
+					hasTopPriority = true
+				}
+			}
+			if manualIndex >= 0 && hasTopPriority {
+				candidates[manualIndex].CurrentPriority = topPriority
+			}
+		}
 		plan := planChannelSmartScheduleWithScoring(
 			candidates, policy.Strategy, policy.StabilityEnabled,
 			policy.ApplyMode, policy.MinSamples, forceReset, policy.Scoring,
@@ -682,6 +735,7 @@ func runChannelSmartScheduleByRouteOnce(
 				continue
 			}
 			key := routeKeyByPoolChannel[poolKey][candidate.ChannelId]
+			scoreDetailsByRoute[key] = plan.Details[candidate.ChannelId]
 			update := channelSmartScheduleRouteStatusUpdate(
 				key, model.ChannelSmartScheduleStatusSkipped, reason, nil,
 				candidate.CurrentPriority, candidate.CurrentWeight, now, stabilityUpdates[key],
@@ -691,9 +745,15 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		for _, item := range plan.Items {
 			key := routeKeyByPoolChannel[poolKey][item.ChannelId]
+			scoreDetailsByRoute[key] = item.ScoreDetails
 			score := item.Score
+			message := ""
+			if route := routeByKey[key]; route.State.ManualPrimaryUntil > now {
+				message = fmt.Sprintf("管理员已固定为主渠道，固定至 %s",
+					time.Unix(route.State.ManualPrimaryUntil, 0).Format("2006-01-02 15:04:05"))
+			}
 			update := channelSmartScheduleRouteStatusUpdate(
-				key, model.ChannelSmartScheduleStatusSucceeded, "", &score,
+				key, model.ChannelSmartScheduleStatusSucceeded, message, &score,
 				item.TargetPriority, item.TargetWeight, now, stabilityUpdates[key],
 			)
 			update.Exploration = explorationUpdates[key]
@@ -715,6 +775,10 @@ func runChannelSmartScheduleByRouteOnce(
 			model:     statusUpdates[index].Model,
 		}
 		statusUpdates[index].Jitter = jitterUpdates[key]
+		statusUpdates[index].ScoreDetails = scoreDetailsByRoute[key]
+		if statusUpdates[index].ScoreDetails != nil && statusUpdates[index].Error != "" {
+			channelSmartScheduleSetAdjustmentReason(statusUpdates[index].ScoreDetails, statusUpdates[index].Error)
+		}
 	}
 
 	processed := result.Skipped
@@ -732,13 +796,21 @@ func runChannelSmartScheduleByRouteOnce(
 		update.ExpectedPriority = route.Priority
 		update.ExpectedWeight = route.Weight
 		update.ApplyPriorityWeight = update.Priority != route.Priority || update.Weight != route.Weight
+		if update.ScoreDetails != nil && update.ScoreDetails.Decision.AdjustmentReason == "" {
+			channelSmartScheduleSetAdjustmentReason(update.ScoreDetails, channelSmartScheduleScoredAdjustmentReason(
+				update.Score, update.Priority != route.Priority, update.Weight != route.Weight,
+			))
+		}
 		outcomes, applyErr := model.ApplyChannelSmartScheduleRouteResults([]model.ChannelSmartScheduleRouteResultUpdate{update})
 		adjustment := channelSmartScheduleTaskAdjustment{
 			ChannelId: update.ChannelId, ChannelName: route.ChannelName,
 			Group: update.Group, Model: update.Model,
 			OldPriority: route.Priority, NewPriority: update.Priority,
 			OldWeight: route.Weight, NewWeight: update.Weight,
-			Score: update.Score, Reason: update.Error,
+			Score: update.Score, ScoreDetails: update.ScoreDetails, Reason: update.Error,
+			ManualPrimary:                      route.State.ManualPrimaryUntil > now,
+			ManualPrimaryUntil:                 route.State.ManualPrimaryUntil,
+			ManualPrimaryAllowStabilityDegrade: route.State.ManualPrimaryAllowStabilityDegrade,
 		}
 		if applyErr != nil {
 			adjustment.Action = channelSmartScheduleAdjustmentFailed
@@ -766,6 +838,9 @@ func runChannelSmartScheduleByRouteOnce(
 				adjustment.OldPriority != adjustment.NewPriority,
 				adjustment.OldWeight != adjustment.NewWeight,
 			)
+		}
+		if adjustment.ScoreDetails != nil {
+			channelSmartScheduleSetAdjustmentReason(adjustment.ScoreDetails, adjustment.Reason)
 		}
 		result.recordAdjustment(adjustment)
 		processed++

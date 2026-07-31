@@ -135,10 +135,43 @@ func ListChannelMonitorTasks(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	var scheduleDetails map[string][]model.ChannelSmartScheduleExecutionDetailPayload
+	if taskType == channelMonitorSmartScheduleTaskType {
+		taskIds := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			taskIds = append(taskIds, task.TaskID)
+		}
+		scheduleDetails, err = model.GetChannelSmartScheduleExecutionDetails(taskIds)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 
 	responses := make([]model.SystemTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		responses = append(responses, task.ToResponse())
+		response := task.ToResponse()
+		if taskType == channelMonitorSmartScheduleTaskType && strings.TrimSpace(task.Result) != "" {
+			var result channelSmartScheduleTaskResult
+			if err := common.UnmarshalJsonStr(task.Result, &result); err == nil {
+				result.Adjustments = nil
+				for _, stored := range scheduleDetails[task.TaskID] {
+					var adjustment channelSmartScheduleTaskAdjustment
+					if err := common.UnmarshalJsonStr(stored.Payload, &adjustment); err != nil {
+						common.ApiError(c, fmt.Errorf(
+							"解析智能调度执行明细失败: task_id=%s adjustment_index=%d: %w",
+							task.TaskID,
+							stored.AdjustmentIndex,
+							err,
+						))
+						return
+					}
+					result.Adjustments = append(result.Adjustments, adjustment)
+				}
+				response.Result = result
+			}
+		}
+		responses = append(responses, response)
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(responses)

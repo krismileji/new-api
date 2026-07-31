@@ -33,7 +33,11 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.LogConsumeEnabled = true
 	constant.ErrorLogEnabled = true
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelSmartScheduleRouteState{},
+	))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
@@ -69,4 +73,54 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	require.Len(t, metrics, 1)
 	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
 	assert.Equal(t, int64(1), metrics[0].ActualFailureCount)
+}
+
+func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWithoutLogs(t *testing.T) {
+	originalDB := model.DB
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "manual-primary-expiry.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.LogConsumeEnabled = false
+	constant.ErrorLogEnabled = false
+	common.MemoryCacheEnabled = false
+	require.NoError(t, db.AutoMigrate(&model.Ability{}, &model.ChannelSmartScheduleRouteState{}))
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.SetMainDatabaseType(originalMainDatabaseType)
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		require.NoError(t, sqlDB.Close())
+	})
+
+	forcedPriority := int64(101)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "vip", Model: "model-a", ChannelId: 1, Enabled: true,
+		Priority: &forcedPriority, Weight: 1000,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1, GroupName: "vip", ModelName: "model-a",
+		ManualPrimaryUntil: common.GetTimestamp() - 1, ManualPrimarySaved: true,
+		ManualPrimarySavedPriority: 70, ManualPrimarySavedWeight: 40,
+	}).Error)
+
+	require.NoError(t, runChannelMonitorAggregationOnce(context.Background()))
+
+	var ability model.Ability
+	require.NoError(t, db.First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, int64(70), *ability.Priority)
+	assert.Equal(t, uint(40), ability.Weight)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.First(&state).Error)
+	assert.Zero(t, state.ManualPrimaryUntil)
+	assert.False(t, state.ManualPrimarySaved)
 }

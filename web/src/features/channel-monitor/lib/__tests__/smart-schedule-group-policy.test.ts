@@ -32,15 +32,13 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   stabilityEnabled: true,
   jitterEnabled: true,
   jitterTolerancePercent: 5,
-  jitterThresholdMultiplier: 3,
-  jitterAbsoluteToleranceMs: 1000,
-  jitterBaselineHours: 24,
+  jitterThresholdMultiplier: 5,
+  jitterAbsoluteToleranceSeconds: 10,
+  jitterBaselineMinutes: 60,
   scoring: {
     stabilityPercent: 50,
-    curveExponent: 1,
-    relativeWeightEnabled: true,
-    relativeWeightStartPercent: 3,
-    relativeWeightFullPercent: 10,
+    primaryTrafficPercent: 90,
+    primarySwitchThresholdPercent: 3,
     smart: {
       costRatioPercent: 40,
       firstTokenPercent: 40,
@@ -103,16 +101,14 @@ describe('smart schedule group policy', () => {
         jitter_enabled: defaultPolicy.jitterEnabled,
         jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
         jitter_threshold_multiplier: defaultPolicy.jitterThresholdMultiplier,
-        jitter_absolute_tolerance_ms: defaultPolicy.jitterAbsoluteToleranceMs,
-        jitter_baseline_hours: defaultPolicy.jitterBaselineHours,
+        jitter_absolute_tolerance_seconds:
+          defaultPolicy.jitterAbsoluteToleranceSeconds,
+        jitter_baseline_minutes: defaultPolicy.jitterBaselineMinutes,
         scoring: {
           stability_percent: defaultPolicy.scoring.stabilityPercent,
-          curve_exponent: defaultPolicy.scoring.curveExponent,
-          relative_weight_enabled: defaultPolicy.scoring.relativeWeightEnabled,
-          relative_weight_start_percent:
-            defaultPolicy.scoring.relativeWeightStartPercent,
-          relative_weight_full_percent:
-            defaultPolicy.scoring.relativeWeightFullPercent,
+          primary_traffic_percent: defaultPolicy.scoring.primaryTrafficPercent,
+          primary_switch_threshold_percent:
+            defaultPolicy.scoring.primarySwitchThresholdPercent,
           smart: {
             cost_ratio_percent: defaultPolicy.scoring.smart.costRatioPercent,
             first_token_percent: defaultPolicy.scoring.smart.firstTokenPercent,
@@ -150,14 +146,16 @@ describe('smart schedule group policy', () => {
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
-    assert.equal(formPolicies[0]?.jitterThresholdMultiplier, 3)
-    assert.equal(formPolicies[0]?.jitterAbsoluteToleranceMs, 1000)
-    assert.equal(formPolicies[0]?.jitterBaselineHours, 24)
+    assert.equal(formPolicies[0]?.jitterThresholdMultiplier, 5)
+    assert.equal(formPolicies[0]?.jitterAbsoluteToleranceSeconds, 10)
+    assert.equal(formPolicies[0]?.jitterBaselineMinutes, 60)
     assert.equal(apiPolicies[0]?.jitter_enabled, true)
     assert.equal(apiPolicies[0]?.jitter_tolerance_percent, 5)
-    assert.equal(apiPolicies[0]?.jitter_threshold_multiplier, 3)
-    assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_ms, 1000)
-    assert.equal(apiPolicies[0]?.jitter_baseline_hours, 24)
+    assert.equal(apiPolicies[0]?.jitter_threshold_multiplier, 5)
+    assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_seconds, 10)
+    assert.equal(apiPolicies[0]?.jitter_baseline_minutes, 60)
+    assert.equal(apiPolicies[0]?.scoring.primary_traffic_percent, 90)
+    assert.equal(apiPolicies[0]?.scoring.primary_switch_threshold_percent, 3)
     assert.deepEqual(apiPolicies[0]?.models, [])
     assert.equal(apiPolicies[0]?.min_samples, 5)
     assert.equal(apiPolicies[0]?.degrade_stability_score, 90)
@@ -202,15 +200,25 @@ describe('smart schedule group policy', () => {
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterThresholdMultiplier,
+      5
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterAbsoluteToleranceSeconds,
+      10
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterBaselineMinutes,
+      60
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring
+        .primaryTrafficPercent,
+      90
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring
+        .primarySwitchThresholdPercent,
       3
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterAbsoluteToleranceMs,
-      1000
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterBaselineHours,
-      24
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailurePenaltyPercent,

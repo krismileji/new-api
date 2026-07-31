@@ -118,15 +118,13 @@ function SmartScheduleGroupPoliciesFixture(props: {
               stabilityEnabled: false,
               jitterEnabled: true,
               jitterTolerancePercent: 5,
-              jitterThresholdMultiplier: 3,
-              jitterAbsoluteToleranceMs: 1000,
-              jitterBaselineHours: 24,
+              jitterThresholdMultiplier: 5,
+              jitterAbsoluteToleranceSeconds: 10,
+              jitterBaselineMinutes: 60,
               scoring: {
                 stabilityPercent: 50,
-                curveExponent: 1,
-                relativeWeightEnabled: true,
-                relativeWeightStartPercent: 3,
-                relativeWeightFullPercent: 10,
+                primaryTrafficPercent: 90,
+                primarySwitchThresholdPercent: 3,
                 smart: {
                   costRatioPercent: 40,
                   firstTokenPercent: 40,
@@ -182,15 +180,13 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       stabilityEnabled: true,
       jitterEnabled: props.jitterEnabled ?? true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 3,
-      jitterAbsoluteToleranceMs: 1000,
-      jitterBaselineHours: 24,
+      jitterThresholdMultiplier: 5,
+      jitterAbsoluteToleranceSeconds: 10,
+      jitterBaselineMinutes: 60,
       scoring: {
         stabilityPercent: 50,
-        curveExponent: 1,
-        relativeWeightEnabled: true,
-        relativeWeightStartPercent: 3,
-        relativeWeightFullPercent: 10,
+        primaryTrafficPercent: 90,
+        primarySwitchThresholdPercent: 3,
         smart: {
           costRatioPercent: 40,
           firstTokenPercent: 40,
@@ -317,6 +313,12 @@ describe('channel monitor settings dialog', () => {
         sampleMode='probe'
       />
     )
+    const weightPolicyMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='weight'
+        sampleMode='probe'
+      />
+    )
 
     for (const label of [
       '智能调度',
@@ -350,10 +352,7 @@ describe('channel monitor settings dialog', () => {
       '成本倍率',
       '首字时间',
       'TPS',
-      '得分曲线指数',
-      '相对权重拉伸',
-      '开始拉伸分差',
-      '完整拉伸分差',
+      '主渠道切换分差',
     ]) {
       assert.ok(trafficPolicyMarkup.includes(`aria-label="查看“${label}”说明"`))
     }
@@ -361,6 +360,41 @@ describe('channel monitor settings dialog', () => {
       trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')
     )
     assert.ok(probePolicyMarkup.includes('aria-label="查看“探测间隔”说明"'))
+    assert.ok(
+      weightPolicyMarkup.includes('aria-label="查看“主渠道目标流量”说明"')
+    )
+  })
+
+  test('shows primary traffic only for weight mode and switch threshold for both modes', () => {
+    const weightMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='weight'
+        sampleMode='probe'
+      />
+    )
+    const priorityWeightMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='probe'
+      />
+    )
+
+    assert.match(
+      weightMarkup,
+      /<input(?=[^>]*name="scoring.primaryTrafficPercent")(?=[^>]*min="51")(?=[^>]*max="99")(?=[^>]*value="90")[^>]*>/
+    )
+    assert.equal(
+      priorityWeightMarkup.includes('name="scoring.primaryTrafficPercent"'),
+      false
+    )
+    for (const markup of [weightMarkup, priorityWeightMarkup]) {
+      assert.match(
+        markup,
+        /<input(?=[^>]*name="scoring.primarySwitchThresholdPercent")(?=[^>]*min="0")(?=[^>]*max="100")(?=[^>]*value="3")[^>]*>/
+      )
+      assert.equal(markup.includes('得分曲线指数'), false)
+      assert.equal(markup.includes('相对权重拉伸'), false)
+    }
   })
 
   test('shows the empty state before any group scheduling policy is configured', () => {
@@ -449,15 +483,15 @@ describe('channel monitor settings dialog', () => {
     )
     assert.match(
       markup,
-      /<input(?=[^>]*name="jitterThresholdMultiplier")(?=[^>]*min="1.01")(?=[^>]*max="20")(?=[^>]*value="3")[^>]*>/
+      /<input(?=[^>]*name="jitterThresholdMultiplier")(?=[^>]*min="1.01")(?=[^>]*max="20")(?=[^>]*value="5")[^>]*>/
     )
     assert.match(
       markup,
-      /<input(?=[^>]*name="jitterAbsoluteToleranceMs")(?=[^>]*min="0")(?=[^>]*max="60000")(?=[^>]*value="1000")[^>]*>/
+      /<input(?=[^>]*name="jitterAbsoluteToleranceSeconds")(?=[^>]*min="0")(?=[^>]*max="60")(?=[^>]*value="10")[^>]*>/
     )
     assert.match(
       markup,
-      /<input(?=[^>]*name="jitterBaselineHours")(?=[^>]*min="1")(?=[^>]*max="720")(?=[^>]*value="24")[^>]*>/
+      /<input(?=[^>]*name="jitterBaselineMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="60")[^>]*>/
     )
     assert.ok(markup.includes('慢请求阈值取'))
   })
@@ -474,7 +508,10 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('成功延迟抖动'))
     assert.equal(markup.includes('name="jitterTolerancePercent"'), false)
     assert.equal(markup.includes('name="jitterThresholdMultiplier"'), false)
-    assert.equal(markup.includes('name="jitterAbsoluteToleranceMs"'), false)
-    assert.equal(markup.includes('name="jitterBaselineHours"'), false)
+    assert.equal(
+      markup.includes('name="jitterAbsoluteToleranceSeconds"'),
+      false
+    )
+    assert.equal(markup.includes('name="jitterBaselineMinutes"'), false)
   })
 })

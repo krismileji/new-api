@@ -364,6 +364,45 @@ func TestSavingFirstGroupPolicyDoesNotImplicitlyEnableScheduling(t *testing.T) {
 	assert.Equal(t, "false", enabledOption.Value)
 }
 
+func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
+	var scoring channelSmartScheduleScoring
+	require.NoError(t, common.UnmarshalJsonStr(`{
+		"stability_percent":50,
+		"smart":{"cost_ratio_percent":40,"first_token_percent":40,"tps_percent":20},
+		"ratio":{"cost_ratio_percent":70,"first_token_percent":20,"tps_percent":10}
+	}`, &scoring))
+	assert.Equal(t, 90.0, scoring.PrimaryTrafficPercent)
+	assert.Equal(t, 3.0, scoring.PrimarySwitchThresholdPercent)
+	require.NoError(t, validateChannelSmartScheduleScoring(scoring))
+	for _, value := range []float64{51, 99} {
+		candidate := scoring
+		candidate.PrimaryTrafficPercent = value
+		assert.NoError(t, validateChannelSmartScheduleScoring(candidate))
+	}
+	for _, value := range []float64{50, 100} {
+		candidate := scoring
+		candidate.PrimaryTrafficPercent = value
+		assert.ErrorContains(t, validateChannelSmartScheduleScoring(candidate), "51% 到 99%")
+	}
+
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	policy.JitterThresholdMultiplier = nil
+	policy.JitterAbsoluteToleranceSeconds = nil
+	policy.JitterBaselineMinutes = nil
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].JitterThresholdMultiplier)
+	assert.Equal(t, 5.0, *normalized[0].JitterThresholdMultiplier)
+	require.NotNil(t, normalized[0].JitterAbsoluteToleranceSeconds)
+	assert.Equal(t, 10.0, *normalized[0].JitterAbsoluteToleranceSeconds)
+	require.NotNil(t, normalized[0].JitterBaselineMinutes)
+	assert.Equal(t, 60, *normalized[0].JitterBaselineMinutes)
+}
+
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
@@ -388,11 +427,11 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
 	invalidStabilityScoring.Scoring.StabilityPercent = 101
-	invalidCurveScoring := channelSmartScheduleTestGroupPolicy(
+	invalidPrimaryTraffic := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	invalidCurveScoring.Scoring.CurveExponent = 0
+	invalidPrimaryTraffic.Scoring.PrimaryTrafficPercent = 50
 	invalidRatioScoring := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
@@ -401,16 +440,11 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		FirstTokenPercent: 50,
 		TPSPercent:        50,
 	}
-	invalidRelativeWeightStart := channelSmartScheduleTestGroupPolicy(
+	invalidPrimarySwitchThreshold := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	invalidRelativeWeightStart.Scoring.RelativeWeightStartPercent = -1
-	invalidRelativeWeightRange := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyRatio, false,
-		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
-	)
-	invalidRelativeWeightRange.Scoring.RelativeWeightFullPercent = invalidRelativeWeightRange.Scoring.RelativeWeightStartPercent
+	invalidPrimarySwitchThreshold.Scoring.PrimarySwitchThresholdPercent = 101
 	tooManyModels := make([]string, maxChannelMonitorSmartScheduleModelCount+1)
 	invalidModels := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
@@ -445,14 +479,14 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	invalidJitterAbsoluteToleranceValue := 60001
-	invalidJitterAbsoluteTolerance.JitterAbsoluteToleranceMs = &invalidJitterAbsoluteToleranceValue
-	invalidJitterBaselineHours := channelSmartScheduleTestGroupPolicy(
+	invalidJitterAbsoluteToleranceValue := 60.001
+	invalidJitterAbsoluteTolerance.JitterAbsoluteToleranceSeconds = &invalidJitterAbsoluteToleranceValue
+	invalidJitterBaselineMinutes := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	invalidJitterBaselineHoursValue := 0
-	invalidJitterBaselineHours.JitterBaselineHours = &invalidJitterBaselineHoursValue
+	invalidJitterBaselineMinutesValue := 0
+	invalidJitterBaselineMinutes.JitterBaselineMinutes = &invalidJitterBaselineMinutesValue
 	invalidCooldown := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 0,
@@ -518,10 +552,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidApplyMode}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSmartScoring}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidStabilityScoring}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidCurveScoring}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidPrimaryTraffic}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRatioScoring}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightStart}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRelativeWeightRange}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidPrimarySwitchThreshold}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidModels}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidModelOrder}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidMinSamples}},
@@ -529,7 +562,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterTolerance}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterMultiplier}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterAbsoluteTolerance}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterBaselineHours}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterBaselineMinutes}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidCooldown}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidExplorationTraffic}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSampleMode}},
@@ -549,11 +582,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	}
 
 	validScoring := channelSmartScheduleScoring{
-		StabilityPercent:           60,
-		CurveExponent:              1.5,
-		RelativeWeightEnabled:      true,
-		RelativeWeightStartPercent: 2,
-		RelativeWeightFullPercent:  8,
+		StabilityPercent:              60,
+		PrimaryTrafficPercent:         85,
+		PrimarySwitchThresholdPercent: 4,
 		Smart: channelSmartScheduleMetricPercentages{
 			CostRatioPercent: 50, FirstTokenPercent: 25, TPSPercent: 25,
 		},
@@ -581,7 +612,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"min_samples": 8, "degrade_stability_score": 90, "recovery_stability_score": 95,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5, "jitter_threshold_multiplier": 3,
-				"jitter_absolute_tolerance_ms": 1000, "jitter_baseline_hours": 24,
+				"jitter_absolute_tolerance_seconds": 10, "jitter_baseline_minutes": 60,
 				"cooldown_minutes":            45,
 				"sample_mode":                 channelMonitorSmartScheduleSampleOff,
 				"exploration_traffic_percent": 3, "probe_interval_minutes": 10,
@@ -595,7 +626,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"min_samples": 8, "degrade_stability_score": 75.5, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5, "jitter_threshold_multiplier": 3,
-				"jitter_absolute_tolerance_ms": 1000, "jitter_baseline_hours": 24,
+				"jitter_absolute_tolerance_seconds": 10, "jitter_baseline_minutes": 60,
 				"cooldown_minutes":            45,
 				"sample_mode":                 channelMonitorSmartScheduleSampleTraffic,
 				"exploration_traffic_percent": 5, "probe_interval_minutes": 5,
@@ -662,10 +693,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 5.0, *defaultGroupPolicy.JitterTolerancePercent)
 	require.NotNil(t, defaultGroupPolicy.JitterThresholdMultiplier)
 	assert.Equal(t, 3.0, *defaultGroupPolicy.JitterThresholdMultiplier)
-	require.NotNil(t, defaultGroupPolicy.JitterAbsoluteToleranceMs)
-	assert.Equal(t, 1000, *defaultGroupPolicy.JitterAbsoluteToleranceMs)
-	require.NotNil(t, defaultGroupPolicy.JitterBaselineHours)
-	assert.Equal(t, 24, *defaultGroupPolicy.JitterBaselineHours)
+	require.NotNil(t, defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
+	assert.Equal(t, 10.0, *defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
+	require.NotNil(t, defaultGroupPolicy.JitterBaselineMinutes)
+	assert.Equal(t, 60, *defaultGroupPolicy.JitterBaselineMinutes)
 	require.NotNil(t, defaultGroupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *defaultGroupPolicy.CooldownMinutes)
 
@@ -730,6 +761,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	var storedGroupPolicies smartScheduleGroupPolicies
 	require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedGroupPolicies))
 	assert.Equal(t, response.Data.SmartScheduleGroupPolicies, storedGroupPolicies)
+	assert.Contains(t, option.Value, `"jitter_absolute_tolerance_seconds":10`)
+	assert.Contains(t, option.Value, `"jitter_baseline_minutes":60`)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
 	assert.Equal(t, "10", option.Value)

@@ -38,12 +38,13 @@ type ChannelSmartScheduleRouteState struct {
 	Excluded         bool   `json:"excluded"`
 	Revision         int64  `json:"-" gorm:"bigint"`
 
-	LastScheduleStatus   string   `json:"last_schedule_status" gorm:"type:varchar(16);index"`
-	LastScheduleError    string   `json:"last_schedule_error" gorm:"type:varchar(255)"`
-	LastScheduleScore    *float64 `json:"last_schedule_score"`
-	LastSchedulePriority int64    `json:"last_schedule_priority" gorm:"bigint"`
-	LastScheduleWeight   uint     `json:"last_schedule_weight"`
-	LastScheduleTime     int64    `json:"last_schedule_time" gorm:"bigint;index"`
+	LastScheduleStatus       string                               `json:"last_schedule_status" gorm:"type:varchar(16);index"`
+	LastScheduleError        string                               `json:"last_schedule_error" gorm:"type:varchar(255)"`
+	LastScheduleScore        *float64                             `json:"last_schedule_score"`
+	LastSchedulePriority     int64                                `json:"last_schedule_priority" gorm:"bigint"`
+	LastScheduleWeight       uint                                 `json:"last_schedule_weight"`
+	LastScheduleTime         int64                                `json:"last_schedule_time" gorm:"bigint;index"`
+	LastScheduleScoreDetails ChannelSmartScheduleScoreDetailsJSON `json:"last_schedule_score_details,omitempty" gorm:"type:text"`
 
 	StabilityState             string   `json:"stability_state" gorm:"type:varchar(16);index"`
 	StabilityUntil             int64    `json:"stability_until" gorm:"bigint;index"`
@@ -57,6 +58,15 @@ type ChannelSmartScheduleRouteState struct {
 	ExplorationSince         int64 `json:"exploration_since" gorm:"bigint"`
 	ExplorationSavedPriority int64 `json:"exploration_saved_priority" gorm:"bigint"`
 	ExplorationSavedWeight   uint  `json:"exploration_saved_weight"`
+
+	// ManualPrimaryUntil keeps an administrator-selected primary route in
+	// force until the unix timestamp. The saved routing values are internal
+	// restore markers and are intentionally not exposed to API consumers.
+	ManualPrimaryUntil                 int64 `json:"manual_primary_until" gorm:"bigint;index"`
+	ManualPrimaryAllowStabilityDegrade bool  `json:"manual_primary_allow_stability_degrade"`
+	ManualPrimarySaved                 bool  `json:"-"`
+	ManualPrimarySavedPriority         int64 `json:"-" gorm:"bigint"`
+	ManualPrimarySavedWeight           uint  `json:"-"`
 
 	ProbeWindowStart                int64    `json:"probe_window_start" gorm:"bigint"`
 	ProbeLastTime                   int64    `json:"probe_last_time" gorm:"bigint;index"`
@@ -74,6 +84,18 @@ type ChannelSmartScheduleRouteState struct {
 	// string type unbounded lets each supported dialect choose its long-text
 	// equivalent instead of truncating high-frequency probe history.
 	ProbeSamples string `json:"-"`
+}
+
+const ChannelSmartScheduleManualPrimaryMaxMinutes = 525600
+
+type ChannelSmartScheduleRoutePrimaryResult struct {
+	State          ChannelSmartScheduleRouteState
+	RoutingChanged bool
+}
+
+type ChannelSmartScheduleRoutePrimaryOptions struct {
+	DurationMinutes       int
+	AllowStabilityDegrade bool
 }
 
 func (state ChannelSmartScheduleRouteState) Participates() bool {
@@ -111,6 +133,7 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	Status                  string
 	Error                   string
 	Score                   *float64
+	ScoreDetails            *ChannelSmartScheduleScoreDetails
 	Priority                int64
 	Weight                  uint
 	Time                    int64
@@ -162,6 +185,8 @@ type ChannelSmartScheduleProbeResult struct {
 	ChannelId    int
 	Group        string
 	Model        string
+	Source       string
+	SampleId     string
 	WindowStart  int64
 	Time         int64
 	Success      bool
@@ -192,20 +217,46 @@ type ChannelSmartScheduleProbeMetrics struct {
 type channelSmartScheduleProbeSample struct {
 	Time              int64    `json:"time"`
 	Success           bool     `json:"success"`
+	Source            string   `json:"source,omitempty"`
+	SampleId          string   `json:"sample_id,omitempty"`
 	FailureDurationMs *float64 `json:"failure_duration_ms,omitempty"`
 	FirstTokenMs      *float64 `json:"first_token_ms,omitempty"`
 	TPS               *float64 `json:"tps,omitempty"`
 }
 
-const channelSmartScheduleMaxProbeSamples = 1500
+const (
+	channelSmartScheduleMaxProbeSamples            = 1500
+	ChannelSmartScheduleSampleSourceScheduledProbe = "scheduled_probe"
+	ChannelSmartScheduleSampleSourceManualTest     = "manual_test"
+)
 
 func (state ChannelSmartScheduleRouteState) ProbeMetricsSince(windowStart int64) ChannelSmartScheduleProbeMetrics {
+	return state.probeMetricsSince(windowStart, "")
+}
+
+func (state ChannelSmartScheduleRouteState) ManualTestMetricsSince(windowStart int64) ChannelSmartScheduleProbeMetrics {
+	return state.probeMetricsSince(windowStart, ChannelSmartScheduleSampleSourceManualTest)
+}
+
+func (state ChannelSmartScheduleRouteState) probeMetricsSince(
+	windowStart int64,
+	source string,
+) ChannelSmartScheduleProbeMetrics {
 	if strings.TrimSpace(state.ProbeSamples) == "" {
 		return ChannelSmartScheduleProbeMetrics{}
 	}
 	var samples []channelSmartScheduleProbeSample
 	if err := common.UnmarshalJsonStr(state.ProbeSamples, &samples); err != nil {
 		return ChannelSmartScheduleProbeMetrics{}
+	}
+	if source != "" {
+		filtered := samples[:0]
+		for _, sample := range samples {
+			if sample.Source == source {
+				filtered = append(filtered, sample)
+			}
+		}
+		samples = filtered
 	}
 	return channelSmartScheduleCalculateProbeMetrics(samples, windowStart)
 }
@@ -436,6 +487,13 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 		state.ParticipationSet = true
 		state.Excluded = excluded
 		if excluded {
+			if state.ManualPrimaryUntil > 0 || state.ManualPrimarySaved {
+				changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, &state)
+				if restoreErr != nil {
+					return restoreErr
+				}
+				routingChanged = routingChanged || changed
+			}
 			if state.ExplorationActive {
 				priority := state.ExplorationSavedPriority
 				weight := state.ExplorationSavedWeight
@@ -453,6 +511,9 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 		}
 		if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
 			state.StabilitySince = common.GetTimestamp()
+		}
+		if state.Revision == math.MaxInt64 {
+			return errors.New("智能调度路由修订号已达上限")
 		}
 		state.Revision++
 		if created {
@@ -506,6 +567,13 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 			state.ParticipationSet = true
 			state.Excluded = excluded
 			if excluded {
+				if state.ManualPrimaryUntil > 0 || state.ManualPrimarySaved {
+					changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, state)
+					if restoreErr != nil {
+						return restoreErr
+					}
+					result.RoutingChanged = result.RoutingChanged || changed
+				}
 				if state.ExplorationActive {
 					priority := state.ExplorationSavedPriority
 					weight := state.ExplorationSavedWeight
@@ -524,6 +592,9 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 			if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
 				state.StabilitySince = now
 			}
+			if state.Revision == math.MaxInt64 {
+				return errors.New("智能调度路由修订号已达上限")
+			}
 			state.Revision++
 			if created {
 				if err := tx.Create(state).Error; err != nil {
@@ -537,6 +608,254 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 		return nil
 	})
 	return result, err
+}
+
+func SaveChannelSmartScheduleRoutePrimary(
+	channelId int,
+	group string,
+	modelName string,
+	options ChannelSmartScheduleRoutePrimaryOptions,
+) (result ChannelSmartScheduleRoutePrimaryResult, err error) {
+	durationMinutes := options.DurationMinutes
+	if durationMinutes < 0 || durationMinutes > ChannelSmartScheduleManualPrimaryMaxMinutes {
+		return result, fmt.Errorf("主渠道固定时间必须在 0 到 %d 分钟之间", ChannelSmartScheduleManualPrimaryMaxMinutes)
+	}
+	now := common.GetTimestamp()
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var states []ChannelSmartScheduleRouteState
+		if err := lockForUpdate(tx).
+			Where("group_name = ? AND model_name = ?", group, modelName).
+			Find(&states).Error; err != nil {
+			return err
+		}
+		stateByChannel := make(map[int]*ChannelSmartScheduleRouteState, len(states))
+		for index := range states {
+			stateByChannel[states[index].ChannelId] = &states[index]
+		}
+		targetState := stateByChannel[channelId]
+		if targetState == nil {
+			return gorm.ErrRecordNotFound
+		}
+
+		if durationMinutes == 0 {
+			changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, targetState)
+			if restoreErr != nil {
+				return restoreErr
+			}
+			result.RoutingChanged = result.RoutingChanged || changed
+			result.State = *targetState
+			return nil
+		}
+		for index := range states {
+			state := &states[index]
+			if state.ChannelId == channelId || state.ManualPrimaryUntil <= 0 {
+				continue
+			}
+			changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, state)
+			if restoreErr != nil {
+				return restoreErr
+			}
+			result.RoutingChanged = result.RoutingChanged || changed
+		}
+
+		var targetAbility Ability
+		if err := lockForUpdate(tx).Where(&Ability{
+			ChannelId: channelId, Group: group, Model: modelName,
+		}).First(&targetAbility).Error; err != nil {
+			return err
+		}
+		var channel Channel
+		if err := lockForUpdate(tx).Select("id", "status").Where("id = ?", channelId).First(&channel).Error; err != nil {
+			return err
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			return errors.New("渠道已禁用，不能固定为主渠道")
+		}
+		if !targetAbility.Enabled {
+			return errors.New("该分组和模型路由已禁用，不能固定为主渠道")
+		}
+		if !targetState.Participates() {
+			return errors.New("该分组和模型路由未参与智能调度，不能固定为主渠道")
+		}
+		if targetState.ManualPrimaryUntil > now && targetState.ManualPrimarySaved {
+			if targetState.Revision == math.MaxInt64 {
+				return errors.New("智能调度路由修订号已达上限")
+			}
+			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+			targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
+			targetState.Revision++
+			if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, targetState); err != nil {
+				return err
+			}
+			result.State = *targetState
+			return nil
+		}
+
+		if targetState.ManualPrimaryUntil > 0 && targetState.ManualPrimaryUntil <= now {
+			changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, targetState)
+			if restoreErr != nil {
+				return restoreErr
+			}
+			result.RoutingChanged = result.RoutingChanged || changed
+			if err := lockForUpdate(tx).Where(&Ability{
+				ChannelId: channelId, Group: group, Model: modelName,
+			}).First(&targetAbility).Error; err != nil {
+				return err
+			}
+		}
+		if targetState.StabilityState != "" {
+			return errors.New("该分组和模型路由处于稳定性保护状态，不能固定为主渠道")
+		}
+
+		if targetState.ExplorationActive {
+			restoredPriority := targetState.ExplorationSavedPriority
+			restoredWeight := targetState.ExplorationSavedWeight
+			if abilityPriority(targetAbility) != restoredPriority || targetAbility.Weight != restoredWeight {
+				if err := updateAbilitySmartSchedulePriorityWeightTx(
+					tx,
+					channelSmartScheduleRouteKey(channelId, group, modelName),
+					&restoredPriority,
+					&restoredWeight,
+				); err != nil {
+					return err
+				}
+				result.RoutingChanged = true
+				targetAbility.Priority = &restoredPriority
+				targetAbility.Weight = restoredWeight
+			}
+			targetState.ExplorationActive = false
+			targetState.ExplorationSince = 0
+			targetState.ExplorationSavedPriority = 0
+			targetState.ExplorationSavedWeight = 0
+		}
+
+		if targetState.ManualPrimaryUntil <= now || !targetState.ManualPrimarySaved {
+			targetState.ManualPrimarySaved = true
+			targetState.ManualPrimarySavedPriority = abilityPriority(targetAbility)
+			targetState.ManualPrimarySavedWeight = targetAbility.Weight
+		}
+
+		var abilities []Ability
+		if err := lockForUpdate(tx).
+			Where(&Ability{Group: group, Model: modelName}).
+			Find(&abilities).Error; err != nil {
+			return err
+		}
+		manualPriority := int64(0)
+		for _, ability := range abilities {
+			if priority := abilityPriority(ability); priority > manualPriority {
+				manualPriority = priority
+			}
+		}
+		if manualPriority == math.MaxInt64 {
+			return errors.New("当前路由优先级已达上限，不能固定主渠道")
+		}
+		manualPriority++
+		manualWeight := uint(1000)
+		if abilityPriority(targetAbility) != manualPriority || targetAbility.Weight != manualWeight {
+			if err := updateAbilitySmartSchedulePriorityWeightTx(
+				tx,
+				channelSmartScheduleRouteKey(channelId, group, modelName),
+				&manualPriority,
+				&manualWeight,
+			); err != nil {
+				return err
+			}
+			result.RoutingChanged = true
+		}
+
+		if targetState.Revision == math.MaxInt64 {
+			return errors.New("智能调度路由修订号已达上限")
+		}
+		targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+		targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
+		targetState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
+		targetState.LastScheduleError = "管理员已固定该路由为主渠道"
+		targetState.LastScheduleScore = nil
+		targetState.LastScheduleScoreDetails = ""
+		targetState.LastSchedulePriority = manualPriority
+		targetState.LastScheduleWeight = manualWeight
+		targetState.LastScheduleTime = now
+		targetState.Revision++
+		if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, targetState); err != nil {
+			return err
+		}
+		result.State = *targetState
+		return nil
+	})
+	return result, err
+}
+
+func ClearExpiredChannelSmartScheduleRoutePrimaries(now int64) (routingChanged bool, err error) {
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var states []ChannelSmartScheduleRouteState
+		if err := lockForUpdate(tx).
+			Where("manual_primary_until > ? AND manual_primary_until <= ?", 0, now).
+			Find(&states).Error; err != nil {
+			return err
+		}
+		for index := range states {
+			changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, &states[index])
+			if restoreErr != nil {
+				return restoreErr
+			}
+			routingChanged = routingChanged || changed
+		}
+		return nil
+	})
+	return routingChanged, err
+}
+
+func restoreChannelSmartScheduleRoutePrimaryTx(
+	tx *gorm.DB,
+	state *ChannelSmartScheduleRouteState,
+) (routingChanged bool, err error) {
+	if state.ManualPrimaryUntil <= 0 && !state.ManualPrimarySaved {
+		return false, nil
+	}
+	if state.Revision == math.MaxInt64 {
+		return false, errors.New("智能调度路由修订号已达上限")
+	}
+	if state.ManualPrimarySaved && state.StabilityState == "" {
+		var ability Ability
+		findErr := lockForUpdate(tx).Where(&Ability{
+			ChannelId: state.ChannelId, Group: state.GroupName, Model: state.ModelName,
+		}).First(&ability).Error
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return false, findErr
+		}
+		if findErr == nil && (abilityPriority(ability) != state.ManualPrimarySavedPriority ||
+			ability.Weight != state.ManualPrimarySavedWeight) {
+			priority := state.ManualPrimarySavedPriority
+			weight := state.ManualPrimarySavedWeight
+			if err := updateAbilitySmartSchedulePriorityWeightTx(
+				tx,
+				channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName),
+				&priority,
+				&weight,
+			); err != nil {
+				return false, err
+			}
+			routingChanged = true
+		}
+	}
+	if state.ManualPrimarySaved && state.StabilityState != "" {
+		state.StabilitySavedPriority = state.ManualPrimarySavedPriority
+		state.StabilitySavedWeight = state.ManualPrimarySavedWeight
+	}
+	state.ManualPrimaryUntil = 0
+	state.ManualPrimaryAllowStabilityDegrade = false
+	state.ManualPrimarySaved = false
+	state.ManualPrimarySavedPriority = 0
+	state.ManualPrimarySavedWeight = 0
+	state.Revision++
+	if err := saveChannelSmartScheduleRouteStateWithoutProbeTx(tx, state); err != nil {
+		return false, err
+	}
+	return routingChanged, nil
 }
 
 func ClearChannelSmartScheduleExplorations() (routingChanged bool, err error) {
@@ -596,6 +915,15 @@ func SaveChannelSmartScheduleProbeResult(result ChannelSmartScheduleProbeResult)
 		if windowStart <= 0 || windowStart > probeTime {
 			windowStart = probeTime
 		}
+		source := strings.TrimSpace(result.Source)
+		if source == "" {
+			source = ChannelSmartScheduleSampleSourceScheduledProbe
+		}
+		if source != ChannelSmartScheduleSampleSourceScheduledProbe &&
+			source != ChannelSmartScheduleSampleSourceManualTest {
+			return errors.New("智能调度样本来源无效")
+		}
+		sampleId := strings.TrimSpace(result.SampleId)
 
 		var samples []channelSmartScheduleProbeSample
 		if strings.TrimSpace(state.ProbeSamples) != "" {
@@ -606,10 +934,15 @@ func SaveChannelSmartScheduleProbeResult(result ChannelSmartScheduleProbeResult)
 		retained := samples[:0]
 		for _, sample := range samples {
 			if sample.Time >= windowStart && sample.Time <= probeTime {
+				if sampleId != "" && sample.SampleId == sampleId && sample.Source == source {
+					return nil
+				}
 				retained = append(retained, sample)
 			}
 		}
-		sample := channelSmartScheduleProbeSample{Time: probeTime, Success: result.Success}
+		sample := channelSmartScheduleProbeSample{
+			Time: probeTime, Success: result.Success, Source: source, SampleId: sampleId,
+		}
 		if !result.Success && result.DurationMs != nil && *result.DurationMs >= 0 &&
 			!math.IsNaN(*result.DurationMs) && !math.IsInf(*result.DurationMs, 0) {
 			value := *result.DurationMs
@@ -743,9 +1076,14 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			if updatedTime <= 0 {
 				updatedTime = common.GetTimestamp()
 			}
+			scoreDetails, err := EncodeChannelSmartScheduleScoreDetails(result.ScoreDetails)
+			if err != nil {
+				return fmt.Errorf("保存智能调度评分明细失败: %w", err)
+			}
 			state.LastScheduleStatus = result.Status
 			state.LastScheduleError = message
 			state.LastScheduleScore = result.Score
+			state.LastScheduleScoreDetails = scoreDetails
 			state.LastSchedulePriority = result.Priority
 			state.LastScheduleWeight = result.Weight
 			state.LastScheduleTime = updatedTime
@@ -837,6 +1175,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		state.LastScheduleError = "管理员已手动解除稳定性保护"
 		state.LastScheduleScore = nil
+		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = result.Priority
 		state.LastScheduleWeight = result.Weight
 		state.LastScheduleTime = now

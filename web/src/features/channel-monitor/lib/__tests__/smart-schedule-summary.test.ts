@@ -80,6 +80,8 @@ function createRoute(
       exploration_since: 0,
       exploration_saved_priority: 0,
       exploration_saved_weight: 0,
+      manual_primary_until: 0,
+      manual_primary_allow_stability_degrade: false,
       probe_window_start: 0,
       probe_last_time: 0,
       probe_last_success: false,
@@ -184,10 +186,12 @@ describe('smart schedule route placement', () => {
   test('calculates traffic only inside the highest priority layer of each group-model pool', () => {
     const primary = createRoute(1, 'vip', 'model-a', 100, 80)
     const candidate = createRoute(2, 'vip', 'model-a', 100, 20)
-    const standby = createRoute(3, 'vip', 'model-a', 90, 100)
+    const firstBackup = createRoute(3, 'vip', 'model-a', 90, 100)
+    const standby = createRoute(4, 'vip', 'model-a', 80, 100)
 
     const placements = placeChannelMonitorSmartScheduleRoutes([
       standby,
+      firstBackup,
       candidate,
       primary,
     ])
@@ -206,6 +210,15 @@ describe('smart schedule route placement', () => {
       {
         role: 'candidate',
         estimatedShare: 0.2,
+        topPriority: 100,
+        candidateCount: 2,
+      }
+    )
+    assert.deepEqual(
+      placements.get(channelMonitorSmartScheduleRouteKey(firstBackup)),
+      {
+        role: 'first_backup',
+        estimatedShare: null,
         topPriority: 100,
         candidateCount: 2,
       }

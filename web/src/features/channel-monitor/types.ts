@@ -462,10 +462,8 @@ export type ChannelMonitorSmartScheduleMetricPercentages = {
 
 export type ChannelMonitorSmartScheduleScoring = {
   stability_percent: number
-  curve_exponent: number
-  relative_weight_enabled: boolean
-  relative_weight_start_percent: number
-  relative_weight_full_percent: number
+  primary_traffic_percent: number
+  primary_switch_threshold_percent: number
   smart: ChannelMonitorSmartScheduleMetricPercentages
   ratio: ChannelMonitorSmartScheduleMetricPercentages
 }
@@ -477,8 +475,8 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   jitter_enabled: boolean
   jitter_tolerance_percent: number
   jitter_threshold_multiplier: number
-  jitter_absolute_tolerance_ms: number
-  jitter_baseline_hours: number
+  jitter_absolute_tolerance_seconds: number
+  jitter_baseline_minutes: number
   scoring: ChannelMonitorSmartScheduleScoring
   apply_mode: ChannelMonitorSmartScheduleApplyMode
   models: string[]
@@ -527,6 +525,105 @@ export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
 
 export type ChannelMonitorSmartScheduleSampleMode = 'off' | 'traffic' | 'probe'
 
+export type ChannelMonitorSmartScheduleScoreMetricInput = {
+  value: number | null
+  sample_count: number
+}
+
+export type ChannelMonitorSmartScheduleScoreCohort = {
+  minimum: number | null
+  maximum: number | null
+  available_count: number
+}
+
+export type ChannelMonitorSmartScheduleScoreComponent = {
+  available: boolean
+  raw_value: number | null
+  normalized_score: number | null
+  configured_weight_percent: number
+  effective_weight_percent: number
+}
+
+export type ChannelMonitorSmartScheduleScoreDetails = {
+  version: number
+  strategy: ChannelMonitorSmartScheduleStrategy
+  minimum_samples: number
+  inputs: {
+    cost_ratio: ChannelMonitorSmartScheduleScoreMetricInput
+    first_token_ms: ChannelMonitorSmartScheduleScoreMetricInput
+    tps: ChannelMonitorSmartScheduleScoreMetricInput
+    stability: ChannelMonitorSmartScheduleScoreMetricInput
+  }
+  cohort: {
+    priority?: number
+    cost_ratio: ChannelMonitorSmartScheduleScoreCohort
+    first_token_ms: ChannelMonitorSmartScheduleScoreCohort
+    tps: ChannelMonitorSmartScheduleScoreCohort
+  }
+  components: {
+    cost_ratio: ChannelMonitorSmartScheduleScoreComponent
+    first_token_ms: ChannelMonitorSmartScheduleScoreComponent
+    tps: ChannelMonitorSmartScheduleScoreComponent
+  }
+  business_score: number | null
+  stability: {
+    enabled: boolean
+    available: boolean
+    applied: boolean
+    raw_score: number | null
+    configured_weight_percent: number
+    effective_weight_percent: number
+    business_contribution: number
+    contribution: number
+  }
+  final_score: number | null
+  decision: {
+    apply_mode: ChannelMonitorSmartScheduleApplyMode
+    current_primary_channel_id: number
+    raw_winner_channel_id: number
+    selected_primary_channel_id: number
+    selected_primary: boolean
+    manual_primary_channel_id: number
+    switch_threshold_percent: number
+    primary_traffic_percent: number
+    force_reset: boolean
+    manual_primary: boolean
+    selection_reason: string
+    adjustment_reason: string
+    reason: string
+  }
+}
+
+export type ChannelMonitorSmartScheduleModelTestStatus =
+  | 'success'
+  | 'failure'
+  | 'skipped'
+
+export type ChannelMonitorSmartScheduleModelTestItem = {
+  channel_id: number
+  channel_name: string
+  participates: boolean
+  available: boolean
+  status: ChannelMonitorSmartScheduleModelTestStatus
+  total_ms: number
+  first_token_ms?: number
+  tps?: number
+  error?: string
+  error_code?: string
+}
+
+export type ChannelMonitorSmartScheduleModelTestResult = {
+  group: string
+  model: string
+  stream: boolean
+  endpoint_type: string
+  total: number
+  succeeded: number
+  failed: number
+  skipped: number
+  results: ChannelMonitorSmartScheduleModelTestItem[]
+}
+
 export type ChannelMonitorSmartScheduleStabilityClearResult = {
   cleared: boolean
   previous_state: '' | 'degraded' | 'probing'
@@ -544,6 +641,7 @@ export type ChannelMonitorSmartScheduleRouteState = {
   last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
   last_schedule_error: string
   last_schedule_score: number | null
+  last_schedule_score_details?: ChannelMonitorSmartScheduleScoreDetails | null
   last_schedule_priority: number
   last_schedule_weight: number
   last_schedule_time: number
@@ -556,6 +654,8 @@ export type ChannelMonitorSmartScheduleRouteState = {
   exploration_since: number
   exploration_saved_priority: number
   exploration_saved_weight: number
+  manual_primary_until: number
+  manual_primary_allow_stability_degrade: boolean
   probe_window_start: number
   probe_last_time: number
   probe_last_success: boolean
@@ -636,6 +736,17 @@ export type ChannelMonitorSmartScheduleRouteResult = {
   stability_items: ChannelMonitorSmartScheduleRouteStability[]
 }
 
+export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
+  channel_id: number
+  group: string
+  model: string
+  duration_minutes: number
+  allow_stability_degrade: boolean
+  manual_primary_until: number
+  routing_changed: boolean
+  task: ChannelMonitorTask | null
+}
+
 export type ChannelMonitorTaskRunResult = {
   created: boolean
   task: ChannelMonitorTask
@@ -709,6 +820,10 @@ export type ChannelMonitorTaskAdjustment = {
   old_weight: number
   new_weight: number
   score?: number
+  score_details?: ChannelMonitorSmartScheduleScoreDetails | null
+  manual_primary?: boolean
+  manual_primary_until?: number
+  manual_primary_allow_stability_degrade?: boolean
   reason: string
 }
 

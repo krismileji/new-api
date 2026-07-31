@@ -91,15 +91,13 @@ const settings = {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_threshold_multiplier: 3,
-      jitter_absolute_tolerance_ms: 1000,
-      jitter_baseline_hours: 24,
+      jitter_threshold_multiplier: 5,
+      jitter_absolute_tolerance_seconds: 10,
+      jitter_baseline_minutes: 60,
       scoring: {
         stability_percent: 50,
-        curve_exponent: 1,
-        relative_weight_enabled: true,
-        relative_weight_start_percent: 3,
-        relative_weight_full_percent: 10,
+        primary_traffic_percent: 90,
+        primary_switch_threshold_percent: 3,
         smart: {
           cost_ratio_percent: 40,
           first_token_percent: 40,
@@ -255,9 +253,11 @@ const policyDialogHasCompletePolicyControls = [
   '绝对容差',
   '基线学习周期',
   '智能调度指标占比',
-  '得分曲线指数',
-  '相对权重拉伸',
+  '主渠道切换分差',
 ].every((label) => policyDialogText.includes(label))
+const policyDialogHasNoLegacyWeightControls =
+  !policyDialogText.includes('得分曲线指数') &&
+  !policyDialogText.includes('相对权重拉伸')
 const fastFailureInput = policyDialog.querySelector(
   'input[name="fastFailureSeconds"]'
 )
@@ -296,6 +296,7 @@ process.stdout.write(
     policyDialogExplainsExplicitScope,
     policyDialogHasGroupSettingHelp,
     policyDialogHasCompletePolicyControls,
+    policyDialogHasNoLegacyWeightControls,
     policyDialogStabilityInputsAligned,
     scheduleHasExplicitPolicyScope,
     scheduleHasNoImplicitPolicyControls,

@@ -50,12 +50,15 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
-  MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS,
-  MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS,
+  MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
+  MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
   MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
+  MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
+  MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
+  MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
 import {
@@ -79,8 +82,6 @@ function GroupPolicyPercentField(props: {
   form: UseFormReturn<ChannelMonitorSmartSchedulePolicyFormValues>
   name:
     | 'scoring.stabilityPercent'
-    | 'scoring.relativeWeightStartPercent'
-    | 'scoring.relativeWeightFullPercent'
     | 'degradeStabilityScore'
     | 'recoveryStabilityScore'
     | 'fastFailurePenaltyPercent'
@@ -198,10 +199,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
   const sampleMode = useWatch({
     control: props.form.control,
     name: 'sampleMode',
-  })
-  const relativeWeightEnabled = useWatch({
-    control: props.form.control,
-    name: 'scoring.relativeWeightEnabled',
   })
   const selectedModels = useWatch({
     control: props.form.control,
@@ -807,7 +804,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   />
                   <FormField
                     control={props.form.control}
-                    name='jitterAbsoluteToleranceMs'
+                    name='jitterAbsoluteToleranceSeconds'
                     render={({ field }) => (
                       <FormItem>
                         <ChannelMonitorSettingLabel
@@ -820,10 +817,10 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                               type='number'
                               min={0}
                               max={
-                                MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS
+                                MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS
                               }
-                              step={1}
-                              inputMode='numeric'
+                              step={0.1}
+                              inputMode='decimal'
                               value={field.value}
                               onBlur={field.onBlur}
                               onChange={field.onChange}
@@ -831,11 +828,11 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                               ref={field.ref}
                               aria-invalid={Boolean(
                                 props.form.formState.errors
-                                  .jitterAbsoluteToleranceMs
+                                  .jitterAbsoluteToleranceSeconds
                               )}
                             />
                             <InputGroupAddon align='inline-end'>
-                              ms
+                              秒
                             </InputGroupAddon>
                           </InputGroup>
                         </FormControl>
@@ -848,7 +845,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   />
                   <FormField
                     control={props.form.control}
-                    name='jitterBaselineHours'
+                    name='jitterBaselineMinutes'
                     render={({ field }) => (
                       <FormItem>
                         <ChannelMonitorSettingLabel
@@ -860,7 +857,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                             <InputGroupInput
                               type='number'
                               min={1}
-                              max={MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS}
+                              max={MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES}
                               step={1}
                               inputMode='numeric'
                               value={field.value}
@@ -869,11 +866,12 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                               name={field.name}
                               ref={field.ref}
                               aria-invalid={Boolean(
-                                props.form.formState.errors.jitterBaselineHours
+                                props.form.formState.errors
+                                  .jitterBaselineMinutes
                               )}
                             />
                             <InputGroupAddon align='inline-end'>
-                              小时
+                              分钟
                             </InputGroupAddon>
                           </InputGroup>
                         </FormControl>
@@ -896,9 +894,9 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
 
       <div className='flex flex-col gap-4'>
         <div>
-          <h3 className='text-sm font-medium'>评分与权重</h3>
+          <h3 className='text-sm font-medium'>评分与流量</h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            当前分组的评分参数和权重配置
+            当前分组的评分参数、主渠道流量和切换规则
           </p>
         </div>
 
@@ -917,22 +915,62 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
           />
         )}
 
-        <div className='grid gap-4 sm:grid-cols-2'>
+        <div className='grid items-start gap-4 sm:grid-cols-2'>
+          {applyMode === 'weight' ? (
+            <FormField
+              control={props.form.control}
+              name='scoring.primaryTrafficPercent'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='主渠道目标流量'
+                    helpKey='primaryTraffic'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT}
+                        max={MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT}
+                        step={0.1}
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.scoring
+                            ?.primaryTrafficPercent
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    仅调整权重时，最高分渠道的目标流量占比
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : null}
+
           <FormField
             control={props.form.control}
-            name='scoring.curveExponent'
+            name='scoring.primarySwitchThresholdPercent'
             render={({ field }) => (
               <FormItem>
                 <ChannelMonitorSettingLabel
-                  label='得分曲线指数'
-                  helpKey='curveExponent'
+                  label='主渠道切换分差'
+                  helpKey='primarySwitchThreshold'
                 />
                 <FormControl>
                   <InputGroup>
                     <InputGroupInput
                       type='number'
-                      min={0.1}
-                      max={5}
+                      min={0}
+                      max={MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT}
                       step={0.1}
                       inputMode='decimal'
                       value={field.value}
@@ -941,57 +979,21 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       name={field.name}
                       ref={field.ref}
                       aria-invalid={Boolean(
-                        props.form.formState.errors.scoring?.curveExponent
+                        props.form.formState.errors.scoring
+                          ?.primarySwitchThresholdPercent
                       )}
                     />
+                    <InputGroupAddon align='inline-end'>%</InputGroupAddon>
                   </InputGroup>
                 </FormControl>
-                <FormDescription>大于 1 会进一步拉开权重</FormDescription>
+                <FormDescription>
+                  新渠道至少领先当前主渠道这些百分点才切换
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
-
-          <FormField
-            control={props.form.control}
-            name='scoring.relativeWeightEnabled'
-            render={({ field }) => (
-              <FormItem className='flex items-center justify-between gap-4'>
-                <div className='flex flex-col gap-1'>
-                  <ChannelMonitorSettingLabel
-                    label='相对权重拉伸'
-                    helpKey='relativeWeight'
-                  />
-                  <FormDescription>按组内分差渐进拉开流量</FormDescription>
-                </div>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                    aria-label='分组相对权重拉伸'
-                  />
-                </FormControl>
-              </FormItem>
-            )}
-          />
         </div>
-
-        {relativeWeightEnabled && (
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <GroupPolicyPercentField
-              form={props.form}
-              name='scoring.relativeWeightStartPercent'
-              label='开始拉伸分差'
-              helpKey='relativeWeightStart'
-            />
-            <GroupPolicyPercentField
-              form={props.form}
-              name='scoring.relativeWeightFullPercent'
-              label='完整拉伸分差'
-              helpKey='relativeWeightFull'
-            />
-          </div>
-        )}
       </div>
     </div>
   )

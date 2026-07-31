@@ -18,10 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   ArrowDown01Icon,
+  Cancel01Icon,
   HistoryIcon,
+  PinIcon,
   Refresh01Icon,
   Route01Icon,
   Settings02Icon,
+  TestTubeIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -44,11 +47,21 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
@@ -58,12 +71,14 @@ import { cn } from '@/lib/utils'
 
 import {
   runChannelMonitorSmartSchedule,
+  updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
 import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-model-order'
+import { createChannelMonitorSmartSchedulePrimaryFormState } from '../lib/smart-schedule-primary'
 import {
   channelMonitorSmartScheduleRouteKey,
   channelMonitorSmartScheduleRouteParticipates,
@@ -86,8 +101,14 @@ import type {
   ChannelMonitorSmartScheduleRouteResult,
 } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
+import { ChannelMonitorSmartScheduleModelTestDialog } from './channel-monitor-smart-schedule-model-test-dialog'
 import { ChannelMonitorSmartSchedulePoolLayout } from './channel-monitor-smart-schedule-pool-layout'
+import {
+  ChannelMonitorSmartSchedulePrimaryControls,
+  ChannelMonitorSmartSchedulePrimaryStabilityField,
+} from './channel-monitor-smart-schedule-primary-controls'
 import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
+import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
 
 type ChannelMonitorSmartScheduleBoardProps = {
   active: boolean
@@ -119,6 +140,8 @@ type RouteRowProps = {
     checked: boolean
   ) => void
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
 }
 
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
@@ -142,7 +165,9 @@ function formatEstimatedShare(
   if (placement?.estimatedShare != null) {
     return `${(placement.estimatedShare * 100).toFixed(1)}%`
   }
-  if (placement?.role === 'standby') return '0%'
+  if (placement?.role === 'first_backup' || placement?.role === 'standby') {
+    return '0%'
+  }
   return '-'
 }
 
@@ -191,9 +216,12 @@ function ScheduleRouteStatus(props: {
     return <Badge variant='destructive'>调度失败</Badge>
   }
   if (status === 'exploring') return <Badge variant='warning'>探索采样</Badge>
-  if (status === 'primary') return <Badge>主候选</Badge>
-  if (status === 'candidate') return <Badge variant='secondary'>候选</Badge>
-  if (status === 'standby') return <Badge variant='outline'>备用</Badge>
+  if (status === 'primary') return <Badge>主渠道</Badge>
+  if (status === 'candidate') return <Badge variant='secondary'>同层候选</Badge>
+  if (status === 'first_backup') {
+    return <Badge variant='outline'>第一备用</Badge>
+  }
+  if (status === 'standby') return <Badge variant='outline'>后续备用</Badge>
   if (status === 'excluded') return <Badge variant='outline'>未参与</Badge>
   return <Badge variant='destructive'>不可调度</Badge>
 }
@@ -209,9 +237,7 @@ function ScheduleRouteRow(props: RouteRowProps) {
       )}
     >
       <div className='min-w-0'>
-        <div className='truncate font-medium'>
-          {props.route.channel_name}
-        </div>
+        <div className='truncate font-medium'>{props.route.channel_name}</div>
         <div className='text-muted-foreground mt-0.5 flex min-w-0 items-center gap-2 text-xs'>
           <span className='shrink-0'>ID {props.route.channel_id}</span>
           <span aria-hidden='true'>·</span>
@@ -221,7 +247,7 @@ function ScheduleRouteRow(props: RouteRowProps) {
         </div>
       </div>
 
-      <div className='flex items-center gap-3 sm:justify-end'>
+      <div className='flex flex-wrap items-center gap-3 sm:justify-end'>
         <ScheduleRouteStatus
           route={props.route}
           placement={props.placement}
@@ -239,12 +265,26 @@ function ScheduleRouteRow(props: RouteRowProps) {
           />
           <span className='text-muted-foreground text-xs'>参与</span>
         </div>
+        <ChannelMonitorSmartSchedulePrimaryControls
+          route={props.route}
+          disabled={props.updateDisabled}
+          onEdit={props.onSetPrimary}
+          onClear={props.onClearPrimary}
+        />
       </div>
 
-      <div className='border-border/70 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-2 sm:col-span-2 sm:grid-cols-4'>
+      <div className='border-border/70 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-2 sm:col-span-2 sm:grid-cols-5'>
         <RouteMetric
           label='成本倍率'
           value={formatMonitorRatio(props.channel?.cost_ratio)}
+        />
+        <RouteMetric
+          label='最终得分'
+          value={
+            props.route.state.last_schedule_score == null
+              ? '-'
+              : `${(props.route.state.last_schedule_score * 100).toFixed(1)}%`
+          }
         />
         <RouteMetric label='优先级' value={`P${props.route.priority}`} />
         <RouteMetric label='权重' value={`W${props.route.weight}`} />
@@ -253,6 +293,11 @@ function ScheduleRouteRow(props: RouteRowProps) {
           value={formatEstimatedShare(props.placement)}
         />
       </div>
+      <ChannelMonitorSmartScheduleScoreDetails
+        details={props.route.state.last_schedule_score_details}
+        className='sm:col-span-2'
+        snapshotLabel='最近一次调度快照'
+      />
       {props.route.state.probe_last_time > 0 ? (
         <div className='border-border/70 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-xs sm:col-span-2'>
           <Badge
@@ -292,6 +337,9 @@ function SchedulePoolCard(props: {
     checked: boolean
   ) => void
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onModelTest: () => void
 }) {
   const primaryRoutes: ChannelMonitorSmartScheduleRoute[] = []
   const foldedRoutes: ChannelMonitorSmartScheduleRoute[] = []
@@ -303,6 +351,7 @@ function SchedulePoolCard(props: {
       props.placements.get(key)
     )
     if (
+      displayStatus === 'first_backup' ||
       displayStatus === 'standby' ||
       displayStatus === 'unavailable' ||
       displayStatus === 'excluded'
@@ -337,12 +386,18 @@ function SchedulePoolCard(props: {
       props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
       'standby'
   ).length
+  const firstBackupCount = foldedRoutes.filter(
+    (route) =>
+      props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
+      'first_backup'
+  ).length
   const unavailableCount = foldedRoutes.filter(
     (route) =>
       props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
       'unavailable'
   ).length
-  const excludedCount = foldedRoutes.length - standbyCount - unavailableCount
+  const excludedCount =
+    foldedRoutes.length - firstBackupCount - standbyCount - unavailableCount
   const finalPrimaryGridRowStartsAt =
     primaryRoutes.length - (primaryRoutes.length % 2 === 0 ? 2 : 1)
 
@@ -362,6 +417,8 @@ function SchedulePoolCard(props: {
         updateDisabled={props.updateDisabled}
         onParticipationChange={props.onParticipationChange}
         onClearProtection={props.onClearProtection}
+        onSetPrimary={props.onSetPrimary}
+        onClearPrimary={props.onClearPrimary}
       />
     )
   }
@@ -383,12 +440,22 @@ function SchedulePoolCard(props: {
             <span>
               {props.pool.summary.topPriority == null
                 ? '无候选层'
-                : `候选层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
+                : `流入层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
             </span>
             <span>{formatSampleMode(props.policy)}</span>
           </CardDescription>
         </div>
-        <CardAction>
+        <CardAction className='flex items-center gap-2'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            onClick={props.onModelTest}
+            aria-label={`测试 ${props.pool.summary.group} ${props.pool.summary.model} 调度池模型`}
+            title='模型测试'
+          >
+            <HugeiconsIcon icon={TestTubeIcon} />
+          </Button>
           <Badge variant={getPoolStatusVariant(status)}>{status}</Badge>
         </CardAction>
       </CardHeader>
@@ -398,7 +465,7 @@ function SchedulePoolCard(props: {
           <div className='border-b px-4 py-3'>
             <div className='mb-2 flex items-center justify-between gap-3 text-xs'>
               <span className='font-medium'>预计流量分布</span>
-              <span className='text-muted-foreground'>当前候选层</span>
+              <span className='text-muted-foreground'>当前流入层</span>
             </div>
             <div className='flex flex-col gap-2'>
               {visibleTrafficRoutes.map((item) => {
@@ -477,8 +544,8 @@ function SchedulePoolCard(props: {
               <span>
                 备用与未参与路由
                 <span className='text-muted-foreground ml-2 text-xs'>
-                  备用 {standbyCount} · 不可调度 {unavailableCount} · 未参与{' '}
-                  {excludedCount}
+                  第一备用 {firstBackupCount} · 后续备用 {standbyCount} ·
+                  不可调度 {unavailableCount} · 未参与 {excludedCount}
                 </span>
               </span>
               <HugeiconsIcon
@@ -506,6 +573,15 @@ export function ChannelMonitorSmartScheduleBoard(
   const [selectedGroup, setSelectedGroup] = useState('')
   const [clearTarget, setClearTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
+  const [primaryTarget, setPrimaryTarget] =
+    useState<ChannelMonitorSmartScheduleRoute | null>(null)
+  const [modelTestTarget, setModelTestTarget] = useState<{
+    group: string
+    model: string
+  } | null>(null)
+  const [primaryDuration, setPrimaryDuration] = useState('60')
+  const [allowPrimaryStabilityDegrade, setAllowPrimaryStabilityDegrade] =
+    useState(true)
   const routes = useMemo(
     () =>
       filterChannelMonitorSmartScheduleRoutes(
@@ -645,6 +721,27 @@ export function ChannelMonitorSmartScheduleBoard(
     onError: handleChannelMonitorMutationError,
     onSuccess: () => toast.success('路由调度设置已保存'),
     onSettled: invalidateSchedule,
+  })
+  const primaryMutation = useMutation({
+    mutationFn: updateChannelMonitorSmartScheduleRoutePrimary,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: (response) => {
+      toast.success(
+        response.data.duration_minutes > 0
+          ? `主渠道已固定 ${response.data.duration_minutes} 分钟`
+          : '已解除主渠道固定'
+      )
+      setPrimaryTarget(null)
+    },
+    onSettled: () => {
+      invalidateSchedule()
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor-smart-schedule-executions'],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor-task-history'],
+      })
+    },
   })
   const runMutation = useMutation({
     mutationFn: runChannelMonitorSmartSchedule,
@@ -946,7 +1043,9 @@ export function ChannelMonitorSmartScheduleBoard(
                 channelsById={channelsById}
                 placements={placements}
                 updateRouteKey={updateRouteKey}
-                updateDisabled={updateMutation.isPending}
+                updateDisabled={
+                  updateMutation.isPending || primaryMutation.isPending
+                }
                 onParticipationChange={(route, checked) =>
                   updateMutation.mutate({
                     channelId: route.channel_id,
@@ -956,6 +1055,33 @@ export function ChannelMonitorSmartScheduleBoard(
                   })
                 }
                 onClearProtection={setClearTarget}
+                onSetPrimary={(route) => {
+                  const formState =
+                    createChannelMonitorSmartSchedulePrimaryFormState(
+                      route,
+                      Date.now() / 1000
+                    )
+                  setPrimaryDuration(formState.durationMinutes)
+                  setAllowPrimaryStabilityDegrade(
+                    formState.allowStabilityDegrade
+                  )
+                  setPrimaryTarget(route)
+                }}
+                onClearPrimary={(route) =>
+                  primaryMutation.mutate({
+                    channelId: route.channel_id,
+                    group: route.group,
+                    model: route.model,
+                    durationMinutes: 0,
+                    allowStabilityDegrade: false,
+                  })
+                }
+                onModelTest={() =>
+                  setModelTestTarget({
+                    group: pool.summary.group,
+                    model: pool.summary.model,
+                  })
+                }
               />
             ))}
           </ChannelMonitorSmartSchedulePoolLayout>
@@ -968,6 +1094,96 @@ export function ChannelMonitorSmartScheduleBoard(
           if (!open) setClearTarget(null)
         }}
       />
+      {modelTestTarget ? (
+        <ChannelMonitorSmartScheduleModelTestDialog
+          open
+          group={modelTestTarget.group}
+          model={modelTestTarget.model}
+          onOpenChange={(open) => {
+            if (!open) setModelTestTarget(null)
+          }}
+        />
+      ) : null}
+      {primaryTarget ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPrimaryTarget(null)
+          }}
+        >
+          <DialogContent className='sm:max-w-md'>
+            <DialogHeader>
+              <DialogTitle>
+                {primaryTarget.state.manual_primary_until > 0
+                  ? '重新设置固定时长'
+                  : '固定主渠道'}
+              </DialogTitle>
+              <DialogDescription>
+                {primaryTarget.channel_name}{' '}
+                将在当前分组和模型中优先承接请求。固定期间仍会继续采集和计算评分；渠道禁用或退出参与仍会立即停止该路由接收请求。
+                {primaryTarget.state.manual_primary_until > 0
+                  ? ` 当前固定至 ${formatTimestampToDate(primaryTarget.state.manual_primary_until)}。`
+                  : null}
+              </DialogDescription>
+            </DialogHeader>
+            <FieldGroup className='gap-3'>
+              <Field>
+                <FieldLabel htmlFor='channel-monitor-manual-primary-duration'>
+                  固定时长
+                </FieldLabel>
+                <div className='flex items-center gap-2'>
+                  <Input
+                    id='channel-monitor-manual-primary-duration'
+                    type='number'
+                    min={1}
+                    max={525600}
+                    value={primaryDuration}
+                    onChange={(event) => setPrimaryDuration(event.target.value)}
+                    aria-label='固定时长（分钟）'
+                  />
+                  <span className='text-muted-foreground text-sm'>分钟</span>
+                </div>
+              </Field>
+              <ChannelMonitorSmartSchedulePrimaryStabilityField
+                checked={allowPrimaryStabilityDegrade}
+                onCheckedChange={setAllowPrimaryStabilityDegrade}
+              />
+            </FieldGroup>
+            <DialogFooter>
+              <Button variant='outline' onClick={() => setPrimaryTarget(null)}>
+                <HugeiconsIcon icon={Cancel01Icon} data-icon='inline-start' />
+                取消
+              </Button>
+              <Button
+                disabled={
+                  primaryMutation.isPending ||
+                  !Number.isInteger(Number(primaryDuration)) ||
+                  Number(primaryDuration) < 1 ||
+                  Number(primaryDuration) > 525600
+                }
+                onClick={() =>
+                  primaryMutation.mutate({
+                    channelId: primaryTarget.channel_id,
+                    group: primaryTarget.group,
+                    model: primaryTarget.model,
+                    durationMinutes: Number(primaryDuration),
+                    allowStabilityDegrade: allowPrimaryStabilityDegrade,
+                  })
+                }
+              >
+                {primaryMutation.isPending ? (
+                  <Spinner data-icon='inline-start' />
+                ) : (
+                  <HugeiconsIcon icon={PinIcon} data-icon='inline-start' />
+                )}
+                {primaryTarget.state.manual_primary_until > 0
+                  ? '更新固定时长'
+                  : '固定主渠道'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   )
 }

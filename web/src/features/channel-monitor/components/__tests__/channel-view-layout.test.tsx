@@ -162,6 +162,8 @@ function createSmartScheduleRoute(): ChannelMonitorSmartScheduleRoute {
       exploration_since: 0,
       exploration_saved_priority: 0,
       exploration_saved_weight: 0,
+      manual_primary_until: 0,
+      manual_primary_allow_stability_degrade: false,
       probe_window_start: 0,
       probe_last_time: 0,
       probe_last_success: false,

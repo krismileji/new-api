@@ -21,12 +21,23 @@ import (
 const channelMonitorSmartScheduleProbeTaskType = "channel_smart_schedule_probe"
 
 type channelSmartScheduleProbeTestOptions struct {
-	Group string
+	Group          string
+	ScheduledProbe bool
 }
 
 type channelSmartScheduleProbeTestContextKey struct{}
 
 func withChannelSmartScheduleProbeTestContext(ctx context.Context, group string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, channelSmartScheduleProbeTestContextKey{}, channelSmartScheduleProbeTestOptions{
+		Group:          group,
+		ScheduledProbe: true,
+	})
+}
+
+func withChannelSmartScheduleModelTestContext(ctx context.Context, group string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -51,7 +62,7 @@ func isChannelSmartScheduleProbeTest(ctx context.Context) bool {
 		return false
 	}
 	options, ok := ctx.Value(channelSmartScheduleProbeTestContextKey{}).(channelSmartScheduleProbeTestOptions)
-	return ok && options.Group != ""
+	return ok && options.Group != "" && options.ScheduledProbe
 }
 
 type channelSmartScheduleProbeTaskHandler struct{}
@@ -371,6 +382,7 @@ func runChannelSmartScheduleProbeOnce(
 		}
 		_, saveErr := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
 			ChannelId: item.route.ChannelId, Group: item.route.Group, Model: item.route.Model,
+			Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
 			WindowStart: windowStart, Time: probeTime, Success: succeeded, Error: message,
 			DurationMs:   &probeDurationMs,
 			FirstTokenMs: probeResult.firstResponseMilliseconds,
@@ -510,8 +522,12 @@ func channelSmartScheduleMergeProbePerformance(
 	performance *channelSmartSchedulePerformance,
 	state model.ChannelSmartScheduleRouteState,
 	windowStart int64,
+	sources ...string,
 ) *channelSmartSchedulePerformance {
 	metrics := state.ProbeMetricsSince(windowStart)
+	if len(sources) == 1 && sources[0] == model.ChannelSmartScheduleSampleSourceManualTest {
+		metrics = state.ManualTestMetricsSince(windowStart)
+	}
 	if metrics.SampleCount <= 0 {
 		return performance
 	}

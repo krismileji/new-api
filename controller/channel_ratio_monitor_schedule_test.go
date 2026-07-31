@@ -35,34 +35,34 @@ func channelSmartScheduleTestGroupPolicy(
 	slowFailureSeconds := 10.0
 	jitterEnabled := true
 	jitterTolerancePercent := 5.0
-	jitterThresholdMultiplier := 3.0
-	jitterAbsoluteToleranceMs := 1000
-	jitterBaselineHours := 24
+	jitterThresholdMultiplier := 5.0
+	jitterAbsoluteToleranceSeconds := 10.0
+	jitterBaselineMinutes := 60
 	if models == nil {
 		models = []string{}
 	}
 	return channelSmartScheduleGroupPolicy{
-		Group:                     group,
-		Strategy:                  &strategy,
-		StabilityEnabled:          &stabilityEnabled,
-		Scoring:                   &scoring,
-		ApplyMode:                 &applyMode,
-		Models:                    &models,
-		MinSamples:                &minSamples,
-		DegradeStabilityScore:     &degradeStabilityScore,
-		RecoveryStabilityScore:    &recoveryStabilityScore,
-		FastFailurePenaltyPercent: &fastFailurePenaltyPercent,
-		FastFailureSeconds:        &fastFailureSeconds,
-		SlowFailureSeconds:        &slowFailureSeconds,
-		JitterEnabled:             &jitterEnabled,
-		JitterTolerancePercent:    &jitterTolerancePercent,
-		JitterThresholdMultiplier: &jitterThresholdMultiplier,
-		JitterAbsoluteToleranceMs: &jitterAbsoluteToleranceMs,
-		JitterBaselineHours:       &jitterBaselineHours,
-		CooldownMinutes:           &cooldownMinutes,
-		SampleMode:                &sampleMode,
-		ExplorationTrafficPercent: &explorationTrafficPercent,
-		ProbeIntervalMinutes:      &probeIntervalMinutes,
+		Group:                          group,
+		Strategy:                       &strategy,
+		StabilityEnabled:               &stabilityEnabled,
+		Scoring:                        &scoring,
+		ApplyMode:                      &applyMode,
+		Models:                         &models,
+		MinSamples:                     &minSamples,
+		DegradeStabilityScore:          &degradeStabilityScore,
+		RecoveryStabilityScore:         &recoveryStabilityScore,
+		FastFailurePenaltyPercent:      &fastFailurePenaltyPercent,
+		FastFailureSeconds:             &fastFailureSeconds,
+		SlowFailureSeconds:             &slowFailureSeconds,
+		JitterEnabled:                  &jitterEnabled,
+		JitterTolerancePercent:         &jitterTolerancePercent,
+		JitterThresholdMultiplier:      &jitterThresholdMultiplier,
+		JitterAbsoluteToleranceSeconds: &jitterAbsoluteToleranceSeconds,
+		JitterBaselineMinutes:          &jitterBaselineMinutes,
+		CooldownMinutes:                &cooldownMinutes,
+		SampleMode:                     &sampleMode,
+		ExplorationTrafficPercent:      &explorationTrafficPercent,
+		ProbeIntervalMinutes:           &probeIntervalMinutes,
 	}
 }
 
@@ -127,8 +127,8 @@ func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.
 		priority int64
 		weight   uint
 	}{
-		11: {priority: 80, weight: 100},
-		12: {priority: 80, weight: 10},
+		11: {priority: 80, weight: 900},
+		12: {priority: 80, weight: 100},
 		13: {priority: 80, weight: 10},
 		14: {priority: 100, weight: 90},
 	}
@@ -510,11 +510,11 @@ func TestChannelSmartScheduleStabilityScoreFullyPenalizesFinalFailure(t *testing
 
 func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:          true,
-		JitterEnabled:             true,
-		JitterTolerancePercent:    5,
-		JitterThresholdMultiplier: 3,
-		JitterAbsoluteToleranceMs: 1000,
+		StabilityEnabled:               true,
+		JitterEnabled:                  true,
+		JitterTolerancePercent:         5,
+		JitterThresholdMultiplier:      3,
+		JitterAbsoluteToleranceSeconds: 1,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
 		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 99, TotalMs: 29700},
@@ -531,11 +531,11 @@ func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) 
 
 func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:          true,
-		JitterEnabled:             true,
-		JitterTolerancePercent:    5,
-		JitterThresholdMultiplier: 3,
-		JitterAbsoluteToleranceMs: 1000,
+		StabilityEnabled:               true,
+		JitterEnabled:                  true,
+		JitterTolerancePercent:         5,
+		JitterThresholdMultiplier:      3,
+		JitterAbsoluteToleranceSeconds: 1,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
 		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 80, TotalMs: 24000},
@@ -553,14 +553,14 @@ func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T
 
 func TestChannelSmartScheduleJitterRequiresDistributionSamples(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:          true,
-		JitterEnabled:             true,
-		JitterTolerancePercent:    0,
-		JitterThresholdMultiplier: 3,
-		JitterAbsoluteToleranceMs: 1000,
-		RecoveryStabilityScore:    80,
-		JitterBaselineHours:       24,
-		MinSamples:                5,
+		StabilityEnabled:               true,
+		JitterEnabled:                  true,
+		JitterTolerancePercent:         0,
+		JitterThresholdMultiplier:      3,
+		JitterAbsoluteToleranceSeconds: 1,
+		RecoveryStabilityScore:         80,
+		JitterBaselineMinutes:          1440,
+		MinSamples:                     5,
 	}
 	p50 := 10_000.0
 	stability := 1.0
@@ -587,11 +587,11 @@ func TestChannelSmartScheduleJitterRequiresDistributionSamples(t *testing.T) {
 
 func TestChannelSmartScheduleJitterBaselineLearnsGradually(t *testing.T) {
 	current := 300.0
-	learned, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 3700, 24)
+	learned, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 3700, 1440)
 
 	assert.True(t, changed)
 	assert.InDelta(t, 325, learned, 1e-9)
-	capped, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 86500, 24)
+	capped, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 86500, 1440)
 	assert.True(t, changed)
 	assert.InDelta(t, 330, capped, 1e-9)
 }
@@ -615,16 +615,16 @@ func TestPlanChannelSmartScheduleWeightOnlyKeepsPriorityCohorts(t *testing.T) {
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, int64(0), items[1].TargetPriority)
-	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
 	assert.Equal(t, int64(0), items[2].TargetPriority)
-	assert.Equal(t, uint(10), items[2].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 	assert.Equal(t, int64(10), items[3].TargetPriority)
-	assert.Equal(t, uint(10), items[3].TargetWeight)
+	assert.Equal(t, uint(100), items[3].TargetWeight)
 	assert.Equal(t, int64(10), items[4].TargetPriority)
-	assert.Equal(t, uint(100), items[4].TargetWeight)
+	assert.Equal(t, uint(900), items[4].TargetWeight)
 }
 
-func TestPlanChannelSmartSchedulePriorityWeightUsesQualityTiersAndDamping(t *testing.T) {
+func TestPlanChannelSmartSchedulePriorityWeightUsesPrimaryAndFallbackRanks(t *testing.T) {
 	ratioOne := 1.0
 	ratioTwo := 2.0
 	ratioThree := 3.0
@@ -640,29 +640,35 @@ func TestPlanChannelSmartSchedulePriorityWeightUsesQualityTiersAndDamping(t *tes
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, int64(100), items[1].TargetPriority)
-	assert.Equal(t, uint(80), items[1].TargetWeight)
+	assert.Equal(t, uint(1000), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(50), items[2].TargetWeight)
+	assert.Equal(t, uint(1000), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
-	assert.Equal(t, uint(20), items[3].TargetWeight)
+	assert.Equal(t, uint(1000), items[3].TargetWeight)
 }
 
-func TestPlanChannelSmartSchedulePriorityWeightKeepsEqualScoresInSameTier(t *testing.T) {
+func TestPlanChannelSmartSchedulePriorityWeightTiesRetainCurrentThenUseChannelId(t *testing.T) {
 	ratio := 1.0
 	plan := planChannelSmartSchedule([]channelSmartScheduleCandidate{
-		{ChannelId: 3, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
+		{ChannelId: 3, CurrentPriority: 100, CurrentWeight: 50, Ratio: &ratio},
 		{ChannelId: 1, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
 		{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 50, Ratio: &ratio},
 	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyPriorityWeight, 5, false)
 
 	require.Len(t, plan.Items, 3)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
 	for _, item := range plan.Items {
-		assert.Equal(t, int64(100), item.TargetPriority)
-		assert.Equal(t, uint(80), item.TargetWeight)
+		items[item.ChannelId] = item
 	}
+	assert.Equal(t, int64(100), items[3].TargetPriority)
+	assert.Equal(t, int64(90), items[1].TargetPriority)
+	assert.Equal(t, int64(80), items[2].TargetPriority)
+	assert.Equal(t, uint(1000), items[1].TargetWeight)
+	assert.Equal(t, uint(1000), items[2].TargetWeight)
+	assert.Equal(t, uint(1000), items[3].TargetWeight)
 }
 
-func TestPlanChannelSmartScheduleUsesLinearScoreCurveByDefault(t *testing.T) {
+func TestPlanChannelSmartScheduleAssignsConfiguredPrimaryTraffic(t *testing.T) {
 	ratioLow := 1.0
 	ratioMiddle := 2.0
 	ratioHigh := 3.0
@@ -715,9 +721,9 @@ func TestPlanChannelSmartScheduleUsesLinearScoreCurveByDefault(t *testing.T) {
 			for _, item := range plan.Items {
 				items[item.ChannelId] = item
 			}
-			assert.Equal(t, uint(40), items[1].TargetWeight)
-			assert.Equal(t, uint(40), items[2].TargetWeight)
-			assert.Equal(t, uint(10), items[3].TargetWeight)
+			assert.Equal(t, uint(900), items[1].TargetWeight)
+			assert.Equal(t, uint(98), items[2].TargetWeight)
+			assert.Equal(t, uint(2), items[3].TargetWeight)
 			assert.InDelta(t, 0.5, items[2].Score, 1e-9)
 		})
 	}
@@ -731,7 +737,6 @@ func TestPlanChannelSmartScheduleRatioBalancesPerformanceGuardrails(t *testing.T
 	tpsSlow := 10.0
 	tpsFast := 30.0
 	scoring := defaultChannelSmartScheduleScoring()
-	scoring.RelativeWeightEnabled = false
 	plan := planChannelSmartScheduleWithScoring([]channelSmartScheduleCandidate{
 		{
 			ChannelId:             1,
@@ -762,8 +767,8 @@ func TestPlanChannelSmartScheduleRatioBalancesPerformanceGuardrails(t *testing.T
 	}
 	assert.InDelta(t, 0.7, items[1].Score, 1e-9)
 	assert.InDelta(t, 0.3, items[2].Score, 1e-9)
-	assert.Equal(t, uint(40), items[1].TargetWeight)
-	assert.Equal(t, uint(35), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 }
 
 func TestPlanChannelSmartScheduleUsesConfiguredStrategyPercentages(t *testing.T) {
@@ -786,7 +791,6 @@ func TestPlanChannelSmartScheduleUsesConfiguredStrategyPercentages(t *testing.T)
 		},
 	}
 	scoring := defaultChannelSmartScheduleScoring()
-	scoring.RelativeWeightEnabled = false
 	scoring.Smart = channelSmartScheduleMetricPercentages{
 		CostRatioPercent: 60, FirstTokenPercent: 20, TPSPercent: 20,
 	}
@@ -810,8 +814,8 @@ func TestPlanChannelSmartScheduleUsesConfiguredStrategyPercentages(t *testing.T)
 	}
 	assert.InDelta(t, 0.6, items[1].Score, 1e-9)
 	assert.InDelta(t, 0.4, items[2].Score, 1e-9)
-	assert.Equal(t, uint(65), items[1].TargetWeight)
-	assert.Equal(t, uint(45), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 
 	plan = planChannelSmartScheduleWithScoring(
 		candidates,
@@ -829,8 +833,8 @@ func TestPlanChannelSmartScheduleUsesConfiguredStrategyPercentages(t *testing.T)
 	}
 	assert.InDelta(t, 0.2, items[1].Score, 1e-9)
 	assert.InDelta(t, 0.8, items[2].Score, 1e-9)
-	assert.Equal(t, uint(30), items[1].TargetWeight)
-	assert.Equal(t, uint(80), items[2].TargetWeight)
+	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(900), items[2].TargetWeight)
 }
 
 func TestPlanChannelSmartScheduleDoesNotRequireZeroPercentMetrics(t *testing.T) {
@@ -924,8 +928,8 @@ func TestPlanChannelSmartScheduleRatioIgnoresInsufficientPerformanceSamples(t *t
 	}
 	assert.InDelta(t, 1, items[1].Score, 1e-9)
 	assert.InDelta(t, 0, items[2].Score, 1e-9)
-	assert.Equal(t, uint(40), items[1].TargetWeight)
-	assert.Equal(t, uint(10), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 }
 
 func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
@@ -966,7 +970,6 @@ func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T
 	stabilityLower := 0.80
 	stabilityHigher := 1.0
 	scoring := defaultChannelSmartScheduleScoring()
-	scoring.RelativeWeightEnabled = false
 	plan := planChannelSmartScheduleWithScoring([]channelSmartScheduleCandidate{
 		{
 			ChannelId: 1, Ratio: &ratioLow,
@@ -987,8 +990,8 @@ func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, uint(80), items[1].TargetWeight)
-	assert.Equal(t, uint(30), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 
 	plan = planChannelSmartScheduleWithScoring([]channelSmartScheduleCandidate{
 		{
@@ -1009,8 +1012,8 @@ func TestPlanChannelSmartScheduleSmartUsesStabilityScoreWhenEnabled(t *testing.T
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, uint(80), items[1].TargetWeight)
-	assert.Equal(t, uint(65), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 }
 
 func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testing.T) {
@@ -1018,7 +1021,6 @@ func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testi
 	stableRate := 0.99
 	unstableRate := 0.80
 	scoring := defaultChannelSmartScheduleScoring()
-	scoring.RelativeWeightEnabled = false
 	plan := planChannelSmartScheduleWithScoring([]channelSmartScheduleCandidate{
 		{ChannelId: 1, Ratio: &ratio, Stability: &stableRate, StabilitySampleCount: 100, StabilityAvailable: true},
 		{ChannelId: 2, Ratio: &ratio, Stability: &unstableRate, StabilitySampleCount: 100, StabilityAvailable: true},
@@ -1031,8 +1033,8 @@ func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testi
 	}
 	assert.InDelta(t, 0.995, items[1].Score, 1e-9)
 	assert.InDelta(t, 0.9, items[2].Score, 1e-9)
-	assert.Equal(t, uint(100), items[1].TargetWeight)
-	assert.Equal(t, uint(90), items[2].TargetWeight)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 
 	plan = planChannelSmartScheduleWithScoring([]channelSmartScheduleCandidate{
 		{ChannelId: 3, Ratio: &ratio},
@@ -1050,73 +1052,372 @@ func TestPlanChannelSmartScheduleUsesSelectedStrategyWithStabilityScore(t *testi
 	assert.Empty(t, plan.Skipped)
 }
 
-func TestPlanChannelSmartScheduleRelativeWeightStretching(t *testing.T) {
-	tests := []struct {
-		name             string
-		enabled          bool
-		startPercent     float64
-		fullPercent      float64
-		lowerScore       float64
-		higherScore      float64
-		wantLowerWeight  uint
-		wantHigherWeight uint
-	}{
+func TestPlanChannelSmartScheduleUsesHysteresisAndForceReset(t *testing.T) {
+	currentScore := 0.80
+	challengerScore := 0.82
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	candidates := []channelSmartScheduleCandidate{
 		{
-			name: "disabled keeps absolute score mapping", enabled: false,
-			startPercent: 3, fullPercent: 10, lowerScore: 0.80, higherScore: 0.90,
-			wantLowerWeight: 80, wantHigherWeight: 90,
+			ChannelId: 1, CurrentPriority: 80, CurrentWeight: 900,
+			Stability: &currentScore, StabilitySampleCount: 5, StabilityAvailable: true,
 		},
 		{
-			name: "spread below start keeps absolute score mapping", enabled: true,
-			startPercent: 3, fullPercent: 10, lowerScore: 0.80, higherScore: 0.82,
-			wantLowerWeight: 80, wantHigherWeight: 85,
+			ChannelId: 2, CurrentPriority: 80, CurrentWeight: 100,
+			Stability: &challengerScore, StabilitySampleCount: 5, StabilityAvailable: true,
+		},
+	}
+	plan := planChannelSmartScheduleWithScoring(
+		candidates, channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, 5, false, scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	assert.Equal(t, uint(900), plan.Items[0].TargetWeight)
+	assert.Equal(t, uint(100), plan.Items[1].TargetWeight)
+
+	plan = planChannelSmartScheduleWithScoring(
+		candidates, channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, 5, true, scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	assert.Equal(t, uint(100), plan.Items[0].TargetWeight)
+	assert.Equal(t, uint(900), plan.Items[1].TargetWeight)
+
+	challengerScore = 0.83
+	plan = planChannelSmartScheduleWithScoring(
+		candidates, channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, 5, false, scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	assert.Equal(t, uint(100), plan.Items[0].TargetWeight)
+	assert.Equal(t, uint(900), plan.Items[1].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleManualPrimaryOverridesScore(t *testing.T) {
+	higherScore := 0.98
+	lowerScore := 0.60
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	scoring.PrimaryTrafficPercent = 90
+	candidates := []channelSmartScheduleCandidate{
+		{
+			ChannelId: 1, CurrentPriority: 80, CurrentWeight: 900,
+			Stability: &higherScore, StabilitySampleCount: 20, StabilityAvailable: true,
 		},
 		{
-			name: "spread between thresholds blends relative positions", enabled: true,
-			startPercent: 3, fullPercent: 10, lowerScore: 0.80, higherScore: 0.85,
-			wantLowerWeight: 60, wantHigherWeight: 90,
-		},
-		{
-			name: "spread at full threshold uses the full weight range", enabled: true,
-			startPercent: 3, fullPercent: 10, lowerScore: 0.80, higherScore: 0.90,
-			wantLowerWeight: 10, wantHigherWeight: 100,
-		},
-		{
-			name: "configurable thresholds can fully stretch close scores", enabled: true,
-			startPercent: 0, fullPercent: 1, lowerScore: 0.80, higherScore: 0.81,
-			wantLowerWeight: 10, wantHigherWeight: 100,
+			ChannelId: 2, CurrentPriority: 80, CurrentWeight: 100,
+			Stability: &lowerScore, StabilitySampleCount: 20, StabilityAvailable: true,
+			ManualPrimary: true,
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			scoring := defaultChannelSmartScheduleScoring()
-			scoring.StabilityPercent = 100
-			scoring.RelativeWeightEnabled = test.enabled
-			scoring.RelativeWeightStartPercent = test.startPercent
-			scoring.RelativeWeightFullPercent = test.fullPercent
-			plan := planChannelSmartScheduleWithScoring(
-				[]channelSmartScheduleCandidate{
-					{ChannelId: 1, Stability: &test.lowerScore, StabilitySampleCount: 5, StabilityAvailable: true},
-					{ChannelId: 2, Stability: &test.higherScore, StabilitySampleCount: 5, StabilityAvailable: true},
-				},
-				channelMonitorSmartScheduleStrategyRatio,
-				true,
-				channelMonitorSmartScheduleApplyWeight,
-				5,
-				true,
-				scoring,
-			)
+	plan := planChannelSmartScheduleWithScoring(
+		candidates, channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, 5, false, scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(900), items[2].TargetWeight)
 
-			require.Len(t, plan.Items, 2)
-			items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
-			for _, item := range plan.Items {
-				items[item.ChannelId] = item
-			}
-			assert.Equal(t, test.wantLowerWeight, items[1].TargetWeight)
-			assert.Equal(t, test.wantHigherWeight, items[2].TargetWeight)
+	plan = planChannelSmartScheduleWithScoring(
+		candidates, channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, 5, false, scoring,
+	)
+	require.Len(t, plan.Items, 2)
+	items = make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.Equal(t, int64(90), items[1].TargetPriority)
+	assert.Equal(t, int64(100), items[2].TargetPriority)
+}
+
+func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleProbe
+	policy.SampleMode = &sampleMode
+	policy.Scoring.StabilityPercent = 100
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	priority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 66, Name: "manual unstable", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 67, Name: "automatic stable", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 66, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 67, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 66, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 67, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	now := common.GetTimestamp()
+	windowStart := now - 3600
+	failureDurationMs := 500.0
+	for index := 0; index < 2; index++ {
+		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
+			ChannelId: 66, Group: "vip", Model: "model-a",
+			WindowStart: windowStart, Time: now - int64(2-index), Success: false,
+			DurationMs: &failureDurationMs,
 		})
+		require.NoError(t, err)
+		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
+			ChannelId: 67, Group: "vip", Model: "model-a",
+			WindowStart: windowStart, Time: now - int64(2-index), Success: true,
+		})
+		require.NoError(t, err)
 	}
+	fixed, err := model.SaveChannelSmartScheduleRoutePrimary(
+		66, "vip", "model-a", model.ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10},
+	)
+	require.NoError(t, err)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	var fixedAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 66, Group: "vip", Model: "model-a"}).
+		First(&fixedAbility).Error)
+	assert.Equal(t, int64(80), *fixedAbility.Priority)
+	assert.Equal(t, uint(900), fixedAbility.Weight)
+	var fixedState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 66, "vip", "model-a",
+	).First(&fixedState).Error)
+	assert.Empty(t, fixedState.StabilityState)
+	assert.Equal(t, fixed.State.ManualPrimaryUntil, fixedState.ManualPrimaryUntil)
+
+	var fixedAdjustment *channelSmartScheduleTaskAdjustment
+	for index := range result.Adjustments {
+		if result.Adjustments[index].ChannelId == 66 {
+			fixedAdjustment = &result.Adjustments[index]
+			break
+		}
+	}
+	require.NotNil(t, fixedAdjustment)
+	assert.True(t, fixedAdjustment.ManualPrimary)
+	assert.Equal(t, fixed.State.ManualPrimaryUntil, fixedAdjustment.ManualPrimaryUntil)
+	require.NotNil(t, fixedAdjustment.Score)
+	assert.Less(t, *fixedAdjustment.Score, 0.8)
+	assert.Contains(t, fixedAdjustment.Reason, "管理员已固定为主渠道")
+}
+
+func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleProbe
+	policy.SampleMode = &sampleMode
+	policy.Scoring.StabilityPercent = 100
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	priority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 68, Name: "degradable fixed primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 69, Name: "stable fallback", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 68, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 69, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 68, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 69, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	now := common.GetTimestamp()
+	failureDurationMs := 500.0
+	for index := 0; index < 2; index++ {
+		_, err := model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
+			ChannelId: 68, Group: "vip", Model: "model-a", WindowStart: now - 3600,
+			Time: now - int64(2-index), Success: false, DurationMs: &failureDurationMs,
+		})
+		require.NoError(t, err)
+		_, err = model.SaveChannelSmartScheduleProbeResult(model.ChannelSmartScheduleProbeResult{
+			ChannelId: 69, Group: "vip", Model: "model-a", WindowStart: now - 3600,
+			Time: now - int64(2-index), Success: true,
+		})
+		require.NoError(t, err)
+	}
+	fixed, err := model.SaveChannelSmartScheduleRoutePrimary(
+		68, "vip", "model-a", model.ChannelSmartScheduleRoutePrimaryOptions{
+			DurationMinutes: 10, AllowStabilityDegrade: true,
+		},
+	)
+	require.NoError(t, err)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	var fixedAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 68, Group: "vip", Model: "model-a"}).
+		First(&fixedAbility).Error)
+	assert.Equal(t, int64(0), *fixedAbility.Priority)
+	assert.Zero(t, fixedAbility.Weight)
+	var fixedState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 68, "vip", "model-a",
+	).First(&fixedState).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, fixedState.StabilityState)
+	assert.Equal(t, fixed.State.ManualPrimaryUntil, fixedState.ManualPrimaryUntil)
+	assert.True(t, fixedState.ManualPrimaryAllowStabilityDegrade)
+
+	var fixedAdjustment *channelSmartScheduleTaskAdjustment
+	for index := range result.Adjustments {
+		if result.Adjustments[index].ChannelId == 68 {
+			fixedAdjustment = &result.Adjustments[index]
+			break
+		}
+	}
+	require.NotNil(t, fixedAdjustment)
+	assert.True(t, fixedAdjustment.ManualPrimary)
+	assert.True(t, fixedAdjustment.ManualPrimaryAllowStabilityDegrade)
+	assert.Contains(t, fixedAdjustment.Reason, "低于降级阈值")
+}
+
+func TestPlanChannelSmartScheduleFirstRunSelectsRawWinner(t *testing.T) {
+	firstScore := 0.80
+	secondScore := 0.82
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 80, CurrentWeight: 50,
+				Stability: &firstScore, StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 80, CurrentWeight: 50,
+				Stability: &secondScore, StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		true,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		scoring,
+	)
+
+	require.Len(t, plan.Items, 2)
+	assert.Equal(t, uint(100), plan.Items[0].TargetWeight)
+	assert.Equal(t, uint(900), plan.Items[1].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleUsesConfiguredPrimaryTrafficAndDeterministicRounding(t *testing.T) {
+	scores := []float64{0.90, 0.60, 0.30, 0}
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	scoring.PrimaryTrafficPercent = 75
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{ChannelId: 1, Stability: &scores[0], StabilitySampleCount: 5, StabilityAvailable: true},
+			{ChannelId: 2, Stability: &scores[1], StabilitySampleCount: 5, StabilityAvailable: true},
+			{ChannelId: 3, Stability: &scores[2], StabilitySampleCount: 5, StabilityAvailable: true},
+			{ChannelId: 4, Stability: &scores[3], StabilitySampleCount: 5, StabilityAvailable: true},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		true,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		true,
+		scoring,
+	)
+
+	require.Len(t, plan.Items, 4)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	totalWeight := uint(0)
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+		totalWeight += item.TargetWeight
+	}
+	assert.Equal(t, uint(1000), totalWeight)
+	assert.Equal(t, uint(750), items[1].TargetWeight)
+	assert.Equal(t, uint(165), items[2].TargetWeight)
+	assert.Equal(t, uint(82), items[3].TargetWeight)
+	assert.Equal(t, uint(3), items[4].TargetWeight)
+}
+
+func TestPlanChannelSmartScheduleMinimumPrimaryTrafficStaysStrictlyHigher(t *testing.T) {
+	score := 0.90
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	scoring.PrimaryTrafficPercent = 51
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{ChannelId: 1, Stability: &score, StabilitySampleCount: 5, StabilityAvailable: true},
+			{ChannelId: 2, Stability: &score, StabilitySampleCount: 5, StabilityAvailable: true},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		true,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		scoring,
+	)
+
+	require.Len(t, plan.Items, 2)
+	assert.Equal(t, uint(510), plan.Items[0].TargetWeight)
+	assert.Equal(t, uint(490), plan.Items[1].TargetWeight)
+	assert.Greater(t, plan.Items[0].TargetWeight, plan.Items[1].TargetWeight)
+}
+
+func TestPlanChannelSmartSchedulePriorityWeightRanksHysteresisPrimaryBeforeRawChallenger(t *testing.T) {
+	scores := []float64{0.80, 0.82, 0.50, 0.25}
+	scoring := defaultChannelSmartScheduleScoring()
+	scoring.StabilityPercent = 100
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 100, CurrentWeight: 1000,
+				Stability: &scores[0], StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 90, CurrentWeight: 1000,
+				Stability: &scores[1], StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+			{
+				ChannelId: 3, CurrentPriority: 80, CurrentWeight: 500,
+				Stability: &scores[2], StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+			{
+				ChannelId: 4, CurrentPriority: 80, CurrentWeight: 500,
+				Stability: &scores[3], StabilitySampleCount: 5, StabilityAvailable: true,
+			},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		true,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+		scoring,
+	)
+
+	require.Len(t, plan.Items, 4)
+	assert.Equal(t, int64(100), plan.Items[0].TargetPriority)
+	assert.Equal(t, int64(90), plan.Items[1].TargetPriority)
+	assert.Equal(t, int64(80), plan.Items[2].TargetPriority)
+	assert.Equal(t, int64(80), plan.Items[3].TargetPriority)
+	assert.Equal(t, uint(667), plan.Items[2].TargetWeight)
+	assert.Equal(t, uint(333), plan.Items[3].TargetWeight)
 }
 
 func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExploration(t *testing.T) {
@@ -1253,12 +1554,12 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 	assert.NotNil(t, state.LastScheduleScore)
 }
 
-func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *testing.T) {
+func TestPlanChannelSmartScheduleForceResetSelectsRawWinnerAndPreservesWeightCohort(t *testing.T) {
 	ratioLow := 1.0
 	ratioHigh := 3.0
 	plan := planChannelSmartSchedule([]channelSmartScheduleCandidate{
-		{ChannelId: 1, CurrentPriority: 100, CurrentWeight: 90, Ratio: &ratioLow},
-		{ChannelId: 2, CurrentPriority: 80, CurrentWeight: 90, Ratio: &ratioHigh},
+		{ChannelId: 1, CurrentPriority: 100, CurrentWeight: 100, Ratio: &ratioLow},
+		{ChannelId: 2, CurrentPriority: 100, CurrentWeight: 900, Ratio: &ratioHigh},
 	}, channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, 5, true)
 
 	require.Len(t, plan.Items, 2)
@@ -1267,10 +1568,10 @@ func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *test
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(80), items[1].TargetPriority)
-	assert.Equal(t, uint(100), items[1].TargetWeight)
-	assert.Equal(t, int64(80), items[2].TargetPriority)
-	assert.Equal(t, uint(10), items[2].TargetWeight)
+	assert.Equal(t, int64(100), items[1].TargetPriority)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, int64(100), items[2].TargetPriority)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
 
 	ratioMiddle := 2.0
 	plan = planChannelSmartSchedule([]channelSmartScheduleCandidate{
@@ -1285,9 +1586,9 @@ func TestPlanChannelSmartScheduleForceResetRecalculatesPriorityAndWeight(t *test
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, int64(100), items[1].TargetPriority)
-	assert.Equal(t, uint(100), items[1].TargetWeight)
+	assert.Equal(t, uint(1000), items[1].TargetWeight)
 	assert.Equal(t, int64(90), items[2].TargetPriority)
-	assert.Equal(t, uint(55), items[2].TargetWeight)
+	assert.Equal(t, uint(1000), items[2].TargetWeight)
 	assert.Equal(t, int64(80), items[3].TargetPriority)
-	assert.Equal(t, uint(10), items[3].TargetWeight)
+	assert.Equal(t, uint(1000), items[3].TargetWeight)
 }

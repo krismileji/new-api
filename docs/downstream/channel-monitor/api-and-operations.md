@@ -17,11 +17,13 @@
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
+| `POST` | `/schedule/model-test` | 测试指定分组模型在参与调度的渠道上的可用性；支持流式首字与 TPS |
 | `GET` | `/schedule` | 返回分组模型路由、实际优先级/权重、调度状态和性能/成功率指标 |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
 | `PUT` | `/channel/:id/schedule/routes` | 批量更新该渠道全部分组模型路由的参与状态；`excluded`，不修改当前路由值或稳定性状态 |
 | `PUT` | `/channel/:id/schedule/route` | 更新一条分组模型路由的参与状态；`group`、`model`、`excluded` |
+| `PUT` | `/channel/:id/schedule/route/primary` | 固定、续期或解除一条分组模型路由的主渠道状态；`group`、`model`、`duration_minutes` |
 | `POST` | `/channel/:id/schedule/route/stability/clear` | 手动解除一条分组模型路由的低成功率降级或稳定性试放；`group`、`model` |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
 | `GET` | `/channel/:id/history` | 查询倍率变更历史，支持通用分页 |
@@ -65,7 +67,7 @@
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`；曲线指数范围为 `0.1..5`。相对权重拉伸的两个分差范围均为 `0..100`，且完整拉伸分差必须大于开始拉伸分差。完整策略示例：
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。抖动阈值倍数范围为 `(1, 20]`，绝对容差使用秒且范围为 `0..60`，基准学习周期使用分钟且范围为 `1..43200`。完整策略示例：
 
 ```json
 [
@@ -83,19 +85,17 @@
     "slow_failure_seconds": 10,
     "jitter_enabled": true,
     "jitter_tolerance_percent": 5,
-    "jitter_threshold_multiplier": 3,
-    "jitter_absolute_tolerance_ms": 1000,
-    "jitter_baseline_hours": 24,
+    "jitter_threshold_multiplier": 5,
+    "jitter_absolute_tolerance_seconds": 10,
+    "jitter_baseline_minutes": 60,
     "cooldown_minutes": 30,
     "sample_mode": "probe",
     "exploration_traffic_percent": 3,
     "probe_interval_minutes": 10,
     "scoring": {
       "stability_percent": 50,
-      "curve_exponent": 1,
-      "relative_weight_enabled": true,
-      "relative_weight_start_percent": 3,
-      "relative_weight_full_percent": 10,
+      "primary_traffic_percent": 90,
+      "primary_switch_threshold_percent": 3,
       "smart": {
         "cost_ratio_percent": 40,
         "first_token_percent": 40,
@@ -111,6 +111,48 @@
 ]
 ```
 
+## 固定主渠道
+
+`PUT /api/channel_monitor/channel/:id/schedule/route/primary` 按渠道 ID、分组和模型唯一定位路由。请求体：
+
+```json
+{
+  "group": "vip",
+  "model": "gpt-4.1",
+  "duration_minutes": 60,
+  "allow_stability_degrade": true
+}
+```
+
+`group` 和 `model` 必须为非空的实际路由值。`duration_minutes` 必须显式提交：`1..525600` 表示固定或续期，对已固定的同一路由调用时会从当前时间重新计算到期时间；`0` 表示立即解除固定。负数、超过 `525600` 或缺少该字段都会返回 `400`。
+
+`allow_stability_degrade` 为可选布尔值，省略时默认为 `true`。`true` 表示固定期间允许稳定性保护临时降级该路由，但保留固定到期时间和选主意图，到期前恢复后继续作为固定主渠道。`false` 表示严格固定：仍记录稳定性样本和分数，但固定期内不自动降级。对已固定路由重新提交时，到期时间和该布尔选项会一起更新；解除固定时该选项不影响解除结果。
+
+新设固定前，渠道和对应 `Ability` 必须已启用，路由必须已参与智能调度且不在稳定性保护状态。同一 `(group, model)` 池只保留一个固定主渠道，固定新渠道时会先解除旧渠道并恢复其保存的路由值。接口会立即更新实际优先级和权重；若智能调度已启用且存在分组策略，还会创建或复用一个调度任务。
+
+成功响应的 `data` 包含 `channel_id`、`group`、`model`、`duration_minutes`、`allow_stability_degrade`、`manual_primary_until`、`routing_changed` 和可选的 `task`。`manual_primary_until` 是 Unix 秒级时间戳，解除后为 `0`。调度看板路由状态使用 `manual_primary_allow_stability_degrade` 返回当前固定的选项值。后台每分钟清理一次已到期的固定并刷新路由缓存，调度看板读取和调度任务执行前也会再次清理，无需再调用解除接口。
+
+严格固定 `30` 分钟的请求示例：
+
+```json
+{
+  "group": "vip",
+  "model": "gpt-4.1",
+  "duration_minutes": 30,
+  "allow_stability_degrade": false
+}
+```
+
+解除固定的请求示例：
+
+```json
+{
+  "group": "vip",
+  "model": "gpt-4.1",
+  "duration_minutes": 0
+}
+```
+
 ## 系统任务
 
 | 任务类型 | 触发方式 | 说明 |
@@ -122,6 +164,10 @@
 
 同类型业务任务已经排队或运行时，手动触发会返回现有任务并标记 `created=false`。任务结果限制失败明细数量，避免单次大规模故障无限放大任务记录。
 
+`channel_smart_schedule` 任务结果的 `adjustments` 逐条返回渠道、分组、模型、得分、新旧优先级与权重、动作和原因。每条 `score_details` 是执行时固化的评分解释，包含原始输入及样本数、同池归一化范围、配置/有效权重、业务与稳定性贡献、最终得分、选主结果及选择/调整原因。完整明细按任务和顺序保存在 `channel_smart_schedule_execution_details` 的独立 `TEXT` 行中，`system_tasks.result` 只保存汇总；查询任务列表时再组装返回，避免单个任务汇总超过数据库 `TEXT` 限制。固定路由还包含 `manual_primary: true`、`manual_primary_until` 和 `manual_primary_allow_stability_degrade`，便于在独立的执行记录页面核对本轮选主是来自评分还是管理员固定，以及固定是否允许稳定性保护。固定、续期和解除的管理审计明细使用 `allow_stability_degrade` 保存操作时的选项值；未传时按默认 `true` 记录。
+
+`POST /api/channel_monitor/schedule/model-test` 请求体包含 `group`、`model`、可选的 `stream`、`endpoint_type` 和 `channel_ids`。`stream` 默认 `true`，`endpoint_type` 默认 `auto`；`channel_ids` 为空时测试整个调度池，传单个 ID 可用于重试。后端最多并发测试 `4` 条渠道并遵守渠道并发上限，只实际请求正在参与调度且渠道和路由均可用的项。响应逐条返回 `success`、`failure` 或 `skipped`，以及总耗时、可用时的流式首字时间和 TPS、错误与错误码；实际发出的成功和失败测试都会写入所选分组的手动测试样本。
+
 倍率和余额分别记录连续失败次数。任一项连续失败 `2` 次后，定时任务会暂停该项的后续上游请求，另一项不受影响；管理员手动刷新成功或修改相关上游配置后会恢复自动请求。
 
 ## 持久化数据
@@ -130,6 +176,7 @@
 
 - `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制。
 - `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
+- `ChannelSmartScheduleExecutionDetail`：按任务和路由保存智能调度执行时的评分与调整解释。
 - `ChannelMonitorMinuteDurationBucket`：按分钟保存首字延迟分布，供异常抖动判断和稳健延迟评分使用。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。

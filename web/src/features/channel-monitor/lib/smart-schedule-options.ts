@@ -43,12 +43,12 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS = [
   {
     value: 'weight',
     label: '只调整权重',
-    description: '保留现有优先级，只在同优先级内调整流量',
+    description: '保留现有优先级，让同层最高分渠道承接目标流量',
   },
   {
     value: 'priority_weight',
     label: '优先级分层 + 权重',
-    description: '按得分分为 100、90、80 三档，再调整权重',
+    description: '最高分为主渠道，第二名为第一备用，其余为后续备用',
   },
 ] as const
 

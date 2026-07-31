@@ -55,8 +55,11 @@ export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
 export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER = 20
-export const MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS = 60_000
-export const MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS = 720
+export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
+export const MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 99
+export const MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT = 100
+export const MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS = 60
+export const MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES = 43_200
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -98,14 +101,25 @@ const smartScheduleMetricPercentagesSchema = z.object({
 const smartScheduleScoringSchema = z
   .object({
     stabilityPercent: smartSchedulePercentageSchema,
-    curveExponent: z.coerce
+    primaryTrafficPercent: z.coerce
       .number()
-      .finite('得分曲线指数必须是有效数字')
-      .min(0.1, '得分曲线指数不能小于 0.1')
-      .max(5, '得分曲线指数不能超过 5'),
-    relativeWeightEnabled: z.boolean(),
-    relativeWeightStartPercent: smartSchedulePercentageSchema,
-    relativeWeightFullPercent: smartSchedulePercentageSchema,
+      .finite('主渠道目标流量必须是有效数字')
+      .min(
+        MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
+        '主渠道目标流量不能小于 51%'
+      )
+      .max(
+        MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
+        '主渠道目标流量不能超过 99%'
+      ),
+    primarySwitchThresholdPercent: z.coerce
+      .number()
+      .finite('主渠道切换分差必须是有效数字')
+      .min(0, '主渠道切换分差不能小于 0%')
+      .max(
+        MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
+        '主渠道切换分差不能超过 100%'
+      ),
     smart: smartScheduleMetricPercentagesSchema,
     ratio: smartScheduleMetricPercentagesSchema,
   })
@@ -140,13 +154,6 @@ const smartScheduleScoringSchema = z
         code: 'custom',
         path: ['ratio', 'costRatioPercent'],
         message: '按成本倍率调度的成本倍率占比必须大于 0%',
-      })
-    }
-    if (values.relativeWeightFullPercent <= values.relativeWeightStartPercent) {
-      context.addIssue({
-        code: 'custom',
-        path: ['relativeWeightFullPercent'],
-        message: '完整拉伸分差必须大于开始拉伸分差',
       })
     }
   })
@@ -208,20 +215,20 @@ const smartScheduleJitterThresholdMultiplierSchema = z.coerce
 
 const smartScheduleJitterAbsoluteToleranceSchema = z.coerce
   .number()
-  .int('抖动绝对容差必须是整数')
-  .min(0, '抖动绝对容差不能小于 0 毫秒')
+  .finite('抖动绝对容差必须是有效数字')
+  .min(0, '抖动绝对容差不能小于 0 秒')
   .max(
-    MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_MS,
-    '抖动绝对容差不能超过 60000 毫秒'
+    MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
+    '抖动绝对容差不能超过 60 秒'
   )
 
-const smartScheduleJitterBaselineHoursSchema = z.coerce
+const smartScheduleJitterBaselineMinutesSchema = z.coerce
   .number()
   .int('抖动基线学习周期必须是整数')
-  .min(1, '抖动基线学习周期不能小于 1 小时')
+  .min(1, '抖动基线学习周期不能小于 1 分钟')
   .max(
-    MAX_SMART_SCHEDULE_JITTER_BASELINE_HOURS,
-    '抖动基线学习周期不能超过 720 小时'
+    MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
+    '抖动基线学习周期不能超过 43200 分钟'
   )
 
 const smartScheduleCooldownSchema = z.coerce
@@ -251,8 +258,8 @@ const smartSchedulePolicyShape = {
   jitterEnabled: z.boolean(),
   jitterTolerancePercent: smartScheduleJitterToleranceSchema,
   jitterThresholdMultiplier: smartScheduleJitterThresholdMultiplierSchema,
-  jitterAbsoluteToleranceMs: smartScheduleJitterAbsoluteToleranceSchema,
-  jitterBaselineHours: smartScheduleJitterBaselineHoursSchema,
+  jitterAbsoluteToleranceSeconds: smartScheduleJitterAbsoluteToleranceSchema,
+  jitterBaselineMinutes: smartScheduleJitterBaselineMinutesSchema,
   scoring: smartScheduleScoringSchema,
   applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
   models: smartScheduleModelsSchema,

@@ -15,58 +15,61 @@ const (
 	maxChannelMonitorSmartScheduleFailureSeconds         = 60
 	maxChannelMonitorSmartScheduleJitterTolerancePercent = 50
 	maxChannelMonitorSmartScheduleJitterMultiplier       = 20
-	maxChannelMonitorSmartScheduleJitterToleranceMs      = 60000
-	maxChannelMonitorSmartScheduleJitterBaselineHours    = 720
+	maxChannelMonitorSmartScheduleJitterToleranceSeconds = 60
+	maxChannelMonitorSmartScheduleJitterBaselineMinutes  = 43200
+	defaultChannelMonitorSmartScheduleJitterMultiplier   = 5.0
+	defaultChannelMonitorSmartScheduleJitterSeconds      = 10.0
+	defaultChannelMonitorSmartScheduleJitterMinutes      = 60
 )
 
 type channelSmartScheduleGroupPolicy struct {
-	Group                     string                       `json:"group"`
-	Strategy                  *string                      `json:"strategy,omitempty"`
-	StabilityEnabled          *bool                        `json:"stability_enabled,omitempty"`
-	Scoring                   *channelSmartScheduleScoring `json:"scoring,omitempty"`
-	ApplyMode                 *string                      `json:"apply_mode,omitempty"`
-	Models                    *[]string                    `json:"models,omitempty"`
-	ModelOrder                []string                     `json:"model_order,omitempty"`
-	MinSamples                *int                         `json:"min_samples,omitempty"`
-	DegradeStabilityScore     *float64                     `json:"degrade_stability_score,omitempty"`
-	RecoveryStabilityScore    *float64                     `json:"recovery_stability_score,omitempty"`
-	FastFailurePenaltyPercent *float64                     `json:"fast_failure_penalty_percent,omitempty"`
-	FastFailureSeconds        *float64                     `json:"fast_failure_seconds,omitempty"`
-	SlowFailureSeconds        *float64                     `json:"slow_failure_seconds,omitempty"`
-	JitterEnabled             *bool                        `json:"jitter_enabled,omitempty"`
-	JitterTolerancePercent    *float64                     `json:"jitter_tolerance_percent,omitempty"`
-	JitterThresholdMultiplier *float64                     `json:"jitter_threshold_multiplier,omitempty"`
-	JitterAbsoluteToleranceMs *int                         `json:"jitter_absolute_tolerance_ms,omitempty"`
-	JitterBaselineHours       *int                         `json:"jitter_baseline_hours,omitempty"`
-	CooldownMinutes           *int                         `json:"cooldown_minutes,omitempty"`
-	SampleMode                *string                      `json:"sample_mode,omitempty"`
-	ExplorationTrafficPercent *float64                     `json:"exploration_traffic_percent,omitempty"`
-	ProbeIntervalMinutes      *int                         `json:"probe_interval_minutes,omitempty"`
+	Group                          string                       `json:"group"`
+	Strategy                       *string                      `json:"strategy,omitempty"`
+	StabilityEnabled               *bool                        `json:"stability_enabled,omitempty"`
+	Scoring                        *channelSmartScheduleScoring `json:"scoring,omitempty"`
+	ApplyMode                      *string                      `json:"apply_mode,omitempty"`
+	Models                         *[]string                    `json:"models,omitempty"`
+	ModelOrder                     []string                     `json:"model_order,omitempty"`
+	MinSamples                     *int                         `json:"min_samples,omitempty"`
+	DegradeStabilityScore          *float64                     `json:"degrade_stability_score,omitempty"`
+	RecoveryStabilityScore         *float64                     `json:"recovery_stability_score,omitempty"`
+	FastFailurePenaltyPercent      *float64                     `json:"fast_failure_penalty_percent,omitempty"`
+	FastFailureSeconds             *float64                     `json:"fast_failure_seconds,omitempty"`
+	SlowFailureSeconds             *float64                     `json:"slow_failure_seconds,omitempty"`
+	JitterEnabled                  *bool                        `json:"jitter_enabled,omitempty"`
+	JitterTolerancePercent         *float64                     `json:"jitter_tolerance_percent,omitempty"`
+	JitterThresholdMultiplier      *float64                     `json:"jitter_threshold_multiplier,omitempty"`
+	JitterAbsoluteToleranceSeconds *float64                     `json:"jitter_absolute_tolerance_seconds,omitempty"`
+	JitterBaselineMinutes          *int                         `json:"jitter_baseline_minutes,omitempty"`
+	CooldownMinutes                *int                         `json:"cooldown_minutes,omitempty"`
+	SampleMode                     *string                      `json:"sample_mode,omitempty"`
+	ExplorationTrafficPercent      *float64                     `json:"exploration_traffic_percent,omitempty"`
+	ProbeIntervalMinutes           *int                         `json:"probe_interval_minutes,omitempty"`
 }
 
 type smartScheduleGroupPolicies []channelSmartScheduleGroupPolicy
 
 type channelSmartSchedulePolicy struct {
-	Strategy                  string
-	StabilityEnabled          bool
-	Scoring                   channelSmartScheduleScoring
-	ApplyMode                 string
-	Models                    []string
-	MinSamples                int
-	DegradeStabilityScore     float64
-	RecoveryStabilityScore    float64
-	FastFailurePenaltyPercent float64
-	FastFailureSeconds        float64
-	SlowFailureSeconds        float64
-	JitterEnabled             bool
-	JitterTolerancePercent    float64
-	JitterThresholdMultiplier float64
-	JitterAbsoluteToleranceMs int
-	JitterBaselineHours       int
-	CooldownMinutes           int
-	SampleMode                string
-	ExplorationTrafficPercent float64
-	ProbeIntervalMinutes      int
+	Strategy                       string
+	StabilityEnabled               bool
+	Scoring                        channelSmartScheduleScoring
+	ApplyMode                      string
+	Models                         []string
+	MinSamples                     int
+	DegradeStabilityScore          float64
+	RecoveryStabilityScore         float64
+	FastFailurePenaltyPercent      float64
+	FastFailureSeconds             float64
+	SlowFailureSeconds             float64
+	JitterEnabled                  bool
+	JitterTolerancePercent         float64
+	JitterThresholdMultiplier      float64
+	JitterAbsoluteToleranceSeconds float64
+	JitterBaselineMinutes          int
+	CooldownMinutes                int
+	SampleMode                     string
+	ExplorationTrafficPercent      float64
+	ProbeIntervalMinutes           int
 }
 
 func parseChannelSmartScheduleGroupPolicies(raw string) []channelSmartScheduleGroupPolicy {
@@ -102,13 +105,25 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("同一分组不能配置多个调度策略")
 		}
 		seenGroups[policy.Group] = struct{}{}
+		if policy.JitterThresholdMultiplier == nil {
+			value := defaultChannelMonitorSmartScheduleJitterMultiplier
+			policy.JitterThresholdMultiplier = &value
+		}
+		if policy.JitterAbsoluteToleranceSeconds == nil {
+			value := defaultChannelMonitorSmartScheduleJitterSeconds
+			policy.JitterAbsoluteToleranceSeconds = &value
+		}
+		if policy.JitterBaselineMinutes == nil {
+			value := defaultChannelMonitorSmartScheduleJitterMinutes
+			policy.JitterBaselineMinutes = &value
+		}
 		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.DegradeStabilityScore == nil || policy.RecoveryStabilityScore == nil ||
 			policy.FastFailurePenaltyPercent == nil || policy.FastFailureSeconds == nil ||
 			policy.SlowFailureSeconds == nil || policy.JitterEnabled == nil ||
 			policy.JitterTolerancePercent == nil || policy.JitterThresholdMultiplier == nil ||
-			policy.JitterAbsoluteToleranceMs == nil || policy.JitterBaselineHours == nil ||
+			policy.JitterAbsoluteToleranceSeconds == nil || policy.JitterBaselineMinutes == nil ||
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
 			policy.ProbeIntervalMinutes == nil {
@@ -175,13 +190,15 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.JitterThresholdMultiplier > maxChannelMonitorSmartScheduleJitterMultiplier {
 			return nil, errors.New("分组调度抖动阈值倍数必须大于 1 且不超过 20")
 		}
-		if *policy.JitterAbsoluteToleranceMs < 0 ||
-			*policy.JitterAbsoluteToleranceMs > maxChannelMonitorSmartScheduleJitterToleranceMs {
-			return nil, errors.New("分组调度抖动绝对容差必须在 0 到 60000 毫秒之间")
+		if math.IsNaN(*policy.JitterAbsoluteToleranceSeconds) ||
+			math.IsInf(*policy.JitterAbsoluteToleranceSeconds, 0) ||
+			*policy.JitterAbsoluteToleranceSeconds < 0 ||
+			*policy.JitterAbsoluteToleranceSeconds > maxChannelMonitorSmartScheduleJitterToleranceSeconds {
+			return nil, errors.New("分组调度抖动绝对容差必须在 0 到 60 秒之间")
 		}
-		if *policy.JitterBaselineHours <= 0 ||
-			*policy.JitterBaselineHours > maxChannelMonitorSmartScheduleJitterBaselineHours {
-			return nil, errors.New("分组调度抖动基准学习周期必须在 1 到 720 小时之间")
+		if *policy.JitterBaselineMinutes <= 0 ||
+			*policy.JitterBaselineMinutes > maxChannelMonitorSmartScheduleJitterBaselineMinutes {
+			return nil, errors.New("分组调度抖动基准学习周期必须在 1 到 43200 分钟之间")
 		}
 		if *policy.CooldownMinutes <= 0 || *policy.CooldownMinutes > maxChannelMonitorAutoUpdateIntervalMinutes {
 			return nil, errors.New("分组调度降级时长必须在 1 到 525600 分钟之间")
@@ -214,26 +231,26 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 
 func (configured channelSmartScheduleGroupPolicy) policy() channelSmartSchedulePolicy {
 	return channelSmartSchedulePolicy{
-		Strategy:                  *configured.Strategy,
-		StabilityEnabled:          *configured.StabilityEnabled,
-		Scoring:                   *configured.Scoring,
-		ApplyMode:                 *configured.ApplyMode,
-		Models:                    *configured.Models,
-		MinSamples:                *configured.MinSamples,
-		DegradeStabilityScore:     *configured.DegradeStabilityScore,
-		RecoveryStabilityScore:    *configured.RecoveryStabilityScore,
-		FastFailurePenaltyPercent: *configured.FastFailurePenaltyPercent,
-		FastFailureSeconds:        *configured.FastFailureSeconds,
-		SlowFailureSeconds:        *configured.SlowFailureSeconds,
-		JitterEnabled:             *configured.JitterEnabled,
-		JitterTolerancePercent:    *configured.JitterTolerancePercent,
-		JitterThresholdMultiplier: *configured.JitterThresholdMultiplier,
-		JitterAbsoluteToleranceMs: *configured.JitterAbsoluteToleranceMs,
-		JitterBaselineHours:       *configured.JitterBaselineHours,
-		CooldownMinutes:           *configured.CooldownMinutes,
-		SampleMode:                *configured.SampleMode,
-		ExplorationTrafficPercent: *configured.ExplorationTrafficPercent,
-		ProbeIntervalMinutes:      *configured.ProbeIntervalMinutes,
+		Strategy:                       *configured.Strategy,
+		StabilityEnabled:               *configured.StabilityEnabled,
+		Scoring:                        *configured.Scoring,
+		ApplyMode:                      *configured.ApplyMode,
+		Models:                         *configured.Models,
+		MinSamples:                     *configured.MinSamples,
+		DegradeStabilityScore:          *configured.DegradeStabilityScore,
+		RecoveryStabilityScore:         *configured.RecoveryStabilityScore,
+		FastFailurePenaltyPercent:      *configured.FastFailurePenaltyPercent,
+		FastFailureSeconds:             *configured.FastFailureSeconds,
+		SlowFailureSeconds:             *configured.SlowFailureSeconds,
+		JitterEnabled:                  *configured.JitterEnabled,
+		JitterTolerancePercent:         *configured.JitterTolerancePercent,
+		JitterThresholdMultiplier:      *configured.JitterThresholdMultiplier,
+		JitterAbsoluteToleranceSeconds: *configured.JitterAbsoluteToleranceSeconds,
+		JitterBaselineMinutes:          *configured.JitterBaselineMinutes,
+		CooldownMinutes:                *configured.CooldownMinutes,
+		SampleMode:                     *configured.SampleMode,
+		ExplorationTrafficPercent:      *configured.ExplorationTrafficPercent,
+		ProbeIntervalMinutes:           *configured.ProbeIntervalMinutes,
 	}
 }
 

@@ -104,6 +104,7 @@ export type ChannelMonitorSmartScheduleOverviewSummary = {
 export type ChannelMonitorSmartScheduleRouteRole =
   | 'primary'
   | 'candidate'
+  | 'first_backup'
   | 'standby'
   | 'excluded'
   | 'unavailable'
@@ -132,9 +133,10 @@ const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
   failed: 3,
   primary: 4,
   candidate: 5,
-  standby: 6,
-  unavailable: 7,
-  excluded: 8,
+  first_backup: 6,
+  standby: 7,
+  unavailable: 8,
+  excluded: 9,
 }
 
 const EMPTY_GROUP_RATIOS: Readonly<Record<string, number>> = {}
@@ -317,6 +319,15 @@ export function placeChannelMonitorSmartScheduleRoutes(
       topPriority == null
         ? []
         : activeRoutes.filter((route) => route.priority === topPriority)
+    const firstBackupPriority = activeRoutes.reduce<number | null>(
+      (current, route) => {
+        if (topPriority == null || route.priority >= topPriority) return current
+        return current == null
+          ? route.priority
+          : Math.max(current, route.priority)
+      },
+      null
+    )
     const totalWeight = candidates.reduce(
       (total, route) => total + Math.max(0, route.weight),
       0
@@ -348,6 +359,8 @@ export function placeChannelMonitorSmartScheduleRoutes(
           (estimatedShare === largestShare && largestShareCount === 1)
             ? 'primary'
             : 'candidate'
+      } else if (route.priority === firstBackupPriority) {
+        role = 'first_backup'
       }
       placements.set(channelMonitorSmartScheduleRouteKey(route), {
         role,

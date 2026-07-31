@@ -28,8 +28,10 @@ import {
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
+  testChannelMonitorSmartScheduleModel,
   updateChannelMonitorGroupChannels,
   updateChannelMonitorSmartScheduleChannelConfig,
+  updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 
@@ -105,6 +107,135 @@ test('loads and updates one group-model scheduling route', async () => {
     group: 'vip',
     model: 'model-a',
     excluded: true,
+  })
+})
+
+test('tests a scheduling pool model and supports one-channel retry', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          group: 'vip',
+          model: 'model-a',
+          stream: true,
+          endpoint_type: 'auto',
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+          results: [],
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await testChannelMonitorSmartScheduleModel({
+      group: 'vip',
+      model: 'model-a',
+      stream: true,
+      endpointType: 'auto',
+    })
+    await testChannelMonitorSmartScheduleModel({
+      group: 'vip',
+      model: 'model-a',
+      stream: true,
+      endpointType: 'openai-response',
+      channelIds: [7],
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requests[0]?.url, '/api/channel_monitor/schedule/model-test')
+  assert.equal(requests[0]?.method, 'post')
+  assert.deepEqual(JSON.parse(String(requests[0]?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    stream: true,
+    endpoint_type: 'auto',
+  })
+  assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    stream: true,
+    endpoint_type: 'openai-response',
+    channel_ids: [7],
+  })
+})
+
+test('sets and clears a fixed primary route with its stability option', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          channel_id: 7,
+          group: 'vip',
+          model: 'model-a',
+          duration_minutes: 0,
+          allow_stability_degrade: false,
+          manual_primary_until: 0,
+          routing_changed: true,
+          task: null,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await updateChannelMonitorSmartScheduleRoutePrimary({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+      durationMinutes: 90,
+      allowStabilityDegrade: true,
+    })
+    await updateChannelMonitorSmartScheduleRoutePrimary({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+      durationMinutes: 0,
+      allowStabilityDegrade: false,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requests[0]?.url,
+    '/api/channel_monitor/channel/7/schedule/route/primary'
+  )
+  assert.deepEqual(JSON.parse(String(requests[0]?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    duration_minutes: 90,
+    allow_stability_degrade: true,
+  })
+  assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    duration_minutes: 0,
+    allow_stability_degrade: false,
   })
 })
 

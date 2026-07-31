@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,10 +27,25 @@ type channelSmartScheduleRouteRequest struct {
 	Model string `json:"model"`
 }
 
+type channelSmartScheduleRoutePrimaryRequest struct {
+	Group                 string `json:"group"`
+	Model                 string `json:"model"`
+	DurationMinutes       *int   `json:"duration_minutes"`
+	AllowStabilityDegrade *bool  `json:"allow_stability_degrade"`
+}
+
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	routingChanged, err := model.ClearExpiredChannelSmartScheduleRoutePrimaries(common.GetTimestamp())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if routingChanged {
+		model.InitChannelCache()
 	}
 	settings := getChannelMonitorSettings()
 	routes, err := model.GetChannelSmartScheduleRoutes()
@@ -67,6 +83,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	}
 	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
 	probeMetricsAvailable := false
+	manualMetricsAvailable := false
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		policy := configured.policy()
 		policyByGroup[configured.Group] = policy
@@ -96,6 +113,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			continue
 		}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+		manualMetricsAvailable = manualMetricsAvailable ||
+			route.State.ManualTestMetricsSince(startTimestamp).SampleCount > 0
 		metric, hasMetric := stabilityByRoute[key]
 		var performance *channelSmartSchedulePerformance
 		if performanceMetric, exists := performanceByRoute[key]; exists {
@@ -131,6 +150,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe {
 			performance = channelSmartScheduleMergeProbePerformance(performance, route.State, windowStart)
+		} else {
+			performance = channelSmartScheduleMergeProbePerformance(
+				performance, route.State, windowStart, model.ChannelSmartScheduleSampleSourceManualTest,
+			)
 		}
 		if performance == nil {
 			continue
@@ -201,8 +224,76 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"enabled":                     settings.SmartScheduleEnabled,
 		"routes":                      routes,
 		"performance_items":           performanceMetrics,
-		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable,
+		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable || manualMetricsAvailable,
 		"stability_items":             stabilityMetrics,
+	})
+}
+
+func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
+	channelId, ok := channelSmartScheduleRouteChannelId(c)
+	if !ok {
+		return
+	}
+	var request channelSmartScheduleRoutePrimaryRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	group, modelName, ok := normalizeChannelSmartScheduleRouteRequest(c, request.Group, request.Model)
+	if !ok {
+		return
+	}
+	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
+		*request.DurationMinutes > model.ChannelSmartScheduleManualPrimaryMaxMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "主渠道固定时间必须在 0 到 525600 分钟之间",
+		})
+		return
+	}
+	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	allowStabilityDegrade := true
+	if request.AllowStabilityDegrade != nil {
+		allowStabilityDegrade = *request.AllowStabilityDegrade
+	}
+	result, err := model.SaveChannelSmartScheduleRoutePrimary(
+		channelId, group, modelName, model.ChannelSmartScheduleRoutePrimaryOptions{
+			DurationMinutes:       *request.DurationMinutes,
+			AllowStabilityDegrade: allowStabilityDegrade,
+		},
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if result.RoutingChanged {
+		model.InitChannelCache()
+	}
+	var taskResponse any
+	settings := getChannelMonitorSettings()
+	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
+		if task, _, enqueueErr := service.EnqueueSystemTask(channelMonitorSmartScheduleTaskType, nil); enqueueErr == nil {
+			taskResponse = task.ToResponse()
+		}
+	}
+	recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
+		"id": channelId, "group": group, "model": modelName,
+		"duration_minutes":        *request.DurationMinutes,
+		"allow_stability_degrade": allowStabilityDegrade,
+		"manual_primary_until":    result.State.ManualPrimaryUntil,
+	})
+	common.ApiSuccess(c, gin.H{
+		"channel_id":              channelId,
+		"group":                   group,
+		"model":                   modelName,
+		"duration_minutes":        *request.DurationMinutes,
+		"allow_stability_degrade": result.State.ManualPrimaryAllowStabilityDegrade,
+		"manual_primary_until":    result.State.ManualPrimaryUntil,
+		"routing_changed":         result.RoutingChanged,
+		"task":                    taskResponse,
 	})
 }
 

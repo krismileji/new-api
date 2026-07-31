@@ -68,20 +68,20 @@ const reactTestGlobals = globalThis as typeof globalThis & {
 reactTestGlobals.IS_REACT_ACT_ENVIRONMENT = true
 
 function SettingHelpFixture() {
-  const form = useForm<{ curveExponent: number }>({
-    defaultValues: { curveExponent: 1 },
+  const form = useForm<{ primarySwitchThresholdPercent: number }>({
+    defaultValues: { primarySwitchThresholdPercent: 3 },
   })
 
   return (
     <Form {...form}>
       <FormField
         control={form.control}
-        name='curveExponent'
+        name='primarySwitchThresholdPercent'
         render={() => (
           <FormItem>
             <ChannelMonitorSettingLabel
-              label='得分曲线指数'
-              helpKey='curveExponent'
+              label='主渠道切换分差'
+              helpKey='primarySwitchThreshold'
             />
           </FormItem>
         )}
@@ -121,7 +121,7 @@ const root = createRoot(container)
 await act(async () => root.render(<SettingHelpFixture />))
 
 const trigger = container.querySelector<HTMLButtonElement>(
-  'button[aria-label="查看“得分曲线指数”说明"]'
+  'button[aria-label="查看“主渠道切换分差”说明"]'
 )
 assert.ok(trigger)
 const triggerType = trigger.type
@@ -129,8 +129,8 @@ const triggerType = trigger.type
 await act(async () => trigger.focus())
 const tooltip = await waitForTooltip()
 const focusShowsExplanation =
-  tooltip.textContent?.includes('得分 ^ 指数') === true &&
-  tooltip.textContent.includes('大于 1')
+  tooltip.textContent?.includes('新渠道的最终得分') === true &&
+  tooltip.textContent.includes('立即切换')
 
 await act(async () => root.unmount())
 container.remove()

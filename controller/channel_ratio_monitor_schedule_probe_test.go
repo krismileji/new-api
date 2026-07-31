@@ -106,6 +106,39 @@ func TestChannelSmartScheduleMergeProbePerformanceCombinesBusinessAndProbeSample
 	assert.Nil(t, channelSmartScheduleMergeProbePerformance(nil, state, 111))
 }
 
+func TestChannelSmartScheduleMergeProbePerformanceCanSelectManualSamples(t *testing.T) {
+	rawSamples, err := common.Marshal([]map[string]any{
+		{
+			"time": int64(100), "success": true,
+			"source":         model.ChannelSmartScheduleSampleSourceScheduledProbe,
+			"first_token_ms": 100.0,
+		},
+		{
+			"time": int64(110), "success": false,
+			"source":              model.ChannelSmartScheduleSampleSourceManualTest,
+			"failure_duration_ms": 750.0,
+		},
+	})
+	require.NoError(t, err)
+	state := model.ChannelSmartScheduleRouteState{ProbeSamples: string(rawSamples)}
+
+	all := channelSmartScheduleMergeProbePerformance(nil, state, 90)
+	require.NotNil(t, all)
+	assert.Equal(t, int64(2), all.StabilitySampleCount)
+	assert.Equal(t, int64(1), all.StabilitySuccessCount)
+	assert.Equal(t, int64(1), all.StabilityFailureCount)
+	assert.Equal(t, 1, all.FirstTokenSampleCount)
+
+	manual := channelSmartScheduleMergeProbePerformance(
+		nil, state, 90, model.ChannelSmartScheduleSampleSourceManualTest,
+	)
+	require.NotNil(t, manual)
+	assert.Equal(t, int64(1), manual.StabilitySampleCount)
+	assert.Zero(t, manual.StabilitySuccessCount)
+	assert.Equal(t, int64(1), manual.StabilityFailureCount)
+	assert.Zero(t, manual.FirstTokenSampleCount)
+}
+
 func TestRunChannelSmartScheduleUsesProbeSamplesInFormalScoring(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(

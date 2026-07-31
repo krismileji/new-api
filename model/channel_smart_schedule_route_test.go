@@ -110,6 +110,182 @@ func TestUpdateAbilitiesPreservesParticipatingSmartScheduleRouteRouting(t *testi
 	assert.Equal(t, defaultWeight, byGroup["new"].Weight)
 }
 
+func TestSaveChannelSmartScheduleRoutePrimarySwitchesAndRestoresRouting(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	priority := int64(80)
+	for _, channelID := range []int{3101, 3102} {
+		channelWeight := uint(100)
+		channel := Channel{Id: channelID, Name: fmt.Sprintf("primary-%d", channelID),
+			Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a",
+			Priority: &priority, Weight: &channelWeight}
+		require.NoError(t, db.Create(&channel).Error)
+		abilityPriority := int64(80)
+		require.NoError(t, db.Create(&Ability{ChannelId: channelID, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: &abilityPriority, Weight: 100}).Error)
+		require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{ChannelId: channelID,
+			GroupName: "vip", ModelName: "model-a", ParticipationSet: true}).Error)
+	}
+
+	first, err := SaveChannelSmartScheduleRoutePrimary(3101, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10})
+	require.NoError(t, err)
+	assert.Greater(t, first.State.ManualPrimaryUntil, common.GetTimestamp())
+	assert.True(t, first.State.ManualPrimarySaved)
+	var firstAbility Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 3101, Group: "vip", Model: "model-a"}).First(&firstAbility).Error)
+	assert.Equal(t, int64(81), abilityPriority(firstAbility))
+	assert.Equal(t, uint(1000), firstAbility.Weight)
+	rescheduledPriority := int64(100)
+	require.NoError(t, db.Model(&Ability{}).
+		Where(&Ability{ChannelId: 3101, Group: "vip", Model: "model-a"}).
+		Updates(map[string]any{"priority": rescheduledPriority, "weight": uint(900)}).Error)
+	extended, err := SaveChannelSmartScheduleRoutePrimary(3101, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 20})
+	require.NoError(t, err)
+	assert.False(t, extended.RoutingChanged)
+	assert.GreaterOrEqual(t, extended.State.ManualPrimaryUntil, first.State.ManualPrimaryUntil)
+	assert.Equal(t, int64(80), extended.State.ManualPrimarySavedPriority)
+	assert.Equal(t, uint(100), extended.State.ManualPrimarySavedWeight)
+
+	require.NoError(t, db.Model(&Ability{}).
+		Where(&Ability{ChannelId: 3102, Group: "vip", Model: "model-a"}).
+		Update("enabled", false).Error)
+	_, err = SaveChannelSmartScheduleRoutePrimary(3102, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10})
+	require.ErrorContains(t, err, "路由已禁用")
+	var fixedAfterRejectedSwitch ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{ChannelId: 3101,
+		GroupName: "vip", ModelName: "model-a"}).First(&fixedAfterRejectedSwitch).Error)
+	assert.Greater(t, fixedAfterRejectedSwitch.ManualPrimaryUntil, common.GetTimestamp())
+	var abilityAfterRejectedSwitch Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 3101, Group: "vip", Model: "model-a"}).
+		First(&abilityAfterRejectedSwitch).Error)
+	assert.Equal(t, int64(100), abilityPriority(abilityAfterRejectedSwitch))
+	assert.Equal(t, uint(900), abilityAfterRejectedSwitch.Weight)
+	require.NoError(t, db.Model(&Ability{}).
+		Where(&Ability{ChannelId: 3102, Group: "vip", Model: "model-a"}).
+		Update("enabled", true).Error)
+
+	second, err := SaveChannelSmartScheduleRoutePrimary(3102, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10})
+	require.NoError(t, err)
+	assert.Greater(t, second.State.ManualPrimaryUntil, common.GetTimestamp())
+	var restoredFirst ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{ChannelId: 3101,
+		GroupName: "vip", ModelName: "model-a"}).First(&restoredFirst).Error)
+	assert.Zero(t, restoredFirst.ManualPrimaryUntil)
+	assert.False(t, restoredFirst.ManualPrimarySaved)
+	var firstAfterSwitch Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 3101, Group: "vip", Model: "model-a"}).First(&firstAfterSwitch).Error)
+	assert.Equal(t, int64(80), abilityPriority(firstAfterSwitch))
+	assert.Equal(t, uint(100), firstAfterSwitch.Weight)
+
+	cleared, err := SaveChannelSmartScheduleRoutePrimary(3102, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, cleared.State.ManualPrimaryUntil)
+	var secondAfterClear Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 3102, Group: "vip", Model: "model-a"}).First(&secondAfterClear).Error)
+	assert.Equal(t, int64(80), abilityPriority(secondAfterClear))
+	assert.Equal(t, uint(100), secondAfterClear.Weight)
+
+	expiring, err := SaveChannelSmartScheduleRoutePrimary(3101, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 1})
+	require.NoError(t, err)
+	routingChanged, err := ClearExpiredChannelSmartScheduleRoutePrimaries(expiring.State.ManualPrimaryUntil)
+	require.NoError(t, err)
+	assert.True(t, routingChanged)
+	var expiredState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{ChannelId: 3101,
+		GroupName: "vip", ModelName: "model-a"}).First(&expiredState).Error)
+	assert.Zero(t, expiredState.ManualPrimaryUntil)
+}
+
+func TestClearAndExpireChannelSmartScheduleRoutePrimaryRebaseActiveStabilityRestoreTarget(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	degradedPriority := int64(0)
+	channelPriority := int64(80)
+	channelWeight := uint(100)
+	restoredPriority := int64(80)
+	restoredWeight := uint(100)
+	require.NoError(t, db.Create(&Channel{
+		Id: 3111, Name: "degraded fixed primary", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &channelPriority, Weight: &channelWeight,
+	}).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: 3111, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &degradedPriority, Weight: 0,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 3111, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:         ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil:         common.GetTimestamp() + 300,
+		StabilitySavedPriority: 81, StabilitySavedWeight: 1000,
+		ManualPrimaryUntil:                 common.GetTimestamp() + 600,
+		ManualPrimaryAllowStabilityDegrade: true,
+		ManualPrimarySaved:                 true,
+		ManualPrimarySavedPriority:         restoredPriority,
+		ManualPrimarySavedWeight:           restoredWeight,
+	}).Error)
+
+	extended, err := SaveChannelSmartScheduleRoutePrimary(
+		3111, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{
+			DurationMinutes: 20, AllowStabilityDegrade: false,
+		},
+	)
+	require.NoError(t, err)
+	assert.False(t, extended.RoutingChanged)
+	assert.Greater(t, extended.State.ManualPrimaryUntil, common.GetTimestamp()+600)
+	assert.False(t, extended.State.ManualPrimaryAllowStabilityDegrade)
+	assert.Equal(t, restoredPriority, extended.State.ManualPrimarySavedPriority)
+	assert.Equal(t, restoredWeight, extended.State.ManualPrimarySavedWeight)
+	assert.Equal(t, int64(81), extended.State.StabilitySavedPriority)
+	assert.Equal(t, uint(1000), extended.State.StabilitySavedWeight)
+
+	cleared, err := SaveChannelSmartScheduleRoutePrimary(
+		3111, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{},
+	)
+	require.NoError(t, err)
+	assert.False(t, cleared.RoutingChanged)
+	assert.Zero(t, cleared.State.ManualPrimaryUntil)
+	assert.False(t, cleared.State.ManualPrimaryAllowStabilityDegrade)
+	assert.Equal(t, restoredPriority, cleared.State.StabilitySavedPriority)
+	assert.Equal(t, restoredWeight, cleared.State.StabilitySavedWeight)
+
+	stabilityResult, err := ClearChannelSmartScheduleRouteStability(3111, "vip", "model-a", 80, 10)
+	require.NoError(t, err)
+	assert.True(t, stabilityResult.Cleared)
+	assert.Equal(t, restoredPriority, stabilityResult.Priority)
+	assert.Equal(t, restoredWeight, stabilityResult.Weight)
+	var ability Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 3111, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	assert.Equal(t, restoredPriority, abilityPriority(ability))
+	assert.Equal(t, restoredWeight, ability.Weight)
+
+	expiredAt := common.GetTimestamp() + 60
+	require.NoError(t, db.Model(&Ability{}).
+		Where(&Ability{ChannelId: 3111, Group: "vip", Model: "model-a"}).
+		Updates(map[string]any{"priority": degradedPriority, "weight": uint(0)}).Error)
+	require.NoError(t, db.Model(&ChannelSmartScheduleRouteState{}).
+		Where(&ChannelSmartScheduleRouteState{ChannelId: 3111, GroupName: "vip", ModelName: "model-a"}).
+		Updates(map[string]any{
+			"stability_state":                        ChannelSmartScheduleStabilityDegraded,
+			"stability_until":                        expiredAt + 300,
+			"stability_saved_priority":               int64(81),
+			"stability_saved_weight":                 uint(1000),
+			"manual_primary_until":                   expiredAt,
+			"manual_primary_allow_stability_degrade": true,
+			"manual_primary_saved":                   true,
+			"manual_primary_saved_priority":          restoredPriority,
+			"manual_primary_saved_weight":            restoredWeight,
+		}).Error)
+
+	routingChanged, err := ClearExpiredChannelSmartScheduleRoutePrimaries(expiredAt)
+	require.NoError(t, err)
+	assert.False(t, routingChanged)
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 3111, GroupName: "vip", ModelName: "model-a",
+	}).First(&cleared.State).Error)
+	assert.Zero(t, cleared.State.ManualPrimaryUntil)
+	assert.False(t, cleared.State.ManualPrimaryAllowStabilityDegrade)
+	assert.Equal(t, restoredPriority, cleared.State.StabilitySavedPriority)
+	assert.Equal(t, restoredWeight, cleared.State.StabilitySavedWeight)
+}
+
 func TestUpdateAbilitiesRemovesDeletedRouteScheduleState(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	defaultPriority := int64(80)
@@ -681,6 +857,62 @@ func TestSaveChannelSmartScheduleProbeResultKeepsNewestBoundedSamples(t *testing
 	metrics := state.ProbeMetricsSince(channelSmartScheduleMaxProbeSamples)
 	assert.Equal(t, int64(2), metrics.SampleCount)
 	assert.Equal(t, int64(1), metrics.SuccessCount)
+}
+
+func TestSaveChannelSmartScheduleProbeResultSeparatesAndDeduplicatesManualSamples(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1008, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	state, err := SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
+		ChannelId: 1008, Group: "vip", Model: "model-a",
+		Source:   ChannelSmartScheduleSampleSourceScheduledProbe,
+		SampleId: "scheduled-1", WindowStart: 100, Time: 100, Success: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), state.ProbeSampleCount)
+
+	failureDurationMs := 750.0
+	manualResult := ChannelSmartScheduleProbeResult{
+		ChannelId: 1008, Group: "vip", Model: "model-a",
+		Source:   ChannelSmartScheduleSampleSourceManualTest,
+		SampleId: "manual-1", WindowStart: 100, Time: 110, Success: false,
+		DurationMs: &failureDurationMs,
+	}
+	state, err = SaveChannelSmartScheduleProbeResult(manualResult)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), state.ProbeSampleCount)
+
+	manualResult.Success = true
+	state, err = SaveChannelSmartScheduleProbeResult(manualResult)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), state.ProbeSampleCount)
+	assert.Equal(t, int64(1), state.ProbeSuccessCount)
+
+	firstTokenMs := 125.0
+	tps := 40.0
+	state, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
+		ChannelId: 1008, Group: "vip", Model: "model-a",
+		Source:   ChannelSmartScheduleSampleSourceManualTest,
+		SampleId: "manual-2", WindowStart: 100, Time: 120, Success: true,
+		FirstTokenMs: &firstTokenMs, TPS: &tps,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), state.ProbeSampleCount)
+
+	manualMetrics := state.ManualTestMetricsSince(100)
+	assert.Equal(t, int64(2), manualMetrics.SampleCount)
+	assert.Equal(t, int64(1), manualMetrics.SuccessCount)
+	assert.Equal(t, int64(1), manualMetrics.FailureCount)
+	assert.Equal(t, int64(1), manualMetrics.FirstTokenSampleCount)
+	assert.Equal(t, int64(1), manualMetrics.TPSSampleCount)
+
+	_, err = SaveChannelSmartScheduleProbeResult(ChannelSmartScheduleProbeResult{
+		ChannelId: 1008, Group: "vip", Model: "model-a",
+		Source: "unknown", WindowStart: 100, Time: 130, Success: true,
+	})
+	assert.ErrorContains(t, err, "样本来源无效")
 }
 
 func TestRouteCacheSelectsAbilityPriorityWithinGroupAndModel(t *testing.T) {

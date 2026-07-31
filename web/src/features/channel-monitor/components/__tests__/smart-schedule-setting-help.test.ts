@@ -46,6 +46,6 @@ test('shows smart schedule setting help when its icon receives keyboard focus', 
   const result = JSON.parse(output) as SettingHelpResult
 
   assert.equal(result.triggerType, 'button')
-  assert.equal(result.triggerAriaLabel, '查看“得分曲线指数”说明')
+  assert.equal(result.triggerAriaLabel, '查看“主渠道切换分差”说明')
   assert.equal(result.focusShowsExplanation, true)
 })

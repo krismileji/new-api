@@ -29,6 +29,7 @@ type SettingsSurfaceResult = {
   policyDialogExplainsExplicitScope: boolean
   policyDialogHasGroupSettingHelp: boolean
   policyDialogHasCompletePolicyControls: boolean
+  policyDialogHasNoLegacyWeightControls: boolean
   policyDialogStabilityInputsAligned: boolean
   policyTableScrollable: boolean
   newPolicyVisible: boolean
@@ -76,6 +77,7 @@ test(
     assert.equal(result.policyDialogCentered, true)
     assert.equal(result.policyDialogBlocksHorizontalOverflow, true)
     assert.equal(result.policyDialogHasCompletePolicyControls, true)
+    assert.equal(result.policyDialogHasNoLegacyWeightControls, true)
     assert.equal(result.policyDialogStabilityInputsAligned, true)
     assert.equal(result.policyDialogExplainsExplicitScope, true)
     assert.equal(result.policyDialogHasGroupSettingHelp, true)

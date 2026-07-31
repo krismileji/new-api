@@ -41,7 +41,7 @@ func manualProbeTestPolicy(group string, models []string, sampleMode string) cha
 	return policy
 }
 
-func TestRecordManualChannelSmartScheduleProbeResultUsesOnlyEligibleConfiguredGroups(t *testing.T) {
+func TestRecordManualChannelSmartScheduleProbeResultUsesEveryParticipatingConfiguredGroup(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policies := []channelSmartScheduleGroupPolicy{
 		manualProbeTestPolicy("vip", []string{"model-a"}, channelMonitorSmartScheduleSampleProbe),
@@ -97,13 +97,14 @@ func TestRecordManualChannelSmartScheduleProbeResultUsesOnlyEligibleConfiguredGr
 	for _, state := range states {
 		byGroup[state.GroupName] = state
 	}
-	for _, group := range []string{"vip", "shared"} {
+	for _, group := range []string{"vip", "shared", "traffic", "off", "degraded"} {
 		assert.Equal(t, int64(1), byGroup[group].ProbeSampleCount)
 		assert.Equal(t, int64(1), byGroup[group].ProbeSuccessCount)
 		assert.Equal(t, int64(1), byGroup[group].ProbeFirstTokenSampleCount)
 		assert.Equal(t, int64(1), byGroup[group].ProbeTPSSampleCount)
+		assert.Equal(t, int64(1), byGroup[group].ManualTestMetricsSince(0).SampleCount)
 	}
-	for _, group := range []string{"traffic", "off", "excluded", "degraded", "disabled", "wrong-model", "unconfigured"} {
+	for _, group := range []string{"excluded", "disabled", "wrong-model", "unconfigured"} {
 		assert.Zero(t, byGroup[group].ProbeSampleCount)
 	}
 
@@ -122,11 +123,11 @@ func TestRecordManualChannelSmartScheduleProbeResultUsesOnlyEligibleConfiguredGr
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "model-a",
 	).First(&vipState).Error)
-	assert.Equal(t, int64(2), vipState.ProbeSampleCount)
+	assert.Equal(t, int64(3), vipState.ProbeSampleCount)
 	assert.Equal(t, int64(1), vipState.ProbeSuccessCount)
-	assert.Equal(t, int64(1), vipState.ProbeFailureDurationSampleCount)
+	assert.Equal(t, int64(2), vipState.ProbeFailureDurationSampleCount)
 	require.NotNil(t, vipState.ProbeAverageFailureDurationMs)
-	assert.InDelta(t, 850, *vipState.ProbeAverageFailureDurationMs, 1e-9)
+	assert.InDelta(t, 675, *vipState.ProbeAverageFailureDurationMs, 1e-9)
 
 	var logCount int64
 	require.NoError(t, db.Model(&model.Log{}).Count(&logCount).Error)

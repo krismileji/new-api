@@ -4,15 +4,16 @@ import (
 	"errors"
 	"math"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
 const (
-	channelMonitorScorePercentageTotal     = 100.0
-	channelMonitorMinScoreCurveExponent    = 0.1
-	channelMonitorMaxScoreCurveExponent    = 5.0
-	channelMonitorDefaultWeightSpreadStart = 3.0
-	channelMonitorDefaultWeightSpreadFull  = 10.0
+	channelMonitorScorePercentageTotal   = 100.0
+	channelMonitorDefaultPrimaryTraffic  = 90.0
+	channelMonitorMinPrimaryTraffic      = 51.0
+	channelMonitorMaxPrimaryTraffic      = 99.0
+	channelMonitorDefaultSwitchThreshold = 3.0
 )
 
 type channelSmartScheduleMetricPercentages struct {
@@ -22,22 +23,18 @@ type channelSmartScheduleMetricPercentages struct {
 }
 
 type channelSmartScheduleScoring struct {
-	StabilityPercent           float64                               `json:"stability_percent"`
-	CurveExponent              float64                               `json:"curve_exponent"`
-	RelativeWeightEnabled      bool                                  `json:"relative_weight_enabled"`
-	RelativeWeightStartPercent float64                               `json:"relative_weight_start_percent"`
-	RelativeWeightFullPercent  float64                               `json:"relative_weight_full_percent"`
-	Smart                      channelSmartScheduleMetricPercentages `json:"smart"`
-	Ratio                      channelSmartScheduleMetricPercentages `json:"ratio"`
+	StabilityPercent              float64                               `json:"stability_percent"`
+	PrimaryTrafficPercent         float64                               `json:"primary_traffic_percent"`
+	PrimarySwitchThresholdPercent float64                               `json:"primary_switch_threshold_percent"`
+	Smart                         channelSmartScheduleMetricPercentages `json:"smart"`
+	Ratio                         channelSmartScheduleMetricPercentages `json:"ratio"`
 }
 
 func defaultChannelSmartScheduleScoring() channelSmartScheduleScoring {
 	return channelSmartScheduleScoring{
-		StabilityPercent:           50,
-		CurveExponent:              1,
-		RelativeWeightEnabled:      true,
-		RelativeWeightStartPercent: channelMonitorDefaultWeightSpreadStart,
-		RelativeWeightFullPercent:  channelMonitorDefaultWeightSpreadFull,
+		StabilityPercent:              50,
+		PrimaryTrafficPercent:         channelMonitorDefaultPrimaryTraffic,
+		PrimarySwitchThresholdPercent: channelMonitorDefaultSwitchThreshold,
 		Smart: channelSmartScheduleMetricPercentages{
 			CostRatioPercent:  40,
 			FirstTokenPercent: 40,
@@ -51,21 +48,27 @@ func defaultChannelSmartScheduleScoring() channelSmartScheduleScoring {
 	}
 }
 
+func (scoring *channelSmartScheduleScoring) UnmarshalJSON(data []byte) error {
+	type scoringAlias channelSmartScheduleScoring
+	normalized := scoringAlias(defaultChannelSmartScheduleScoring())
+	if err := common.Unmarshal(data, &normalized); err != nil {
+		return err
+	}
+	*scoring = channelSmartScheduleScoring(normalized)
+	return nil
+}
+
 func validateChannelSmartScheduleScoring(scoring channelSmartScheduleScoring) error {
 	if err := validateChannelSmartSchedulePercentage(scoring.StabilityPercent); err != nil {
 		return errors.New("稳定性占比必须在 0% 到 100% 之间")
 	}
-	if math.IsNaN(scoring.CurveExponent) || math.IsInf(scoring.CurveExponent, 0) ||
-		scoring.CurveExponent < channelMonitorMinScoreCurveExponent ||
-		scoring.CurveExponent > channelMonitorMaxScoreCurveExponent {
-		return errors.New("得分曲线指数必须在 0.1 到 5 之间")
+	if math.IsNaN(scoring.PrimaryTrafficPercent) || math.IsInf(scoring.PrimaryTrafficPercent, 0) ||
+		scoring.PrimaryTrafficPercent < channelMonitorMinPrimaryTraffic ||
+		scoring.PrimaryTrafficPercent > channelMonitorMaxPrimaryTraffic {
+		return errors.New("主渠道目标流量占比必须在 51% 到 99% 之间")
 	}
-	if err := validateChannelSmartSchedulePercentage(scoring.RelativeWeightStartPercent); err != nil {
-		return errors.New("相对权重拉伸起始分差必须在 0% 到 100% 之间")
-	}
-	if err := validateChannelSmartSchedulePercentage(scoring.RelativeWeightFullPercent); err != nil ||
-		scoring.RelativeWeightFullPercent <= scoring.RelativeWeightStartPercent {
-		return errors.New("相对权重拉伸完整分差必须大于起始分差且不超过 100%")
+	if err := validateChannelSmartSchedulePercentage(scoring.PrimarySwitchThresholdPercent); err != nil {
+		return errors.New("主渠道切换分差必须在 0% 到 100% 之间")
 	}
 	if err := validateChannelSmartScheduleMetricPercentages(scoring.Smart); err != nil {
 		return errors.New("智能调度的成本倍率、首字和 TPS 占比合计必须为 100%")
@@ -155,7 +158,7 @@ func channelSmartScheduleMeasureJitter(
 	}
 	thresholdMs := math.Max(
 		baselineMs*policy.JitterThresholdMultiplier,
-		baselineMs+float64(policy.JitterAbsoluteToleranceMs),
+		baselineMs+policy.JitterAbsoluteToleranceSeconds*1000,
 	)
 	if math.IsNaN(thresholdMs) || math.IsInf(thresholdMs, 0) || thresholdMs <= 0 {
 		return measurement
@@ -186,10 +189,12 @@ func channelSmartScheduleMeasureJitter(
 		return measurement
 	}
 	measurement.Available = true
-	allowed := int64(math.Floor(
-		float64(measurement.SampleCount) * policy.JitterTolerancePercent / channelMonitorScorePercentageTotal,
-	))
-	measurement.AllowedCount = min(max(allowed, int64(1)), measurement.SampleCount)
+	if policy.JitterTolerancePercent > 0 {
+		allowed := int64(math.Floor(
+			float64(measurement.SampleCount) * policy.JitterTolerancePercent / channelMonitorScorePercentageTotal,
+		))
+		measurement.AllowedCount = min(max(allowed, int64(1)), measurement.SampleCount)
+	}
 	measurement.Penalty = float64(max(measurement.SlowCount-measurement.AllowedCount, int64(0)))
 	return measurement
 }
@@ -212,7 +217,7 @@ func channelSmartScheduleLearnJitterBaseline(
 	currentUpdatedAt int64,
 	observedMs float64,
 	now int64,
-	learningHours int,
+	learningMinutes int,
 ) (float64, bool) {
 	if math.IsNaN(observedMs) || math.IsInf(observedMs, 0) || observedMs <= 0 || now <= 0 {
 		return 0, false
@@ -220,10 +225,10 @@ func channelSmartScheduleLearnJitterBaseline(
 	if current == nil || math.IsNaN(*current) || math.IsInf(*current, 0) || *current <= 0 {
 		return observedMs, true
 	}
-	if learningHours <= 0 || currentUpdatedAt <= 0 || now <= currentUpdatedAt {
+	if learningMinutes <= 0 || currentUpdatedAt <= 0 || now <= currentUpdatedAt {
 		return *current, false
 	}
-	alpha := math.Min(1, float64(now-currentUpdatedAt)/float64(learningHours*60*60))
+	alpha := math.Min(1, float64(now-currentUpdatedAt)/float64(learningMinutes*60))
 	learned := *current + (observedMs-*current)*alpha
 	learned = min(max(learned, *current*0.9), *current*1.1)
 	return learned, true

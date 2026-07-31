@@ -155,6 +155,15 @@ const LazyChannelBatchTestDialog = lazy(() =>
     (module) => ({ default: module.ChannelBatchTestDialog })
   )
 )
+const loadChannelMonitorSmartScheduleExecutionDialog = () =>
+  import('./components/channel-monitor-smart-schedule-execution-dialog').then(
+    (module) => ({
+      default: module.ChannelMonitorSmartScheduleExecutionDialog,
+    })
+  )
+const LazyChannelMonitorSmartScheduleExecutionDialog = lazy(
+  loadChannelMonitorSmartScheduleExecutionDialog
+)
 type MonitorView = 'channels' | 'groups' | 'models' | 'smart-schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
@@ -249,6 +258,8 @@ export function ChannelMonitor() {
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
   const [taskHistoryKind, setTaskHistoryKind] =
     useState<ChannelMonitorTaskKind>('ratio')
+  const [smartScheduleExecutionOpen, setSmartScheduleExecutionOpen] =
+    useState(false)
   const [costHistoryOpen, setCostHistoryOpen] = useState(false)
   const [costHistoryChannel, setCostHistoryChannel] = useState<{
     id: number
@@ -1101,8 +1112,7 @@ export function ChannelMonitor() {
               isLoading={smartScheduleQuery.isLoading}
               isError={smartScheduleQuery.isError}
               onOpenHistory={() => {
-                setTaskHistoryKind('schedule')
-                setTaskHistoryOpen(true)
+                setSmartScheduleExecutionOpen(true)
               }}
               onOpenSettings={openSmartScheduleSettings}
             />
@@ -1151,6 +1161,27 @@ export function ChannelMonitor() {
               }
             />
             <TooltipContent>定时任务记录</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onMouseEnter={() => {
+                    void loadChannelMonitorSmartScheduleExecutionDialog()
+                  }}
+                  onFocus={() => {
+                    void loadChannelMonitorSmartScheduleExecutionDialog()
+                  }}
+                  onClick={() => setSmartScheduleExecutionOpen(true)}
+                  aria-label='智能调度执行记录'
+                >
+                  <HugeiconsIcon icon={ChartLineData01Icon} />
+                </Button>
+              }
+            />
+            <TooltipContent>智能调度执行记录</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -1320,6 +1351,14 @@ export function ChannelMonitor() {
           open
           onOpenChange={setTaskHistoryOpen}
         />
+      )}
+      {smartScheduleExecutionOpen && (
+        <Suspense fallback={null}>
+          <LazyChannelMonitorSmartScheduleExecutionDialog
+            open
+            onOpenChange={setSmartScheduleExecutionOpen}
+          />
+        </Suspense>
       )}
       {costHistoryOpen && (
         <Suspense fallback={null}>

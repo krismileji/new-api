@@ -45,6 +45,13 @@ func StartChannelMonitorAggregationWorker() {
 }
 
 func runChannelMonitorAggregationOnce(ctx context.Context) error {
+	routingChanged, err := model.ClearExpiredChannelSmartScheduleRoutePrimaries(common.GetTimestamp())
+	if err != nil {
+		return fmt.Errorf("清理到期的固定主渠道失败: %w", err)
+	}
+	if routingChanged && common.MemoryCacheEnabled {
+		model.InitChannelCache()
+	}
 	if !common.LogConsumeEnabled && !constant.ErrorLogEnabled {
 		return nil
 	}
@@ -54,6 +61,6 @@ func runChannelMonitorAggregationOnce(ctx context.Context) error {
 	if start < 0 {
 		start = 0
 	}
-	_, err := model.AggregateChannelMonitorMinuteRange(ctx, start, targetEnd)
+	_, err = model.AggregateChannelMonitorMinuteRange(ctx, start, targetEnd)
 	return err
 }
