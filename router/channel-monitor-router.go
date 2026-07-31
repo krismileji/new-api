@@ -18,6 +18,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.GET("/success/detail", controller.GetChannelMonitorSuccessDetail)
 		monitorRoute.GET("/tasks", controller.ListChannelMonitorTasks)
 		monitorRoute.PUT("/settings", controller.UpdateChannelMonitorSettings)
+		monitorRoute.POST("/settings/email-preview", controller.PreviewChannelMonitorNotificationEmail)
 		monitorRoute.POST("/ratio/run", controller.RunChannelMonitorRatioUpdate)
 		monitorRoute.POST("/schedule/run", controller.RunChannelMonitorSmartSchedule)
 		monitorRoute.POST("/schedule/model-test", controller.RunChannelMonitorSmartScheduleModelTest)

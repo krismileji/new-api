@@ -504,6 +504,7 @@ export type ChannelMonitorSettings = {
   cost_retention_days: number
   email_notification_enabled: boolean
   notification_email: string
+  email_notification_types: ChannelMonitorEmailNotificationType[]
   probe_response_enabled: boolean
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
@@ -513,6 +514,20 @@ export type ChannelMonitorSettings = {
   smart_schedule_force_reset_task_created?: boolean
   smart_schedule_force_reset_task_id?: string
   smart_schedule_force_reset_task_error?: string
+}
+
+export type ChannelMonitorEmailNotificationType =
+  | 'ratio_change'
+  | 'balance_warning'
+  | 'channel_disabled'
+  | 'group_membership_removed'
+  | 'upstream_sync_failed'
+  | 'task_failed'
+
+export type ChannelMonitorEmailPreview = {
+  subject: string
+  html: string
+  notification_types: ChannelMonitorEmailNotificationType[]
 }
 
 export type ChannelMonitorSmartScheduleStrategy =

@@ -22,8 +22,10 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 type SettingsSurfaceResult = {
+  allNotificationTypesSelected: boolean
   generalHasSchedule: boolean
   generalTitle: string
+  notificationTypeCanBeUnchecked: boolean
   policyDialogBlocksHorizontalOverflow: boolean
   policyDialogCentered: boolean
   policyDialogExplainsExplicitScope: boolean
@@ -32,6 +34,7 @@ type SettingsSurfaceResult = {
   policyDialogHasNoLegacyWeightControls: boolean
   policyDialogStabilityInputsAligned: boolean
   policyTableScrollable: boolean
+  previewEmailButtonEnabled: boolean
   newPolicyVisible: boolean
   scheduleHasExplicitPolicyScope: boolean
   scheduleHasNoImplicitPolicyControls: boolean
@@ -68,6 +71,9 @@ test(
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
     assert.equal(result.generalHasSchedule, false)
+    assert.equal(result.allNotificationTypesSelected, true)
+    assert.equal(result.notificationTypeCanBeUnchecked, true)
+    assert.equal(result.previewEmailButtonEnabled, true)
     assert.equal(result.scheduleSide, 'right')
     assert.match(result.scheduleTitle, /智能调度设置/)
     assert.equal(result.scheduleUsesChannelDrawerLayout, true)

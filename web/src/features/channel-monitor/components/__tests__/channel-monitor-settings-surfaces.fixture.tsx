@@ -20,6 +20,7 @@ import assert from 'node:assert/strict'
 
 import { Window } from 'happy-dom'
 
+import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../../lib/email-notification'
 import type { ChannelMonitorSettings } from '../../types'
 
 const domWindow = new Window()
@@ -79,8 +80,9 @@ const settings = {
   auto_enable_on_cost_ratio_recovery: false,
   auto_enable_on_balance_recovery: false,
   cost_retention_days: 120,
-  email_notification_enabled: false,
-  notification_email: '',
+  email_notification_enabled: true,
+  notification_email: 'alerts@example.com',
+  email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   probe_response_enabled: false,
   relay_response_header_timeout_seconds: 60,
   smart_schedule_enabled: true,
@@ -172,6 +174,27 @@ const generalDialog = document.body.querySelector(
 assert.ok(generalDialog)
 const generalTitle = generalDialog.textContent ?? ''
 const generalHasSchedule = generalTitle.includes('智能调度')
+const notificationTypeFields = [
+  ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
+]
+const notificationTypeCheckboxes = notificationTypeFields.map((field) =>
+  field.querySelector<HTMLButtonElement>('[role="checkbox"]')
+)
+assert.equal(notificationTypeCheckboxes.length, 6)
+assert.ok(notificationTypeCheckboxes.every(Boolean))
+const allNotificationTypesSelected = notificationTypeCheckboxes.every(
+  (checkbox) => checkbox?.getAttribute('aria-checked') === 'true'
+)
+const previewEmailButton = [...generalDialog.querySelectorAll('button')].find(
+  (button) => button.textContent?.includes('预览邮件')
+)
+assert.ok(previewEmailButton)
+const previewEmailButtonEnabled = !previewEmailButton.disabled
+const firstNotificationCheckbox = notificationTypeCheckboxes[0]
+assert.ok(firstNotificationCheckbox)
+await act(async () => firstNotificationCheckbox.click())
+const notificationTypeCanBeUnchecked =
+  firstNotificationCheckbox.getAttribute('aria-checked') === 'false'
 await unmountSettingsSurface(generalSurface)
 
 const scheduleSurface = await renderSettingsSurface('schedule')
@@ -287,11 +310,14 @@ const newPolicyVisible =
 
 process.stdout.write(
   `${JSON.stringify({
+    allNotificationTypesSelected,
     generalHasSchedule,
     generalTitle,
+    notificationTypeCanBeUnchecked,
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,
     policyTableScrollable,
+    previewEmailButtonEnabled,
     newPolicyVisible,
     policyDialogExplainsExplicitScope,
     policyDialogHasGroupSettingHelp,

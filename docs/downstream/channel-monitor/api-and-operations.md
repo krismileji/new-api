@@ -15,6 +15,7 @@
 | `GET` | `/success/detail` | 成功率明细；指定 `channel_id`（可加 `model_name`）或 `group`，二选一 |
 | `GET` | `/tasks` | 任务记录；`kind=ratio|schedule` 和通用分页参数 |
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
+| `POST` | `/settings/email-preview` | 按提交的 `notification_types` 生成邮件主题和 HTML 预览，不发送邮件 |
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
 | `POST` | `/schedule/model-test` | 测试指定分组模型在参与调度的渠道上的可用性；支持流式首字与 TPS |
@@ -54,6 +55,7 @@
 | `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `120` | `1..3650` |
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
+| `email_notification_types` | `ChannelMonitorEmailNotificationTypes` | 六类全选 | `ratio_change`、`balance_warning`、`channel_disabled`、`group_membership_removed`、`upstream_sync_failed`、`task_failed`；开启邮件通知时至少选择一类 |
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
@@ -64,6 +66,8 @@
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
 
 `upstream_request_timeout_seconds` 同时用于自动更新、手动刷新和上游配置测试。一次倍率刷新中包含的登录、倍率和余额子请求共享同一个总超时预算；自动更新若超时，会按 `auto_update_retry_count` 为下一次尝试重新分配完整预算。该设置与中继请求的 `relay_response_header_timeout_seconds` 相互独立。
+
+`email_notification_types` 控制通知邮件中的分类和主题统计；未勾选的事件仍会写入任务执行记录，但不会触发或进入邮件。`POST /settings/email-preview` 使用同一套邮件构建逻辑生成示例，响应的 `data.subject` 和 `data.html` 就是当前选择对应的最终主题与 HTML 内容。
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 

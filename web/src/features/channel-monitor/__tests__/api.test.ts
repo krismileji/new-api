@@ -28,12 +28,58 @@ import {
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
+  previewChannelMonitorNotificationEmail,
   testChannelMonitorSmartScheduleModel,
   updateChannelMonitorGroupChannels,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
+
+test('previews an email with exactly the selected notification types', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          subject: '渠道监控：1 个余额预警，1 项更新失败',
+          html: '<h3>上游余额预警</h3><h3>定时更新任务失败</h3>',
+          notification_types: ['balance_warning', 'task_failed'],
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    const response = await previewChannelMonitorNotificationEmail({
+      notificationTypes: ['balance_warning', 'task_failed'],
+    })
+    assert.deepEqual(response.data.notification_types, [
+      'balance_warning',
+      'task_failed',
+    ])
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/settings/email-preview'
+  )
+  assert.equal(requestConfig?.method, 'post')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    notification_types: ['balance_warning', 'task_failed'],
+  })
+})
 
 test('updates all group-model route participation for one channel', async () => {
   const originalAdapter = api.defaults.adapter

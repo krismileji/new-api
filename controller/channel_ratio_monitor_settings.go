@@ -30,6 +30,7 @@ const (
 	channelMonitorCostRetentionDaysOption                  = "ChannelMonitorCostRetentionDays"
 	channelMonitorEmailNotificationOption                  = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption                  = "ChannelMonitorNotificationEmail"
+	channelMonitorEmailNotificationTypesOption             = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorProbeResponseOption                      = channelprobe.OptionKey
 	channelMonitorGroupCoefficientsOption                  = "ChannelMonitorGroupCoefficients"
 	channelMonitorChannelOrderOption                       = "ChannelMonitorChannelOrder"
@@ -74,7 +75,22 @@ const (
 	defaultChannelMonitorGroupCoefficient                  = 1
 	defaultChannelMonitorSmartScheduleInterval             = 10
 	defaultChannelMonitorSmartScheduleRange                = 60
+	channelMonitorEmailTypeRatioChange                     = "ratio_change"
+	channelMonitorEmailTypeBalanceWarning                  = "balance_warning"
+	channelMonitorEmailTypeChannelDisabled                 = "channel_disabled"
+	channelMonitorEmailTypeGroupMembershipRemoved          = "group_membership_removed"
+	channelMonitorEmailTypeUpstreamSyncFailed              = "upstream_sync_failed"
+	channelMonitorEmailTypeTaskFailed                      = "task_failed"
 )
+
+var channelMonitorEmailNotificationTypes = []string{
+	channelMonitorEmailTypeRatioChange,
+	channelMonitorEmailTypeBalanceWarning,
+	channelMonitorEmailTypeChannelDisabled,
+	channelMonitorEmailTypeGroupMembershipRemoved,
+	channelMonitorEmailTypeUpstreamSyncFailed,
+	channelMonitorEmailTypeTaskFailed,
+}
 
 type channelMonitorSettings struct {
 	AutoUpdateIntervalMinutes          int                        `json:"auto_update_interval_minutes"`
@@ -87,6 +103,7 @@ type channelMonitorSettings struct {
 	CostRetentionDays                  int                        `json:"cost_retention_days"`
 	EmailNotificationEnabled           bool                       `json:"email_notification_enabled"`
 	NotificationEmail                  string                     `json:"notification_email"`
+	EmailNotificationTypes             []string                   `json:"email_notification_types"`
 	ProbeResponseEnabled               bool                       `json:"probe_response_enabled"`
 	RelayHeaderTimeoutSeconds          int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled               bool                       `json:"smart_schedule_enabled"`
@@ -110,6 +127,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	CostRetentionDays                 *int                        `json:"cost_retention_days"`
 	EmailNotificationEnabled          *bool                       `json:"email_notification_enabled"`
 	NotificationEmail                 *string                     `json:"notification_email"`
+	EmailNotificationTypes            *[]string                   `json:"email_notification_types"`
 	ProbeResponseEnabled              *bool                       `json:"probe_response_enabled"`
 	RelayHeaderTimeoutSeconds         *int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled              *bool                       `json:"smart_schedule_enabled"`
@@ -135,6 +153,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawCostRetentionDays := common.OptionMap[channelMonitorCostRetentionDaysOption]
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
+	rawEmailNotificationTypes := common.OptionMap[channelMonitorEmailNotificationTypesOption]
 	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
 	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
@@ -186,6 +205,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil {
 		emailNotificationEnabled = false
 	}
+	emailNotificationTypes := parseChannelMonitorEmailNotificationTypes(rawEmailNotificationTypes)
 	probeResponseEnabled, err := strconv.ParseBool(rawProbeResponseEnabled)
 	if err != nil {
 		probeResponseEnabled = false
@@ -222,6 +242,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		CostRetentionDays:                 costRetentionDays,
 		EmailNotificationEnabled:          emailNotificationEnabled,
 		NotificationEmail:                 notificationEmail,
+		EmailNotificationTypes:            emailNotificationTypes,
 		ProbeResponseEnabled:              probeResponseEnabled,
 		RelayHeaderTimeoutSeconds:         relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:              smartScheduleEnabled,
@@ -235,6 +256,63 @@ func getChannelMonitorSettings() channelMonitorSettings {
 
 func (settings channelMonitorSettings) upstreamRequestTimeout() time.Duration {
 	return time.Duration(settings.UpstreamRequestTimeoutSeconds) * time.Second
+}
+
+func defaultChannelMonitorEmailNotificationTypes() []string {
+	return append([]string(nil), channelMonitorEmailNotificationTypes...)
+}
+
+func normalizeChannelMonitorEmailNotificationTypes(values []string) ([]string, error) {
+	if len(values) > len(channelMonitorEmailNotificationTypes) {
+		return nil, fmt.Errorf("邮件通知类型不能超过 %d 个", len(channelMonitorEmailNotificationTypes))
+	}
+	selected := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		valid := false
+		for _, notificationType := range channelMonitorEmailNotificationTypes {
+			if value == notificationType {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, fmt.Errorf("不支持的邮件通知类型：%s", value)
+		}
+		selected[value] = struct{}{}
+	}
+	normalized := make([]string, 0, len(selected))
+	for _, notificationType := range channelMonitorEmailNotificationTypes {
+		if _, exists := selected[notificationType]; exists {
+			normalized = append(normalized, notificationType)
+		}
+	}
+	return normalized, nil
+}
+
+func parseChannelMonitorEmailNotificationTypes(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return defaultChannelMonitorEmailNotificationTypes()
+	}
+	var values []string
+	if err := common.UnmarshalJsonStr(raw, &values); err != nil {
+		return defaultChannelMonitorEmailNotificationTypes()
+	}
+	normalized, err := normalizeChannelMonitorEmailNotificationTypes(values)
+	if err != nil {
+		return defaultChannelMonitorEmailNotificationTypes()
+	}
+	return normalized
+}
+
+func channelMonitorEmailNotificationTypeEnabled(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeChannelMonitorSmartScheduleModels(models []string, fieldName string) ([]string, error) {
@@ -454,6 +532,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.CostRetentionDays == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
+		request.EmailNotificationTypes == nil &&
 		request.ProbeResponseEnabled == nil &&
 		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
@@ -553,8 +632,26 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.NotificationEmail = notificationEmail
 		values[channelMonitorNotificationEmailOption] = notificationEmail
 	}
+	if request.EmailNotificationTypes != nil {
+		notificationTypes, err := normalizeChannelMonitorEmailNotificationTypes(*request.EmailNotificationTypes)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		encoded, err := common.Marshal(notificationTypes)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		settings.EmailNotificationTypes = notificationTypes
+		values[channelMonitorEmailNotificationTypesOption] = string(encoded)
+	}
 	if settings.EmailNotificationEnabled && settings.NotificationEmail == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "开启邮件通知时请填写通知邮箱"})
+		return
+	}
+	if settings.EmailNotificationEnabled && len(settings.EmailNotificationTypes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "开启邮件通知时请至少选择一种通知类型"})
 		return
 	}
 	if request.ProbeResponseEnabled != nil {
@@ -674,6 +771,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"cost_retention_days":                   settings.CostRetentionDays,
 		"email_notification_enabled":            settings.EmailNotificationEnabled,
 		"notification_email_configured":         settings.NotificationEmail != "",
+		"email_notification_types":              settings.EmailNotificationTypes,
 		"probe_response_enabled":                settings.ProbeResponseEnabled,
 		"smart_schedule_enabled":                settings.SmartScheduleEnabled,
 		"smart_schedule_group_policies":         settings.SmartScheduleGroupPolicies,

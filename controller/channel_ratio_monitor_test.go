@@ -272,6 +272,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			assert.Equal(t, test.wantFailureLimit, settings.AutoUpdateConsecutiveFailureLimit)
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
 			assert.Equal(t, test.wantEmailEnabled, settings.EmailNotificationEnabled)
+			assert.Equal(t, defaultChannelMonitorEmailNotificationTypes(), settings.EmailNotificationTypes)
 			assert.Equal(t, test.wantProbeEnabled, settings.ProbeResponseEnabled)
 			assert.Equal(t, test.wantRelayTimeout, settings.RelayHeaderTimeoutSeconds)
 			if test.name == "valid values" {
@@ -286,6 +287,22 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			assert.Equal(t, model.SystemTaskTypeChannelRatioMonitor, handler.Type())
 		})
 	}
+}
+
+func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmpty(t *testing.T) {
+	for _, raw := range []string{"", "null", "{\"invalid\":true}"} {
+		t.Run(raw, func(t *testing.T) {
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorEmailNotificationTypesOption: raw,
+			})
+			assert.Equal(t, defaultChannelMonitorEmailNotificationTypes(), getChannelMonitorSettings().EmailNotificationTypes)
+		})
+	}
+
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorEmailNotificationTypesOption: "[]",
+	})
+	assert.Empty(t, getChannelMonitorSettings().EmailNotificationTypes)
 }
 
 func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
@@ -537,6 +554,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"cost_retention_days": minChannelMonitorCostRetentionDays - 1},
 		{"cost_retention_days": maxChannelMonitorCostRetentionDays + 1},
 		{"email_notification_enabled": true},
+		{"email_notification_enabled": true, "notification_email": "alerts@example.com", "email_notification_types": []string{}},
+		{"email_notification_types": []string{"unknown"}},
 		{"notification_email": "invalid"},
 		{"notification_email": strings.Repeat("a", maxChannelMonitorNotificationEmailLength) + "@example.com"},
 		{"relay_response_header_timeout_seconds": -1},
@@ -601,6 +620,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"cost_retention_days":                   365,
 		"email_notification_enabled":            true,
 		"notification_email":                    "alerts@example.com",
+		"email_notification_types":              []string{channelMonitorEmailTypeBalanceWarning, channelMonitorEmailTypeTaskFailed},
 		"probe_response_enabled":                true,
 		"smart_schedule_enabled":                true,
 		"smart_schedule_group_policies": []map[string]any{
@@ -651,6 +671,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 365, response.Data.CostRetentionDays)
 	assert.True(t, response.Data.EmailNotificationEnabled)
 	assert.Equal(t, "alerts@example.com", response.Data.NotificationEmail)
+	assert.Equal(t, []string{channelMonitorEmailTypeBalanceWarning, channelMonitorEmailTypeTaskFailed}, response.Data.EmailNotificationTypes)
 	assert.True(t, response.Data.ProbeResponseEnabled)
 	assert.Equal(t, 60, response.Data.RelayHeaderTimeoutSeconds)
 	assert.Equal(t, 60, common.GetRelayResponseHeaderTimeoutSeconds())

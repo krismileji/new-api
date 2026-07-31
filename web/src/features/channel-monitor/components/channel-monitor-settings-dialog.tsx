@@ -20,12 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Route01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  useForm,
-  useWatch,
-  type Resolver,
-  type UseFormReturn,
-} from 'react-hook-form'
+import { useForm, type Resolver, type UseFormReturn } from 'react-hook-form'
 import { toast } from 'sonner'
 
 import {
@@ -53,7 +48,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { IconBadge } from '@/components/ui/icon-badge'
-import { Input } from '@/components/ui/input'
 import {
   InputGroup,
   InputGroupAddon,
@@ -95,6 +89,7 @@ import {
 } from '../lib/settings-update'
 import { channelMonitorSmartScheduleGroupPoliciesToForm } from '../lib/smart-schedule-group-policy'
 import type { ChannelMonitorSettings } from '../types'
+import { ChannelMonitorEmailNotificationFields } from './channel-monitor-email-notification-fields'
 import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
 
@@ -302,6 +297,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
+      emailNotificationTypes: props.settings.email_notification_types,
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       relayResponseHeaderTimeoutSeconds:
         props.settings.relay_response_header_timeout_seconds ?? 0,
@@ -316,10 +312,6 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         props.settings.smart_schedule_performance_minutes,
       smartScheduleForceReset: false,
     },
-  })
-  const emailNotificationEnabled = useWatch({
-    control: form.control,
-    name: 'emailNotificationEnabled',
   })
   const mutation = useMutation({
     mutationFn: updateChannelMonitorSettings,
@@ -583,57 +575,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
 
                 <ChannelMonitorCostRetentionField form={form} />
 
-                <FormField
-                  control={form.control}
-                  name='emailNotificationEnabled'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>邮件通知</FormLabel>
-                        <FormDescription>
-                          开启后，定时更新检测到倍率变化、余额预警、更新失败或倍率策略自动禁用时发送邮件
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='开启渠道监控邮件通知'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name='notificationEmail'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>通知邮箱</FormLabel>
-                      <FormControl>
-                        <Input
-                          type='email'
-                          disabled={!emailNotificationEnabled}
-                          autoComplete='email'
-                          placeholder='name@example.com'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            form.formState.errors.notificationEmail
-                          )}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        关闭通知后仍会保留邮箱地址；邮件发送使用系统 SMTP 设置
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <ChannelMonitorEmailNotificationFields form={form} />
               </TabsContent>
 
               <TabsContent

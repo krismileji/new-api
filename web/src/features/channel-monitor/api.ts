@@ -22,6 +22,8 @@ import type {
   ChannelMonitorApplyGroupResult,
   ChannelMonitorApiResponse,
   ChannelMonitorCostOverview,
+  ChannelMonitorEmailNotificationType,
+  ChannelMonitorEmailPreview,
   ChannelMonitorFetchResult,
   ChannelMonitorGroupChannelsUpdateResult,
   ChannelMonitorGroupRatioSyncResult,
@@ -402,6 +404,19 @@ export async function updateChannelMonitorSettings(
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSettings>
   >('/api/channel_monitor/settings', settings, channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function previewChannelMonitorNotificationEmail(request: {
+  notificationTypes: ChannelMonitorEmailNotificationType[]
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorEmailPreview>
+  >(
+    '/api/channel_monitor/settings/email-preview',
+    { notification_types: request.notificationTypes },
+    channelMonitorRequestConfig()
+  )
   return ensureChannelMonitorSuccess(response.data)
 }
 

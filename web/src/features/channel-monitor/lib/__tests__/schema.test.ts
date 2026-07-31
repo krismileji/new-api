@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
+import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../email-notification'
 import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
@@ -69,6 +70,7 @@ describe('channel monitor settings schema', () => {
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
+      emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: true,
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
@@ -87,6 +89,37 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
   })
 
+  test('requires at least one selected notification type while email is enabled', () => {
+    const result = createChannelMonitorSettingsSchema().safeParse({
+      autoUpdateIntervalMinutes: 10,
+      autoUpdateRetryCount: 2,
+      upstreamRequestTimeoutSeconds: 30,
+      autoUpdateConsecutiveFailureLimit: 2,
+      autoDisableOnUpdateFailure: false,
+      autoEnableOnCostRatioRecovery: false,
+      autoEnableOnBalanceRecovery: false,
+      costRetentionDays: 120,
+      emailNotificationEnabled: true,
+      notificationEmail: 'alerts@example.com',
+      emailNotificationTypes: [],
+      probeResponseEnabled: false,
+      relayResponseHeaderTimeoutSeconds: 0,
+      smartScheduleEnabled: false,
+      smartScheduleGroupPolicies: [],
+      smartScheduleIntervalMinutes: 10,
+      smartSchedulePerformanceMinutes: 60,
+      smartScheduleForceReset: false,
+    })
+
+    assert.equal(result.success, false)
+    if (result.success) return
+    assert.ok(
+      result.error.issues.some(
+        (issue) => issue.path.join('.') === 'emailNotificationTypes'
+      )
+    )
+  })
+
   test('accepts bounded general settings and rejects values outside their ranges', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
@@ -99,6 +132,7 @@ describe('channel monitor settings schema', () => {
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
+      emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: false,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: false,
@@ -251,6 +285,7 @@ describe('channel monitor settings schema', () => {
       costRetentionDays: 120,
       emailNotificationEnabled: false,
       notificationEmail: '',
+      emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: false,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: true,

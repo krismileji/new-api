@@ -56,6 +56,7 @@ export function createChannelMonitorSettingsUpdatePayload(
     cost_retention_days: values.costRetentionDays,
     email_notification_enabled: values.emailNotificationEnabled,
     notification_email: values.notificationEmail,
+    email_notification_types: values.emailNotificationTypes,
     probe_response_enabled: values.probeResponseEnabled,
   }
 }

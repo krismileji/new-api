@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import * as z from 'zod'
 
 import type {
+  ChannelMonitorEmailNotificationType,
   ChannelMonitorPolicyAction,
   ChannelMonitorSmartScheduleApplyMode,
   ChannelMonitorSmartScheduleSampleMode,
@@ -27,6 +28,7 @@ import type {
   ChannelMonitorUpstreamType,
 } from '../types'
 import { CHANNEL_MONITOR_SUBSCRIPTION_DAYS } from './cost-conversion'
+import { CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from './email-notification'
 
 export const MAX_MONITOR_RATIO = 1_000_000
 export const MAX_BALANCE_THRESHOLD = 1_000_000_000_000
@@ -415,6 +417,16 @@ export function createChannelMonitorSettingsSchema() {
           '成本数据保留天数不能超过 3650 天'
         ),
       emailNotificationEnabled: z.boolean(),
+      emailNotificationTypes: z
+        .array(
+          z.enum(
+            CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES
+          ) as z.ZodType<ChannelMonitorEmailNotificationType>
+        )
+        .max(
+          CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES.length,
+          '邮件通知类型选择无效'
+        ),
       notificationEmail: z
         .string()
         .trim()
@@ -460,6 +472,16 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['notificationEmail'],
           message: '开启邮件通知时请填写通知邮箱',
+        })
+      }
+      if (
+        values.emailNotificationEnabled &&
+        values.emailNotificationTypes.length === 0
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['emailNotificationTypes'],
+          message: '开启邮件通知时请至少选择一种通知类型',
         })
       }
       if (
