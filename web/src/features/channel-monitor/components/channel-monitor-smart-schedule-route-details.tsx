@@ -1,0 +1,297 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { Cancel01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
+import { formatTimestampToDate } from '@/lib/format'
+
+import { formatMonitorRatio } from '../lib/format'
+import { formatChannelMonitorSmartScheduleEstimatedShare } from '../lib/smart-schedule-display'
+import {
+  channelMonitorSmartScheduleRouteParticipates,
+  getChannelMonitorSmartScheduleRouteDisplayStatus,
+  type ChannelMonitorSmartScheduleRoutePlacement,
+} from '../lib/smart-schedule-summary'
+import type {
+  ChannelMonitorItem,
+  ChannelMonitorSmartScheduleRoute,
+} from '../types'
+import { ChannelMonitorSmartSchedulePrimaryControls } from './channel-monitor-smart-schedule-primary-controls'
+import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
+import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
+
+type ChannelMonitorSmartScheduleRouteDetailsProps = {
+  open: boolean
+  route: ChannelMonitorSmartScheduleRoute | null
+  channel: ChannelMonitorItem | undefined
+  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
+  updatePending: boolean
+  updateDisabled: boolean
+  onOpenChange: (open: boolean) => void
+  onParticipationChange: (
+    route: ChannelMonitorSmartScheduleRoute,
+    checked: boolean
+  ) => void
+  onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+}
+
+export function ChannelMonitorSmartScheduleRouteStatus(props: {
+  route: ChannelMonitorSmartScheduleRoute
+  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
+  onClearProtection: () => void
+}) {
+  if (props.route.state.stability_state !== '') {
+    return (
+      <ChannelMonitorSmartScheduleRouteState
+        route={props.route}
+        onProtectedStatusClick={props.onClearProtection}
+      />
+    )
+  }
+
+  const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
+    props.route,
+    props.placement
+  )
+  if (status === 'failed') {
+    return <Badge variant='destructive'>调度失败</Badge>
+  }
+  if (status === 'exploring') return <Badge variant='warning'>探索采样</Badge>
+  if (status === 'primary') return <Badge>主渠道</Badge>
+  if (status === 'candidate') return <Badge variant='secondary'>同层候选</Badge>
+  if (status === 'first_backup') {
+    return <Badge variant='outline'>第一备用</Badge>
+  }
+  if (status === 'standby') return <Badge variant='outline'>后续备用</Badge>
+  if (status === 'excluded') return <Badge variant='outline'>未参与</Badge>
+  return <Badge variant='destructive'>不可调度</Badge>
+}
+
+function DetailMetric(props: { label: string; value: string }) {
+  return (
+    <div className='min-w-0 border-l pl-3 first:border-l-0 first:pl-0'>
+      <div className='text-muted-foreground text-[11px] leading-4'>
+        {props.label}
+      </div>
+      <div className='truncate font-mono text-sm font-medium tabular-nums'>
+        {props.value}
+      </div>
+    </div>
+  )
+}
+
+function SharedSampleDetails(props: {
+  route: ChannelMonitorSmartScheduleRoute
+}) {
+  const samples = props.route.shared_samples
+  if (samples.sample_count === 0 && samples.last_time === 0) {
+    return (
+      <section className='border-t px-4 py-4' aria-label='共享样本'>
+        <h3 className='text-sm font-medium'>渠道 + 模型共享样本</h3>
+        <p className='text-muted-foreground mt-1 text-sm'>暂无可用样本</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className='border-t px-4 py-4' aria-label='共享样本'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <div>
+          <h3 className='text-sm font-medium'>渠道 + 模型共享样本</h3>
+          <p className='text-muted-foreground mt-0.5 text-xs'>
+            同一渠道和模型的请求样本会供所有关联分组使用
+          </p>
+        </div>
+        {samples.last_time > 0 ? (
+          <Badge variant={samples.last_success ? 'secondary' : 'destructive'}>
+            {samples.last_success ? '最近成功' : '最近失败'}
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className='mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4'>
+        <DetailMetric label='样本总数' value={`${samples.sample_count} 次`} />
+        <DetailMetric label='成功次数' value={`${samples.success_count} 次`} />
+        <DetailMetric
+          label='首字均值'
+          value={
+            samples.average_first_token_ms == null
+              ? '-'
+              : `${samples.average_first_token_ms.toFixed(0)} ms`
+          }
+        />
+        <DetailMetric
+          label='平均 TPS'
+          value={
+            samples.average_tps == null ? '-' : samples.average_tps.toFixed(2)
+          }
+        />
+      </div>
+
+      {samples.last_time > 0 ? (
+        <p className='text-muted-foreground mt-3 text-xs'>
+          最近样本 {formatTimestampToDate(samples.last_time)}
+        </p>
+      ) : null}
+      {samples.last_error ? (
+        <p className='text-destructive mt-2 text-xs break-words'>
+          {samples.last_error}
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+export function ChannelMonitorSmartScheduleRouteDetails(
+  props: ChannelMonitorSmartScheduleRouteDetailsProps
+) {
+  if (!props.route) return null
+
+  const route = props.route
+  const remark = props.channel?.channel_remark || props.channel?.remark
+  const score =
+    route.state.last_schedule_score == null
+      ? '-'
+      : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`
+
+  return (
+    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
+      <SheetContent
+        id={`channel-monitor-route-details-${route.channel_id}`}
+        className='w-full gap-0 sm:max-w-3xl'
+        showCloseButton={false}
+        aria-label={`${route.channel_name} 调度详情`}
+      >
+        <SheetHeader className='relative border-b pr-12'>
+          <div className='flex min-w-0 flex-wrap items-center gap-2'>
+            <SheetTitle className='truncate' title={route.channel_name}>
+              {route.channel_name}
+            </SheetTitle>
+            {route.state.manual_primary_until > 0 ? (
+              <Badge variant='secondary'>管理员固定</Badge>
+            ) : null}
+          </div>
+          <SheetDescription className='truncate' title={remark || undefined}>
+            ID {route.channel_id} · {route.group} / {route.model}
+            {remark ? ` · ${remark}` : ''}
+          </SheetDescription>
+          <SheetClose
+            render={
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                className='absolute top-3 right-3'
+              />
+            }
+          >
+            <HugeiconsIcon icon={Cancel01Icon} aria-hidden='true' />
+            <span className='sr-only'>关闭渠道调度详情</span>
+          </SheetClose>
+        </SheetHeader>
+
+        <div className='min-h-0 flex-1 overflow-y-auto'>
+          <section className='px-4 py-4' aria-label='渠道调度摘要'>
+            <div className='grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5'>
+              <DetailMetric
+                label='成本倍率'
+                value={formatMonitorRatio(props.channel?.cost_ratio)}
+              />
+              <DetailMetric label='最终得分' value={score} />
+              <DetailMetric label='优先级' value={`P${route.priority}`} />
+              <DetailMetric label='权重' value={`W${route.weight}`} />
+              <DetailMetric
+                label='预计流量'
+                value={formatChannelMonitorSmartScheduleEstimatedShare(
+                  props.placement
+                )}
+              />
+            </div>
+          </section>
+
+          <section className='border-t px-4 py-3' aria-label='渠道调度控制'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <ChannelMonitorSmartScheduleRouteStatus
+                  route={route}
+                  placement={props.placement}
+                  onClearProtection={() => props.onClearProtection(route)}
+                />
+                {props.updatePending ? <Spinner className='size-4' /> : null}
+                <Switch
+                  checked={channelMonitorSmartScheduleRouteParticipates(route)}
+                  disabled={props.updateDisabled}
+                  onCheckedChange={(checked) =>
+                    props.onParticipationChange(route, checked)
+                  }
+                  aria-label={`${route.channel_name} ${route.group} ${route.model} 参与智能调度`}
+                />
+                <span className='text-muted-foreground text-xs'>参与调度</span>
+              </div>
+              <ChannelMonitorSmartSchedulePrimaryControls
+                route={route}
+                disabled={props.updateDisabled}
+                onEdit={props.onSetPrimary}
+                onClear={props.onClearPrimary}
+              />
+            </div>
+          </section>
+
+          <ChannelMonitorSmartScheduleScoreDetails
+            details={route.state.last_schedule_score_details}
+            snapshotLabel='最近一次调度快照'
+            defaultOpen
+          />
+          {!route.state.last_schedule_score_details ? (
+            <section className='border-t px-4 py-4' aria-label='评分计算'>
+              <div className='flex items-start gap-2'>
+                <HugeiconsIcon
+                  icon={InformationCircleIcon}
+                  className='text-muted-foreground mt-0.5 size-4 shrink-0'
+                  aria-hidden='true'
+                />
+                <div>
+                  <h3 className='text-sm font-medium'>评分计算</h3>
+                  <p className='text-muted-foreground mt-1 text-sm'>
+                    最近一次调度没有可展示的评分快照。
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+          <SharedSampleDetails route={route} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}

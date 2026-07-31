@@ -320,7 +320,7 @@ function renderBoard(
 }
 
 describe('channel monitor smart schedule board', () => {
-  test('shows the compact operating overview without bringing back the large route table', () => {
+  test('shows the compact operating overview with a dense route table', () => {
     const markup = renderBoard()
 
     assert.ok(markup.includes('智能调度运行状态'))
@@ -335,7 +335,8 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('执行记录'))
     assert.ok(markup.includes('调度设置'))
     assert.ok(markup.includes('立即调度'))
-    assert.equal(markup.includes('<table'), false)
+    assert.ok(markup.includes('<table'))
+    assert.ok(markup.includes('data-schedule-route-list="desktop-table"'))
     assert.equal(markup.includes('全部路由'), false)
   })
 
@@ -346,7 +347,7 @@ describe('channel monitor smart schedule board', () => {
     assert.match(markup, /vip[\s\S]*x0\.5[\s\S]*1 池/)
     assert.match(markup, /default[\s\S]*x1[\s\S]*1 池/)
     assert.ok(markup.includes('model-fast'))
-    assert.ok(markup.includes('测试 vip model-fast 调度池模型'))
+    assert.equal(markup.includes('测试 vip model-fast 调度池模型'), false)
     assert.ok(markup.includes('流入层 P100 · 2 条'))
     assert.ok(markup.includes('主线路'))
     assert.ok(markup.includes('成本倍率'))
@@ -357,12 +358,43 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('25.0%'))
     assert.ok(markup.includes('transition-[width]'))
     assert.ok(markup.includes('样本成功'))
-    assert.ok(markup.includes('渠道 + 模型共享 · 最近样本'))
-    assert.ok(markup.includes('2xl:grid-cols-2'))
+    assert.ok(markup.includes('5 次 · 成功 5 次'))
+    assert.ok(markup.includes('首字 420 ms'))
+    assert.ok(markup.includes('TPS 18.50'))
+    assert.ok(markup.includes('搜索渠道名称、ID 或备注'))
+    assert.ok(markup.includes('按状态筛选'))
+    assert.ok(markup.includes('按渠道排序'))
+    assert.ok(markup.includes('查看 高速渠道 的调度详情'))
     assert.ok(markup.indexOf('主线路') < markup.indexOf('备用供应商'))
   })
 
-  test('orders pool channels by enabled status before cost ratio', () => {
+  test('keeps dozens of routes in a fixed-header scroll region', () => {
+    const result = createResult()
+    result.routes = Array.from({ length: 36 }, (_, index) =>
+      createRoute(index + 1, {
+        channel_name: `生产渠道 ${String(index + 1).padStart(2, '0')}`,
+        weight: 100 - index,
+      })
+    )
+    const channels = result.routes.map((route, index) =>
+      createChannel(
+        route.channel_id,
+        route.channel_name,
+        0.5 + index / 100,
+        `线路备注 ${index + 1}`
+      )
+    )
+
+    const markup = renderBoard({ result, channels })
+
+    assert.ok(markup.includes('data-schedule-scroll-region="true"'))
+    assert.ok(markup.includes('sticky top-0'))
+    assert.equal((markup.match(/data-schedule-route-row=/g) ?? []).length, 36)
+    assert.ok(markup.includes('共 36 条渠道'))
+    assert.equal(markup.includes('备用与未参与路由'), false)
+  })
+
+  test('uses ascending cost ratio as the default pool channel order', () => {
     const enabledChannel = createChannel(11, '启用高倍率', 1.5, '启用线路')
     const disabledChannel = {
       ...createChannel(12, '禁用低倍率', 0.5, '禁用线路'),
@@ -387,7 +419,27 @@ describe('channel monitor smart schedule board', () => {
       channels: [disabledChannel, enabledChannel],
     })
 
-    assert.ok(markup.indexOf('启用线路') < markup.indexOf('禁用线路'))
+    assert.ok(markup.indexOf('禁用线路') < markup.indexOf('启用线路'))
+  })
+
+  test('keeps the default pool channel order ascending by cost ratio', () => {
+    const result = createResult()
+    result.routes = [
+      createRoute(11, { channel_name: '主渠道', priority: 100 }),
+      createRoute(12, { channel_name: '低成本后续备用', priority: 80 }),
+      createRoute(13, { channel_name: '第一备用渠道', priority: 90 }),
+    ]
+
+    const markup = renderBoard({
+      result,
+      channels: [
+        createChannel(11, '主渠道', 1, '主线路'),
+        createChannel(12, '低成本后续备用', 0.7, '后续备用'),
+        createChannel(13, '第一备用渠道', 0.9, '第一备用'),
+      ],
+    })
+
+    assert.ok(markup.indexOf('低成本后续备用') < markup.indexOf('第一备用渠道'))
   })
 
   test('orders model pool cards by the configured order before the name fallback', () => {
@@ -491,17 +543,18 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('稳定性降级 1'), false)
   })
 
-  test('keeps protection recovery clickable and folds secondary routes behind one entry', () => {
+  test('keeps protection recovery clickable and secondary routes directly visible', () => {
     const markup = renderBoard()
 
     assert.match(
       markup,
       /<button[^>]*data-slot="badge"[^>]*aria-label="解除 恢复中渠道 vip model-fast 的稳定性降级保护"[^>]*>/
     )
-    assert.ok(markup.includes('备用与未参与路由'))
-    assert.ok(markup.includes('第一备用 1'))
-    assert.ok(markup.includes('未参与 1'))
-    assert.match(markup, /data-slot="collapsible-trigger"/)
+    assert.ok(markup.includes('备用渠道'))
+    assert.ok(markup.includes('第一备用'))
+    assert.ok(markup.includes('未参与渠道'))
+    assert.ok(markup.includes('未参与'))
+    assert.equal(markup.includes('备用与未参与路由'), false)
   })
 
   test('exposes fixed-primary expiry, editing, and clear actions on the route', () => {
@@ -519,6 +572,6 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('管理员固定至'))
     assert.ok(markup.includes('允许稳定性降级'))
     assert.ok(markup.includes('重新设置 高速渠道 的固定时长'))
-    assert.ok(markup.includes('解除 高速渠道 的主渠道固定'))
+    assert.ok(markup.includes('查看 高速渠道 的调度详情'))
   })
 })

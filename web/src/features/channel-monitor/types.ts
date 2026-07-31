@@ -611,36 +611,6 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
   }
 }
 
-export type ChannelMonitorSmartScheduleModelTestStatus =
-  | 'success'
-  | 'failure'
-  | 'skipped'
-
-export type ChannelMonitorSmartScheduleModelTestItem = {
-  channel_id: number
-  channel_name: string
-  participates: boolean
-  available: boolean
-  status: ChannelMonitorSmartScheduleModelTestStatus
-  total_ms: number
-  first_token_ms?: number
-  tps?: number
-  error?: string
-  error_code?: string
-}
-
-export type ChannelMonitorSmartScheduleModelTestResult = {
-  group: string
-  model: string
-  stream: boolean
-  endpoint_type: string
-  total: number
-  succeeded: number
-  failed: number
-  skipped: number
-  results: ChannelMonitorSmartScheduleModelTestItem[]
-}
-
 export type ChannelMonitorSmartScheduleStabilityClearResult = {
   cleared: boolean
   previous_state: '' | 'degraded' | 'probing'

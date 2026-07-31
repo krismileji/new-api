@@ -17,14 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  ArrowDown01Icon,
   Cancel01Icon,
   HistoryIcon,
   PinIcon,
   Refresh01Icon,
   Route01Icon,
   Settings02Icon,
-  TestTubeIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -33,19 +31,6 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -64,7 +49,6 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { Switch } from '@/components/ui/switch'
 import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -81,18 +65,12 @@ import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-
 import { createChannelMonitorSmartSchedulePrimaryFormState } from '../lib/smart-schedule-primary'
 import {
   channelMonitorSmartScheduleRouteKey,
-  channelMonitorSmartScheduleRouteParticipates,
   compareChannelMonitorSmartScheduleGroupsByRatio,
   filterChannelMonitorSmartScheduleRoutes,
-  getChannelMonitorSmartSchedulePoolStatus,
-  getChannelMonitorSmartScheduleRouteDisplayStatus,
   isChannelMonitorSmartScheduleResultStale,
   placeChannelMonitorSmartScheduleRoutes,
   summarizeChannelMonitorSmartScheduleOverview,
   summarizeChannelMonitorSmartSchedulePools,
-  type ChannelMonitorSmartSchedulePoolStatus,
-  type ChannelMonitorSmartSchedulePoolSummary,
-  type ChannelMonitorSmartScheduleRoutePlacement,
 } from '../lib/smart-schedule-summary'
 import type {
   ChannelMonitorItem,
@@ -101,14 +79,11 @@ import type {
   ChannelMonitorSmartScheduleRouteResult,
 } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
-import { ChannelMonitorSmartScheduleModelTestDialog } from './channel-monitor-smart-schedule-model-test-dialog'
-import { ChannelMonitorSmartSchedulePoolLayout } from './channel-monitor-smart-schedule-pool-layout'
 import {
-  ChannelMonitorSmartSchedulePrimaryControls,
-  ChannelMonitorSmartSchedulePrimaryStabilityField,
-} from './channel-monitor-smart-schedule-primary-controls'
-import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
-import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
+  ChannelMonitorSmartSchedulePool,
+  type ChannelMonitorSmartSchedulePoolView,
+} from './channel-monitor-smart-schedule-pool'
+import { ChannelMonitorSmartSchedulePrimaryStabilityField } from './channel-monitor-smart-schedule-primary-controls'
 
 type ChannelMonitorSmartScheduleBoardProps = {
   active: boolean
@@ -123,471 +98,7 @@ type ChannelMonitorSmartScheduleBoardProps = {
   onOpenHistory: () => void
 }
 
-type SchedulePoolView = {
-  summary: ChannelMonitorSmartSchedulePoolSummary
-  routes: ChannelMonitorSmartScheduleRoute[]
-}
-
-type RouteRowProps = {
-  className?: string
-  route: ChannelMonitorSmartScheduleRoute
-  channel: ChannelMonitorItem | undefined
-  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
-  updatePending: boolean
-  updateDisabled: boolean
-  onParticipationChange: (
-    route: ChannelMonitorSmartScheduleRoute,
-    checked: boolean
-  ) => void
-  onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
-  onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-}
-
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
-
-function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
-  if (status === '稳定性降级' || status === '最近失败') return 'destructive'
-  if (
-    status === '稳定性试放' ||
-    status === '探索采样' ||
-    status === '部分可调度'
-  ) {
-    return 'warning'
-  }
-  if (status === '正常') return 'secondary'
-  return 'outline'
-}
-
-function formatEstimatedShare(
-  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
-) {
-  if (placement?.estimatedShare != null) {
-    return `${(placement.estimatedShare * 100).toFixed(1)}%`
-  }
-  if (placement?.role === 'first_backup' || placement?.role === 'standby') {
-    return '0%'
-  }
-  return '-'
-}
-
-function formatSampleMode(
-  policy: ChannelMonitorSmartScheduleGroupPolicy | undefined
-) {
-  if (!policy || policy.sample_mode === 'off') return '样本补充关闭'
-  if (policy.sample_mode === 'traffic') {
-    return `探索流量 ${policy.exploration_traffic_percent}%`
-  }
-  return `每 ${policy.probe_interval_minutes} 分钟文本探测`
-}
-
-function RouteMetric(props: { label: string; value: string }) {
-  return (
-    <div className='min-w-0'>
-      <div className='text-muted-foreground text-[11px] leading-4'>
-        {props.label}
-      </div>
-      <div className='truncate font-mono text-xs font-medium tabular-nums'>
-        {props.value}
-      </div>
-    </div>
-  )
-}
-
-function ScheduleRouteStatus(props: {
-  route: ChannelMonitorSmartScheduleRoute
-  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
-  onClearProtection: () => void
-}) {
-  if (props.route.state.stability_state !== '') {
-    return (
-      <ChannelMonitorSmartScheduleRouteState
-        route={props.route}
-        onProtectedStatusClick={props.onClearProtection}
-      />
-    )
-  }
-
-  const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
-    props.route,
-    props.placement
-  )
-  if (status === 'failed') {
-    return <Badge variant='destructive'>调度失败</Badge>
-  }
-  if (status === 'exploring') return <Badge variant='warning'>探索采样</Badge>
-  if (status === 'primary') return <Badge>主渠道</Badge>
-  if (status === 'candidate') return <Badge variant='secondary'>同层候选</Badge>
-  if (status === 'first_backup') {
-    return <Badge variant='outline'>第一备用</Badge>
-  }
-  if (status === 'standby') return <Badge variant='outline'>后续备用</Badge>
-  if (status === 'excluded') return <Badge variant='outline'>未参与</Badge>
-  return <Badge variant='destructive'>不可调度</Badge>
-}
-
-function ScheduleRouteRow(props: RouteRowProps) {
-  const remark = props.channel?.channel_remark || props.channel?.remark
-
-  return (
-    <div
-      className={cn(
-        'bg-card grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]',
-        props.className
-      )}
-    >
-      <div className='min-w-0'>
-        <div className='truncate font-medium'>{props.route.channel_name}</div>
-        <div className='text-muted-foreground mt-0.5 flex min-w-0 items-center gap-2 text-xs'>
-          <span className='shrink-0'>ID {props.route.channel_id}</span>
-          <span aria-hidden='true'>·</span>
-          <span className='truncate' title={remark || '暂无备注'}>
-            {remark || '暂无备注'}
-          </span>
-        </div>
-      </div>
-
-      <div className='flex flex-wrap items-center gap-3 sm:justify-end'>
-        <ScheduleRouteStatus
-          route={props.route}
-          placement={props.placement}
-          onClearProtection={() => props.onClearProtection(props.route)}
-        />
-        <div className='flex items-center gap-2'>
-          {props.updatePending ? <Spinner className='size-4' /> : null}
-          <Switch
-            checked={channelMonitorSmartScheduleRouteParticipates(props.route)}
-            disabled={props.updateDisabled}
-            onCheckedChange={(checked) =>
-              props.onParticipationChange(props.route, checked)
-            }
-            aria-label={`${props.route.channel_name} ${props.route.group} ${props.route.model} 参与智能调度`}
-          />
-          <span className='text-muted-foreground text-xs'>参与</span>
-        </div>
-        <ChannelMonitorSmartSchedulePrimaryControls
-          route={props.route}
-          disabled={props.updateDisabled}
-          onEdit={props.onSetPrimary}
-          onClear={props.onClearPrimary}
-        />
-      </div>
-
-      <div className='border-border/70 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-2 sm:col-span-2 sm:grid-cols-5'>
-        <RouteMetric
-          label='成本倍率'
-          value={formatMonitorRatio(props.channel?.cost_ratio)}
-        />
-        <RouteMetric
-          label='最终得分'
-          value={
-            props.route.state.last_schedule_score == null
-              ? '-'
-              : `${(props.route.state.last_schedule_score * 100).toFixed(1)}%`
-          }
-        />
-        <RouteMetric label='优先级' value={`P${props.route.priority}`} />
-        <RouteMetric label='权重' value={`W${props.route.weight}`} />
-        <RouteMetric
-          label='预计流量'
-          value={formatEstimatedShare(props.placement)}
-        />
-      </div>
-      <ChannelMonitorSmartScheduleScoreDetails
-        details={props.route.state.last_schedule_score_details}
-        className='sm:col-span-2'
-        snapshotLabel='最近一次调度快照'
-      />
-      {props.route.shared_samples.last_time > 0 ? (
-        <div className='border-border/70 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-xs sm:col-span-2'>
-          <Badge
-            variant={
-              props.route.shared_samples.last_success
-                ? 'secondary'
-                : 'destructive'
-            }
-          >
-            {props.route.shared_samples.last_success ? '样本成功' : '样本失败'}
-          </Badge>
-          <span className='text-muted-foreground'>
-            渠道 + 模型共享 · 最近样本{' '}
-            {formatTimestampToDate(props.route.shared_samples.last_time)}
-          </span>
-          {props.route.shared_samples.last_error ? (
-            <span
-              className='text-destructive min-w-0 truncate'
-              title={props.route.shared_samples.last_error}
-            >
-              {props.route.shared_samples.last_error}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {props.route.shared_samples.sample_count > 0 ? (
-        <div className='border-border/70 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-t pt-2 text-xs sm:col-span-2'>
-          <span className='font-medium'>渠道 + 模型共享样本</span>
-          <span className='text-muted-foreground'>
-            {props.route.shared_samples.sample_count} 次 · 成功{' '}
-            {props.route.shared_samples.success_count} 次
-          </span>
-          {props.route.shared_samples.average_first_token_ms != null ? (
-            <span className='font-mono tabular-nums'>
-              首字均值{' '}
-              {props.route.shared_samples.average_first_token_ms.toFixed(0)} ms
-            </span>
-          ) : null}
-          {props.route.shared_samples.average_tps != null ? (
-            <span className='font-mono tabular-nums'>
-              TPS {props.route.shared_samples.average_tps.toFixed(2)}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function SchedulePoolCard(props: {
-  pool: SchedulePoolView
-  policy: ChannelMonitorSmartScheduleGroupPolicy | undefined
-  wide: boolean
-  channelsById: ReadonlyMap<number, ChannelMonitorItem>
-  placements: ReadonlyMap<string, ChannelMonitorSmartScheduleRoutePlacement>
-  updateRouteKey: string | null
-  updateDisabled: boolean
-  onParticipationChange: (
-    route: ChannelMonitorSmartScheduleRoute,
-    checked: boolean
-  ) => void
-  onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
-  onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-  onModelTest: () => void
-}) {
-  const primaryRoutes: ChannelMonitorSmartScheduleRoute[] = []
-  const foldedRoutes: ChannelMonitorSmartScheduleRoute[] = []
-
-  for (const route of props.pool.routes) {
-    const key = channelMonitorSmartScheduleRouteKey(route)
-    const displayStatus = getChannelMonitorSmartScheduleRouteDisplayStatus(
-      route,
-      props.placements.get(key)
-    )
-    if (
-      displayStatus === 'first_backup' ||
-      displayStatus === 'standby' ||
-      displayStatus === 'unavailable' ||
-      displayStatus === 'excluded'
-    ) {
-      foldedRoutes.push(route)
-    } else {
-      primaryRoutes.push(route)
-    }
-  }
-
-  const status = getChannelMonitorSmartSchedulePoolStatus(props.pool.summary)
-  const trafficRoutes = props.pool.routes
-    .map((route) => ({
-      route,
-      share:
-        props.placements.get(channelMonitorSmartScheduleRouteKey(route))
-          ?.estimatedShare ?? null,
-    }))
-    .filter(
-      (
-        item
-      ): item is { route: ChannelMonitorSmartScheduleRoute; share: number } =>
-        item.share != null
-    )
-    .sort((first, second) => second.share - first.share)
-  const visibleTrafficRoutes = trafficRoutes.slice(0, 3)
-  const otherTrafficShare = trafficRoutes
-    .slice(3)
-    .reduce((total, item) => total + item.share, 0)
-  const standbyCount = foldedRoutes.filter(
-    (route) =>
-      props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
-      'standby'
-  ).length
-  const firstBackupCount = foldedRoutes.filter(
-    (route) =>
-      props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
-      'first_backup'
-  ).length
-  const unavailableCount = foldedRoutes.filter(
-    (route) =>
-      props.placements.get(channelMonitorSmartScheduleRouteKey(route))?.role ===
-      'unavailable'
-  ).length
-  const excludedCount =
-    foldedRoutes.length - firstBackupCount - standbyCount - unavailableCount
-  const finalPrimaryGridRowStartsAt =
-    primaryRoutes.length - (primaryRoutes.length % 2 === 0 ? 2 : 1)
-
-  const renderRoute = (
-    route: ChannelMonitorSmartScheduleRoute,
-    className?: string
-  ) => {
-    const key = channelMonitorSmartScheduleRouteKey(route)
-    return (
-      <ScheduleRouteRow
-        key={key}
-        className={className}
-        route={route}
-        channel={props.channelsById.get(route.channel_id)}
-        placement={props.placements.get(key)}
-        updatePending={props.updateRouteKey === key}
-        updateDisabled={props.updateDisabled}
-        onParticipationChange={props.onParticipationChange}
-        onClearProtection={props.onClearProtection}
-        onSetPrimary={props.onSetPrimary}
-        onClearPrimary={props.onClearPrimary}
-      />
-    )
-  }
-
-  return (
-    <Card size='sm' className='gap-0 self-start py-0'>
-      <CardHeader className='border-b py-3'>
-        <div className='min-w-0'>
-          <CardTitle className='flex min-w-0 flex-wrap items-center gap-2'>
-            <span className='truncate' title={props.pool.summary.model}>
-              {props.pool.summary.model}
-            </span>
-          </CardTitle>
-          <CardDescription className='mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs'>
-            <span>
-              可调度 {props.pool.summary.activeCount}/
-              {props.pool.summary.participatingCount}
-            </span>
-            <span>
-              {props.pool.summary.topPriority == null
-                ? '无候选层'
-                : `流入层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
-            </span>
-            <span>{formatSampleMode(props.policy)}</span>
-          </CardDescription>
-        </div>
-        <CardAction className='flex items-center gap-2'>
-          <Button
-            type='button'
-            variant='ghost'
-            size='icon-sm'
-            onClick={props.onModelTest}
-            aria-label={`测试 ${props.pool.summary.group} ${props.pool.summary.model} 调度池模型`}
-            title='模型测试'
-          >
-            <HugeiconsIcon icon={TestTubeIcon} />
-          </Button>
-          <Badge variant={getPoolStatusVariant(status)}>{status}</Badge>
-        </CardAction>
-      </CardHeader>
-
-      <CardContent className='p-0'>
-        {visibleTrafficRoutes.length > 0 ? (
-          <div className='border-b px-4 py-3'>
-            <div className='mb-2 flex items-center justify-between gap-3 text-xs'>
-              <span className='font-medium'>预计流量分布</span>
-              <span className='text-muted-foreground'>当前流入层</span>
-            </div>
-            <div className='flex flex-col gap-2'>
-              {visibleTrafficRoutes.map((item) => {
-                const percentage = item.share * 100
-                return (
-                  <div
-                    key={channelMonitorSmartScheduleRouteKey(item.route)}
-                    className='grid grid-cols-[minmax(0,8rem)_minmax(5rem,1fr)_3.5rem] items-center gap-2 text-xs'
-                  >
-                    <span className='truncate' title={item.route.channel_name}>
-                      {item.route.channel_name}
-                    </span>
-                    <span className='bg-muted h-1.5 overflow-hidden rounded-full'>
-                      <span
-                        className='bg-primary block h-full rounded-full transition-[width] duration-200'
-                        style={{ width: `${Math.max(2, percentage)}%` }}
-                      />
-                    </span>
-                    <span className='text-right font-mono tabular-nums'>
-                      {percentage.toFixed(1)}%
-                    </span>
-                  </div>
-                )
-              })}
-              {otherTrafficShare > 0 ? (
-                <div className='grid grid-cols-[minmax(0,8rem)_minmax(5rem,1fr)_3.5rem] items-center gap-2 text-xs'>
-                  <span className='text-muted-foreground'>其他渠道</span>
-                  <span className='bg-muted h-1.5 overflow-hidden rounded-full'>
-                    <span
-                      className='bg-muted-foreground/50 block h-full rounded-full'
-                      style={{
-                        width: `${Math.max(2, otherTrafficShare * 100)}%`,
-                      }}
-                    />
-                  </span>
-                  <span className='text-right font-mono tabular-nums'>
-                    {(otherTrafficShare * 100).toFixed(1)}%
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {primaryRoutes.length > 0 ? (
-          <div
-            className={cn(
-              'divide-border divide-y',
-              props.wide && '2xl:grid 2xl:grid-cols-2 2xl:divide-y-0'
-            )}
-          >
-            {primaryRoutes.map((route, index) => {
-              return renderRoute(
-                route,
-                cn(
-                  props.wide &&
-                    index < finalPrimaryGridRowStartsAt &&
-                    '2xl:border-b',
-                  props.wide &&
-                    index % 2 === 0 &&
-                    index + 1 < primaryRoutes.length &&
-                    '2xl:border-r'
-                )
-              )
-            })}
-          </div>
-        ) : (
-          <div className='text-muted-foreground px-4 py-4 text-sm'>
-            当前没有主路由或候选路由
-          </div>
-        )}
-
-        {foldedRoutes.length > 0 ? (
-          <Collapsible className='group/collapsible border-t'>
-            <CollapsibleTrigger className='hover:bg-muted/40 focus-visible:ring-ring/50 flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition-colors outline-none focus-visible:ring-3'>
-              <span>
-                备用与未参与路由
-                <span className='text-muted-foreground ml-2 text-xs'>
-                  第一备用 {firstBackupCount} · 后续备用 {standbyCount} ·
-                  不可调度 {unavailableCount} · 未参与 {excludedCount}
-                </span>
-              </span>
-              <HugeiconsIcon
-                icon={ArrowDown01Icon}
-                className='text-muted-foreground size-4 shrink-0 transition-transform group-data-[panel-open]/collapsible:rotate-180'
-                aria-hidden='true'
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className='divide-border divide-y border-t'>
-                {foldedRoutes.map((route) => renderRoute(route))}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
 
 export function ChannelMonitorSmartScheduleBoard(
   props: ChannelMonitorSmartScheduleBoardProps
@@ -598,10 +109,6 @@ export function ChannelMonitorSmartScheduleBoard(
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const [primaryTarget, setPrimaryTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
-  const [modelTestTarget, setModelTestTarget] = useState<{
-    group: string
-    model: string
-  } | null>(null)
   const [primaryDuration, setPrimaryDuration] = useState('60')
   const [allowPrimaryStabilityDegrade, setAllowPrimaryStabilityDegrade] =
     useState(true)
@@ -654,7 +161,7 @@ export function ChannelMonitorSmartScheduleBoard(
       else routesByPool.set(key, [route])
     }
     return poolSummaries
-      .map<SchedulePoolView>((poolSummary) => ({
+      .map<ChannelMonitorSmartSchedulePoolView>((poolSummary) => ({
         summary: poolSummary,
         routes: (
           routesByPool.get(`${poolSummary.group}\u0000${poolSummary.model}`) ??
@@ -1056,13 +563,12 @@ export function ChannelMonitorSmartScheduleBoard(
             })}
           </nav>
 
-          <ChannelMonitorSmartSchedulePoolLayout>
+          <div className='grid min-w-0 gap-4'>
             {visiblePools.map((pool) => (
-              <SchedulePoolCard
+              <ChannelMonitorSmartSchedulePool
                 key={`${pool.summary.group}\u0000${pool.summary.model}`}
                 pool={pool}
                 policy={policyByGroup.get(pool.summary.group)}
-                wide={visiblePools.length === 1}
                 channelsById={channelsById}
                 placements={placements}
                 updateRouteKey={updateRouteKey}
@@ -1099,15 +605,9 @@ export function ChannelMonitorSmartScheduleBoard(
                     allowStabilityDegrade: false,
                   })
                 }
-                onModelTest={() =>
-                  setModelTestTarget({
-                    group: pool.summary.group,
-                    model: pool.summary.model,
-                  })
-                }
               />
             ))}
-          </ChannelMonitorSmartSchedulePoolLayout>
+          </div>
         </div>
       ) : null}
 
@@ -1117,16 +617,6 @@ export function ChannelMonitorSmartScheduleBoard(
           if (!open) setClearTarget(null)
         }}
       />
-      {modelTestTarget ? (
-        <ChannelMonitorSmartScheduleModelTestDialog
-          open
-          group={modelTestTarget.group}
-          model={modelTestTarget.model}
-          onOpenChange={(open) => {
-            if (!open) setModelTestTarget(null)
-          }}
-        />
-      ) : null}
       {primaryTarget ? (
         <Dialog
           open

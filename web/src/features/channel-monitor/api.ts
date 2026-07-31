@@ -31,7 +31,6 @@ import type {
   ChannelMonitorPerformanceRangeMinutes,
   ChannelMonitorPerformanceResult,
   ChannelMonitorSettings,
-  ChannelMonitorSmartScheduleModelTestResult,
   ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
@@ -197,29 +196,6 @@ export async function getChannelMonitorSmartScheduleRoutes() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRouteResult>
   >('/api/channel_monitor/schedule', channelMonitorRequestConfig())
-  return ensureChannelMonitorSuccess(response.data)
-}
-
-export async function testChannelMonitorSmartScheduleModel(request: {
-  group: string
-  model: string
-  stream: boolean
-  endpointType: string
-  channelIds?: number[]
-}) {
-  const response = await api.post<
-    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleModelTestResult>
-  >(
-    '/api/channel_monitor/schedule/model-test',
-    {
-      group: request.group,
-      model: request.model,
-      stream: request.stream,
-      endpoint_type: request.endpointType,
-      channel_ids: request.channelIds,
-    },
-    channelMonitorRequestConfig()
-  )
   return ensureChannelMonitorSuccess(response.data)
 }
 

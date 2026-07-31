@@ -37,15 +37,6 @@ func withChannelSmartScheduleProbeTestContext(ctx context.Context, group string)
 	})
 }
 
-func withChannelSmartScheduleModelTestContext(ctx context.Context, group string) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, channelSmartScheduleProbeTestContextKey{}, channelSmartScheduleProbeTestOptions{
-		Group: group,
-	})
-}
-
 func applyChannelSmartScheduleProbeTestContext(source context.Context, target *gin.Context) {
 	if source == nil || target == nil {
 		return

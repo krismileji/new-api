@@ -18,7 +18,6 @@
 | `POST` | `/settings/email-preview` | 按提交的 `notification_types` 生成邮件主题和 HTML 预览，不发送邮件 |
 | `POST` | `/ratio/run` | 手动创建或复用倍率更新任务 |
 | `POST` | `/schedule/run` | 手动创建或复用智能调度任务 |
-| `POST` | `/schedule/model-test` | 测试指定分组模型在参与调度的渠道上的可用性；支持流式首字与 TPS |
 | `GET` | `/schedule` | 返回分组模型路由、实际优先级/权重、独立调度状态和渠道模型共享观测指标 |
 | `PUT` | `/order` | 保存监控页渠道顺序；`channel_ids` |
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
@@ -171,8 +170,6 @@
 同类型业务任务已经排队或运行时，手动触发会返回现有任务并标记 `created=false`。任务结果限制失败明细数量，避免单次大规模故障无限放大任务记录。
 
 `channel_smart_schedule` 任务结果的 `adjustments` 逐条返回渠道、分组、模型、得分、新旧优先级与权重、动作和原因。每条 `score_details` 是执行时固化的评分解释，包含原始输入及样本数、同池归一化范围、配置/有效权重、业务与稳定性贡献、最终得分、选主结果及选择/调整原因。完整明细按任务和顺序保存在 `channel_smart_schedule_execution_details` 的独立 `TEXT` 行中，`system_tasks.result` 只保存汇总；查询任务列表时再组装返回，避免单个任务汇总超过数据库 `TEXT` 限制。固定路由还包含 `manual_primary: true`、`manual_primary_until` 和 `manual_primary_allow_stability_degrade`，便于在独立的执行记录页面核对本轮选主是来自评分还是管理员固定，以及固定是否允许稳定性保护。固定、续期和解除的管理审计明细使用 `allow_stability_degrade` 保存操作时的选项值；未传时按默认 `true` 记录。
-
-`POST /api/channel_monitor/schedule/model-test` 请求体包含 `group`、`model`、可选的 `stream`、`endpoint_type` 和 `channel_ids`。`stream` 默认 `true`，`endpoint_type` 默认 `auto`；`channel_ids` 为空时测试整个调度池，传单个 ID 可用于重试。后端最多并发测试 `4` 条渠道并遵守渠道并发上限，只实际请求正在参与调度且渠道和路由均可用的项。响应逐条返回 `success`、`failure` 或 `skipped`，以及总耗时、可用时的流式首字时间和 TPS、错误与错误码；所选分组只用于验证测试资格和发起请求，实际发出的成功和失败结果各写一份渠道模型共享手动测试样本。
 
 倍率和余额分别记录连续失败次数。任一项连续失败 `2` 次后，定时任务会暂停该项的后续上游请求，另一项不受影响；管理员手动刷新成功或修改相关上游配置后会恢复自动请求。
 
