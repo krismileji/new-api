@@ -64,7 +64,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -83,6 +83,7 @@ import type {
   ChannelMonitorTaskKind,
   ChannelMonitorTaskStatus,
 } from '../types'
+import { ChannelMonitorSmartScheduleExecutionPanel } from './channel-monitor-smart-schedule-execution-dialog'
 import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
@@ -93,15 +94,6 @@ const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
   running: '执行中',
   succeeded: '成功',
   failed: '失败',
-}
-
-const STATUS_STYLES: Record<ChannelMonitorTaskStatus, string> = {
-  pending:
-    'bg-amber-500/10 text-amber-700 dark:text-amber-300 dark:bg-amber-500/15',
-  running: 'bg-sky-500/10 text-sky-700 dark:text-sky-300 dark:bg-sky-500/15',
-  succeeded:
-    'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 dark:bg-emerald-500/15',
-  failed: '',
 }
 
 type ChannelMonitorTaskHistoryDialogProps = {
@@ -131,18 +123,14 @@ function ChannelTaskStatusBadge(props: { task: ChannelMonitorTask }) {
     ((props.task.result?.failed ?? 0) > 0 ||
       props.task.result?.email_status === 'failed')
   const label = partiallyFailed ? '部分失败' : STATUS_LABELS[props.task.status]
-  const className = partiallyFailed
-    ? 'bg-amber-500/10 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-    : STATUS_STYLES[props.task.status]
+  let variant: 'destructive' | 'outline' | 'secondary' | 'warning' = 'outline'
+  if (props.task.status === 'failed') variant = 'destructive'
+  if (props.task.status === 'running' || partiallyFailed) variant = 'warning'
+  if (props.task.status === 'succeeded' && !partiallyFailed) {
+    variant = 'secondary'
+  }
 
-  return (
-    <Badge
-      variant={props.task.status === 'failed' ? 'destructive' : 'secondary'}
-      className={className}
-    >
-      {label}
-    </Badge>
-  )
+  return <Badge variant={variant}>{label}</Badge>
 }
 
 function FailureDot(props: { label: string }) {
@@ -163,45 +151,41 @@ export function ChannelMonitorTaskRowDisclosure(props: {
   controlsId: string
   onToggle: () => void
 }) {
-  let label = props.expanded ? '收起调整明细' : '展开调整明细'
+  let label = props.expanded ? '收起执行详情' : '查看执行详情'
   if (!props.expanded && props.adjustmentCount > 0) {
     label = props.truncated
-      ? `展开调整明细，至少 ${props.adjustmentCount} 条`
-      : `展开调整明细，共 ${props.adjustmentCount} 条`
+      ? `查看执行详情，至少 ${props.adjustmentCount} 条`
+      : `查看执行详情，共 ${props.adjustmentCount} 条`
   }
 
   return (
     <Button
       type='button'
       variant='ghost'
-      size='icon-xs'
+      size='sm'
       className='text-muted-foreground hover:text-foreground ml-auto'
       onClick={props.onToggle}
       aria-label={label}
       aria-expanded={props.expanded}
       aria-controls={props.controlsId}
     >
+      {props.expanded ? '收起详情' : '查看详情'}
       <HugeiconsIcon
         icon={ArrowDown01Icon}
         className={cn('transition-transform', props.expanded && 'rotate-180')}
+        data-icon='inline-end'
         aria-hidden='true'
       />
     </Button>
   )
 }
 
-function ChannelTaskProgress(props: {
-  task: ChannelMonitorTask
-  detailsExpanded: boolean
-  detailsId: string
-  onToggleDetails: () => void
-}) {
+function ChannelTaskProgress(props: { task: ChannelMonitorTask }) {
   const result = props.task.result
   if (result) {
-    const failures = result.failures ?? []
     if (props.task.type === 'channel_smart_schedule') {
       return (
-        <div className='flex min-w-52 flex-wrap items-center gap-x-3 gap-y-1 text-xs'>
+        <div className='flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:min-w-52'>
           <span>
             更新 <strong>{result.updated}</strong>
           </span>
@@ -220,18 +204,11 @@ function ChannelTaskProgress(props: {
             失败 <strong>{result.failed}</strong>
             {result.failed > 0 && <FailureDot label='智能调度更新失败' />}
           </span>
-          <ChannelMonitorTaskRowDisclosure
-            adjustmentCount={result.adjustments?.length ?? 0}
-            truncated={result.adjustment_details_truncated === true}
-            expanded={props.detailsExpanded}
-            controlsId={props.detailsId}
-            onToggle={props.onToggleDetails}
-          />
         </div>
       )
     }
     return (
-      <div className='flex min-w-52 flex-wrap gap-x-3 gap-y-1 text-xs'>
+      <div className='flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs sm:min-w-52'>
         <span>
           成功 <strong>{result.updated}</strong> / {result.total}
         </span>
@@ -239,7 +216,7 @@ function ChannelTaskProgress(props: {
           变化 <strong>{result.changed ?? 0}</strong>
         </span>
         <span>
-          余额 <strong>{result.balance_updated ?? 0}</strong>
+          余额更新 <strong>{result.balance_updated ?? 0}</strong>
         </span>
         {(result.balance_warnings ?? 0) > 0 && (
           <span className='text-destructive'>
@@ -276,20 +253,6 @@ function ChannelTaskProgress(props: {
             邮件 发送失败
           </span>
         )}
-        {failures.length > 0 && (
-          <Button
-            type='button'
-            variant='link'
-            size='xs'
-            className='text-destructive h-auto p-0'
-            onClick={props.onToggleDetails}
-            aria-expanded={props.detailsExpanded}
-            aria-controls={props.detailsId}
-          >
-            <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
-            {props.detailsExpanded ? '收起失败原因' : '查看失败原因'}
-          </Button>
-        )}
       </div>
     )
   }
@@ -316,7 +279,7 @@ export function ChannelMonitorTaskPolicySummary(props: {
         ? `${groupPolicies.length} 个分组策略 · ${groupNames}`
         : '未记录分组策略'
     return (
-      <div className='flex min-w-48 flex-col gap-1 text-xs'>
+      <div className='flex min-w-0 flex-col gap-1 text-xs sm:min-w-48'>
         <span className='max-w-80 truncate' title={policySummary}>
           {policySummary}
           {result.force_reset ? ' · 强制重算' : ''}
@@ -328,7 +291,7 @@ export function ChannelMonitorTaskPolicySummary(props: {
     )
   }
   return (
-    <div className='flex min-w-44 flex-wrap gap-x-3 gap-y-1 text-xs'>
+    <div className='flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs sm:min-w-44'>
       <span className='inline-flex items-center gap-1.5'>
         更新分组 {result.groups_updated ?? 0}
         {result.group_update_failed && <FailureDot label='分组更新失败' />}
@@ -350,8 +313,8 @@ export function ChannelMonitorTaskHistoryEntry(props: {
   const detailsId = `channel-monitor-task-details-${props.task.task_id}`
   const canExpand =
     props.task.type === 'channel_smart_schedule'
-      ? props.task.result !== null
-      : failures.length > 0
+      ? props.task.result !== null || Boolean(props.task.error)
+      : failures.length > 0 || Boolean(props.task.error)
   const detailsExpanded = props.expanded && canExpand
 
   return (
@@ -359,6 +322,7 @@ export function ChannelMonitorTaskHistoryEntry(props: {
       <TableRow
         data-expandable={canExpand ? 'true' : undefined}
         className={cn(
+          'grid !h-auto grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3 p-3 sm:table-row sm:!h-15 sm:p-0',
           canExpand &&
             'cursor-pointer focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-[-2px]'
         )}
@@ -389,39 +353,65 @@ export function ChannelMonitorTaskHistoryEntry(props: {
             : undefined
         }
       >
-        <TableCell className='whitespace-nowrap'>
-          {formatTimestampToDate(props.task.created_at)}
+        <TableCell className='min-w-0 p-0 whitespace-nowrap sm:p-2'>
+          <span className='block'>
+            {formatTimestampToDate(props.task.created_at)}
+          </span>
+          <span className='text-muted-foreground mt-1 block text-xs sm:hidden'>
+            耗时 {formatTaskDuration(props.task)}
+          </span>
         </TableCell>
-        <TableCell>
+        <TableCell className='p-0 text-right sm:p-2 sm:text-left'>
           <ChannelTaskStatusBadge task={props.task} />
         </TableCell>
-        <TableCell>
-          <ChannelTaskProgress
-            task={props.task}
-            detailsExpanded={detailsExpanded}
-            detailsId={detailsId}
-            onToggleDetails={props.onToggleDetails}
-          />
+        <TableCell className='col-span-2 p-0 whitespace-normal sm:table-cell sm:p-2'>
+          <span className='text-muted-foreground mb-1 block text-xs font-medium sm:hidden'>
+            执行结果
+          </span>
+          <ChannelTaskProgress task={props.task} />
         </TableCell>
-        <TableCell>
+        <TableCell className='col-span-2 p-0 whitespace-normal sm:table-cell sm:p-2'>
+          <span className='text-muted-foreground mb-1 block text-xs font-medium sm:hidden'>
+            联动操作
+          </span>
           <ChannelMonitorTaskPolicySummary task={props.task} />
         </TableCell>
-        <TableCell className='whitespace-nowrap'>
+        <TableCell className='hidden whitespace-nowrap sm:table-cell'>
           {formatTaskDuration(props.task)}
         </TableCell>
         <TableCell
           className={cn(
-            'max-w-56 truncate',
-            props.task.error && 'text-destructive'
+            'col-span-2 border-t p-0 pt-2 text-right sm:table-cell sm:border-0 sm:p-2',
+            !canExpand && 'hidden sm:table-cell'
           )}
-          title={props.task.error || undefined}
         >
-          {props.task.error || '-'}
+          {canExpand ? (
+            <ChannelMonitorTaskRowDisclosure
+              adjustmentCount={
+                props.task.type === 'channel_smart_schedule'
+                  ? (props.task.result?.adjustments?.length ?? 0)
+                  : failures.length
+              }
+              truncated={
+                props.task.type === 'channel_smart_schedule'
+                  ? props.task.result?.adjustment_details_truncated === true
+                  : props.task.result?.failure_details_truncated === true
+              }
+              expanded={detailsExpanded}
+              controlsId={detailsId}
+              onToggle={props.onToggleDetails}
+            />
+          ) : (
+            <span className='text-muted-foreground'>-</span>
+          )}
         </TableCell>
       </TableRow>
       {detailsExpanded && (
-        <TableRow className='bg-muted/20 hover:bg-muted/20'>
-          <TableCell colSpan={6} className='p-3 whitespace-normal'>
+        <TableRow className='bg-muted/20 hover:bg-muted/20 block !h-auto sm:table-row'>
+          <TableCell
+            colSpan={6}
+            className='block p-3 whitespace-normal sm:table-cell'
+          >
             {props.task.type === 'channel_smart_schedule' ? (
               <ChannelMonitorTaskAdjustmentDetails
                 task={props.task}
@@ -431,9 +421,18 @@ export function ChannelMonitorTaskHistoryEntry(props: {
               <div
                 id={detailsId}
                 role='region'
-                aria-label='倍率更新失败原因'
+                aria-label='倍率与余额更新详情'
                 className='flex flex-col gap-2'
               >
+                {props.task.error && (
+                  <Alert variant='destructive'>
+                    <HugeiconsIcon icon={Alert02Icon} />
+                    <AlertTitle>任务执行失败</AlertTitle>
+                    <AlertDescription className='text-left break-all'>
+                      {props.task.error}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {failures.map((failure) => (
                   <Alert key={failure.channel_id} variant='destructive'>
                     <HugeiconsIcon icon={Alert02Icon} />
@@ -506,14 +505,17 @@ export function ChannelMonitorTaskHistoryDialog(
       queryClient.invalidateQueries({
         queryKey: ['channel-monitor-task-history'],
       })
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor-smart-schedule-executions'],
+      })
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       queryClient.invalidateQueries({ queryKey: ['channels'] })
     },
   })
   const query = useQuery({
-    queryKey: ['channel-monitor-task-history', kind, page, TASK_PAGE_SIZE],
-    queryFn: () => getChannelMonitorTasks(page, TASK_PAGE_SIZE, kind),
-    enabled: props.open,
+    queryKey: ['channel-monitor-task-history', 'ratio', page, TASK_PAGE_SIZE],
+    queryFn: () => getChannelMonitorTasks(page, TASK_PAGE_SIZE, 'ratio'),
+    enabled: props.open && kind === 'ratio',
     placeholderData: keepPreviousData,
     staleTime: 30 * 1000,
     refetchInterval: (result) =>
@@ -528,6 +530,19 @@ export function ChannelMonitorTaskHistoryDialog(
   const rangeEnd = Math.min(page * TASK_PAGE_SIZE, total)
   const latestCompletedTaskTime =
     getLatestCompletedChannelMonitorTaskTime(tasks)
+  const activeCount = tasks.filter(isActiveChannelMonitorTask).length
+  const failedCount = tasks.filter((task) => task.status === 'failed').length
+  const partialFailureCount = tasks.filter(
+    (task) =>
+      task.status === 'succeeded' &&
+      ((task.result?.failed ?? 0) > 0 || task.result?.email_status === 'failed')
+  ).length
+  const succeededCount = tasks.filter(
+    (task) =>
+      task.status === 'succeeded' &&
+      (task.result?.failed ?? 0) === 0 &&
+      task.result?.email_status !== 'failed'
+  ).length
 
   useEffect(() => {
     if (latestCompletedTaskTime <= 0) return
@@ -551,7 +566,7 @@ export function ChannelMonitorTaskHistoryDialog(
           <EmptyMedia variant='icon'>
             <HugeiconsIcon icon={Alert02Icon} />
           </EmptyMedia>
-          <EmptyTitle>定时任务记录加载失败</EmptyTitle>
+          <EmptyTitle>倍率与余额记录加载失败</EmptyTitle>
           <EmptyDescription>
             {query.error instanceof Error ? query.error.message : '请稍后重试'}
           </EmptyDescription>
@@ -571,31 +586,27 @@ export function ChannelMonitorTaskHistoryDialog(
           <EmptyMedia variant='icon'>
             <HugeiconsIcon icon={HistoryIcon} />
           </EmptyMedia>
-          <EmptyTitle>
-            {kind === 'schedule' ? '暂无智能调度记录' : '暂无倍率更新记录'}
-          </EmptyTitle>
+          <EmptyTitle>暂无倍率与余额更新记录</EmptyTitle>
           <EmptyDescription>
-            {kind === 'schedule'
-              ? '开启智能调度或手动执行后，任务会在这里留下记录。'
-              : '开启自动更新或手动执行后，任务会在这里留下记录。'}
+            开启自动更新或手动执行后，任务会在这里留下记录。
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
     )
   } else {
     content = (
-      <Table className='min-w-[900px]'>
-        <TableHeader>
+      <Table className='block min-w-0 sm:table sm:min-w-[920px]'>
+        <TableHeader className='hidden sm:table-header-group'>
           <TableRow>
             <TableHead>执行时间</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>执行结果</TableHead>
-            <TableHead>规则与策略</TableHead>
+            <TableHead>联动操作</TableHead>
             <TableHead>耗时</TableHead>
-            <TableHead>错误</TableHead>
+            <TableHead className='text-right'>详情</TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody className='block sm:table-row-group'>
           {tasks.map((task) => (
             <ChannelMonitorTaskHistoryEntry
               key={task.task_id}
@@ -615,119 +626,191 @@ export function ChannelMonitorTaskHistoryDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='h-[min(85dvh,48rem)] grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-5xl'>
+      <DialogContent className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'>
         <DialogHeader className='pr-10'>
-          <DialogTitle>定时任务记录</DialogTitle>
+          <DialogTitle>执行记录</DialogTitle>
           <DialogDescription>
-            查看上游倍率与余额更新、智能调度的执行结果，也可以立即执行任务。
+            统一查看倍率与余额更新、智能调度的执行结果、计算依据和调整原因。
           </DialogDescription>
         </DialogHeader>
-        <div className='flex flex-wrap items-center justify-between gap-3'>
-          <div className='flex flex-wrap items-center gap-3'>
-            <ToggleGroup
-              value={[kind]}
-              onValueChange={(values) => {
-                const nextKind = values.find((value) => value !== kind)
-                if (nextKind !== 'ratio' && nextKind !== 'schedule') return
-                setKind(nextKind)
-                setPage(1)
-                setExpandedTaskId(null)
-              }}
-              variant='outline'
-              size='sm'
-              spacing={0}
-              aria-label='选择定时任务类型'
-            >
-              <ToggleGroupItem value='ratio'>倍率与余额</ToggleGroupItem>
-              <ToggleGroupItem value='schedule'>智能调度</ToggleGroupItem>
-            </ToggleGroup>
-            <span className='text-muted-foreground text-xs'>
-              显示 {rangeStart}-{rangeEnd}，共 {total} 条
-            </span>
-          </div>
-          <div className='flex flex-wrap items-center gap-2'>
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => ratioUpdateMutation.mutate()}
-              disabled={ratioUpdateMutation.isPending}
-            >
-              {ratioUpdateMutation.isPending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon
-                  icon={CloudDownloadIcon}
-                  data-icon='inline-start'
-                />
-              )}
-              立即更新倍率和余额
-            </Button>
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => smartScheduleMutation.mutate()}
-              disabled={smartScheduleMutation.isPending}
-            >
-              {smartScheduleMutation.isPending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon
-                  icon={WorkflowSquare06Icon}
-                  data-icon='inline-start'
-                />
-              )}
-              执行智能调度
-            </Button>
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => query.refetch()}
-              disabled={query.isFetching}
-            >
-              <HugeiconsIcon
-                icon={Refresh01Icon}
-                data-icon='inline-start'
-                className={cn(query.isFetching && 'animate-spin')}
-              />
-              刷新
-            </Button>
-          </div>
-        </div>
-        <div
-          className='min-h-0 min-w-0 overflow-x-hidden overflow-y-auto rounded-lg border'
-          aria-busy={query.isFetching}
+        <Tabs
+          value={kind}
+          onValueChange={(nextKind) => {
+            if (nextKind !== 'ratio' && nextKind !== 'schedule') return
+            setKind(nextKind)
+            setPage(1)
+            setExpandedTaskId(null)
+          }}
+          className='min-h-0 overflow-hidden'
         >
-          {content}
-        </div>
-        {total > 0 && (
-          <div className='flex items-center justify-end gap-2'>
-            <Button
-              variant='outline'
-              size='icon-sm'
-              aria-label='上一页'
-              title='上一页'
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-              disabled={page <= 1 || query.isFetching}
-            >
-              <HugeiconsIcon icon={ArrowLeft01Icon} />
-            </Button>
-            <span className='text-muted-foreground min-w-20 text-center text-xs tabular-nums'>
-              第 {page} / {totalPages} 页
-            </span>
-            <Button
-              variant='outline'
-              size='icon-sm'
-              aria-label='下一页'
-              title='下一页'
-              onClick={() =>
-                setPage((current) => Math.min(totalPages, current + 1))
-              }
-              disabled={page >= totalPages || query.isFetching}
-            >
-              <HugeiconsIcon icon={ArrowRight01Icon} />
-            </Button>
+          <div className='flex flex-wrap items-center justify-between gap-3'>
+            <div className='flex min-w-0 flex-wrap items-center gap-3'>
+              <TabsList aria-label='选择执行记录类型'>
+                <TabsTrigger value='ratio'>
+                  <HugeiconsIcon
+                    icon={CloudDownloadIcon}
+                    data-icon='inline-start'
+                  />
+                  倍率与余额更新
+                </TabsTrigger>
+                <TabsTrigger value='schedule'>
+                  <HugeiconsIcon
+                    icon={WorkflowSquare06Icon}
+                    data-icon='inline-start'
+                  />
+                  智能调度
+                </TabsTrigger>
+              </TabsList>
+              {kind === 'ratio' ? (
+                <span className='text-muted-foreground text-xs tabular-nums'>
+                  共 {total} 条更新任务
+                </span>
+              ) : (
+                <span className='text-muted-foreground text-xs'>
+                  按批次查看评分、路由变化和调整原因
+                </span>
+              )}
+            </div>
+            {kind === 'ratio' ? (
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => ratioUpdateMutation.mutate()}
+                disabled={ratioUpdateMutation.isPending}
+              >
+                {ratioUpdateMutation.isPending ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon
+                    icon={CloudDownloadIcon}
+                    data-icon='inline-start'
+                  />
+                )}
+                立即更新倍率和余额
+              </Button>
+            ) : (
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => smartScheduleMutation.mutate()}
+                disabled={smartScheduleMutation.isPending}
+              >
+                {smartScheduleMutation.isPending ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon
+                    icon={WorkflowSquare06Icon}
+                    data-icon='inline-start'
+                  />
+                )}
+                执行智能调度
+              </Button>
+            )}
           </div>
-        )}
+          <TabsContent
+            value='ratio'
+            className='grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden'
+          >
+            <div
+              className='bg-border grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4'
+              aria-label='当前页执行概览'
+            >
+              <div className='bg-background p-3'>
+                <span className='text-muted-foreground block text-xs'>
+                  当前页
+                </span>
+                <strong className='mt-1 block text-lg tabular-nums'>
+                  {tasks.length} 条
+                </strong>
+              </div>
+              <div className='bg-background p-3'>
+                <span className='text-muted-foreground block text-xs'>
+                  成功
+                </span>
+                <strong className='mt-1 block text-lg tabular-nums'>
+                  {succeededCount} 条
+                </strong>
+              </div>
+              <div className='bg-background p-3'>
+                <span className='text-muted-foreground block text-xs'>
+                  需关注
+                </span>
+                <strong
+                  className={cn(
+                    'mt-1 block text-lg tabular-nums',
+                    partialFailureCount + failedCount > 0 && 'text-destructive'
+                  )}
+                >
+                  {partialFailureCount + failedCount} 条
+                </strong>
+              </div>
+              <div className='bg-background p-3'>
+                <span className='text-muted-foreground block text-xs'>
+                  执行中
+                </span>
+                <strong className='mt-1 block text-lg tabular-nums'>
+                  {activeCount} 条
+                </strong>
+              </div>
+            </div>
+            <div
+              className='min-h-0 min-w-0 overflow-auto rounded-lg border'
+              aria-busy={query.isFetching}
+            >
+              {content}
+            </div>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <span className='text-muted-foreground text-xs tabular-nums'>
+                显示 {rangeStart}-{rangeEnd}，共 {total} 条
+              </span>
+              <div className='flex items-center gap-2'>
+                <Button
+                  variant='outline'
+                  size='icon-sm'
+                  aria-label='上一页'
+                  title='上一页'
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1 || query.isFetching}
+                >
+                  <HugeiconsIcon icon={ArrowLeft01Icon} />
+                </Button>
+                <span className='text-muted-foreground min-w-20 text-center text-xs tabular-nums'>
+                  第 {page} / {totalPages} 页
+                </span>
+                <Button
+                  variant='outline'
+                  size='icon-sm'
+                  aria-label='下一页'
+                  title='下一页'
+                  onClick={() =>
+                    setPage((current) => Math.min(totalPages, current + 1))
+                  }
+                  disabled={page >= totalPages || query.isFetching}
+                >
+                  <HugeiconsIcon icon={ArrowRight01Icon} />
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() => query.refetch()}
+                  disabled={query.isFetching}
+                >
+                  <HugeiconsIcon
+                    icon={Refresh01Icon}
+                    className={cn(query.isFetching && 'animate-spin')}
+                    data-icon='inline-start'
+                  />
+                  刷新
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+          <TabsContent value='schedule' className='min-h-0 overflow-hidden'>
+            <ChannelMonitorSmartScheduleExecutionPanel
+              active={props.open && kind === 'schedule'}
+            />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )

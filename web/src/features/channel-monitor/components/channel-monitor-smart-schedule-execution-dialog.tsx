@@ -37,13 +37,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -255,13 +248,12 @@ function TaskListItem(props: {
   )
 }
 
-type ChannelMonitorSmartScheduleExecutionDialogProps = {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+type ChannelMonitorSmartScheduleExecutionPanelProps = {
+  active: boolean
 }
 
-export function ChannelMonitorSmartScheduleExecutionDialog(
-  props: ChannelMonitorSmartScheduleExecutionDialogProps
+export function ChannelMonitorSmartScheduleExecutionPanel(
+  props: ChannelMonitorSmartScheduleExecutionPanelProps
 ) {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
@@ -273,7 +265,7 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
   const query = useQuery({
     queryKey: ['channel-monitor-smart-schedule-executions', page],
     queryFn: () => getChannelMonitorTasks(page, PAGE_SIZE, 'schedule'),
-    enabled: props.open,
+    enabled: props.active,
     placeholderData: keepPreviousData,
     staleTime: 15 * 1000,
     refetchInterval: (result) =>
@@ -587,22 +579,22 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-6xl'>
-        <DialogHeader className='pr-10'>
-          <DialogTitle>智能调度执行记录</DialogTitle>
-          <DialogDescription>
-            按执行批次查看每个分组和模型的评分、主备路由、优先级/权重变化及调整原因。
-          </DialogDescription>
-        </DialogHeader>
-        <div
-          className='min-h-0 overflow-hidden rounded-lg border'
-          aria-busy={query.isFetching}
-        >
-          {body}
-        </div>
-        {total > 0 ? (
-          <div className='flex items-center justify-end gap-2'>
+    <div
+      className='grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden'
+      data-smart-schedule-execution-panel
+    >
+      <div
+        className='min-h-0 overflow-hidden rounded-lg border'
+        aria-busy={query.isFetching}
+      >
+        {body}
+      </div>
+      {total > 0 ? (
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <span className='text-muted-foreground text-xs tabular-nums'>
+            共 {total} 个执行批次
+          </span>
+          <div className='flex items-center gap-2'>
             <Button
               variant='outline'
               size='icon-sm'
@@ -641,10 +633,10 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
               />
               刷新
             </Button>
-            {query.isFetching ? <Spinner className='size-4' /> : null}
+            {query.isFetching ? <Spinner /> : null}
           </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+        </div>
+      ) : null}
+    </div>
   )
 }

@@ -218,7 +218,7 @@ describe('smart schedule task adjustment history', () => {
     assert.ok(markup.includes('数据库写入失败'))
   })
 
-  test('shows an icon-only accessible disclosure and toggles from click', () => {
+  test('shows a clear accessible disclosure and toggles from click', () => {
     let toggleCount = 0
     const collapsed = ChannelMonitorTaskRowDisclosure({
       adjustmentCount: 4,
@@ -233,8 +233,8 @@ describe('smart schedule task adjustment history', () => {
 
     assert.ok(collapsedMarkup.includes('aria-expanded="false"'))
     assert.ok(collapsedMarkup.includes('aria-controls="adjustment-details"'))
-    assert.ok(collapsedMarkup.includes('aria-label="展开调整明细，共 4 条"'))
-    assert.doesNotMatch(collapsedMarkup, />\s*查看调整明细/)
+    assert.ok(collapsedMarkup.includes('aria-label="查看执行详情，共 4 条"'))
+    assert.ok(collapsedMarkup.includes('查看详情'))
     collapsed.props.onClick()
     assert.equal(toggleCount, 1)
 
@@ -248,8 +248,8 @@ describe('smart schedule task adjustment history', () => {
       />
     )
     assert.ok(expandedMarkup.includes('aria-expanded="true"'))
-    assert.ok(expandedMarkup.includes('aria-label="收起调整明细"'))
-    assert.doesNotMatch(expandedMarkup, />\s*收起调整明细/)
+    assert.ok(expandedMarkup.includes('aria-label="收起执行详情"'))
+    assert.ok(expandedMarkup.includes('收起详情'))
     assert.ok(expandedMarkup.includes('rotate-180'))
   })
 
