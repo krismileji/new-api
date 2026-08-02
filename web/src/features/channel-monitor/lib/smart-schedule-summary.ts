@@ -325,6 +325,7 @@ export function groupChannelMonitorSmartScheduleRoutesByChannel(
 
 type ChannelMonitorSmartSchedulePoolRoutingSnapshot = {
   decision: ChannelMonitorSmartScheduleScoreDetails['decision'] | undefined
+  actualPrimaryChannelId: number
   actualHighestPriority: number | null
   actualTopLayerChannelIds: number[]
 }
@@ -342,21 +343,6 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
     }
   }
 
-  const recordedTopLayer = [
-    ...new Set(
-      (decision?.actual_top_layer_channel_ids ?? []).filter(
-        (channelId) => channelId > 0
-      )
-    ),
-  ]
-  if (recordedTopLayer.length > 0) {
-    return {
-      decision,
-      actualHighestPriority: decision?.actual_highest_priority ?? null,
-      actualTopLayerChannelIds: recordedTopLayer,
-    }
-  }
-
   const routableRoutes = routes.filter(
     (route) => route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
   )
@@ -365,16 +351,57 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
       current == null ? route.priority : Math.max(current, route.priority),
     null
   )
+  const actualTopLayerRoutes =
+    actualHighestPriority == null
+      ? []
+      : routableRoutes.filter(
+          (route) => route.priority === actualHighestPriority
+        )
+  const actualTopLayerChannelIds = actualTopLayerRoutes
+    .map((route) => route.channel_id)
+    .sort((first, second) => first - second)
+  const recordedTopLayer = [
+    ...new Set(
+      (decision?.actual_top_layer_channel_ids ?? []).filter(
+        (channelId) => channelId > 0
+      )
+    ),
+  ].sort((first, second) => first - second)
+  const decisionMatchesCurrentRouting =
+    decision?.actual_highest_priority === actualHighestPriority &&
+    recordedTopLayer.length === actualTopLayerChannelIds.length &&
+    recordedTopLayer.every(
+      (channelId, index) => channelId === actualTopLayerChannelIds[index]
+    )
+  const largestWeight = Math.max(
+    0,
+    ...actualTopLayerRoutes.map((route) => Math.max(0, route.weight))
+  )
+  const largestWeightCount = actualTopLayerRoutes.filter(
+    (route) => Math.max(0, route.weight) === largestWeight
+  ).length
+  const weightedPrimary = actualTopLayerRoutes.find(
+    (route) =>
+      actualTopLayerRoutes.length === 1 ||
+      (Math.max(0, route.weight) === largestWeight && largestWeightCount === 1)
+  )
+  let actualPrimaryChannelId = weightedPrimary?.channel_id ?? 0
+  if (actualPrimaryChannelId === 0 && decisionMatchesCurrentRouting) {
+    const recordedPrimaryChannelId = decision?.actual_primary_channel_id ?? 0
+    if (
+      actualTopLayerRoutes.some(
+        (route) => route.channel_id === recordedPrimaryChannelId
+      )
+    ) {
+      actualPrimaryChannelId = recordedPrimaryChannelId
+    }
+  }
+
   return {
     decision,
+    actualPrimaryChannelId,
     actualHighestPriority,
-    actualTopLayerChannelIds:
-      actualHighestPriority == null
-        ? []
-        : routableRoutes
-            .filter((route) => route.priority === actualHighestPriority)
-            .map((route) => route.channel_id)
-            .sort((first, second) => first - second),
+    actualTopLayerChannelIds,
   }
 }
 
@@ -417,21 +444,7 @@ export function placeChannelMonitorSmartScheduleRoutes(
           : 1 / candidates.length
       shares.set(route.channel_id, share)
     }
-    const largestShare = Math.max(0, ...shares.values())
-    const largestShareCount = [...shares.values()].filter(
-      (share) => Math.abs(share - largestShare) < Number.EPSILON
-    ).length
-    let actualPrimaryChannelId =
-      snapshot.decision?.actual_primary_channel_id ?? 0
-    if (actualPrimaryChannelId === 0) {
-      const fallbackPrimary = candidates.find(
-        (route) =>
-          candidates.length === 1 ||
-          (shares.get(route.channel_id) === largestShare &&
-            largestShareCount === 1)
-      )
-      actualPrimaryChannelId = fallbackPrimary?.channel_id ?? 0
-    }
+    const actualPrimaryChannelId = snapshot.actualPrimaryChannelId
 
     for (const route of poolRoutes) {
       let role: ChannelMonitorSmartScheduleRouteRole = 'backup'
@@ -620,7 +633,7 @@ export function summarizeChannelMonitorSmartSchedulePools(
       topPriority: snapshot.actualHighestPriority,
       candidateCount: snapshot.actualTopLayerChannelIds.length,
       scoringWinnerChannelId: snapshot.decision?.raw_winner_channel_id ?? 0,
-      actualPrimaryChannelId: snapshot.decision?.actual_primary_channel_id ?? 0,
+      actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
       actualTopLayerChannelIds: snapshot.actualTopLayerChannelIds,
     }

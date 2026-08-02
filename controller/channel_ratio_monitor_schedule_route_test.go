@@ -618,3 +618,67 @@ func TestUpdateChannelMonitorSmartScheduleRoutePrimaryDefaultsAndPersistsStabili
 	}).First(&state).Error)
 	assert.False(t, state.ManualPrimaryAllowStabilityDegrade)
 }
+
+func TestUpdateChannelMonitorSmartScheduleRoutePrimaryRequiresStabilityConfirmation(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "false",
+	})
+	priority := int64(80)
+	weight := uint(100)
+	degradedPriority := int64(0)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1212, Name: "protected primary", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1212, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &degradedPriority, Weight: 0,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1212, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:         model.ChannelSmartScheduleStabilityDegraded,
+		StabilitySavedPriority: priority,
+		StabilitySavedWeight:   weight,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/1212/schedule/route/primary",
+		map[string]any{"group": "vip", "model": "model-a", "duration_minutes": 10},
+	)
+	ctx.AddParam("id", "1212")
+	UpdateChannelMonitorSmartScheduleRoutePrimary(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var confirmationResponse struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &confirmationResponse))
+	assert.False(t, confirmationResponse.Success)
+	assert.Equal(t, "smart_schedule_route_stability_confirmation_required", confirmationResponse.Code)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/1212/schedule/route/primary",
+		map[string]any{
+			"group": "vip", "model": "model-a", "duration_minutes": 10,
+			"allow_stability_degrade":    true,
+			"confirm_stability_override": true,
+		},
+	)
+	ctx.AddParam("id", "1212")
+	UpdateChannelMonitorSmartScheduleRoutePrimary(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var successResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			StabilityProtectionCleared bool `json:"stability_protection_cleared"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &successResponse))
+	assert.True(t, successResponse.Success)
+	assert.True(t, successResponse.Data.StabilityProtectionCleared)
+}

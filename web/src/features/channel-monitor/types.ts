@@ -759,6 +759,7 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
   duration_minutes: number
   allow_stability_degrade: boolean
   manual_primary_until: number
+  stability_protection_cleared: boolean
   routing_changed: boolean
   task: ChannelMonitorTask | null
 }
@@ -900,6 +901,7 @@ export type ChannelMonitorApiResponse<T> = {
   success: boolean
   message: string
   data: T
+  code?: string
 }
 
 export type GroupMonitorItem = {

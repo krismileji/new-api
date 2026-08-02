@@ -44,3 +44,13 @@ export function createChannelMonitorSmartSchedulePrimaryFormState(
     allowStabilityDegrade: route.state.manual_primary_allow_stability_degrade,
   }
 }
+
+export function channelMonitorSmartSchedulePrimaryRequiresConfirmation(
+  route: ChannelMonitorSmartScheduleRoute,
+  nowSeconds: number
+) {
+  return (
+    route.state.stability_state !== '' &&
+    route.state.manual_primary_until <= nowSeconds
+  )
+}

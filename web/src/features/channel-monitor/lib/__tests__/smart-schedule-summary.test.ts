@@ -29,6 +29,7 @@ import {
   getChannelMonitorSmartScheduleDisplayOptions,
   getChannelMonitorSmartSchedulePoolStatus,
   placeChannelMonitorSmartScheduleRoutes,
+  summarizeChannelMonitorSmartSchedulePools,
 } from '../smart-schedule-summary'
 
 const normalPool = {
@@ -291,6 +292,68 @@ describe('smart schedule route placement', () => {
         isActualTopLayer: false,
       }
     )
+  })
+
+  test('uses current routing after a fixed primary replaces a stale schedule decision', () => {
+    const previousPrimary = createRoute(1, 'vip', 'model-a', 100, 1000)
+    const fixedPrimary = createRoute(2, 'vip', 'model-a', 101, 1000)
+    fixedPrimary.state.manual_primary_until = 1_900_000_000
+    previousPrimary.state.last_schedule_score_details = {
+      decision: {
+        apply_mode: 'priority_weight',
+        current_primary_channel_id: 1,
+        raw_winner_channel_id: 1,
+        selected_primary_channel_id: 1,
+        actual_primary_channel_id: 1,
+        selected_primary: true,
+        manual_primary_channel_id: 0,
+        base_rank: 1,
+        base_priority: 100,
+        base_weight: 1000,
+        applied_priority: 100,
+        applied_weight: 1000,
+        actual_highest_priority: 100,
+        actual_top_layer_channel_ids: [1],
+        temporary_traffic_kind: '',
+        temporary_traffic_target_percent: 0,
+        switch_threshold_percent: 3,
+        primary_traffic_percent: 90,
+        force_reset: false,
+        manual_primary: false,
+        selection_reason: '上一轮调度结果',
+        adjustment_reason: '',
+        reason: '上一轮调度结果',
+      },
+    } as ChannelMonitorSmartScheduleRoute['state']['last_schedule_score_details']
+
+    const placements = placeChannelMonitorSmartScheduleRoutes([
+      previousPrimary,
+      fixedPrimary,
+    ])
+
+    assert.deepEqual(
+      placements.get(channelMonitorSmartScheduleRouteKey(fixedPrimary)),
+      {
+        role: 'primary',
+        estimatedShare: 1,
+        topPriority: 101,
+        candidateCount: 1,
+        actualPrimaryChannelId: 2,
+        scoringWinnerChannelId: 1,
+        actualHighestPriority: 101,
+        actualTopLayerChannelIds: [2],
+        isActualPrimary: true,
+        isScoringWinner: false,
+        isActualTopLayer: true,
+      }
+    )
+    const summaries = summarizeChannelMonitorSmartSchedulePools([
+      previousPrimary,
+      fixedPrimary,
+    ])
+    assert.equal(summaries[0]?.actualPrimaryChannelId, 2)
+    assert.equal(summaries[0]?.actualHighestPriority, 101)
+    assert.deepEqual(summaries[0]?.actualTopLayerChannelIds, [2])
   })
 
   test('isolates shares by group and model and splits zero-weight candidates evenly', () => {

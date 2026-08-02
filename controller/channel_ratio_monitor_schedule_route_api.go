@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"sort"
@@ -28,10 +29,11 @@ type channelSmartScheduleRouteRequest struct {
 }
 
 type channelSmartScheduleRoutePrimaryRequest struct {
-	Group                 string `json:"group"`
-	Model                 string `json:"model"`
-	DurationMinutes       *int   `json:"duration_minutes"`
-	AllowStabilityDegrade *bool  `json:"allow_stability_degrade"`
+	Group                    string `json:"group"`
+	Model                    string `json:"model"`
+	DurationMinutes          *int   `json:"duration_minutes"`
+	AllowStabilityDegrade    *bool  `json:"allow_stability_degrade"`
+	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
@@ -268,11 +270,23 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	}
 	result, err := model.SaveChannelSmartScheduleRoutePrimary(
 		channelId, group, modelName, model.ChannelSmartScheduleRoutePrimaryOptions{
-			DurationMinutes:       *request.DurationMinutes,
-			AllowStabilityDegrade: allowStabilityDegrade,
+			DurationMinutes:           *request.DurationMinutes,
+			AllowStabilityDegrade:     allowStabilityDegrade,
+			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
+			StabilityFallbackPriority: channelMonitorSmartScheduleBaselinePriority,
+			StabilityFallbackWeight:   channelMonitorSmartScheduleMinWeight,
 		},
 	)
 	if err != nil {
+		if errors.Is(err, model.ErrChannelSmartScheduleRouteStabilityProtected) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"code":    "smart_schedule_route_stability_confirmation_required",
+				"message": "该分组和模型路由处于稳定性保护状态，确认解除保护后可固定为主渠道",
+				"data":    nil,
+			})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -288,19 +302,22 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
 		"id": channelId, "group": group, "model": modelName,
-		"duration_minutes":        *request.DurationMinutes,
-		"allow_stability_degrade": allowStabilityDegrade,
-		"manual_primary_until":    result.State.ManualPrimaryUntil,
+		"duration_minutes":             *request.DurationMinutes,
+		"allow_stability_degrade":      allowStabilityDegrade,
+		"confirm_stability_override":   request.ConfirmStabilityOverride,
+		"stability_protection_cleared": result.StabilityProtectionCleared,
+		"manual_primary_until":         result.State.ManualPrimaryUntil,
 	})
 	common.ApiSuccess(c, gin.H{
-		"channel_id":              channelId,
-		"group":                   group,
-		"model":                   modelName,
-		"duration_minutes":        *request.DurationMinutes,
-		"allow_stability_degrade": result.State.ManualPrimaryAllowStabilityDegrade,
-		"manual_primary_until":    result.State.ManualPrimaryUntil,
-		"routing_changed":         result.RoutingChanged,
-		"task":                    taskResponse,
+		"channel_id":                   channelId,
+		"group":                        group,
+		"model":                        modelName,
+		"duration_minutes":             *request.DurationMinutes,
+		"allow_stability_degrade":      result.State.ManualPrimaryAllowStabilityDegrade,
+		"manual_primary_until":         result.State.ManualPrimaryUntil,
+		"stability_protection_cleared": result.StabilityProtectionCleared,
+		"routing_changed":              result.RoutingChanged,
+		"task":                         taskResponse,
 	})
 }
 

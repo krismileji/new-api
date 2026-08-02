@@ -20,7 +20,10 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { ChannelMonitorSmartScheduleRoute } from '../../types'
-import { createChannelMonitorSmartSchedulePrimaryFormState } from '../smart-schedule-primary'
+import {
+  channelMonitorSmartSchedulePrimaryRequiresConfirmation,
+  createChannelMonitorSmartSchedulePrimaryFormState,
+} from '../smart-schedule-primary'
 
 function createRoute(
   stateOverrides: Partial<ChannelMonitorSmartScheduleRoute['state']> = {}
@@ -124,5 +127,28 @@ describe('smart schedule primary form state', () => {
     )
 
     assert.equal(state.allowStabilityDegrade, true)
+  })
+
+  test('requires confirmation before fixing a route under stability protection', () => {
+    assert.equal(
+      channelMonitorSmartSchedulePrimaryRequiresConfirmation(
+        createRoute({ stability_state: 'degraded' }),
+        1_000
+      ),
+      true
+    )
+  })
+
+  test('does not ask again when editing an active fixed route under protection', () => {
+    assert.equal(
+      channelMonitorSmartSchedulePrimaryRequiresConfirmation(
+        createRoute({
+          stability_state: 'degraded',
+          manual_primary_until: 1_600,
+        }),
+        1_000
+      ),
+      false
+    )
   })
 })

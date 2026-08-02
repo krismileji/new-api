@@ -24,6 +24,7 @@ import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
 import { api } from '@/lib/api'
 
 import {
+  ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   clearChannelMonitorSmartScheduleRouteStability,
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
@@ -270,6 +271,77 @@ test('sets and clears a fixed primary route with its stability option', async ()
     duration_minutes: 0,
     allow_stability_degrade: false,
   })
+})
+
+test('requires and sends explicit confirmation before overriding stability protection', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    const request = JSON.parse(String(config.data)) as {
+      confirm_stability_override?: boolean
+    }
+    return {
+      data: request.confirm_stability_override
+        ? {
+            success: true,
+            message: '',
+            data: {
+              channel_id: 7,
+              group: 'vip',
+              model: 'model-a',
+              duration_minutes: 90,
+              allow_stability_degrade: true,
+              manual_primary_until: 1_900_000_000,
+              stability_protection_cleared: true,
+              routing_changed: true,
+              task: null,
+            },
+          }
+        : {
+            success: false,
+            code: 'smart_schedule_route_stability_confirmation_required',
+            message: '该路由处于稳定性保护状态，请确认后继续',
+            data: null,
+          },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  const request = {
+    channelId: 7,
+    group: 'vip',
+    model: 'model-a',
+    durationMinutes: 90,
+    allowStabilityDegrade: true,
+  }
+  try {
+    await assert.rejects(
+      () => updateChannelMonitorSmartScheduleRoutePrimary(request),
+      ChannelMonitorSmartScheduleStabilityConfirmationRequiredError
+    )
+    const response = await updateChannelMonitorSmartScheduleRoutePrimary({
+      ...request,
+      confirmStabilityOverride: true,
+    })
+    assert.equal(response.data.stability_protection_cleared, true)
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requests.length, 2)
+  assert.equal(
+    JSON.parse(String(requests[0]?.data)).confirm_stability_override,
+    undefined
+  )
+  assert.equal(
+    JSON.parse(String(requests[1]?.data)).confirm_stability_override,
+    true
+  )
 })
 
 test('posts manual stability clear for one group-model route', async () => {

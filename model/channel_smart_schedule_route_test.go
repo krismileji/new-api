@@ -190,6 +190,73 @@ func TestSaveChannelSmartScheduleRoutePrimarySwitchesAndRestoresRouting(t *testi
 	assert.Zero(t, expiredState.ManualPrimaryUntil)
 }
 
+func TestSaveChannelSmartScheduleRoutePrimaryRequiresConfirmationToClearStabilityProtection(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	channelPriority := int64(80)
+	channelWeight := uint(50)
+	degradedPriority := int64(0)
+	restoredPriority := int64(90)
+	restoredWeight := uint(60)
+	require.NoError(t, db.Create(&Channel{
+		Id: 3103, Name: "protected primary", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &channelPriority, Weight: &channelWeight,
+	}).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: 3103, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &degradedPriority, Weight: 0,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 3103, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:         ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil:         common.GetTimestamp() + 300,
+		StabilitySavedPriority: restoredPriority,
+		StabilitySavedWeight:   restoredWeight,
+		RuntimeProtectionUntil: common.GetTimestamp() + 300,
+	}).Error)
+
+	_, err := SaveChannelSmartScheduleRoutePrimary(
+		3103,
+		"vip",
+		"model-a",
+		ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10},
+	)
+	require.ErrorIs(t, err, ErrChannelSmartScheduleRouteStabilityProtected)
+
+	var protectedState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 3103, GroupName: "vip", ModelName: "model-a",
+	}).First(&protectedState).Error)
+	assert.Equal(t, ChannelSmartScheduleStabilityDegraded, protectedState.StabilityState)
+	assert.Zero(t, protectedState.ManualPrimaryUntil)
+
+	fixed, err := SaveChannelSmartScheduleRoutePrimary(
+		3103,
+		"vip",
+		"model-a",
+		ChannelSmartScheduleRoutePrimaryOptions{
+			DurationMinutes:           10,
+			AllowStabilityDegrade:     true,
+			ConfirmStabilityOverride:  true,
+			StabilityFallbackPriority: channelPriority,
+			StabilityFallbackWeight:   10,
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, fixed.StabilityProtectionCleared)
+	assert.Empty(t, fixed.State.StabilityState)
+	assert.True(t, fixed.State.ManualPrimaryAllowStabilityDegrade)
+	assert.Greater(t, fixed.State.ManualPrimaryUntil, common.GetTimestamp())
+	assert.Equal(t, restoredPriority, fixed.State.ManualPrimarySavedPriority)
+	assert.Equal(t, restoredWeight, fixed.State.ManualPrimarySavedWeight)
+
+	var ability Ability
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: 3103, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	assert.Equal(t, restoredPriority+1, abilityPriority(ability))
+	assert.Equal(t, uint(1000), ability.Weight)
+}
+
 func TestClearAndExpireChannelSmartScheduleRoutePrimaryRebaseActiveStabilityRestoreTarget(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	degradedPriority := int64(0)

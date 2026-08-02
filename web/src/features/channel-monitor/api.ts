@@ -276,13 +276,25 @@ export async function updateChannelMonitorSmartScheduleManualRouting(request: {
   return ensureChannelMonitorSuccess(response.data)
 }
 
-export async function updateChannelMonitorSmartScheduleRoutePrimary(request: {
+export type ChannelMonitorSmartSchedulePrimaryUpdateRequest = {
   channelId: number
   group: string
   model: string
   durationMinutes: number
   allowStabilityDegrade: boolean
-}) {
+  confirmStabilityOverride?: boolean
+}
+
+export class ChannelMonitorSmartScheduleStabilityConfirmationRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ChannelMonitorSmartScheduleStabilityConfirmationRequiredError'
+  }
+}
+
+export async function updateChannelMonitorSmartScheduleRoutePrimary(
+  request: ChannelMonitorSmartSchedulePrimaryUpdateRequest
+) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartSchedulePrimaryUpdateResult>
   >(
@@ -292,9 +304,20 @@ export async function updateChannelMonitorSmartScheduleRoutePrimary(request: {
       model: request.model,
       duration_minutes: request.durationMinutes,
       allow_stability_degrade: request.allowStabilityDegrade,
+      confirm_stability_override:
+        request.confirmStabilityOverride === true ? true : undefined,
     },
     channelMonitorRequestConfig()
   )
+  if (
+    !response.data.success &&
+    response.data.code ===
+      'smart_schedule_route_stability_confirmation_required'
+  ) {
+    throw new ChannelMonitorSmartScheduleStabilityConfirmationRequiredError(
+      response.data.message
+    )
+  }
   return ensureChannelMonitorSuccess(response.data)
 }
 

@@ -60,14 +60,20 @@ type ChannelSmartScheduleRouteState struct {
 
 const ChannelSmartScheduleManualPrimaryMaxMinutes = 525600
 
+var ErrChannelSmartScheduleRouteStabilityProtected = errors.New("该分组和模型路由处于稳定性保护状态，需要管理员确认后才能固定为主渠道")
+
 type ChannelSmartScheduleRoutePrimaryResult struct {
-	State          ChannelSmartScheduleRouteState
-	RoutingChanged bool
+	State                      ChannelSmartScheduleRouteState
+	RoutingChanged             bool
+	StabilityProtectionCleared bool
 }
 
 type ChannelSmartScheduleRoutePrimaryOptions struct {
-	DurationMinutes       int
-	AllowStabilityDegrade bool
+	DurationMinutes           int
+	AllowStabilityDegrade     bool
+	ConfirmStabilityOverride  bool
+	StabilityFallbackPriority int64
+	StabilityFallbackWeight   uint
 }
 
 func (state ChannelSmartScheduleRouteState) Participates() bool {
@@ -129,10 +135,11 @@ type ChannelSmartScheduleRouteApplyOutcome struct {
 }
 
 type ChannelSmartScheduleStabilityClearResult struct {
-	PreviousState string
-	Cleared       bool
-	Priority      int64
-	Weight        uint
+	PreviousState  string
+	Cleared        bool
+	RoutingChanged bool
+	Priority       int64
+	Weight         uint
 }
 
 type ChannelSmartScheduleStabilityUpdate struct {
@@ -539,7 +546,22 @@ func SaveChannelSmartScheduleRoutePrimary(
 			}
 		}
 		if targetState.StabilityState != "" {
-			return errors.New("该分组和模型路由处于稳定性保护状态，不能固定为主渠道")
+			if !options.ConfirmStabilityOverride {
+				return ErrChannelSmartScheduleRouteStabilityProtected
+			}
+			clearResult, clearErr := clearChannelSmartScheduleRouteStabilityTx(
+				tx,
+				targetState,
+				&targetAbility,
+				options.StabilityFallbackPriority,
+				options.StabilityFallbackWeight,
+				"管理员确认固定主渠道，已解除稳定性保护",
+			)
+			if clearErr != nil {
+				return clearErr
+			}
+			result.StabilityProtectionCleared = clearResult.Cleared
+			result.RoutingChanged = result.RoutingChanged || clearResult.RoutingChanged
 		}
 
 		if targetState.TemporaryTrafficKind != "" {
@@ -1033,48 +1055,76 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		if err := lockForUpdate(tx).Where(&Ability{ChannelId: channelId, Group: group, Model: modelName}).First(&ability).Error; err != nil {
 			return err
 		}
-		result.PreviousState = state.StabilityState
-		result.Priority = abilityPriority(ability)
-		result.Weight = ability.Weight
-		if result.PreviousState == "" {
-			return nil
-		}
-		if state.Revision == math.MaxInt64 {
-			return errors.New("智能调度路由修订号已达上限")
-		}
-		result.Priority = state.StabilitySavedPriority
-		if result.Priority <= 0 {
-			result.Priority = fallbackPriority
-		}
-		result.Weight = state.StabilitySavedWeight
-		if result.Weight == 0 {
-			result.Weight = fallbackWeight
-		}
-		key := channelSmartScheduleRouteKey(channelId, group, modelName)
-		if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &result.Priority, &result.Weight); err != nil {
-			return err
-		}
-		now := common.GetTimestamp()
-		state.StabilityState = ""
-		state.StabilityUntil = 0
-		state.StabilitySince = now
-		state.StabilitySavedPriority = 0
-		state.StabilitySavedWeight = 0
-		state.RuntimeProtectionUntil = 0
-		state.JitterBaselineFirstTokenMs = nil
-		state.JitterBaselineUpdatedAt = 0
-		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
-		state.LastScheduleError = "管理员已手动解除稳定性保护"
-		state.LastScheduleScore = nil
-		state.LastScheduleScoreDetails = ""
-		state.LastSchedulePriority = result.Priority
-		state.LastScheduleWeight = result.Weight
-		state.LastScheduleTime = now
-		state.Revision++
-		result.Cleared = true
-		return saveChannelSmartScheduleRouteStateTx(tx, &state)
+		var clearErr error
+		result, clearErr = clearChannelSmartScheduleRouteStabilityTx(
+			tx,
+			&state,
+			&ability,
+			fallbackPriority,
+			fallbackWeight,
+			"管理员已手动解除稳定性保护",
+		)
+		return clearErr
 	})
 	return result, err
+}
+
+func clearChannelSmartScheduleRouteStabilityTx(
+	tx *gorm.DB,
+	state *ChannelSmartScheduleRouteState,
+	ability *Ability,
+	fallbackPriority int64,
+	fallbackWeight uint,
+	reason string,
+) (result ChannelSmartScheduleStabilityClearResult, err error) {
+	result.PreviousState = state.StabilityState
+	result.Priority = abilityPriority(*ability)
+	result.Weight = ability.Weight
+	if result.PreviousState == "" {
+		return result, nil
+	}
+	if state.Revision == math.MaxInt64 {
+		return result, errors.New("智能调度路由修订号已达上限")
+	}
+
+	result.Priority = state.StabilitySavedPriority
+	if result.Priority <= 0 {
+		result.Priority = fallbackPriority
+	}
+	result.Weight = state.StabilitySavedWeight
+	if result.Weight == 0 {
+		result.Weight = fallbackWeight
+	}
+	if abilityPriority(*ability) != result.Priority || ability.Weight != result.Weight {
+		key := channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)
+		if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &result.Priority, &result.Weight); err != nil {
+			return result, err
+		}
+		result.RoutingChanged = true
+	}
+	restoredPriority := result.Priority
+	ability.Priority = &restoredPriority
+	ability.Weight = result.Weight
+
+	now := common.GetTimestamp()
+	state.StabilityState = ""
+	state.StabilityUntil = 0
+	state.StabilitySince = now
+	state.StabilitySavedPriority = 0
+	state.StabilitySavedWeight = 0
+	state.RuntimeProtectionUntil = 0
+	state.JitterBaselineFirstTokenMs = nil
+	state.JitterBaselineUpdatedAt = 0
+	state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
+	state.LastScheduleError = reason
+	state.LastScheduleScore = nil
+	state.LastScheduleScoreDetails = ""
+	state.LastSchedulePriority = result.Priority
+	state.LastScheduleWeight = result.Weight
+	state.LastScheduleTime = now
+	state.Revision++
+	result.Cleared = true
+	return result, saveChannelSmartScheduleRouteStateTx(tx, state)
 }
 
 func updateAbilitySmartSchedulePriorityWeightTx(tx *gorm.DB, key ChannelSmartScheduleRouteKey, priority *int64, weight *uint) error {
