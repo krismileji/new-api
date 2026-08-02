@@ -43,6 +43,9 @@ function renderAdjustment(
     old_weight: 100,
     new_weight: 900,
     score: 0.98,
+    previous_effective_time: 1_752_700_000,
+    previous_effective_priority: 90,
+    previous_effective_weight: 100,
     reason: '管理员固定主渠道',
     ...overrides,
   } satisfies ChannelMonitorTaskAdjustment
@@ -62,7 +65,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
     effective_weight_percent: 100,
   }
   return {
-    version: 2,
+    version: 3,
     strategy: 'ratio',
     minimum_samples: 5,
     sample_scope: 'channel_model',
@@ -114,8 +117,18 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       current_primary_channel_id: 8,
       raw_winner_channel_id: 7,
       selected_primary_channel_id: 7,
+      actual_primary_channel_id: 7,
       selected_primary: true,
       manual_primary_channel_id: 0,
+      base_rank: 1,
+      base_priority: 2,
+      base_weight: 100,
+      applied_priority: 2,
+      applied_weight: 90,
+      actual_highest_priority: 2,
+      actual_top_layer_channel_ids: [7],
+      temporary_traffic_kind: '',
+      temporary_traffic_target_percent: 0,
       switch_threshold_percent: 3,
       primary_traffic_percent: 90,
       force_reset: false,
@@ -163,5 +176,18 @@ describe('smart schedule execution adjustment details', () => {
 
     assert.ok(markup.includes('评分计算'))
     assert.ok(markup.includes('本次执行快照'))
+  })
+
+  test('shows the failed stage and retained previous effective result', () => {
+    const markup = renderAdjustment({
+      action: 'failed',
+      failure_stage: 'configuration_conflict',
+      reason: '调度执行期间配置已变化',
+    })
+
+    assert.ok(markup.includes('失败阶段：配置冲突'))
+    assert.ok(markup.includes('上一轮生效结果：'))
+    assert.ok(markup.includes('P90 / W100'))
+    assert.ok(markup.includes('上一轮结果继续生效'))
   })
 })

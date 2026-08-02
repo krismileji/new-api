@@ -89,7 +89,9 @@ function SmartScheduleFieldsFixture() {
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartSchedulePerformanceMinutes: 60,
+      smartSchedulePerformanceWindowMinutes: 60,
+      smartScheduleStabilityWindowMinutes: 120,
+      smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     } as unknown as ChannelMonitorSettingsFormValues,
   })
@@ -148,6 +150,11 @@ function SmartScheduleGroupPoliciesFixture(props: {
               sampleMode: props.sampleMode ?? 'traffic',
               explorationTrafficPercent: 3,
               probeIntervalMinutes: 10,
+              prioritySamplingEnabled: true,
+              prioritySamplingIntervalMinutes: 10,
+              prioritySamplingBasePercent: 3,
+              prioritySamplingDecayPercent: 70,
+              prioritySamplingMinPercent: 0.5,
             },
           ]
         : [],
@@ -173,6 +180,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
   applyMode: ChannelMonitorSmartSchedulePolicyFormValues['applyMode']
   sampleMode: ChannelMonitorSmartSchedulePolicyFormValues['sampleMode']
   jitterEnabled?: boolean
+  prioritySamplingEnabled?: boolean
 }) {
   const form = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     defaultValues: {
@@ -211,6 +219,11 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       sampleMode: props.sampleMode,
       explorationTrafficPercent: 3,
       probeIntervalMinutes: 15,
+      prioritySamplingEnabled: props.prioritySamplingEnabled ?? true,
+      prioritySamplingIntervalMinutes: 10,
+      prioritySamplingBasePercent: 3,
+      prioritySamplingDecayPercent: 70,
+      prioritySamplingMinPercent: 0.5,
     },
   })
   return (
@@ -272,6 +285,26 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /value="60"/)
     assert.match(
       markup,
+      /<input(?=[^>]*name="smartSchedulePerformanceWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="60")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="smartScheduleStabilityWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="120")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="smartScheduleRateLimitCooldownSeconds")(?=[^>]*min="0")(?=[^>]*max="300")(?=[^>]*value="30")[^>]*>/
+    )
+    assert.ok(markup.includes('429 冷却时间'))
+    assert.ok(
+      markup.includes(
+        '上游返回 429 后临时停止该渠道对应模型进入新请求；到期自动恢复，0 秒表示关闭'
+      )
+    )
+    assert.ok(markup.includes('用于首字、TPS 和业务性能评分'))
+    assert.ok(markup.includes('用于成功率、失败耗时和首字抖动'))
+    assert.match(
+      markup,
       /<div(?=[^>]*data-slot="smart-schedule-runtime-fields")(?=[^>]*class="[^"]*\bitems-start\b[^"]*")[^>]*>/
     )
     assert.equal(markup.includes('0 表示不限制'), false)
@@ -323,7 +356,9 @@ describe('channel monitor settings dialog', () => {
     for (const label of [
       '智能调度',
       '调度间隔',
-      '统计范围',
+      '性能窗口',
+      '稳定性窗口',
+      '429 冷却时间',
       '上游响应等待时间',
       '强制重置优先级和权重',
     ]) {
@@ -416,6 +451,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('按成本倍率'))
     assert.ok(markup.includes('优先级分层 + 权重'))
     assert.ok(markup.includes('探索流量 3%'))
+    assert.ok(markup.includes('每 10 分钟 · 3% 起'))
     assert.ok(markup.includes('全部模型'))
     assert.equal(markup.includes('未参与调度'), false)
     assert.ok(markup.includes('aria-label="编辑分组策略 vip"'))
@@ -464,6 +500,62 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('固定使用 /v1/responses 流式请求'))
     assert.ok(markup.includes('非文本模型会跳过'))
     assert.ok(markup.includes('需要先将调整方式设为'))
+  })
+
+  test('shows bounded low-priority rotation fields only in priority mode while enabled', () => {
+    const priorityMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+      />
+    )
+    const disabledMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+        prioritySamplingEnabled={false}
+      />
+    )
+    const weightMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='weight'
+        sampleMode='probe'
+      />
+    )
+
+    assert.ok(priorityMarkup.includes('低优先级轮转采样'))
+    assert.match(
+      priorityMarkup,
+      /<input(?=[^>]*name="prioritySamplingIntervalMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="10")[^>]*>/
+    )
+    assert.match(
+      priorityMarkup,
+      /<input(?=[^>]*name="prioritySamplingBasePercent")(?=[^>]*min="0.1")(?=[^>]*max="20")(?=[^>]*value="3")[^>]*>/
+    )
+    assert.match(
+      priorityMarkup,
+      /<input(?=[^>]*name="prioritySamplingDecayPercent")(?=[^>]*min="1")(?=[^>]*max="100")(?=[^>]*value="70")[^>]*>/
+    )
+    assert.match(
+      priorityMarkup,
+      /<input(?=[^>]*name="prioritySamplingMinPercent")(?=[^>]*min="0.01")(?=[^>]*max="5")(?=[^>]*value="0.5")[^>]*>/
+    )
+    assert.equal(
+      disabledMarkup.includes('name="prioritySamplingIntervalMinutes"'),
+      false
+    )
+    assert.ok(weightMarkup.includes('当前配置不会生效'))
+    assert.equal(
+      weightMarkup.includes('name="prioritySamplingIntervalMinutes"'),
+      false
+    )
+    const samplingSwitchMarkup =
+      weightMarkup.match(
+        /<[^>]*(?=[^>]*role="switch")(?=[^>]*aria-label="低优先级轮转采样")[^>]*>/
+      )?.[0] ?? ''
+    assert.ok(samplingSwitchMarkup)
+    assert.match(samplingSwitchMarkup, /\sdata-disabled=""/)
+    assert.match(samplingSwitchMarkup, /\saria-disabled="true"/)
   })
 
   test('shows bounded successful latency jitter controls while enabled', () => {

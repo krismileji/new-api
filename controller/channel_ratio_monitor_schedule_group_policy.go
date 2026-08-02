@@ -20,56 +20,73 @@ const (
 	defaultChannelMonitorSmartScheduleJitterMultiplier   = 5.0
 	defaultChannelMonitorSmartScheduleJitterSeconds      = 10.0
 	defaultChannelMonitorSmartScheduleJitterMinutes      = 60
+	maxChannelMonitorSmartScheduleSamplingInterval       = 1440
+	minChannelMonitorSmartScheduleSamplingBasePercent    = 0.1
+	maxChannelMonitorSmartScheduleSamplingBasePercent    = 20.0
+	minChannelMonitorSmartScheduleSamplingDecayPercent   = 1.0
+	maxChannelMonitorSmartScheduleSamplingDecayPercent   = 100.0
+	minChannelMonitorSmartScheduleSamplingFloorPercent   = 0.01
+	maxChannelMonitorSmartScheduleSamplingFloorPercent   = 5.0
 )
 
 type channelSmartScheduleGroupPolicy struct {
-	Group                          string                       `json:"group"`
-	Strategy                       *string                      `json:"strategy,omitempty"`
-	StabilityEnabled               *bool                        `json:"stability_enabled,omitempty"`
-	Scoring                        *channelSmartScheduleScoring `json:"scoring,omitempty"`
-	ApplyMode                      *string                      `json:"apply_mode,omitempty"`
-	Models                         *[]string                    `json:"models,omitempty"`
-	ModelOrder                     []string                     `json:"model_order,omitempty"`
-	MinSamples                     *int                         `json:"min_samples,omitempty"`
-	DegradeStabilityScore          *float64                     `json:"degrade_stability_score,omitempty"`
-	RecoveryStabilityScore         *float64                     `json:"recovery_stability_score,omitempty"`
-	FastFailurePenaltyPercent      *float64                     `json:"fast_failure_penalty_percent,omitempty"`
-	FastFailureSeconds             *float64                     `json:"fast_failure_seconds,omitempty"`
-	SlowFailureSeconds             *float64                     `json:"slow_failure_seconds,omitempty"`
-	JitterEnabled                  *bool                        `json:"jitter_enabled,omitempty"`
-	JitterTolerancePercent         *float64                     `json:"jitter_tolerance_percent,omitempty"`
-	JitterThresholdMultiplier      *float64                     `json:"jitter_threshold_multiplier,omitempty"`
-	JitterAbsoluteToleranceSeconds *float64                     `json:"jitter_absolute_tolerance_seconds,omitempty"`
-	JitterBaselineMinutes          *int                         `json:"jitter_baseline_minutes,omitempty"`
-	CooldownMinutes                *int                         `json:"cooldown_minutes,omitempty"`
-	SampleMode                     *string                      `json:"sample_mode,omitempty"`
-	ExplorationTrafficPercent      *float64                     `json:"exploration_traffic_percent,omitempty"`
-	ProbeIntervalMinutes           *int                         `json:"probe_interval_minutes,omitempty"`
+	Group                           string                       `json:"group"`
+	Strategy                        *string                      `json:"strategy,omitempty"`
+	StabilityEnabled                *bool                        `json:"stability_enabled,omitempty"`
+	Scoring                         *channelSmartScheduleScoring `json:"scoring,omitempty"`
+	ApplyMode                       *string                      `json:"apply_mode,omitempty"`
+	Models                          *[]string                    `json:"models,omitempty"`
+	ModelOrder                      []string                     `json:"model_order,omitempty"`
+	MinSamples                      *int                         `json:"min_samples,omitempty"`
+	DegradeStabilityScore           *float64                     `json:"degrade_stability_score,omitempty"`
+	RecoveryStabilityScore          *float64                     `json:"recovery_stability_score,omitempty"`
+	FastFailurePenaltyPercent       *float64                     `json:"fast_failure_penalty_percent,omitempty"`
+	FastFailureSeconds              *float64                     `json:"fast_failure_seconds,omitempty"`
+	SlowFailureSeconds              *float64                     `json:"slow_failure_seconds,omitempty"`
+	JitterEnabled                   *bool                        `json:"jitter_enabled,omitempty"`
+	JitterTolerancePercent          *float64                     `json:"jitter_tolerance_percent,omitempty"`
+	JitterThresholdMultiplier       *float64                     `json:"jitter_threshold_multiplier,omitempty"`
+	JitterAbsoluteToleranceSeconds  *float64                     `json:"jitter_absolute_tolerance_seconds,omitempty"`
+	JitterBaselineMinutes           *int                         `json:"jitter_baseline_minutes,omitempty"`
+	CooldownMinutes                 *int                         `json:"cooldown_minutes,omitempty"`
+	SampleMode                      *string                      `json:"sample_mode,omitempty"`
+	ExplorationTrafficPercent       *float64                     `json:"exploration_traffic_percent,omitempty"`
+	ProbeIntervalMinutes            *int                         `json:"probe_interval_minutes,omitempty"`
+	PrioritySamplingEnabled         *bool                        `json:"priority_sampling_enabled,omitempty"`
+	PrioritySamplingIntervalMinutes *int                         `json:"priority_sampling_interval_minutes,omitempty"`
+	PrioritySamplingBasePercent     *float64                     `json:"priority_sampling_base_percent,omitempty"`
+	PrioritySamplingDecayPercent    *float64                     `json:"priority_sampling_decay_percent,omitempty"`
+	PrioritySamplingMinPercent      *float64                     `json:"priority_sampling_min_percent,omitempty"`
 }
 
 type smartScheduleGroupPolicies []channelSmartScheduleGroupPolicy
 
 type channelSmartSchedulePolicy struct {
-	Strategy                       string
-	StabilityEnabled               bool
-	Scoring                        channelSmartScheduleScoring
-	ApplyMode                      string
-	Models                         []string
-	MinSamples                     int
-	DegradeStabilityScore          float64
-	RecoveryStabilityScore         float64
-	FastFailurePenaltyPercent      float64
-	FastFailureSeconds             float64
-	SlowFailureSeconds             float64
-	JitterEnabled                  bool
-	JitterTolerancePercent         float64
-	JitterThresholdMultiplier      float64
-	JitterAbsoluteToleranceSeconds float64
-	JitterBaselineMinutes          int
-	CooldownMinutes                int
-	SampleMode                     string
-	ExplorationTrafficPercent      float64
-	ProbeIntervalMinutes           int
+	Strategy                        string
+	StabilityEnabled                bool
+	Scoring                         channelSmartScheduleScoring
+	ApplyMode                       string
+	Models                          []string
+	MinSamples                      int
+	DegradeStabilityScore           float64
+	RecoveryStabilityScore          float64
+	FastFailurePenaltyPercent       float64
+	FastFailureSeconds              float64
+	SlowFailureSeconds              float64
+	JitterEnabled                   bool
+	JitterTolerancePercent          float64
+	JitterThresholdMultiplier       float64
+	JitterAbsoluteToleranceSeconds  float64
+	JitterBaselineMinutes           int
+	CooldownMinutes                 int
+	SampleMode                      string
+	ExplorationTrafficPercent       float64
+	ProbeIntervalMinutes            int
+	PrioritySamplingEnabled         bool
+	PrioritySamplingIntervalMinutes int
+	PrioritySamplingBasePercent     float64
+	PrioritySamplingDecayPercent    float64
+	PrioritySamplingMinPercent      float64
 }
 
 func parseChannelSmartScheduleGroupPolicies(raw string) []channelSmartScheduleGroupPolicy {
@@ -126,8 +143,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.JitterAbsoluteToleranceSeconds == nil || policy.JitterBaselineMinutes == nil ||
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
-			policy.ProbeIntervalMinutes == nil {
-			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、降级时长和采样方式")
+			policy.ProbeIntervalMinutes == nil || policy.PrioritySamplingEnabled == nil ||
+			policy.PrioritySamplingIntervalMinutes == nil || policy.PrioritySamplingBasePercent == nil ||
+			policy.PrioritySamplingDecayPercent == nil || policy.PrioritySamplingMinPercent == nil {
+			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、降级时长、样本补充和低优先级轮转")
 		}
 
 		strategy := strings.TrimSpace(*policy.Strategy)
@@ -221,6 +240,28 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.ProbeIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes {
 			return nil, errors.New("分组调度探测间隔必须在 1 到 525600 分钟之间")
 		}
+		if *policy.PrioritySamplingIntervalMinutes <= 0 ||
+			*policy.PrioritySamplingIntervalMinutes > maxChannelMonitorSmartScheduleSamplingInterval {
+			return nil, errors.New("低优先级轮转间隔必须在 1 到 1440 分钟之间")
+		}
+		if math.IsNaN(*policy.PrioritySamplingBasePercent) || math.IsInf(*policy.PrioritySamplingBasePercent, 0) ||
+			*policy.PrioritySamplingBasePercent < minChannelMonitorSmartScheduleSamplingBasePercent ||
+			*policy.PrioritySamplingBasePercent > maxChannelMonitorSmartScheduleSamplingBasePercent {
+			return nil, errors.New("低优先级轮转基础流量必须在 0.1% 到 20% 之间")
+		}
+		if math.IsNaN(*policy.PrioritySamplingDecayPercent) || math.IsInf(*policy.PrioritySamplingDecayPercent, 0) ||
+			*policy.PrioritySamplingDecayPercent < minChannelMonitorSmartScheduleSamplingDecayPercent ||
+			*policy.PrioritySamplingDecayPercent > maxChannelMonitorSmartScheduleSamplingDecayPercent {
+			return nil, errors.New("低优先级轮转递减比例必须在 1% 到 100% 之间")
+		}
+		if math.IsNaN(*policy.PrioritySamplingMinPercent) || math.IsInf(*policy.PrioritySamplingMinPercent, 0) ||
+			*policy.PrioritySamplingMinPercent < minChannelMonitorSmartScheduleSamplingFloorPercent ||
+			*policy.PrioritySamplingMinPercent > maxChannelMonitorSmartScheduleSamplingFloorPercent {
+			return nil, errors.New("低优先级轮转最小流量必须在 0.01% 到 5% 之间")
+		}
+		if *policy.PrioritySamplingMinPercent > *policy.PrioritySamplingBasePercent {
+			return nil, errors.New("低优先级轮转最小流量不能大于基础流量")
+		}
 		normalized = append(normalized, policy)
 	}
 	sort.Slice(normalized, func(i, j int) bool {
@@ -231,26 +272,31 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 
 func (configured channelSmartScheduleGroupPolicy) policy() channelSmartSchedulePolicy {
 	return channelSmartSchedulePolicy{
-		Strategy:                       *configured.Strategy,
-		StabilityEnabled:               *configured.StabilityEnabled,
-		Scoring:                        *configured.Scoring,
-		ApplyMode:                      *configured.ApplyMode,
-		Models:                         *configured.Models,
-		MinSamples:                     *configured.MinSamples,
-		DegradeStabilityScore:          *configured.DegradeStabilityScore,
-		RecoveryStabilityScore:         *configured.RecoveryStabilityScore,
-		FastFailurePenaltyPercent:      *configured.FastFailurePenaltyPercent,
-		FastFailureSeconds:             *configured.FastFailureSeconds,
-		SlowFailureSeconds:             *configured.SlowFailureSeconds,
-		JitterEnabled:                  *configured.JitterEnabled,
-		JitterTolerancePercent:         *configured.JitterTolerancePercent,
-		JitterThresholdMultiplier:      *configured.JitterThresholdMultiplier,
-		JitterAbsoluteToleranceSeconds: *configured.JitterAbsoluteToleranceSeconds,
-		JitterBaselineMinutes:          *configured.JitterBaselineMinutes,
-		CooldownMinutes:                *configured.CooldownMinutes,
-		SampleMode:                     *configured.SampleMode,
-		ExplorationTrafficPercent:      *configured.ExplorationTrafficPercent,
-		ProbeIntervalMinutes:           *configured.ProbeIntervalMinutes,
+		Strategy:                        *configured.Strategy,
+		StabilityEnabled:                *configured.StabilityEnabled,
+		Scoring:                         *configured.Scoring,
+		ApplyMode:                       *configured.ApplyMode,
+		Models:                          *configured.Models,
+		MinSamples:                      *configured.MinSamples,
+		DegradeStabilityScore:           *configured.DegradeStabilityScore,
+		RecoveryStabilityScore:          *configured.RecoveryStabilityScore,
+		FastFailurePenaltyPercent:       *configured.FastFailurePenaltyPercent,
+		FastFailureSeconds:              *configured.FastFailureSeconds,
+		SlowFailureSeconds:              *configured.SlowFailureSeconds,
+		JitterEnabled:                   *configured.JitterEnabled,
+		JitterTolerancePercent:          *configured.JitterTolerancePercent,
+		JitterThresholdMultiplier:       *configured.JitterThresholdMultiplier,
+		JitterAbsoluteToleranceSeconds:  *configured.JitterAbsoluteToleranceSeconds,
+		JitterBaselineMinutes:           *configured.JitterBaselineMinutes,
+		CooldownMinutes:                 *configured.CooldownMinutes,
+		SampleMode:                      *configured.SampleMode,
+		ExplorationTrafficPercent:       *configured.ExplorationTrafficPercent,
+		ProbeIntervalMinutes:            *configured.ProbeIntervalMinutes,
+		PrioritySamplingEnabled:         *configured.PrioritySamplingEnabled,
+		PrioritySamplingIntervalMinutes: *configured.PrioritySamplingIntervalMinutes,
+		PrioritySamplingBasePercent:     *configured.PrioritySamplingBasePercent,
+		PrioritySamplingDecayPercent:    *configured.PrioritySamplingDecayPercent,
+		PrioritySamplingMinPercent:      *configured.PrioritySamplingMinPercent,
 	}
 }
 

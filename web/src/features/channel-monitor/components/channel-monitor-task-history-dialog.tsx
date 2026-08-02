@@ -285,7 +285,8 @@ export function ChannelMonitorTaskPolicySummary(props: {
           {result.force_reset ? ' · 强制重算' : ''}
         </span>
         <span className='text-muted-foreground'>
-          按分组独立配置 · {result.performance_minutes ?? 0} 分钟统计范围
+          性能窗口 {result.performance_window_minutes ?? 0} 分钟 · 稳定性窗口{' '}
+          {result.stability_window_minutes ?? 0} 分钟
         </span>
       </div>
     )

@@ -55,6 +55,17 @@ export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
 export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
 export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
+export const MIN_SMART_SCHEDULE_WINDOW_MINUTES = 1
+export const MAX_SMART_SCHEDULE_WINDOW_MINUTES = 43_200
+export const DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 30
+export const MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 300
+export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES = 1_440
+export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT = 0.1
+export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT = 20
+export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 1
+export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 100
+export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 0.01
+export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 5
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER = 20
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
@@ -254,6 +265,51 @@ const smartScheduleProbeIntervalSchema = z.coerce
     '探测间隔不能超过 525600 分钟'
   )
 
+const smartSchedulePrioritySamplingIntervalSchema = z.coerce
+  .number()
+  .int('轮转间隔必须是整数')
+  .min(1, '轮转间隔不能小于 1 分钟')
+  .max(
+    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES,
+    '轮转间隔不能超过 1440 分钟'
+  )
+
+const smartSchedulePrioritySamplingBasePercentSchema = z.coerce
+  .number()
+  .finite('基础采样比例必须是有效数字')
+  .min(
+    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
+    '基础采样比例不能小于 0.1%'
+  )
+  .max(
+    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
+    '基础采样比例不能超过 20%'
+  )
+
+const smartSchedulePrioritySamplingDecayPercentSchema = z.coerce
+  .number()
+  .finite('排名递减比例必须是有效数字')
+  .min(
+    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
+    '排名递减比例不能小于 1%'
+  )
+  .max(
+    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
+    '排名递减比例不能超过 100%'
+  )
+
+const smartSchedulePrioritySamplingMinPercentSchema = z.coerce
+  .number()
+  .finite('最低采样比例必须是有效数字')
+  .min(
+    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
+    '最低采样比例不能小于 0.01%'
+  )
+  .max(
+    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
+    '最低采样比例不能超过 5%'
+  )
+
 const smartSchedulePolicyShape = {
   strategy: z.enum(channelMonitorSmartScheduleStrategies),
   stabilityEnabled: z.boolean(),
@@ -276,6 +332,11 @@ const smartSchedulePolicyShape = {
   sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
   explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
+  prioritySamplingEnabled: z.boolean(),
+  prioritySamplingIntervalMinutes: smartSchedulePrioritySamplingIntervalSchema,
+  prioritySamplingBasePercent: smartSchedulePrioritySamplingBasePercentSchema,
+  prioritySamplingDecayPercent: smartSchedulePrioritySamplingDecayPercentSchema,
+  prioritySamplingMinPercent: smartSchedulePrioritySamplingMinPercentSchema,
 }
 
 function validateSmartSchedulePolicy(
@@ -458,12 +519,28 @@ export function createChannelMonitorSettingsSchema() {
           MAX_AUTO_UPDATE_INTERVAL_MINUTES,
           '智能调度间隔不能超过 525600 分钟'
         ),
-      smartSchedulePerformanceMinutes: z.union([
-        z.literal(15),
-        z.literal(60),
-        z.literal(360),
-        z.literal(1440),
-      ]),
+      smartSchedulePerformanceWindowMinutes: z.coerce
+        .number()
+        .int('性能窗口必须是整数')
+        .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能小于 1 分钟')
+        .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 43200 分钟'),
+      smartScheduleStabilityWindowMinutes: z.coerce
+        .number()
+        .int('稳定性窗口必须是整数')
+        .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性窗口不能小于 1 分钟')
+        .max(
+          MAX_SMART_SCHEDULE_WINDOW_MINUTES,
+          '稳定性窗口不能超过 43200 分钟'
+        ),
+      smartScheduleRateLimitCooldownSeconds: z.coerce
+        .number()
+        .int('429 冷却时间必须是整数')
+        .min(0, '429 冷却时间不能小于 0 秒')
+        .max(
+          MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+          '429 冷却时间不能超过 300 秒'
+        )
+        .default(DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS),
       smartScheduleForceReset: z.boolean(),
     })
     .superRefine((values, context) => {

@@ -28,9 +28,12 @@ import {
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
+  MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+  MAX_SMART_SCHEDULE_WINDOW_MINUTES,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+  MIN_SMART_SCHEDULE_WINDOW_MINUTES,
 } from '../schema'
 
 describe('channel concurrency limit schema', () => {
@@ -76,7 +79,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartSchedulePerformanceMinutes: 60,
+      smartSchedulePerformanceWindowMinutes: 60,
+      smartScheduleStabilityWindowMinutes: 120,
+      smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     })
 
@@ -87,6 +92,9 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
+    assert.equal(settings.smartSchedulePerformanceWindowMinutes, 60)
+    assert.equal(settings.smartScheduleStabilityWindowMinutes, 120)
+    assert.equal(settings.smartScheduleRateLimitCooldownSeconds, 30)
   })
 
   test('requires at least one selected notification type while email is enabled', () => {
@@ -107,7 +115,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartSchedulePerformanceMinutes: 60,
+      smartSchedulePerformanceWindowMinutes: 60,
+      smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     })
 
@@ -138,7 +148,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
       smartScheduleIntervalMinutes: 10,
-      smartSchedulePerformanceMinutes: 60 as const,
+      smartSchedulePerformanceWindowMinutes: 60,
+      smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
@@ -233,6 +245,65 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
+
+    for (const windowMinutes of [
+      MIN_SMART_SCHEDULE_WINDOW_MINUTES,
+      MAX_SMART_SCHEDULE_WINDOW_MINUTES,
+    ]) {
+      const parsed = schema.parse({
+        ...baseSettings,
+        smartSchedulePerformanceWindowMinutes: windowMinutes,
+        smartScheduleStabilityWindowMinutes: windowMinutes,
+      })
+      assert.equal(parsed.smartSchedulePerformanceWindowMinutes, windowMinutes)
+      assert.equal(parsed.smartScheduleStabilityWindowMinutes, windowMinutes)
+    }
+    for (const windowMinutes of [
+      MIN_SMART_SCHEDULE_WINDOW_MINUTES - 1,
+      1.5,
+      MAX_SMART_SCHEDULE_WINDOW_MINUTES + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartSchedulePerformanceWindowMinutes: windowMinutes,
+        }).success,
+        false
+      )
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleStabilityWindowMinutes: windowMinutes,
+        }).success,
+        false
+      )
+    }
+
+    for (const smartScheduleRateLimitCooldownSeconds of [
+      0,
+      MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+    ]) {
+      assert.equal(
+        schema.parse({
+          ...baseSettings,
+          smartScheduleRateLimitCooldownSeconds,
+        }).smartScheduleRateLimitCooldownSeconds,
+        smartScheduleRateLimitCooldownSeconds
+      )
+    }
+    for (const smartScheduleRateLimitCooldownSeconds of [
+      -1,
+      1.5,
+      MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleRateLimitCooldownSeconds,
+        }).success,
+        false
+      )
+    }
   })
 
   test('requires a complete explicit policy for every scheduled group', () => {
@@ -273,6 +344,11 @@ describe('channel monitor settings schema', () => {
       sampleMode: 'traffic' as const,
       explorationTrafficPercent: 3,
       probeIntervalMinutes: 10,
+      prioritySamplingEnabled: true,
+      prioritySamplingIntervalMinutes: 10,
+      prioritySamplingBasePercent: 3,
+      prioritySamplingDecayPercent: 70,
+      prioritySamplingMinPercent: 0.5,
     }
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
@@ -291,7 +367,9 @@ describe('channel monitor settings schema', () => {
       smartScheduleEnabled: true,
       smartScheduleGroupPolicies: [groupPolicy],
       smartScheduleIntervalMinutes: 10,
-      smartSchedulePerformanceMinutes: 60 as const,
+      smartSchedulePerformanceWindowMinutes: 60,
+      smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
@@ -624,5 +702,93 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
+    for (const prioritySamplingIntervalMinutes of [1, 1440]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingIntervalMinutes },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const prioritySamplingIntervalMinutes of [0, 1.5, 1441]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingIntervalMinutes },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const prioritySamplingBasePercent of [0.1, 20]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingBasePercent },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const prioritySamplingBasePercent of [0.09, 20.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingBasePercent },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const prioritySamplingDecayPercent of [1, 100]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingDecayPercent },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const prioritySamplingDecayPercent of [0.9, 100.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingDecayPercent },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const prioritySamplingMinPercent of [0.01, 5]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingMinPercent },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const prioritySamplingMinPercent of [0, 5.1]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, prioritySamplingMinPercent },
+          ],
+        }).success,
+        false
+      )
+    }
   })
 })

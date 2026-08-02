@@ -55,6 +55,7 @@ import { cn } from '@/lib/utils'
 
 import {
   runChannelMonitorSmartSchedule,
+  updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
@@ -105,6 +106,7 @@ export function ChannelMonitorSmartScheduleBoard(
 ) {
   const queryClient = useQueryClient()
   const [selectedGroup, setSelectedGroup] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
   const [clearTarget, setClearTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const [primaryTarget, setPrimaryTarget] =
@@ -214,7 +216,8 @@ export function ChannelMonitorSmartScheduleBoard(
       if (
         pool.summary.degradedCount === 0 &&
         pool.summary.probingCount === 0 &&
-        pool.summary.explorationCount === 0 &&
+        pool.summary.insufficientSampleCount === 0 &&
+        pool.summary.prioritySamplingCount === 0 &&
         pool.summary.failedCount === 0
       ) {
         continue
@@ -223,22 +226,42 @@ export function ChannelMonitorSmartScheduleBoard(
     }
     return counts
   }, [pools])
-  const firstDegradedGroup = pools.find(
+  const firstDegradedPool = pools.find(
     (pool) => pool.summary.degradedCount > 0
-  )?.summary.group
-  const firstFailedGroup = pools.find((pool) => pool.summary.failedCount > 0)
-    ?.summary.group
-  const firstProbingGroup = pools.find((pool) => pool.summary.probingCount > 0)
-    ?.summary.group
-  const firstExplorationGroup = pools.find(
-    (pool) => pool.summary.explorationCount > 0
-  )?.summary.group
+  )
+  const firstFailedPool = pools.find((pool) => pool.summary.failedCount > 0)
+  const firstProbingPool = pools.find((pool) => pool.summary.probingCount > 0)
+  const firstInsufficientSamplePool = pools.find(
+    (pool) => pool.summary.insufficientSampleCount > 0
+  )
+  const firstPrioritySamplingPool = pools.find(
+    (pool) => pool.summary.prioritySamplingCount > 0
+  )
   const visibleGroup = groups.includes(selectedGroup)
     ? selectedGroup
     : (groups[0] ?? '')
-  const visiblePools = pools.filter(
-    (pool) => pool.summary.group === visibleGroup
+  const visiblePools = useMemo(
+    () => pools.filter((pool) => pool.summary.group === visibleGroup),
+    [pools, visibleGroup]
   )
+  const visibleModels = useMemo(
+    () => visiblePools.map((pool) => pool.summary.model),
+    [visiblePools]
+  )
+  const visibleModel = visibleModels.includes(selectedModel)
+    ? selectedModel
+    : (visibleModels[0] ?? '')
+  const visiblePool =
+    visiblePools.find((pool) => pool.summary.model === visibleModel) ?? null
+
+  const selectGroup = (group: string) => {
+    setSelectedGroup(group)
+    setSelectedModel('')
+  }
+  const selectPool = (pool: ChannelMonitorSmartSchedulePoolView) => {
+    setSelectedGroup(pool.summary.group)
+    setSelectedModel(pool.summary.model)
+  }
 
   const invalidateSchedule = () => {
     queryClient.invalidateQueries({
@@ -273,6 +296,12 @@ export function ChannelMonitorSmartScheduleBoard(
       })
     },
   })
+  const manualRoutingMutation = useMutation({
+    mutationFn: updateChannelMonitorSmartScheduleManualRouting,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: () => toast.success('人工优先级和权重已保存'),
+    onSettled: invalidateSchedule,
+  })
   const runMutation = useMutation({
     mutationFn: runChannelMonitorSmartSchedule,
     onError: handleChannelMonitorMutationError,
@@ -296,6 +325,14 @@ export function ChannelMonitorSmartScheduleBoard(
           channel_id: updateMutation.variables.channelId,
           group: updateMutation.variables.group,
           model: updateMutation.variables.model,
+        })
+      : null
+  const manualRoutingKey =
+    manualRoutingMutation.isPending && manualRoutingMutation.variables
+      ? channelMonitorSmartScheduleRouteKey({
+          channel_id: manualRoutingMutation.variables.channelId,
+          group: manualRoutingMutation.variables.group,
+          model: manualRoutingMutation.variables.model,
         })
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
@@ -422,7 +459,8 @@ export function ChannelMonitorSmartScheduleBoard(
       (summary.degradedCount > 0 ||
         summary.failedCount > 0 ||
         summary.probingCount > 0 ||
-        summary.explorationCount > 0) ? (
+        summary.insufficientSampleCount > 0 ||
+        summary.prioritySamplingCount > 0) ? (
         <section
           className='border-border flex flex-wrap items-center gap-2 border-b px-4 pb-3'
           aria-label='当前调度状态'
@@ -436,7 +474,7 @@ export function ChannelMonitorSmartScheduleBoard(
               variant='destructive'
               className='cursor-pointer'
               onClick={() => {
-                if (firstDegradedGroup) setSelectedGroup(firstDegradedGroup)
+                if (firstDegradedPool) selectPool(firstDegradedPool)
               }}
             >
               稳定性降级 {summary.degradedCount}
@@ -448,7 +486,7 @@ export function ChannelMonitorSmartScheduleBoard(
               variant='destructive'
               className='cursor-pointer'
               onClick={() => {
-                if (firstFailedGroup) setSelectedGroup(firstFailedGroup)
+                if (firstFailedPool) selectPool(firstFailedPool)
               }}
             >
               最近调度失败 {summary.failedCount}
@@ -460,24 +498,38 @@ export function ChannelMonitorSmartScheduleBoard(
               variant='warning'
               className='cursor-pointer'
               onClick={() => {
-                if (firstProbingGroup) setSelectedGroup(firstProbingGroup)
+                if (firstProbingPool) selectPool(firstProbingPool)
               }}
             >
               稳定性试放 {summary.probingCount}
             </Badge>
           ) : null}
-          {summary.explorationCount > 0 ? (
+          {summary.insufficientSampleCount > 0 ? (
             <Badge
               render={<button type='button' />}
               variant='warning'
               className='cursor-pointer'
               onClick={() => {
-                if (firstExplorationGroup) {
-                  setSelectedGroup(firstExplorationGroup)
+                if (firstInsufficientSamplePool) {
+                  selectPool(firstInsufficientSamplePool)
                 }
               }}
             >
-              探索采样 {summary.explorationCount}
+              样本不足补量 {summary.insufficientSampleCount}
+            </Badge>
+          ) : null}
+          {summary.prioritySamplingCount > 0 ? (
+            <Badge
+              render={<button type='button' />}
+              variant='warning'
+              className='cursor-pointer'
+              onClick={() => {
+                if (firstPrioritySamplingPool) {
+                  selectPool(firstPrioritySamplingPool)
+                }
+              }}
+            >
+              低优先级轮转 {summary.prioritySamplingCount}
             </Badge>
           ) : null}
         </section>
@@ -508,72 +560,155 @@ export function ChannelMonitorSmartScheduleBoard(
       ) : null}
 
       {props.result?.enabled && groups.length > 0 ? (
-        <div className='grid items-start gap-4 xl:grid-cols-[14rem_minmax(0,1fr)]'>
-          <nav
-            className='flex gap-2 overflow-x-auto pb-1 xl:sticky xl:top-4 xl:flex-col xl:overflow-visible xl:pb-0'
-            aria-label='智能调度分组'
-          >
-            {groups.map((group) => {
-              const selected = group === visibleGroup
-              const warningCount = warningCountByGroup.get(group) ?? 0
-              return (
-                <button
-                  key={group}
-                  type='button'
-                  className={cn(
-                    'focus-visible:ring-ring/50 flex min-h-12 shrink-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-3',
-                    selected
-                      ? 'border-foreground/20 bg-muted text-foreground'
-                      : 'bg-background hover:bg-muted/50'
-                  )}
-                  aria-pressed={selected}
-                  onClick={() => setSelectedGroup(group)}
-                >
-                  <span className='min-w-0 flex-1 text-left'>
-                    <span className='block truncate font-medium' title={group}>
-                      {group}
-                    </span>
-                    <span
+        <div className='grid items-start gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]'>
+          <aside className='grid min-w-0 gap-3 xl:sticky xl:top-4'>
+            <div className='grid min-w-0 gap-2'>
+              <div className='text-muted-foreground px-1 text-xs font-medium'>
+                1. 选择分组
+              </div>
+              <nav
+                className='flex gap-2 overflow-x-auto pb-1 xl:flex-col xl:overflow-visible xl:pb-0'
+                aria-label='智能调度分组'
+              >
+                {groups.map((group) => {
+                  const selected = group === visibleGroup
+                  const warningCount = warningCountByGroup.get(group) ?? 0
+                  return (
+                    <button
+                      key={group}
+                      type='button'
                       className={cn(
-                        'block font-mono text-xs tabular-nums',
+                        'focus-visible:ring-ring/50 flex min-h-12 shrink-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-3',
                         selected
-                          ? 'text-foreground/70'
-                          : 'text-muted-foreground'
+                          ? 'border-foreground/20 bg-muted text-foreground'
+                          : 'bg-background hover:bg-muted/50'
                       )}
+                      aria-pressed={selected}
+                      onClick={() => selectGroup(group)}
                     >
-                      x{formatMonitorRatio(props.groupRatios[group] ?? 1)} ·{' '}
-                      {poolCountByGroup.get(group) ?? 0} 池
-                    </span>
-                  </span>
-                  {warningCount > 0 ? (
-                    <span
-                      className={cn(
-                        'flex size-5 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
-                        selected
-                          ? 'bg-warning/15 text-warning'
-                          : 'bg-warning/10 text-warning'
-                      )}
-                      aria-label={`${warningCount} 个调度池需要关注`}
-                    >
-                      {warningCount}
-                    </span>
-                  ) : null}
-                </button>
-              )
-            })}
-          </nav>
+                      <span className='min-w-0 flex-1 text-left'>
+                        <span
+                          className='block truncate font-medium'
+                          title={group}
+                        >
+                          {group}
+                        </span>
+                        <span
+                          className={cn(
+                            'block font-mono text-xs tabular-nums',
+                            selected
+                              ? 'text-foreground/70'
+                              : 'text-muted-foreground'
+                          )}
+                        >
+                          x{formatMonitorRatio(props.groupRatios[group] ?? 1)} ·{' '}
+                          {poolCountByGroup.get(group) ?? 0} 池
+                        </span>
+                      </span>
+                      {warningCount > 0 ? (
+                        <span
+                          className={cn(
+                            'flex size-5 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
+                            selected
+                              ? 'bg-warning/15 text-warning'
+                              : 'bg-warning/10 text-warning'
+                          )}
+                          aria-label={`${warningCount} 个调度池需要关注`}
+                        >
+                          {warningCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </nav>
+            </div>
+
+          </aside>
 
           <div className='grid min-w-0 gap-4'>
-            {visiblePools.map((pool) => (
+            <section
+              className='border-border grid min-w-0 gap-2 border-b pb-3'
+              aria-label={`${visibleGroup} 分组下的模型选择`}
+            >
+              <div className='flex items-center justify-between gap-2 px-1'>
+                <span className='min-w-0 truncate text-sm font-medium'>
+                  选择模型
+                  <span className='text-muted-foreground'> · {visibleGroup}</span>
+                </span>
+                <span className='text-muted-foreground font-mono text-xs tabular-nums'>
+                  {visibleModels.length} 个模型
+                </span>
+              </div>
+              <nav
+                className='flex gap-2 overflow-x-auto pb-1 xl:max-h-32 xl:flex-wrap xl:overflow-y-auto xl:pr-1 xl:pb-0'
+                aria-label={`${visibleGroup} 分组下的智能调度模型`}
+              >
+                {visiblePools.map((pool) => {
+                  const selected = pool.summary.model === visibleModel
+                  const needsAttention =
+                    pool.summary.degradedCount > 0 ||
+                    pool.summary.probingCount > 0 ||
+                    pool.summary.insufficientSampleCount > 0 ||
+                    pool.summary.prioritySamplingCount > 0 ||
+                    pool.summary.failedCount > 0
+                  return (
+                    <button
+                      key={pool.summary.model}
+                      type='button'
+                      className={cn(
+                        'focus-visible:ring-ring/50 flex min-h-12 min-w-48 shrink-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-3',
+                        selected
+                          ? 'border-foreground/20 bg-muted text-foreground'
+                          : 'bg-background hover:bg-muted/50'
+                      )}
+                      aria-pressed={selected}
+                      onClick={() => setSelectedModel(pool.summary.model)}
+                    >
+                      <span className='min-w-0 flex-1 text-left'>
+                        <span
+                          className='block truncate font-medium'
+                          title={pool.summary.model}
+                        >
+                          {pool.summary.model}
+                        </span>
+                        <span
+                          className={cn(
+                            'block text-xs tabular-nums',
+                            selected
+                              ? 'text-foreground/70'
+                              : 'text-muted-foreground'
+                          )}
+                        >
+                          可调度 {pool.summary.activeCount}/
+                          {pool.summary.participatingCount}
+                        </span>
+                      </span>
+                      {needsAttention ? (
+                        <span
+                          className='bg-warning size-2 shrink-0 rounded-full'
+                          aria-label='需要关注'
+                        />
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </nav>
+            </section>
+
+            {visiblePool ? (
               <ChannelMonitorSmartSchedulePool
-                key={`${pool.summary.group}\u0000${pool.summary.model}`}
-                pool={pool}
-                policy={policyByGroup.get(pool.summary.group)}
+                key={`${visiblePool.summary.group}\u0000${visiblePool.summary.model}`}
+                pool={visiblePool}
+                policy={policyByGroup.get(visiblePool.summary.group)}
                 channelsById={channelsById}
                 placements={placements}
                 updateRouteKey={updateRouteKey}
+                manualRoutingKey={manualRoutingKey}
                 updateDisabled={
-                  updateMutation.isPending || primaryMutation.isPending
+                  updateMutation.isPending ||
+                  primaryMutation.isPending ||
+                  manualRoutingMutation.isPending
                 }
                 onParticipationChange={(route, checked) =>
                   updateMutation.mutate({
@@ -605,8 +740,26 @@ export function ChannelMonitorSmartScheduleBoard(
                     allowStabilityDegrade: false,
                   })
                 }
+                onSaveManualRouting={(route, priority, weight) =>
+                  manualRoutingMutation.mutate({
+                    channelId: route.channel_id,
+                    group: route.group,
+                    model: route.model,
+                    priority,
+                    weight,
+                  })
+                }
               />
-            ))}
+            ) : (
+              <Empty className='min-h-72'>
+                <EmptyHeader>
+                  <EmptyTitle>当前分组暂无模型池</EmptyTitle>
+                  <EmptyDescription>
+                    请检查该分组的模型和渠道配置
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
           </div>
         </div>
       ) : null}

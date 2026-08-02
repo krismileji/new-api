@@ -35,13 +35,18 @@ type ChannelSmartScheduleRouteState struct {
 	StabilitySince             int64    `json:"stability_since" gorm:"bigint"`
 	StabilitySavedPriority     int64    `json:"stability_saved_priority" gorm:"bigint"`
 	StabilitySavedWeight       uint     `json:"stability_saved_weight"`
+	RuntimeProtectionUntil     int64    `json:"runtime_protection_until" gorm:"bigint;index"`
 	JitterBaselineFirstTokenMs *float64 `json:"jitter_baseline_first_token_ms"`
 	JitterBaselineUpdatedAt    int64    `json:"jitter_baseline_updated_at" gorm:"bigint"`
 
-	ExplorationActive        bool  `json:"exploration_active" gorm:"index"`
-	ExplorationSince         int64 `json:"exploration_since" gorm:"bigint"`
-	ExplorationSavedPriority int64 `json:"exploration_saved_priority" gorm:"bigint"`
-	ExplorationSavedWeight   uint  `json:"exploration_saved_weight"`
+	BaseRank     int   `json:"base_rank"`
+	BasePriority int64 `json:"base_priority" gorm:"bigint"`
+	BaseWeight   uint  `json:"base_weight"`
+
+	TemporaryTrafficKind          string  `json:"temporary_traffic_kind" gorm:"type:varchar(32);index"`
+	TemporaryTrafficSince         int64   `json:"temporary_traffic_since" gorm:"bigint"`
+	TemporaryTrafficTargetPercent float64 `json:"temporary_traffic_target_percent"`
+	LastPrioritySampleTime        int64   `json:"last_priority_sample_time" gorm:"bigint;index"`
 
 	// ManualPrimaryUntil keeps an administrator-selected primary route in
 	// force until the unix timestamp. The saved routing values are internal
@@ -107,7 +112,8 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	Time                    int64
 	Stability               *ChannelSmartScheduleStabilityUpdate
 	Jitter                  *ChannelSmartScheduleJitterUpdate
-	Exploration             *ChannelSmartScheduleExplorationUpdate
+	RuntimeProtectionUntil  *int64
+	RoutingSnapshot         *ChannelSmartScheduleRoutingSnapshotUpdate
 	GuardCurrent            bool
 	ExpectedRevision        int64
 	ExpectedControlRevision string
@@ -142,12 +148,20 @@ type ChannelSmartScheduleJitterUpdate struct {
 	BaselineUpdatedAt    int64
 }
 
-type ChannelSmartScheduleExplorationUpdate struct {
-	Active        bool
-	Since         int64
-	SavedPriority int64
-	SavedWeight   uint
+type ChannelSmartScheduleRoutingSnapshotUpdate struct {
+	BaseRank                      int
+	BasePriority                  int64
+	BaseWeight                    uint
+	TemporaryTrafficKind          string
+	TemporaryTrafficSince         int64
+	TemporaryTrafficTargetPercent float64
+	LastPrioritySampleTime        int64
 }
+
+const (
+	ChannelSmartScheduleTemporaryTrafficExploration      = "insufficient_samples"
+	ChannelSmartScheduleTemporaryTrafficPrioritySampling = "priority_sampling"
+)
 
 type ChannelSmartScheduleChannelConfigResult struct {
 	Total          int  `json:"total"`
@@ -315,9 +329,9 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 				}
 				routingChanged = routingChanged || changed
 			}
-			if state.ExplorationActive {
-				priority := state.ExplorationSavedPriority
-				weight := state.ExplorationSavedWeight
+			if state.TemporaryTrafficKind != "" {
+				priority := state.BasePriority
+				weight := state.BaseWeight
 				routingChanged = abilityPriority(ability) != priority || ability.Weight != weight
 				if err := updateAbilitySmartSchedulePriorityWeightTx(
 					tx, channelSmartScheduleRouteKey(channelId, group, modelName), &priority, &weight,
@@ -325,10 +339,10 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 					return err
 				}
 			}
-			state.ExplorationActive = false
-			state.ExplorationSince = 0
-			state.ExplorationSavedPriority = 0
-			state.ExplorationSavedWeight = 0
+			state.TemporaryTrafficKind = ""
+			state.TemporaryTrafficSince = 0
+			state.TemporaryTrafficTargetPercent = 0
+			state.RuntimeProtectionUntil = 0
 		}
 		if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
 			state.StabilitySince = common.GetTimestamp()
@@ -395,9 +409,9 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 					}
 					result.RoutingChanged = result.RoutingChanged || changed
 				}
-				if state.ExplorationActive {
-					priority := state.ExplorationSavedPriority
-					weight := state.ExplorationSavedWeight
+				if state.TemporaryTrafficKind != "" {
+					priority := state.BasePriority
+					weight := state.BaseWeight
 					if abilityPriority(ability) != priority || ability.Weight != weight {
 						result.RoutingChanged = true
 					}
@@ -405,10 +419,10 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 						return err
 					}
 				}
-				state.ExplorationActive = false
-				state.ExplorationSince = 0
-				state.ExplorationSavedPriority = 0
-				state.ExplorationSavedWeight = 0
+				state.TemporaryTrafficKind = ""
+				state.TemporaryTrafficSince = 0
+				state.TemporaryTrafficTargetPercent = 0
+				state.RuntimeProtectionUntil = 0
 			}
 			if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
 				state.StabilitySince = now
@@ -528,9 +542,9 @@ func SaveChannelSmartScheduleRoutePrimary(
 			return errors.New("该分组和模型路由处于稳定性保护状态，不能固定为主渠道")
 		}
 
-		if targetState.ExplorationActive {
-			restoredPriority := targetState.ExplorationSavedPriority
-			restoredWeight := targetState.ExplorationSavedWeight
+		if targetState.TemporaryTrafficKind != "" {
+			restoredPriority := targetState.BasePriority
+			restoredWeight := targetState.BaseWeight
 			if abilityPriority(targetAbility) != restoredPriority || targetAbility.Weight != restoredWeight {
 				if err := updateAbilitySmartSchedulePriorityWeightTx(
 					tx,
@@ -544,10 +558,9 @@ func SaveChannelSmartScheduleRoutePrimary(
 				targetAbility.Priority = &restoredPriority
 				targetAbility.Weight = restoredWeight
 			}
-			targetState.ExplorationActive = false
-			targetState.ExplorationSince = 0
-			targetState.ExplorationSavedPriority = 0
-			targetState.ExplorationSavedWeight = 0
+			targetState.TemporaryTrafficKind = ""
+			targetState.TemporaryTrafficSince = 0
+			targetState.TemporaryTrafficTargetPercent = 0
 		}
 
 		if targetState.ManualPrimaryUntil <= now || !targetState.ManualPrimarySaved {
@@ -682,7 +695,7 @@ func restoreChannelSmartScheduleRoutePrimaryTx(
 func ClearChannelSmartScheduleExplorations() (routingChanged bool, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var states []ChannelSmartScheduleRouteState
-		if err := lockForUpdate(tx).Where("exploration_active = ?", true).Find(&states).Error; err != nil {
+		if err := lockForUpdate(tx).Where("temporary_traffic_kind <> ?", "").Find(&states).Error; err != nil {
 			return err
 		}
 		for index := range states {
@@ -698,19 +711,18 @@ func ClearChannelSmartScheduleExplorations() (routingChanged bool, err error) {
 			if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 				return findErr
 			}
-			if findErr == nil && (abilityPriority(ability) != state.ExplorationSavedPriority ||
-				ability.Weight != state.ExplorationSavedWeight) {
-				priority := state.ExplorationSavedPriority
-				weight := state.ExplorationSavedWeight
+			if findErr == nil && (abilityPriority(ability) != state.BasePriority ||
+				ability.Weight != state.BaseWeight) {
+				priority := state.BasePriority
+				weight := state.BaseWeight
 				if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight); err != nil {
 					return err
 				}
 				routingChanged = true
 			}
-			state.ExplorationActive = false
-			state.ExplorationSince = 0
-			state.ExplorationSavedPriority = 0
-			state.ExplorationSavedWeight = 0
+			state.TemporaryTrafficKind = ""
+			state.TemporaryTrafficSince = 0
+			state.TemporaryTrafficTargetPercent = 0
 			state.Revision++
 			if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 				return err
@@ -721,24 +733,179 @@ func ClearChannelSmartScheduleExplorations() (routingChanged bool, err error) {
 	return routingChanged, err
 }
 
+type ChannelSmartScheduleRuntimeFailureResult struct {
+	Handled        bool
+	RoutingChanged bool
+	PreviousState  string
+}
+
+const (
+	channelSmartScheduleRuntimeFallbackPriority int64 = 80
+	channelSmartScheduleRuntimeFallbackWeight   uint  = 10
+)
+
+// ProtectChannelSmartScheduleRouteOnRuntimeFailure immediately removes
+// temporary traffic from a route that failed while it was being explored or
+// stability-tested. The normal scheduler remains responsible for recovery.
+func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	if channelId <= 0 || group == "" || modelName == "" {
+		return result, nil
+	}
+	now := common.GetTimestamp()
+	if protectionUntil <= now {
+		protectionUntil = now + 60
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "渠道运行时错误，已立即停止临时流量并进入稳定性保护"
+	}
+	if messageRunes := []rune(reason); len(messageRunes) > 255 {
+		reason = string(messageRunes[:255])
+	}
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		var state ChannelSmartScheduleRouteState
+		findErr := lockForUpdate(tx).
+			Where(&ChannelSmartScheduleRouteState{
+				ChannelId: channelId, GroupName: group, ModelName: modelName,
+			}).First(&state).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if findErr != nil {
+			return findErr
+		}
+		var ability Ability
+		findErr = lockForUpdate(tx).Where(&Ability{
+			ChannelId: channelId, Group: group, Model: modelName,
+		}).First(&ability).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if findErr != nil {
+			return findErr
+		}
+		if !state.Participates() || !ability.Enabled ||
+			(state.TemporaryTrafficKind == "" && state.StabilityState != ChannelSmartScheduleStabilityProbing) {
+			return nil
+		}
+		if state.ManualPrimaryUntil > now && !state.ManualPrimaryAllowStabilityDegrade {
+			return nil
+		}
+		if state.Revision == math.MaxInt64 {
+			return errors.New("智能调度路由修订号已达上限")
+		}
+
+		result.Handled = true
+		result.PreviousState = state.StabilityState
+		savedPriority := state.StabilitySavedPriority
+		savedWeight := state.StabilitySavedWeight
+		if state.TemporaryTrafficKind != "" {
+			if state.BasePriority > 0 {
+				savedPriority = state.BasePriority
+			}
+			if state.BaseWeight > 0 {
+				savedWeight = state.BaseWeight
+			}
+			state.TemporaryTrafficKind = ""
+			state.TemporaryTrafficSince = 0
+			state.TemporaryTrafficTargetPercent = 0
+		}
+		if savedPriority <= 0 {
+			savedPriority = abilityPriority(ability)
+		}
+		if savedPriority <= 0 {
+			savedPriority = channelSmartScheduleRuntimeFallbackPriority
+		}
+		if savedWeight == 0 {
+			savedWeight = ability.Weight
+		}
+		if savedWeight == 0 {
+			savedWeight = channelSmartScheduleRuntimeFallbackWeight
+		}
+
+		degradedPriority := int64(0)
+		degradedWeight := uint(0)
+		if abilityPriority(ability) != degradedPriority || ability.Weight != degradedWeight {
+			if err := updateAbilitySmartSchedulePriorityWeightTx(
+				tx,
+				channelSmartScheduleRouteKey(channelId, group, modelName),
+				&degradedPriority,
+				&degradedWeight,
+			); err != nil {
+				return err
+			}
+			result.RoutingChanged = true
+		}
+		state.StabilityState = ChannelSmartScheduleStabilityDegraded
+		state.StabilityUntil = protectionUntil
+		state.StabilitySince = 0
+		state.StabilitySavedPriority = savedPriority
+		state.StabilitySavedWeight = savedWeight
+		state.RuntimeProtectionUntil = protectionUntil
+		state.LastScheduleStatus = ChannelSmartScheduleStatusFailed
+		state.LastScheduleError = reason
+		state.LastScheduleScore = nil
+		state.LastScheduleScoreDetails = ""
+		state.LastSchedulePriority = degradedPriority
+		state.LastScheduleWeight = degradedWeight
+		state.LastScheduleTime = now
+		state.Revision++
+		return saveChannelSmartScheduleRouteStateTx(tx, &state)
+	})
+	if err != nil {
+		result.Handled = false
+		result.RoutingChanged = false
+	}
+	return result, err
+}
+
 func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteResultUpdate) ([]ChannelSmartScheduleRouteApplyOutcome, error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
-	outcomes := make([]ChannelSmartScheduleRouteApplyOutcome, 0, len(results))
+	group := results[0].Group
+	modelName := results[0].Model
+	seenChannels := make(map[int]struct{}, len(results))
+	outcomes := make([]ChannelSmartScheduleRouteApplyOutcome, len(results))
+	for index, result := range results {
+		if result.Group != group || result.Model != modelName {
+			return nil, errors.New("智能调度路由结果必须属于同一分组和模型池")
+		}
+		if _, exists := seenChannels[result.ChannelId]; exists {
+			return nil, errors.New("智能调度池包含重复渠道")
+		}
+		seenChannels[result.ChannelId] = struct{}{}
+		outcomes[index].Key = channelSmartScheduleRouteKey(result.ChannelId, result.Group, result.Model)
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		guarded := false
 		for _, result := range results {
-			key := channelSmartScheduleRouteKey(result.ChannelId, result.Group, result.Model)
-			outcome := ChannelSmartScheduleRouteApplyOutcome{Key: key}
+			guarded = guarded || result.GuardCurrent
+		}
+		controlRevision := ""
+		if guarded {
 			var controlOption Option
-			if result.GuardCurrent {
-				optionErr := lockForUpdate(tx).Where(&Option{Key: ChannelSmartScheduleControlRevisionOption}).First(&controlOption).Error
-				if errors.Is(optionErr, gorm.ErrRecordNotFound) {
-					controlOption.Value = ""
-				} else if optionErr != nil {
-					return optionErr
-				}
+			optionErr := lockForUpdate(tx).Where(&Option{Key: ChannelSmartScheduleControlRevisionOption}).First(&controlOption).Error
+			if optionErr != nil && !errors.Is(optionErr, gorm.ErrRecordNotFound) {
+				return optionErr
 			}
+			if optionErr == nil {
+				controlRevision = controlOption.Value
+			}
+		}
+
+		states := make([]ChannelSmartScheduleRouteState, len(results))
+		abilities := make([]Ability, len(results))
+		for index, result := range results {
 			var state ChannelSmartScheduleRouteState
 			findErr := lockForUpdate(tx).
 				Where(&ChannelSmartScheduleRouteState{ChannelId: result.ChannelId, GroupName: result.Group, ModelName: result.Model}).
@@ -758,22 +925,27 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				return err
 			}
 			if result.GuardCurrent {
-				if controlOption.Value != result.ExpectedControlRevision || state.Revision != result.ExpectedRevision ||
+				if controlRevision != result.ExpectedControlRevision || state.Revision != result.ExpectedRevision ||
 					!state.Participates() || !ability.Enabled || abilityPriority(ability) != result.ExpectedPriority ||
 					ability.Weight != result.ExpectedWeight {
-					outcomes = append(outcomes, outcome)
-					continue
+					return nil
 				}
 				var channel Channel
 				if err := lockForUpdate(tx).Select("id", "status").Where("id = ?", result.ChannelId).First(&channel).Error; err != nil {
 					return err
 				}
 				if channel.Status != common.ChannelStatusEnabled {
-					outcomes = append(outcomes, outcome)
-					continue
+					return nil
 				}
 			}
+			states[index] = state
+			abilities[index] = ability
+		}
 
+		for index, result := range results {
+			key := outcomes[index].Key
+			state := states[index]
+			ability := abilities[index]
 			message := strings.TrimSpace(result.Error)
 			messageRunes := []rune(message)
 			if len(messageRunes) > 255 {
@@ -805,11 +977,17 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state.JitterBaselineFirstTokenMs = result.Jitter.BaselineFirstTokenMs
 				state.JitterBaselineUpdatedAt = result.Jitter.BaselineUpdatedAt
 			}
-			if result.Exploration != nil {
-				state.ExplorationActive = result.Exploration.Active
-				state.ExplorationSince = result.Exploration.Since
-				state.ExplorationSavedPriority = result.Exploration.SavedPriority
-				state.ExplorationSavedWeight = result.Exploration.SavedWeight
+			if result.RuntimeProtectionUntil != nil {
+				state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
+			}
+			if result.RoutingSnapshot != nil {
+				state.BaseRank = result.RoutingSnapshot.BaseRank
+				state.BasePriority = result.RoutingSnapshot.BasePriority
+				state.BaseWeight = result.RoutingSnapshot.BaseWeight
+				state.TemporaryTrafficKind = result.RoutingSnapshot.TemporaryTrafficKind
+				state.TemporaryTrafficSince = result.RoutingSnapshot.TemporaryTrafficSince
+				state.TemporaryTrafficTargetPercent = result.RoutingSnapshot.TemporaryTrafficTargetPercent
+				state.LastPrioritySampleTime = result.RoutingSnapshot.LastPrioritySampleTime
 			}
 			if state.Revision == math.MaxInt64 {
 				return errors.New("智能调度路由修订号已达上限")
@@ -821,7 +999,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight); err != nil {
 					return err
 				}
-				outcome.RoutingChanged = priority != result.ExpectedPriority || weight != result.ExpectedWeight
+				outcomes[index].RoutingChanged = priority != abilityPriority(ability) || weight != ability.Weight
 			}
 			if state.Id == 0 {
 				if err := tx.Create(&state).Error; err != nil {
@@ -830,11 +1008,16 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			} else if err := saveChannelSmartScheduleRouteStateTx(tx, &state); err != nil {
 				return err
 			}
-			outcome.Applied = true
-			outcomes = append(outcomes, outcome)
+			outcomes[index].Applied = true
 		}
 		return nil
 	})
+	if err != nil {
+		for index := range outcomes {
+			outcomes[index].Applied = false
+			outcomes[index].RoutingChanged = false
+		}
+	}
 	return outcomes, err
 }
 
@@ -877,6 +1060,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		state.StabilitySince = now
 		state.StabilitySavedPriority = 0
 		state.StabilitySavedWeight = 0
+		state.RuntimeProtectionUntil = 0
 		state.JitterBaselineFirstTokenMs = nil
 		state.JitterBaselineUpdatedAt = 0
 		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded

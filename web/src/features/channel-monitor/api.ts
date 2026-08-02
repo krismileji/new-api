@@ -247,6 +247,35 @@ export async function updateChannelMonitorSmartScheduleRouteConfig(request: {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export async function updateChannelMonitorSmartScheduleManualRouting(request: {
+  channelId: number
+  group: string
+  model: string
+  priority: number
+  weight: number
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<{
+      channel_id: number
+      group: string
+      model: string
+      priority: number
+      weight: number
+      routing_changed: boolean
+    }>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/routing`,
+    {
+      group: request.group,
+      model: request.model,
+      priority: request.priority,
+      weight: request.weight,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
 export async function updateChannelMonitorSmartScheduleRoutePrimary(request: {
   channelId: number
   group: string

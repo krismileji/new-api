@@ -43,6 +43,7 @@ type testResult struct {
 	originalModelName         string
 	firstResponseMilliseconds *float64
 	tokensPerSecond           *float64
+	outputTokens              int
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -571,6 +572,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		originalModelName:         info.OriginModelName,
 		firstResponseMilliseconds: firstResponseMilliseconds,
 		tokensPerSecond:           tokensPerSecond,
+		outputTokens:              usage.CompletionTokens,
 	}
 }
 
@@ -948,16 +950,27 @@ func TestChannel(c *gin.Context) {
 		requestCtx = c.Request.Context()
 	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
-	recordManualChannelSmartScheduleProbeResult(
+	finishedAt := time.Now()
+	durationMs := float64(finishedAt.Sub(tik)) / float64(time.Millisecond)
+	sampleRecorded, sampleMessage := recordManualChannelSmartScheduleProbeResult(
 		channel,
 		result,
-		float64(time.Since(tik))/float64(time.Millisecond),
+		durationMs,
 	)
+	responseData := gin.H{
+		"response_time":                  durationMs,
+		"first_token_ms":                 result.firstResponseMilliseconds,
+		"tokens_per_second":              result.tokensPerSecond,
+		"output_tokens":                  result.outputTokens,
+		"smart_schedule_sample_recorded": sampleRecorded,
+		"smart_schedule_sample_message":  sampleMessage,
+	}
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
 			"message": result.localErr.Error(),
-			"time":    0.0,
+			"time":    durationMs / 1000,
+			"data":    responseData,
 		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
@@ -965,16 +978,16 @@ func TestChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, resp)
 		return
 	}
-	tok := time.Now()
-	milliseconds := tok.Sub(tik).Milliseconds()
+	milliseconds := finishedAt.Sub(tik).Milliseconds()
 	go channel.UpdateResponseTime(milliseconds)
-	consumedTime := float64(milliseconds) / 1000.0
+	consumedTime := durationMs / 1000
 	if result.newAPIError != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success":    false,
 			"message":    result.newAPIError.Error(),
 			"time":       consumedTime,
 			"error_code": result.newAPIError.GetErrorCode(),
+			"data":       responseData,
 		})
 		return
 	}
@@ -982,6 +995,7 @@ func TestChannel(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"time":    consumedTime,
+		"data":    responseData,
 	})
 }
 

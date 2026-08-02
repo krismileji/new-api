@@ -64,6 +64,7 @@ import { cn } from '@/lib/utils'
 
 import { getChannelMonitorTasks } from '../api'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
+import { formatChannelMonitorSmartScheduleFailureStage } from '../lib/smart-schedule-execution'
 import { isActiveChannelMonitorTask } from '../lib/task-status'
 import type {
   ChannelMonitorTask,
@@ -153,6 +154,11 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
   adjustment: ChannelMonitorTaskAdjustment
 }) {
   const adjustment = props.adjustment
+  const failureStage = formatChannelMonitorSmartScheduleFailureStage(
+    adjustment.failure_stage
+  )
+  const hasPreviousEffectiveResult =
+    (adjustment.previous_effective_time ?? 0) > 0
   return (
     <li className='grid min-w-0 gap-3 border-b p-3 last:border-b-0 lg:grid-cols-[minmax(12rem,1fr)_minmax(15rem,auto)_auto]'>
       <div className='min-w-0'>
@@ -177,15 +183,26 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
           {adjustment.old_weight} → <strong>{adjustment.new_weight}</strong>
         </span>
       </div>
-      <Badge
-        variant={actionVariant(adjustment.action)}
-        className='w-fit lg:justify-self-end'
-      >
-        {ACTION_LABELS[adjustment.action]}
-      </Badge>
+      <div className='flex flex-wrap gap-1 lg:justify-self-end'>
+        <Badge variant={actionVariant(adjustment.action)}>
+          {ACTION_LABELS[adjustment.action]}
+        </Badge>
+        {failureStage ? (
+          <Badge variant='destructive'>失败阶段：{failureStage}</Badge>
+        ) : null}
+      </div>
       <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
         <span className='text-foreground font-medium'>原因：</span>
         {adjustment.reason || '未记录原因'}
+      </p>
+      <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
+        <span className='text-foreground font-medium'>上一轮生效结果：</span>
+        {hasPreviousEffectiveResult
+          ? `P${adjustment.previous_effective_priority ?? 0} / W${adjustment.previous_effective_weight ?? 0} · ${formatTimestampToDate(adjustment.previous_effective_time ?? 0)}`
+          : '未记录已生效结果'}
+        {adjustment.action === 'failed' && hasPreviousEffectiveResult
+          ? '；本轮失败未覆盖，上一轮结果继续生效'
+          : ''}
       </p>
       <ChannelMonitorSmartScheduleScoreDetails
         details={adjustment.score_details}
@@ -466,10 +483,13 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   </strong>
                 </div>
               </div>
-              {result?.group_policies?.length ? (
+              {result ? (
                 <p className='text-muted-foreground mt-3 text-xs'>
-                  按 {result.group_policies.length} 个分组策略执行 · 使用最近{' '}
-                  {result.performance_minutes ?? 0} 分钟样本
+                  {result.group_policies?.length
+                    ? `按 ${result.group_policies.length} 个分组策略执行`
+                    : '未记录分组策略'}{' '}
+                  · 性能窗口 {result.performance_window_minutes ?? 0} 分钟 ·
+                  稳定性窗口 {result.stability_window_minutes ?? 0} 分钟
                 </p>
               ) : null}
             </div>

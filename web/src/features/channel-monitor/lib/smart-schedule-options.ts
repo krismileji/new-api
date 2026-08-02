@@ -48,7 +48,7 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS = [
   {
     value: 'priority_weight',
     label: '优先级分层 + 权重',
-    description: '最高分为主渠道，第二名为第一备用，其余为后续备用',
+    description: '正常参与渠道按评分形成独立优先级，低优先级渠道可轮转采样',
   },
 ] as const
 

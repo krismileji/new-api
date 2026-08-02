@@ -126,6 +126,23 @@ function GroupPolicySampleModeBadge(props: {
   return <Badge variant='outline'>关闭</Badge>
 }
 
+function GroupPolicyPrioritySamplingBadge(props: {
+  policy: ChannelMonitorSmartScheduleGroupPolicyFormValues
+}) {
+  if (props.policy.applyMode !== 'priority_weight') {
+    return <Badge variant='outline'>不适用</Badge>
+  }
+  if (!props.policy.prioritySamplingEnabled) {
+    return <Badge variant='outline'>关闭</Badge>
+  }
+  return (
+    <Badge variant='secondary'>
+      每 {props.policy.prioritySamplingIntervalMinutes} 分钟 ·{' '}
+      {props.policy.prioritySamplingBasePercent}% 起
+    </Badge>
+  )
+}
+
 export function ChannelMonitorSmartScheduleGroupPolicies(
   props: ChannelMonitorSmartScheduleGroupPoliciesProps
 ) {
@@ -259,6 +276,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                 <TableHead>调度方式</TableHead>
                 <TableHead>调整方式</TableHead>
                 <TableHead>样本补充</TableHead>
+                <TableHead>轮转采样</TableHead>
                 <TableHead>模型范围</TableHead>
                 <TableHead>稳定性</TableHead>
                 <TableHead className='w-24 text-right'>操作</TableHead>
@@ -287,6 +305,9 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   </TableCell>
                   <TableCell>
                     <GroupPolicySampleModeBadge policy={policy} />
+                  </TableCell>
+                  <TableCell>
+                    <GroupPolicyPrioritySamplingBadge policy={policy} />
                   </TableCell>
                   <TableCell>
                     <span

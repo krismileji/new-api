@@ -408,6 +408,15 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool, attemptDuration *time.Duration, finalRetrySummary bool) {
+	// Protect a temporary route before doing the comparatively slower error-log
+	// and auto-ban work, so concurrent requests observe the new route as soon as
+	// the first upstream failure is received.
+	protectChannelSmartScheduleRuntimeFailure(
+		channelError.ChannelId,
+		c.GetString("original_model"),
+		err,
+	)
+
 	if !finalRetrySummary {
 		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
@@ -466,7 +475,6 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
 	}
-
 }
 
 func RelayMidjourney(c *gin.Context) {

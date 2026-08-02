@@ -90,4 +90,62 @@ describe('channel test request options', () => {
       api.defaults.adapter = originalAdapter
     }
   })
+
+  test('returns stream metrics and smart schedule sample status to callers', async () => {
+    const originalAdapter = api.defaults.adapter
+    let completion:
+      | {
+          success: boolean
+          responseTime?: number
+          firstTokenMs?: number | null
+          sampleRecorded?: boolean
+        }
+      | undefined
+
+    api.defaults.adapter = (config) =>
+      Promise.resolve({
+        data: {
+          success: true,
+          message: '',
+          time: 1.2,
+          data: {
+            response_time: 1200,
+            first_token_ms: 180,
+            tokens_per_second: 24.5,
+            output_tokens: 16,
+            smart_schedule_sample_recorded: true,
+            smart_schedule_sample_message: '已计入渠道 + 模型共享样本',
+          },
+        },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      })
+
+    try {
+      await handleTestChannel(
+        7,
+        { testModel: 'gpt-4o-mini', stream: true, silent: true },
+        (success, responseTime, _error, _errorCode, response) => {
+          completion = {
+            success,
+            responseTime,
+            firstTokenMs: response?.data?.first_token_ms,
+            sampleRecorded:
+              response?.data?.smart_schedule_sample_recorded,
+          }
+        }
+      )
+    } finally {
+      api.defaults.adapter = originalAdapter
+    }
+
+    assert.deepEqual(completion, {
+      success: true,
+      responseTime: 1200,
+      firstTokenMs: 180,
+      sampleRecorded: true,
+    })
+  })
 })

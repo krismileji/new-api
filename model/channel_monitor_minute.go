@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,6 +42,8 @@ type ChannelMonitorMinuteMetric struct {
 	ActualFailureCount          int64 `gorm:"not null"`
 	FinalSuccessCount           int64 `gorm:"not null"`
 	FinalFailureCount           int64 `gorm:"not null"`
+	RateLimitActualFailureCount int64 `gorm:"not null;default:0"`
+	RateLimitFinalFailureCount  int64 `gorm:"not null;default:0"`
 	RetryFailureCount           int64 `gorm:"not null;default:0"`
 	RetryFailureDurationTotalMs int64 `gorm:"not null;default:0"`
 	RetryFailureUnder1sCount    int64 `gorm:"column:retry_failure_under_1s_count;not null;default:0"`
@@ -81,6 +84,7 @@ type channelMonitorMinuteLog struct {
 	RequestId         string
 	AttemptDurationMs int64
 	FinalRetrySummary bool
+	RateLimited       bool
 }
 
 type channelMonitorMinuteLogOther struct {
@@ -94,6 +98,7 @@ type channelMonitorMinuteLogOther struct {
 	FinalRetrySummary     bool     `json:"channel_monitor_final_retry_summary"`
 	SmartScheduleProbe    bool     `json:"channel_monitor_smart_schedule_probe"`
 	ChannelTest           bool     `json:"channel_monitor_channel_test"`
+	StatusCode            any      `json:"status_code"`
 }
 
 type channelMonitorMinuteAggregateKey struct {
@@ -144,6 +149,21 @@ func channelMonitorMinuteNonZero(value *float64) bool {
 	return value != nil && *value != 0
 }
 
+func channelMonitorMinuteRateLimited(value any) bool {
+	switch statusCode := value.(type) {
+	case float64:
+		return statusCode == 429
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(statusCode))
+		return err == nil && parsed == 429
+	case int:
+		return statusCode == 429
+	case int64:
+		return statusCode == 429
+	}
+	return false
+}
+
 func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog) {
 	if log.Type == LogTypeConsume {
 		aggregate.ActualSuccessCount++
@@ -151,12 +171,23 @@ func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog)
 	} else if log.Type == LogTypeError {
 		if log.FinalRetrySummary {
 			aggregate.FinalFailureCount++
+			if log.RateLimited {
+				aggregate.RateLimitFinalFailureCount++
+			}
 		} else {
 			aggregate.ActualFailureCount++
+			if log.RateLimited {
+				aggregate.RateLimitActualFailureCount++
+			}
 			if log.IsRetryAttempt {
-				aggregate.addRetryFailureDuration(log.AttemptDurationMs)
+				if !log.RateLimited {
+					aggregate.addRetryFailureDuration(log.AttemptDurationMs)
+				}
 			} else {
 				aggregate.FinalFailureCount++
+				if log.RateLimited {
+					aggregate.RateLimitFinalFailureCount++
+				}
 			}
 		}
 	}
@@ -343,6 +374,7 @@ func aggregateChannelMonitorMinuteLogs(
 				durationMs = *parsedOther.AttemptDurationMs
 			}
 			log.FinalRetrySummary = parsedOther.FinalRetrySummary
+			log.RateLimited = channelMonitorMinuteRateLimited(parsedOther.StatusCode)
 		}
 		log.AttemptDurationMs = durationMs
 		modelName := channelMonitorMinuteMetricNames(log.ModelName, 255)
@@ -403,7 +435,7 @@ func aggregateChannelMonitorMinuteLogs(
 			bucket.Count++
 			bucket.TotalMs += *parsedOther.FirstResponseTime
 		}
-		if log.Type != LogTypeError || log.RequestId == "" {
+		if log.Type != LogTypeError || log.RequestId == "" || log.RateLimited {
 			continue
 		}
 		if log.FinalRetrySummary {

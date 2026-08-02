@@ -63,6 +63,11 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   sampleMode: 'probe',
   explorationTrafficPercent: 3,
   probeIntervalMinutes: 15,
+  prioritySamplingEnabled: true,
+  prioritySamplingIntervalMinutes: 10,
+  prioritySamplingBasePercent: 3,
+  prioritySamplingDecayPercent: 70,
+  prioritySamplingMinPercent: 0.5,
 }
 
 describe('smart schedule group policy', () => {
@@ -133,6 +138,14 @@ describe('smart schedule group policy', () => {
         sample_mode: defaultPolicy.sampleMode,
         exploration_traffic_percent: defaultPolicy.explorationTrafficPercent,
         probe_interval_minutes: defaultPolicy.probeIntervalMinutes,
+        priority_sampling_enabled: defaultPolicy.prioritySamplingEnabled,
+        priority_sampling_interval_minutes:
+          defaultPolicy.prioritySamplingIntervalMinutes,
+        priority_sampling_base_percent:
+          defaultPolicy.prioritySamplingBasePercent,
+        priority_sampling_decay_percent:
+          defaultPolicy.prioritySamplingDecayPercent,
+        priority_sampling_min_percent: defaultPolicy.prioritySamplingMinPercent,
       },
     ])
     const apiPolicies =
@@ -166,6 +179,11 @@ describe('smart schedule group policy', () => {
     assert.equal(apiPolicies[0]?.sample_mode, 'probe')
     assert.equal(apiPolicies[0]?.exploration_traffic_percent, 3)
     assert.equal(apiPolicies[0]?.probe_interval_minutes, 15)
+    assert.equal(apiPolicies[0]?.priority_sampling_enabled, true)
+    assert.equal(apiPolicies[0]?.priority_sampling_interval_minutes, 10)
+    assert.equal(apiPolicies[0]?.priority_sampling_base_percent, 3)
+    assert.equal(apiPolicies[0]?.priority_sampling_decay_percent, 70)
+    assert.equal(apiPolicies[0]?.priority_sampling_min_percent, 0.5)
   })
 
   test('uses a complete editor template without creating a runtime policy', () => {
@@ -239,6 +257,26 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.probeIntervalMinutes,
       10
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.prioritySamplingEnabled,
+      true
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.prioritySamplingIntervalMinutes,
+      10
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.prioritySamplingBasePercent,
+      3
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.prioritySamplingDecayPercent,
+      70
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.prioritySamplingMinPercent,
+      0.5
     )
   })
 })

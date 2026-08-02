@@ -15,8 +15,8 @@ func recordManualChannelSmartScheduleProbeResult(
 	channel *model.Channel,
 	result testResult,
 	durationMs float64,
-) {
-	recordManualChannelSmartScheduleProbeResultForGroup(channel, result, durationMs, "")
+) (bool, string) {
+	return recordManualChannelSmartScheduleProbeResultForGroup(channel, result, durationMs, "")
 }
 
 func recordManualChannelSmartScheduleProbeResultForGroup(
@@ -24,9 +24,9 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 	result testResult,
 	durationMs float64,
 	group string,
-) {
+) (bool, string) {
 	if channel == nil {
-		return
+		return false, "渠道不可用，未计入智能调度样本"
 	}
 	group = strings.TrimSpace(group)
 	modelName := strings.TrimSpace(result.originalModelName)
@@ -34,15 +34,19 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		modelName = strings.TrimSpace(common.GetContextKeyString(result.context, constant.ContextKeyOriginalModel))
 	}
 	if modelName == "" {
-		return
+		return false, "无法确定测试模型，未计入智能调度样本"
 	}
 
 	settings := getChannelMonitorSettings()
 	if !settings.SmartScheduleEnabled {
-		return
+		return false, "智能调度未启用，本次未计入样本"
 	}
 	probeTime := common.GetTimestamp()
-	windowStart := probeTime - int64(settings.SmartSchedulePerformanceMinutes*60)
+	retentionMinutes := max(
+		settings.SmartSchedulePerformanceWindowMinutes,
+		settings.SmartScheduleStabilityWindowMinutes,
+	)
+	windowStart := probeTime - int64(retentionMinutes*60)
 	sampleId := ""
 	if result.context != nil {
 		sampleId = strings.TrimSpace(result.context.GetString(common.RequestIdKey))
@@ -89,7 +93,7 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		break
 	}
 	if eligibleGroup == "" {
-		return
+		return false, "该渠道模型没有参与智能调度的路由，本次未计入样本"
 	}
 	var sampleDurationMs *float64
 	if !math.IsNaN(durationMs) && !math.IsInf(durationMs, 0) && durationMs >= 0 {
@@ -114,5 +118,7 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 			"保存手动渠道测试共享样本失败: channel_id=%d model=%s matched_group=%s err=%s",
 			channel.Id, modelName, eligibleGroup, err.Error(),
 		))
+		return false, "样本保存失败，请查看服务端日志"
 	}
+	return true, "已计入渠道 + 模型共享样本"
 }

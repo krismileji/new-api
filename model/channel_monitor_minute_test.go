@@ -144,6 +144,74 @@ func TestAggregateChannelMonitorMinuteBucketsRetryFailureDurations(t *testing.T)
 	assert.Equal(t, int64(1), metric.RetryFailureOver60sCount)
 }
 
+func TestAggregateChannelMonitorMinuteKeeps429ErrorsButExcludesThemFromStability(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	rateLimitDuration := int64(5_000)
+	retryDuration := int64(500)
+	rateLimitRetryOther, err := common.Marshal(channelMonitorMinuteLogOther{
+		AttemptDurationMs: &rateLimitDuration,
+		StatusCode:        429,
+	})
+	require.NoError(t, err)
+	rateLimitFinalOther, err := common.Marshal(channelMonitorMinuteLogOther{
+		AttemptDurationMs: &rateLimitDuration,
+		FinalRetrySummary: true,
+		StatusCode:        "429",
+	})
+	require.NoError(t, err)
+	retryOther, err := common.Marshal(channelMonitorMinuteLogOther{
+		AttemptDurationMs: &retryDuration,
+		StatusCode:        503,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", CreatedAt: 121,
+			Type: LogTypeConsume,
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", CreatedAt: 122,
+			Type: LogTypeError, IsRetryAttempt: true, RequestId: "rate-limit",
+			Other: string(rateLimitRetryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", CreatedAt: 123,
+			Type: LogTypeError, RequestId: "rate-limit", Other: string(rateLimitFinalOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", CreatedAt: 124,
+			Type: LogTypeError, IsRetryAttempt: true, RequestId: "upstream-error",
+			Other: string(retryOther),
+		},
+	}).Error)
+
+	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
+
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where(
+		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
+		120, 1, "model-a", "vip",
+	).First(&metric).Error)
+	assert.Equal(t, int64(2), metric.ActualFailureCount)
+	assert.Equal(t, int64(1), metric.FinalFailureCount)
+	assert.Equal(t, int64(1), metric.RateLimitActualFailureCount)
+	assert.Equal(t, int64(1), metric.RateLimitFinalFailureCount)
+	assert.Equal(t, int64(1), metric.RetryFailureCount)
+	assert.Equal(t, retryDuration, metric.RetryFailureDurationTotalMs)
+	assert.Equal(t, int64(1), metric.RetryFailureUnder1sCount)
+	assert.Zero(t, metric.RetryFailure3To10sCount)
+
+	stabilityMetrics, err := GetChannelMonitorRouteStabilityMetrics(context.Background(), 120, 180)
+	require.NoError(t, err)
+	require.Len(t, stabilityMetrics, 1)
+	assert.Equal(t, int64(1), stabilityMetrics[0].SuccessCount)
+	assert.Equal(t, int64(1), stabilityMetrics[0].FailureCount)
+	assert.Zero(t, stabilityMetrics[0].FinalFailureCount)
+	assert.Equal(t, int64(1), stabilityMetrics[0].RetryFailureCount)
+	assert.Equal(t, int64(2), stabilityMetrics[0].SampleCount)
+	assert.InDelta(t, 0.5, stabilityMetrics[0].SuccessRate, 0.0001)
+}
+
 func TestAggregateChannelMonitorMinuteSaturatesRetryFailureDuration(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	durationMs := int64(math.MaxInt64)

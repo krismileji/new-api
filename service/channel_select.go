@@ -90,6 +90,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 	if len(options) > 0 {
 		selectionOptions = options[len(options)-1]
 	}
+	selectionOptions = applyChannelRateLimitCooldowns(param.ModelName, selectionOptions)
 	hasExcludedChannels := selectionOptions.HasExcludedChannels()
 
 	if param.TokenGroup == "auto" {

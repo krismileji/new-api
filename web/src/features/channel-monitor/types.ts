@@ -286,12 +286,6 @@ export type ChannelMonitorCostOverview = {
 
 export type ChannelMonitorPerformanceRangeMinutes = number
 
-export type ChannelMonitorSmartSchedulePerformanceRangeMinutes =
-  | 15
-  | 60
-  | 360
-  | 1440
-
 export type ChannelMonitorPerformanceMetric = {
   channel_id: number
   model_name: string
@@ -491,6 +485,11 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   sample_mode: ChannelMonitorSmartScheduleSampleMode
   exploration_traffic_percent: number
   probe_interval_minutes: number
+  priority_sampling_enabled: boolean
+  priority_sampling_interval_minutes: number
+  priority_sampling_base_percent: number
+  priority_sampling_decay_percent: number
+  priority_sampling_min_percent: number
 }
 
 export type ChannelMonitorSettings = {
@@ -510,7 +509,9 @@ export type ChannelMonitorSettings = {
   smart_schedule_enabled: boolean
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_interval_minutes: number
-  smart_schedule_performance_minutes: ChannelMonitorSmartSchedulePerformanceRangeMinutes
+  smart_schedule_performance_window_minutes: number
+  smart_schedule_stability_window_minutes: number
+  smart_schedule_rate_limit_cooldown_seconds: number
   smart_schedule_force_reset_task_created?: boolean
   smart_schedule_force_reset_task_id?: string
   smart_schedule_force_reset_task_error?: string
@@ -599,8 +600,18 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     current_primary_channel_id: number
     raw_winner_channel_id: number
     selected_primary_channel_id: number
+    actual_primary_channel_id: number
     selected_primary: boolean
     manual_primary_channel_id: number
+    base_rank: number
+    base_priority: number
+    base_weight: number
+    applied_priority: number
+    applied_weight: number
+    actual_highest_priority: number
+    actual_top_layer_channel_ids: number[] | null
+    temporary_traffic_kind: '' | 'insufficient_samples' | 'priority_sampling'
+    temporary_traffic_target_percent: number
     switch_threshold_percent: number
     primary_traffic_percent: number
     force_reset: boolean
@@ -637,10 +648,14 @@ export type ChannelMonitorSmartScheduleRouteState = {
   stability_since: number
   stability_saved_priority: number
   stability_saved_weight: number
-  exploration_active: boolean
-  exploration_since: number
-  exploration_saved_priority: number
-  exploration_saved_weight: number
+  runtime_protection_until: number
+  base_rank: number
+  base_priority: number
+  base_weight: number
+  temporary_traffic_kind: '' | 'insufficient_samples' | 'priority_sampling'
+  temporary_traffic_since: number
+  temporary_traffic_target_percent: number
+  last_priority_sample_time: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean
 }
@@ -727,7 +742,8 @@ export type ChannelMonitorFailureDurationBucket = {
 
 export type ChannelMonitorSmartScheduleRouteResult = {
   generated_at: number
-  range_minutes: number
+  performance_window_minutes: number
+  stability_window_minutes: number
   sample_scope: 'channel_model'
   enabled: boolean
   routes: ChannelMonitorSmartScheduleRoute[]
@@ -797,7 +813,8 @@ export type ChannelMonitorTaskResult = {
   recovered_after_retry?: number
   force_reset?: boolean
   group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
-  performance_minutes?: number
+  performance_window_minutes?: number
+  stability_window_minutes?: number
   planned?: number
   unchanged?: number
   skipped?: number
@@ -824,12 +841,19 @@ export type ChannelMonitorTaskAdjustment = {
   manual_primary?: boolean
   manual_primary_until?: number
   manual_primary_allow_stability_degrade?: boolean
+  failure_stage?: string
+  previous_effective_time?: number
+  previous_effective_priority?: number
+  previous_effective_weight?: number
   reason: string
 }
 
 export type ChannelMonitorTaskFailure = {
   channel_id: number
   channel_name: string
+  group: string
+  model: string
+  failure_stage: string
   error: string
 }
 

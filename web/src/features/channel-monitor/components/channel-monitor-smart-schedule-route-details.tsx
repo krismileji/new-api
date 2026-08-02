@@ -16,11 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cancel01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import {
+  Cancel01Icon,
+  InformationCircleIcon,
+  Tick02Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
 import {
   Sheet,
   SheetClose,
@@ -34,7 +40,10 @@ import { Switch } from '@/components/ui/switch'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { formatMonitorRatio } from '../lib/format'
-import { formatChannelMonitorSmartScheduleEstimatedShare } from '../lib/smart-schedule-display'
+import {
+  formatChannelMonitorSmartScheduleEstimatedShare,
+  formatChannelMonitorSmartScheduleTemporaryTraffic,
+} from '../lib/smart-schedule-display'
 import {
   channelMonitorSmartScheduleRouteParticipates,
   getChannelMonitorSmartScheduleRouteDisplayStatus,
@@ -54,6 +63,7 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   channel: ChannelMonitorItem | undefined
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   updatePending: boolean
+  manualRoutingPending: boolean
   updateDisabled: boolean
   onOpenChange: (open: boolean) => void
   onParticipationChange: (
@@ -63,6 +73,11 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSaveManualRouting: (
+    route: ChannelMonitorSmartScheduleRoute,
+    priority: number,
+    weight: number
+  ) => void
 }
 
 export function ChannelMonitorSmartScheduleRouteStatus(props: {
@@ -86,24 +101,31 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   if (status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>
   }
-  if (status === 'exploring') return <Badge variant='warning'>探索采样</Badge>
-  if (status === 'primary') return <Badge>主渠道</Badge>
-  if (status === 'candidate') return <Badge variant='secondary'>同层候选</Badge>
-  if (status === 'first_backup') {
-    return <Badge variant='outline'>第一备用</Badge>
+  if (status === 'insufficient_samples') {
+    return <Badge variant='warning'>样本不足补量</Badge>
   }
-  if (status === 'standby') return <Badge variant='outline'>后续备用</Badge>
+  if (status === 'priority_sampling') {
+    return <Badge variant='warning'>低优先级轮转</Badge>
+  }
+  if (status === 'primary') return <Badge>实际主渠道</Badge>
+  if (status === 'candidate') {
+    return <Badge variant='secondary'>实际最高层</Badge>
+  }
+  if (status === 'backup') return <Badge variant='outline'>备用顺位</Badge>
   if (status === 'excluded') return <Badge variant='outline'>未参与</Badge>
   return <Badge variant='destructive'>不可调度</Badge>
 }
 
 function DetailMetric(props: { label: string; value: string }) {
   return (
-    <div className='min-w-0 border-l pl-3 first:border-l-0 first:pl-0'>
-      <div className='text-muted-foreground text-[11px] leading-4'>
+    <div className='bg-background min-w-0 rounded-md border px-3 py-2'>
+      <div className='text-muted-foreground text-xs leading-4'>
         {props.label}
       </div>
-      <div className='truncate font-mono text-sm font-medium tabular-nums'>
+      <div
+        className='mt-1 break-words font-mono text-sm font-medium leading-5 tabular-nums'
+        title={props.value}
+      >
         {props.value}
       </div>
     </div>
@@ -183,6 +205,27 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     route.state.last_schedule_score == null
       ? '-'
       : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`
+  const participates = channelMonitorSmartScheduleRouteParticipates(route)
+  const decision = route.state.last_schedule_score_details?.decision
+  const baseRank = route.state.base_rank || decision?.base_rank || 0
+  const basePriority = route.state.base_priority || decision?.base_priority || 0
+  const baseWeight = route.state.base_weight || decision?.base_weight || 0
+  const scoringWinnerChannelId =
+    props.placement?.scoringWinnerChannelId ??
+    decision?.raw_winner_channel_id ??
+    0
+  const actualPrimaryChannelId =
+    props.placement?.actualPrimaryChannelId ??
+    decision?.actual_primary_channel_id ??
+    0
+  const actualHighestPriority =
+    props.placement?.actualHighestPriority ??
+    decision?.actual_highest_priority ??
+    null
+  const actualTopLayerChannelIds =
+    props.placement?.actualTopLayerChannelIds ??
+    decision?.actual_top_layer_channel_ids ??
+    []
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
@@ -199,6 +242,15 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             </SheetTitle>
             {route.state.manual_primary_until > 0 ? (
               <Badge variant='secondary'>管理员固定</Badge>
+            ) : null}
+            {props.placement?.isScoringWinner ? (
+              <Badge variant='outline'>评分第一</Badge>
+            ) : null}
+            {props.placement?.isActualPrimary ? (
+              <Badge>实际主渠道</Badge>
+            ) : null}
+            {props.placement?.isActualTopLayer ? (
+              <Badge variant='secondary'>实际最高层</Badge>
             ) : null}
           </div>
           <SheetDescription className='truncate' title={remark || undefined}>
@@ -221,20 +273,115 @@ export function ChannelMonitorSmartScheduleRouteDetails(
         </SheetHeader>
 
         <div className='min-h-0 flex-1 overflow-y-auto'>
-          <section className='px-4 py-4' aria-label='渠道调度摘要'>
-            <div className='grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5'>
+          <section
+            className='bg-muted/20 px-4 py-4'
+            aria-label='渠道调度摘要'
+          >
+            <div className='flex flex-wrap items-start justify-between gap-3'>
+              <div className='min-w-0'>
+                <div className='text-muted-foreground text-xs'>当前状态</div>
+                <div className='mt-1 flex flex-wrap items-center gap-2'>
+                  <ChannelMonitorSmartScheduleRouteStatus
+                    route={route}
+                    placement={props.placement}
+                    onClearProtection={() => props.onClearProtection(route)}
+                  />
+                  {props.updatePending ? <Spinner className='size-4' /> : null}
+                  {route.state.last_schedule_time > 0 ? (
+                    <span className='text-muted-foreground text-xs'>
+                      更新于 {formatTimestampToDate(route.state.last_schedule_time)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className='text-right'>
+                <div className='text-muted-foreground text-xs'>预计流量</div>
+                <div className='mt-1 font-mono text-lg font-semibold tabular-nums'>
+                  {formatChannelMonitorSmartScheduleEstimatedShare(
+                    props.placement
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className='mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3'>
               <DetailMetric
                 label='成本倍率'
                 value={formatMonitorRatio(props.channel?.cost_ratio)}
               />
               <DetailMetric label='最终得分' value={score} />
-              <DetailMetric label='优先级' value={`P${route.priority}`} />
-              <DetailMetric label='权重' value={`W${route.weight}`} />
               <DetailMetric
-                label='预计流量'
-                value={formatChannelMonitorSmartScheduleEstimatedShare(
-                  props.placement
+                label='当前 P / W'
+                value={`P${route.priority} / W${route.weight}`}
+              />
+            </div>
+          </section>
+
+          <section className='border-t px-4 py-4' aria-label='评分与流量依据'>
+            <div className='mb-3'>
+              <h3 className='text-sm font-medium'>评分与流量依据</h3>
+              <p className='text-muted-foreground mt-0.5 text-xs'>
+                用于解释本渠道为什么处于当前顺位和流量状态
+              </p>
+            </div>
+            <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
+              <DetailMetric
+                label='基础排名'
+                value={baseRank > 0 ? `第 ${baseRank} 名` : '-'}
+              />
+              <DetailMetric
+                label='基础 P / W'
+                value={baseRank > 0 ? `P${basePriority} / W${baseWeight}` : '-'}
+              />
+              <DetailMetric
+                label='临时流量类型与目标'
+                value={formatChannelMonitorSmartScheduleTemporaryTraffic(
+                  route.state.temporary_traffic_kind,
+                  route.state.temporary_traffic_target_percent
                 )}
+              />
+              <DetailMetric
+                label='最近调度'
+                value={
+                  route.state.last_schedule_time > 0
+                    ? formatTimestampToDate(route.state.last_schedule_time)
+                    : '-'
+                }
+              />
+            </div>
+          </section>
+
+          <section className='border-t px-4 py-4' aria-label='调度池决策结果'>
+            <div className='mb-3'>
+              <h3 className='text-sm font-medium'>调度池决策结果</h3>
+              <p className='text-muted-foreground mt-0.5 text-xs'>
+                当前渠道在本分组和模型中的实际路由位置
+              </p>
+            </div>
+            <div className='grid gap-x-5 gap-y-3 sm:grid-cols-3'>
+              <DetailMetric
+                label='评分第一'
+                value={
+                  scoringWinnerChannelId > 0
+                    ? `渠道 ID ${scoringWinnerChannelId}`
+                    : '-'
+                }
+              />
+              <DetailMetric
+                label='实际主渠道'
+                value={
+                  actualPrimaryChannelId > 0
+                    ? `渠道 ID ${actualPrimaryChannelId}`
+                    : '-'
+                }
+              />
+              <DetailMetric
+                label='实际最高层'
+                value={
+                  actualHighestPriority == null
+                    ? '-'
+                    : `P${actualHighestPriority} · 渠道 ${actualTopLayerChannelIds.join('、') || '-'}`
+                }
               />
             </div>
           </section>
@@ -242,14 +389,8 @@ export function ChannelMonitorSmartScheduleRouteDetails(
           <section className='border-t px-4 py-3' aria-label='渠道调度控制'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div className='flex flex-wrap items-center gap-2'>
-                <ChannelMonitorSmartScheduleRouteStatus
-                  route={route}
-                  placement={props.placement}
-                  onClearProtection={() => props.onClearProtection(route)}
-                />
-                {props.updatePending ? <Spinner className='size-4' /> : null}
                 <Switch
-                  checked={channelMonitorSmartScheduleRouteParticipates(route)}
+                  checked={participates}
                   disabled={props.updateDisabled}
                   onCheckedChange={(checked) =>
                     props.onParticipationChange(route, checked)
@@ -267,10 +408,88 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             </div>
           </section>
 
+          {!participates ? (
+            <section className='border-t px-4 py-4' aria-label='人工路由设置'>
+              <div className='flex items-start gap-2'>
+                <HugeiconsIcon
+                  icon={InformationCircleIcon}
+                  className='text-muted-foreground mt-0.5 size-4 shrink-0'
+                  aria-hidden='true'
+                />
+                <div>
+                  <h3 className='text-sm font-medium'>人工路由设置</h3>
+                  <p className='text-muted-foreground mt-1 text-xs'>
+                    该路由未参与智能调度，调度任务不会修改这里保存的优先级和权重。绝对优先级高于智能主渠道时，真实请求会优先进入该路由。
+                  </p>
+                </div>
+              </div>
+              <form
+                key={`${route.channel_id}\u0000${route.group}\u0000${route.model}\u0000${route.priority}\u0000${route.weight}`}
+                className='mt-4 flex flex-col gap-3 sm:flex-row sm:items-end'
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const formData = new FormData(event.currentTarget)
+                  const priority = Number(formData.get('manual_priority'))
+                  const weight = Number(formData.get('manual_weight'))
+                  if (
+                    !Number.isInteger(priority) ||
+                    !Number.isInteger(weight)
+                  ) {
+                    return
+                  }
+                  props.onSaveManualRouting(route, priority, weight)
+                }}
+              >
+                <FieldGroup className='grid flex-1 grid-cols-2 gap-3'>
+                  <Field>
+                    <FieldLabel htmlFor={`manual-priority-${route.channel_id}`}>
+                      人工优先级
+                    </FieldLabel>
+                    <Input
+                      id={`manual-priority-${route.channel_id}`}
+                      name='manual_priority'
+                      type='number'
+                      min={0}
+                      max={2_147_483_647}
+                      step={1}
+                      defaultValue={route.priority}
+                      disabled={props.updateDisabled}
+                      required
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`manual-weight-${route.channel_id}`}>
+                      人工权重
+                    </FieldLabel>
+                    <Input
+                      id={`manual-weight-${route.channel_id}`}
+                      name='manual_weight'
+                      type='number'
+                      min={0}
+                      max={2_147_483_647}
+                      step={1}
+                      defaultValue={route.weight}
+                      disabled={props.updateDisabled}
+                      required
+                    />
+                  </Field>
+                </FieldGroup>
+                <Button type='submit' disabled={props.updateDisabled}>
+                  {props.manualRoutingPending ? (
+                    <Spinner data-icon='inline-start' />
+                  ) : (
+                    <HugeiconsIcon icon={Tick02Icon} data-icon='inline-start' />
+                  )}
+                  保存人工路由
+                </Button>
+              </form>
+            </section>
+          ) : null}
+
           <ChannelMonitorSmartScheduleScoreDetails
             details={route.state.last_schedule_score_details}
             snapshotLabel='最近一次调度快照'
-            defaultOpen
+            defaultOpen={false}
           />
           {!route.state.last_schedule_score_details ? (
             <section className='border-t px-4 py-4' aria-label='评分计算'>

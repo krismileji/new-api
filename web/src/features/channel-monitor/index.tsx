@@ -112,6 +112,7 @@ import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
 } from './lib/schema'
 import { getChannelMonitorSmartScheduleModelOptionsByGroup } from './lib/smart-schedule-model-order'
 import {
@@ -174,6 +175,10 @@ type ChannelDialogState = {
   channelId: number
   type: ChannelDialogType
 }
+type SmartScheduleDisplaySelection = {
+  group: string
+  model: string
+}
 
 const EMPTY_CHANNELS: ChannelMonitorItem[] = []
 const EMPTY_CHANNEL_ORDER: number[] = []
@@ -201,11 +206,16 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   smart_schedule_enabled: false,
   smart_schedule_group_policies: [],
   smart_schedule_interval_minutes: 10,
-  smart_schedule_performance_minutes: 60,
+  smart_schedule_performance_window_minutes: 60,
+  smart_schedule_stability_window_minutes: 60,
+  smart_schedule_rate_limit_cooldown_seconds:
+    DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
 }
 const CHANNEL_MONITOR_SORT_STORAGE_KEY = 'channel-monitor:channel-sort'
 const CHANNEL_MONITOR_PERFORMANCE_RANGE_STORAGE_KEY =
   'channel-monitor:performance-range:v1'
+const CHANNEL_MONITOR_SMART_SCHEDULE_DISPLAY_STORAGE_KEY =
+  'channel-monitor:smart-schedule-display:v1'
 const DEFAULT_CHANNEL_MONITOR_PERFORMANCE_MINUTES = 15
 const MIN_CHANNEL_MONITOR_PERFORMANCE_MINUTES = 1
 const MAX_CHANNEL_MONITOR_PERFORMANCE_MINUTES = 1440
@@ -263,7 +273,28 @@ export function ChannelMonitor() {
     name: string
   } | null>(null)
   const [todaySuccessOpen, setTodaySuccessOpen] = useState(false)
-  const [smartScheduleDisplayKey, setSmartScheduleDisplayKey] = useState('')
+  const [smartScheduleDisplaySelection, setSmartScheduleDisplaySelection] =
+    useState<SmartScheduleDisplaySelection>(() => {
+      try {
+        const stored = localStorage.getItem(
+          CHANNEL_MONITOR_SMART_SCHEDULE_DISPLAY_STORAGE_KEY
+        )
+        if (stored) {
+          const parsed: unknown = JSON.parse(stored)
+          if (
+            parsed &&
+            typeof parsed === 'object' &&
+            'group' in parsed &&
+            'model' in parsed &&
+            typeof parsed.group === 'string' &&
+            typeof parsed.model === 'string'
+          ) {
+            return { group: parsed.group, model: parsed.model }
+          }
+        }
+      } catch {}
+      return { group: '', model: '' }
+    })
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
   const [successDetailTarget, setSuccessDetailTarget] =
@@ -415,12 +446,52 @@ export function ChannelMonitor() {
       ),
     [effectiveSmartScheduleRoutes, groupRatios]
   )
+  const smartScheduleDisplayGroups = useMemo(
+    () =>
+      [
+        ...new Set(smartScheduleDisplayOptions.map((option) => option.group)),
+      ].map((group) => ({ value: group, label: group })),
+    [smartScheduleDisplayOptions]
+  )
+  const smartScheduleDisplayModelsByGroup = useMemo(() => {
+    const modelsByGroup = new Map<string, string[]>()
+    for (const option of smartScheduleDisplayOptions) {
+      const models = modelsByGroup.get(option.group)
+      if (models) models.push(option.model)
+      else modelsByGroup.set(option.group, [option.model])
+    }
+    return modelsByGroup
+  }, [smartScheduleDisplayOptions])
+  const activeSmartScheduleDisplayGroup = smartScheduleDisplayGroups.some(
+    (option) => option.value === smartScheduleDisplaySelection.group
+  )
+    ? smartScheduleDisplaySelection.group
+    : (smartScheduleDisplayGroups[0]?.value ?? '')
+  const activeSmartScheduleDisplayModels =
+    smartScheduleDisplayModelsByGroup.get(activeSmartScheduleDisplayGroup) ?? []
+  const activeSmartScheduleDisplayModel =
+    activeSmartScheduleDisplayModels.includes(
+      smartScheduleDisplaySelection.model
+    )
+      ? smartScheduleDisplaySelection.model
+      : (activeSmartScheduleDisplayModels[0] ?? '')
   const activeSmartScheduleDisplay =
     smartScheduleDisplayOptions.find(
-      (option) => option.value === smartScheduleDisplayKey
-    ) ??
-    smartScheduleDisplayOptions[0] ??
-    null
+      (option) =>
+        option.group === activeSmartScheduleDisplayGroup &&
+        option.model === activeSmartScheduleDisplayModel
+    ) ?? null
+  const saveSmartScheduleDisplaySelection = (
+    selection: SmartScheduleDisplaySelection
+  ) => {
+    setSmartScheduleDisplaySelection(selection)
+    try {
+      localStorage.setItem(
+        CHANNEL_MONITOR_SMART_SCHEDULE_DISPLAY_STORAGE_KEY,
+        JSON.stringify(selection)
+      )
+    } catch {}
+  }
   const smartScheduleSummary = useMemo(
     () =>
       summarizeChannelMonitorSmartScheduleOverview(
@@ -833,24 +904,62 @@ export function ChannelMonitor() {
                 {view === 'channels' && (
                   <div className='flex w-full flex-col gap-2 sm:w-auto sm:flex-row'>
                     <Select
-                      items={smartScheduleDisplayOptions}
-                      value={activeSmartScheduleDisplay?.value ?? null}
+                      items={smartScheduleDisplayGroups}
+                      value={activeSmartScheduleDisplayGroup || null}
                       onValueChange={(value) => {
-                        if (value !== null) setSmartScheduleDisplayKey(value)
+                        if (value === null) return
+                        const nextModel =
+                          smartScheduleDisplayModelsByGroup.get(value)?.[0] ??
+                          ''
+                        saveSmartScheduleDisplaySelection({
+                          group: value,
+                          model: nextModel,
+                        })
+                      }}
+                    >
+                      <SelectTrigger
+                        className='w-full sm:w-48'
+                        aria-label='选择智能调度分组'
+                        disabled={smartScheduleDisplayGroups.length === 0}
+                      >
+                        <SelectValue placeholder='选择分组' />
+                      </SelectTrigger>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {smartScheduleDisplayGroups.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      items={activeSmartScheduleDisplayModels.map((model) => ({
+                        value: model,
+                        label: model,
+                      }))}
+                      value={activeSmartScheduleDisplayModel || null}
+                      onValueChange={(value) => {
+                        if (value === null) return
+                        saveSmartScheduleDisplaySelection({
+                          group: activeSmartScheduleDisplayGroup,
+                          model: value,
+                        })
                       }}
                     >
                       <SelectTrigger
                         className='w-full sm:w-60'
-                        aria-label='选择智能调度展示路由'
-                        disabled={smartScheduleDisplayOptions.length === 0}
+                        aria-label='选择智能调度模型'
+                        disabled={activeSmartScheduleDisplayModels.length === 0}
                       >
-                        <SelectValue placeholder='选择分组 / 模型' />
+                        <SelectValue placeholder='选择模型' />
                       </SelectTrigger>
                       <SelectContent alignItemWithTrigger={false}>
                         <SelectGroup>
-                          {smartScheduleDisplayOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
+                          {activeSmartScheduleDisplayModels.map((model) => (
+                            <SelectItem key={model} value={model}>
+                              {model}
                             </SelectItem>
                           ))}
                         </SelectGroup>

@@ -187,6 +187,8 @@ type channelMonitorRouteStabilityAggregate struct {
 	ActualSuccessCount          int64
 	ActualFailureCount          int64
 	FinalFailureCount           int64
+	RateLimitActualFailureCount int64
+	RateLimitFinalFailureCount  int64
 	RetryFailureCount           int64
 	RetryFailureDurationTotalMs int64
 	RetryFailureUnder1sCount    int64 `gorm:"column:retry_failure_under_1s_count"`
@@ -214,6 +216,8 @@ func getChannelMonitorRouteStabilityAggregates(
 				"SUM(actual_success_count) AS actual_success_count, "+
 				"SUM(actual_failure_count) AS actual_failure_count, "+
 				"SUM(final_failure_count) AS final_failure_count, "+
+				"SUM(rate_limit_actual_failure_count) AS rate_limit_actual_failure_count, "+
+				"SUM(rate_limit_final_failure_count) AS rate_limit_final_failure_count, "+
 				"SUM(retry_failure_count) AS retry_failure_count, "+
 				"SUM(retry_failure_duration_total_ms) AS retry_failure_duration_total_ms, "+
 				"SUM(retry_failure_under_1s_count) AS retry_failure_under_1s_count, "+
@@ -238,8 +242,10 @@ func getChannelMonitorRouteStabilityAggregates(
 }
 
 func channelMonitorRouteStabilityMetric(aggregate channelMonitorRouteStabilityAggregate) ChannelMonitorRouteStabilityMetric {
-	failureCount := max(max(aggregate.ActualFailureCount, aggregate.FinalFailureCount), 0)
-	finalFailureCount := min(max(aggregate.FinalFailureCount, 0), failureCount)
+	actualFailureCount := max(aggregate.ActualFailureCount-aggregate.RateLimitActualFailureCount, 0)
+	configuredFinalFailureCount := max(aggregate.FinalFailureCount-aggregate.RateLimitFinalFailureCount, 0)
+	failureCount := max(actualFailureCount, configuredFinalFailureCount)
+	finalFailureCount := min(configuredFinalFailureCount, failureCount)
 	retryFailureLimit := failureCount - finalFailureCount
 	retryFailureCount := min(max(aggregate.RetryFailureCount, 0), retryFailureLimit)
 	sampleCount := max(aggregate.ActualSuccessCount, 0) + failureCount

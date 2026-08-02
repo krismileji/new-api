@@ -57,7 +57,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                generatedAt,
-			"range_minutes":               settings.SmartSchedulePerformanceMinutes,
+			"performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
+			"stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
 			"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
 			"enabled":                     settings.SmartScheduleEnabled,
 			"routes":                      routes,
@@ -67,18 +68,14 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		})
 		return
 	}
-	startTimestamp := generatedAt - int64(settings.SmartSchedulePerformanceMinutes*60)
+	performanceStart := generatedAt - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
+	stabilityStart := generatedAt - int64(settings.SmartScheduleStabilityWindowMinutes*60)
 	performanceMetrics, err := model.GetChannelMonitorRoutePerformanceMetrics(
-		c.Request.Context(), startTimestamp, generatedAt,
+		c.Request.Context(), performanceStart, generatedAt,
 	)
 	if err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	performanceByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
-	for _, metric := range performanceMetrics {
-		key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
-		performanceByModel[key] = metric
 	}
 	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
 	probeMetricsAvailable := false
@@ -90,11 +87,12 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	}
 	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	stabilityByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRouteStabilityMetric)
+	jitterByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric)
 	stabilityByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric)
 	if logStabilityAvailable {
 		var stabilityMetrics []model.ChannelMonitorRouteStabilityMetric
 		stabilityMetrics, err = model.GetChannelMonitorRouteStabilityMetrics(
-			c.Request.Context(), startTimestamp, generatedAt,
+			c.Request.Context(), stabilityStart, generatedAt,
 		)
 		if err != nil {
 			common.ApiError(c, err)
@@ -103,6 +101,17 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		for _, metric := range stabilityMetrics {
 			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
 			stabilityByModel[key] = metric
+		}
+		jitterMetrics, jitterErr := model.GetChannelMonitorRoutePerformanceMetrics(
+			c.Request.Context(), stabilityStart, generatedAt,
+		)
+		if jitterErr != nil {
+			common.ApiError(c, jitterErr)
+			return
+		}
+		for _, metric := range jitterMetrics {
+			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			jitterByModel[key] = metric
 		}
 	}
 	for _, route := range routes {
@@ -113,17 +122,17 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		sharedMetricsAvailable = sharedMetricsAvailable ||
-			route.SharedSamples.MetricsSince(startTimestamp).SampleCount > 0
+			route.SharedSamples.MetricsSince(stabilityStart).SampleCount > 0
 		metric, hasMetric := stabilityByModel[modelKey]
 		var performance *channelSmartSchedulePerformance
-		if performanceMetric, exists := performanceByModel[modelKey]; exists {
-			performance = channelSmartScheduleSetPerformanceMetric(nil, performanceMetric)
-		}
 		if hasMetric {
 			performance = channelSmartScheduleSetStabilityMetric(performance, metric)
 		}
-		windowStart := startTimestamp
-		if policy.StabilityEnabled && route.State.StabilitySince > startTimestamp {
+		if jitterMetric, exists := jitterByModel[modelKey]; exists {
+			performance = channelSmartScheduleSetPerformanceMetric(performance, jitterMetric)
+		}
+		windowStart := stabilityStart
+		if policy.StabilityEnabled && route.State.StabilitySince > stabilityStart {
 			windowStart = route.State.StabilitySince
 			performance = nil
 			if logStabilityAvailable {
@@ -216,7 +225,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	})
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                generatedAt,
-		"range_minutes":               settings.SmartSchedulePerformanceMinutes,
+		"performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
+		"stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
 		"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
 		"enabled":                     settings.SmartScheduleEnabled,
 		"routes":                      routes,

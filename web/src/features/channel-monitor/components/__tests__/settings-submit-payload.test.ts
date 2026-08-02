@@ -74,10 +74,17 @@ const formValues = {
       sampleMode: 'probe',
       explorationTrafficPercent: 3,
       probeIntervalMinutes: 15,
+      prioritySamplingEnabled: true,
+      prioritySamplingIntervalMinutes: 10,
+      prioritySamplingBasePercent: 3,
+      prioritySamplingDecayPercent: 70,
+      prioritySamplingMinPercent: 0.5,
     },
   ],
   smartScheduleIntervalMinutes: 10,
-  smartSchedulePerformanceMinutes: 60,
+  smartSchedulePerformanceWindowMinutes: 60,
+  smartScheduleStabilityWindowMinutes: 120,
+  smartScheduleRateLimitCooldownSeconds: 30,
   smartScheduleForceReset: true,
 } as ChannelMonitorSettingsFormValues
 
@@ -94,7 +101,9 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_force_reset',
       'smart_schedule_group_policies',
       'smart_schedule_interval_minutes',
-      'smart_schedule_performance_minutes',
+      'smart_schedule_performance_window_minutes',
+      'smart_schedule_rate_limit_cooldown_seconds',
+      'smart_schedule_stability_window_minutes',
     ])
     assert.equal(payload.smart_schedule_group_policies?.[0]?.group, 'vip')
     assert.equal(
@@ -115,6 +124,23 @@ describe('channel monitor settings submit payload', () => {
       payload.smart_schedule_group_policies?.[0]?.probe_interval_minutes,
       15
     )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.priority_sampling_enabled,
+      true
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.priority_sampling_interval_minutes,
+      10
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.priority_sampling_decay_percent,
+      70
+    )
+    assert.equal(payload.smart_schedule_performance_window_minutes, 60)
+    assert.equal(payload.smart_schedule_stability_window_minutes, 120)
+    assert.equal(payload.smart_schedule_rate_limit_cooldown_seconds, 30)
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.degrade_stability_score,
       90

@@ -28,6 +28,7 @@ import {
   FormDescription,
   FormField,
   FormItem,
+  FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import {
@@ -55,9 +56,16 @@ import {
   MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
+  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
+  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
+  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES,
+  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
+  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
+  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
+  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
   MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
@@ -173,6 +181,53 @@ function GroupPolicyMetricFields(props: {
   )
 }
 
+type PrioritySamplingPercentFieldName =
+  | 'prioritySamplingBasePercent'
+  | 'prioritySamplingDecayPercent'
+  | 'prioritySamplingMinPercent'
+
+function PrioritySamplingPercentField(props: {
+  form: UseFormReturn<ChannelMonitorSmartSchedulePolicyFormValues>
+  name: PrioritySamplingPercentFieldName
+  label: string
+  description: string
+  min: number
+  max: number
+  step: number
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{props.label}</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={props.min}
+                max={props.max}
+                step={props.step}
+                inputMode='decimal'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={props.form.getFieldState(props.name).invalid}
+              />
+              <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>{props.description}</FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 export function ChannelMonitorSmartScheduleGroupPolicyFields(
   props: ChannelMonitorSmartScheduleGroupPolicyFieldsProps
 ) {
@@ -199,6 +254,10 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
   const sampleMode = useWatch({
     control: props.form.control,
     name: 'sampleMode',
+  })
+  const prioritySamplingEnabled = useWatch({
+    control: props.form.control,
+    name: 'prioritySamplingEnabled',
   })
   const selectedModels = useWatch({
     control: props.form.control,
@@ -509,6 +568,104 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               </FormItem>
             )}
           />
+        ) : null}
+      </div>
+
+      <div className='bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
+        <FormField
+          control={props.form.control}
+          name='prioritySamplingEnabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between gap-4'>
+              <div className='flex flex-col gap-1'>
+                <FormLabel>低优先级轮转采样</FormLabel>
+                <FormDescription>
+                  每轮选择一条健康低优先级渠道，临时提升到主渠道同层获取少量真实流量
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  disabled={applyMode !== 'priority_weight'}
+                  onCheckedChange={field.onChange}
+                  aria-label='低优先级轮转采样'
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        {applyMode !== 'priority_weight' ? (
+          <FormDescription>
+            仅“优先级分层 + 权重”支持轮转采样，当前配置不会生效
+          </FormDescription>
+        ) : null}
+
+        {applyMode === 'priority_weight' && prioritySamplingEnabled ? (
+          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+            <FormField
+              control={props.form.control}
+              name='prioritySamplingIntervalMinutes'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>轮转间隔</FormLabel>
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={
+                          MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES
+                        }
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={
+                          props.form.getFieldState(
+                            'prioritySamplingIntervalMinutes'
+                          ).invalid
+                        }
+                      />
+                      <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>切换本轮采样渠道的间隔</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <PrioritySamplingPercentField
+              form={props.form}
+              name='prioritySamplingBasePercent'
+              label='基础采样比例'
+              description='基础排名第 2 名的目标流量'
+              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT}
+              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT}
+              step={0.1}
+            />
+            <PrioritySamplingPercentField
+              form={props.form}
+              name='prioritySamplingDecayPercent'
+              label='排名递减比例'
+              description='每降低一名保留的流量比例'
+              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT}
+              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT}
+              step={0.1}
+            />
+            <PrioritySamplingPercentField
+              form={props.form}
+              name='prioritySamplingMinPercent'
+              label='最低采样比例'
+              description='低排名渠道仍能获得的最小流量'
+              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT}
+              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT}
+              step={0.01}
+            />
+          </div>
         ) : null}
       </div>
 

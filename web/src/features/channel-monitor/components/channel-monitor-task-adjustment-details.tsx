@@ -32,7 +32,9 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { formatTimestampToDate } from '@/lib/format'
 
+import { formatChannelMonitorSmartScheduleFailureStage } from '../lib/smart-schedule-execution'
 import type { ChannelMonitorTask, ChannelMonitorTaskAdjustment } from '../types'
 import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
 
@@ -73,7 +75,7 @@ function ScheduleFailuresWithoutAdjustments(props: {
       </Alert>
       {failures.map((failure) => (
         <Alert
-          key={`${failure.channel_id}-${failure.channel_name}`}
+          key={`${failure.channel_id}-${failure.group}-${failure.model}`}
           variant='destructive'
         >
           <HugeiconsIcon icon={Alert02Icon} />
@@ -82,8 +84,21 @@ function ScheduleFailuresWithoutAdjustments(props: {
               ? `${failure.channel_name}（ID ${failure.channel_id}）`
               : `渠道 ID ${failure.channel_id}`}
           </AlertTitle>
-          <AlertDescription className='text-left break-all'>
-            {failure.error || '智能调度更新失败'}
+          <AlertDescription className='flex flex-col gap-1 text-left break-all'>
+            {failure.group || failure.model ? (
+              <span>
+                {failure.group || '-'} / {failure.model || '-'}
+              </span>
+            ) : null}
+            {failure.failure_stage ? (
+              <span>
+                失败阶段：
+                {formatChannelMonitorSmartScheduleFailureStage(
+                  failure.failure_stage
+                )}
+              </span>
+            ) : null}
+            <span>{failure.error || '智能调度更新失败'}</span>
           </AlertDescription>
         </Alert>
       ))}
@@ -176,12 +191,32 @@ export function ChannelMonitorTaskAdjustmentDetails(props: {
                 </span>
               )}
             </div>
-            <div className='lg:justify-self-end'>
+            <div className='flex flex-wrap gap-1 lg:justify-self-end'>
               <AdjustmentActionBadge action={adjustment.action} />
+              {adjustment.failure_stage ? (
+                <Badge variant='destructive'>
+                  失败阶段：
+                  {formatChannelMonitorSmartScheduleFailureStage(
+                    adjustment.failure_stage
+                  )}
+                </Badge>
+              ) : null}
             </div>
             <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
               <span className='text-foreground font-medium'>调整原因：</span>
               {adjustment.reason || '未记录调整原因'}
+            </p>
+            <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
+              <span className='text-foreground font-medium'>
+                上一轮生效结果：
+              </span>
+              {(adjustment.previous_effective_time ?? 0) > 0
+                ? `P${adjustment.previous_effective_priority ?? 0} / W${adjustment.previous_effective_weight ?? 0} · ${formatTimestampToDate(adjustment.previous_effective_time ?? 0)}`
+                : '未记录已生效结果'}
+              {adjustment.action === 'failed' &&
+              (adjustment.previous_effective_time ?? 0) > 0
+                ? '；本轮失败未覆盖，上一轮结果继续生效'
+                : ''}
             </p>
             <ChannelMonitorSmartScheduleScoreDetails
               details={adjustment.score_details}

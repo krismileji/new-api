@@ -132,10 +132,14 @@ function createRoute(
       stability_since: 0,
       stability_saved_priority: 0,
       stability_saved_weight: 0,
-      exploration_active: false,
-      exploration_since: 0,
-      exploration_saved_priority: 0,
-      exploration_saved_weight: 0,
+      runtime_protection_until: 0,
+      base_rank: 1,
+      base_priority: overrides.priority ?? 100,
+      base_weight: overrides.weight ?? 100,
+      temporary_traffic_kind: '',
+      temporary_traffic_since: 0,
+      temporary_traffic_target_percent: 0,
+      last_priority_sample_time: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: false,
       ...overrides.state,
@@ -146,7 +150,8 @@ function createRoute(
 function createResult(): ChannelMonitorSmartScheduleRouteResult {
   return {
     generated_at: 1_752_777_845,
-    range_minutes: 60,
+    performance_window_minutes: 60,
+    stability_window_minutes: 120,
     sample_scope: 'channel_model',
     enabled: true,
     routes: [
@@ -189,6 +194,8 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
       }),
       createRoute(4, {
         channel_name: '未参与渠道',
+        priority: 0,
+        weight: 0,
         state: {
           excluded: true,
         } as ChannelMonitorSmartScheduleRoute['state'],
@@ -267,6 +274,11 @@ function renderBoard(
               sample_mode: 'traffic',
               exploration_traffic_percent: 3,
               probe_interval_minutes: 10,
+              priority_sampling_enabled: true,
+              priority_sampling_interval_minutes: 10,
+              priority_sampling_base_percent: 3,
+              priority_sampling_decay_percent: 70,
+              priority_sampling_min_percent: 0.5,
             },
             {
               group: 'default',
@@ -305,6 +317,11 @@ function renderBoard(
               sample_mode: 'probe',
               exploration_traffic_percent: 3,
               probe_interval_minutes: 15,
+              priority_sampling_enabled: false,
+              priority_sampling_interval_minutes: 10,
+              priority_sampling_base_percent: 3,
+              priority_sampling_decay_percent: 70,
+              priority_sampling_min_percent: 0.5,
             },
           ]
         }
@@ -340,15 +357,26 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('全部路由'), false)
   })
 
-  test('orders group navigation by ratio and shows the selected group as model pool cards', () => {
+  test('orders group navigation by ratio and shows only the selected model pool', () => {
     const markup = renderBoard()
 
     assert.ok(markup.indexOf('vip') < markup.indexOf('default'))
     assert.match(markup, /vip[\s\S]*x0\.5[\s\S]*1 池/)
     assert.match(markup, /default[\s\S]*x1[\s\S]*1 池/)
+    assert.ok(markup.includes('1. 选择分组'))
+    assert.ok(markup.includes('选择模型'))
+    assert.ok(markup.includes('· vip'))
+    assert.ok(markup.includes('aria-label="vip 分组下的智能调度模型"'))
     assert.ok(markup.includes('model-fast'))
+    assert.equal(markup.includes('model-standard'), false)
     assert.equal(markup.includes('测试 vip model-fast 调度池模型'), false)
-    assert.ok(markup.includes('流入层 P100 · 2 条'))
+    assert.ok(markup.includes('实际最高层 P100 · 2 条'))
+    assert.ok(markup.includes('评分第一'))
+    assert.ok(markup.includes('实际主渠道'))
+    assert.ok(markup.includes('基础排名'))
+    assert.ok(markup.includes('基础 P / W'))
+    assert.ok(markup.includes('当前 P / W'))
+    assert.ok(markup.includes('临时流量'))
     assert.ok(markup.includes('主线路'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('探索流量 3%'))
@@ -426,20 +454,20 @@ describe('channel monitor smart schedule board', () => {
     const result = createResult()
     result.routes = [
       createRoute(11, { channel_name: '主渠道', priority: 100 }),
-      createRoute(12, { channel_name: '低成本后续备用', priority: 80 }),
-      createRoute(13, { channel_name: '第一备用渠道', priority: 90 }),
+      createRoute(12, { channel_name: '低成本第 3 名', priority: 80 }),
+      createRoute(13, { channel_name: '第 2 名渠道', priority: 90 }),
     ]
 
     const markup = renderBoard({
       result,
       channels: [
         createChannel(11, '主渠道', 1, '主线路'),
-        createChannel(12, '低成本后续备用', 0.7, '后续备用'),
-        createChannel(13, '第一备用渠道', 0.9, '第一备用'),
+        createChannel(12, '低成本第 3 名', 0.7, '基础排名第 3'),
+        createChannel(13, '第 2 名渠道', 0.9, '基础排名第 2'),
       ],
     })
 
-    assert.ok(markup.indexOf('低成本后续备用') < markup.indexOf('第一备用渠道'))
+    assert.ok(markup.indexOf('低成本第 3 名') < markup.indexOf('第 2 名渠道'))
   })
 
   test('orders model pool cards by the configured order before the name fallback', () => {
@@ -487,6 +515,11 @@ describe('channel monitor smart schedule board', () => {
       sample_mode: 'traffic',
       exploration_traffic_percent: 3,
       probe_interval_minutes: 10,
+      priority_sampling_enabled: true,
+      priority_sampling_interval_minutes: 10,
+      priority_sampling_base_percent: 3,
+      priority_sampling_decay_percent: 70,
+      priority_sampling_min_percent: 0.5,
     } satisfies ChannelMonitorSmartScheduleGroupPolicy
 
     const markup = renderBoard({ result, groupPolicies: [groupPolicy] })
@@ -494,6 +527,10 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.indexOf('model-zeta') < markup.indexOf('model-beta'))
     assert.ok(markup.indexOf('model-beta') < markup.indexOf('model-alpha'))
     assert.ok(markup.indexOf('model-alpha') < markup.indexOf('model-gamma'))
+    assert.ok(markup.includes('Zeta 渠道'))
+    assert.equal(markup.includes('Beta 渠道'), false)
+    assert.equal(markup.includes('Alpha 渠道'), false)
+    assert.equal(markup.includes('Gamma 渠道'), false)
   })
 
   test('opens the lowest-ratio group without prioritizing a group that needs attention', () => {
@@ -551,7 +588,7 @@ describe('channel monitor smart schedule board', () => {
       /<button[^>]*data-slot="badge"[^>]*aria-label="解除 恢复中渠道 vip model-fast 的稳定性降级保护"[^>]*>/
     )
     assert.ok(markup.includes('备用渠道'))
-    assert.ok(markup.includes('第一备用'))
+    assert.ok(markup.includes('备用顺位'))
     assert.ok(markup.includes('未参与渠道'))
     assert.ok(markup.includes('未参与'))
     assert.equal(markup.includes('备用与未参与路由'), false)

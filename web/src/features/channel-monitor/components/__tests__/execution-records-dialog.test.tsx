@@ -91,7 +91,8 @@ function createTask(
             unchanged: 0,
             skipped: 0,
             failed: 0,
-            performance_minutes: 60,
+            performance_window_minutes: 60,
+            stability_window_minutes: 30,
             adjustments: [
               {
                 channel_id: 7,
@@ -104,6 +105,9 @@ function createTask(
                 old_weight: 20,
                 new_weight: 90,
                 score: 0.96,
+                previous_effective_time: 1_752_700_000,
+                previous_effective_priority: 80,
+                previous_effective_weight: 20,
                 reason: '综合评分最高，提升为主渠道',
               },
             ],

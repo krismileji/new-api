@@ -128,7 +128,7 @@ func TestRunChannelSmartScheduleRecordsPerRouteApplyFailures(t *testing.T) {
 	})
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "失败池已保留上一轮结果")
 	assert.Equal(t, 2, result.Failed)
 	require.Len(t, result.Adjustments, 2)
 	for _, adjustment := range result.Adjustments {
@@ -136,6 +136,14 @@ func TestRunChannelSmartScheduleRecordsPerRouteApplyFailures(t *testing.T) {
 		assert.Equal(t, forcedError.Error(), adjustment.Reason)
 		assert.Equal(t, "vip", adjustment.Group)
 		assert.Equal(t, "model-a", adjustment.Model)
+	}
+	var preservedAbilities []model.Ability
+	require.NoError(t, db.Order("channel_id ASC").Find(&preservedAbilities).Error)
+	require.Len(t, preservedAbilities, 2)
+	for _, ability := range preservedAbilities {
+		require.NotNil(t, ability.Priority)
+		assert.Equal(t, priority, *ability.Priority)
+		assert.Equal(t, weight, ability.Weight)
 	}
 }
 
@@ -231,14 +239,15 @@ func TestRunChannelSmartScheduleByRouteIsolatesGroupModelPools(t *testing.T) {
 
 func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	goldPolicy := channelSmartScheduleTestGroupPolicy(
+		"gold", channelMonitorSmartScheduleStrategyTPS, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-b"}, 1, 80, 30,
+	)
+	prioritySamplingEnabled := false
+	goldPolicy.PrioritySamplingEnabled = &prioritySamplingEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption: "true",
-		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
-			channelSmartScheduleTestGroupPolicy(
-				"gold", channelMonitorSmartScheduleStrategyTPS, false,
-				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-b"}, 1, 80, 30,
-			),
-		),
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, goldPolicy),
 	})
 	priority := int64(80)
 	weight := uint(50)
@@ -298,8 +307,8 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	}
 	goldFast := abilityByRoute[routeKey{channelId: 1301, model: "model-b"}]
 	goldSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-b"}]
-	assert.Equal(t, int64(100), *goldFast.Priority)
-	assert.Equal(t, int64(90), *goldSlow.Priority)
+	assert.Equal(t, int64(2), *goldFast.Priority)
+	assert.Equal(t, int64(1), *goldSlow.Priority)
 	assert.Equal(t, goldFast.Weight, goldSlow.Weight)
 	assert.Equal(t, int64(80), *abilityByRoute[routeKey{channelId: 1301, model: "model-a"}].Priority)
 	assert.Equal(t, weight, abilityByRoute[routeKey{channelId: 1301, model: "model-a"}].Weight)

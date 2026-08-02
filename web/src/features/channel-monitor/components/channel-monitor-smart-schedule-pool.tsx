@@ -47,7 +47,11 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { formatMonitorRatio } from '../lib/format'
-import { formatChannelMonitorSmartScheduleEstimatedShare } from '../lib/smart-schedule-display'
+import {
+  formatChannelMonitorSmartScheduleEstimatedShare,
+  formatChannelMonitorSmartScheduleTemporaryTraffic,
+  getChannelMonitorSmartScheduleTemporaryTrafficLabel,
+} from '../lib/smart-schedule-display'
 import {
   channelMonitorSmartScheduleRouteKey,
   channelMonitorSmartScheduleRouteParticipates,
@@ -80,6 +84,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
   channelsById: ReadonlyMap<number, ChannelMonitorItem>
   placements: ReadonlyMap<string, ChannelMonitorSmartScheduleRoutePlacement>
   updateRouteKey: string | null
+  manualRoutingKey: string | null
   updateDisabled: boolean
   onParticipationChange: (
     route: ChannelMonitorSmartScheduleRoute,
@@ -88,6 +93,11 @@ type ChannelMonitorSmartSchedulePoolProps = {
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSaveManualRouting: (
+    route: ChannelMonitorSmartScheduleRoute,
+    priority: number,
+    weight: number
+  ) => void
 }
 
 type RouteFilter = 'all' | 'traffic' | 'attention' | 'backup' | 'excluded'
@@ -113,7 +123,8 @@ const ATTENTION_STATUSES =
   new Set<ChannelMonitorSmartScheduleRouteDisplayStatus>([
     'degraded',
     'probing',
-    'exploring',
+    'insufficient_samples',
+    'priority_sampling',
     'failed',
     'unavailable',
   ])
@@ -122,7 +133,8 @@ function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
   if (status === '稳定性降级' || status === '最近失败') return 'destructive'
   if (
     status === '稳定性试放' ||
-    status === '探索采样' ||
+    status === '样本不足补量' ||
+    status === '低优先级轮转' ||
     status === '部分可调度'
   ) {
     return 'warning'
@@ -156,7 +168,7 @@ function routeMatchesFilter(
   }
   if (filter === 'attention') return ATTENTION_STATUSES.has(status)
   if (filter === 'backup') {
-    return status === 'first_backup' || status === 'standby'
+    return status === 'backup'
   }
   return status === 'excluded'
 }
@@ -215,6 +227,104 @@ function ManualPrimaryIndicator(props: {
     <span className='text-primary shrink-0' title={label} aria-label={label}>
       <HugeiconsIcon icon={PinIcon} className='size-3.5' aria-hidden='true' />
     </span>
+  )
+}
+
+function formatPoolChannelReference(
+  routes: readonly ChannelMonitorSmartScheduleRoute[],
+  channelId: number
+) {
+  if (channelId <= 0) return '-'
+  const route = routes.find((item) => item.channel_id === channelId)
+  return route
+    ? `${route.channel_name}（ID ${channelId}）`
+    : `渠道 ID ${channelId}`
+}
+
+function PoolDecisionSummary(props: {
+  pool: ChannelMonitorSmartSchedulePoolView
+}) {
+  const summary = props.pool.summary
+  const topLayer = summary.actualTopLayerChannelIds
+    .map((channelId) =>
+      formatPoolChannelReference(props.pool.routes, channelId)
+    )
+    .join('、')
+
+  return (
+    <div
+      className='bg-muted/10 grid gap-x-5 gap-y-3 border-b px-4 py-3 sm:grid-cols-3'
+      aria-label='调度池决策结果'
+    >
+      <div className='min-w-0'>
+        <div className='text-muted-foreground text-[11px]'>评分第一</div>
+        <div className='mt-0.5 truncate text-xs font-medium'>
+          {formatPoolChannelReference(
+            props.pool.routes,
+            summary.scoringWinnerChannelId
+          )}
+        </div>
+      </div>
+      <div className='min-w-0'>
+        <div className='text-muted-foreground text-[11px]'>实际主渠道</div>
+        <div className='mt-0.5 truncate text-xs font-medium'>
+          {formatPoolChannelReference(
+            props.pool.routes,
+            summary.actualPrimaryChannelId
+          )}
+        </div>
+      </div>
+      <div className='min-w-0'>
+        <div className='text-muted-foreground text-[11px]'>实际最高层</div>
+        <div className='mt-0.5 text-xs font-medium break-words'>
+          {summary.actualHighestPriority == null
+            ? '-'
+            : `P${summary.actualHighestPriority} · ${topLayer || '未记录渠道'}`}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RouteDecisionBadges(props: {
+  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
+}) {
+  if (!props.placement) return <span className='text-muted-foreground'>-</span>
+  return (
+    <div className='flex flex-wrap gap-1'>
+      {props.placement.isScoringWinner ? (
+        <Badge variant='outline'>评分第一</Badge>
+      ) : null}
+      {props.placement.isActualPrimary ? <Badge>实际主渠道</Badge> : null}
+      {props.placement.isActualTopLayer ? (
+        <Badge variant='secondary'>实际最高层</Badge>
+      ) : null}
+      {!props.placement.isScoringWinner &&
+      !props.placement.isActualPrimary &&
+      !props.placement.isActualTopLayer ? (
+        <span className='text-muted-foreground'>-</span>
+      ) : null}
+    </div>
+  )
+}
+
+function RouteTemporaryTraffic(props: {
+  route: ChannelMonitorSmartScheduleRoute
+}) {
+  if (!props.route.state.temporary_traffic_kind) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+  return (
+    <div className='flex flex-col gap-0.5'>
+      <span className='font-medium'>
+        {getChannelMonitorSmartScheduleTemporaryTrafficLabel(
+          props.route.state.temporary_traffic_kind
+        )}
+      </span>
+      <span className='text-muted-foreground font-mono'>
+        目标 {props.route.state.temporary_traffic_target_percent.toFixed(1)}%
+      </span>
+    </div>
   )
 }
 
@@ -457,18 +567,20 @@ export function ChannelMonitorSmartSchedulePool(
             </span>
             <span>
               {props.pool.summary.topPriority == null
-                ? '无候选层'
-                : `流入层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
+                ? '无实际最高层'
+                : `实际最高层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
             </span>
             <span>{formatSampleMode(props.policy)}</span>
           </p>
         </div>
       </header>
 
+      <PoolDecisionSummary pool={props.pool} />
+
       <div className='bg-muted/15 grid gap-3 border-b px-4 py-3 lg:grid-cols-[8rem_minmax(0,1fr)]'>
         <div>
           <div className='text-sm font-medium'>预计流量分布</div>
-          <div className='text-muted-foreground mt-0.5 text-xs'>当前流入层</div>
+          <div className='text-muted-foreground mt-0.5 text-xs'>实际最高层</div>
         </div>
         <TrafficDistribution
           routes={props.pool.routes}
@@ -571,24 +683,27 @@ export function ChannelMonitorSmartSchedulePool(
             data-schedule-scroll-region='true'
           >
             <table
-              className='w-full min-w-[60rem] table-fixed text-left text-xs tabular-nums'
+              className='w-full min-w-[76rem] table-fixed text-left text-xs tabular-nums'
               data-schedule-route-list='desktop-table'
             >
               <thead className='bg-card/95 sticky top-0 z-10 border-b supports-backdrop-filter:backdrop-blur-sm'>
                 <tr className='text-muted-foreground'>
-                  <th className='w-[22%] px-3 py-2 font-medium'>渠道</th>
-                  <th className='w-[11%] px-2 py-2 font-medium'>状态</th>
-                  <th className='w-[8%] px-2 py-2 font-medium'>成本倍率</th>
-                  <th className='w-[8%] px-2 py-2 font-medium'>最终得分</th>
-                  <th className='w-[10%] px-2 py-2 font-medium'>
-                    优先级 / 权重
+                  <th className='w-[18%] px-3 py-2 font-medium'>渠道</th>
+                  <th className='w-[10%] px-2 py-2 font-medium'>状态</th>
+                  <th className='w-[9%] px-2 py-2 font-medium'>
+                    成本倍率 / 最终得分
                   </th>
-                  <th className='w-[9%] px-2 py-2 font-medium'>预计流量</th>
-                  <th className='w-[17%] px-2 py-2 font-medium'>共享样本</th>
-                  <th className='w-[7%] px-2 py-2 text-center font-medium'>
+                  <th className='w-[7%] px-2 py-2 font-medium'>基础排名</th>
+                  <th className='w-[9%] px-2 py-2 font-medium'>基础 P / W</th>
+                  <th className='w-[9%] px-2 py-2 font-medium'>当前 P / W</th>
+                  <th className='w-[14%] px-2 py-2 font-medium'>决策结果</th>
+                  <th className='w-[11%] px-2 py-2 font-medium'>临时流量</th>
+                  <th className='w-[8%] px-2 py-2 font-medium'>预计流量</th>
+                  <th className='w-[15%] px-2 py-2 font-medium'>共享样本</th>
+                  <th className='w-[6%] px-2 py-2 text-center font-medium'>
                     参与
                   </th>
-                  <th className='w-[8%] px-3 py-2 text-right font-medium'>
+                  <th className='w-[7%] px-3 py-2 text-right font-medium'>
                     操作
                   </th>
                 </tr>
@@ -636,15 +751,33 @@ export function ChannelMonitorSmartSchedulePool(
                         />
                       </td>
                       <td className='px-2 py-2 align-middle font-mono'>
-                        {formatMonitorRatio(channel?.cost_ratio)}
+                        <span className='block'>
+                          {formatMonitorRatio(channel?.cost_ratio)}
+                        </span>
+                        <span className='text-muted-foreground mt-0.5 block'>
+                          {route.state.last_schedule_score == null
+                            ? '得分 -'
+                            : `得分 ${(route.state.last_schedule_score * 100).toFixed(1)}`}
+                        </span>
                       </td>
                       <td className='px-2 py-2 align-middle font-mono font-medium'>
-                        {route.state.last_schedule_score == null
-                          ? '-'
-                          : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`}
+                        {route.state.base_rank > 0
+                          ? `第 ${route.state.base_rank} 名`
+                          : '-'}
                       </td>
                       <td className='px-2 py-2 align-middle font-mono'>
+                        {route.state.base_rank > 0
+                          ? `P${route.state.base_priority} · W${route.state.base_weight}`
+                          : '-'}
+                      </td>
+                      <td className='px-2 py-2 align-middle font-mono font-medium'>
                         P{route.priority} · W{route.weight}
+                      </td>
+                      <td className='px-2 py-2 align-middle'>
+                        <RouteDecisionBadges placement={placement} />
+                      </td>
+                      <td className='px-2 py-2 align-middle'>
+                        <RouteTemporaryTraffic route={route} />
                       </td>
                       <td className='px-2 py-2 align-middle font-mono font-medium'>
                         {formatChannelMonitorSmartScheduleEstimatedShare(
@@ -723,29 +856,71 @@ export function ChannelMonitorSmartSchedulePool(
                     />
                   </div>
 
-                  <div className='mt-3 grid grid-cols-3 gap-3 border-y py-2 text-xs'>
+                  <div className='mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-y py-2 text-xs'>
                     <div>
-                      <span className='text-muted-foreground block'>得分</span>
-                      <span className='font-mono font-medium'>
+                      <span className='text-muted-foreground block'>
+                        成本倍率 / 最终得分
+                      </span>
+                      <span className='font-mono font-medium tabular-nums'>
+                        {formatMonitorRatio(channel?.cost_ratio)} /{' '}
                         {route.state.last_schedule_score == null
                           ? '-'
-                          : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`}
+                          : (route.state.last_schedule_score * 100).toFixed(1)}
                       </span>
                     </div>
                     <div>
-                      <span className='text-muted-foreground block'>路由</span>
+                      <span className='text-muted-foreground block'>
+                        基础排名
+                      </span>
+                      <span className='font-mono font-medium'>
+                        {route.state.base_rank > 0
+                          ? `第 ${route.state.base_rank} 名`
+                          : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className='text-muted-foreground block'>
+                        基础 P / W
+                      </span>
                       <span className='font-mono'>
+                        {route.state.base_rank > 0
+                          ? `P${route.state.base_priority} · W${route.state.base_weight}`
+                          : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className='text-muted-foreground block'>
+                        当前 P / W
+                      </span>
+                      <span className='font-mono font-medium'>
                         P{route.priority} · W{route.weight}
                       </span>
                     </div>
                     <div>
-                      <span className='text-muted-foreground block'>流量</span>
+                      <span className='text-muted-foreground block'>
+                        临时流量
+                      </span>
+                      <span className='font-medium'>
+                        {formatChannelMonitorSmartScheduleTemporaryTraffic(
+                          route.state.temporary_traffic_kind,
+                          route.state.temporary_traffic_target_percent
+                        )}
+                      </span>
+                    </div>
+                    <div>
+                      <span className='text-muted-foreground block'>
+                        预计流量
+                      </span>
                       <span className='font-mono font-medium'>
                         {formatChannelMonitorSmartScheduleEstimatedShare(
                           placement
                         )}
                       </span>
                     </div>
+                  </div>
+
+                  <div className='mt-2'>
+                    <RouteDecisionBadges placement={placement} />
                   </div>
 
                   <div className='mt-2 flex items-center justify-between gap-3'>
@@ -791,6 +966,9 @@ export function ChannelMonitorSmartSchedulePool(
           props.updateRouteKey ===
             channelMonitorSmartScheduleRouteKey(detailRoute)
         }
+        manualRoutingPending={
+          detailRoute != null && props.manualRoutingKey === detailRouteKey
+        }
         updateDisabled={props.updateDisabled}
         onOpenChange={(open) => {
           if (!open) setDetailRouteKey(null)
@@ -799,6 +977,7 @@ export function ChannelMonitorSmartSchedulePool(
         onClearProtection={props.onClearProtection}
         onSetPrimary={props.onSetPrimary}
         onClearPrimary={props.onClearPrimary}
+        onSaveManualRouting={props.onSaveManualRouting}
       />
     </section>
   )

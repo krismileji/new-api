@@ -26,7 +26,7 @@ import { ChannelMonitorSmartScheduleScoreDetails as ScoreDetails } from '../chan
 
 function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
   return {
-    version: 2,
+    version: 3,
     strategy: 'smart',
     minimum_samples: 5,
     sample_scope: 'channel_model',
@@ -83,8 +83,18 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       current_primary_channel_id: 8,
       raw_winner_channel_id: 7,
       selected_primary_channel_id: 7,
+      actual_primary_channel_id: 7,
       selected_primary: true,
       manual_primary_channel_id: 0,
+      base_rank: 1,
+      base_priority: 3,
+      base_weight: 100,
+      applied_priority: 3,
+      applied_weight: 90,
+      actual_highest_priority: 3,
+      actual_top_layer_channel_ids: [7],
+      temporary_traffic_kind: 'priority_sampling',
+      temporary_traffic_target_percent: 2.5,
       switch_threshold_percent: 3,
       primary_traffic_percent: 90,
       force_reset: false,
@@ -148,6 +158,12 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('原主渠道'))
     assert.ok(markup.includes('渠道 8'))
     assert.ok(markup.includes('评分第一'))
+    assert.ok(markup.includes('实际主渠道'))
+    assert.ok(markup.includes('基础排名'))
+    assert.ok(markup.includes('当前应用'))
+    assert.ok(markup.includes('实际最高层'))
+    assert.ok(markup.includes('低优先级轮转'))
+    assert.ok(markup.includes('2.5%'))
     assert.ok(markup.includes('切换分差'))
     assert.ok(markup.includes('3.0%'))
     assert.ok(markup.includes('评分领先且超过主渠道切换分差'))
@@ -167,6 +183,19 @@ describe('smart schedule score calculation details', () => {
 
     assert.ok(markup.includes('未计入'))
     assert.ok(markup.includes('未计入：样本 2/5'))
+  })
+
+  test('renders skipped decisions when the backend has no actual top layer', () => {
+    const details = createScoreDetails()
+    details.decision.actual_highest_priority = 0
+    details.decision.actual_top_layer_channel_ids = null
+
+    const markup = renderToStaticMarkup(
+      <ScoreDetails details={details} defaultOpen />
+    )
+
+    assert.ok(markup.includes('实际最高层'))
+    assert.ok(markup.includes('渠道 -'))
   })
 
   test('renders nothing when no saved score snapshot exists', () => {

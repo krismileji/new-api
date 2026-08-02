@@ -31,35 +31,67 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
 import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
+  MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+  MAX_SMART_SCHEDULE_WINDOW_MINUTES,
+  MIN_SMART_SCHEDULE_WINDOW_MINUTES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
 import { ChannelMonitorSettingLabel } from './channel-monitor-setting-label'
 import { ChannelMonitorSmartScheduleGroupPolicies } from './channel-monitor-smart-schedule-group-policies'
 
-const PERFORMANCE_RANGE_OPTIONS = [
-  { value: '15', label: '近 15 分钟' },
-  { value: '60', label: '近 1 小时' },
-  { value: '360', label: '近 6 小时' },
-  { value: '1440', label: '近 24 小时' },
-]
-
 type ChannelMonitorSmartScheduleFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   modelOptionsByGroup: ReadonlyMap<string, string[]>
   groupOptions: string[]
+}
+
+function ChannelMonitorSmartScheduleWindowField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  name:
+    | 'smartSchedulePerformanceWindowMinutes'
+    | 'smartScheduleStabilityWindowMinutes'
+  label: string
+  description: string
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <ChannelMonitorSettingLabel
+            label={props.label}
+            helpKey='performanceRange'
+          />
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={MIN_SMART_SCHEDULE_WINDOW_MINUTES}
+                max={MAX_SMART_SCHEDULE_WINDOW_MINUTES}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={props.form.getFieldState(props.name).invalid}
+              />
+              <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>{props.description}</FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 }
 
 function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
@@ -95,6 +127,51 @@ function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
               <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
             </InputGroup>
           </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+function ChannelMonitorRateLimitCooldownField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='smartScheduleRateLimitCooldownSeconds'
+      render={({ field }) => (
+        <FormItem>
+          <ChannelMonitorSettingLabel
+            label='429 冷却时间'
+            helpKey='rateLimitCooldown'
+          />
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={0}
+                max={MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors
+                    .smartScheduleRateLimitCooldownSeconds
+                )}
+              />
+              <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            上游返回 429 后临时停止该渠道对应模型进入新请求；到期自动恢复，0
+            秒表示关闭
+          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -141,12 +218,12 @@ export function ChannelMonitorSmartScheduleFields(
             运行设置
           </h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            控制所有已配置分组的执行频率、统计窗口和响应等待时间
+            控制所有已配置分组的执行频率、统计窗口、429 临时冷却和响应等待时间
           </p>
         </div>
         <div
           data-slot='smart-schedule-runtime-fields'
-          className='grid items-start gap-4 md:grid-cols-2 lg:grid-cols-3'
+          className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-5'
         >
           <FormField
             control={props.form.control}
@@ -182,41 +259,21 @@ export function ChannelMonitorSmartScheduleFields(
             )}
           />
 
-          <FormField
-            control={props.form.control}
-            name='smartSchedulePerformanceMinutes'
-            render={({ field }) => (
-              <FormItem>
-                <ChannelMonitorSettingLabel
-                  label='统计范围'
-                  helpKey='performanceRange'
-                />
-                <Select
-                  items={PERFORMANCE_RANGE_OPTIONS}
-                  value={String(field.value)}
-                  onValueChange={(value) => {
-                    if (value !== null) field.onChange(Number(value))
-                  }}
-                >
-                  <FormControl>
-                    <SelectTrigger className='w-full'>
-                      <SelectValue />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      {PERFORMANCE_RANGE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
+          <ChannelMonitorSmartScheduleWindowField
+            form={props.form}
+            name='smartSchedulePerformanceWindowMinutes'
+            label='性能窗口'
+            description='用于首字、TPS 和业务性能评分'
           />
+
+          <ChannelMonitorSmartScheduleWindowField
+            form={props.form}
+            name='smartScheduleStabilityWindowMinutes'
+            label='稳定性窗口'
+            description='用于成功率、失败耗时和首字抖动'
+          />
+
+          <ChannelMonitorRateLimitCooldownField form={props.form} />
 
           <ChannelMonitorRelayResponseHeaderTimeoutField form={props.form} />
         </div>

@@ -6,7 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ChannelSmartScheduleScoreDetailsVersion = 2
+const ChannelSmartScheduleScoreDetailsVersion = 3
 
 type ChannelSmartScheduleScoreInput struct {
 	Value       *float64 `json:"value"`
@@ -63,8 +63,18 @@ type ChannelSmartScheduleScoreDecision struct {
 	CurrentPrimaryChannelId       int     `json:"current_primary_channel_id"`
 	RawWinnerChannelId            int     `json:"raw_winner_channel_id"`
 	SelectedPrimaryChannelId      int     `json:"selected_primary_channel_id"`
+	ActualPrimaryChannelId        int     `json:"actual_primary_channel_id"`
 	SelectedPrimary               bool    `json:"selected_primary"`
 	ManualPrimaryChannelId        int     `json:"manual_primary_channel_id"`
+	BaseRank                      int     `json:"base_rank"`
+	BasePriority                  int64   `json:"base_priority"`
+	BaseWeight                    uint    `json:"base_weight"`
+	AppliedPriority               int64   `json:"applied_priority"`
+	AppliedWeight                 uint    `json:"applied_weight"`
+	ActualHighestPriority         int64   `json:"actual_highest_priority"`
+	ActualTopLayerChannelIds      []int   `json:"actual_top_layer_channel_ids"`
+	TemporaryTrafficKind          string  `json:"temporary_traffic_kind"`
+	TemporaryTrafficTargetPercent float64 `json:"temporary_traffic_target_percent"`
 	PrimarySwitchThresholdPercent float64 `json:"switch_threshold_percent"`
 	PrimaryTrafficPercent         float64 `json:"primary_traffic_percent"`
 	ForceReset                    bool    `json:"force_reset"`

@@ -35,6 +35,7 @@ const domGlobals = [
   'DocumentFragment',
   'HTMLElement',
   'HTMLButtonElement',
+  'HTMLFormElement',
   'HTMLInputElement',
   'HTMLSelectElement',
   'SVGElement',
@@ -50,6 +51,7 @@ const domGlobals = [
   'MouseEvent',
   'MutationObserver',
   'ResizeObserver',
+  'FormData',
   'requestAnimationFrame',
   'cancelAnimationFrame',
   'getComputedStyle',
@@ -133,10 +135,14 @@ function createRoute(
       stability_since: 0,
       stability_saved_priority: 0,
       stability_saved_weight: 0,
-      exploration_active: false,
-      exploration_since: 0,
-      exploration_saved_priority: 0,
-      exploration_saved_weight: 0,
+      runtime_protection_until: 0,
+      base_rank: channelId,
+      base_priority: priority,
+      base_weight: 100,
+      temporary_traffic_kind: '',
+      temporary_traffic_since: 0,
+      temporary_traffic_target_percent: 0,
+      last_priority_sample_time: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: true,
       ...overrides.state,
@@ -214,6 +220,11 @@ assert.ok(poolSummary)
 
 async function renderPool(options?: {
   onClearPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
+  onSaveManualRouting?: (
+    route: ChannelMonitorSmartScheduleRoute,
+    priority: number,
+    weight: number
+  ) => void
 }) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -226,11 +237,13 @@ async function renderPool(options?: {
         channelsById={channels}
         placements={placements}
         updateRouteKey={null}
+        manualRoutingKey={null}
         updateDisabled={false}
         onParticipationChange={() => {}}
         onClearProtection={() => {}}
         onSetPrimary={() => {}}
         onClearPrimary={options?.onClearPrimary ?? (() => {})}
+        onSaveManualRouting={options?.onSaveManualRouting ?? (() => {})}
       />
     )
   })
@@ -305,6 +318,13 @@ describe('smart schedule dense pool interactions', () => {
 
   test('opens route details with an accessible expanded state', async () => {
     const rendered = await renderPool()
+    assert.ok(rendered.container.textContent?.includes('评分第一'))
+    assert.ok(rendered.container.textContent?.includes('实际主渠道'))
+    assert.ok(rendered.container.textContent?.includes('实际最高层'))
+    assert.ok(rendered.container.textContent?.includes('基础排名'))
+    assert.ok(rendered.container.textContent?.includes('基础 P / W'))
+    assert.ok(rendered.container.textContent?.includes('当前 P / W'))
+    assert.ok(rendered.container.textContent?.includes('临时流量'))
     const detailButtons =
       rendered.container.querySelectorAll<HTMLButtonElement>(
         '[aria-label="查看 上海主渠道 的调度详情"]'
@@ -322,6 +342,62 @@ describe('smart schedule dense pool interactions', () => {
       expandedButtons[0]?.getAttribute('aria-controls'),
       'channel-monitor-route-details-1'
     )
+    const details = document.querySelector<HTMLElement>(
+      '[aria-label="上海主渠道 调度详情"]'
+    )
+    assert.ok(details)
+    assert.ok(details.textContent?.includes('基础排名'))
+    assert.ok(details.textContent?.includes('基础 P / W'))
+    assert.ok(details.textContent?.includes('当前 P / W'))
+    assert.ok(details.textContent?.includes('临时流量类型与目标'))
+    assert.ok(details.querySelector('[aria-label="调度池决策结果"]'))
+
+    await act(async () => rendered.root.unmount())
+    rendered.container.remove()
+  })
+
+  test('lets an administrator save priority and weight only after the route leaves scheduling', async () => {
+    let submitted:
+      | {
+          route: ChannelMonitorSmartScheduleRoute
+          priority: number
+          weight: number
+        }
+      | undefined
+    const rendered = await renderPool({
+      onSaveManualRouting: (route, priority, weight) => {
+        submitted = { route, priority, weight }
+      },
+    })
+    const detailButtons =
+      rendered.container.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="查看 广州暂停渠道 的调度详情"]'
+      )
+    assert.equal(detailButtons.length, 2)
+
+    await act(async () => detailButtons[0]?.click())
+    const details = document.querySelector<HTMLElement>(
+      '[aria-label="广州暂停渠道 调度详情"]'
+    )
+    assert.ok(details)
+    assert.ok(details.textContent?.includes('人工路由设置'))
+    const priorityInput =
+      details.querySelector<HTMLInputElement>('#manual-priority-3')
+    const weightInput =
+      details.querySelector<HTMLInputElement>('#manual-weight-3')
+    const submit = details.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    )
+    assert.ok(priorityInput)
+    assert.ok(weightInput)
+    assert.ok(submit)
+    priorityInput.value = '30'
+    weightInput.value = '400'
+
+    await act(async () => submit.click())
+    assert.equal(submitted?.route.channel_id, 3)
+    assert.equal(submitted?.priority, 30)
+    assert.equal(submitted?.weight, 400)
 
     await act(async () => rendered.root.unmount())
     rendered.container.remove()

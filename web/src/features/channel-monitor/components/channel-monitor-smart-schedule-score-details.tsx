@@ -208,6 +208,14 @@ export function ChannelMonitorSmartScheduleScoreDetails(
   if (!props.details) return null
 
   const details = props.details
+  const actualTopLayerChannelIds =
+    details.decision.actual_top_layer_channel_ids ?? []
+  let temporaryTrafficLabel = ''
+  if (details.decision.temporary_traffic_kind === 'insufficient_samples') {
+    temporaryTrafficLabel = '样本不足补量'
+  } else if (details.decision.temporary_traffic_kind === 'priority_sampling') {
+    temporaryTrafficLabel = '低优先级轮转'
+  }
   let stabilityState = '未启用'
   if (details.stability.enabled) stabilityState = '未达到可用条件'
   if (details.stability.applied) {
@@ -357,8 +365,8 @@ export function ChannelMonitorSmartScheduleScoreDetails(
                 {formatChannelId(details.decision.raw_winner_channel_id)}
               </span>
               <span>
-                <span className='text-muted-foreground'>最终主渠道 </span>
-                {formatChannelId(details.decision.selected_primary_channel_id)}
+                <span className='text-muted-foreground'>实际主渠道 </span>
+                {formatChannelId(details.decision.actual_primary_channel_id)}
               </span>
               {details.decision.manual_primary_channel_id > 0 ? (
                 <span>
@@ -374,6 +382,37 @@ export function ChannelMonitorSmartScheduleScoreDetails(
                 <span className='text-muted-foreground'>主渠道目标流量 </span>
                 {formatPercent(details.decision.primary_traffic_percent)}
               </span>
+              {details.decision.base_rank > 0 ? (
+                <span>
+                  <span className='text-muted-foreground'>基础排名 </span>第{' '}
+                  {details.decision.base_rank} 名 · P
+                  {details.decision.base_priority} / W
+                  {details.decision.base_weight}
+                </span>
+              ) : null}
+              <span>
+                <span className='text-muted-foreground'>当前应用 </span>P
+                {details.decision.applied_priority} / W
+                {details.decision.applied_weight}
+              </span>
+              {details.decision.actual_highest_priority >= 0 ? (
+                <span>
+                  <span className='text-muted-foreground'>实际最高层 </span>P
+                  {details.decision.actual_highest_priority} · 渠道{' '}
+                  {actualTopLayerChannelIds.length > 0
+                    ? actualTopLayerChannelIds.join('、')
+                    : '-'}
+                </span>
+              ) : null}
+              {temporaryTrafficLabel ? (
+                <span>
+                  <span className='text-muted-foreground'>临时流量 </span>
+                  {temporaryTrafficLabel}{' '}
+                  {formatPercent(
+                    details.decision.temporary_traffic_target_percent
+                  )}
+                </span>
+              ) : null}
             </div>
             <div className='text-muted-foreground mt-2 grid gap-1 break-words'>
               <p>

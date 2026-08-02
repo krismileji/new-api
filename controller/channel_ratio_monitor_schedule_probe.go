@@ -239,7 +239,11 @@ func runChannelSmartScheduleProbeOnce(
 	}
 
 	now := common.GetTimestamp()
-	performanceStart := now - int64(settings.SmartSchedulePerformanceMinutes*60)
+	retentionMinutes := max(
+		settings.SmartSchedulePerformanceWindowMinutes,
+		settings.SmartScheduleStabilityWindowMinutes,
+	)
+	retentionStart := now - int64(retentionMinutes*60)
 	type dueProbe struct {
 		routes []model.ChannelSmartScheduleRoute
 	}
@@ -397,7 +401,7 @@ func runChannelSmartScheduleProbeOnce(
 		_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: route.ChannelId, Model: route.Model,
 			Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
-			WindowStart: performanceStart, Time: probeTime, Success: succeeded, Error: message,
+			WindowStart: retentionStart, Time: probeTime, Success: succeeded, Error: message,
 			DurationMs:   &probeDurationMs,
 			FirstTokenMs: probeResult.firstResponseMilliseconds,
 			TPS:          probeResult.tokensPerSecond,

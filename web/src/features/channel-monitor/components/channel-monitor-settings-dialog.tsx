@@ -73,6 +73,7 @@ import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
@@ -308,8 +309,13 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         ),
       smartScheduleIntervalMinutes:
         props.settings.smart_schedule_interval_minutes,
-      smartSchedulePerformanceMinutes:
-        props.settings.smart_schedule_performance_minutes,
+      smartSchedulePerformanceWindowMinutes:
+        props.settings.smart_schedule_performance_window_minutes,
+      smartScheduleStabilityWindowMinutes:
+        props.settings.smart_schedule_stability_window_minutes,
+      smartScheduleRateLimitCooldownSeconds:
+        props.settings.smart_schedule_rate_limit_cooldown_seconds ??
+        DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
       smartScheduleForceReset: false,
     },
   })

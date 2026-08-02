@@ -74,6 +74,11 @@ function createGroupPolicy(
     sample_mode: 'traffic',
     exploration_traffic_percent: 3,
     probe_interval_minutes: 10,
+    priority_sampling_enabled: true,
+    priority_sampling_interval_minutes: 10,
+    priority_sampling_base_percent: 3,
+    priority_sampling_decay_percent: 70,
+    priority_sampling_min_percent: 0.5,
   }
 }
 
@@ -104,6 +109,9 @@ function createTask(
           old_weight: 20,
           new_weight: 75,
           score: 0.87346,
+          previous_effective_time: 1_752_700_000,
+          previous_effective_priority: 80,
+          previous_effective_weight: 20,
           reason: '根据智能调度评分，在同一分组和模型调度池中调整权重',
         },
         {
@@ -141,6 +149,10 @@ function createTask(
           new_priority: 100,
           old_weight: 10,
           new_weight: 60,
+          failure_stage: 'write',
+          previous_effective_time: 1_752_700_000,
+          previous_effective_priority: 80,
+          previous_effective_weight: 10,
           reason: '数据库写入失败',
         },
       ],
@@ -159,7 +171,8 @@ describe('smart schedule task adjustment history', () => {
       total: 4,
       updated: 2,
       failed: 0,
-      performance_minutes: 60,
+      performance_window_minutes: 60,
+      stability_window_minutes: 30,
       force_reset: true,
       group_policies: [
         createGroupPolicy('vip'),
@@ -173,7 +186,7 @@ describe('smart schedule task adjustment history', () => {
     )
 
     assert.ok(markup.includes('3 个分组策略 · vip、default、batch'))
-    assert.ok(markup.includes('按分组独立配置 · 60 分钟统计范围'))
+    assert.ok(markup.includes('性能窗口 60 分钟 · 稳定性窗口 30 分钟'))
     assert.ok(markup.includes('强制重算'))
     assert.equal(markup.includes('只调整权重'), false)
   })
@@ -184,7 +197,8 @@ describe('smart schedule task adjustment history', () => {
       total: 0,
       updated: 0,
       failed: 0,
-      performance_minutes: 30,
+      performance_window_minutes: 30,
+      stability_window_minutes: 15,
     }
 
     const markup = renderToStaticMarkup(
@@ -192,7 +206,7 @@ describe('smart schedule task adjustment history', () => {
     )
 
     assert.ok(markup.includes('未记录分组策略'))
-    assert.ok(markup.includes('按分组独立配置 · 30 分钟统计范围'))
+    assert.ok(markup.includes('性能窗口 30 分钟 · 稳定性窗口 15 分钟'))
   })
 
   test('shows route changes, scores, actions, and full adjustment reasons', () => {
@@ -216,6 +230,10 @@ describe('smart schedule task adjustment history', () => {
     assert.ok(markup.includes('失败'))
     assert.ok(markup.includes('调整原因：'))
     assert.ok(markup.includes('数据库写入失败'))
+    assert.ok(markup.includes('失败阶段：'))
+    assert.ok(markup.includes('结果写入'))
+    assert.ok(markup.includes('上一轮生效结果：'))
+    assert.ok(markup.includes('本轮失败未覆盖，上一轮结果继续生效'))
   })
 
   test('shows a clear accessible disclosure and toggles from click', () => {
@@ -337,6 +355,9 @@ describe('smart schedule task adjustment history', () => {
         {
           channel_id: 12,
           channel_name: '失败渠道',
+          group: 'vip',
+          model: 'gpt-5',
+          failure_stage: 'plan',
           error: '任务执行失败',
         },
       ],
@@ -347,6 +368,8 @@ describe('smart schedule task adjustment history', () => {
 
     assert.ok(markup.includes('本次任务未记录逐路由调整明细'))
     assert.ok(markup.includes('失败渠道（ID 12）'))
+    assert.ok(markup.includes('vip / gpt-5'))
+    assert.ok(markup.includes('失败阶段：计划计算'))
     assert.ok(markup.includes('任务执行失败'))
   })
 

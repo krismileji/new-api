@@ -16,7 +16,8 @@ func TestListChannelMonitorTasksHydratesPersistedScheduleExecutionDetails(t *tes
 	require.NoError(t, db.AutoMigrate(&model.ChannelSmartScheduleExecutionDetail{}))
 
 	storedSummary := channelSmartScheduleTaskResult{
-		Total: 1, Planned: 1, Updated: 1, PerformanceMinutes: 60,
+		Total: 1, Planned: 1, Updated: 1,
+		PerformanceWindowMinutes: 60, StabilityWindowMinutes: 30,
 	}
 	resultJSON, err := common.Marshal(storedSummary)
 	require.NoError(t, err)

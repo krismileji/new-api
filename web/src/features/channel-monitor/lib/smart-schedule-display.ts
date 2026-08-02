@@ -18,13 +18,34 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ChannelMonitorSmartScheduleRoutePlacement } from './smart-schedule-summary'
 
+export type ChannelMonitorSmartScheduleTemporaryTrafficKind =
+  | ''
+  | 'insufficient_samples'
+  | 'priority_sampling'
+
+export function getChannelMonitorSmartScheduleTemporaryTrafficLabel(
+  kind: ChannelMonitorSmartScheduleTemporaryTrafficKind
+) {
+  if (kind === 'insufficient_samples') return '样本不足补量'
+  if (kind === 'priority_sampling') return '低优先级轮转'
+  return '无临时流量'
+}
+
+export function formatChannelMonitorSmartScheduleTemporaryTraffic(
+  kind: ChannelMonitorSmartScheduleTemporaryTrafficKind,
+  targetPercent: number
+) {
+  if (!kind) return '-'
+  return `${getChannelMonitorSmartScheduleTemporaryTrafficLabel(kind)} · 目标 ${targetPercent.toFixed(1)}%`
+}
+
 export function formatChannelMonitorSmartScheduleEstimatedShare(
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 ) {
   if (placement?.estimatedShare != null) {
     return `${(placement.estimatedShare * 100).toFixed(1)}%`
   }
-  if (placement?.role === 'first_backup' || placement?.role === 'standby') {
+  if (placement?.role === 'backup') {
     return '0%'
   }
   return '-'

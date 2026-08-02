@@ -123,10 +123,17 @@ const settings = {
       sample_mode: 'traffic',
       exploration_traffic_percent: 3,
       probe_interval_minutes: 10,
+      priority_sampling_enabled: true,
+      priority_sampling_interval_minutes: 10,
+      priority_sampling_base_percent: 3,
+      priority_sampling_decay_percent: 70,
+      priority_sampling_min_percent: 0.5,
     },
   ],
   smart_schedule_interval_minutes: 10,
-  smart_schedule_performance_minutes: 60,
+  smart_schedule_performance_window_minutes: 60,
+  smart_schedule_stability_window_minutes: 120,
+  smart_schedule_rate_limit_cooldown_seconds: 30,
 } satisfies ChannelMonitorSettings
 
 async function renderSettingsSurface(surface: 'general' | 'schedule') {

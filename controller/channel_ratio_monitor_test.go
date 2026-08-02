@@ -321,7 +321,9 @@ func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 	settings := getChannelMonitorSettings()
 	assert.True(t, settings.SmartScheduleEnabled)
 	assert.Equal(t, 25, settings.SmartScheduleIntervalMinutes)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleRange, settings.SmartSchedulePerformanceMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleWindowMinutes, settings.SmartSchedulePerformanceWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleWindowMinutes, settings.SmartScheduleStabilityWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds, settings.SmartScheduleRateLimitCooldownSeconds)
 	require.Len(t, settings.SmartScheduleGroupPolicies, 1)
 	assert.Equal(t, "vip", settings.SmartScheduleGroupPolicies[0].Group)
 
@@ -593,7 +595,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 			channelSmartScheduleTestGroupPolicy(" vip ", channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30),
 		}},
 		{"smart_schedule_interval_minutes": 0},
-		{"smart_schedule_performance_minutes": 30},
+		{"smart_schedule_performance_window_minutes": 0},
+		{"smart_schedule_performance_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
+		{"smart_schedule_stability_window_minutes": 0},
+		{"smart_schedule_stability_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
+		{"smart_schedule_rate_limit_cooldown_seconds": -1},
+		{"smart_schedule_rate_limit_cooldown_seconds": maxChannelMonitorSmartScheduleRateLimitCooldownSeconds + 1},
 	}
 	for _, request := range invalidRequests {
 		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -637,6 +644,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"cooldown_minutes":            45,
 				"sample_mode":                 channelMonitorSmartScheduleSampleOff,
 				"exploration_traffic_percent": 3, "probe_interval_minutes": 10,
+				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
+				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
+				"priority_sampling_min_percent": 0.5,
 			},
 			{
 				"group": "default", "strategy": channelMonitorSmartScheduleStrategySmart,
@@ -651,10 +661,15 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"cooldown_minutes":            45,
 				"sample_mode":                 channelMonitorSmartScheduleSampleTraffic,
 				"exploration_traffic_percent": 5, "probe_interval_minutes": 5,
+				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
+				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
+				"priority_sampling_min_percent": 0.5,
 			},
 		},
-		"smart_schedule_interval_minutes":    10,
-		"smart_schedule_performance_minutes": 360,
+		"smart_schedule_interval_minutes":            10,
+		"smart_schedule_performance_window_minutes":  360,
+		"smart_schedule_stability_window_minutes":    120,
+		"smart_schedule_rate_limit_cooldown_seconds": 300,
 	}
 	request["relay_response_header_timeout_seconds"] = 60
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -743,7 +758,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotNil(t, groupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *groupPolicy.CooldownMinutes)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
-	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceMinutes)
+	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
+	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)
+	assert.Equal(t, 300, response.Data.SmartScheduleRateLimitCooldownSeconds)
 
 	var option model.Option
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateIntervalOption).First(&option).Error)
@@ -789,8 +806,14 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
 	assert.Equal(t, "10", option.Value)
 	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRangeOption).First(&option).Error)
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartSchedulePerformanceWindowOption).First(&option).Error)
 	assert.Equal(t, "360", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStabilityWindowOption).First(&option).Error)
+	assert.Equal(t, "120", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRateLimitCooldownOption).First(&option).Error)
+	assert.Equal(t, "300", option.Value)
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"email_notification_enabled": false,
 		"notification_email":         "",
@@ -807,6 +830,30 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Empty(t, response.Data.NotificationEmail)
 	assert.True(t, response.Data.SmartScheduleEnabled)
 	require.Len(t, response.Data.SmartScheduleGroupPolicies, 2)
+	assert.Equal(t, 300, response.Data.SmartScheduleRateLimitCooldownSeconds)
+}
+
+func TestUpdateChannelMonitorSettingsAllowsDisabling429CooldownAndClearsActiveEntries(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	service.StartChannelRateLimitCooldown(1901, "model-a", 30)
+	assert.NotZero(t, service.ChannelRateLimitCooldownUntil(1901, "model-a"))
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_rate_limit_cooldown_seconds": 0,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1901, "model-a"))
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Zero(t, response.Data.SmartScheduleRateLimitCooldownSeconds)
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRateLimitCooldownOption).First(&option).Error)
+	assert.Equal(t, "0", option.Value)
 }
 
 func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {

@@ -29,6 +29,11 @@ func channelSmartScheduleTestGroupPolicy(
 	sampleMode := channelMonitorSmartScheduleSampleOff
 	explorationTrafficPercent := 3.0
 	probeIntervalMinutes := 10
+	prioritySamplingEnabled := true
+	prioritySamplingIntervalMinutes := 10
+	prioritySamplingBasePercent := 3.0
+	prioritySamplingDecayPercent := 70.0
+	prioritySamplingMinPercent := 0.5
 	recoveryStabilityScore := math.Min(degradeStabilityScore+5, 100)
 	fastFailurePenaltyPercent := 40.0
 	fastFailureSeconds := 1.0
@@ -42,27 +47,32 @@ func channelSmartScheduleTestGroupPolicy(
 		models = []string{}
 	}
 	return channelSmartScheduleGroupPolicy{
-		Group:                          group,
-		Strategy:                       &strategy,
-		StabilityEnabled:               &stabilityEnabled,
-		Scoring:                        &scoring,
-		ApplyMode:                      &applyMode,
-		Models:                         &models,
-		MinSamples:                     &minSamples,
-		DegradeStabilityScore:          &degradeStabilityScore,
-		RecoveryStabilityScore:         &recoveryStabilityScore,
-		FastFailurePenaltyPercent:      &fastFailurePenaltyPercent,
-		FastFailureSeconds:             &fastFailureSeconds,
-		SlowFailureSeconds:             &slowFailureSeconds,
-		JitterEnabled:                  &jitterEnabled,
-		JitterTolerancePercent:         &jitterTolerancePercent,
-		JitterThresholdMultiplier:      &jitterThresholdMultiplier,
-		JitterAbsoluteToleranceSeconds: &jitterAbsoluteToleranceSeconds,
-		JitterBaselineMinutes:          &jitterBaselineMinutes,
-		CooldownMinutes:                &cooldownMinutes,
-		SampleMode:                     &sampleMode,
-		ExplorationTrafficPercent:      &explorationTrafficPercent,
-		ProbeIntervalMinutes:           &probeIntervalMinutes,
+		Group:                           group,
+		Strategy:                        &strategy,
+		StabilityEnabled:                &stabilityEnabled,
+		Scoring:                         &scoring,
+		ApplyMode:                       &applyMode,
+		Models:                          &models,
+		MinSamples:                      &minSamples,
+		DegradeStabilityScore:           &degradeStabilityScore,
+		RecoveryStabilityScore:          &recoveryStabilityScore,
+		FastFailurePenaltyPercent:       &fastFailurePenaltyPercent,
+		FastFailureSeconds:              &fastFailureSeconds,
+		SlowFailureSeconds:              &slowFailureSeconds,
+		JitterEnabled:                   &jitterEnabled,
+		JitterTolerancePercent:          &jitterTolerancePercent,
+		JitterThresholdMultiplier:       &jitterThresholdMultiplier,
+		JitterAbsoluteToleranceSeconds:  &jitterAbsoluteToleranceSeconds,
+		JitterBaselineMinutes:           &jitterBaselineMinutes,
+		CooldownMinutes:                 &cooldownMinutes,
+		SampleMode:                      &sampleMode,
+		ExplorationTrafficPercent:       &explorationTrafficPercent,
+		ProbeIntervalMinutes:            &probeIntervalMinutes,
+		PrioritySamplingEnabled:         &prioritySamplingEnabled,
+		PrioritySamplingIntervalMinutes: &prioritySamplingIntervalMinutes,
+		PrioritySamplingBasePercent:     &prioritySamplingBasePercent,
+		PrioritySamplingDecayPercent:    &prioritySamplingDecayPercent,
+		PrioritySamplingMinPercent:      &prioritySamplingMinPercent,
 	}
 }
 
@@ -639,11 +649,11 @@ func TestPlanChannelSmartSchedulePriorityWeightUsesPrimaryAndFallbackRanks(t *te
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(100), items[1].TargetPriority)
+	assert.Equal(t, int64(3), items[1].TargetPriority)
 	assert.Equal(t, uint(1000), items[1].TargetWeight)
-	assert.Equal(t, int64(90), items[2].TargetPriority)
+	assert.Equal(t, int64(2), items[2].TargetPriority)
 	assert.Equal(t, uint(1000), items[2].TargetWeight)
-	assert.Equal(t, int64(80), items[3].TargetPriority)
+	assert.Equal(t, int64(1), items[3].TargetPriority)
 	assert.Equal(t, uint(1000), items[3].TargetWeight)
 }
 
@@ -660,12 +670,73 @@ func TestPlanChannelSmartSchedulePriorityWeightTiesRetainCurrentThenUseChannelId
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(100), items[3].TargetPriority)
-	assert.Equal(t, int64(90), items[1].TargetPriority)
-	assert.Equal(t, int64(80), items[2].TargetPriority)
+	assert.Equal(t, int64(3), items[3].TargetPriority)
+	assert.Equal(t, int64(2), items[1].TargetPriority)
+	assert.Equal(t, int64(1), items[2].TargetPriority)
 	assert.Equal(t, uint(1000), items[1].TargetWeight)
 	assert.Equal(t, uint(1000), items[2].TargetWeight)
 	assert.Equal(t, uint(1000), items[3].TargetWeight)
+}
+
+func TestPlanChannelSmartSchedulePriorityWeightAssignsUniquePrioritiesToTenHealthyChannels(t *testing.T) {
+	ratios := make([]float64, 10)
+	candidates := make([]channelSmartScheduleCandidate, 0, len(ratios))
+	for index := range ratios {
+		ratios[index] = float64(index + 1)
+		candidates = append(candidates, channelSmartScheduleCandidate{
+			ChannelId: index + 1, CurrentPriority: 100, CurrentWeight: 50, Ratio: &ratios[index],
+		})
+	}
+
+	plan := planChannelSmartSchedule(
+		candidates,
+		channelMonitorSmartScheduleStrategyRatio,
+		false,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+	)
+
+	require.Len(t, plan.Items, 10)
+	priorities := make(map[int64]struct{}, len(plan.Items))
+	for _, item := range plan.Items {
+		assert.Equal(t, int64(11-item.ChannelId), item.TargetPriority)
+		assert.Equal(t, uint(1000), item.TargetWeight)
+		priorities[item.TargetPriority] = struct{}{}
+	}
+	assert.Len(t, priorities, 10)
+}
+
+func TestPlanChannelSmartSchedulePriorityWeightRanksInsufficientSamplesAfterScoredChannels(t *testing.T) {
+	ratioBest := 1.0
+	ratioSecond := 2.0
+	plan := planChannelSmartSchedule(
+		[]channelSmartScheduleCandidate{
+			{ChannelId: 1, Ratio: &ratioBest},
+			{ChannelId: 2, Ratio: &ratioSecond},
+			{ChannelId: 3, PreviousBaseRank: 4},
+			{ChannelId: 4, PreviousBaseRank: 3},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		false,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+	)
+
+	require.Len(t, plan.Items, 4)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+	}
+	assert.True(t, items[1].Scored)
+	assert.True(t, items[2].Scored)
+	assert.False(t, items[3].Scored)
+	assert.False(t, items[4].Scored)
+	assert.Equal(t, int64(4), items[1].BasePriority)
+	assert.Equal(t, int64(3), items[2].BasePriority)
+	assert.Equal(t, int64(2), items[4].BasePriority)
+	assert.Equal(t, int64(1), items[3].BasePriority)
 }
 
 func TestPlanChannelSmartScheduleAssignsConfiguredPrimaryTraffic(t *testing.T) {
@@ -1132,8 +1203,8 @@ func TestPlanChannelSmartScheduleManualPrimaryOverridesScore(t *testing.T) {
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(90), items[1].TargetPriority)
-	assert.Equal(t, int64(100), items[2].TargetPriority)
+	assert.Equal(t, int64(1), items[1].TargetPriority)
+	assert.Equal(t, int64(2), items[2].TargetPriority)
 }
 
 func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testing.T) {
@@ -1191,7 +1262,7 @@ func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testin
 	var fixedAbility model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 66, Group: "vip", Model: "model-a"}).
 		First(&fixedAbility).Error)
-	assert.Equal(t, int64(80), *fixedAbility.Priority)
+	assert.Equal(t, int64(81), *fixedAbility.Priority)
 	assert.Equal(t, uint(900), fixedAbility.Weight)
 	var fixedState model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
@@ -1412,12 +1483,13 @@ func TestPlanChannelSmartSchedulePriorityWeightRanksHysteresisPrimaryBeforeRawCh
 	)
 
 	require.Len(t, plan.Items, 4)
-	assert.Equal(t, int64(100), plan.Items[0].TargetPriority)
-	assert.Equal(t, int64(90), plan.Items[1].TargetPriority)
-	assert.Equal(t, int64(80), plan.Items[2].TargetPriority)
-	assert.Equal(t, int64(80), plan.Items[3].TargetPriority)
-	assert.Equal(t, uint(667), plan.Items[2].TargetWeight)
-	assert.Equal(t, uint(333), plan.Items[3].TargetWeight)
+	assert.Equal(t, int64(4), plan.Items[0].TargetPriority)
+	assert.Equal(t, int64(3), plan.Items[1].TargetPriority)
+	assert.Equal(t, int64(2), plan.Items[2].TargetPriority)
+	assert.Equal(t, int64(1), plan.Items[3].TargetPriority)
+	for _, item := range plan.Items {
+		assert.Equal(t, uint(1000), item.TargetWeight)
+	}
 }
 
 func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExploration(t *testing.T) {
@@ -1428,6 +1500,8 @@ func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExp
 	)
 	sampleMode := channelMonitorSmartScheduleSampleTraffic
 	policy.SampleMode = &sampleMode
+	prioritySamplingEnabled := false
+	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
@@ -1465,33 +1539,33 @@ func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExp
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Updated)
+	assert.Equal(t, 3, result.Updated)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 61, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(100), *ability.Priority)
-	assert.Equal(t, uint(2), ability.Weight)
+	assert.Equal(t, int64(3), *ability.Priority)
+	assert.Equal(t, uint(300), ability.Weight)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 61, "vip", "model-a",
 	).First(&state).Error)
-	assert.True(t, state.ExplorationActive)
-	assert.Equal(t, priorityLow, state.ExplorationSavedPriority)
-	assert.Equal(t, weight, state.ExplorationSavedWeight)
-	assert.Contains(t, state.LastScheduleError, "探索采样中")
-	assert.Contains(t, state.LastScheduleError, "目标流量 3.0%")
+	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficExploration, state.TemporaryTrafficKind)
+	assert.NotZero(t, state.TemporaryTrafficSince)
+	assert.Equal(t, 3.0, state.TemporaryTrafficTargetPercent)
+	assert.Contains(t, state.LastScheduleError, "样本不足探索")
+	assert.Contains(t, state.LastScheduleError, "临时提升到最高优先级")
+	assert.Contains(t, state.LastScheduleError, "3.00%")
 	ability = model.Ability{}
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 63, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, priorityLow, *ability.Priority)
-	assert.Equal(t, weight, ability.Weight)
+	assert.Equal(t, int64(1), *ability.Priority)
+	assert.Equal(t, uint(1000), ability.Weight)
 	state = model.ChannelSmartScheduleRouteState{}
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 63, "vip", "model-a",
 	).First(&state).Error)
-	assert.False(t, state.ExplorationActive)
-	assert.Contains(t, state.LastScheduleError, "等待同一分组和模型中的当前探索完成")
+	assert.Empty(t, state.TemporaryTrafficKind)
 }
 
 func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testing.T) {
@@ -1502,6 +1576,8 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 	)
 	sampleMode := channelMonitorSmartScheduleSampleTraffic
 	policy.SampleMode = &sampleMode
+	prioritySamplingEnabled := false
+	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
@@ -1523,8 +1599,10 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
 		{
 			ChannelId: 64, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-			ExplorationActive: true, ExplorationSince: time.Now().Unix() - 60,
-			ExplorationSavedPriority: priorityLow, ExplorationSavedWeight: weightHigh,
+			BaseRank: 2, BasePriority: priorityLow, BaseWeight: weightHigh,
+			TemporaryTrafficKind:          model.ChannelSmartScheduleTemporaryTrafficExploration,
+			TemporaryTrafficSince:         time.Now().Unix() - 60,
+			TemporaryTrafficTargetPercent: 3,
 		},
 		{ChannelId: 65, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
@@ -1544,14 +1622,137 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 64, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(90), *ability.Priority)
+	assert.Equal(t, int64(1), *ability.Priority)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 64, "vip", "model-a",
 	).First(&state).Error)
-	assert.False(t, state.ExplorationActive)
-	assert.Zero(t, state.ExplorationSince)
+	assert.Empty(t, state.TemporaryTrafficKind)
+	assert.Zero(t, state.TemporaryTrafficSince)
 	assert.NotNil(t, state.LastScheduleScore)
+}
+
+func TestRunChannelSmartSchedulePrioritySamplingUsesRankDecayAndFairRotation(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 2, 80, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+	priority := int64(10)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 71, Name: "primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 72, Name: "recently sampled", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 73, Name: "waiting longest", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 71, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 72, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 73, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 71, Ratio: 1, UpdatedTime: 1},
+		{ChannelId: 72, Ratio: 2, UpdatedTime: 1},
+		{ChannelId: 73, Ratio: 3, UpdatedTime: 1},
+	}).Error)
+	now := time.Now().Unix()
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 71, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 72, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, LastPrioritySampleTime: now},
+		{ChannelId: 73, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Updated)
+
+	var primaryAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 71, Group: "vip", Model: "model-a"}).First(&primaryAbility).Error)
+	require.NotNil(t, primaryAbility.Priority)
+	assert.Equal(t, int64(3), *primaryAbility.Priority)
+	assert.Equal(t, uint(9790), primaryAbility.Weight)
+	var sampledAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 73, Group: "vip", Model: "model-a"}).First(&sampledAbility).Error)
+	require.NotNil(t, sampledAbility.Priority)
+	assert.Equal(t, int64(3), *sampledAbility.Priority)
+	assert.Equal(t, uint(210), sampledAbility.Weight)
+	var sampledState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 73, "vip", "model-a",
+	).First(&sampledState).Error)
+	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficPrioritySampling, sampledState.TemporaryTrafficKind)
+	assert.InDelta(t, 2.1, sampledState.TemporaryTrafficTargetPercent, 1e-9)
+	assert.GreaterOrEqual(t, sampledState.LastPrioritySampleTime, now)
+	assert.Contains(t, sampledState.LastScheduleError, "低优先级轮转")
+}
+
+func TestRunChannelSmartScheduleFixedPrimaryStaysAboveUnmanagedManualRoute(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		applyMode      string
+		fixedPriority  int64
+		manualPriority int64
+	}{
+		{name: "priority weight with higher manual route", applyMode: channelMonitorSmartScheduleApplyPriorityWeight, fixedPriority: 10, manualPriority: 500},
+		{name: "priority weight with same layer manual route", applyMode: channelMonitorSmartScheduleApplyPriorityWeight, fixedPriority: 500, manualPriority: 500},
+		{name: "weight with higher manual route", applyMode: channelMonitorSmartScheduleApplyWeight, fixedPriority: 10, manualPriority: 500},
+		{name: "weight with same layer manual route", applyMode: channelMonitorSmartScheduleApplyWeight, fixedPriority: 500, manualPriority: 500},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			policy := channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				test.applyMode, nil, 2, 80, 30,
+			)
+			prioritySamplingEnabled := false
+			policy.PrioritySamplingEnabled = &prioritySamplingEnabled
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorSmartScheduleEnabledOption:       "true",
+				channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+			})
+			managedPriority := int64(20)
+			weight := uint(50)
+			require.NoError(t, db.Create(&[]model.Channel{
+				{Id: 81, Name: "fixed", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &test.fixedPriority, Weight: &weight},
+				{Id: 82, Name: "managed", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &managedPriority, Weight: &weight},
+				{Id: 83, Name: "manual", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &test.manualPriority, Weight: &weight},
+			}).Error)
+			require.NoError(t, db.Create(&[]model.Ability{
+				{ChannelId: 81, Group: "vip", Model: "model-a", Enabled: true, Priority: &test.fixedPriority, Weight: weight},
+				{ChannelId: 82, Group: "vip", Model: "model-a", Enabled: true, Priority: &managedPriority, Weight: weight},
+				{ChannelId: 83, Group: "vip", Model: "model-a", Enabled: true, Priority: &test.manualPriority, Weight: weight},
+			}).Error)
+			require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+				{ChannelId: 81, Ratio: 3, UpdatedTime: 1},
+				{ChannelId: 82, Ratio: 1, UpdatedTime: 1},
+				{ChannelId: 83, Ratio: 2, UpdatedTime: 1},
+			}).Error)
+			require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+				{
+					ChannelId: 81, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+					ManualPrimaryUntil: time.Now().Add(30 * time.Minute).Unix(),
+				},
+				{ChannelId: 82, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+				{ChannelId: 83, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Excluded: true},
+			}).Error)
+
+			_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+			require.NoError(t, err)
+			var fixedAbility model.Ability
+			require.NoError(t, db.Where(&model.Ability{ChannelId: 81, Group: "vip", Model: "model-a"}).First(&fixedAbility).Error)
+			require.NotNil(t, fixedAbility.Priority)
+			assert.Equal(t, test.manualPriority+1, *fixedAbility.Priority)
+			var manualAbility model.Ability
+			require.NoError(t, db.Where(&model.Ability{ChannelId: 83, Group: "vip", Model: "model-a"}).First(&manualAbility).Error)
+			require.NotNil(t, manualAbility.Priority)
+			assert.Equal(t, test.manualPriority, *manualAbility.Priority)
+			assert.Equal(t, weight, manualAbility.Weight)
+		})
+	}
 }
 
 func TestPlanChannelSmartScheduleForceResetSelectsRawWinnerAndPreservesWeightCohort(t *testing.T) {
@@ -1585,10 +1786,10 @@ func TestPlanChannelSmartScheduleForceResetSelectsRawWinnerAndPreservesWeightCoh
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(100), items[1].TargetPriority)
+	assert.Equal(t, int64(3), items[1].TargetPriority)
 	assert.Equal(t, uint(1000), items[1].TargetWeight)
-	assert.Equal(t, int64(90), items[2].TargetPriority)
+	assert.Equal(t, int64(2), items[2].TargetPriority)
 	assert.Equal(t, uint(1000), items[2].TargetWeight)
-	assert.Equal(t, int64(80), items[3].TargetPriority)
+	assert.Equal(t, int64(1), items[3].TargetPriority)
 	assert.Equal(t, uint(1000), items[3].TargetWeight)
 }

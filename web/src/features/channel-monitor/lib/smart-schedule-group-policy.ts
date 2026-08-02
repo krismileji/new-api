@@ -54,6 +54,11 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmart
     sampleMode: 'off',
     explorationTrafficPercent: 3,
     probeIntervalMinutes: 10,
+    prioritySamplingEnabled: true,
+    prioritySamplingIntervalMinutes: 10,
+    prioritySamplingBasePercent: 3,
+    prioritySamplingDecayPercent: 70,
+    prioritySamplingMinPercent: 0.5,
   }
 
 export function channelMonitorSmartScheduleScoringToForm(
@@ -123,6 +128,11 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     sampleMode: policy.sample_mode,
     explorationTrafficPercent: policy.exploration_traffic_percent,
     probeIntervalMinutes: policy.probe_interval_minutes,
+    prioritySamplingEnabled: policy.priority_sampling_enabled,
+    prioritySamplingIntervalMinutes: policy.priority_sampling_interval_minutes,
+    prioritySamplingBasePercent: policy.priority_sampling_base_percent,
+    prioritySamplingDecayPercent: policy.priority_sampling_decay_percent,
+    prioritySamplingMinPercent: policy.priority_sampling_min_percent,
   }))
 }
 
@@ -152,6 +162,11 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     sample_mode: policy.sampleMode,
     exploration_traffic_percent: policy.explorationTrafficPercent,
     probe_interval_minutes: policy.probeIntervalMinutes,
+    priority_sampling_enabled: policy.prioritySamplingEnabled,
+    priority_sampling_interval_minutes: policy.prioritySamplingIntervalMinutes,
+    priority_sampling_base_percent: policy.prioritySamplingBasePercent,
+    priority_sampling_decay_percent: policy.prioritySamplingDecayPercent,
+    priority_sampling_min_percent: policy.prioritySamplingMinPercent,
   }))
 }
 
@@ -182,6 +197,11 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     sampleMode: policy.sampleMode,
     explorationTrafficPercent: policy.explorationTrafficPercent,
     probeIntervalMinutes: policy.probeIntervalMinutes,
+    prioritySamplingEnabled: policy.prioritySamplingEnabled,
+    prioritySamplingIntervalMinutes: policy.prioritySamplingIntervalMinutes,
+    prioritySamplingBasePercent: policy.prioritySamplingBasePercent,
+    prioritySamplingDecayPercent: policy.prioritySamplingDecayPercent,
+    prioritySamplingMinPercent: policy.prioritySamplingMinPercent,
   }
 }
 

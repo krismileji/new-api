@@ -31,6 +31,7 @@ import {
   previewChannelMonitorNotificationEmail,
   updateChannelMonitorGroupChannels,
   updateChannelMonitorSmartScheduleChannelConfig,
+  updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
@@ -152,6 +153,57 @@ test('loads and updates one group-model scheduling route', async () => {
     group: 'vip',
     model: 'model-a',
     excluded: true,
+  })
+})
+
+test('updates priority and weight for one non-participating route', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          channel_id: 7,
+          group: 'vip',
+          model: 'model-a',
+          priority: 30,
+          weight: 400,
+          routing_changed: true,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await updateChannelMonitorSmartScheduleManualRouting({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+      priority: 30,
+      weight: 400,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/route/routing'
+  )
+  assert.equal(requestConfig?.method, 'put')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    group: 'vip',
+    model: 'model-a',
+    priority: 30,
+    weight: 400,
   })
 })
 

@@ -128,6 +128,11 @@ type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 type TestResult = {
   status: TestStatus
   responseTime?: number
+  firstTokenMs?: number
+  tokensPerSecond?: number
+  outputTokens?: number
+  smartScheduleSampleRecorded?: boolean
+  smartScheduleSampleMessage?: string
   completedAt?: number
   error?: string
   errorCode?: string
@@ -590,11 +595,28 @@ function ChannelTestDialogContent({
             stream: effectiveStreamTest,
             silent,
           },
-          (success, responseTime, error, errorCode) => {
+          (success, responseTime, error, errorCode, response) => {
             const completedAt = Date.now()
+            const data = response?.data
             finalResult = {
               status: success ? 'success' : 'error',
               responseTime,
+              firstTokenMs:
+                typeof data?.first_token_ms === 'number'
+                  ? data.first_token_ms
+                  : undefined,
+              tokensPerSecond:
+                typeof data?.tokens_per_second === 'number'
+                  ? data.tokens_per_second
+                  : undefined,
+              outputTokens:
+                typeof data?.output_tokens === 'number'
+                  ? data.output_tokens
+                  : undefined,
+              smartScheduleSampleRecorded:
+                data?.smart_schedule_sample_recorded,
+              smartScheduleSampleMessage:
+                data?.smart_schedule_sample_message,
               completedAt,
               error,
               errorCode,
@@ -1266,13 +1288,7 @@ function TestResultCell({
   }
 
   if (result.status === 'success') {
-    return typeof result.responseTime === 'number' ? (
-      <span className='text-muted-foreground text-sm'>
-        {formatResponseTime(result.responseTime, t)}
-      </span>
-    ) : (
-      <span className='text-muted-foreground text-sm'>-</span>
-    )
+    return <ChannelTestMetrics result={result} />
   }
 
   return (
@@ -1307,11 +1323,12 @@ function FailureResultContent({
   })
 
   return (
-    <div className='flex min-w-0 items-center gap-2 text-xs whitespace-normal'>
-      <p className='text-muted-foreground line-clamp-2 min-w-0 flex-1 leading-snug wrap-break-word'>
-        {summary}
-      </p>
-      <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+    <div className='flex min-w-0 flex-col gap-1.5 text-xs whitespace-normal'>
+      <div className='flex min-w-0 items-center gap-2'>
+        <p className='text-muted-foreground line-clamp-2 min-w-0 flex-1 leading-snug wrap-break-word'>
+          {summary}
+        </p>
+        <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
         {isModelPriceError && (
           <Button
             variant='outline'
@@ -1337,8 +1354,43 @@ function FailureResultContent({
             {t('Details')}
           </Button>
         )}
+        </div>
       </div>
+      <ChannelTestMetrics result={result} />
     </div>
+  )
+}
+
+function ChannelTestMetrics(props: { result: TestResult }) {
+  const { t } = useTranslation()
+  const result = props.result
+  const metrics: string[] = []
+  if (typeof result.responseTime === 'number') {
+    metrics.push(`总耗时 ${formatResponseTime(result.responseTime, t)}`)
+  }
+  if (typeof result.firstTokenMs === 'number') {
+    metrics.push(`首字 ${formatResponseTime(result.firstTokenMs, t)}`)
+  }
+  if (typeof result.tokensPerSecond === 'number') {
+    metrics.push(`TPS ${result.tokensPerSecond.toFixed(2)}`)
+  }
+  if (typeof result.outputTokens === 'number') {
+    metrics.push(`输出 ${result.outputTokens} token`)
+  }
+  if (typeof result.smartScheduleSampleRecorded === 'boolean') {
+    metrics.push(result.smartScheduleSampleRecorded ? '已计入调度样本' : '未计入调度样本')
+  }
+  if (metrics.length === 0) {
+    return <span className='text-muted-foreground text-sm'>-</span>
+  }
+
+  return (
+    <p
+      className='text-muted-foreground min-w-0 text-xs leading-5 wrap-break-word'
+      title={result.smartScheduleSampleMessage}
+    >
+      {metrics.join(' · ')}
+    </p>
   )
 }
 

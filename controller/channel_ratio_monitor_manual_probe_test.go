@@ -198,9 +198,23 @@ func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *te
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	var response struct {
 		Success bool `json:"success"`
+		Data    struct {
+			ResponseTimeMs              float64  `json:"response_time"`
+			FirstTokenMs                *float64 `json:"first_token_ms"`
+			TokensPerSecond             *float64 `json:"tokens_per_second"`
+			OutputTokens                int      `json:"output_tokens"`
+			SmartScheduleSampleRecorded bool     `json:"smart_schedule_sample_recorded"`
+			SmartScheduleSampleMessage  string   `json:"smart_schedule_sample_message"`
+		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success, recorder.Body.String())
+	assert.GreaterOrEqual(t, response.Data.ResponseTimeMs, 0.0)
+	assert.Nil(t, response.Data.FirstTokenMs)
+	assert.Nil(t, response.Data.TokensPerSecond)
+	assert.Equal(t, 1, response.Data.OutputTokens)
+	assert.True(t, response.Data.SmartScheduleSampleRecorded)
+	assert.Equal(t, "已计入渠道 + 模型共享样本", response.Data.SmartScheduleSampleMessage)
 
 	var state model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(

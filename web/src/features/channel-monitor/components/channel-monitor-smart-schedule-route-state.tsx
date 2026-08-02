@@ -57,8 +57,11 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
-  if (route.state.exploration_active) {
-    return <Badge variant='warning'>探索采样</Badge>
+  if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    return <Badge variant='warning'>样本不足补量</Badge>
+  }
+  if (route.state.temporary_traffic_kind === 'priority_sampling') {
+    return <Badge variant='warning'>低优先级轮转</Badge>
   }
   if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
     return <Badge variant='destructive'>渠道禁用</Badge>
