@@ -507,7 +507,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	req = req.WithContext(c.Request.Context())
+	if info.IsStream {
+		req = service.WithRelayStreamFirstResponseTimeout(req)
+	}
 	resp, err := client.Do(req)
+	if err == nil && info.IsStream && resp != nil {
+		err = service.WaitForRelayStreamFirstResponse(resp)
+	}
 	if err != nil {
 		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
 			return nil, clientGoneErr

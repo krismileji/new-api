@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	common2 "github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -94,6 +95,43 @@ func TestDoRequestKeepsTransportFailureRetryable(t *testing.T) {
 	var apiErr *types.NewAPIError
 	require.ErrorAs(t, requestErr, &apiErr)
 	assert.False(t, types.IsClientGoneError(apiErr))
+	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+	assert.False(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestDoRequestTreatsStreamFirstResponseTimeoutAsRetryable(t *testing.T) {
+	originalTimeout := common2.GetRelayResponseHeaderTimeoutSeconds()
+	common2.SetRelayResponseHeaderTimeoutSeconds(1)
+	service.InitHttpClient()
+	t.Cleanup(func() {
+		common2.SetRelayResponseHeaderTimeoutSeconds(originalTimeout)
+		service.InitHttpClient()
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.WriteHeader(http.StatusOK)
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-request.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, server.URL, nil)
+	require.NoError(t, err)
+
+	_, requestErr := DoRequest(c, upstreamRequest, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+		IsStream:    true,
+	})
+
+	require.Error(t, requestErr)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, requestErr, &apiErr)
 	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
 	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
 	assert.False(t, types.IsSkipRetryError(apiErr))
