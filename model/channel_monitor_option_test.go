@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/utils/tests"
 )
 
 func setupChannelMonitorOptionTestDB(t *testing.T, ratios string, coefficients string) *gorm.DB {
@@ -519,4 +520,45 @@ func TestUpdateChannelMonitorSettingsOptionsRejectsStaleSmartScheduleRevision(t 
 	assert.False(t, routingChanged)
 	require.NoError(t, db.Where("key = ?", "ChannelMonitorSmartScheduleIntervalMinutes").First(&interval).Error)
 	assert.Equal(t, "20", interval.Value)
+}
+
+func TestRefreshChannelSmartScheduleOptionsQuotesReservedKeyColumn(t *testing.T) {
+	originalDB := DB
+	originalDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
+	db, err := gorm.Open(tests.DummyDialector{}, &gorm.Config{DryRun: true})
+	require.NoError(t, err)
+	DB = db
+
+	var generatedSQL string
+	callbackName := "test:channel_smart_schedule_option_query"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		generatedSQL = tx.Statement.SQL.String()
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Query().Remove(callbackName))
+		DB = originalDB
+		common.SetDatabaseTypes(originalDatabaseType, originalLogDatabaseType)
+		initCol()
+	})
+
+	tests := []struct {
+		name         string
+		databaseType common.DatabaseType
+		quotedKey    string
+	}{
+		{name: "MySQL", databaseType: common.DatabaseTypeMySQL, quotedKey: "`key`"},
+		{name: "PostgreSQL", databaseType: common.DatabaseTypePostgreSQL, quotedKey: `"key"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			common.SetDatabaseTypes(test.databaseType, originalLogDatabaseType)
+			initCol()
+			generatedSQL = ""
+
+			require.NoError(t, RefreshChannelSmartScheduleOptions())
+			assert.Contains(t, generatedSQL, "WHERE "+test.quotedKey+" LIKE ?")
+			assert.Contains(t, generatedSQL, "ORDER BY "+test.quotedKey+" ASC")
+		})
+	}
 }

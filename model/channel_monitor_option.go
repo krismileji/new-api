@@ -367,8 +367,8 @@ func RefreshChannelSmartScheduleOptions() error {
 
 func refreshChannelSmartScheduleOptionsLocked() error {
 	var options []Option
-	if err := DB.Where("key LIKE ?", "ChannelMonitorSmartSchedule%").
-		Order("key ASC").
+	if err := DB.Where(commonKeyCol+" LIKE ?", "ChannelMonitorSmartSchedule%").
+		Order(commonKeyCol + " ASC").
 		Find(&options).Error; err != nil {
 		return err
 	}
