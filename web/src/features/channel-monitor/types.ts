@@ -512,6 +512,7 @@ export type ChannelMonitorSettings = {
   smart_schedule_performance_window_minutes: number
   smart_schedule_stability_window_minutes: number
   smart_schedule_rate_limit_cooldown_seconds: number
+  smart_schedule_control_revision: string
   smart_schedule_force_reset_task_created?: boolean
   smart_schedule_force_reset_task_id?: string
   smart_schedule_force_reset_task_error?: string
@@ -695,6 +696,7 @@ export type ChannelMonitorSmartScheduleRoute = {
 
 export type ChannelMonitorSmartScheduleRoutePerformance = {
   channel_id: number
+  group: string
   model: string
   group_count: number
   sample_count: number
@@ -814,6 +816,7 @@ export type ChannelMonitorTaskResult = {
   recovered_after_retry?: number
   force_reset?: boolean
   group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
+  group_policy_count?: number
   performance_window_minutes?: number
   stability_window_minutes?: number
   planned?: number
@@ -822,7 +825,6 @@ export type ChannelMonitorTaskResult = {
   failures?: ChannelMonitorTaskFailure[]
   failure_details_truncated?: boolean
   adjustments?: ChannelMonitorTaskAdjustment[]
-  adjustment_details_truncated?: boolean
   email_status?: 'sent' | 'failed'
   email_error?: string
 }
@@ -877,6 +879,16 @@ export type ChannelMonitorTaskPage = {
   page_size: number
   total: number
   items: ChannelMonitorTask[]
+}
+
+export type ChannelMonitorSmartScheduleExecutionDetailPage = {
+  page: number
+  page_size: number
+  total: number
+  items: ChannelMonitorTaskAdjustment[]
+  groups: string[]
+  models: string[]
+  channel_names: Record<string, string>
 }
 
 export type ChannelRatioHistory = {

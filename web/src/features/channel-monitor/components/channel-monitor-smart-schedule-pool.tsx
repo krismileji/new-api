@@ -67,6 +67,8 @@ import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleGroupPolicy,
   ChannelMonitorSmartScheduleRoute,
+  ChannelMonitorSmartScheduleRoutePerformance,
+  ChannelMonitorSmartScheduleRouteStability,
 } from '../types'
 import {
   ChannelMonitorSmartScheduleRouteDetails,
@@ -83,6 +85,14 @@ type ChannelMonitorSmartSchedulePoolProps = {
   policy: ChannelMonitorSmartScheduleGroupPolicy | undefined
   channelsById: ReadonlyMap<number, ChannelMonitorItem>
   placements: ReadonlyMap<string, ChannelMonitorSmartScheduleRoutePlacement>
+  performanceByRoute?: ReadonlyMap<
+    string,
+    ChannelMonitorSmartScheduleRoutePerformance
+  >
+  stabilityByRoute?: ReadonlyMap<
+    string,
+    ChannelMonitorSmartScheduleRouteStability
+  >
   updateRouteKey: string | null
   manualRoutingKey: string | null
   updateDisabled: boolean
@@ -183,32 +193,48 @@ function compareNullableDescending(
   return second - first
 }
 
-function RouteSamples(props: { route: ChannelMonitorSmartScheduleRoute }) {
+function RouteSamples(props: {
+  route: ChannelMonitorSmartScheduleRoute
+  performance?: ChannelMonitorSmartScheduleRoutePerformance
+  stability?: ChannelMonitorSmartScheduleRouteStability
+}) {
   const samples = props.route.shared_samples
-  if (samples.sample_count === 0) {
-    return <span className='text-muted-foreground text-xs'>暂无样本</span>
+  const stabilitySampleCount = props.stability?.sample_count ?? 0
+  const performanceSampleCount = props.performance?.sample_count ?? 0
+  if (
+    stabilitySampleCount === 0 &&
+    performanceSampleCount === 0 &&
+    samples.sample_count === 0
+  ) {
+    return <span className='text-muted-foreground text-xs'>窗口内暂无样本</span>
   }
 
+  let stabilityLabel = '稳定性 -'
+  if (props.stability?.stability_score != null) {
+    stabilityLabel = `稳定分 ${(props.stability.stability_score * 100).toFixed(1)}`
+  } else if (props.stability != null) {
+    stabilityLabel = `成功率 ${(props.stability.success_rate * 100).toFixed(1)}%`
+  }
+  const firstTokenMs =
+    props.performance?.first_token_p50_ms ??
+    props.performance?.average_first_token_ms
+  const firstTokenLabel =
+    firstTokenMs == null ? 'P50 -' : `P50 ${firstTokenMs.toFixed(0)} ms`
+  const tpsLabel =
+    props.performance?.average_tps == null
+      ? 'TPS -'
+      : `TPS ${props.performance.average_tps.toFixed(2)}`
+  const sharedLabel = `测试/探测 ${samples.sample_count} 次`
+  const detail = `稳定性窗口 ${stabilitySampleCount} 次，${stabilityLabel}；性能窗口 ${performanceSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${sharedLabel}，成功 ${samples.success_count} 次`
+
   return (
-    <div className='min-w-0 text-xs tabular-nums'>
+    <div className='min-w-0 text-xs tabular-nums' title={detail}>
       <div className='truncate'>
-        <span
-          className={
-            samples.last_success ? 'text-foreground' : 'text-destructive'
-          }
-        >
-          {samples.last_success ? '样本成功' : '样本失败'}
-        </span>{' '}
-        · {samples.sample_count} 次 · 成功 {samples.success_count} 次
+        稳定 {stabilitySampleCount} 次 · {stabilityLabel}
       </div>
       <div className='text-muted-foreground mt-0.5 truncate font-mono'>
-        {samples.average_first_token_ms == null
-          ? '首字 -'
-          : `首字 ${samples.average_first_token_ms.toFixed(0)} ms`}
-        {' · '}
-        {samples.average_tps == null
-          ? 'TPS -'
-          : `TPS ${samples.average_tps.toFixed(2)}`}
+        性能 {performanceSampleCount} 次 · {firstTokenLabel} · {tpsLabel} ·{' '}
+        {sharedLabel}
       </div>
     </div>
   )
@@ -404,6 +430,7 @@ function RouteActions(props: {
   disabled: boolean
   detailsExpanded: boolean
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onOpenDetails: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
   const fixed = props.route.state.manual_primary_until > 0
@@ -416,15 +443,23 @@ function RouteActions(props: {
         className={cn(fixed && 'text-primary')}
         disabled={
           props.disabled ||
-          !channelMonitorSmartScheduleRouteParticipates(props.route)
+          (!fixed &&
+            !channelMonitorSmartScheduleRouteParticipates(props.route))
         }
-        onClick={() => props.onSetPrimary(props.route)}
+        onClick={() => {
+          if (fixed) {
+            props.onClearPrimary(props.route)
+            return
+          }
+          props.onSetPrimary(props.route)
+        }}
+        aria-pressed={fixed}
         aria-label={
           fixed
-            ? `重新设置 ${props.route.channel_name} 的固定时长`
+            ? `取消固定 ${props.route.channel_name}`
             : `固定 ${props.route.channel_name} 为主渠道`
         }
-        title={fixed ? '重新设置固定时长' : '固定为主渠道'}
+        title={fixed ? '取消固定' : '固定为主渠道'}
       >
         <HugeiconsIcon icon={PinIcon} aria-hidden='true' />
       </Button>
@@ -536,6 +571,12 @@ export function ChannelMonitorSmartSchedulePool(
     ) ?? null
   const detailPlacement = detailRoute
     ? props.placements.get(channelMonitorSmartScheduleRouteKey(detailRoute))
+    : undefined
+  const detailPerformance = detailRouteKey
+    ? props.performanceByRoute?.get(detailRouteKey)
+    : undefined
+  const detailStability = detailRouteKey
+    ? props.stabilityByRoute?.get(detailRouteKey)
     : undefined
   const detailChannel = detailRoute
     ? props.channelsById.get(detailRoute.channel_id)
@@ -699,7 +740,9 @@ export function ChannelMonitorSmartSchedulePool(
                   <th className='w-[14%] px-2 py-2 font-medium'>决策结果</th>
                   <th className='w-[11%] px-2 py-2 font-medium'>临时流量</th>
                   <th className='w-[8%] px-2 py-2 font-medium'>预计流量</th>
-                  <th className='w-[15%] px-2 py-2 font-medium'>共享样本</th>
+                  <th className='w-[15%] px-2 py-2 font-medium'>
+                    窗口数据 / 测试样本
+                  </th>
                   <th className='w-[6%] px-2 py-2 text-center font-medium'>
                     参与
                   </th>
@@ -785,7 +828,11 @@ export function ChannelMonitorSmartSchedulePool(
                         )}
                       </td>
                       <td className='px-2 py-2 align-middle'>
-                        <RouteSamples route={route} />
+                        <RouteSamples
+                          route={route}
+                          performance={props.performanceByRoute?.get(key)}
+                          stability={props.stabilityByRoute?.get(key)}
+                        />
                       </td>
                       <td className='px-2 py-2 text-center align-middle'>
                         <div className='flex items-center justify-center'>
@@ -811,6 +858,7 @@ export function ChannelMonitorSmartSchedulePool(
                           disabled={props.updateDisabled}
                           detailsExpanded={detailRouteKey === key}
                           onSetPrimary={props.onSetPrimary}
+                          onClearPrimary={props.onClearPrimary}
                           onOpenDetails={openDetails}
                         />
                       </td>
@@ -924,7 +972,11 @@ export function ChannelMonitorSmartSchedulePool(
                   </div>
 
                   <div className='mt-2 flex items-center justify-between gap-3'>
-                    <RouteSamples route={route} />
+                    <RouteSamples
+                      route={route}
+                      performance={props.performanceByRoute?.get(key)}
+                      stability={props.stabilityByRoute?.get(key)}
+                    />
                     <div className='flex shrink-0 items-center gap-2'>
                       {updatePending ? (
                         <Spinner className='size-4' />
@@ -945,6 +997,7 @@ export function ChannelMonitorSmartSchedulePool(
                         disabled={props.updateDisabled}
                         detailsExpanded={detailRouteKey === key}
                         onSetPrimary={props.onSetPrimary}
+                        onClearPrimary={props.onClearPrimary}
                         onOpenDetails={openDetails}
                       />
                     </div>
@@ -960,7 +1013,10 @@ export function ChannelMonitorSmartSchedulePool(
         open={detailRoute !== null}
         route={detailRoute}
         channel={detailChannel}
+        poolRoutes={props.pool.routes}
         placement={detailPlacement}
+        performance={detailPerformance}
+        stability={detailStability}
         updatePending={
           detailRoute != null &&
           props.updateRouteKey ===

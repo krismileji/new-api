@@ -33,25 +33,9 @@ func SaveChannelSmartScheduleExecutionDetails(
 	inputs []ChannelSmartScheduleExecutionDetailInput,
 ) error {
 	taskId = strings.TrimSpace(taskId)
-	if taskId == "" {
-		return errors.New("智能调度任务 ID 不能为空")
-	}
-	now := common.GetTimestamp()
-	rows := make([]ChannelSmartScheduleExecutionDetail, 0, len(inputs))
-	for _, input := range inputs {
-		if input.AdjustmentIndex < 0 || input.Payload == nil {
-			continue
-		}
-		encoded, err := common.Marshal(input.Payload)
-		if err != nil {
-			return fmt.Errorf("编码智能调度执行明细失败: %w", err)
-		}
-		rows = append(rows, ChannelSmartScheduleExecutionDetail{
-			TaskId:          taskId,
-			AdjustmentIndex: input.AdjustmentIndex,
-			Payload:         string(encoded),
-			CreatedAt:       now,
-		})
+	rows, err := channelSmartScheduleExecutionDetailRows(taskId, inputs, common.GetTimestamp())
+	if err != nil {
+		return err
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("task_id = ?", taskId).
@@ -63,6 +47,95 @@ func SaveChannelSmartScheduleExecutionDetails(
 		}
 		return tx.CreateInBatches(&rows, 100).Error
 	})
+}
+
+// FinishChannelSmartScheduleTaskWithExecutionDetails commits the task terminal
+// state and its detail snapshot together while the caller still owns the lease.
+func FinishChannelSmartScheduleTaskWithExecutionDetails(
+	taskId string,
+	lockedBy string,
+	status SystemTaskStatus,
+	resultPayload any,
+	errorMessage string,
+	inputs []ChannelSmartScheduleExecutionDetailInput,
+) error {
+	taskId = strings.TrimSpace(taskId)
+	if taskId == "" {
+		return errors.New("智能调度任务 ID 不能为空")
+	}
+	now := common.GetTimestamp()
+	rows, err := channelSmartScheduleExecutionDetailRows(taskId, inputs, now)
+	if err != nil {
+		return err
+	}
+	resultText, err := marshalSystemTaskJSON(resultPayload)
+	if err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&SystemTask{}).
+			Where("task_id = ? AND status = ? AND locked_by = ?", taskId, SystemTaskStatusRunning, lockedBy).
+			Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
+			Updates(map[string]any{
+				"status":     status,
+				"active_key": nil,
+				"result":     resultText,
+				"error":      errorMessage,
+				"updated_at": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrSystemTaskLockLost
+		}
+		if err := tx.Where("task_id = ?", taskId).
+			Delete(&ChannelSmartScheduleExecutionDetail{}).Error; err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			if err := tx.CreateInBatches(&rows, 100).Error; err != nil {
+				return err
+			}
+		}
+		lockResult := tx.Where("task_id = ? AND locked_by = ?", taskId, lockedBy).
+			Delete(&SystemTaskLock{})
+		if lockResult.Error != nil {
+			return lockResult.Error
+		}
+		if lockResult.RowsAffected == 0 {
+			return ErrSystemTaskLockLost
+		}
+		return nil
+	})
+}
+
+func channelSmartScheduleExecutionDetailRows(
+	taskId string,
+	inputs []ChannelSmartScheduleExecutionDetailInput,
+	createdAt int64,
+) ([]ChannelSmartScheduleExecutionDetail, error) {
+	taskId = strings.TrimSpace(taskId)
+	if taskId == "" {
+		return nil, errors.New("智能调度任务 ID 不能为空")
+	}
+	rows := make([]ChannelSmartScheduleExecutionDetail, 0, len(inputs))
+	for _, input := range inputs {
+		if input.AdjustmentIndex < 0 || input.Payload == nil {
+			continue
+		}
+		encoded, err := common.Marshal(input.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("编码智能调度执行明细失败: %w", err)
+		}
+		rows = append(rows, ChannelSmartScheduleExecutionDetail{
+			TaskId:          taskId,
+			AdjustmentIndex: input.AdjustmentIndex,
+			Payload:         string(encoded),
+			CreatedAt:       createdAt,
+		})
+	}
+	return rows, nil
 }
 
 func GetChannelSmartScheduleExecutionDetails(

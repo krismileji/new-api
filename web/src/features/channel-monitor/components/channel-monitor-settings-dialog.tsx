@@ -67,7 +67,14 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { updateChannelMonitorSettings } from '../api'
-import { handleChannelMonitorMutationError } from '../lib/error'
+import {
+  handleChannelMonitorMutationError,
+  shouldReloadChannelMonitorSettings,
+} from '../lib/error'
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+} from '../lib/query-options'
 import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
@@ -321,7 +328,18 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
   })
   const mutation = useMutation({
     mutationFn: updateChannelMonitorSettings,
-    onError: handleChannelMonitorMutationError,
+    onError: (error) => {
+      handleChannelMonitorMutationError(error)
+      if (!shouldReloadChannelMonitorSettings(error)) return
+      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+      })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      })
+      props.onOpenChange(false)
+    },
     onSuccess: (response) => {
       if (response.data.smart_schedule_force_reset_task_error) {
         toast.error(
@@ -345,12 +363,22 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         )
       }
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+      })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      })
       props.onOpenChange(false)
     },
   })
   const handleSubmit = form.handleSubmit((values) => {
     mutation.mutate(
-      createChannelMonitorSettingsUpdatePayload(props.mode, values)
+      createChannelMonitorSettingsUpdatePayload(
+        props.mode,
+        values,
+        props.settings.smart_schedule_control_revision
+      )
     )
   })
 
@@ -358,10 +386,16 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
     return (
       <Sheet
         open={props.open}
-        onOpenChange={props.onOpenChange}
+        onOpenChange={(open) => {
+          if (!open && mutation.isPending) return
+          props.onOpenChange(open)
+        }}
         onOpenChangeComplete={props.onOpenChangeComplete}
       >
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-5xl')}>
+        <SheetContent
+          className={sideDrawerContentClassName('sm:max-w-5xl')}
+          showCloseButton={!mutation.isPending}
+        >
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <IconBadge tone='info' size='title'>
@@ -411,8 +445,17 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='max-h-[min(90dvh,48rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl'>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open && mutation.isPending) return
+        props.onOpenChange(open)
+      }}
+    >
+      <DialogContent
+        className='max-h-[min(90dvh,48rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl'
+        showCloseButton={!mutation.isPending}
+      >
         <DialogHeader>
           <DialogTitle>渠道监控设置</DialogTitle>
           <DialogDescription>

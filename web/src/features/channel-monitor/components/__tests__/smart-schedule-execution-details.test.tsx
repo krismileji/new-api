@@ -159,6 +159,8 @@ describe('smart schedule execution adjustment details', () => {
     const markup = renderAdjustment()
 
     assert.equal(markup.includes('固定到期：'), false)
+    assert.ok(markup.includes('98.00 分'))
+    assert.equal(markup.includes('0.9800'), false)
   })
 
   test('shows when a fixed primary channel cannot degrade during its fixed time', () => {

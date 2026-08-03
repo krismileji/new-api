@@ -23,6 +23,7 @@ import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../email-notif
 import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
+  createChannelMonitorSmartSchedulePolicySchema,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
@@ -35,6 +36,63 @@ import {
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
 } from '../schema'
+import { CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE } from '../smart-schedule-group-policy'
+
+describe('smart schedule policy schema', () => {
+  const schema = createChannelMonitorSmartSchedulePolicySchema()
+
+  test('normalizes empty hidden controls when their branches are disabled', () => {
+    const result = schema.safeParse({
+      ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
+      stabilityEnabled: false,
+      jitterEnabled: false,
+      applyMode: 'weight',
+      sampleMode: 'off',
+      scoring: {
+        ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring,
+        stabilityPercent: '',
+      },
+      jitterTolerancePercent: '',
+      jitterThresholdMultiplier: '',
+      jitterAbsoluteToleranceSeconds: '',
+      jitterBaselineMinutes: '',
+      minSamples: '',
+      degradeStabilityScore: '',
+      recoveryStabilityScore: '',
+      fastFailurePenaltyPercent: '',
+      fastFailureSeconds: '',
+      slowFailureSeconds: '',
+      cooldownMinutes: '',
+      explorationTrafficPercent: '',
+      probeIntervalMinutes: '',
+      prioritySamplingEnabled: true,
+      prioritySamplingIntervalMinutes: '',
+      prioritySamplingBasePercent: '',
+      prioritySamplingDecayPercent: '',
+      prioritySamplingMinPercent: '',
+    })
+
+    assert.equal(result.success, true)
+    if (!result.success) return
+    assert.equal(result.data.prioritySamplingEnabled, false)
+    assert.equal(result.data.scoring.stabilityPercent, 50)
+  })
+
+  test('continues to reject empty controls in active branches', () => {
+    const basePolicy = CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
+    const activeCases = [
+      { ...basePolicy, explorationTrafficPercent: '', sampleMode: 'traffic' },
+      { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
+      { ...basePolicy, prioritySamplingBasePercent: '' },
+      { ...basePolicy, minSamples: '' },
+      { ...basePolicy, jitterBaselineMinutes: '' },
+    ]
+
+    for (const policy of activeCases) {
+      assert.equal(schema.safeParse(policy).success, false)
+    }
+  })
+})
 
 describe('channel concurrency limit schema', () => {
   const schema = createChannelConcurrencyLimitSchema()

@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { HistoryIcon } from '@hugeicons/core-free-icons'
+import { HistoryIcon, Refresh01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -30,6 +32,7 @@ import {
 } from '@/components/ui/dialog'
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -78,6 +81,7 @@ export function ChannelRatioHistoryDialog(
 }
 
 export function ChannelRatioHistoryPanel(props: ChannelRatioHistoryPanelProps) {
+  const { t } = useTranslation()
   const query = useQuery({
     queryKey: ['channel-monitor-history', props.channel.id],
     queryFn: () => getChannelMonitorHistory(props.channel.id),
@@ -92,6 +96,25 @@ export function ChannelRatioHistoryPanel(props: ChannelRatioHistoryPanelProps) {
           <Skeleton key={key} className='h-12 w-full' />
         ))}
       </div>
+    )
+  } else if (query.isError) {
+    historyContent = (
+      <Empty className='min-h-64 border-0'>
+        <EmptyHeader>
+          <EmptyTitle>{t('Failed to load')}</EmptyTitle>
+          <EmptyDescription>
+            {query.error instanceof Error
+              ? query.error.message
+              : t('Failed to load')}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant='outline' size='sm' onClick={() => query.refetch()}>
+            <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
+            {t('Retry')}
+          </Button>
+        </EmptyContent>
+      </Empty>
     )
   } else if (history.length === 0) {
     historyContent = (

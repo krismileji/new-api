@@ -75,7 +75,7 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	assert.Equal(t, int64(1), metrics[0].ActualFailureCount)
 }
 
-func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWithoutLogs(t *testing.T) {
+func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWhenSchedulingIsDisabled(t *testing.T) {
 	originalDB := model.DB
 	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogConsumeEnabled := common.LogConsumeEnabled
@@ -91,7 +91,7 @@ func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWithoutLogs(t
 	common.LogConsumeEnabled = false
 	constant.ErrorLogEnabled = false
 	common.MemoryCacheEnabled = false
-	require.NoError(t, db.AutoMigrate(&model.Ability{}, &model.ChannelSmartScheduleRouteState{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Ability{}, &model.ChannelSmartScheduleRouteState{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.SetMainDatabaseType(originalMainDatabaseType)
@@ -102,6 +102,9 @@ func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWithoutLogs(t
 	})
 
 	forcedPriority := int64(101)
+	require.NoError(t, db.Create(&model.Option{
+		Key: "ChannelMonitorSmartScheduleEnabled", Value: "false",
+	}).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		Group: "vip", Model: "model-a", ChannelId: 1, Enabled: true,
 		Priority: &forcedPriority, Weight: 1000,

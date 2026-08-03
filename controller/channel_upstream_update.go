@@ -462,13 +462,11 @@ func fetchAdvancedCustomUpstreamModelIDs(channel *model.Channel, baseURL string)
 
 func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.ChannelOtherSettings, updateModels bool) error {
 	channel.SetOtherSettings(settings)
-	updates := map[string]interface{}{
-		"settings": channel.OtherSettings,
-	}
+	var models *string
 	if updateModels {
-		updates["models"] = channel.Models
+		models = &channel.Models
 	}
-	return model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	return model.UpdateChannelUpstreamModelSettings(channel.Id, channel.OtherSettings, models)
 }
 
 func checkAndPersistChannelUpstreamModelUpdates(
@@ -511,11 +509,6 @@ func checkAndPersistChannelUpstreamModelUpdates(
 
 	if err = updateChannelUpstreamModelSettings(channel, *settings, modelsChanged); err != nil {
 		return false, autoAdded, err
-	}
-	if modelsChanged {
-		if err = channel.UpdateAbilities(nil); err != nil {
-			return true, autoAdded, err
-		}
 	}
 	return modelsChanged, autoAdded, nil
 }
@@ -958,11 +951,6 @@ func applyChannelUpstreamModelUpdates(
 		return nil, nil, nil, nil, false, err
 	}
 
-	if modelsChanged {
-		if err := channel.UpdateAbilities(nil); err != nil {
-			return addModels, removeModels, remainingModels, remainingRemoveModels, true, err
-		}
-	}
 	return addModels, removeModels, remainingModels, remainingRemoveModels, modelsChanged, nil
 }
 

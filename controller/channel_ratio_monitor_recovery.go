@@ -138,7 +138,20 @@ func autoEnableChannelsAfterCostRatioRecovery(
 		) {
 			continue
 		}
-		if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "") {
+		changed, revisionCurrent, _, updateErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+			channel.Id,
+			input.UpstreamRevision,
+			model.CaptureChannelMonitorStatus(currentChannel),
+			common.ChannelStatusEnabled,
+			"",
+		)
+		if updateErr != nil {
+			return enabledChannelIds, updateErr
+		}
+		if !revisionCurrent {
+			continue
+		}
+		if changed {
 			channel.Status = common.ChannelStatusEnabled
 			enabledChannelIds = append(enabledChannelIds, channel.Id)
 		}
@@ -184,7 +197,20 @@ func autoEnableChannelsAfterBalanceRecovery(
 			) {
 			continue
 		}
-		if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "") {
+		changed, revisionCurrent, _, updateErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+			channel.Id,
+			input.UpstreamRevision,
+			model.CaptureChannelMonitorStatus(currentChannel),
+			common.ChannelStatusEnabled,
+			"",
+		)
+		if updateErr != nil {
+			return enabledChannelIds, updateErr
+		}
+		if !revisionCurrent {
+			continue
+		}
+		if changed {
 			channel.Status = common.ChannelStatusEnabled
 			enabledChannelIds = append(enabledChannelIds, channel.Id)
 		}

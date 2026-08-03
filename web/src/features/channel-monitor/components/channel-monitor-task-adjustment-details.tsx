@@ -226,16 +226,6 @@ export function ChannelMonitorTaskAdjustmentDetails(props: {
           </li>
         ))}
       </ol>
-      {result?.adjustment_details_truncated && (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>调整明细已截断</AlertTitle>
-          <AlertDescription>
-            路由数量较多，仅优先保留失败和已调整等前 {adjustments.length}{' '}
-            条结果，任务汇总计数不受影响。
-          </AlertDescription>
-        </Alert>
-      )}
     </div>
   )
 }

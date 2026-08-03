@@ -32,7 +32,7 @@ const (
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
-	channelMonitorGroupCoefficientsOption                      = "ChannelMonitorGroupCoefficients"
+	channelMonitorGroupCoefficientsOption                      = model.ChannelMonitorGroupCoefficientsOption
 	channelMonitorChannelOrderOption                           = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption                   = "ChannelMonitorSmartScheduleEnabled"
 	channelMonitorSmartScheduleIntervalOption                  = "ChannelMonitorSmartScheduleIntervalMinutes"
@@ -117,7 +117,7 @@ type channelMonitorSettings struct {
 	SmartSchedulePerformanceWindowMinutes int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   int                        `json:"smart_schedule_stability_window_minutes"`
 	SmartScheduleRateLimitCooldownSeconds int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
-	SmartScheduleControlRevision          string                     `json:"-"`
+	SmartScheduleControlRevision          string                     `json:"smart_schedule_control_revision"`
 	SmartScheduleForceResetTaskCreated    *bool                      `json:"smart_schedule_force_reset_task_created,omitempty"`
 	SmartScheduleForceResetTaskId         string                     `json:"smart_schedule_force_reset_task_id,omitempty"`
 	SmartScheduleForceResetTaskError      string                     `json:"smart_schedule_force_reset_task_error,omitempty"`
@@ -143,6 +143,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	SmartSchedulePerformanceWindowMinutes *int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   *int                        `json:"smart_schedule_stability_window_minutes"`
 	SmartScheduleRateLimitCooldownSeconds *int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
+	SmartScheduleControlRevision          *string                     `json:"smart_schedule_control_revision"`
 	SmartScheduleForceReset               *bool                       `json:"smart_schedule_force_reset"`
 }
 
@@ -561,7 +562,22 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的设置"})
 		return
 	}
+	forceResetSmartSchedule := request.SmartScheduleForceReset != nil && *request.SmartScheduleForceReset
+	smartScheduleSettingsChanged := request.SmartScheduleEnabled != nil ||
+		request.SmartScheduleGroupPolicies != nil ||
+		request.SmartScheduleIntervalMinutes != nil ||
+		request.SmartSchedulePerformanceWindowMinutes != nil ||
+		request.SmartScheduleStabilityWindowMinutes != nil ||
+		request.SmartScheduleRateLimitCooldownSeconds != nil || forceResetSmartSchedule
 	settings := getChannelMonitorSettings()
+	if smartScheduleSettingsChanged && request.SmartScheduleControlRevision != nil &&
+		settings.SmartScheduleControlRevision != *request.SmartScheduleControlRevision {
+		if err := model.RefreshChannelSmartScheduleOptions(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		settings = getChannelMonitorSettings()
+	}
 	values := make(map[string]string, 21)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -751,7 +767,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		values[channelMonitorSmartScheduleGroupPoliciesOption] = string(serializedGroupPolicies)
 		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
-	forceResetSmartSchedule := request.SmartScheduleForceReset != nil && *request.SmartScheduleForceReset
 	if forceResetSmartSchedule && !settings.SmartScheduleEnabled {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "启用智能调度后才能强制重置"})
 		return
@@ -761,38 +776,58 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "启用智能调度前请至少配置一个完整的分组策略"})
 		return
 	}
-	smartScheduleSettingsChanged := request.SmartScheduleEnabled != nil ||
-		request.SmartScheduleGroupPolicies != nil ||
-		request.SmartScheduleIntervalMinutes != nil ||
-		request.SmartSchedulePerformanceWindowMinutes != nil ||
-		request.SmartScheduleStabilityWindowMinutes != nil ||
-		request.SmartScheduleRateLimitCooldownSeconds != nil || forceResetSmartSchedule
 	if smartScheduleSettingsChanged {
+		if request.SmartScheduleControlRevision == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "智能调度设置缺少配置修订号，请刷新后重试",
+			})
+			return
+		}
 		values[channelMonitorSmartScheduleControlRevisionOption] = common.GetUUID()
 	}
-	if err := model.UpdateOptionsBulk(values); err != nil {
+	var expectedSmartScheduleControlRevision *string
+	if smartScheduleSettingsChanged {
+		expectedSmartScheduleControlRevision = request.SmartScheduleControlRevision
+	}
+	routingChanged, err := model.UpdateChannelMonitorSettingsOptions(
+		values,
+		smartScheduleSettingsChanged,
+		expectedSmartScheduleControlRevision,
+	)
+	if err != nil {
+		if errors.Is(err, model.ErrChannelMonitorSettingsChanged) {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
-	if request.SmartScheduleEnabled != nil || request.SmartScheduleGroupPolicies != nil {
-		routingChanged, err := model.ClearChannelSmartScheduleExplorations()
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if routingChanged {
-			model.InitChannelCache()
-		}
+	if routingChanged {
+		model.InitChannelCache()
 	}
-	if request.SmartScheduleRateLimitCooldownSeconds != nil ||
-		(request.SmartScheduleEnabled != nil && !settings.SmartScheduleEnabled) {
-		service.ClearChannelRateLimitCooldowns()
+	settings = getChannelMonitorSettings()
+	previousSmartScheduleControlRevision := settings.SmartScheduleControlRevision
+	if expectedSmartScheduleControlRevision != nil {
+		previousSmartScheduleControlRevision = *expectedSmartScheduleControlRevision
+	}
+	cooldownRevisionApplied := true
+	var cooldownRevisionError error
+	if smartScheduleSettingsChanged {
+		cooldownRevisionApplied, cooldownRevisionError = service.UpdateChannelRateLimitCooldownControlRevision(
+			values[channelMonitorSmartScheduleControlRevisionOption],
+			previousSmartScheduleControlRevision,
+		)
 	}
 	forceResetTaskCreated := false
 	forceResetTaskId := ""
 	forceResetTaskError := ""
-	if forceResetSmartSchedule {
-		task, created, err := service.EnqueueSystemTask(
+	if forceResetSmartSchedule && cooldownRevisionError != nil {
+		forceResetTaskError = "429 冷却状态同步失败，未创建强制重置任务"
+	} else if forceResetSmartSchedule && !cooldownRevisionApplied {
+		forceResetTaskError = "智能调度配置已被更新的修订覆盖，未创建强制重置任务"
+	} else if forceResetSmartSchedule {
+		task, created, err := service.EnqueueRequiredSystemTask(
 			channelMonitorSmartScheduleTaskType,
 			channelSmartScheduleTaskPayload{ForceReset: true},
 		)
@@ -829,8 +864,26 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"smart_schedule_force_reset_created":         forceResetTaskCreated,
 		"smart_schedule_force_reset_task_id":         forceResetTaskId,
 		"smart_schedule_force_reset_error":           forceResetTaskError,
+		"smart_schedule_cooldown_revision_applied":   cooldownRevisionApplied,
+	}
+	if cooldownRevisionError != nil {
+		auditDetails["smart_schedule_cooldown_revision_error"] = cooldownRevisionError.Error()
 	}
 	auditDetails["relay_response_header_timeout_seconds"] = settings.RelayHeaderTimeoutSeconds
 	recordManageAudit(c, "channel.monitor_settings_update", auditDetails)
+	if cooldownRevisionError != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "设置已保存，但 429 冷却状态同步失败，请重试当前设置",
+		})
+		return
+	}
+	if !cooldownRevisionApplied {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "设置已保存，但已被更新的智能调度配置覆盖，请刷新后确认",
+		})
+		return
+	}
 	common.ApiSuccess(c, settings)
 }

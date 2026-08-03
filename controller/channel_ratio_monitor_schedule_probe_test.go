@@ -491,6 +491,94 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	assert.Equal(t, true, other[model.ChannelMonitorSmartScheduleProbeLogKey])
 }
 
+func TestRunChannelSmartScheduleProbeDeduplicatesMatchingModelsAndSkipsWildcardOnly(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	originalStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = originalStreamingTimeout
+	})
+	const exactModel = "gemini-2.5-pro-thinking-2048"
+	const wildcardModel = "gemini-2.5-pro-thinking-*"
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		body, err := io.ReadAll(r.Body)
+		if !assert.NoError(t, err) {
+			return
+		}
+		var request dto.OpenAIResponsesRequest
+		if !assert.NoError(t, common.Unmarshal(body, &request)) {
+			return
+		}
+		assert.Equal(t, exactModel, request.Model)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, err = w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp-probe","model":"gemini-2.5-pro-thinking-2048","created_at":1}}`,
+			`data: {"type":"response.output_text.delta","delta":"ok"}`,
+			`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+			"",
+		}, "\n\n")))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
+	user := model.User{
+		Username: "probe-model-root", Password: "password", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id: 1422, Type: constant.ChannelTypeOpenAI, Key: "sk-exact", Name: "exact and wildcard",
+			Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL),
+			Models: exactModel + "," + wildcardModel, Group: "vip", Priority: &priority, Weight: &weight,
+		},
+		{
+			Id: 1423, Type: constant.ChannelTypeOpenAI, Key: "sk-wildcard", Name: "wildcard only",
+			Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL),
+			Models: wildcardModel, Group: "vip", Priority: &priority, Weight: &weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1422, Group: "vip", Model: exactModel, Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1422, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1423, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1422, GroupName: "vip", ModelName: exactModel, ParticipationSet: true},
+		{ChannelId: 1422, GroupName: "vip", ModelName: wildcardModel, ParticipationSet: true},
+		{ChannelId: 1423, GroupName: "vip", ModelName: wildcardModel, ParticipationSet: true},
+	}).Error)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyWeight, []string{wildcardModel}, 1, 80, 30,
+	)
+	probeMode := channelMonitorSmartScheduleSampleProbe
+	policy.SampleMode = &probeMode
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Succeeded)
+	assert.Equal(t, 1, result.Skipped)
+	assert.Equal(t, 1, requestCount)
+
+	var sampleStates []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Find(&sampleStates).Error)
+	require.Len(t, sampleStates, 1)
+	assert.Equal(t, 1422, sampleStates[0].ChannelId)
+	assert.Equal(t, wildcardModel, sampleStates[0].ModelName)
+}
+
 func TestRunChannelSmartScheduleProbeSkipsNonTextModelsWithoutUpstreamRequest(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	priority := int64(80)
@@ -605,7 +693,12 @@ func TestRunChannelSmartScheduleProbeRecordsDispatchedFailureErrorLog(t *testing
 	}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&model.Ability{ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini", Enabled: true, Priority: &priority, Weight: weight}).Error)
-	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true,
+		StabilityState:         model.ChannelSmartScheduleStabilityProbing,
+		StabilitySavedPriority: priority,
+		StabilitySavedWeight:   weight,
+	}).Error)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
 		channelMonitorSmartScheduleApplyWeight, nil, 1, 80, 30,
@@ -635,9 +728,79 @@ func TestRunChannelSmartScheduleProbeRecordsDispatchedFailureErrorLog(t *testing
 	assert.NotEmpty(t, other["error_code"])
 	assert.Equal(t, float64(http.StatusServiceUnavailable), other["status_code"])
 	assert.NotNil(t, other["channel_monitor_attempt_duration_ms"])
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Zero(t, *ability.Priority)
+	assert.Zero(t, ability.Weight)
+	var routeState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "gpt-4o-mini",
+	).First(&routeState).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, routeState.StabilityState)
+	assert.Greater(t, routeState.RuntimeProtectionUntil, common.GetTimestamp())
 	var consumeLogCount int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
 	assert.Zero(t, consumeLogCount)
+}
+
+func TestRunChannelSmartScheduleProbeRateLimitStartsCooldownWithoutStabilitySample(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(upstream.Close)
+	user := model.User{
+		Username: "probe-rate-limit-root", Password: "password", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	priority := int64(80)
+	weight := uint(50)
+	channel := model.Channel{
+		Id: 1436, Type: constant.ChannelTypeOpenAI, Key: "sk-probe", Name: "rate limited channel",
+		Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL), Models: "gpt-4o-mini",
+		Group: "vip", Priority: &priority, Weight: &weight,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true,
+	}).Error)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyWeight, nil, 1, 80, 30,
+	)
+	probeMode := channelMonitorSmartScheduleSampleProbe
+	policy.SampleMode = &probeMode
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartScheduleRateLimitCooldownOption: "30",
+		channelMonitorSmartScheduleGroupPoliciesOption:     channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Failed)
+	assert.Greater(t, service.ChannelRateLimitCooldownUntil(channel.Id, "gpt-4o-mini"), common.GetTimestamp())
+	var sampleCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
+	assert.Zero(t, sampleCount)
+	var errorLog model.Log
+	require.NoError(t, db.Where("type = ?", model.LogTypeError).First(&errorLog).Error)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(errorLog.Other, &other))
+	assert.Equal(t, float64(http.StatusTooManyRequests), other["status_code"])
 }
 
 func TestRunChannelSmartScheduleProbeSkipsSaturatedChannel(t *testing.T) {

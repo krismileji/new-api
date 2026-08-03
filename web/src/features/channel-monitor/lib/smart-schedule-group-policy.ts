@@ -16,7 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING } from '../constants'
+import {
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS,
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING,
+} from '../constants'
 import type {
   ChannelMonitorSmartScheduleGroupPolicy,
   ChannelMonitorSmartScheduleScoring,
@@ -34,31 +37,15 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmart
     strategy: 'smart',
     stabilityEnabled: true,
     jitterEnabled: true,
-    jitterTolerancePercent: 5,
-    jitterThresholdMultiplier: 5,
-    jitterAbsoluteToleranceSeconds: 10,
-    jitterBaselineMinutes: 60,
+    ...DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS,
     scoring: channelMonitorSmartScheduleScoringToForm(
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING
     ),
     applyMode: 'priority_weight',
     models: [],
     modelOrder: [],
-    minSamples: 5,
-    degradeStabilityScore: 90,
-    recoveryStabilityScore: 95,
-    fastFailurePenaltyPercent: 40,
-    fastFailureSeconds: 1,
-    slowFailureSeconds: 10,
-    cooldownMinutes: 30,
     sampleMode: 'off',
-    explorationTrafficPercent: 3,
-    probeIntervalMinutes: 10,
     prioritySamplingEnabled: true,
-    prioritySamplingIntervalMinutes: 10,
-    prioritySamplingBasePercent: 3,
-    prioritySamplingDecayPercent: 70,
-    prioritySamplingMinPercent: 0.5,
   }
 
 export function channelMonitorSmartScheduleScoringToForm(

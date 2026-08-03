@@ -284,7 +284,7 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyNewSamples(t *tes
 	require.NoError(t, err)
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 31, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(90), *ability.Priority)
+	assert.Zero(t, *ability.Priority)
 	assert.Equal(t, uint(channelMonitorSmartScheduleMinWeight), ability.Weight)
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 31, "vip", "model-a",
@@ -467,7 +467,7 @@ func TestRunChannelSmartScheduleKeepsProbingBetweenStabilityThresholds(t *testin
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 35, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, priority, *ability.Priority)
+	assert.Zero(t, *ability.Priority)
 	assert.Equal(t, probeWeight, ability.Weight)
 }
 
@@ -1178,7 +1178,7 @@ func TestPlanChannelSmartScheduleManualPrimaryOverridesScore(t *testing.T) {
 		{
 			ChannelId: 2, CurrentPriority: 80, CurrentWeight: 100,
 			Stability: &lowerScore, StabilitySampleCount: 20, StabilityAvailable: true,
-			ManualPrimary: true,
+			ManualPrimary: true, ManualTargetPriority: 3,
 		},
 	}
 
@@ -1203,8 +1203,16 @@ func TestPlanChannelSmartScheduleManualPrimaryOverridesScore(t *testing.T) {
 	for _, item := range plan.Items {
 		items[item.ChannelId] = item
 	}
-	assert.Equal(t, int64(1), items[1].TargetPriority)
-	assert.Equal(t, int64(2), items[2].TargetPriority)
+	assert.Equal(t, 1, items[1].BaseRank)
+	assert.Equal(t, int64(2), items[1].BasePriority)
+	assert.Equal(t, int64(2), items[1].TargetPriority)
+	assert.Equal(t, 2, items[2].BaseRank)
+	assert.Equal(t, int64(1), items[2].BasePriority)
+	assert.Equal(t, int64(3), items[2].TargetPriority)
+	assert.Equal(t, 1, plan.RawWinnerId)
+	assert.Equal(t, 2, plan.ActualPrimaryId)
+	assert.Equal(t, 2, items[1].ScoreDetails.Decision.ManualPrimaryChannelId)
+	assert.Equal(t, 2, items[2].ScoreDetails.Decision.ManualPrimaryChannelId)
 }
 
 func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testing.T) {
@@ -1348,6 +1356,8 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 		"channel_id = ? AND group_name = ? AND model_name = ?", 68, "vip", "model-a",
 	).First(&fixedState).Error)
 	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, fixedState.StabilityState)
+	assert.Equal(t, int64(81), fixedState.StabilitySavedPriority)
+	assert.Equal(t, uint(1000), fixedState.StabilitySavedWeight)
 	assert.Equal(t, fixed.State.ManualPrimaryUntil, fixedState.ManualPrimaryUntil)
 	assert.True(t, fixedState.ManualPrimaryAllowStabilityDegrade)
 
@@ -1362,6 +1372,191 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	assert.True(t, fixedAdjustment.ManualPrimary)
 	assert.True(t, fixedAdjustment.ManualPrimaryAllowStabilityDegrade)
 	assert.Contains(t, fixedAdjustment.Reason, "低于降级阈值")
+
+	probeStartedAt := common.GetTimestamp()
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).
+		Where("channel_id = ? AND group_name = ? AND model_name = ?", 68, "vip", "model-a").
+		Updates(map[string]any{
+			"stability_state":          model.ChannelSmartScheduleStabilityProbing,
+			"stability_since":          probeStartedAt,
+			"stability_until":          0,
+			"runtime_protection_until": 0,
+		}).Error)
+	require.NoError(t, db.Model(&model.Ability{}).
+		Where(&model.Ability{ChannelId: 69, Group: "vip", Model: "model-a"}).
+		Update("enabled", false).Error)
+	for index := 0; index < 2; index++ {
+		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			ChannelId: 68, Model: "model-a", WindowStart: now - 3600,
+			Time: probeStartedAt, Success: true, SampleId: fmt.Sprintf("fixed-recovery-%d", index),
+		})
+		require.NoError(t, err)
+	}
+
+	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 68, Group: "vip", Model: "model-a"}).
+		First(&fixedAbility).Error)
+	assert.Equal(t, int64(81), *fixedAbility.Priority)
+	assert.Equal(t, uint(1000), fixedAbility.Weight)
+}
+
+func TestRunChannelSmartScheduleKeepsFixedPrimaryAtMaximumPriority(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 80, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	fixedPriority := int64(math.MaxInt64)
+	backupPriority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 70, Name: "maximum fixed primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &fixedPriority, Weight: &weight},
+		{Id: 71, Name: "normal backup", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &backupPriority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 70, Group: "vip", Model: "model-a", Enabled: true, Priority: &fixedPriority, Weight: weight},
+		{ChannelId: 71, Group: "vip", Model: "model-a", Enabled: true, Priority: &backupPriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 70, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 71, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 70, Ratio: 1, UpdatedTime: now},
+		{ChannelId: 71, Ratio: 2, UpdatedTime: now},
+	}).Error)
+
+	_, err := model.SaveChannelSmartScheduleRoutePrimary(
+		70,
+		"vip",
+		"model-a",
+		model.ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10},
+	)
+	require.NoError(t, err)
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	assert.Zero(t, result.Failed)
+
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 70, Group: "vip", Model: "model-a"}).
+		First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, fixedPriority, *ability.Priority)
+}
+
+func TestRunChannelSmartScheduleFixedPrimaryPreservesBaseRankingAndClearsImmediately(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	)
+	prioritySamplingEnabled := false
+	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	primaryPriority := int64(2)
+	fixedBasePriority := int64(1)
+	weight := uint(1000)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 76, Name: "scored primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &primaryPriority, Weight: &weight},
+		{Id: 77, Name: "fixed lower score", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &fixedBasePriority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 76, Group: "vip", Model: "model-a", Enabled: true, Priority: &primaryPriority, Weight: weight},
+		{ChannelId: 77, Group: "vip", Model: "model-a", Enabled: true, Priority: &fixedBasePriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 76, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, BaseRank: 1, BasePriority: primaryPriority, BaseWeight: weight},
+		{ChannelId: 77, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, BaseRank: 2, BasePriority: fixedBasePriority, BaseWeight: weight},
+	}).Error)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 76, Ratio: 1, UpdatedTime: now},
+		{ChannelId: 77, Ratio: 2, UpdatedTime: now},
+	}).Error)
+
+	_, err := model.SaveChannelSmartScheduleRoutePrimary(
+		77,
+		"vip",
+		"model-a",
+		model.ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10},
+	)
+	require.NoError(t, err)
+	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+
+	var primaryState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 76, GroupName: "vip", ModelName: "model-a",
+	}).First(&primaryState).Error)
+	assert.Equal(t, 1, primaryState.BaseRank)
+	assert.Equal(t, primaryPriority, primaryState.BasePriority)
+
+	var fixedState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 77, GroupName: "vip", ModelName: "model-a",
+	}).First(&fixedState).Error)
+	assert.Equal(t, 2, fixedState.BaseRank)
+	assert.Equal(t, fixedBasePriority, fixedState.BasePriority)
+
+	var fixedAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 77, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.Equal(t, int64(3), *fixedAbility.Priority)
+
+	require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).
+		Where("channel_id = ?", 76).
+		Update("ratio", 3).Error)
+	require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).
+		Where("channel_id = ?", 77).
+		Update("ratio", 1).Error)
+	_, err = runChannelSmartScheduleOnce(context.Background(), nil, true)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 76, GroupName: "vip", ModelName: "model-a",
+	}).First(&primaryState).Error)
+	assert.Equal(t, 2, primaryState.BaseRank)
+	assert.Equal(t, fixedBasePriority, primaryState.BasePriority)
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 77, GroupName: "vip", ModelName: "model-a",
+	}).First(&fixedState).Error)
+	assert.Equal(t, 1, fixedState.BaseRank)
+	assert.Equal(t, primaryPriority, fixedState.BasePriority)
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 77, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.Equal(t, int64(3), *fixedAbility.Priority)
+
+	cleared, err := model.SaveChannelSmartScheduleRoutePrimary(
+		77,
+		"vip",
+		"model-a",
+		model.ChannelSmartScheduleRoutePrimaryOptions{},
+	)
+	require.NoError(t, err)
+	assert.True(t, cleared.RoutingChanged)
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 77, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.Equal(t, primaryPriority, *fixedAbility.Priority)
+
+	var primaryAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 76, Group: "vip", Model: "model-a",
+	}).First(&primaryAbility).Error)
+	assert.Equal(t, fixedBasePriority, *primaryAbility.Priority)
 }
 
 func TestPlanChannelSmartScheduleFirstRunSelectsRawWinner(t *testing.T) {

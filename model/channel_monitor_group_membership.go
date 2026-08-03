@@ -26,8 +26,11 @@ type ChannelMonitorGroupMembershipUpdate struct {
 }
 
 type ChannelMonitorGroupMembershipRemoval struct {
-	ChannelId int    `json:"channel_id"`
-	Group     string `json:"group"`
+	ChannelId                int    `json:"channel_id"`
+	Group                    string `json:"group"`
+	ExpectedGroups           string `json:"-"`
+	ExpectedUpstreamRevision int64  `json:"-"`
+	GuardUpstreamRevision    bool   `json:"-"`
 }
 
 func ReplaceChannelMonitorGroupMembers(group string, channelIds []int) (ChannelMonitorGroupMembershipUpdate, error) {
@@ -54,6 +57,9 @@ func ReplaceChannelMonitorGroupMembers(group string, channelIds []int) (ChannelM
 		result.ChannelIds = append(result.ChannelIds, channelId)
 	}
 	sort.Ints(result.ChannelIds)
+
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var channels []Channel
@@ -152,6 +158,8 @@ func ReplaceChannelMonitorGroupMembers(group string, channelIds []int) (ChannelM
 
 func RemoveChannelMonitorGroupMemberships(removals []ChannelMonitorGroupMembershipRemoval) ([]ChannelMonitorGroupMembershipRemoval, error) {
 	requestedByChannel := make(map[int]map[string]struct{})
+	expectedGroupsByChannel := make(map[int]string)
+	expectedRevisionByChannel := make(map[int]int64)
 	channelIds := make([]int, 0)
 	for _, removal := range removals {
 		removal.Group = strings.TrimSpace(removal.Group)
@@ -168,11 +176,27 @@ func RemoveChannelMonitorGroupMemberships(removals []ChannelMonitorGroupMembersh
 			channelIds = append(channelIds, removal.ChannelId)
 		}
 		groups[removal.Group] = struct{}{}
+		if removal.ExpectedGroups != "" {
+			if expected, exists := expectedGroupsByChannel[removal.ChannelId]; exists && expected != removal.ExpectedGroups {
+				return nil, errors.New("同一渠道的分组移除计划包含不同快照")
+			}
+			expectedGroupsByChannel[removal.ChannelId] = removal.ExpectedGroups
+		}
+		if removal.GuardUpstreamRevision {
+			if expected, exists := expectedRevisionByChannel[removal.ChannelId]; exists &&
+				expected != removal.ExpectedUpstreamRevision {
+				return nil, errors.New("同一渠道的分组移除计划包含不同配置修订号")
+			}
+			expectedRevisionByChannel[removal.ChannelId] = removal.ExpectedUpstreamRevision
+		}
 	}
 	if len(channelIds) == 0 {
 		return nil, nil
 	}
 	sort.Ints(channelIds)
+
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 
 	applied := make([]ChannelMonitorGroupMembershipRemoval, 0, len(removals))
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -192,8 +216,40 @@ func RemoveChannelMonitorGroupMemberships(removals []ChannelMonitorGroupMembersh
 			}
 		}
 
+		staleChannels := make(map[int]struct{})
+		if len(expectedRevisionByChannel) > 0 {
+			guardedChannelIds := make([]int, 0, len(expectedRevisionByChannel))
+			for channelId := range expectedRevisionByChannel {
+				guardedChannelIds = append(guardedChannelIds, channelId)
+			}
+			sort.Ints(guardedChannelIds)
+			var monitors []ChannelRatioMonitor
+			if err := lockForUpdate(tx).
+				Select("channel_id", "upstream_revision").
+				Where("channel_id IN ?", guardedChannelIds).
+				Order("channel_id ASC").
+				Find(&monitors).Error; err != nil {
+				return err
+			}
+			currentRevisionByChannel := make(map[int]int64, len(monitors))
+			for _, monitor := range monitors {
+				currentRevisionByChannel[monitor.ChannelId] = monitor.UpstreamRevision
+			}
+			for channelId, expectedRevision := range expectedRevisionByChannel {
+				currentRevision, exists := currentRevisionByChannel[channelId]
+				if !exists || currentRevision != expectedRevision {
+					staleChannels[channelId] = struct{}{}
+				}
+			}
+		}
 		for i := range channels {
 			channel := &channels[i]
+			if _, stale := staleChannels[channel.Id]; stale {
+				continue
+			}
+			if expectedGroups, guarded := expectedGroupsByChannel[channel.Id]; guarded && channel.Group != expectedGroups {
+				continue
+			}
 			requestedGroups := requestedByChannel[channel.Id]
 			groups := make([]string, 0)
 			seenGroups := make(map[string]struct{})

@@ -86,6 +86,146 @@ func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) 
 	assert.Equal(t, channelSmartScheduleAdjustmentUnchanged, secondByChannel[1102].Action)
 }
 
+func TestRunChannelSmartScheduleRecordsUnchangedWhenOnlyBaseSnapshotRefreshes(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 5, 80, 30,
+	)
+	prioritySamplingEnabled := false
+	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+	priority := int64(100)
+	weight := uint(90)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1105, Name: "cheap", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 1106, Name: "expensive", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1105, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1106, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1105, Ratio: 1, UpdatedTime: 1},
+		{ChannelId: 1106, Ratio: 2, UpdatedTime: 1},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1105, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1106, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	firstResult, err := runChannelSmartScheduleOnce(context.Background(), nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, 2, firstResult.Updated)
+
+	secondResult, err := runChannelSmartScheduleOnce(context.Background(), nil, true)
+	require.NoError(t, err)
+	assert.Zero(t, secondResult.Updated)
+	assert.Equal(t, 2, secondResult.Unchanged)
+	require.Len(t, secondResult.Adjustments, 2)
+	for _, adjustment := range secondResult.Adjustments {
+		assert.Equal(t, channelSmartScheduleAdjustmentUnchanged, adjustment.Action)
+		assert.Contains(t, adjustment.Reason, "无需调整")
+	}
+}
+
+func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
+	state := model.ChannelSmartScheduleRouteState{
+		StabilityState:                model.ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil:                200,
+		StabilitySince:                100,
+		StabilitySavedPriority:        8,
+		StabilitySavedWeight:          900,
+		RuntimeProtectionUntil:        300,
+		BaseRank:                      2,
+		BasePriority:                  7,
+		BaseWeight:                    800,
+		TemporaryTrafficKind:          model.ChannelSmartScheduleTemporaryTrafficExploration,
+		TemporaryTrafficSince:         150,
+		TemporaryTrafficTargetPercent: 3,
+	}
+	matchingStability := &model.ChannelSmartScheduleStabilityUpdate{
+		State: model.ChannelSmartScheduleStabilityDegraded, Until: 200, Since: 100,
+		SavedPriority: 8, SavedWeight: 900,
+	}
+	matchingSnapshot := &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+		BaseRank: 1, BasePriority: 6, BaseWeight: 700,
+		TemporaryTrafficKind:  model.ChannelSmartScheduleTemporaryTrafficExploration,
+		TemporaryTrafficSince: 150, TemporaryTrafficTargetPercent: 3,
+	}
+
+	assert.False(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
+		Stability: matchingStability, RoutingSnapshot: matchingSnapshot,
+	}))
+	assert.False(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
+		Stability: &model.ChannelSmartScheduleStabilityUpdate{
+			State: model.ChannelSmartScheduleStabilityDegraded, Until: 200, Since: 50,
+			SavedPriority: 7, SavedWeight: 800,
+		},
+	}))
+	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
+		Stability: &model.ChannelSmartScheduleStabilityUpdate{
+			State: model.ChannelSmartScheduleStabilityProbing, Since: 100,
+			SavedPriority: 8, SavedWeight: 900,
+		},
+	}))
+	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
+		RoutingSnapshot: &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+			BaseRank: 2, BasePriority: 7, BaseWeight: 800,
+		},
+	}))
+	runtimeProtectionUntil := int64(0)
+	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
+		RuntimeProtectionUntil: &runtimeProtectionUntil,
+	}))
+}
+
+func TestRunChannelSmartScheduleRecordsActiveRuntimeProtection(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 5, 80, 30,
+			),
+		),
+	})
+	priority := int64(90)
+	weight := uint(80)
+	protectionUntil := common.GetTimestamp() + 120
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1104, Name: "protected", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1104, Ratio: 1, UpdatedTime: 1,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1104, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1104, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		RuntimeProtectionUntil: protectionUntil,
+	}).Error)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	require.Len(t, result.Adjustments, 1)
+	adjustment := result.Adjustments[0]
+	assert.Equal(t, channelSmartScheduleAdjustmentSkipped, adjustment.Action)
+	assert.Equal(t, priority, adjustment.OldPriority)
+	assert.Equal(t, priority, adjustment.NewPriority)
+	assert.Equal(t, weight, adjustment.OldWeight)
+	assert.Equal(t, weight, adjustment.NewWeight)
+	assert.Contains(t, adjustment.Reason, "运行时稳定性保护中")
+	assert.Contains(t, adjustment.Reason, "保护至")
+}
+
 func TestRunChannelSmartScheduleRecordsPerRouteApplyFailures(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
@@ -147,9 +287,89 @@ func TestRunChannelSmartScheduleRecordsPerRouteApplyFailures(t *testing.T) {
 	}
 }
 
-func TestChannelSmartScheduleTaskResultLimitsPersistedAdjustmentDetails(t *testing.T) {
+func TestRunChannelSmartScheduleKeepsSuccessfulPoolWhenLaterPoolFails(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"gold", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+			),
+			channelSmartScheduleTestGroupPolicy(
+				"silver", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+			),
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1113, Name: "gold channel", Group: "gold", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 1114, Name: "silver channel", Group: "silver", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1113, Group: "gold", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1114, Group: "silver", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1113, GroupName: "gold", ModelName: "model-a", ParticipationSet: true, Revision: 1},
+		{ChannelId: 1114, GroupName: "silver", ModelName: "model-a", ParticipationSet: true, Revision: 1},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1113, Ratio: 1, UpdatedTime: 1},
+		{ChannelId: 1114, Ratio: 1, UpdatedTime: 1},
+	}).Error)
+
+	forcedError := errors.New("模拟第二个调度池写入失败")
+	const callbackName = "test:fail_second_smart_schedule_pool"
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "channel_smart_schedule_route_states" {
+			return
+		}
+		state, ok := tx.Statement.Dest.(*model.ChannelSmartScheduleRouteState)
+		if ok && state.GroupName == "silver" {
+			tx.AddError(forcedError)
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Update().Remove(callbackName))
+	})
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.ErrorContains(t, err, "失败池已保留上一轮结果")
+	assert.Equal(t, 1, result.Updated)
+	assert.Equal(t, 1, result.Failed)
+	require.Len(t, result.Adjustments, 2)
+
+	adjustmentByGroup := make(map[string]channelSmartScheduleTaskAdjustment, 2)
+	for _, adjustment := range result.Adjustments {
+		adjustmentByGroup[adjustment.Group] = adjustment
+	}
+	assert.Equal(t, channelSmartScheduleAdjustmentUpdated, adjustmentByGroup["gold"].Action)
+	assert.Equal(t, channelSmartScheduleAdjustmentFailed, adjustmentByGroup["silver"].Action)
+	assert.Equal(t, "write", adjustmentByGroup["silver"].FailureStage)
+	assert.Equal(t, forcedError.Error(), adjustmentByGroup["silver"].Reason)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Order("channel_id ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+	require.NotNil(t, abilities[0].Priority)
+	assert.True(t, *abilities[0].Priority != priority || abilities[0].Weight != weight)
+	require.NotNil(t, abilities[1].Priority)
+	assert.Equal(t, priority, *abilities[1].Priority)
+	assert.Equal(t, weight, abilities[1].Weight)
+
+	var states []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Order("channel_id ASC").Find(&states).Error)
+	require.Len(t, states, 2)
+	assert.Positive(t, states[0].LastScheduleTime)
+	assert.Zero(t, states[1].LastScheduleTime)
+}
+
+func TestChannelSmartScheduleTaskResultKeepsAllPersistedAdjustmentDetails(t *testing.T) {
 	result := channelSmartScheduleTaskResult{}
-	for channelId := 1; channelId <= maxChannelSmartScheduleTaskAdjustmentDetails; channelId++ {
+	for channelId := 1; channelId <= 500; channelId++ {
 		result.recordAdjustment(channelSmartScheduleTaskAdjustment{
 			ChannelId: channelId, Action: channelSmartScheduleAdjustmentUnchanged,
 		})
@@ -161,10 +381,10 @@ func TestChannelSmartScheduleTaskResultLimitsPersistedAdjustmentDetails(t *testi
 
 	result.finalizeAdjustments()
 
-	assert.True(t, result.AdjustmentDetailsTruncated)
-	require.Len(t, result.Adjustments, maxChannelSmartScheduleTaskAdjustmentDetails)
+	require.Len(t, result.Adjustments, 501)
 	assert.Equal(t, channelSmartScheduleAdjustmentFailed, result.Adjustments[0].Action)
 	assert.Equal(t, 9999, result.Adjustments[0].ChannelId)
+	assert.Equal(t, 500, result.Adjustments[len(result.Adjustments)-1].ChannelId)
 }
 
 func TestRunChannelSmartScheduleByRouteIsolatesGroupModelPools(t *testing.T) {
@@ -398,6 +618,81 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 	assert.InDelta(t, 0.8, *metric.StabilityScore, 1e-9)
 }
 
+func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+
+	const (
+		exactModel      = "gemini-2.5-pro-thinking-2048"
+		normalizedModel = "gemini-2.5-pro-thinking-*"
+	)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{exactModel}, 1, 90, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartSchedulePerformanceWindowOption: "60",
+		channelMonitorSmartScheduleStabilityWindowOption:   "60",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t, policy,
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1307, Name: "parameterized model", Group: "vip", Models: exactModel,
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1307, Group: "vip", Model: exactModel, Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1307, GroupName: "vip", ModelName: exactModel, ParticipationSet: true,
+	}).Error)
+	now := common.GetTimestamp()
+	minuteStart := now - now%60 - 60
+	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
+		MinuteStart: minuteStart, ChannelId: 1307,
+		ModelKey: normalizedModel, GroupKey: "vip", APIKeyKey: "all",
+		ModelName: normalizedModel, GroupName: "vip", SampleCount: 2,
+		ActualSuccessCount: 2, FirstTokenSampleCount: 2, FirstTokenTotalMs: 400,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule", nil,
+	)
+	GetChannelMonitorSmartScheduleRoutes(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			PerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
+			StabilityItems   []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	require.Len(t, response.Data.PerformanceItems, 1)
+	performance := response.Data.PerformanceItems[0]
+	assert.Equal(t, "vip", performance.GroupName)
+	assert.Equal(t, exactModel, performance.ModelName)
+	assert.Equal(t, 2, performance.SampleCount)
+	require.Len(t, response.Data.StabilityItems, 1)
+	metric := response.Data.StabilityItems[0]
+	assert.Equal(t, exactModel, metric.ModelName)
+	assert.Equal(t, int64(2), metric.SampleCount)
+	assert.Equal(t, int64(2), metric.SuccessCount)
+}
+
 func TestRunChannelSmartScheduleUsesManualSamplesInEverySampleMode(t *testing.T) {
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -617,6 +912,57 @@ func TestUpdateChannelMonitorSmartScheduleRoutePrimaryDefaultsAndPersistsStabili
 		ChannelId: 1211, GroupName: "vip", ModelName: "model-a",
 	}).First(&state).Error)
 	assert.False(t, state.ManualPrimaryAllowStabilityDegrade)
+}
+
+func TestUpdateChannelMonitorSmartScheduleRoutePrimaryQueuesSuccessorBehindRunningSchedule(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 5, 80, 30,
+			),
+		),
+	})
+	priority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1213, Name: "fixed while scheduling", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1213, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1213, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+	running, err := model.CreateSystemTask(channelMonitorSmartScheduleTaskType, nil, nil)
+	require.NoError(t, err)
+	claimed, ok, err := model.ClaimSystemTask(
+		running.ID, channelMonitorSmartScheduleTaskType, "running-scheduler", common.GetTimestamp()+60,
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, claimed)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodPut, "/api/channel_monitor/channel/1213/schedule/route/primary",
+		map[string]any{"group": "vip", "model": "model-a", "duration_minutes": 10},
+	)
+	ctx.AddParam("id", "1213")
+	UpdateChannelMonitorSmartScheduleRoutePrimary(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var tasks []model.SystemTask
+	require.NoError(t, db.Where("type = ?", channelMonitorSmartScheduleTaskType).Order("id ASC").Find(&tasks).Error)
+	require.Len(t, tasks, 2)
+	assert.Equal(t, model.SystemTaskStatusRunning, tasks[0].Status)
+	assert.Nil(t, tasks[0].ActiveKey)
+	assert.Equal(t, model.SystemTaskStatusPending, tasks[1].Status)
+	require.NotNil(t, tasks[1].ActiveKey)
+	assert.Equal(t, channelMonitorSmartScheduleTaskType, *tasks[1].ActiveKey)
 }
 
 func TestUpdateChannelMonitorSmartScheduleRoutePrimaryRequiresStabilityConfirmation(t *testing.T) {

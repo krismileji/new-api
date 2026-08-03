@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { getChannelMonitorTodaySuccess } from '../api'
@@ -32,7 +32,6 @@ export function useChannelMonitorDailyInsight(open: boolean) {
     queryFn: () => getChannelMonitorTodaySuccess({ days, date: selectedDate }),
     enabled: open,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
   })
 
   const changeDays = (nextDays: number) => {

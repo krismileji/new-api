@@ -24,15 +24,9 @@ import {
   CloudDownloadIcon,
   HistoryIcon,
   Refresh01Icon,
-  WorkflowSquare06Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 
@@ -64,26 +58,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import {
-  getChannelMonitorTasks,
-  runChannelMonitorRatioUpdate,
-  runChannelMonitorSmartSchedule,
-} from '../api'
+import { getChannelMonitorTasks, runChannelMonitorRatioUpdate } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import { CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY } from '../lib/query-options'
 import {
   getLatestCompletedChannelMonitorTaskTime,
   isActiveChannelMonitorTask,
 } from '../lib/task-status'
-import type {
-  ChannelMonitorTask,
-  ChannelMonitorTaskKind,
-  ChannelMonitorTaskStatus,
-} from '../types'
-import { ChannelMonitorSmartScheduleExecutionPanel } from './channel-monitor-smart-schedule-execution-dialog'
+import type { ChannelMonitorTask, ChannelMonitorTaskStatus } from '../types'
 import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
@@ -97,7 +82,6 @@ const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
 }
 
 type ChannelMonitorTaskHistoryDialogProps = {
-  initialKind: ChannelMonitorTaskKind
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -395,7 +379,7 @@ export function ChannelMonitorTaskHistoryEntry(props: {
               }
               truncated={
                 props.task.type === 'channel_smart_schedule'
-                  ? props.task.result?.adjustment_details_truncated === true
+                  ? false
                   : props.task.result?.failure_details_truncated === true
               }
               expanded={detailsExpanded}
@@ -465,7 +449,6 @@ export function ChannelMonitorTaskHistoryDialog(
   props: ChannelMonitorTaskHistoryDialogProps
 ) {
   const queryClient = useQueryClient()
-  const [kind, setKind] = useState<ChannelMonitorTaskKind>(props.initialKind)
   const [page, setPage] = useState(1)
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const ratioUpdateMutation = useMutation({
@@ -477,47 +460,26 @@ export function ChannelMonitorTaskHistoryDialog(
           ? '倍率更新任务已创建'
           : '已有倍率更新任务正在执行'
       )
-      setKind('ratio')
       setPage(1)
       setExpandedTaskId(null)
     },
     onSettled: () => {
       queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-task-history'],
-      })
-      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
-      queryClient.invalidateQueries({ queryKey: ['channels'] })
-    },
-  })
-  const smartScheduleMutation = useMutation({
-    mutationFn: runChannelMonitorSmartSchedule,
-    onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
-      toast.success(
-        response.data.created
-          ? '智能调度任务已创建'
-          : '已有智能调度任务正在执行'
-      )
-      setKind('schedule')
-      setPage(1)
-      setExpandedTaskId(null)
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-task-history'],
-      })
-      queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-smart-schedule-executions'],
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
       })
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       queryClient.invalidateQueries({ queryKey: ['channels'] })
     },
   })
   const query = useQuery({
-    queryKey: ['channel-monitor-task-history', 'ratio', page, TASK_PAGE_SIZE],
+    queryKey: [
+      ...CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      'ratio',
+      page,
+      TASK_PAGE_SIZE,
+    ],
     queryFn: () => getChannelMonitorTasks(page, TASK_PAGE_SIZE, 'ratio'),
-    enabled: props.open && kind === 'ratio',
-    placeholderData: keepPreviousData,
+    enabled: props.open,
     staleTime: 30 * 1000,
     refetchInterval: (result) =>
       result.state.data?.data.items.some(isActiveChannelMonitorTask)
@@ -551,6 +513,17 @@ export function ChannelMonitorTaskHistoryDialog(
     queryClient.invalidateQueries({ queryKey: ['channels'] })
   }, [latestCompletedTaskTime, queryClient])
 
+  useEffect(() => {
+    if (page <= totalPages) return
+    setPage(totalPages)
+    setExpandedTaskId(null)
+  }, [page, totalPages])
+
+  const changePage = (nextPage: number) => {
+    setExpandedTaskId(null)
+    setPage(nextPage)
+  }
+
   let content: ReactNode
   if (query.isLoading) {
     content = (
@@ -560,7 +533,7 @@ export function ChannelMonitorTaskHistoryDialog(
         ))}
       </div>
     )
-  } else if (query.isError) {
+  } else if (query.isError && tasks.length === 0) {
     content = (
       <Empty className='h-full min-h-64 border-0'>
         <EmptyHeader>
@@ -626,192 +599,144 @@ export function ChannelMonitorTaskHistoryDialog(
   }
 
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open && ratioUpdateMutation.isPending) return
+        props.onOpenChange(open)
+      }}
+    >
+      <DialogContent
+        className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'
+        showCloseButton={!ratioUpdateMutation.isPending}
+      >
         <DialogHeader className='pr-10'>
-          <DialogTitle>执行记录</DialogTitle>
+          <DialogTitle>倍率与余额更新记录</DialogTitle>
           <DialogDescription>
-            统一查看倍率与余额更新、智能调度的执行结果、计算依据和调整原因。
+            查看每次上游倍率与余额更新的结果、联动操作、失败原因和耗时。
           </DialogDescription>
         </DialogHeader>
-        <Tabs
-          value={kind}
-          onValueChange={(nextKind) => {
-            if (nextKind !== 'ratio' && nextKind !== 'schedule') return
-            setKind(nextKind)
-            setPage(1)
-            setExpandedTaskId(null)
-          }}
-          className='min-h-0 overflow-hidden'
-        >
+        <div className='grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 overflow-hidden'>
           <div className='flex flex-wrap items-center justify-between gap-3'>
-            <div className='flex min-w-0 flex-wrap items-center gap-3'>
-              <TabsList aria-label='选择执行记录类型'>
-                <TabsTrigger value='ratio'>
-                  <HugeiconsIcon
-                    icon={CloudDownloadIcon}
-                    data-icon='inline-start'
-                  />
-                  倍率与余额更新
-                </TabsTrigger>
-                <TabsTrigger value='schedule'>
-                  <HugeiconsIcon
-                    icon={WorkflowSquare06Icon}
-                    data-icon='inline-start'
-                  />
-                  智能调度
-                </TabsTrigger>
-              </TabsList>
-              {kind === 'ratio' ? (
-                <span className='text-muted-foreground text-xs tabular-nums'>
-                  共 {total} 条更新任务
-                </span>
+            <span className='text-muted-foreground text-xs tabular-nums'>
+              共 {total} 条更新任务
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => ratioUpdateMutation.mutate()}
+              disabled={ratioUpdateMutation.isPending}
+            >
+              {ratioUpdateMutation.isPending ? (
+                <Spinner />
               ) : (
-                <span className='text-muted-foreground text-xs'>
-                  按批次查看评分、路由变化和调整原因
-                </span>
+                <HugeiconsIcon
+                  icon={CloudDownloadIcon}
+                  data-icon='inline-start'
+                />
               )}
-            </div>
-            {kind === 'ratio' ? (
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => ratioUpdateMutation.mutate()}
-                disabled={ratioUpdateMutation.isPending}
-              >
-                {ratioUpdateMutation.isPending ? (
-                  <Spinner />
-                ) : (
-                  <HugeiconsIcon
-                    icon={CloudDownloadIcon}
-                    data-icon='inline-start'
-                  />
-                )}
-                立即更新倍率和余额
-              </Button>
-            ) : (
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => smartScheduleMutation.mutate()}
-                disabled={smartScheduleMutation.isPending}
-              >
-                {smartScheduleMutation.isPending ? (
-                  <Spinner />
-                ) : (
-                  <HugeiconsIcon
-                    icon={WorkflowSquare06Icon}
-                    data-icon='inline-start'
-                  />
-                )}
-                执行智能调度
-              </Button>
-            )}
+              立即更新倍率和余额
+            </Button>
           </div>
-          <TabsContent
-            value='ratio'
-            className='grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden'
+          <div
+            className='bg-border grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4'
+            aria-label='当前页执行概览'
           >
-            <div
-              className='bg-border grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4'
-              aria-label='当前页执行概览'
-            >
-              <div className='bg-background p-3'>
-                <span className='text-muted-foreground block text-xs'>
-                  当前页
-                </span>
-                <strong className='mt-1 block text-lg tabular-nums'>
-                  {tasks.length} 条
-                </strong>
-              </div>
-              <div className='bg-background p-3'>
-                <span className='text-muted-foreground block text-xs'>
-                  成功
-                </span>
-                <strong className='mt-1 block text-lg tabular-nums'>
-                  {succeededCount} 条
-                </strong>
-              </div>
-              <div className='bg-background p-3'>
-                <span className='text-muted-foreground block text-xs'>
-                  需关注
-                </span>
-                <strong
-                  className={cn(
-                    'mt-1 block text-lg tabular-nums',
-                    partialFailureCount + failedCount > 0 && 'text-destructive'
-                  )}
-                >
-                  {partialFailureCount + failedCount} 条
-                </strong>
-              </div>
-              <div className='bg-background p-3'>
-                <span className='text-muted-foreground block text-xs'>
-                  执行中
-                </span>
-                <strong className='mt-1 block text-lg tabular-nums'>
-                  {activeCount} 条
-                </strong>
-              </div>
-            </div>
-            <div
-              className='min-h-0 min-w-0 overflow-auto rounded-lg border'
-              aria-busy={query.isFetching}
-            >
-              {content}
-            </div>
-            <div className='flex flex-wrap items-center justify-between gap-2'>
-              <span className='text-muted-foreground text-xs tabular-nums'>
-                显示 {rangeStart}-{rangeEnd}，共 {total} 条
+            <div className='bg-background p-3'>
+              <span className='text-muted-foreground block text-xs'>
+                当前页
               </span>
-              <div className='flex items-center gap-2'>
-                <Button
-                  variant='outline'
-                  size='icon-sm'
-                  aria-label='上一页'
-                  title='上一页'
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  disabled={page <= 1 || query.isFetching}
-                >
-                  <HugeiconsIcon icon={ArrowLeft01Icon} />
-                </Button>
-                <span className='text-muted-foreground min-w-20 text-center text-xs tabular-nums'>
-                  第 {page} / {totalPages} 页
-                </span>
-                <Button
-                  variant='outline'
-                  size='icon-sm'
-                  aria-label='下一页'
-                  title='下一页'
-                  onClick={() =>
-                    setPage((current) => Math.min(totalPages, current + 1))
-                  }
-                  disabled={page >= totalPages || query.isFetching}
-                >
-                  <HugeiconsIcon icon={ArrowRight01Icon} />
-                </Button>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => query.refetch()}
-                  disabled={query.isFetching}
-                >
-                  <HugeiconsIcon
-                    icon={Refresh01Icon}
-                    className={cn(query.isFetching && 'animate-spin')}
-                    data-icon='inline-start'
-                  />
-                  刷新
-                </Button>
-              </div>
+              <strong className='mt-1 block text-lg tabular-nums'>
+                {tasks.length} 条
+              </strong>
             </div>
-          </TabsContent>
-          <TabsContent value='schedule' className='min-h-0 overflow-hidden'>
-            <ChannelMonitorSmartScheduleExecutionPanel
-              active={props.open && kind === 'schedule'}
-            />
-          </TabsContent>
-        </Tabs>
+            <div className='bg-background p-3'>
+              <span className='text-muted-foreground block text-xs'>成功</span>
+              <strong className='mt-1 block text-lg tabular-nums'>
+                {succeededCount} 条
+              </strong>
+            </div>
+            <div className='bg-background p-3'>
+              <span className='text-muted-foreground block text-xs'>
+                需关注
+              </span>
+              <strong
+                className={cn(
+                  'mt-1 block text-lg tabular-nums',
+                  partialFailureCount + failedCount > 0 && 'text-destructive'
+                )}
+              >
+                {partialFailureCount + failedCount} 条
+              </strong>
+            </div>
+            <div className='bg-background p-3'>
+              <span className='text-muted-foreground block text-xs'>
+                执行中
+              </span>
+              <strong className='mt-1 block text-lg tabular-nums'>
+                {activeCount} 条
+              </strong>
+            </div>
+          </div>
+          <div
+            className='min-h-0 min-w-0 overflow-auto rounded-lg border'
+            aria-busy={query.isFetching}
+          >
+            {query.isError && tasks.length > 0 ? (
+              <Alert variant='destructive' className='m-3'>
+                <HugeiconsIcon icon={Alert02Icon} />
+                <AlertTitle>更新记录刷新失败</AlertTitle>
+                <AlertDescription>
+                  当前显示上一次成功加载的记录，可点击下方刷新重试。
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {content}
+          </div>
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <span className='text-muted-foreground text-xs tabular-nums'>
+              显示 {rangeStart}-{rangeEnd}，共 {total} 条
+            </span>
+            <div className='flex items-center gap-2'>
+              <Button
+                variant='outline'
+                size='icon-sm'
+                aria-label='上一页'
+                title='上一页'
+                onClick={() => changePage(Math.max(1, page - 1))}
+                disabled={page <= 1 || query.isFetching}
+              >
+                <HugeiconsIcon icon={ArrowLeft01Icon} />
+              </Button>
+              <span className='text-muted-foreground min-w-20 text-center text-xs tabular-nums'>
+                第 {page} / {totalPages} 页
+              </span>
+              <Button
+                variant='outline'
+                size='icon-sm'
+                aria-label='下一页'
+                title='下一页'
+                onClick={() => changePage(Math.min(totalPages, page + 1))}
+                disabled={page >= totalPages || query.isFetching}
+              >
+                <HugeiconsIcon icon={ArrowRight01Icon} />
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => query.refetch()}
+                disabled={query.isFetching}
+              >
+                <HugeiconsIcon
+                  icon={Refresh01Icon}
+                  className={cn(query.isFetching && 'animate-spin')}
+                  data-icon='inline-start'
+                />
+                刷新
+              </Button>
+            </div>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   )

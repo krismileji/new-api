@@ -206,9 +206,51 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
         model: 'model-standard',
       }),
     ],
-    performance_items: [],
+    performance_items: [
+      {
+        channel_id: 1,
+        group: 'vip',
+        model: 'model-fast',
+        group_count: 2,
+        sample_count: 20,
+        first_token_sample_count: 18,
+        first_token_duration_sample_count: 18,
+        tps_sample_count: 16,
+        average_first_token_ms: 410,
+        first_token_p50_ms: 380,
+        first_token_p95_ms: 760,
+        winsorized_average_first_token_ms: 405,
+        average_tps: 24.5,
+        last_used_time: 1_752_777_845,
+      },
+    ],
     stability_metrics_available: true,
-    stability_items: [],
+    stability_items: [
+      {
+        channel_id: 1,
+        group: 'vip',
+        model: 'model-fast',
+        group_count: 2,
+        success_count: 24,
+        failure_count: 1,
+        final_failure_count: 0,
+        retry_failure_count: 1,
+        sample_count: 25,
+        success_rate: 0.96,
+        stability_score: 0.98,
+        average_retry_failure_duration_ms: 500,
+        retry_failure_duration_buckets: [],
+        jitter_available: true,
+        first_token_baseline_ms: 350,
+        first_token_p50_ms: 380,
+        first_token_p95_ms: 760,
+        jitter_threshold_ms: 11_750,
+        jitter_sample_count: 18,
+        jitter_slow_count: 0,
+        jitter_allowed_count: 1,
+        jitter_penalty: 0,
+      },
+    ],
   }
 }
 
@@ -218,6 +260,8 @@ function renderBoard(
     groupRatios?: Readonly<Record<string, number>>
     channels?: ChannelMonitorItem[]
     groupPolicies?: ChannelMonitorSmartScheduleGroupPolicy[]
+    selection?: { group: string; model: string }
+    isError?: boolean
   } = {}
 ) {
   const queryClient = new QueryClient()
@@ -328,9 +372,10 @@ function renderBoard(
         groupRatios={options.groupRatios ?? { default: 1, vip: 0.5 }}
         intervalMinutes={10}
         isLoading={false}
-        isError={false}
+        isError={options.isError ?? false}
         onOpenHistory={noop}
         onOpenSettings={noop}
+        selection={options.selection}
       />
     </QueryClientProvider>
   )
@@ -349,7 +394,7 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('当前调度状态'))
     assert.ok(markup.includes('稳定性降级 1'))
     assert.equal(markup.includes('最近调度失败 0'), false)
-    assert.ok(markup.includes('执行记录'))
+    assert.ok(markup.includes('智能调度记录'))
     assert.ok(markup.includes('调度设置'))
     assert.ok(markup.includes('立即调度'))
     assert.ok(markup.includes('<table'))
@@ -385,15 +430,36 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('75.0%'))
     assert.ok(markup.includes('25.0%'))
     assert.ok(markup.includes('transition-[width]'))
-    assert.ok(markup.includes('样本成功'))
-    assert.ok(markup.includes('5 次 · 成功 5 次'))
-    assert.ok(markup.includes('首字 420 ms'))
-    assert.ok(markup.includes('TPS 18.50'))
+    assert.ok(markup.includes('窗口数据 / 测试样本'))
+    assert.ok(markup.includes('稳定 25 次 · 稳定分 98.0'))
+    assert.ok(markup.includes('性能 20 次 · P50 380 ms'))
+    assert.ok(markup.includes('P50 380 ms'))
+    assert.ok(markup.includes('TPS 24.50'))
+    assert.ok(markup.includes('测试/探测 5 次'))
     assert.ok(markup.includes('搜索渠道名称、ID 或备注'))
     assert.ok(markup.includes('按状态筛选'))
     assert.ok(markup.includes('按渠道排序'))
     assert.ok(markup.includes('查看 高速渠道 的调度详情'))
     assert.ok(markup.indexOf('主线路') < markup.indexOf('备用供应商'))
+  })
+
+  test('restores a persisted group and model selection', () => {
+    const markup = renderBoard({
+      selection: { group: 'default', model: 'model-standard' },
+    })
+
+    assert.ok(markup.includes('· default'))
+    assert.ok(markup.includes('model-standard'))
+    assert.ok(markup.includes('默认分组渠道'))
+    assert.equal(markup.includes('高速渠道'), false)
+  })
+
+  test('keeps the last schedule result visible after a background refresh fails', () => {
+    const markup = renderBoard({ isError: true })
+
+    assert.ok(markup.includes('刷新失败，显示上次结果'))
+    assert.ok(markup.includes('高速渠道'))
+    assert.equal(markup.includes('智能调度加载失败'), false)
   })
 
   test('keeps dozens of routes in a fixed-header scroll region', () => {
@@ -594,7 +660,7 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('备用与未参与路由'), false)
   })
 
-  test('exposes fixed-primary expiry, editing, and clear actions on the route', () => {
+  test('turns the fixed-primary route action into a clear action', () => {
     const result = createResult()
     result.routes[0] = createRoute(1, {
       channel_name: '高速渠道',
@@ -608,7 +674,7 @@ describe('channel monitor smart schedule board', () => {
 
     assert.ok(markup.includes('管理员固定至'))
     assert.ok(markup.includes('允许稳定性降级'))
-    assert.ok(markup.includes('重新设置 高速渠道 的固定时长'))
+    assert.ok(markup.includes('取消固定 高速渠道'))
     assert.ok(markup.includes('查看 高速渠道 的调度详情'))
   })
 })

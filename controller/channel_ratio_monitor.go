@@ -604,24 +604,11 @@ func SyncChannelMonitorGroupRatio(c *gin.Context) {
 		return
 	}
 
-	groupRatios := ratio_setting.GetGroupRatioCopy()
-	groupRatios[request.Group] = targetRatio
-	coefficients := getChannelMonitorGroupCoefficients()
-	coefficients[request.Group] = *request.Coefficient
-	groupRatioBytes, err := common.Marshal(groupRatios)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	coefficientBytes, err := common.Marshal(coefficients)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if err := model.UpdateOptionsBulk(map[string]string{
-		"GroupRatio":                          string(groupRatioBytes),
-		channelMonitorGroupCoefficientsOption: string(coefficientBytes),
-	}); err != nil {
+	if _, err := model.MergeChannelMonitorGroupOptions(
+		map[string]float64{request.Group: targetRatio},
+		map[string]float64{request.Group: *request.Coefficient},
+		false,
+	); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -853,8 +840,10 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 	if config.Type == service.CustomUpstreamType {
 		operatorId, operatorUsername := getChannelMonitorOperator(c)
 		if config.CustomConfig.Ratio.Source == service.ChannelMonitorCustomSourceFixed {
-			monitor, _, _, err = model.UpdateChannelRatioMonitorFromUpstream(
+			var applied bool
+			monitor, _, _, applied, err = model.UpdateChannelRatioMonitorFromUpstreamIfRevision(
 				channelId,
+				monitor.UpstreamRevision,
 				*config.CustomConfig.Ratio.FixedValue,
 				"已应用自定义上游固定倍率",
 				operatorId,
@@ -864,10 +853,24 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 				common.ApiError(c, fmt.Errorf("自定义上游配置已保存，但固定倍率写入失败: %w", err))
 				return
 			}
+			if !applied {
+				common.ApiError(c, model.ErrChannelRatioMonitorConfigChanged)
+				return
+			}
 		}
 		if config.CustomConfig.Balance.Source == service.ChannelMonitorCustomSourceFixed {
-			if err := model.RecordChannelRatioMonitorBalance(channelId, config.CustomConfig.Balance.FixedValue, ""); err != nil {
-				common.ApiError(c, fmt.Errorf("自定义上游配置已保存，但固定余额写入失败: %w", err))
+			applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
+				channelId,
+				monitor.UpstreamRevision,
+				config.CustomConfig.Balance.FixedValue,
+				"",
+			)
+			if recordErr != nil {
+				common.ApiError(c, fmt.Errorf("自定义上游配置已保存，但固定余额写入失败: %w", recordErr))
+				return
+			}
+			if !applied {
+				common.ApiError(c, model.ErrChannelRatioMonitorConfigChanged)
 				return
 			}
 			monitor, err = model.GetChannelRatioMonitor(channelId)
@@ -1008,8 +1011,17 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		if err == nil {
 			return
 		}
-		if statusErr := model.RecordChannelRatioMonitorFetchFailure(monitor.ChannelId, err.Error()); statusErr != nil {
+		applied, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
+			monitor.ChannelId,
+			monitor.UpstreamRevision,
+			err.Error(),
+		)
+		if statusErr != nil {
 			err = fmt.Errorf("%w（记录失败状态失败：%v）", err, statusErr)
+			return
+		}
+		if !applied {
+			err = model.ErrChannelRatioMonitorConfigChanged
 		}
 	}()
 	if monitor.UpstreamType == service.Sub2APIUpstreamType {
@@ -1062,12 +1074,17 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	})
 	outcome.Result = result
 	if result.Balance.Amount != nil || strings.TrimSpace(result.Balance.Error) != "" {
-		if balanceErr := model.RecordChannelRatioMonitorBalance(
+		applied, balanceErr := model.RecordChannelRatioMonitorBalanceIfRevision(
 			monitor.ChannelId,
+			monitor.UpstreamRevision,
 			result.Balance.Amount,
 			result.Balance.Error,
-		); balanceErr != nil {
+		)
+		if balanceErr != nil {
 			return outcome, fmt.Errorf("记录上游余额失败: %w", balanceErr)
+		}
+		if !applied {
+			return outcome, model.ErrChannelRatioMonitorConfigChanged
 		}
 		outcome.BalanceRecorded = result.Balance.Amount != nil
 	}
@@ -1080,8 +1097,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	if strings.TrimSpace(monitor.UpstreamGroup) != "" {
 		remark += fmt.Sprintf("（分组 %s）", monitor.UpstreamGroup)
 	}
-	updatedMonitor, created, changed, err := model.UpdateChannelRatioMonitorFromUpstream(
+	updatedMonitor, created, changed, applied, err := model.UpdateChannelRatioMonitorFromUpstreamIfRevision(
 		monitor.ChannelId,
+		monitor.UpstreamRevision,
 		result.Ratio,
 		remark,
 		operatorId,
@@ -1089,6 +1107,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	)
 	if err != nil {
 		return outcome, err
+	}
+	if !applied {
+		return outcome, model.ErrChannelRatioMonitorConfigChanged
 	}
 	service.InvalidateChannelDailyCostSnapshot(monitor.ChannelId)
 	outcome.Monitor = updatedMonitor
@@ -1143,13 +1164,30 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 		fetchErr = errors.New("上游未返回余额")
 	}
 	if fetchErr != nil {
-		if recordErr := model.RecordChannelRatioMonitorBalance(monitor.ChannelId, nil, fetchErr.Error()); recordErr != nil {
+		applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
+			monitor.ChannelId,
+			monitor.UpstreamRevision,
+			nil,
+			fetchErr.Error(),
+		)
+		if recordErr != nil {
 			fetchErr = fmt.Errorf("%w（记录余额失败状态失败：%v）", fetchErr, recordErr)
+		} else if !applied {
+			fetchErr = model.ErrChannelRatioMonitorConfigChanged
 		}
 		return result, fetchErr
 	}
-	if err := model.RecordChannelRatioMonitorBalance(monitor.ChannelId, result.Amount, ""); err != nil {
-		return result, err
+	applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
+		monitor.ChannelId,
+		monitor.UpstreamRevision,
+		result.Amount,
+		"",
+	)
+	if recordErr != nil {
+		return result, recordErr
+	}
+	if !applied {
+		return result, model.ErrChannelRatioMonitorConfigChanged
 	}
 	return result, nil
 }
@@ -1164,7 +1202,20 @@ func autoDisableChannelMonitorForLowBalance(monitor model.ChannelRatioMonitor, c
 		strconv.FormatFloat(balance, 'f', -1, 64) +
 		channelMonitorBalancePolicyDisableThresholdMarker +
 		strconv.FormatFloat(*monitor.BalanceAutoDisableThreshold, 'f', -1, 64)
-	if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, reason) {
+	changed, revisionCurrent, _, updateErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+		channel.Id,
+		monitor.UpstreamRevision,
+		model.CaptureChannelMonitorStatus(channel),
+		common.ChannelStatusAutoDisabled,
+		reason,
+	)
+	if updateErr != nil {
+		return false, fmt.Errorf("余额低于自动禁用阈值，但渠道禁用失败: %w", updateErr)
+	}
+	if !revisionCurrent {
+		return false, nil
+	}
+	if changed {
 		channel.Status = common.ChannelStatusAutoDisabled
 		return true, nil
 	}
@@ -1359,8 +1410,15 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		if applyResult.KeysUpdated > 0 {
 			applyErr = fmt.Errorf("已切换 %d 个上游令牌，但后续操作失败: %w", applyResult.KeysUpdated, applyErr)
 		}
-		if statusErr := model.RecordChannelRatioMonitorFetchFailure(channelId, applyErr.Error()); statusErr != nil {
+		applied, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
+			channelId,
+			monitor.UpstreamRevision,
+			applyErr.Error(),
+		)
+		if statusErr != nil {
 			applyErr = fmt.Errorf("%w（记录失败状态失败：%v）", applyErr, statusErr)
+		} else if !applied {
+			applyErr = fmt.Errorf("%w（上游配置已变化，未将旧请求的失败状态写入新配置）", applyErr)
 		}
 		common.ApiError(c, applyErr)
 		return
@@ -1377,8 +1435,9 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		upstreamName,
 		monitor.UpstreamGroup,
 	)
-	updatedMonitor, created, changed, err := model.UpdateChannelRatioMonitorFromUpstream(
+	updatedMonitor, created, changed, applied, err := model.UpdateChannelRatioMonitorFromUpstreamIfRevision(
 		channelId,
+		monitor.UpstreamRevision,
 		applyResult.Result.Ratio,
 		remark,
 		operatorId,
@@ -1386,6 +1445,10 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 	)
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("上游令牌已切换，但记录本地倍率失败: %w", err))
+		return
+	}
+	if !applied {
+		common.ApiError(c, errors.New("上游令牌已切换，但本地上游配置已变更，未覆盖新的倍率配置"))
 		return
 	}
 	service.InvalidateChannelDailyCostSnapshot(channelId)
@@ -1450,14 +1513,11 @@ func UpdateChannelMonitorGroupRatio(c *gin.Context) {
 		return
 	}
 
-	groupRatios := ratio_setting.GetGroupRatioCopy()
-	groupRatios[request.Group] = *request.Ratio
-	jsonBytes, err := common.Marshal(groupRatios)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if err := model.UpdateOptionsBulk(map[string]string{"GroupRatio": string(jsonBytes)}); err != nil {
+	if _, err := model.MergeChannelMonitorGroupOptions(
+		map[string]float64{request.Group: *request.Ratio},
+		nil,
+		false,
+	); err != nil {
 		common.ApiError(c, err)
 		return
 	}

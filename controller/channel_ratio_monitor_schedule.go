@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -31,7 +32,6 @@ const (
 	channelMonitorSmartScheduleDegradedPriority      int64 = 0
 	channelMonitorSmartScheduleDegradedWeight        uint  = 0
 	maxChannelSmartScheduleTaskFailureDetails              = 100
-	maxChannelSmartScheduleTaskAdjustmentDetails           = 500
 )
 
 type channelSmartScheduleTaskHandler struct{}
@@ -142,20 +142,20 @@ type channelSmartScheduleTaskAdjustment struct {
 }
 
 type channelSmartScheduleTaskResult struct {
-	ForceReset                 bool                                 `json:"force_reset"`
-	GroupPolicies              smartScheduleGroupPolicies           `json:"group_policies,omitempty"`
-	PerformanceWindowMinutes   int                                  `json:"performance_window_minutes"`
-	StabilityWindowMinutes     int                                  `json:"stability_window_minutes"`
-	Total                      int                                  `json:"total"`
-	Planned                    int                                  `json:"planned"`
-	Updated                    int                                  `json:"updated"`
-	Unchanged                  int                                  `json:"unchanged"`
-	Skipped                    int                                  `json:"skipped"`
-	Failed                     int                                  `json:"failed"`
-	Failures                   []channelSmartScheduleTaskFailure    `json:"failures,omitempty"`
-	FailureDetailsTruncated    bool                                 `json:"failure_details_truncated,omitempty"`
-	Adjustments                []channelSmartScheduleTaskAdjustment `json:"adjustments,omitempty"`
-	AdjustmentDetailsTruncated bool                                 `json:"adjustment_details_truncated,omitempty"`
+	ForceReset               bool                                 `json:"force_reset"`
+	GroupPolicies            smartScheduleGroupPolicies           `json:"group_policies,omitempty"`
+	GroupPolicyCount         int                                  `json:"group_policy_count,omitempty"`
+	PerformanceWindowMinutes int                                  `json:"performance_window_minutes"`
+	StabilityWindowMinutes   int                                  `json:"stability_window_minutes"`
+	Total                    int                                  `json:"total"`
+	Planned                  int                                  `json:"planned"`
+	Updated                  int                                  `json:"updated"`
+	Unchanged                int                                  `json:"unchanged"`
+	Skipped                  int                                  `json:"skipped"`
+	Failed                   int                                  `json:"failed"`
+	Failures                 []channelSmartScheduleTaskFailure    `json:"failures,omitempty"`
+	FailureDetailsTruncated  bool                                 `json:"failure_details_truncated,omitempty"`
+	Adjustments              []channelSmartScheduleTaskAdjustment `json:"adjustments,omitempty"`
 }
 
 func init() {
@@ -199,20 +199,32 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 			Payload:         adjustment,
 		})
 	}
-	if err := model.SaveChannelSmartScheduleExecutionDetails(task.TaskID, detailInputs); err != nil {
-		if runErr == nil {
-			runErr = fmt.Errorf("保存智能调度执行评分明细失败: %w", err)
-		} else {
-			runErr = fmt.Errorf("%w（保存智能调度执行评分明细失败：%v）", runErr, err)
-		}
-	}
 	storedSummary := summary
 	storedSummary.Adjustments = nil
 	status := model.SystemTaskStatusSucceeded
+	errorMessage := ""
 	if runErr != nil {
 		status = model.SystemTaskStatusFailed
+		errorMessage = runErr.Error()
 	}
-	finishSystemTaskHandler(task, runnerID, status, storedSummary, runErr)
+	if err := model.FinishChannelSmartScheduleTaskWithExecutionDetails(
+		task.TaskID,
+		runnerID,
+		status,
+		storedSummary,
+		errorMessage,
+		detailInputs,
+	); err == nil {
+		return
+	} else if errors.Is(err, model.ErrSystemTaskLockLost) {
+		common.SysLog(fmt.Sprintf("system task %s failed to persist result: %v", task.TaskID, err))
+		return
+	} else if runErr == nil {
+		runErr = fmt.Errorf("保存智能调度任务结果和执行评分明细失败: %w", err)
+	} else {
+		runErr = fmt.Errorf("%w（保存智能调度任务结果和执行评分明细失败：%v）", runErr, err)
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, storedSummary, runErr)
 }
 
 func RunChannelMonitorSmartSchedule(c *gin.Context) {
@@ -315,11 +327,6 @@ func (result *channelSmartScheduleTaskResult) finalizeAdjustments() {
 		}
 		return left.ChannelId < right.ChannelId
 	})
-	if len(result.Adjustments) <= maxChannelSmartScheduleTaskAdjustmentDetails {
-		return
-	}
-	result.Adjustments = result.Adjustments[:maxChannelSmartScheduleTaskAdjustmentDetails]
-	result.AdjustmentDetailsTruncated = true
 }
 
 func channelSmartScheduleAdjustmentActionOrder(action string) int {
@@ -600,30 +607,41 @@ func planChannelSmartSchedulePriorityWeight(
 		}
 	}
 	if currentPrimaryId == 0 {
-		currentPrimaryId = channelSmartScheduleCurrentPrimaryId(allCurrentItems)
+		currentItems := allCurrentItems
+		if manualPrimaryId > 0 {
+			currentItems = make([]channelSmartSchedulePlanItem, 0, len(allCurrentItems)-1)
+			for _, item := range allCurrentItems {
+				if item.ChannelId != manualPrimaryId {
+					currentItems = append(currentItems, item)
+				}
+			}
+		}
+		currentPrimaryId = channelSmartScheduleCurrentPrimaryId(currentItems)
 	}
 	rawWinnerId := 0
 	if ranked := channelSmartScheduleRankedItemIndexes(scoredItems, currentPrimaryId); len(ranked) > 0 {
 		rawWinnerId = scoredItems[ranked[0]].ChannelId
 	}
-	actualPrimaryId := 0
-	if manualPrimaryId > 0 {
-		actualPrimaryId = manualPrimaryId
-	} else if len(scoredItems) > 0 {
-		actualPrimaryId = channelSmartScheduleEffectivePrimaryId(
+	automaticPrimaryId := 0
+	if len(scoredItems) > 0 {
+		automaticPrimaryId = channelSmartScheduleEffectivePrimaryId(
 			scoredItems,
 			currentPrimaryId,
 			scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
 			forceReset,
 		)
 	} else if currentPrimaryId > 0 {
-		actualPrimaryId = currentPrimaryId
+		automaticPrimaryId = currentPrimaryId
+	}
+	actualPrimaryId := automaticPrimaryId
+	if manualPrimaryId > 0 {
+		actualPrimaryId = manualPrimaryId
 	}
 
 	rankedItems := make([]channelSmartSchedulePlanItem, 0, len(candidates))
-	if actualPrimaryId > 0 {
+	if automaticPrimaryId > 0 {
 		for _, item := range allCurrentItems {
-			if item.ChannelId == actualPrimaryId {
+			if item.ChannelId == automaticPrimaryId {
 				rankedItems = append(rankedItems, item)
 				break
 			}
@@ -631,7 +649,7 @@ func planChannelSmartSchedulePriorityWeight(
 	}
 	for _, index := range channelSmartScheduleRankedItemIndexes(scoredItems, currentPrimaryId) {
 		item := scoredItems[index]
-		if item.ChannelId != actualPrimaryId {
+		if item.ChannelId != automaticPrimaryId {
 			rankedItems = append(rankedItems, item)
 		}
 	}
@@ -652,7 +670,7 @@ func planChannelSmartSchedulePriorityWeight(
 		return pendingItems[i].ChannelId < pendingItems[j].ChannelId
 	})
 	for _, item := range pendingItems {
-		if item.ChannelId != actualPrimaryId {
+		if item.ChannelId != automaticPrimaryId {
 			rankedItems = append(rankedItems, item)
 		}
 	}
@@ -673,6 +691,10 @@ func planChannelSmartSchedulePriorityWeight(
 	}
 
 	normalCount := len(rankedItems)
+	manualPrimaryFloor := int64(normalCount)
+	if manualPrimaryFloor < math.MaxInt64 {
+		manualPrimaryFloor++
+	}
 	for index := range rankedItems {
 		item := &rankedItems[index]
 		item.BaseRank = index + 1
@@ -681,11 +703,11 @@ func planChannelSmartSchedulePriorityWeight(
 		item.TargetPriority = item.BasePriority
 		item.TargetWeight = item.BaseWeight
 		for _, candidate := range candidates {
-			if candidate.ChannelId == item.ChannelId && candidate.ManualPrimary &&
-				candidate.ManualTargetPriority > item.TargetPriority {
-				item.TargetPriority = candidate.ManualTargetPriority
-				break
+			if candidate.ChannelId != item.ChannelId || !candidate.ManualPrimary {
+				continue
 			}
+			item.TargetPriority = max(item.TargetPriority, manualPrimaryFloor, candidate.ManualTargetPriority)
+			break
 		}
 		details := item.ScoreDetails
 		details.Decision.CurrentPrimaryChannelId = currentPrimaryId

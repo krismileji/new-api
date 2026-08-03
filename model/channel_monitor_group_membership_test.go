@@ -189,3 +189,91 @@ func TestRemoveChannelMonitorGroupMembershipsRollsBackWhenRemovalWouldLeaveNoGro
 	assert.Equal(t, 402, abilities[2].ChannelId)
 	assert.Equal(t, "vip", abilities[2].Group)
 }
+
+func TestRemoveChannelMonitorGroupMembershipsSkipsStaleGroupSnapshot(t *testing.T) {
+	resetChannelMonitorGroupMembershipTables(t)
+
+	channel := Channel{
+		Id: 403, Name: "changed membership", Key: "secret",
+		Status: common.ChannelStatusEnabled, Group: "vip,backup,manual", Models: "model-a",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	applied, err := RemoveChannelMonitorGroupMemberships([]ChannelMonitorGroupMembershipRemoval{{
+		ChannelId: 403, Group: "vip", ExpectedGroups: "vip,backup",
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, applied)
+
+	var storedChannel Channel
+	require.NoError(t, DB.First(&storedChannel, 403).Error)
+	assert.Equal(t, "vip,backup,manual", storedChannel.Group)
+
+	var abilities []Ability
+	require.NoError(t, DB.Where("channel_id = ?", 403).Order(commonGroupCol+" ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 3)
+	assert.Equal(t, []string{"backup", "manual", "vip"}, []string{
+		abilities[0].Group, abilities[1].Group, abilities[2].Group,
+	})
+}
+
+func TestRemoveChannelMonitorGroupMembershipsSkipsStaleMonitorRevision(t *testing.T) {
+	resetChannelMonitorGroupMembershipTables(t)
+	require.NoError(t, DB.AutoMigrate(&ChannelRatioMonitor{}))
+	require.NoError(t, DB.Where("channel_id = ?", 404).Delete(&ChannelRatioMonitor{}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id = ?", 404).Delete(&ChannelRatioMonitor{}).Error)
+	})
+
+	channel := Channel{
+		Id: 404, Name: "changed monitor", Key: "secret",
+		Status: common.ChannelStatusEnabled, Group: "vip,backup", Models: "model-a",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId: 404, UpstreamRevision: 2,
+	}).Error)
+
+	applied, err := RemoveChannelMonitorGroupMemberships([]ChannelMonitorGroupMembershipRemoval{{
+		ChannelId: 404, Group: "vip", ExpectedGroups: "vip,backup",
+		ExpectedUpstreamRevision: 1, GuardUpstreamRevision: true,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, applied)
+
+	var storedChannel Channel
+	require.NoError(t, DB.First(&storedChannel, 404).Error)
+	assert.Equal(t, "vip,backup", storedChannel.Group)
+}
+
+func TestReplaceChannelMonitorGroupMembersRollsBackWhenAbilityRebuildFails(t *testing.T) {
+	resetChannelMonitorGroupMembershipTables(t)
+	channel := Channel{
+		Id: 405, Name: "atomic membership", Key: "secret",
+		Status: common.ChannelStatusEnabled, Group: "default", Models: "model-a",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	callbackName := "test:fail_membership_ability_create"
+	wantErr := errors.New("membership ability create failed")
+	require.NoError(t, DB.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Ability" {
+			tx.AddError(wantErr)
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Create().Remove(callbackName) })
+
+	_, err := ReplaceChannelMonitorGroupMembers("vip", []int{405})
+	require.ErrorIs(t, err, wantErr)
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, 405).Error)
+	assert.Equal(t, "default", stored.Group)
+	var abilities []Ability
+	require.NoError(t, DB.Where("channel_id = ?", 405).Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	assert.Equal(t, "default", abilities[0].Group)
+}

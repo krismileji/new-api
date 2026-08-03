@@ -30,7 +30,6 @@ import {
   getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
   previewChannelMonitorNotificationEmail,
-  updateChannelMonitorGroupChannels,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
@@ -501,37 +500,4 @@ test('requests daily success and cache insights for the selected date', async ()
     days: 30,
     date: '2026-07-23',
   })
-})
-
-test('normalizes nullable group membership change lists from older servers', async () => {
-  const originalAdapter = api.defaults.adapter
-  const adapter: AxiosAdapter = async (config) => ({
-    data: {
-      success: true,
-      message: '',
-      data: {
-        group: 'vip',
-        channel_ids: [7],
-        added_channel_ids: null,
-        removed_channel_ids: null,
-      },
-    },
-    status: 200,
-    statusText: 'OK',
-    headers: {},
-    config,
-  })
-  api.defaults.adapter = adapter
-
-  try {
-    const response = await updateChannelMonitorGroupChannels({
-      group: 'vip',
-      channelIds: [7],
-    })
-
-    assert.deepEqual(response.data.added_channel_ids, [])
-    assert.deepEqual(response.data.removed_channel_ids, [])
-  } finally {
-    api.defaults.adapter = originalAdapter
-  }
 })

@@ -17,9 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { describe, test } from 'node:test'
 
-import { Window } from 'happy-dom'
 import { createInstance } from 'i18next'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
@@ -32,34 +31,13 @@ import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSuccessSummary,
 } from '../../types'
-import { ChannelMonitorChannelView } from '../channel-monitor-channel-view'
+import './test-dom'
 
 const noop = () => {}
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
-
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
+const { ChannelMonitorChannelView } =
+  await import('../channel-monitor-channel-view')
 const reactTestGlobals = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
@@ -619,10 +597,10 @@ describe('channel monitor channel view timestamps', () => {
     })
 
     const primarySwitch = container.querySelector<HTMLElement>(
-      '[aria-label="取消 主渠道 的智能调度参与"]'
+      '[aria-label="取消 主渠道 全部路由的智能调度参与"]'
     )
     const standbySwitch = container.querySelector<HTMLElement>(
-      '[aria-label="取消 备用渠道 的智能调度参与"]'
+      '[aria-label="取消 备用渠道 全部路由的智能调度参与"]'
     )
     assert.ok(primarySwitch)
     assert.ok(standbySwitch)
@@ -677,8 +655,4 @@ describe('channel monitor channel view timestamps', () => {
     )
     assert.ok(markup.includes('tabindex="0"'))
   })
-})
-
-after(() => {
-  domWindow.close()
 })

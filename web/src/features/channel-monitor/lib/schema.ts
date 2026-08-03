@@ -18,6 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 
+import {
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS,
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING,
+} from '../constants'
 import type {
   ChannelMonitorEmailNotificationType,
   ChannelMonitorPolicyAction,
@@ -339,6 +343,70 @@ const smartSchedulePolicyShape = {
   prioritySamplingMinPercent: smartSchedulePrioritySamplingMinPercentSchema,
 }
 
+function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return value
+  }
+
+  const policy = value as Record<string, unknown>
+  const normalized: Record<string, unknown> = { ...policy }
+  const defaults = DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS
+
+  if (policy.sampleMode !== 'traffic') {
+    normalized.explorationTrafficPercent = defaults.explorationTrafficPercent
+  }
+  if (policy.sampleMode !== 'probe') {
+    normalized.probeIntervalMinutes = defaults.probeIntervalMinutes
+  }
+
+  if (
+    policy.applyMode !== 'priority_weight' ||
+    policy.prioritySamplingEnabled !== true
+  ) {
+    normalized.prioritySamplingIntervalMinutes =
+      defaults.prioritySamplingIntervalMinutes
+    normalized.prioritySamplingBasePercent =
+      defaults.prioritySamplingBasePercent
+    normalized.prioritySamplingDecayPercent =
+      defaults.prioritySamplingDecayPercent
+    normalized.prioritySamplingMinPercent = defaults.prioritySamplingMinPercent
+  }
+  if (policy.applyMode !== 'priority_weight') {
+    normalized.prioritySamplingEnabled = false
+  }
+
+  if (policy.stabilityEnabled !== true) {
+    normalized.minSamples = defaults.minSamples
+    normalized.degradeStabilityScore = defaults.degradeStabilityScore
+    normalized.recoveryStabilityScore = defaults.recoveryStabilityScore
+    normalized.fastFailurePenaltyPercent = defaults.fastFailurePenaltyPercent
+    normalized.fastFailureSeconds = defaults.fastFailureSeconds
+    normalized.slowFailureSeconds = defaults.slowFailureSeconds
+    normalized.cooldownMinutes = defaults.cooldownMinutes
+    if (
+      typeof policy.scoring === 'object' &&
+      policy.scoring !== null &&
+      !Array.isArray(policy.scoring)
+    ) {
+      normalized.scoring = {
+        ...(policy.scoring as Record<string, unknown>),
+        stabilityPercent:
+          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.stability_percent,
+      }
+    }
+  }
+
+  if (policy.stabilityEnabled !== true || policy.jitterEnabled !== true) {
+    normalized.jitterTolerancePercent = defaults.jitterTolerancePercent
+    normalized.jitterThresholdMultiplier = defaults.jitterThresholdMultiplier
+    normalized.jitterAbsoluteToleranceSeconds =
+      defaults.jitterAbsoluteToleranceSeconds
+    normalized.jitterBaselineMinutes = defaults.jitterBaselineMinutes
+  }
+
+  return normalized
+}
+
 function validateSmartSchedulePolicy(
   values: {
     applyMode: ChannelMonitorSmartScheduleApplyMode
@@ -374,21 +442,25 @@ function validateSmartSchedulePolicy(
 }
 
 export function createChannelMonitorSmartSchedulePolicySchema() {
-  return z
-    .object(smartSchedulePolicyShape)
-    .superRefine(validateSmartSchedulePolicy)
+  return z.preprocess(
+    normalizeInactiveSmartSchedulePolicy,
+    z.object(smartSchedulePolicyShape).superRefine(validateSmartSchedulePolicy)
+  )
 }
 
-const smartScheduleGroupPolicySchema = z
-  .object({
-    ...smartSchedulePolicyShape,
-    group: z
-      .string()
-      .trim()
-      .min(1, '分组名称不能为空')
-      .max(64, '分组名称不能超过 64 个字符'),
-  })
-  .superRefine(validateSmartSchedulePolicy)
+const smartScheduleGroupPolicySchema = z.preprocess(
+  normalizeInactiveSmartSchedulePolicy,
+  z
+    .object({
+      ...smartSchedulePolicyShape,
+      group: z
+        .string()
+        .trim()
+        .min(1, '分组名称不能为空')
+        .max(64, '分组名称不能超过 64 个字符'),
+    })
+    .superRefine(validateSmartSchedulePolicy)
+)
 
 export function createChannelRatioSchema() {
   return z.object({

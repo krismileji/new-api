@@ -26,16 +26,19 @@ import {
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  keepPreviousData,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Empty,
   EmptyContent,
@@ -62,8 +65,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getChannelMonitorTasks } from '../api'
-import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
+import {
+  getChannelMonitorSmartScheduleExecutionDetails,
+  getChannelMonitorTasks,
+} from '../api'
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+  CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+} from '../lib/query-options'
 import { formatChannelMonitorSmartScheduleFailureStage } from '../lib/smart-schedule-execution'
 import { isActiveChannelMonitorTask } from '../lib/task-status'
 import type {
@@ -78,6 +87,7 @@ import {
 import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
 
 const PAGE_SIZE = 20
+const DETAIL_PAGE_SIZE = 50
 const ACTIVE_REFRESH_INTERVAL_MS = 5000
 
 const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
@@ -135,23 +145,9 @@ function taskSummary(task: ChannelMonitorTask) {
   return `调整 ${result.updated} · 保持 ${result.unchanged ?? 0} · 跳过 ${result.skipped ?? 0} · 失败 ${result.failed}`
 }
 
-function matchesAdjustment(
-  adjustment: ChannelMonitorTaskAdjustment,
-  query: string
-) {
-  if (!query) return true
-  return [
-    adjustment.channel_name,
-    String(adjustment.channel_id),
-    adjustment.group,
-    adjustment.model,
-    adjustment.reason,
-    adjustment.score_details?.decision.reason ?? '',
-  ].some((value) => value.toLowerCase().includes(query))
-}
-
 export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
   adjustment: ChannelMonitorTaskAdjustment
+  channelNameById?: ReadonlyMap<number, string>
 }) {
   const adjustment = props.adjustment
   const failureStage = formatChannelMonitorSmartScheduleFailureStage(
@@ -172,7 +168,9 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
       <div className='flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums'>
         <span>
           <span className='text-muted-foreground'>评分 </span>
-          {adjustment.score == null ? '-' : adjustment.score.toFixed(4)}
+          {adjustment.score == null
+            ? '-'
+            : `${(adjustment.score * 100).toFixed(2)} 分`}
         </span>
         <span>
           <span className='text-muted-foreground'>优先级 </span>
@@ -208,6 +206,7 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
         details={adjustment.score_details}
         className='lg:col-span-3'
         snapshotLabel='本次执行快照'
+        channelNameById={props.channelNameById}
       />
       {adjustment.manual_primary || adjustment.manual_primary_until ? (
         <div className='flex flex-wrap items-center gap-2 text-xs lg:col-span-3'>
@@ -279,11 +278,11 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   const [groupFilter, setGroupFilter] = useState('all')
   const [modelFilter, setModelFilter] = useState('all')
   const [actionFilter, setActionFilter] = useState('all')
+  const [detailPage, setDetailPage] = useState(1)
   const query = useQuery({
-    queryKey: ['channel-monitor-smart-schedule-executions', page],
+    queryKey: [...CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY, page],
     queryFn: () => getChannelMonitorTasks(page, PAGE_SIZE, 'schedule'),
     enabled: props.active,
-    placeholderData: keepPreviousData,
     staleTime: 15 * 1000,
     refetchInterval: (result) =>
       result.state.data?.data.items.some(isActiveChannelMonitorTask)
@@ -297,17 +296,53 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   const total = query.data?.data.total ?? 0
   const selectedTask =
     tasks.find((task) => task.task_id === selectedTaskId) ?? tasks[0]
-  const adjustments = useMemo(
-    () => selectedTask?.result?.adjustments ?? [],
-    [selectedTask?.result?.adjustments]
+  const detailQuery = useQuery({
+    queryKey: [
+      ...CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+      'details',
+      selectedTask?.task_id,
+      detailPage,
+      search.trim(),
+      groupFilter,
+      modelFilter,
+      actionFilter,
+    ],
+    queryFn: () =>
+      getChannelMonitorSmartScheduleExecutionDetails(
+        selectedTask?.task_id ?? '',
+        {
+          page: detailPage,
+          pageSize: DETAIL_PAGE_SIZE,
+          search: search.trim(),
+          group: groupFilter === 'all' ? undefined : groupFilter,
+          model: modelFilter === 'all' ? undefined : modelFilter,
+          action: actionFilter === 'all' ? undefined : actionFilter,
+        }
+      ),
+    enabled:
+      props.active &&
+      selectedTask != null &&
+      !isActiveChannelMonitorTask(selectedTask),
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+  const detailResult = detailQuery.data?.data
+  const adjustments = detailResult?.items ?? []
+  const channelNameById = useMemo(
+    () =>
+      new Map(
+        Object.entries(detailResult?.channel_names ?? {}).map(
+          ([channelId, channelName]) => [Number(channelId), channelName]
+        )
+      ),
+    [detailResult?.channel_names]
   )
   const groups = useMemo(
-    () => [...new Set(adjustments.map((item) => item.group))].sort(),
-    [adjustments]
+    () => detailResult?.groups ?? [],
+    [detailResult?.groups]
   )
   const models = useMemo(
-    () => [...new Set(adjustments.map((item) => item.model))].sort(),
-    [adjustments]
+    () => detailResult?.models ?? [],
+    [detailResult?.models]
   )
   const groupOptions = useMemo(
     () => [
@@ -323,18 +358,6 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     ],
     [models]
   )
-  const normalizedSearch = search.trim().toLowerCase()
-  const filteredAdjustments = useMemo(
-    () =>
-      adjustments.filter(
-        (adjustment) =>
-          (groupFilter === 'all' || adjustment.group === groupFilter) &&
-          (modelFilter === 'all' || adjustment.model === modelFilter) &&
-          (actionFilter === 'all' || adjustment.action === actionFilter) &&
-          matchesAdjustment(adjustment, normalizedSearch)
-      ),
-    [actionFilter, adjustments, groupFilter, modelFilter, normalizedSearch]
-  )
   const latestCompletedTaskId = tasks.find(
     (task) => !isActiveChannelMonitorTask(task)
   )?.task_id
@@ -346,6 +369,11 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     }
     if (!tasks.some((task) => task.task_id === selectedTaskId)) {
       setSelectedTaskId(tasks[0].task_id)
+      setSearch('')
+      setGroupFilter('all')
+      setModelFilter('all')
+      setActionFilter('all')
+      setDetailPage(1)
     }
   }, [selectedTaskId, tasks])
 
@@ -361,10 +389,101 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     setGroupFilter('all')
     setModelFilter('all')
     setActionFilter('all')
+    setDetailPage(1)
+  }
+  const selectTask = (taskId: string) => {
+    if (taskId !== selectedTask?.task_id) resetFilters()
+    setSelectedTaskId(taskId)
+  }
+  const changeTaskPage = (nextPage: number) => {
+    resetFilters()
+    setSelectedTaskId(null)
+    setPage(nextPage)
   }
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  useEffect(() => {
+    if (!query.data || page <= totalPages) return
+    changeTaskPage(totalPages)
+  }, [page, query.data, totalPages])
+
   const result = selectedTask?.result
-  const visibleCount = filteredAdjustments.length
+  const detailTotal = detailResult?.total ?? 0
+  const detailTotalPages = Math.max(
+    1,
+    Math.ceil(detailTotal / DETAIL_PAGE_SIZE)
+  )
+
+  useEffect(() => {
+    if (!detailResult || detailPage <= detailTotalPages) return
+    setDetailPage(detailTotalPages)
+  }, [detailPage, detailResult, detailTotalPages])
+
+  let detailBody
+  if (selectedTask && isActiveChannelMonitorTask(selectedTask)) {
+    detailBody = (
+      <Empty className='min-h-48 border-0'>
+        <EmptyHeader>
+          <EmptyTitle>任务正在执行</EmptyTitle>
+          <EmptyDescription>执行完成后会加载本次调度明细。</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  } else if (detailQuery.isLoading) {
+    detailBody = (
+      <div className='space-y-3 p-4'>
+        <Skeleton className='h-28 w-full' />
+        <Skeleton className='h-28 w-full' />
+      </div>
+    )
+  } else if (detailQuery.isError) {
+    detailBody = (
+      <Empty className='min-h-48 border-0'>
+        <EmptyHeader>
+          <EmptyMedia variant='icon'>
+            <HugeiconsIcon icon={Alert02Icon} />
+          </EmptyMedia>
+          <EmptyTitle>执行明细加载失败</EmptyTitle>
+          <EmptyDescription>
+            {detailQuery.error instanceof Error
+              ? detailQuery.error.message
+              : '请稍后重试'}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={() => detailQuery.refetch()}
+          >
+            <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
+    )
+  } else if (adjustments.length > 0) {
+    detailBody = (
+      <ol className='divide-y'>
+        {adjustments.map((adjustment) => (
+          <ChannelMonitorSmartScheduleAdjustmentRow
+            key={`${adjustment.channel_id}-${adjustment.group}-${adjustment.model}`}
+            adjustment={adjustment}
+            channelNameById={channelNameById}
+          />
+        ))}
+      </ol>
+    )
+  } else {
+    detailBody = (
+      <Empty className='min-h-48 border-0'>
+        <EmptyHeader>
+          <EmptyTitle>没有匹配的路由记录</EmptyTitle>
+          <EmptyDescription>调整筛选条件后重试。</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
 
   let body
   if (query.isLoading) {
@@ -374,7 +493,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
         <Skeleton className='h-full min-h-56' />
       </div>
     )
-  } else if (query.isError) {
+  } else if (query.isError && tasks.length === 0) {
     body = (
       <Empty className='h-full min-h-64 border-0'>
         <EmptyHeader>
@@ -421,7 +540,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 key={task.task_id}
                 task={task}
                 selected={task.task_id === selectedTask?.task_id}
-                onSelect={() => setSelectedTaskId(task.task_id)}
+                onSelect={() => selectTask(task.task_id)}
               />
             ))}
           </>
@@ -429,6 +548,15 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
       >
         {selectedTask && (
           <>
+            {query.isError ? (
+              <Alert variant='destructive' className='m-3 mb-0'>
+                <HugeiconsIcon icon={Alert02Icon} />
+                <AlertTitle>执行记录刷新失败</AlertTitle>
+                <AlertDescription>
+                  当前显示上一次成功加载的记录，可点击下方刷新重试。
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <div className='border-b p-4'>
               <div className='flex flex-wrap items-start justify-between gap-3'>
                 <div className='min-w-0'>
@@ -485,8 +613,8 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               </div>
               {result ? (
                 <p className='text-muted-foreground mt-3 text-xs'>
-                  {result.group_policies?.length
-                    ? `按 ${result.group_policies.length} 个分组策略执行`
+                  {(result.group_policy_count ?? result.group_policies?.length)
+                    ? `按 ${result.group_policy_count ?? result.group_policies?.length} 个分组策略执行`
                     : '未记录分组策略'}{' '}
                   · 性能窗口 {result.performance_window_minutes ?? 0} 分钟 ·
                   稳定性窗口 {result.stability_window_minutes ?? 0} 分钟
@@ -500,7 +628,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 </InputGroupAddon>
                 <InputGroupInput
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    setDetailPage(1)
+                  }}
                   placeholder='搜索渠道、分组、模型或原因'
                   aria-label='搜索执行明细'
                 />
@@ -508,7 +639,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               <Select
                 items={groupOptions}
                 value={groupFilter}
-                onValueChange={(value) => setGroupFilter(value ?? 'all')}
+                onValueChange={(value) => {
+                  setGroupFilter(value ?? 'all')
+                  setDetailPage(1)
+                }}
               >
                 <SelectTrigger className='w-36' aria-label='按分组筛选'>
                   <SelectValue placeholder='全部分组' />
@@ -527,7 +661,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               <Select
                 items={modelOptions}
                 value={modelFilter}
-                onValueChange={(value) => setModelFilter(value ?? 'all')}
+                onValueChange={(value) => {
+                  setModelFilter(value ?? 'all')
+                  setDetailPage(1)
+                }}
               >
                 <SelectTrigger className='w-36' aria-label='按模型筛选'>
                   <SelectValue placeholder='全部模型' />
@@ -546,7 +683,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               <Select
                 items={ACTION_FILTER_OPTIONS}
                 value={actionFilter}
-                onValueChange={(value) => setActionFilter(value ?? 'all')}
+                onValueChange={(value) => {
+                  setActionFilter(value ?? 'all')
+                  setDetailPage(1)
+                }}
               >
                 <SelectTrigger className='w-28' aria-label='按结果筛选'>
                   <SelectValue placeholder='全部结果' />
@@ -570,28 +710,49 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 </Button>
               ) : null}
               <span className='text-muted-foreground ml-auto text-xs tabular-nums'>
-                显示 {visibleCount} 条
+                当前页 {adjustments.length} 条 · 共 {detailTotal} 条
               </span>
             </div>
             <ChannelMonitorSmartScheduleExecutionAdjustments>
-              {filteredAdjustments.length > 0 ? (
-                <ol className='divide-y'>
-                  {filteredAdjustments.map((adjustment) => (
-                    <ChannelMonitorSmartScheduleAdjustmentRow
-                      key={`${adjustment.channel_id}-${adjustment.group}-${adjustment.model}`}
-                      adjustment={adjustment}
-                    />
-                  ))}
-                </ol>
-              ) : (
-                <Empty className='min-h-48 border-0'>
-                  <EmptyHeader>
-                    <EmptyTitle>没有匹配的路由记录</EmptyTitle>
-                    <EmptyDescription>调整筛选条件后重试。</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
+              {detailBody}
             </ChannelMonitorSmartScheduleExecutionAdjustments>
+            {detailTotal > 0 ? (
+              <div className='flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2'>
+                <span className='text-muted-foreground text-xs tabular-nums'>
+                  明细第 {detailPage} / {detailTotalPages} 页
+                </span>
+                <div className='flex items-center gap-1'>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    aria-label='上一页明细'
+                    title='上一页明细'
+                    onClick={() =>
+                      setDetailPage((current) => Math.max(1, current - 1))
+                    }
+                    disabled={detailPage <= 1 || detailQuery.isFetching}
+                  >
+                    <HugeiconsIcon icon={ArrowLeft01Icon} />
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='icon-sm'
+                    aria-label='下一页明细'
+                    title='下一页明细'
+                    onClick={() =>
+                      setDetailPage((current) =>
+                        Math.min(detailTotalPages, current + 1)
+                      )
+                    }
+                    disabled={
+                      detailPage >= detailTotalPages || detailQuery.isFetching
+                    }
+                  >
+                    <HugeiconsIcon icon={ArrowRight01Icon} />
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </>
         )}
       </ChannelMonitorSmartScheduleExecutionLayout>
@@ -605,7 +766,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     >
       <div
         className='min-h-0 overflow-hidden rounded-lg border'
-        aria-busy={query.isFetching}
+        aria-busy={query.isFetching || detailQuery.isFetching}
       >
         {body}
       </div>
@@ -620,7 +781,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               size='icon-sm'
               aria-label='上一页'
               title='上一页'
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              onClick={() => changeTaskPage(Math.max(1, page - 1))}
               disabled={page <= 1 || query.isFetching}
             >
               <HugeiconsIcon icon={ArrowLeft01Icon} />
@@ -634,7 +795,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               aria-label='下一页'
               title='下一页'
               onClick={() =>
-                setPage((current) => Math.min(totalPages, current + 1))
+                changeTaskPage(Math.min(totalPages, page + 1))
               }
               disabled={page >= totalPages || query.isFetching}
             >
@@ -658,5 +819,28 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
         </div>
       ) : null}
     </div>
+  )
+}
+
+type ChannelMonitorSmartScheduleExecutionDialogProps = {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export function ChannelMonitorSmartScheduleExecutionDialog(
+  props: ChannelMonitorSmartScheduleExecutionDialogProps
+) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'>
+        <DialogHeader className='pr-10'>
+          <DialogTitle>智能调度执行记录</DialogTitle>
+          <DialogDescription>
+            按执行批次查看评分输入、计算结果、优先级与权重变化，以及每次调整的原因。
+          </DialogDescription>
+        </DialogHeader>
+        <ChannelMonitorSmartScheduleExecutionPanel active={props.open} />
+      </DialogContent>
+    </Dialog>
   )
 }

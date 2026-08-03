@@ -226,11 +226,17 @@ func GetChannelSmartScheduleModelSampleStates() ([]ChannelSmartScheduleModelSamp
 func SaveChannelSmartScheduleModelSample(
 	result ChannelSmartScheduleModelSampleResult,
 ) (state ChannelSmartScheduleModelSampleState, err error) {
-	result.Model = strings.TrimSpace(result.Model)
+	result.Model = channelSmartScheduleModelName(result.Model)
 	if result.ChannelId <= 0 || result.Model == "" {
 		return state, errors.New("智能调度共享样本缺少渠道或模型")
 	}
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockChannelForDependentWriteTx(tx, result.ChannelId); err != nil {
+			return err
+		}
 		conditions := &ChannelSmartScheduleModelSampleState{ChannelId: result.ChannelId, ModelName: result.Model}
 		findErr := lockForUpdate(tx).Where(conditions).First(&state).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {

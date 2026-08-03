@@ -104,6 +104,7 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					affinityUsable := false
+					affinityTemporarilyUnavailable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
 						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
@@ -111,7 +112,16 @@ func Distribute() func(c *gin.Context) {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRoleAutoGroups(userGroup, c.GetInt("role"))
 							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+								if !model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+									continue
+								}
+								affinityStatus := service.PreferredChannelAffinityStatus(
+									g, modelRequest.Model, preferred.Id, c.Request.URL.Path,
+								)
+								if affinityStatus == model.ChannelSmartScheduleAffinityTemporarilyUnavailable {
+									affinityTemporarilyUnavailable = true
+								}
+								if affinityStatus == model.ChannelSmartScheduleAffinityEligible {
 									selectGroup = g
 									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
 									channel = preferred
@@ -121,13 +131,19 @@ func Distribute() func(c *gin.Context) {
 								}
 							}
 						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+							affinityStatus := service.PreferredChannelAffinityStatus(
+								usingGroup, modelRequest.Model, preferred.Id, c.Request.URL.Path,
+							)
+							affinityTemporarilyUnavailable = affinityStatus == model.ChannelSmartScheduleAffinityTemporarilyUnavailable
+							if affinityStatus == model.ChannelSmartScheduleAffinityEligible {
+								channel = preferred
+								selectGroup = usingGroup
+								affinityUsable = true
+								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+							}
 						}
 					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+					if !affinityUsable && !affinityTemporarilyUnavailable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
 						service.ClearCurrentChannelAffinityCache(c)
 					}
 				}

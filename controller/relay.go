@@ -209,6 +209,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	retryRouting := newRelayRetryRouting()
 	finalRetryLogPending := false
 	finalRetryAttemptDuration := time.Duration(0)
+	var finalRetryChannelError *types.ChannelError
 
 	for retryParam.GetRetry() <= common.RetryTimes {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -218,6 +219,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				newAPIError = relayInfo.LastError
 				break
 			}
+			// No upstream attempt was made for this terminal error. Do not
+			// reuse the previous retry's channel/duration in a final summary.
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
 			break
@@ -225,6 +230,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
@@ -235,6 +242,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		channel, concurrencyLease, concurrencyErr := acquireRelayChannelConcurrency(c, relayInfo, retryParam, retryRouting, channel, true)
 		if concurrencyErr != nil {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 			newAPIError = concurrencyErr
 			break
 		}
@@ -258,23 +267,23 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			retryParam.IncreaseRetry()
 			retryRouting.exclude(channel.Id)
 		}
-		processChannelErrorWithTiming(c,
-			*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
-				common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-			newAPIError, shouldRetry, &attemptDuration, false)
+		channelError := types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+			common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan())
+		processChannelErrorWithTiming(c, *channelError, newAPIError, shouldRetry, &attemptDuration, false)
 		finalRetryLogPending = shouldRetry
 		if shouldRetry {
 			finalRetryAttemptDuration = attemptDuration
+			finalRetryChannelError = channelError
+		} else {
+			finalRetryChannelError = nil
 		}
 
 		if !shouldRetry {
 			break
 		}
 	}
-	if newAPIError != nil && finalRetryLogPending {
-		processChannelErrorWithTiming(c,
-			*types.NewChannelError(c.GetInt("channel_id"), c.GetInt("channel_type"), c.GetString("channel_name"),
-				common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey), "", false),
+	if newAPIError != nil && finalRetryLogPending && finalRetryChannelError != nil {
+		processChannelErrorWithTiming(c, *finalRetryChannelError,
 			newAPIError, false, &finalRetryAttemptDuration, true)
 	}
 
@@ -408,14 +417,19 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 }
 
 func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool, attemptDuration *time.Duration, finalRetrySummary bool) {
-	// Protect a temporary route before doing the comparatively slower error-log
-	// and auto-ban work, so concurrent requests observe the new route as soon as
-	// the first upstream failure is received.
-	protectChannelSmartScheduleRuntimeFailure(
-		channelError.ChannelId,
-		c.GetString("original_model"),
-		err,
-	)
+	// Automatic channel tests are maintenance checks, not production traffic.
+	// They may still auto-disable a channel below, but must never mutate the
+	// smart-schedule runtime state or stability samples.
+	runtimeProtectionEligible := !finalRetrySummary && !isChannelTestContext(c)
+	// Rate-limit cooldown does not depend on a stability sample and should be
+	// applied before the error-log write so concurrent requests stop promptly.
+	if runtimeProtectionEligible && err != nil && err.StatusCode == http.StatusTooManyRequests {
+		protectChannelSmartScheduleRuntimeFailure(
+			channelError.ChannelId,
+			c.GetString("original_model"),
+			err,
+		)
+	}
 
 	if !finalRetrySummary {
 		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
@@ -435,10 +449,13 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		modelName := c.GetString("original_model")
 		tokenId := c.GetInt("token_id")
 		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if usingGroup == "" {
+			usingGroup = c.GetString("group")
+		}
 		if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
 			usingGroup = autoGroup
 		}
-		channelId := c.GetInt("channel_id")
+		channelId := channelError.ChannelId
 		other := make(map[string]interface{})
 		if c.Request != nil && c.Request.URL != nil {
 			other["request_path"] = c.Request.URL.Path
@@ -447,8 +464,11 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		other["error_code"] = err.GetErrorCode()
 		other["status_code"] = err.StatusCode
 		other["channel_id"] = channelId
-		other["channel_name"] = c.GetString("channel_name")
-		other["channel_type"] = c.GetInt("channel_type")
+		other["channel_name"] = channelError.ChannelName
+		other["channel_type"] = channelError.ChannelType
+		if isChannelTestContext(c) {
+			other[model.ChannelMonitorChannelTestLogKey] = true
+		}
 		if attemptDuration != nil {
 			attemptDurationMs := attemptDuration.Milliseconds()
 			if attemptDurationMs < 0 {
@@ -461,7 +481,7 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
+		isMultiKey := channelError.IsMultiKey
 		if isMultiKey {
 			adminInfo["is_multi_key"] = true
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
@@ -474,6 +494,16 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
+	}
+	// Stability protection reads the persisted error sample after it has been
+	// written. The live log tail fills the minute-aggregation delay, so the Nth
+	// sample can trigger protection without waiting for the background worker.
+	if runtimeProtectionEligible && err != nil && err.StatusCode != http.StatusTooManyRequests {
+		protectChannelSmartScheduleRuntimeFailure(
+			channelError.ChannelId,
+			c.GetString("original_model"),
+			err,
+		)
 	}
 }
 
@@ -578,6 +608,8 @@ func RelayTask(c *gin.Context) {
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
 	finalRetryLogPending := false
+	finalRetryAttemptDuration := time.Duration(0)
+	var finalRetryChannelError *types.ChannelError
 	defer func() {
 		if taskErr != nil && relayInfo.Billing != nil {
 			relayInfo.Billing.Refund(c)
@@ -602,6 +634,8 @@ func RelayTask(c *gin.Context) {
 			allowAlternative = false
 			if retryParam.GetRetry() > 0 {
 				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+					finalRetryLogPending = false
+					finalRetryChannelError = nil
 					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
 					break
 				}
@@ -613,6 +647,8 @@ func RelayTask(c *gin.Context) {
 				if retryRouting.candidatesExhausted() && taskErr != nil {
 					break
 				}
+				finalRetryLogPending = false
+				finalRetryChannelError = nil
 				logger.LogError(c, channelErr.Error())
 				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
 				break
@@ -621,6 +657,8 @@ func RelayTask(c *gin.Context) {
 
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
 				taskErr = service.TaskErrorWrapperLocal(bodyErr, "read_request_body_failed", http.StatusRequestEntityTooLarge)
 			} else {
@@ -630,13 +668,17 @@ func RelayTask(c *gin.Context) {
 		}
 		channel, concurrencyLease, concurrencyErr := acquireRelayChannelConcurrency(c, relayInfo, retryParam, retryRouting, channel, allowAlternative)
 		if concurrencyErr != nil {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 			taskErr = service.TaskErrorWrapperLocal(concurrencyErr.Err, "channel_concurrency_limit", concurrencyErr.StatusCode)
 			break
 		}
 		addUsedChannel(c, channel.Id)
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		attemptStartedAt := time.Now()
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease)
+		attemptDuration := time.Since(attemptStartedAt)
 		if taskErr == nil {
 			break
 		}
@@ -646,27 +688,35 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !taskErr.LocalError {
-			processChannelError(c,
-				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
-					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+			channelError := types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+				common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan())
+			processChannelErrorWithTiming(c, *channelError,
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
-				shouldRetry)
+				shouldRetry, &attemptDuration, false)
 			finalRetryLogPending = shouldRetry
+			if shouldRetry {
+				finalRetryAttemptDuration = attemptDuration
+				finalRetryChannelError = channelError
+			} else {
+				finalRetryChannelError = nil
+			}
+		} else {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
 		}
 
 		if !shouldRetry {
 			break
 		}
 	}
-	if taskErr != nil && finalRetryLogPending {
+	if taskErr != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		finalTaskError := taskErr.Error
 		if finalTaskError == nil {
 			finalTaskError = errors.New(taskErr.Message)
 		}
-		processChannelError(c,
-			*types.NewChannelError(c.GetInt("channel_id"), c.GetInt("channel_type"), c.GetString("channel_name"),
-				common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey), "", false),
-			types.NewOpenAIError(finalTaskError, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), false)
+		processChannelErrorWithTiming(c, *finalRetryChannelError,
+			types.NewOpenAIError(finalTaskError, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+			false, &finalRetryAttemptDuration, true)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")

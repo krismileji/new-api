@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -224,6 +225,20 @@ func runChannelSmartScheduleProbeOnce(
 	if err != nil {
 		return result, err
 	}
+	requestModelByKey := make(map[channelSmartScheduleModelKey]string)
+	for _, route := range routes {
+		routeModel := strings.TrimSpace(route.Model)
+		if routeModel == "" || strings.Contains(routeModel, "*") {
+			continue
+		}
+		key := channelSmartScheduleModelKey{
+			channelId: route.ChannelId,
+			model:     ratio_setting.FormatMatchingModelName(routeModel),
+		}
+		if current := requestModelByKey[key]; current == "" || routeModel < current {
+			requestModelByKey[key] = routeModel
+		}
+	}
 	selectedRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(routes))
 	for _, route := range routes {
 		policy, configured := policyByGroup[route.Group]
@@ -245,23 +260,31 @@ func runChannelSmartScheduleProbeOnce(
 	)
 	retentionStart := now - int64(retentionMinutes*60)
 	type dueProbe struct {
-		routes []model.ChannelSmartScheduleRoute
+		routes       []model.ChannelSmartScheduleRoute
+		requestModel string
 	}
 	probesByModel := make(map[channelSmartScheduleModelKey]dueProbe)
 	probeOrder := make([]channelSmartScheduleModelKey, 0)
 	for _, route := range selectedRoutes {
-		key := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
+		routeModel := strings.TrimSpace(route.Model)
+		normalizedModel := ratio_setting.FormatMatchingModelName(routeModel)
+		key := channelSmartScheduleModelKey{channelId: route.ChannelId, model: normalizedModel}
 		probe, exists := probesByModel[key]
 		if !exists {
 			probeOrder = append(probeOrder, key)
 		}
 		probe.routes = append(probe.routes, route)
+		probe.requestModel = requestModelByKey[key]
 		probesByModel[key] = probe
 	}
 	result.Total = len(probeOrder)
 	due := make([]dueProbe, 0, len(probeOrder))
 	for _, key := range probeOrder {
 		probe := probesByModel[key]
+		if probe.requestModel == "" {
+			result.Skipped++
+			continue
+		}
 		eligibleRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(probe.routes))
 		minimumIntervalMinutes := 0
 		for _, route := range probe.routes {
@@ -285,7 +308,7 @@ func runChannelSmartScheduleProbeOnce(
 			result.Skipped++
 			continue
 		}
-		due = append(due, dueProbe{routes: eligibleRoutes})
+		due = append(due, dueProbe{routes: eligibleRoutes, requestModel: probe.requestModel})
 	}
 	if len(due) == 0 {
 		reportProgress(result.Total, result.Total)
@@ -316,7 +339,7 @@ func runChannelSmartScheduleProbeOnce(
 		if channel == nil {
 			return result, fmt.Errorf("智能调度探测渠道 %d 不存在", item.routes[0].ChannelId)
 		}
-		if !channelSmartScheduleSupportsTextProbe(channel, item.routes[0].Model) {
+		if !channelSmartScheduleSupportsTextProbe(channel, item.requestModel) {
 			result.Skipped++
 			continue
 		}
@@ -339,7 +362,18 @@ func runChannelSmartScheduleProbeOnce(
 		}
 		var route model.ChannelSmartScheduleRoute
 		var channel *model.Channel
+		candidateRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(item.routes))
 		for _, candidateRoute := range item.routes {
+			if candidateRoute.Model == item.requestModel {
+				candidateRoutes = append(candidateRoutes, candidateRoute)
+			}
+		}
+		for _, candidateRoute := range item.routes {
+			if candidateRoute.Model != item.requestModel {
+				candidateRoutes = append(candidateRoutes, candidateRoute)
+			}
+		}
+		for _, candidateRoute := range candidateRoutes {
 			currentRoute, currentChannel, _, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(candidateRoute)
 			if eligibilityErr != nil {
 				return result, eligibilityErr
@@ -369,7 +403,7 @@ func runChannelSmartScheduleProbeOnce(
 		}
 		probeStartedAt := time.Now()
 		probeResult := testChannel(
-			probeCtx, channel, testUserID, route.Model,
+			probeCtx, channel, testUserID, item.requestModel,
 			string(constant.EndpointTypeOpenAIResponse), true,
 		)
 		lease.Release()
@@ -386,6 +420,7 @@ func runChannelSmartScheduleProbeOnce(
 		result.Probed++
 		probeTime := common.GetTimestamp()
 		succeeded := probeResult.localErr == nil && probeResult.newAPIError == nil
+		rateLimited := isChannelSmartScheduleUpstreamRateLimit(probeResult)
 		message := ""
 		if !succeeded {
 			if probeResult.localErr != nil {
@@ -398,21 +433,33 @@ func runChannelSmartScheduleProbeOnce(
 				message = string(messageRunes[:255])
 			}
 		}
-		_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
-			ChannelId: route.ChannelId, Model: route.Model,
-			Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
-			WindowStart: retentionStart, Time: probeTime, Success: succeeded, Error: message,
-			DurationMs:   &probeDurationMs,
-			FirstTokenMs: probeResult.firstResponseMilliseconds,
-			TPS:          probeResult.tokensPerSecond,
-		})
-		if saveErr != nil {
-			return result, saveErr
+		if rateLimited {
+			protectChannelSmartScheduleRuntimeFailure(route.ChannelId, item.requestModel, probeResult.newAPIError)
+		} else {
+			_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+				ChannelId: route.ChannelId, Model: item.requestModel,
+				Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
+				WindowStart: retentionStart, Time: probeTime, Success: succeeded, Error: message,
+				DurationMs:   &probeDurationMs,
+				FirstTokenMs: probeResult.firstResponseMilliseconds,
+				TPS:          probeResult.tokensPerSecond,
+			})
+			if saveErr != nil {
+				return result, saveErr
+			}
+			if !succeeded && probeResult.newAPIError != nil {
+				protectChannelSmartScheduleRuntimeFailure(
+					route.ChannelId,
+					item.requestModel,
+					probeResult.newAPIError,
+				)
+			}
 		}
 		if succeeded {
 			result.Succeeded++
 		} else {
 			result.Failed++
+			route.Model = item.requestModel
 			recordChannelSmartScheduleProbeError(
 				probeResult.context,
 				testUserID,

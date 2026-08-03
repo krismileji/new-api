@@ -24,12 +24,14 @@ export type ChannelMonitorSettingsUpdateMode = 'general' | 'schedule'
 
 export function createChannelMonitorSettingsUpdatePayload(
   mode: ChannelMonitorSettingsUpdateMode,
-  values: ChannelMonitorSettingsFormValues
+  values: ChannelMonitorSettingsFormValues,
+  smartScheduleControlRevision: string
 ): Partial<ChannelMonitorSettings> & {
   smart_schedule_force_reset?: boolean
 } {
   if (mode === 'schedule') {
     return {
+      smart_schedule_control_revision: smartScheduleControlRevision,
       smart_schedule_enabled: values.smartScheduleEnabled,
       smart_schedule_group_policies:
         channelMonitorSmartScheduleGroupPoliciesToApi(

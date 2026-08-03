@@ -137,20 +137,15 @@ func GetChannel(group string, model string, retry int, requestPath string, optio
 	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
 	channel := Channel{}
 	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
+		channelIDs := make([]int, len(abilities))
+		weights := make([]uint, len(abilities))
+		for index, ability := range abilities {
+			channelIDs[index] = ability.ChannelId
+			weights[index] = ability.Weight
 		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
-			}
+		channel.Id, err = chooseChannelByWeights(channelIDs, weights)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		return nil, nil
@@ -248,7 +243,7 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 }
 
 func (channel *Channel) DeleteAbilities() error {
-	return DB.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	return deleteChannelAbilities(channel.Id)
 }
 
 // UpdateAbilities updates abilities of this channel.
@@ -257,6 +252,8 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	isNewTx := false
 	// 如果没有传入事务，创建新的事务
 	if tx == nil {
+		channelStatusLock.Lock()
+		defer channelStatusLock.Unlock()
 		tx = DB.Begin()
 		if tx.Error != nil {
 			return tx.Error
@@ -265,8 +262,33 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		defer func() {
 			if r := recover(); r != nil {
 				tx.Rollback()
+				panic(r)
 			}
 		}()
+		var current Channel
+		if err := lockForUpdate(tx).Where("id = ?", channel.Id).First(&current).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+		channel = &current
+	}
+	var currentAbilities []Ability
+	if err := tx.Select("group", "model").Where("channel_id = ?", channel.Id).
+		Find(&currentAbilities).Error; err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	smartSchedulePools := channelSmartScheduleRoutePoolsFromAbilities(
+		currentAbilities,
+		channelSmartScheduleRoutePools(channel.Group, channel.Models)...,
+	)
+	if err := lockChannelSmartScheduleRoutePoolsTx(tx, smartSchedulePools); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
 	}
 	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id)
 	if err != nil {
@@ -327,6 +349,15 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 			}
 		}
 	}
+	// Reconcile the old pools while removed fixed-primary states still exist.
+	// This lets a moved fixed route withdraw pool-wide temporary traffic before
+	// its obsolete state is deleted.
+	if err = reapplyChannelSmartScheduleRoutePrimariesTx(tx, smartSchedulePools); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
 	if err = deleteObsoleteChannelSmartScheduleRouteStates(tx, channel.Id, activeRoutes); err != nil {
 		if isNewTx {
 			tx.Rollback()
@@ -343,25 +374,11 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 }
 
 func UpdateAbilityStatus(channelId int, status bool) error {
-	return DB.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", status).Error
+	return updateAbilityStatusWithPrimaries(channelId, status)
 }
 
 func UpdateAbilityStatusByTag(tag string, status bool) error {
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
-}
-
-func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uint) error {
-	ability := Ability{}
-	if newTag != nil {
-		ability.Tag = newTag
-	}
-	if priority != nil {
-		ability.Priority = priority
-	}
-	if weight != nil {
-		ability.Weight = *weight
-	}
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
+	return updateAbilitiesByTagWithPrimaries(tag, status)
 }
 
 var fixLock = sync.Mutex{}
@@ -372,6 +389,8 @@ func FixAbility() (int, int, error) {
 		return 0, 0, errors.New("已经有一个修复任务在运行中，请稍后再试")
 	}
 	defer fixLock.Unlock()
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 
 	var channels []*Channel
 	// Find all channels
@@ -381,10 +400,14 @@ func FixAbility() (int, int, error) {
 	}
 	successCount := 0
 	failCount := 0
-	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
-		channelIDs = append(channelIDs, channel.Id)
-		err = channel.UpdateAbilities(nil)
+		err = DB.Transaction(func(tx *gorm.DB) error {
+			var current Channel
+			if err := lockForUpdate(tx).Where("id = ?", channel.Id).First(&current).Error; err != nil {
+				return err
+			}
+			return current.UpdateAbilities(tx)
+		})
 		if err != nil {
 			common.SysLog(fmt.Sprintf("Update abilities for channel %d failed: %s", channel.Id, err.Error()))
 			failCount++
@@ -393,14 +416,13 @@ func FixAbility() (int, int, error) {
 		successCount++
 	}
 	if err = DB.Transaction(func(tx *gorm.DB) error {
-		if len(channelIDs) == 0 {
-			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Ability{}).Error; err != nil {
-				return err
-			}
-		} else if err := tx.Where("channel_id NOT IN ?", channelIDs).Delete(&Ability{}).Error; err != nil {
+		if err := tx.Where(
+			"NOT EXISTS (?)",
+			tx.Model(&Channel{}).Select("1").Where("channels.id = abilities.channel_id"),
+		).Delete(&Ability{}).Error; err != nil {
 			return err
 		}
-		return deleteChannelSmartScheduleRouteStatesForMissingChannels(tx, channelIDs)
+		return deleteChannelSmartScheduleRouteStatesForMissingChannels(tx)
 	}); err != nil {
 		return successCount, failCount, err
 	}

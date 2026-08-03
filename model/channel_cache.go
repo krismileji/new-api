@@ -22,16 +22,23 @@ var channelsIDM map[int]*Channel                     // all channels include dis
 // path-aware selection avoids re-parsing JSON per request. Refreshed on full sync.
 var channel2advancedCustomConfig map[int]*dto.AdvancedCustomConfig
 var channelSyncLock sync.RWMutex
+var channelCacheRefreshLock sync.Mutex
 
 func InitChannelCache() {
+	channelCacheRefreshLock.Lock()
+	defer channelCacheRefreshLock.Unlock()
 	if !common.MemoryCacheEnabled {
 		InvalidatePricingCache()
 		return
 	}
+	snapshot, err := loadChannelCacheSnapshot()
+	if err != nil {
+		common.SysError("load channel cache snapshot failed: " + err.Error())
+		return
+	}
 	newChannelId2channel := make(map[int]*Channel)
 	newChannel2advancedCustomConfig := make(map[int]*dto.AdvancedCustomConfig)
-	var channels []*Channel
-	DB.Find(&channels)
+	channels := snapshot.channels
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -40,9 +47,12 @@ func InitChannelCache() {
 			}
 		}
 	}
-	var abilities []*Ability
-	DB.Find(&abilities)
-	newChannelSmartScheduleRouteCache := buildChannelSmartScheduleRouteCache(abilities, newChannelId2channel)
+	abilities := snapshot.abilities
+	newChannelSmartScheduleRouteCache := buildChannelSmartScheduleRouteCacheFromStates(
+		abilities,
+		newChannelId2channel,
+		snapshot.smartScheduleStates,
+	)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -120,7 +130,7 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath, selectionOptions)
+		return getRandomSatisfiedChannelWithoutCache(group, model, retry, requestPath, selectionOptions)
 	}
 
 	channelSyncLock.RLock()

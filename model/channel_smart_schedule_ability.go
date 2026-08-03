@@ -8,8 +8,9 @@ type channelSmartScheduleRouteRouting struct {
 }
 
 // getChannelSmartScheduleRouteRouting preserves the current per-route routing
-// values while a channel edit rebuilds its abilities. Only explicitly
-// participating routes keep their scheduler-controlled values.
+// values while a channel edit rebuilds its abilities. Existing routes keep
+// their scheduler- or administrator-controlled values; only newly exposed
+// routes inherit the channel defaults.
 func getChannelSmartScheduleRouteRouting(
 	tx *gorm.DB,
 	channelId int,
@@ -21,19 +22,15 @@ func getChannelSmartScheduleRouteRouting(
 
 	var states []ChannelSmartScheduleRouteState
 	if err := lockForUpdate(tx).
-		Where("channel_id = ? AND participation_set = ? AND excluded = ?", channelId, true, false).
+		Where("channel_id = ?", channelId).
+		Order("group_name ASC, model_name ASC").
 		Find(&states).Error; err != nil {
 		return nil, err
 	}
-	if len(states) == 0 {
-		return routingByKey, nil
-	}
 
-	participating := make(map[ChannelSmartScheduleRouteKey]struct{}, len(states))
 	for _, state := range states {
 		key := channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)
-		participating[key] = struct{}{}
-		if state.LastScheduleTime > 0 {
+		if state.Participates() && state.LastScheduleTime > 0 {
 			priority := state.LastSchedulePriority
 			routingByKey[key] = channelSmartScheduleRouteRouting{
 				priority: &priority,
@@ -43,14 +40,14 @@ func getChannelSmartScheduleRouteRouting(
 	}
 
 	var abilities []Ability
-	if err := lockForUpdate(tx).Where("channel_id = ?", channelId).Find(&abilities).Error; err != nil {
+	if err := lockForUpdate(tx).
+		Where("channel_id = ?", channelId).
+		Order("model ASC").
+		Find(&abilities).Error; err != nil {
 		return nil, err
 	}
 	for _, ability := range abilities {
 		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
-		if _, ok := participating[key]; !ok {
-			continue
-		}
 		var priority *int64
 		if ability.Priority != nil {
 			value := *ability.Priority
@@ -74,7 +71,10 @@ func deleteObsoleteChannelSmartScheduleRouteStates(
 	}
 
 	var states []ChannelSmartScheduleRouteState
-	if err := lockForUpdate(tx).Where("channel_id = ?", channelId).Find(&states).Error; err != nil {
+	if err := lockForUpdate(tx).
+		Where("channel_id = ?", channelId).
+		Order("group_name ASC, model_name ASC").
+		Find(&states).Error; err != nil {
 		return err
 	}
 	staleIDs := make([]int64, 0)
@@ -89,12 +89,12 @@ func deleteObsoleteChannelSmartScheduleRouteStates(
 	return tx.Where("id IN ?", staleIDs).Delete(&ChannelSmartScheduleRouteState{}).Error
 }
 
-func deleteChannelSmartScheduleRouteStatesForMissingChannels(tx *gorm.DB, channelIDs []int) error {
+func deleteChannelSmartScheduleRouteStatesForMissingChannels(tx *gorm.DB) error {
 	if !tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
 		return nil
 	}
-	if len(channelIDs) == 0 {
-		return tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&ChannelSmartScheduleRouteState{}).Error
-	}
-	return tx.Where("channel_id NOT IN ?", channelIDs).Delete(&ChannelSmartScheduleRouteState{}).Error
+	return tx.Where(
+		"NOT EXISTS (?)",
+		tx.Model(&Channel{}).Select("1").Where("channels.id = channel_smart_schedule_route_states.channel_id"),
+	).Delete(&ChannelSmartScheduleRouteState{}).Error
 }

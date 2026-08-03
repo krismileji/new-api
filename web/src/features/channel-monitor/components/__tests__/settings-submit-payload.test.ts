@@ -92,11 +92,13 @@ describe('channel monitor settings submit payload', () => {
   test('schedule mode submits only explicit policies and global runtime fields', () => {
     const payload = createChannelMonitorSettingsUpdatePayload(
       'schedule',
-      formValues
+      formValues,
+      'revision-a'
     )
 
     assert.deepEqual(Object.keys(payload).sort(), [
       'relay_response_header_timeout_seconds',
+      'smart_schedule_control_revision',
       'smart_schedule_enabled',
       'smart_schedule_force_reset',
       'smart_schedule_group_policies',
@@ -105,6 +107,7 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_rate_limit_cooldown_seconds',
       'smart_schedule_stability_window_minutes',
     ])
+    assert.equal(payload.smart_schedule_control_revision, 'revision-a')
     assert.equal(payload.smart_schedule_group_policies?.[0]?.group, 'vip')
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.scoring
@@ -191,7 +194,8 @@ describe('channel monitor settings submit payload', () => {
   test('general mode submits only channel monitoring fields', () => {
     const payload = createChannelMonitorSettingsUpdatePayload(
       'general',
-      formValues
+      formValues,
+      'revision-a'
     )
 
     assert.deepEqual(Object.keys(payload).sort(), [
@@ -216,5 +220,6 @@ describe('channel monitor settings submit payload', () => {
     assert.equal('smart_schedule_enabled' in payload, false)
     assert.equal('smart_schedule_group_policies' in payload, false)
     assert.equal('relay_response_header_timeout_seconds' in payload, false)
+    assert.equal('smart_schedule_control_revision' in payload, false)
   })
 })

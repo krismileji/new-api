@@ -386,6 +386,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	if c != nil && c.GetBool("channel_test") {
+		c.Set("channel_test_request_dispatched", true)
+	}
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
@@ -509,6 +512,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	req = req.WithContext(c.Request.Context())
 	if info.IsStream {
 		req = service.WithRelayStreamFirstResponseTimeout(req)
+	}
+	// Mark the point at which a channel test actually enters the upstream
+	// transport. Setup/conversion failures return before this marker is set.
+	if c != nil && c.GetBool("channel_test") {
+		c.Set("channel_test_request_dispatched", true)
 	}
 	resp, err := client.Do(req)
 	if err == nil && info.IsStream && resp != nil {

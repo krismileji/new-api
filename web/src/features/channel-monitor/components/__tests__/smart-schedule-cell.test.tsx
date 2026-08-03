@@ -17,7 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { describe, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
@@ -26,80 +28,9 @@ import type {
   ChannelMonitorSmartScheduleRouteState,
 } from '../../types'
 import { ChannelMonitorSmartScheduleCell } from '../channel-monitor-smart-schedule-cell'
+import { createSmartScheduleCellRoute as createRoute } from './smart-schedule-cell-test-data'
 
 const noop = () => {}
-
-type RouteOverrides = Omit<
-  Partial<ChannelMonitorSmartScheduleRoute>,
-  'state'
-> & {
-  state?: Partial<ChannelMonitorSmartScheduleRouteState>
-}
-
-function createRoute(
-  overrides: RouteOverrides = {}
-): ChannelMonitorSmartScheduleRoute {
-  const defaultState: ChannelMonitorSmartScheduleRouteState = {
-    id: 1,
-    channel_id: 7,
-    group: 'default',
-    model: 'model-a',
-    participation_set: true,
-    excluded: false,
-    last_schedule_status: 'succeeded',
-    last_schedule_error: '',
-    last_schedule_score: 0.8,
-    last_schedule_priority: 80,
-    last_schedule_weight: 60,
-    last_schedule_time: 1_752_777_845,
-    stability_state: '',
-    stability_until: 0,
-    stability_since: 0,
-    stability_saved_priority: 0,
-    stability_saved_weight: 0,
-    runtime_protection_until: 0,
-    base_rank: 1,
-    base_priority: 80,
-    base_weight: 60,
-    temporary_traffic_kind: '',
-    temporary_traffic_since: 0,
-    temporary_traffic_target_percent: 0,
-    last_priority_sample_time: 0,
-    manual_primary_until: 0,
-    manual_primary_allow_stability_degrade: false,
-  }
-  return {
-    channel_id: 7,
-    channel_name: '测试渠道',
-    channel_status: 1,
-    channel_priority: 100,
-    channel_weight: 100,
-    group: 'default',
-    model: 'model-a',
-    enabled: true,
-    priority: 80,
-    weight: 60,
-    shared_samples: {
-      id: 0,
-      channel_id: 7,
-      model: 'model-a',
-      window_start: 0,
-      last_time: 0,
-      last_success: false,
-      last_error: '',
-      sample_count: 0,
-      success_count: 0,
-      failure_duration_sample_count: 0,
-      average_failure_duration_ms: null,
-      first_token_sample_count: 0,
-      average_first_token_ms: null,
-      tps_sample_count: 0,
-      average_tps: null,
-    },
-    ...overrides,
-    state: { ...defaultState, ...overrides.state },
-  }
-}
 
 function renderCell(
   routes: ChannelMonitorSmartScheduleRoute[],
@@ -162,20 +93,96 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(markup.indexOf('role="switch"') < markup.indexOf('优先级'))
   })
 
-  test('keeps route protection details out of the compact cell', () => {
+  test('keeps the compact summary at exactly three visible lines', () => {
+    const markup = renderCell([createRoute()])
+
+    assert.equal((markup.match(/data-smart-schedule-line=/g) ?? []).length, 3)
+    assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
+    assert.ok(markup.includes('常规调度'))
+  })
+
+  test('shows active special traffic and stability states for the selected route', () => {
+    const cases: Array<{
+      state: Partial<ChannelMonitorSmartScheduleRouteState>
+      expected: string
+    }> = [
+      { state: { stability_state: 'degraded' }, expected: '稳定性降级' },
+      { state: { stability_state: 'probing' }, expected: '稳定性释放' },
+      {
+        state: {
+          temporary_traffic_kind: 'insufficient_samples',
+          temporary_traffic_target_percent: 3,
+        },
+        expected: '探索流量 3%',
+      },
+      {
+        state: {
+          temporary_traffic_kind: 'priority_sampling',
+          temporary_traffic_target_percent: 1.5,
+        },
+        expected: '优先级采样 1.5%',
+      },
+    ]
+
+    for (const item of cases) {
+      assert.ok(
+        renderCell([createRoute({ state: item.state })]).includes(item.expected)
+      )
+    }
+  })
+
+  test('shows fixed intent together with stability degradation', () => {
     const markup = renderCell([
-      createRoute({ state: { stability_state: 'degraded' } }),
+      createRoute({
+        state: {
+          stability_state: 'degraded',
+          stability_since: 1_752_700_000,
+          stability_until: 4_102_444_800,
+          manual_primary_until: 4_102_444_800,
+          manual_primary_allow_stability_degrade: true,
+        },
+      }),
+    ])
+
+    assert.ok(markup.includes('稳定性降级'))
+    assert.ok(markup.includes('固定主渠道'))
+    assert.ok(markup.includes('查看当前调度状态详情'))
+  })
+
+  test('opens the selected route status details from the third line', () => {
+    const fixturePath = fileURLToPath(
+      new URL('./smart-schedule-cell-interaction.fixture.tsx', import.meta.url)
+    )
+    const execution = spawnSync(process.execPath, [fixturePath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || '调度状态详情交互测试失败'
+    )
+  })
+
+  test('does not leak a different group-model state into the selected route', () => {
+    const markup = renderCell([
+      createRoute(),
+      createRoute({
+        model: 'model-b',
+        state: { model: 'model-b', stability_state: 'degraded' },
+      }),
     ])
 
     assert.equal(markup.includes('稳定性降级'), false)
-    assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
+    assert.ok(markup.includes('常规调度'))
   })
 
   test('keeps participation configurable when the channel is disabled', () => {
     const markup = renderCell([createRoute({ channel_status: 2 })])
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
-    assert.equal(markup.includes('渠道禁用'), false)
+    assert.ok(markup.includes('渠道禁用'))
     assert.equal(markup.includes('不可调度'), false)
     assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
     assert.ok(switchElement)
@@ -198,6 +205,26 @@ describe('channel monitor smart schedule cell status', () => {
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
     assert.ok(switchElement.includes('aria-checked="false"'))
+    assert.ok(markup.includes('未参与 0/1'))
+  })
+
+  test('shows partial participation without hiding the bulk-toggle behavior', () => {
+    const markup = renderCell([
+      createRoute(),
+      createRoute({
+        model: 'model-b',
+        state: { model: 'model-b', excluded: true },
+      }),
+    ])
+    const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
+
+    assert.ok(markup.includes('部分 1/2'))
+    assert.ok(switchElement.includes('aria-checked="true"'))
+    assert.ok(
+      switchElement.includes(
+        'aria-label="取消 测试渠道 全部路由的智能调度参与"'
+      )
+    )
   })
 
   test('disables participation while a participation update is pending', () => {

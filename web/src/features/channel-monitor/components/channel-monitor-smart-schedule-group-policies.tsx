@@ -31,6 +31,7 @@ import {
   type Resolver,
   type UseFormReturn,
 } from 'react-hook-form'
+import type { ZodType } from 'zod'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -176,8 +177,11 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
   )
   const policyForm = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     resolver: zodResolver(
-      createChannelMonitorSmartSchedulePolicySchema()
-    ) as Resolver<ChannelMonitorSmartSchedulePolicyFormValues>,
+      createChannelMonitorSmartSchedulePolicySchema() as unknown as ZodType<
+        ChannelMonitorSmartSchedulePolicyFormValues,
+        ChannelMonitorSmartSchedulePolicyFormValues
+      >
+    ) as unknown as Resolver<ChannelMonitorSmartSchedulePolicyFormValues>,
     defaultValues: CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
   })
 
@@ -229,7 +233,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
         <div>
           <h3 className='text-sm font-medium'>分组策略</h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            只有已配置策略的分组参与智能调度；删除策略后该分组立即退出调度范围
+            只有已配置策略的分组参与智能调度；新增、编辑或删除后，需保存智能调度设置才会生效
           </p>
         </div>
         <Button
@@ -378,7 +382,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
               {editingGroup ? `编辑 ${editingGroup} 分组策略` : '新增分组策略'}
             </DialogTitle>
             <DialogDescription>
-              该分组的调度方式、模型范围、评分和稳定性规则独立保存
+              先将该分组的调度方式、模型范围、评分和稳定性规则应用到当前设置，再保存智能调度设置使其生效
             </DialogDescription>
           </DialogHeader>
 
@@ -414,7 +418,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   </SelectContent>
                 </Select>
                 <FormDescription>
-                  保存策略后，该分组才会进入智能调度
+                  应用到当前设置并保存智能调度设置后，该分组才会进入调度范围
                 </FormDescription>
               </FormItem>
 
@@ -449,7 +453,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
               取消
             </Button>
             <Button type='button' disabled={!draftGroup} onClick={savePolicy}>
-              保存分组策略
+              应用到当前设置
             </Button>
           </DialogFooter>
         </DialogContent>

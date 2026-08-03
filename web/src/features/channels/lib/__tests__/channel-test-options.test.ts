@@ -24,7 +24,7 @@ import { api } from '@/lib/api'
 import { CHANNEL_TEST_DEFAULTS, handleTestChannel } from '../channel-actions'
 
 describe('channel test request options', () => {
-  test('uses streaming Responses as the shared dialog defaults', async () => {
+  test('uses automatic endpoint detection as the shared dialog default', async () => {
     const originalAdapter = api.defaults.adapter
     let requestParams: unknown
 
@@ -44,13 +44,16 @@ describe('channel test request options', () => {
         testModel: 'gpt-4o-mini',
         endpointType: CHANNEL_TEST_DEFAULTS.endpointType,
         stream: CHANNEL_TEST_DEFAULTS.stream,
+        recordSample: CHANNEL_TEST_DEFAULTS.recordSample,
         silent: true,
       })
 
+      assert.equal(CHANNEL_TEST_DEFAULTS.recordSample, true)
       assert.deepEqual(requestParams, {
         model: 'gpt-4o-mini',
-        endpoint_type: 'openai-response',
+        endpoint_type: 'auto',
         stream: true,
+        record_sample: true,
       })
     } finally {
       api.defaults.adapter = originalAdapter
@@ -78,6 +81,7 @@ describe('channel test request options', () => {
         testModel: 'gpt-4o-mini',
         endpointType: 'auto',
         stream: false,
+        recordSample: false,
         silent: true,
       })
 
@@ -85,19 +89,22 @@ describe('channel test request options', () => {
         model: 'gpt-4o-mini',
         endpoint_type: 'auto',
         stream: false,
+        record_sample: false,
       })
     } finally {
       api.defaults.adapter = originalAdapter
     }
   })
 
-  test('returns stream metrics and smart schedule sample status to callers', async () => {
+  test('returns complete stream and usage metrics to callers', async () => {
     const originalAdapter = api.defaults.adapter
     let completion:
       | {
           success: boolean
           responseTime?: number
           firstTokenMs?: number | null
+          inputTokens?: number
+          cacheWriteTokens?: number
           sampleRecorded?: boolean
         }
       | undefined
@@ -112,7 +119,13 @@ describe('channel test request options', () => {
             response_time: 1200,
             first_token_ms: 180,
             tokens_per_second: 24.5,
+            usage_available: true,
+            input_tokens: 20,
             output_tokens: 16,
+            total_tokens: 36,
+            cached_tokens: 8,
+            cache_write_tokens: 4,
+            reasoning_tokens: 3,
             smart_schedule_sample_recorded: true,
             smart_schedule_sample_message: '已计入渠道 + 模型共享样本',
           },
@@ -132,8 +145,9 @@ describe('channel test request options', () => {
             success,
             responseTime,
             firstTokenMs: response?.data?.first_token_ms,
-            sampleRecorded:
-              response?.data?.smart_schedule_sample_recorded,
+            inputTokens: response?.data?.input_tokens,
+            cacheWriteTokens: response?.data?.cache_write_tokens,
+            sampleRecorded: response?.data?.smart_schedule_sample_recorded,
           }
         }
       )
@@ -145,6 +159,8 @@ describe('channel test request options', () => {
       success: true,
       responseTime: 1200,
       firstTokenMs: 180,
+      inputTokens: 20,
+      cacheWriteTokens: 4,
       sampleRecorded: true,
     })
   })

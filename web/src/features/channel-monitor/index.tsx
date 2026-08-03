@@ -28,6 +28,7 @@ import {
   Search01Icon,
   Settings02Icon,
   TestTubeIcon,
+  WorkflowSquare06Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -129,7 +130,6 @@ import type {
   ChannelMonitorPerformanceRangeMinutes,
   ChannelMonitorSettings,
   ChannelMonitorSmartScheduleRoute,
-  ChannelMonitorTaskKind,
   ChannelMonitorSortMode,
   ChannelMonitorGroupSuccessMetric,
   ChannelMonitorSuccessDetailTarget,
@@ -162,6 +162,15 @@ const loadChannelMonitorTaskHistoryDialog = () =>
   }))
 const LazyChannelMonitorTaskHistoryDialog = lazy(
   loadChannelMonitorTaskHistoryDialog
+)
+const loadChannelMonitorSmartScheduleExecutionDialog = () =>
+  import('./components/channel-monitor-smart-schedule-execution-dialog').then(
+    (module) => ({
+      default: module.ChannelMonitorSmartScheduleExecutionDialog,
+    })
+  )
+const LazyChannelMonitorSmartScheduleExecutionDialog = lazy(
+  loadChannelMonitorSmartScheduleExecutionDialog
 )
 type MonitorView = 'channels' | 'groups' | 'models' | 'smart-schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
@@ -210,6 +219,7 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   smart_schedule_stability_window_minutes: 60,
   smart_schedule_rate_limit_cooldown_seconds:
     DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+  smart_schedule_control_revision: '',
 }
 const CHANNEL_MONITOR_SORT_STORAGE_KEY = 'channel-monitor:channel-sort'
 const CHANNEL_MONITOR_PERFORMANCE_RANGE_STORAGE_KEY =
@@ -265,8 +275,8 @@ export function ChannelMonitor() {
   const [smartScheduleSettingsOpen, setSmartScheduleSettingsOpen] =
     useState(false)
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
-  const [taskHistoryKind, setTaskHistoryKind] =
-    useState<ChannelMonitorTaskKind>('ratio')
+  const [smartScheduleHistoryOpen, setSmartScheduleHistoryOpen] =
+    useState(false)
   const [costHistoryOpen, setCostHistoryOpen] = useState(false)
   const [costHistoryChannel, setCostHistoryChannel] = useState<{
     id: number
@@ -301,9 +311,10 @@ export function ChannelMonitor() {
     useState<ChannelMonitorSuccessDetailTarget | null>(null)
   const [channelSortMode, setChannelSortMode] =
     useState<ChannelMonitorSortMode>(() => {
-      const storedSortMode = localStorage.getItem(
-        CHANNEL_MONITOR_SORT_STORAGE_KEY
-      )
+      let storedSortMode: string | null = null
+      try {
+        storedSortMode = localStorage.getItem(CHANNEL_MONITOR_SORT_STORAGE_KEY)
+      } catch {}
       switch (storedSortMode) {
         case 'custom':
         case 'channel_asc':
@@ -772,7 +783,7 @@ export function ChannelMonitor() {
   let pageContent: ReactNode
   if (query.isLoading) {
     pageContent = <ChannelMonitorSkeleton />
-  } else if (query.isError) {
+  } else if (query.isError && !overview) {
     pageContent = (
       <Empty className='min-h-80'>
         <EmptyHeader>
@@ -971,10 +982,12 @@ export function ChannelMonitor() {
                       onValueChange={(value) => {
                         if (value === null) return
                         setChannelSortMode(value)
-                        localStorage.setItem(
-                          CHANNEL_MONITOR_SORT_STORAGE_KEY,
-                          value
-                        )
+                        try {
+                          localStorage.setItem(
+                            CHANNEL_MONITOR_SORT_STORAGE_KEY,
+                            value
+                          )
+                        } catch {}
                       }}
                     >
                       <SelectTrigger
@@ -1091,7 +1104,9 @@ export function ChannelMonitor() {
                 successMetricsAvailable={successMetricsAvailable}
                 performanceRangeLabel={performanceRangeLabel}
                 performanceLoading={performanceQuery.isLoading}
-                performanceError={performanceQuery.isError}
+                performanceError={
+                  performanceQuery.isError && performanceQuery.data == null
+                }
                 smartScheduleRoutesByChannel={smartScheduleRoutesByChannel}
                 smartScheduleSelectedGroupModel={activeSmartScheduleDisplay}
                 smartScheduleUpdatePending={
@@ -1170,7 +1185,9 @@ export function ChannelMonitor() {
               successByGroup={successByGroup}
               successMetricsAvailable={successMetricsAvailable}
               successLoading={performanceQuery.isLoading}
-              successError={performanceQuery.isError}
+              successError={
+                performanceQuery.isError && performanceQuery.data == null
+              }
               successRangeLabel={performanceRangeLabel}
               onOpenSuccessDetail={(group, mode) =>
                 setSuccessDetailTarget({
@@ -1195,7 +1212,9 @@ export function ChannelMonitor() {
               selectedModel={activePerformanceModel}
               search={search}
               isLoading={performanceQuery.isLoading}
-              isError={performanceQuery.isError}
+              isError={
+                performanceQuery.isError && performanceQuery.data == null
+              }
               onOpenSuccessDetail={(channel, modelName) =>
                 setSuccessDetailTarget({
                   scope: 'channel',
@@ -1217,9 +1236,13 @@ export function ChannelMonitor() {
               intervalMinutes={settings.smart_schedule_interval_minutes}
               isLoading={smartScheduleQuery.isLoading}
               isError={smartScheduleQuery.isError}
+              selection={{
+                group: activeSmartScheduleDisplayGroup,
+                model: activeSmartScheduleDisplayModel,
+              }}
+              onSelectionChange={saveSmartScheduleDisplaySelection}
               onOpenHistory={() => {
-                setTaskHistoryKind('schedule')
-                setTaskHistoryOpen(true)
+                setSmartScheduleHistoryOpen(true)
               }}
               onOpenSettings={openSmartScheduleSettings}
             />
@@ -1263,17 +1286,35 @@ export function ChannelMonitor() {
                   onFocus={() => {
                     void loadChannelMonitorTaskHistoryDialog()
                   }}
-                  onClick={() => {
-                    setTaskHistoryKind('ratio')
-                    setTaskHistoryOpen(true)
-                  }}
-                  aria-label='执行记录'
+                  onClick={() => setTaskHistoryOpen(true)}
+                  aria-label='倍率与余额更新记录'
                 >
                   <HugeiconsIcon icon={HistoryIcon} />
                 </Button>
               }
             />
-            <TooltipContent>倍率、余额与智能调度执行记录</TooltipContent>
+            <TooltipContent>倍率与余额更新记录</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onMouseEnter={() => {
+                    void loadChannelMonitorSmartScheduleExecutionDialog()
+                  }}
+                  onFocus={() => {
+                    void loadChannelMonitorSmartScheduleExecutionDialog()
+                  }}
+                  onClick={() => setSmartScheduleHistoryOpen(true)}
+                  aria-label='智能调度执行记录'
+                >
+                  <HugeiconsIcon icon={WorkflowSquare06Icon} />
+                </Button>
+              }
+            />
+            <TooltipContent>智能调度执行记录</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -1440,9 +1481,16 @@ export function ChannelMonitor() {
       {taskHistoryOpen && (
         <Suspense fallback={null}>
           <LazyChannelMonitorTaskHistoryDialog
-            initialKind={taskHistoryKind}
             open
             onOpenChange={setTaskHistoryOpen}
+          />
+        </Suspense>
+      )}
+      {smartScheduleHistoryOpen && (
+        <Suspense fallback={null}>
+          <LazyChannelMonitorSmartScheduleExecutionDialog
+            open
+            onOpenChange={setSmartScheduleHistoryOpen}
           />
         </Suspense>
       )}

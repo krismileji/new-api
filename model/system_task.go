@@ -359,21 +359,7 @@ func MarkSystemTaskLeaseExpired(taskID string) error {
 }
 
 func ExpireStaleSystemTaskLocks(now int64) error {
-	var locks []*SystemTaskLock
-	if err := DB.Where("locked_until < ?", now).Find(&locks).Error; err != nil {
-		return err
-	}
-	for _, lock := range locks {
-		if err := MarkSystemTaskLeaseExpired(lock.TaskID); err != nil {
-			return err
-		}
-		result := DB.Where("type = ? AND task_id = ? AND locked_by = ? AND locked_until < ?", lock.Type, lock.TaskID, lock.LockedBy, now).
-			Delete(&SystemTaskLock{})
-		if result.Error != nil {
-			return result.Error
-		}
-	}
-	return nil
+	return expireStaleSystemTaskLocksSafely(now)
 }
 
 func ReleaseSystemTaskLock(taskID string, lockedBy string) error {

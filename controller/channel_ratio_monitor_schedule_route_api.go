@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -79,6 +80,15 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	performanceByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
+	for _, metric := range performanceMetrics {
+		key := channelSmartScheduleModelKey{
+			channelId: metric.ChannelId,
+			model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+		}
+		performanceByModel[key] = metric
+	}
+	performanceByRoute := make([]model.ChannelMonitorRoutePerformanceMetric, 0, len(routes))
 	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
 	probeMetricsAvailable := false
 	sharedMetricsAvailable := false
@@ -101,7 +111,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			return
 		}
 		for _, metric := range stabilityMetrics {
-			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
 			stabilityByModel[key] = metric
 		}
 		jitterMetrics, jitterErr := model.GetChannelMonitorRoutePerformanceMetrics(
@@ -112,7 +125,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			return
 		}
 		for _, metric := range jitterMetrics {
-			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
 			jitterByModel[key] = metric
 		}
 	}
@@ -121,8 +137,14 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) {
 			continue
 		}
-		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
+		normalizedModelName := ratio_setting.FormatMatchingModelName(route.Model)
+		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: normalizedModelName}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+		if metric, exists := performanceByModel[modelKey]; exists {
+			metric.GroupName = route.Group
+			metric.ModelName = route.Model
+			performanceByRoute = append(performanceByRoute, metric)
+		}
 		sharedMetricsAvailable = sharedMetricsAvailable ||
 			route.SharedSamples.MetricsSince(stabilityStart).SampleCount > 0
 		metric, hasMetric := stabilityByModel[modelKey]
@@ -139,7 +161,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			performance = nil
 			if logStabilityAvailable {
 				metric, err = model.GetChannelMonitorRouteStabilityMetric(
-					c.Request.Context(), windowStart, route.ChannelId, route.Model,
+					c.Request.Context(), windowStart, route.ChannelId, normalizedModelName,
 				)
 				if err != nil {
 					common.ApiError(c, err)
@@ -149,7 +171,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			}
 			if policy.JitterEnabled {
 				performanceMetric, performanceErr := model.GetChannelMonitorRoutePerformanceMetric(
-					c.Request.Context(), windowStart, route.ChannelId, route.Model,
+					c.Request.Context(), windowStart, route.ChannelId, normalizedModelName,
 				)
 				if performanceErr != nil {
 					common.ApiError(c, performanceErr)
@@ -225,6 +247,15 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		return stabilityMetrics[i].ChannelId < stabilityMetrics[j].ChannelId
 	})
+	sort.Slice(performanceByRoute, func(i int, j int) bool {
+		if performanceByRoute[i].GroupName != performanceByRoute[j].GroupName {
+			return performanceByRoute[i].GroupName < performanceByRoute[j].GroupName
+		}
+		if performanceByRoute[i].ModelName != performanceByRoute[j].ModelName {
+			return performanceByRoute[i].ModelName < performanceByRoute[j].ModelName
+		}
+		return performanceByRoute[i].ChannelId < performanceByRoute[j].ChannelId
+	})
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                generatedAt,
 		"performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
@@ -232,7 +263,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
 		"enabled":                     settings.SmartScheduleEnabled,
 		"routes":                      routes,
-		"performance_items":           performanceMetrics,
+		"performance_items":           performanceByRoute,
 		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable || sharedMetricsAvailable,
 		"stability_items":             stabilityMetrics,
 	})
@@ -290,13 +321,11 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if result.RoutingChanged {
-		model.InitChannelCache()
-	}
+	model.InitChannelCache()
 	var taskResponse any
 	settings := getChannelMonitorSettings()
 	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
-		if task, _, enqueueErr := service.EnqueueSystemTask(channelMonitorSmartScheduleTaskType, nil); enqueueErr == nil {
+		if task, _, enqueueErr := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, nil); enqueueErr == nil {
 			taskResponse = task.ToResponse()
 		}
 	}
@@ -343,14 +372,12 @@ func UpdateChannelMonitorSmartScheduleRouteConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	state, routingChanged, err := model.SaveChannelSmartScheduleRouteConfig(channelId, group, modelName, *request.Excluded)
+	state, _, err := model.SaveChannelSmartScheduleRouteConfig(channelId, group, modelName, *request.Excluded)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if routingChanged {
-		model.InitChannelCache()
-	}
+	model.InitChannelCache()
 	recordManageAudit(c, "channel.monitor_smart_schedule_route_config_update", map[string]interface{}{
 		"id": channelId, "group": group, "model": modelName, "excluded": *request.Excluded,
 	})
@@ -389,9 +416,7 @@ func UpdateChannelMonitorSmartScheduleChannelConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if result.RoutingChanged {
-		model.InitChannelCache()
-	}
+	model.InitChannelCache()
 	recordManageAudit(c, "channel.monitor_smart_schedule_channel_config_update", map[string]interface{}{
 		"id": channelId, "excluded": *request.Excluded,
 		"total": result.Total, "updated": result.Updated,

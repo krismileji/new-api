@@ -63,7 +63,11 @@ import {
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
-import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+  CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+} from '../lib/query-options'
 import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-model-order'
 import {
   channelMonitorSmartSchedulePrimaryRequiresConfirmation,
@@ -82,7 +86,9 @@ import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleGroupPolicy,
   ChannelMonitorSmartScheduleRoute,
+  ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteResult,
+  ChannelMonitorSmartScheduleRouteStability,
 } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 import {
@@ -103,6 +109,16 @@ type ChannelMonitorSmartScheduleBoardProps = {
   isError: boolean
   onOpenSettings: () => void
   onOpenHistory: () => void
+  selection?: {
+    group: string
+    model: string
+  }
+  onSelectionChange?: (selection: { group: string; model: string }) => void
+}
+
+type PrimaryMutationVariables = {
+  request: ChannelMonitorSmartSchedulePrimaryUpdateRequest
+  route: ChannelMonitorSmartScheduleRoute
 }
 
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
@@ -117,8 +133,8 @@ export function ChannelMonitorSmartScheduleBoard(
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const [primaryTarget, setPrimaryTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
-  const [primaryConfirmationRequest, setPrimaryConfirmationRequest] =
-    useState<ChannelMonitorSmartSchedulePrimaryUpdateRequest | null>(null)
+  const [primaryConfirmation, setPrimaryConfirmation] =
+    useState<PrimaryMutationVariables | null>(null)
   const [primaryDuration, setPrimaryDuration] = useState('60')
   const [allowPrimaryStabilityDegrade, setAllowPrimaryStabilityDegrade] =
     useState(true)
@@ -161,6 +177,26 @@ export function ChannelMonitorSmartScheduleBoard(
   const channelsById = useMemo(
     () => new Map(props.channels.map((channel) => [channel.id, channel])),
     [props.channels]
+  )
+  const performanceByRoute = useMemo(
+    () =>
+      new Map<string, ChannelMonitorSmartScheduleRoutePerformance>(
+        (props.result?.performance_items ?? []).map((item) => [
+          channelMonitorSmartScheduleRouteKey(item),
+          item,
+        ])
+      ),
+    [props.result?.performance_items]
+  )
+  const stabilityByRoute = useMemo(
+    () =>
+      new Map<string, ChannelMonitorSmartScheduleRouteStability>(
+        (props.result?.stability_items ?? []).map((item) => [
+          channelMonitorSmartScheduleRouteKey(item),
+          item,
+        ])
+      ),
+    [props.result?.stability_items]
   )
   const pools = useMemo(() => {
     const routesByPool = new Map<string, ChannelMonitorSmartScheduleRoute[]>()
@@ -243,8 +279,10 @@ export function ChannelMonitorSmartScheduleBoard(
   const firstPrioritySamplingPool = pools.find(
     (pool) => pool.summary.prioritySamplingCount > 0
   )
-  const visibleGroup = groups.includes(selectedGroup)
-    ? selectedGroup
+  const selectedGroupValue = props.selection?.group ?? selectedGroup
+  const selectedModelValue = props.selection?.model ?? selectedModel
+  const visibleGroup = groups.includes(selectedGroupValue)
+    ? selectedGroupValue
     : (groups[0] ?? '')
   const visiblePools = useMemo(
     () => pools.filter((pool) => pool.summary.group === visibleGroup),
@@ -254,22 +292,26 @@ export function ChannelMonitorSmartScheduleBoard(
     () => visiblePools.map((pool) => pool.summary.model),
     [visiblePools]
   )
-  const visibleModel = visibleModels.includes(selectedModel)
-    ? selectedModel
+  const visibleModel = visibleModels.includes(selectedModelValue)
+    ? selectedModelValue
     : (visibleModels[0] ?? '')
   const visiblePool =
     visiblePools.find((pool) => pool.summary.model === visibleModel) ?? null
 
-  const selectGroup = (group: string) => {
+  const updateSelection = (group: string, model: string) => {
     setSelectedGroup(group)
-    setSelectedModel('')
+    setSelectedModel(model)
+    props.onSelectionChange?.({ group, model })
+  }
+  const selectGroup = (group: string) => {
+    const firstModel = pools.find((pool) => pool.summary.group === group)
+    updateSelection(group, firstModel?.summary.model ?? '')
   }
   const selectPool = (pool: ChannelMonitorSmartSchedulePoolView) => {
-    setSelectedGroup(pool.summary.group)
-    setSelectedModel(pool.summary.model)
+    updateSelection(pool.summary.group, pool.summary.model)
   }
   const closePrimaryDialog = () => {
-    setPrimaryConfirmationRequest(null)
+    setPrimaryConfirmation(null)
     setPrimaryTarget(null)
   }
 
@@ -286,14 +328,15 @@ export function ChannelMonitorSmartScheduleBoard(
     onSettled: invalidateSchedule,
   })
   const primaryMutation = useMutation({
-    mutationFn: updateChannelMonitorSmartScheduleRoutePrimary,
-    onError: (error, request) => {
+    mutationFn: ({ request }: PrimaryMutationVariables) =>
+      updateChannelMonitorSmartScheduleRoutePrimary(request),
+    onError: (error, variables) => {
       if (
         error instanceof
           ChannelMonitorSmartScheduleStabilityConfirmationRequiredError &&
-        request.confirmStabilityOverride !== true
+        variables.request.confirmStabilityOverride !== true
       ) {
-        setPrimaryConfirmationRequest(request)
+        setPrimaryConfirmation(variables)
         return
       }
       handleChannelMonitorMutationError(error)
@@ -312,10 +355,10 @@ export function ChannelMonitorSmartScheduleBoard(
     onSettled: () => {
       invalidateSchedule()
       queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-smart-schedule-executions'],
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
       })
       queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-task-history'],
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
       })
     },
   })
@@ -338,7 +381,10 @@ export function ChannelMonitorSmartScheduleBoard(
     onSettled: () => {
       invalidateSchedule()
       queryClient.invalidateQueries({
-        queryKey: ['channel-monitor-task-history'],
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
       })
     },
   })
@@ -357,10 +403,10 @@ export function ChannelMonitorSmartScheduleBoard(
         Date.now() / 1000
       )
     ) {
-      setPrimaryConfirmationRequest(request)
+      setPrimaryConfirmation({ request, route: primaryTarget })
       return
     }
-    primaryMutation.mutate(request)
+    primaryMutation.mutate({ request, route: primaryTarget })
   }
   const updateRouteKey =
     updateMutation.isPending && updateMutation.variables
@@ -396,7 +442,7 @@ export function ChannelMonitorSmartScheduleBoard(
     )
   }
 
-  if (props.isError) {
+  if (props.isError && !props.result) {
     return (
       <Empty className='min-h-72'>
         <EmptyHeader>
@@ -426,6 +472,9 @@ export function ChannelMonitorSmartScheduleBoard(
                 >
                   {props.result?.enabled ? '已启用' : '已禁用'}
                 </Badge>
+                {props.isError && props.result ? (
+                  <Badge variant='destructive'>刷新失败，显示上次结果</Badge>
+                ) : null}
                 {stale ? <Badge variant='warning'>数据可能已过期</Badge> : null}
               </div>
               <div className='text-muted-foreground mt-0.5 text-xs'>
@@ -466,7 +515,7 @@ export function ChannelMonitorSmartScheduleBoard(
             onClick={props.onOpenHistory}
           >
             <HugeiconsIcon icon={HistoryIcon} data-icon='inline-start' />
-            执行记录
+            智能调度记录
           </Button>
           <Button
             type='button'
@@ -708,7 +757,7 @@ export function ChannelMonitorSmartScheduleBoard(
                           : 'bg-background hover:bg-muted/50'
                       )}
                       aria-pressed={selected}
-                      onClick={() => setSelectedModel(pool.summary.model)}
+                      onClick={() => selectPool(pool)}
                     >
                       <span className='min-w-0 flex-1 text-left'>
                         <span
@@ -748,6 +797,8 @@ export function ChannelMonitorSmartScheduleBoard(
                 policy={policyByGroup.get(visiblePool.summary.group)}
                 channelsById={channelsById}
                 placements={placements}
+                performanceByRoute={performanceByRoute}
+                stabilityByRoute={stabilityByRoute}
                 updateRouteKey={updateRouteKey}
                 manualRoutingKey={manualRoutingKey}
                 updateDisabled={
@@ -778,11 +829,14 @@ export function ChannelMonitorSmartScheduleBoard(
                 }}
                 onClearPrimary={(route) =>
                   primaryMutation.mutate({
-                    channelId: route.channel_id,
-                    group: route.group,
-                    model: route.model,
-                    durationMinutes: 0,
-                    allowStabilityDegrade: false,
+                    route,
+                    request: {
+                      channelId: route.channel_id,
+                      group: route.group,
+                      model: route.model,
+                      durationMinutes: 0,
+                      allowStabilityDegrade: false,
+                    },
                   })
                 }
                 onSaveManualRouting={(route, priority, weight) =>
@@ -819,7 +873,7 @@ export function ChannelMonitorSmartScheduleBoard(
         <Dialog
           open
           onOpenChange={(open) => {
-            if (!open) closePrimaryDialog()
+            if (!open && !primaryMutation.isPending) closePrimaryDialog()
           }}
         >
           <DialogContent className='sm:max-w-md'>
@@ -861,7 +915,11 @@ export function ChannelMonitorSmartScheduleBoard(
               />
             </FieldGroup>
             <DialogFooter>
-              <Button variant='outline' onClick={closePrimaryDialog}>
+              <Button
+                variant='outline'
+                disabled={primaryMutation.isPending}
+                onClick={closePrimaryDialog}
+              >
                 <HugeiconsIcon icon={Cancel01Icon} data-icon='inline-start' />
                 取消
               </Button>
@@ -888,18 +946,21 @@ export function ChannelMonitorSmartScheduleBoard(
         </Dialog>
       ) : null}
       <ChannelMonitorSmartSchedulePrimaryConfirmDialog
-        route={primaryConfirmationRequest ? primaryTarget : null}
+        route={primaryConfirmation?.route ?? null}
         pending={primaryMutation.isPending}
         onOpenChange={(open) => {
           if (!open && !primaryMutation.isPending) {
-            setPrimaryConfirmationRequest(null)
+            setPrimaryConfirmation(null)
           }
         }}
         onConfirm={() => {
-          if (!primaryConfirmationRequest) return
+          if (!primaryConfirmation) return
           primaryMutation.mutate({
-            ...primaryConfirmationRequest,
-            confirmStabilityOverride: true,
+            route: primaryConfirmation.route,
+            request: {
+              ...primaryConfirmation.request,
+              confirmStabilityOverride: true,
+            },
           })
         }}
       />

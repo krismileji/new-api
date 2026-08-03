@@ -61,8 +61,9 @@ export const channelsQueryKeys = {
 }
 
 export const CHANNEL_TEST_DEFAULTS = {
-  endpointType: 'openai-response',
+  endpointType: 'auto',
   stream: true,
+  recordSample: true,
 } as const
 
 function getChannelTestResponseTime(
@@ -269,6 +270,7 @@ export async function handleTestChannel(
     testModel?: string
     endpointType?: string
     stream?: boolean
+    recordSample?: boolean
     silent?: boolean
   },
   onTestComplete?: (
@@ -283,7 +285,8 @@ export async function handleTestChannel(
     options &&
     (options.testModel ||
       options.endpointType ||
-      typeof options.stream === 'boolean')
+      typeof options.stream === 'boolean' ||
+      typeof options.recordSample === 'boolean')
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
           ...(options.endpointType
@@ -291,6 +294,9 @@ export async function handleTestChannel(
             : {}),
           ...(typeof options.stream === 'boolean'
             ? { stream: options.stream }
+            : {}),
+          ...(typeof options.recordSample === 'boolean'
+            ? { record_sample: options.recordSample }
             : {}),
         }
       : undefined

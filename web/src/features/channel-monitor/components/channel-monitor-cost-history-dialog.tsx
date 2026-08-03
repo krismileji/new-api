@@ -23,7 +23,7 @@ import {
   MoneyBag02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -108,7 +108,6 @@ export function ChannelMonitorCostHistoryDialog(
       ),
     enabled: props.open,
     staleTime: 30_000,
-    placeholderData: keepPreviousData,
   })
 
   useEffect(() => {

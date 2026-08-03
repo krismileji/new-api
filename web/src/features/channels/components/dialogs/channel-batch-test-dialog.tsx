@@ -79,7 +79,6 @@ import { getChannels } from '../../api'
 import {
   CHANNEL_TEST_DEFAULTS,
   channelsQueryKeys,
-  formatResponseTime,
   handleTestChannel,
 } from '../../lib'
 import type { Channel } from '../../types'
@@ -93,6 +92,13 @@ import {
   orderBatchTestChannels,
   retainCompatibleChannelIds,
 } from './channel-batch-test-selection'
+import {
+  formatChannelTestDuration,
+  parseChannelTestMetrics,
+  type ChannelTestMetricValues,
+} from './channel-test-metric-values'
+import { ChannelTestMetrics } from './channel-test-metrics'
+import { ChannelTestSampleToggle } from './channel-test-sample-toggle'
 
 type BatchTestChannel = Pick<Channel, 'id' | 'name' | 'status'> &
   Partial<Pick<Channel, 'models' | 'remark'>> & {
@@ -122,16 +128,17 @@ type BatchTestTask = {
 type BatchTestRequestOptions = {
   endpointType?: string
   stream?: boolean
+  recordSample?: boolean
 }
 
 type BatchTestStatus = 'testing' | 'success' | 'error'
 
-type BatchTestResult = BatchTestTask & {
-  status: BatchTestStatus
-  responseTime?: number
-  error?: string
-  errorCode?: string
-}
+type BatchTestResult = BatchTestTask &
+  ChannelTestMetricValues & {
+    status: BatchTestStatus
+    error?: string
+    errorCode?: string
+  }
 
 type BatchTestProgress = {
   total: number
@@ -298,13 +305,14 @@ async function runBatchTestTask(
         testModel: task.model,
         endpointType: options.endpointType,
         stream: options.stream,
+        recordSample: options.recordSample,
         silent: true,
       },
-      (success, responseTime, error, errorCode) => {
+      (success, responseTime, error, errorCode, response) => {
         result = {
           ...task,
+          ...parseChannelTestMetrics(response, responseTime),
           status: success ? 'success' : 'error',
-          responseTime,
           error,
           errorCode,
         }
@@ -354,22 +362,82 @@ function BatchTestResultContent(props: { result: BatchTestResult }) {
   }
 
   if (!props.result.error) {
-    return <span className='text-success'>连通性正常</span>
+    return <ChannelTestMetrics metrics={props.result} />
   }
 
   const errorCode = props.result.errorCode ? ` (${props.result.errorCode})` : ''
   return (
-    <span className='text-destructive'>
-      {props.result.error}
-      {errorCode}
-    </span>
+    <div className='space-y-2'>
+      <p className='text-destructive wrap-break-word whitespace-normal'>
+        {props.result.error}
+        {errorCode}
+      </p>
+      <ChannelTestMetrics metrics={props.result} />
+    </div>
   )
 }
 
 function formatBatchTestResponseTime(responseTime?: number): string {
-  if (typeof responseTime !== 'number') return '-'
-  if (responseTime === 0) return '0ms'
-  return formatResponseTime(responseTime)
+  return formatChannelTestDuration(responseTime)
+}
+
+type BatchTestNumberStats = {
+  average: number
+  fastest: number
+  slowest: number
+  p95: number
+}
+
+function calculateBatchTestNumberStats(
+  values: Array<number | undefined>
+): BatchTestNumberStats | null {
+  const sorted = values
+    .filter(
+      (value): value is number =>
+        typeof value === 'number' && Number.isFinite(value)
+    )
+    .sort((a, b) => a - b)
+  if (sorted.length === 0) return null
+
+  const total = sorted.reduce((sum, value) => sum + value, 0)
+  const p95Index = Math.ceil(sorted.length * 0.95) - 1
+  return {
+    average: total / sorted.length,
+    fastest: sorted.at(0) ?? 0,
+    slowest: sorted.at(-1) ?? 0,
+    p95: sorted.at(p95Index) ?? 0,
+  }
+}
+
+type BatchTestTokenMetric =
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'cachedTokens'
+  | 'cacheWriteTokens'
+  | 'reasoningTokens'
+  | 'totalTokens'
+
+function sumBatchTestTokenMetric(
+  results: BatchTestResult[],
+  metric: BatchTestTokenMetric
+): number {
+  return results.reduce((sum, result) => {
+    const value = result[metric]
+    return (
+      sum + (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+    )
+  }, 0)
+}
+
+function BatchTestSummaryMetric(props: { label: string; value: string }) {
+  return (
+    <div className='min-w-0'>
+      <dt className='text-muted-foreground text-xs'>{props.label}</dt>
+      <dd className='truncate font-mono text-sm font-medium tabular-nums'>
+        {props.value}
+      </dd>
+    </div>
+  )
 }
 
 function getErrorMessage(error: unknown): string {
@@ -387,6 +455,9 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   )
   const [isStreamTest, setIsStreamTest] = useState<boolean>(
     CHANNEL_TEST_DEFAULTS.stream
+  )
+  const [recordSample, setRecordSample] = useState<boolean>(
+    CHANNEL_TEST_DEFAULTS.recordSample
   )
   const [repeatConcurrencyInput, setRepeatConcurrencyInput] = useState(
     DEFAULT_REPEAT_CONCURRENCY
@@ -513,28 +584,39 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
         .filter((result): result is BatchTestResult => result !== undefined),
     [results, tasks]
   )
-  const latencyStats = useMemo(() => {
-    const responseTimes = visibleResults
-      .filter((result) => result.status !== 'testing')
-      .map((result) => result.responseTime)
-      .filter(
-        (responseTime): responseTime is number =>
-          typeof responseTime === 'number' && Number.isFinite(responseTime)
-      )
-      .sort((a, b) => a - b)
-    if (responseTimes.length === 0) return null
-
-    const totalResponseTime = responseTimes.reduce(
-      (total, responseTime) => total + responseTime,
-      0
+  const repeatStats = useMemo(() => {
+    const completedResults = visibleResults.filter(
+      (result) => result.status !== 'testing'
     )
-    const p95Index = Math.ceil(responseTimes.length * 0.95) - 1
+    if (completedResults.length === 0) return null
+
+    const response = calculateBatchTestNumberStats(
+      completedResults.map((result) => result.responseTime)
+    )
+    const firstToken = calculateBatchTestNumberStats(
+      completedResults.map((result) => result.firstTokenMs)
+    )
+    const tokensPerSecond = calculateBatchTestNumberStats(
+      completedResults.map((result) => result.tokensPerSecond)
+    )
+    const usageResults = completedResults.filter(
+      (result) => result.usageAvailable === true
+    )
+
     return {
-      average: Math.round(totalResponseTime / responseTimes.length),
-      fastest: responseTimes.at(0),
-      slowest: responseTimes.at(-1),
-      p95: responseTimes.at(p95Index),
-      sampleCount: responseTimes.length,
+      response,
+      firstToken,
+      tokensPerSecond,
+      usageSampleCount: usageResults.length,
+      inputTokens: sumBatchTestTokenMetric(usageResults, 'inputTokens'),
+      outputTokens: sumBatchTestTokenMetric(usageResults, 'outputTokens'),
+      cachedTokens: sumBatchTestTokenMetric(usageResults, 'cachedTokens'),
+      cacheWriteTokens: sumBatchTestTokenMetric(
+        usageResults,
+        'cacheWriteTokens'
+      ),
+      reasoningTokens: sumBatchTestTokenMetric(usageResults, 'reasoningTokens'),
+      totalTokens: sumBatchTestTokenMetric(usageResults, 'totalTokens'),
     }
   }, [visibleResults])
   const progressPercent = progress
@@ -570,6 +652,11 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     clearResults()
   }
 
+  const handleRecordSampleChange = (checked: boolean) => {
+    setRecordSample(checked)
+    clearResults()
+  }
+
   const handleSelectedModelsChange = (models: string[]) => {
     setSelectedModels(models)
     setSelectedChannelIds((current) =>
@@ -588,6 +675,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     setSelectedModels([])
     setEndpointType(CHANNEL_TEST_DEFAULTS.endpointType)
     setIsStreamTest(CHANNEL_TEST_DEFAULTS.stream)
+    setRecordSample(CHANNEL_TEST_DEFAULTS.recordSample)
     setRepeatConcurrencyInput(DEFAULT_REPEAT_CONCURRENCY)
     setRepeatIterationsInput(DEFAULT_REPEAT_ITERATIONS)
     setResults({})
@@ -642,6 +730,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
     const requestOptions: BatchTestRequestOptions = {
       endpointType,
       stream: effectiveStreamTest,
+      recordSample,
     }
 
     try {
@@ -784,7 +873,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
   }
 
   let testPlanTitle = `将执行 ${tasks.length} 个测试组合`
-  const testModeDescription = `端点：${selectedEndpointLabel} · ${effectiveStreamTest ? '流式' : '非流式'}`
+  const testModeDescription = `端点：${selectedEndpointLabel} · ${effectiveStreamTest ? '流式' : '非流式'} · ${recordSample ? '计入渠道样本' : '不计入渠道样本'}`
   let testPlanDescription = `${selectedChannels.length} 个渠道 × ${selectedModels.length} 个模型，最多同时发起 ${BATCH_TEST_CONCURRENCY} 个请求。${testModeDescription}。`
   if (isRepeatMode) {
     testPlanTitle = `将执行 ${repeatRequestCount} 次测试请求`
@@ -1059,7 +1148,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
         </Field>
       </FieldGroup>
 
-      <FieldGroup className='grid gap-4 md:grid-cols-2'>
+      <FieldGroup className='grid gap-4 md:grid-cols-3'>
         <Field>
           <FieldLabel htmlFor='batch-test-endpoint-type'>端点类型</FieldLabel>
           <Select
@@ -1118,6 +1207,13 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             为本次测试请求启用流式模式；当前端点不支持时会自动关闭。
           </FieldDescription>
         </Field>
+
+        <ChannelTestSampleToggle
+          id='batch-test-record-sample'
+          checked={recordSample}
+          onCheckedChange={handleRecordSampleChange}
+          disabled={isTesting}
+        />
       </FieldGroup>
 
       {isRepeatMode && (
@@ -1218,34 +1314,100 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
             </Badge>
             <Badge variant='destructive'>失败 {progress.failed}</Badge>
           </div>
-          {isRepeatMode && latencyStats && (
-            <dl className='grid grid-cols-2 gap-2 text-sm sm:grid-cols-4'>
-              <div>
-                <dt className='text-muted-foreground'>平均响应</dt>
-                <dd className='font-mono font-medium'>
-                  {formatBatchTestResponseTime(latencyStats.average)}
-                </dd>
+          {isRepeatMode && repeatStats && (
+            <div className='space-y-2'>
+              <dl className='grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6'>
+                <BatchTestSummaryMetric
+                  label='平均响应'
+                  value={formatBatchTestResponseTime(
+                    repeatStats.response?.average
+                  )}
+                />
+                <BatchTestSummaryMetric
+                  label='最快 / 最慢'
+                  value={`${formatBatchTestResponseTime(repeatStats.response?.fastest)} / ${formatBatchTestResponseTime(repeatStats.response?.slowest)}`}
+                />
+                <BatchTestSummaryMetric
+                  label='响应 P95'
+                  value={formatBatchTestResponseTime(repeatStats.response?.p95)}
+                />
+                <BatchTestSummaryMetric
+                  label='平均首字'
+                  value={formatBatchTestResponseTime(
+                    repeatStats.firstToken?.average
+                  )}
+                />
+                <BatchTestSummaryMetric
+                  label='首字 P95'
+                  value={formatBatchTestResponseTime(
+                    repeatStats.firstToken?.p95
+                  )}
+                />
+                <BatchTestSummaryMetric
+                  label='平均 TPS'
+                  value={
+                    repeatStats.tokensPerSecond
+                      ? repeatStats.tokensPerSecond.average.toFixed(2)
+                      : '-'
+                  }
+                />
+              </dl>
+              <div className='border-border/70 space-y-1 border-t pt-2'>
+                <p className='text-muted-foreground text-xs'>
+                  Token 合计（{repeatStats.usageSampleCount} 个 Usage 样本）
+                </p>
+                <dl className='grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6'>
+                  <BatchTestSummaryMetric
+                    label='输入 Token'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.inputTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                  <BatchTestSummaryMetric
+                    label='输出 Token'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.outputTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                  <BatchTestSummaryMetric
+                    label='缓存读取'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.cachedTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                  <BatchTestSummaryMetric
+                    label='缓存写入'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.cacheWriteTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                  <BatchTestSummaryMetric
+                    label='推理 Token'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.reasoningTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                  <BatchTestSummaryMetric
+                    label='总 Token'
+                    value={
+                      repeatStats.usageSampleCount > 0
+                        ? repeatStats.totalTokens.toLocaleString('zh-CN')
+                        : '-'
+                    }
+                  />
+                </dl>
               </div>
-              <div>
-                <dt className='text-muted-foreground'>最快 / 最慢</dt>
-                <dd className='font-mono font-medium'>
-                  {formatBatchTestResponseTime(latencyStats.fastest)} /{' '}
-                  {formatBatchTestResponseTime(latencyStats.slowest)}
-                </dd>
-              </div>
-              <div>
-                <dt className='text-muted-foreground'>P95</dt>
-                <dd className='font-mono font-medium'>
-                  {formatBatchTestResponseTime(latencyStats.p95)}
-                </dd>
-              </div>
-              <div>
-                <dt className='text-muted-foreground'>有效样本</dt>
-                <dd className='font-mono font-medium'>
-                  {latencyStats.sampleCount} 次
-                </dd>
-              </div>
-            </dl>
+            </div>
           )}
         </div>
       )}
@@ -1259,8 +1421,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
                 <TableHead>渠道</TableHead>
                 <TableHead>模型</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>响应时间</TableHead>
-                <TableHead>结果</TableHead>
+                <TableHead>性能与 Token</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1292,10 +1453,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
                   <TableCell>
                     <BatchTestStatusBadge status={result.status} />
                   </TableCell>
-                  <TableCell>
-                    {formatBatchTestResponseTime(result.responseTime)}
-                  </TableCell>
-                  <TableCell className='max-w-[28rem] whitespace-normal'>
+                  <TableCell className='max-w-[28rem] min-w-80 whitespace-normal'>
                     <BatchTestResultContent result={result} />
                   </TableCell>
                 </TableRow>

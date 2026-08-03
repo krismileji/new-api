@@ -90,3 +90,27 @@ func TestLookupChannelSmartScheduleProbeRouteRequiresAbilityChannelAndState(t *t
 	assert.False(t, found)
 	assert.Nil(t, channel)
 }
+
+func TestLookupChannelSmartScheduleProbeRoutePrefersExactParameterizedModel(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	const exactModel = "gemini-2.5-pro-thinking-2048"
+	const wildcardModel = "gemini-2.5-pro-thinking-*"
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&Channel{
+		Id: 2302, Name: "exact parameterized", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 2302, Group: "vip", Model: exactModel, Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 2302, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 2302, GroupName: "vip", ModelName: exactModel, ParticipationSet: true},
+		{ChannelId: 2302, GroupName: "vip", ModelName: wildcardModel, ParticipationSet: true},
+	}).Error)
+
+	route, _, found, err := LookupChannelSmartScheduleProbeRoute(2302, "vip", exactModel)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, exactModel, route.Model)
+}

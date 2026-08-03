@@ -66,7 +66,7 @@ export function ChannelMonitorStatusBadge(
         >
           {label}
         </TooltipTrigger>
-        <TooltipContent className='max-w-xs whitespace-normal break-words'>
+        <TooltipContent className='max-w-xs break-words whitespace-normal'>
           系统禁用原因：{reason}
         </TooltipContent>
       </Tooltip>

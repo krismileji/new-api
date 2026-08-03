@@ -78,8 +78,13 @@ function formatMetricValue(key: ScoreMetricKey, value: number | null) {
   return `${value.toFixed(2)} token/s`
 }
 
-function formatChannelId(channelId: number) {
-  return channelId > 0 ? `渠道 ${channelId}` : '无'
+function formatChannelReference(
+  channelId: number,
+  channelNameById: ReadonlyMap<number, string> | undefined
+) {
+  if (channelId <= 0) return '无'
+  const channelName = channelNameById?.get(channelId)
+  return channelName ? `${channelName}（ID ${channelId}）` : `渠道 ${channelId}`
 }
 
 function getUnavailableReason(
@@ -200,6 +205,7 @@ type ChannelMonitorSmartScheduleScoreDetailsProps = {
   className?: string
   snapshotLabel?: string
   defaultOpen?: boolean
+  channelNameById?: ReadonlyMap<number, string>
 }
 
 export function ChannelMonitorSmartScheduleScoreDetails(
@@ -210,6 +216,11 @@ export function ChannelMonitorSmartScheduleScoreDetails(
   const details = props.details
   const actualTopLayerChannelIds =
     details.decision.actual_top_layer_channel_ids ?? []
+  const actualTopLayerChannels = actualTopLayerChannelIds
+    .map((channelId) =>
+      formatChannelReference(channelId, props.channelNameById)
+    )
+    .join('、')
   let temporaryTrafficLabel = ''
   if (details.decision.temporary_traffic_kind === 'insufficient_samples') {
     temporaryTrafficLabel = '样本不足补量'
@@ -358,20 +369,32 @@ export function ChannelMonitorSmartScheduleScoreDetails(
             <div className='flex flex-wrap gap-x-4 gap-y-1 tabular-nums'>
               <span>
                 <span className='text-muted-foreground'>原主渠道 </span>
-                {formatChannelId(details.decision.current_primary_channel_id)}
+                {formatChannelReference(
+                  details.decision.current_primary_channel_id,
+                  props.channelNameById
+                )}
               </span>
               <span>
                 <span className='text-muted-foreground'>评分第一 </span>
-                {formatChannelId(details.decision.raw_winner_channel_id)}
+                {formatChannelReference(
+                  details.decision.raw_winner_channel_id,
+                  props.channelNameById
+                )}
               </span>
               <span>
                 <span className='text-muted-foreground'>实际主渠道 </span>
-                {formatChannelId(details.decision.actual_primary_channel_id)}
+                {formatChannelReference(
+                  details.decision.actual_primary_channel_id,
+                  props.channelNameById
+                )}
               </span>
               {details.decision.manual_primary_channel_id > 0 ? (
                 <span>
                   <span className='text-muted-foreground'>管理员固定 </span>
-                  {formatChannelId(details.decision.manual_primary_channel_id)}
+                  {formatChannelReference(
+                    details.decision.manual_primary_channel_id,
+                    props.channelNameById
+                  )}
                 </span>
               ) : null}
               <span>
@@ -398,10 +421,8 @@ export function ChannelMonitorSmartScheduleScoreDetails(
               {details.decision.actual_highest_priority >= 0 ? (
                 <span>
                   <span className='text-muted-foreground'>实际最高层 </span>P
-                  {details.decision.actual_highest_priority} · 渠道{' '}
-                  {actualTopLayerChannelIds.length > 0
-                    ? actualTopLayerChannelIds.join('、')
-                    : '-'}
+                  {details.decision.actual_highest_priority} ·{' '}
+                  {actualTopLayerChannels || '渠道 -'}
                 </span>
               ) : null}
               {temporaryTrafficLabel ? (

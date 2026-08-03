@@ -91,7 +91,6 @@ import { updateChannel } from '../../api'
 import {
   CHANNEL_TEST_DEFAULTS,
   channelsQueryKeys,
-  formatResponseTime,
   handleTestChannel,
 } from '../../lib'
 import type {
@@ -100,6 +99,12 @@ import type {
   SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
+import {
+  parseChannelTestMetrics,
+  type ChannelTestMetricValues,
+} from './channel-test-metric-values'
+import { ChannelTestMetrics } from './channel-test-metrics'
+import { ChannelTestSampleToggle } from './channel-test-sample-toggle'
 
 type ChannelTestDialogProps = {
   open: boolean
@@ -125,14 +130,8 @@ type ModelRow = {
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
-type TestResult = {
+type TestResult = ChannelTestMetricValues & {
   status: TestStatus
-  responseTime?: number
-  firstTokenMs?: number
-  tokensPerSecond?: number
-  outputTokens?: number
-  smartScheduleSampleRecorded?: boolean
-  smartScheduleSampleMessage?: string
   completedAt?: number
   error?: string
   errorCode?: string
@@ -365,6 +364,9 @@ function ChannelTestDialogContent({
   const [isStreamTest, setIsStreamTest] = useState<boolean>(
     CHANNEL_TEST_DEFAULTS.stream
   )
+  const [recordSample, setRecordSample] = useState<boolean>(
+    CHANNEL_TEST_DEFAULTS.recordSample
+  )
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -432,6 +434,7 @@ function ChannelTestDialogContent({
     batchStopRequestedRef.current = true
     setEndpointType(CHANNEL_TEST_DEFAULTS.endpointType)
     setIsStreamTest(CHANNEL_TEST_DEFAULTS.stream)
+    setRecordSample(CHANNEL_TEST_DEFAULTS.recordSample)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -593,30 +596,14 @@ function ChannelTestDialogContent({
             testModel: model,
             endpointType,
             stream: effectiveStreamTest,
+            recordSample,
             silent,
           },
           (success, responseTime, error, errorCode, response) => {
             const completedAt = Date.now()
-            const data = response?.data
             finalResult = {
+              ...parseChannelTestMetrics(response, responseTime),
               status: success ? 'success' : 'error',
-              responseTime,
-              firstTokenMs:
-                typeof data?.first_token_ms === 'number'
-                  ? data.first_token_ms
-                  : undefined,
-              tokensPerSecond:
-                typeof data?.tokens_per_second === 'number'
-                  ? data.tokens_per_second
-                  : undefined,
-              outputTokens:
-                typeof data?.output_tokens === 'number'
-                  ? data.output_tokens
-                  : undefined,
-              smartScheduleSampleRecorded:
-                data?.smart_schedule_sample_recorded,
-              smartScheduleSampleMessage:
-                data?.smart_schedule_sample_message,
               completedAt,
               error,
               errorCode,
@@ -649,6 +636,7 @@ function ChannelTestDialogContent({
       endpointType,
       effectiveStreamTest,
       markModelTesting,
+      recordSample,
       refreshChannelLists,
       t,
       updateTestResult,
@@ -1041,7 +1029,7 @@ function ChannelTestDialogContent({
         }
       >
         <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
-          <div className='grid gap-4 md:grid-cols-2'>
+          <div className='grid gap-4 md:grid-cols-3'>
             <div className='grid gap-2'>
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
               <Select
@@ -1097,6 +1085,12 @@ function ChannelTestDialogContent({
                 {t('Enable streaming mode for the test request.')}
               </p>
             </div>
+            <ChannelTestSampleToggle
+              id='channel-test-record-sample'
+              checked={recordSample}
+              onCheckedChange={setRecordSample}
+              disabled={isAnyTesting}
+            />
           </div>
 
           <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
@@ -1288,7 +1282,7 @@ function TestResultCell({
   }
 
   if (result.status === 'success') {
-    return <ChannelTestMetrics result={result} />
+    return <ChannelTestMetrics metrics={result} />
   }
 
   return (
@@ -1329,68 +1323,35 @@ function FailureResultContent({
           {summary}
         </p>
         <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
-        {isModelPriceError && (
-          <Button
-            variant='outline'
-            size='sm'
-            className='h-7 w-fit px-2 text-xs'
-            onClick={() =>
-              window.open('/system-settings/billing/model-pricing', '_blank')
-            }
-          >
-            <Settings className='mr-1 h-3 w-3 shrink-0' />
-            {t('Go to Settings')}
-          </Button>
-        )}
-        {details && (
-          <Button
-            variant='ghost'
-            size='sm'
-            className='h-7 w-fit px-2 text-xs'
-            aria-haspopup='dialog'
-            onClick={() => onOpenDetails({ model, summary, details })}
-          >
-            <Info className='mr-1 h-3 w-3 shrink-0' />
-            {t('Details')}
-          </Button>
-        )}
+          {isModelPriceError && (
+            <Button
+              variant='outline'
+              size='sm'
+              className='h-7 w-fit px-2 text-xs'
+              onClick={() =>
+                window.open('/system-settings/billing/model-pricing', '_blank')
+              }
+            >
+              <Settings className='mr-1 h-3 w-3 shrink-0' />
+              {t('Go to Settings')}
+            </Button>
+          )}
+          {details && (
+            <Button
+              variant='ghost'
+              size='sm'
+              className='h-7 w-fit px-2 text-xs'
+              aria-haspopup='dialog'
+              onClick={() => onOpenDetails({ model, summary, details })}
+            >
+              <Info className='mr-1 h-3 w-3 shrink-0' />
+              {t('Details')}
+            </Button>
+          )}
         </div>
       </div>
-      <ChannelTestMetrics result={result} />
+      <ChannelTestMetrics metrics={result} />
     </div>
-  )
-}
-
-function ChannelTestMetrics(props: { result: TestResult }) {
-  const { t } = useTranslation()
-  const result = props.result
-  const metrics: string[] = []
-  if (typeof result.responseTime === 'number') {
-    metrics.push(`总耗时 ${formatResponseTime(result.responseTime, t)}`)
-  }
-  if (typeof result.firstTokenMs === 'number') {
-    metrics.push(`首字 ${formatResponseTime(result.firstTokenMs, t)}`)
-  }
-  if (typeof result.tokensPerSecond === 'number') {
-    metrics.push(`TPS ${result.tokensPerSecond.toFixed(2)}`)
-  }
-  if (typeof result.outputTokens === 'number') {
-    metrics.push(`输出 ${result.outputTokens} token`)
-  }
-  if (typeof result.smartScheduleSampleRecorded === 'boolean') {
-    metrics.push(result.smartScheduleSampleRecorded ? '已计入调度样本' : '未计入调度样本')
-  }
-  if (metrics.length === 0) {
-    return <span className='text-muted-foreground text-sm'>-</span>
-  }
-
-  return (
-    <p
-      className='text-muted-foreground min-w-0 text-xs leading-5 wrap-break-word'
-      title={result.smartScheduleSampleMessage}
-    >
-      {metrics.join(' · ')}
-    </p>
   )
 }
 

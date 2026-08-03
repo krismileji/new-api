@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -147,6 +148,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelDailyAPIKeyCost{},
 		&model.ChannelMonitorMinuteMetric{},
 		&model.SystemTask{},
+		&model.SystemTaskLock{},
 	))
 	require.NoError(t, service.ReloadChannelConcurrencyLimits(context.Background()))
 
@@ -352,6 +354,7 @@ func TestSavingFirstGroupPolicyDoesNotImplicitlyEnableScheduling(t *testing.T) {
 	})
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_control_revision": "",
 		"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
 			channelSmartScheduleTestGroupPolicy(
 				"vip", channelMonitorSmartScheduleStrategyRatio, false,
@@ -670,6 +673,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"smart_schedule_performance_window_minutes":  360,
 		"smart_schedule_stability_window_minutes":    120,
 		"smart_schedule_rate_limit_cooldown_seconds": 300,
+		"smart_schedule_control_revision":            "",
 	}
 	request["relay_response_header_timeout_seconds"] = 60
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
@@ -679,6 +683,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	var response channelMonitorSettingsAPIResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
+	require.NotEmpty(t, response.Data.SmartScheduleControlRevision)
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
 	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
@@ -843,6 +848,7 @@ func TestUpdateChannelMonitorSettingsAllowsDisabling429CooldownAndClearsActiveEn
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"smart_schedule_rate_limit_cooldown_seconds": 0,
+		"smart_schedule_control_revision":            "",
 	})
 	UpdateChannelMonitorSettings(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -856,6 +862,190 @@ func TestUpdateChannelMonitorSettingsAllowsDisabling429CooldownAndClearsActiveEn
 	assert.Equal(t, "0", option.Value)
 }
 
+func TestUpdateChannelMonitorSettingsClears429CooldownOnAnySchedulingRevision(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	service.StartChannelRateLimitCooldown(1902, "model-a", 30)
+	assert.NotZero(t, service.ChannelRateLimitCooldownUntil(1902, "model-a"))
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_interval_minutes": 20,
+		"smart_schedule_control_revision": "",
+	})
+	UpdateChannelMonitorSettings(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1902, "model-a"))
+}
+
+func TestUpdateChannelMonitorSettingsRejectsStaleSmartScheduleRevision(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleControlRevisionOption: "revision-current",
+		channelMonitorSmartScheduleIntervalOption:        "10",
+	})
+	require.NoError(t, db.Create(&[]model.Option{
+		{Key: channelMonitorSmartScheduleControlRevisionOption, Value: "revision-current"},
+		{Key: channelMonitorSmartScheduleIntervalOption, Value: "10"},
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_interval_minutes": 20,
+		"smart_schedule_control_revision": "revision-current",
+	})
+	UpdateChannelMonitorSettings(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var firstResponse channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &firstResponse))
+	require.NotEmpty(t, firstResponse.Data.SmartScheduleControlRevision)
+	assert.NotEqual(t, "revision-current", firstResponse.Data.SmartScheduleControlRevision)
+
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
+	assert.Equal(t, "20", option.Value)
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_interval_minutes": 30,
+		"smart_schedule_control_revision": "revision-current",
+	})
+	UpdateChannelMonitorSettings(ctx)
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "渠道监控设置已被其他请求修改")
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
+	assert.Equal(t, "20", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleControlRevisionOption).First(&option).Error)
+	assert.Equal(t, firstResponse.Data.SmartScheduleControlRevision, option.Value)
+}
+
+func TestUpdateChannelMonitorSettingsRequiresSmartScheduleRevision(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_interval_minutes": 20,
+	})
+	UpdateChannelMonitorSettings(ctx)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "缺少配置修订号")
+}
+
+func TestUpdateChannelMonitorSettingsRefreshesStaleInstanceBeforeCurrentRevisionSave(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	storedPolicies := channelSmartScheduleTestGroupPoliciesJSON(t, policy)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleControlRevisionOption: "revision-stale",
+		channelMonitorSmartScheduleEnabledOption:         "false",
+		channelMonitorSmartScheduleGroupPoliciesOption:   "[]",
+	})
+	require.NoError(t, db.Create(&[]model.Option{
+		{Key: channelMonitorSmartScheduleControlRevisionOption, Value: "revision-current"},
+		{Key: channelMonitorSmartScheduleEnabledOption, Value: "true"},
+		{Key: channelMonitorSmartScheduleGroupPoliciesOption, Value: storedPolicies},
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_interval_minutes": 20,
+		"smart_schedule_control_revision": "revision-current",
+	})
+	UpdateChannelMonitorSettings(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Data.SmartScheduleEnabled)
+	require.Len(t, response.Data.SmartScheduleGroupPolicies, 1)
+	assert.Equal(t, "vip", response.Data.SmartScheduleGroupPolicies[0].Group)
+	assert.Equal(t, 20, response.Data.SmartScheduleIntervalMinutes)
+	assert.NotEqual(t, "revision-current", response.Data.SmartScheduleControlRevision)
+}
+
+func TestForceResetSmartScheduleDoesNotQueueTaskWhenCooldownSyncFails(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:         "true",
+		channelMonitorSmartScheduleGroupPoliciesOption:   channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+		channelMonitorSmartScheduleControlRevisionOption: "revision-current",
+	})
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
+	failedRedisClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	require.NoError(t, failedRedisClient.Close())
+	common.RedisEnabled = true
+	common.RDB = failedRedisClient
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
+		service.ClearChannelRateLimitCooldowns()
+	})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_force_reset":      true,
+		"smart_schedule_control_revision": "revision-current",
+	})
+	UpdateChannelMonitorSettings(ctx)
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "429 冷却状态同步失败")
+	task, err := model.GetActiveSystemTask(channelMonitorSmartScheduleTaskType)
+	require.NoError(t, err)
+	assert.Nil(t, task)
+}
+
+func TestUpdateChannelMonitorSettingsWindowChangeStopsTemporaryTraffic(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartSchedulePerformanceWindowOption: "60",
+	})
+	require.NoError(t, db.Create(&model.Option{
+		Key: channelMonitorSmartSchedulePerformanceWindowOption, Value: "60",
+	}).Error)
+	priority := int64(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1902, Name: "temporary traffic", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1902, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: 5,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1902, GroupName: "vip", ModelName: "model-a",
+		ParticipationSet: true, Revision: 1, BasePriority: 80, BaseWeight: 40,
+		TemporaryTrafficKind: model.ChannelSmartScheduleTemporaryTrafficPrioritySampling,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_performance_window_minutes": 120,
+		"smart_schedule_control_revision":           "",
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("channel_id = ?", 1902).First(&state).Error)
+	assert.Empty(t, state.TemporaryTrafficKind)
+	var ability model.Ability
+	require.NoError(t, db.Where("channel_id = ?", 1902).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, int64(80), *ability.Priority)
+	assert.Equal(t, uint(40), ability.Weight)
+}
+
 func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
@@ -865,8 +1055,9 @@ func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_enabled":     true,
-		"smart_schedule_force_reset": true,
+		"smart_schedule_enabled":          true,
+		"smart_schedule_force_reset":      true,
+		"smart_schedule_control_revision": "",
 		"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
 			channelSmartScheduleTestGroupPolicy(
 				"vip", channelMonitorSmartScheduleStrategyRatio, false,
@@ -894,7 +1085,8 @@ func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {
 	assert.True(t, payload.ForceReset)
 
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_force_reset": true,
+		"smart_schedule_force_reset":      true,
+		"smart_schedule_control_revision": response.Data.SmartScheduleControlRevision,
 	})
 	UpdateChannelMonitorSettings(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -2024,6 +2216,83 @@ func TestApplyChannelMonitorUpstreamGroupUpdatesRemoteTokenAndRecordsRatio(t *te
 	assert.Contains(t, monitor.Remark, "切换到分组 vip")
 }
 
+func TestApplyChannelMonitorUpstreamGroupDoesNotOverwriteNewerConfig(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	disableChannelMonitorSSRFProtection(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"vip":{"ratio":1.4}}}`))
+		case "/api/token/search":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":31,"name":"channel","expired_time":-1,"remain_quota":0,"unlimited_quota":true,"model_limits_enabled":false,"model_limits":"","allow_ips":null,"group":"default","cross_group_retry":false}]}}`))
+		case "/api/token/":
+			require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).
+				Where("channel_id = ?", 24).
+				Updates(map[string]any{
+					"upstream_group":    "new-config",
+					"upstream_revision": int64(2),
+				}).Error)
+			_, _ = w.Write([]byte(`{"success":true,"message":""}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	baseURL := server.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 24, Name: "new-api", Key: "sk-channel", Group: "vip", BaseURL: &baseURL,
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 24, Ratio: 1, UpdatedTime: 1,
+		UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+		UpstreamUserId: 42, UpstreamAccessToken: "dashboard-token", UpstreamRevision: 1,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/24/upstream/group/apply", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "24"}}
+	ApplyChannelMonitorUpstreamGroup(ctx)
+
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+	assert.Contains(t, response.Message, "本地上游配置已变更")
+
+	monitor, err := model.GetChannelRatioMonitor(24)
+	require.NoError(t, err)
+	assert.Equal(t, "new-config", monitor.UpstreamGroup)
+	assert.Equal(t, int64(2), monitor.UpstreamRevision)
+	assert.Equal(t, 1.0, monitor.Ratio)
+}
+
+func TestAutoDisableChannelMonitorForLowBalanceIgnoresStaleThreshold(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	channel := model.Channel{Id: 25, Name: "balance", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	currentThreshold := 0.5
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 25, UpstreamRevision: 2, BalanceAutoDisableThreshold: &currentThreshold,
+	}).Error)
+
+	staleThreshold := 10.0
+	changed, err := autoDisableChannelMonitorForLowBalance(model.ChannelRatioMonitor{
+		ChannelId: 25, UpstreamRevision: 1, BalanceAutoDisableThreshold: &staleThreshold,
+	}, &channel, 0.25)
+	require.NoError(t, err)
+	assert.False(t, changed)
+
+	storedChannel, err := model.GetChannelById(25, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, storedChannel.Status)
+}
+
 func TestFetchChannelMonitorUpstreamBalanceRecordsSnapshotAndAutoDisables(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
@@ -2343,6 +2612,9 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 		)
 		require.Contains(t, plan.GroupRatioUpdates, "vip")
 		assert.InDelta(t, 1.32, plan.GroupRatioUpdates["vip"], 1e-9)
+		assert.Equal(t, model.ChannelMonitorGroupRatioValueSnapshot{
+			Ratio: 1, Coefficient: 1.1,
+		}, plan.GroupRatioValues["vip"])
 		assert.Empty(t, plan.DisableChannelIds)
 	})
 
@@ -2415,6 +2687,8 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 		assert.Equal(t, []int{2}, plan.DisableChannelIds)
 		require.Contains(t, plan.GroupRatioUpdates, "vip")
 		assert.InDelta(t, 1.2, plan.GroupRatioUpdates["vip"], 1e-9)
+		assert.Equal(t, map[int]int64{1: 0, 2: 0}, plan.GroupRatioRevisions["vip"])
+		assert.Equal(t, map[int]string{1: "vip", 2: "vip"}, plan.GroupRatioMemberships["vip"])
 	})
 
 	t.Run("disabling a channel re-evaluates its other groups", func(t *testing.T) {
@@ -2459,9 +2733,13 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 			map[string]float64{"vip": 1, "backup": 2},
 			nil,
 		)
-		assert.Equal(t, []model.ChannelMonitorGroupMembershipRemoval{{ChannelId: 1, Group: "vip"}}, plan.GroupMembershipRemovals)
+		assert.Equal(t, []model.ChannelMonitorGroupMembershipRemoval{{
+			ChannelId: 1, Group: "vip", ExpectedGroups: "vip,backup", GuardUpstreamRevision: true,
+		}}, plan.GroupMembershipRemovals)
 		require.Contains(t, plan.GroupRatioUpdates, "vip")
 		assert.InDelta(t, 1.25, plan.GroupRatioUpdates["vip"], 1e-9)
+		assert.Equal(t, map[int]int64{1: 0, 2: 0}, plan.GroupRatioRevisions["vip"])
+		assert.Equal(t, map[int]string{1: "vip,backup", 2: "vip"}, plan.GroupRatioMemberships["vip"])
 		assert.Empty(t, plan.DisableChannelIds)
 	})
 
@@ -2527,6 +2805,98 @@ func TestApplyChannelMonitorPolicyPlanMarksGroupUpdateFailure(t *testing.T) {
 	assert.Empty(t, removedMemberships)
 	assert.Empty(t, disabledChannelIds)
 	assert.True(t, groupUpdateFailed)
+}
+
+func TestApplyChannelMonitorPolicyPlanSkipsStaleDisableRevision(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	priority := int64(10)
+	weight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 26, Name: "stale policy", Status: common.ChannelStatusEnabled,
+		Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 26, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 26, UpstreamRevision: 2,
+	}).Error)
+
+	_, _, disabledChannelIds, _, err := applyChannelMonitorPolicyPlan(
+		context.Background(),
+		channelMonitorPolicyPlan{
+			DisableChannelIds:       []int{26},
+			DisableChannelRevisions: map[int]int64{26: 1},
+		},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, disabledChannelIds)
+
+	storedChannel, err := model.GetChannelById(26, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, storedChannel.Status)
+}
+
+func TestApplyChannelMonitorPolicyPlanSkipsStaleGroupRatioRevision(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 27, UpstreamRevision: 2,
+	}).Error)
+
+	groupsUpdated, _, _, groupUpdateFailed, err := applyChannelMonitorPolicyPlan(
+		context.Background(),
+		channelMonitorPolicyPlan{
+			GroupRatioUpdates: map[string]float64{"vip": 2},
+			GroupRatioRevisions: model.ChannelMonitorGroupRatioRevisionGuard{
+				"vip": {27: 1},
+			},
+		},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, groupsUpdated)
+	assert.False(t, groupUpdateFailed)
+	assert.Equal(t, float64(1), ratio_setting.GetGroupRatioCopy()["vip"])
+}
+
+func TestApplyChannelMonitorPolicyPlanSkipsChangedGroupPolicyValues(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		"GroupRatio": `{"vip":1}`,
+		model.ChannelMonitorGroupCoefficientsOption: `{}`,
+	})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+
+	_, err := model.MergeChannelMonitorGroupOptions(
+		map[string]float64{"vip": 0.8},
+		map[string]float64{"vip": 1.2},
+		false,
+	)
+	require.NoError(t, err)
+
+	groupsUpdated, _, _, groupUpdateFailed, err := applyChannelMonitorPolicyPlan(
+		context.Background(),
+		channelMonitorPolicyPlan{
+			GroupRatioUpdates: map[string]float64{"vip": 2},
+			GroupRatioValues: model.ChannelMonitorGroupRatioValueGuard{
+				"vip": {Ratio: 1, Coefficient: 1},
+			},
+		},
+	)
+	require.NoError(t, err)
+	assert.Zero(t, groupsUpdated)
+	assert.False(t, groupUpdateFailed)
+	assert.Equal(t, 0.8, ratio_setting.GetGroupRatioCopy()["vip"])
 }
 
 func TestSyncChannelMonitorGroupRatioUsesHighestEnabledChannel(t *testing.T) {

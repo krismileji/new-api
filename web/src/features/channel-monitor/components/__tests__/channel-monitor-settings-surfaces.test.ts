@@ -23,6 +23,10 @@ import { fileURLToPath } from 'node:url'
 
 type SettingsSurfaceResult = {
   allNotificationTypesSelected: boolean
+  conflictExecutionsQueryInvalidated: boolean
+  conflictFormClosed: boolean
+  conflictHistoryQueryInvalidated: boolean
+  conflictMonitorQueryInvalidated: boolean
   generalHasSchedule: boolean
   generalTitle: string
   notificationTypeCanBeUnchecked: boolean
@@ -44,29 +48,30 @@ type SettingsSurfaceResult = {
   scheduleUsesUnifiedTransition: boolean
 }
 
+function runSettingsSurfaceFixture() {
+  const fixturePath = fileURLToPath(
+    new URL('./channel-monitor-settings-surfaces.fixture.tsx', import.meta.url)
+  )
+  const execution = spawnSync(process.execPath, [fixturePath], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  })
+
+  assert.equal(
+    execution.status,
+    0,
+    execution.stderr || execution.stdout || 'settings surface fixture failed'
+  )
+  const output = execution.stdout.trim().split(/\r?\n/).at(-1)
+  assert.ok(output)
+  return JSON.parse(output) as SettingsSurfaceResult
+}
+
 test(
   'uses separate settings surfaces with a centered group policy editor',
   { timeout: 15_000 },
   () => {
-    const fixturePath = fileURLToPath(
-      new URL(
-        './channel-monitor-settings-surfaces.fixture.tsx',
-        import.meta.url
-      )
-    )
-    const execution = spawnSync(process.execPath, [fixturePath], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    })
-
-    assert.equal(
-      execution.status,
-      0,
-      execution.stderr || execution.stdout || 'settings surface fixture failed'
-    )
-    const output = execution.stdout.trim().split(/\r?\n/).at(-1)
-    assert.ok(output)
-    const result = JSON.parse(output) as SettingsSurfaceResult
+    const result = runSettingsSurfaceFixture()
 
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
@@ -89,5 +94,18 @@ test(
     assert.equal(result.policyDialogHasGroupSettingHelp, true)
     assert.equal(result.policyTableScrollable, true)
     assert.equal(result.newPolicyVisible, true)
+  }
+)
+
+test(
+  'closes stale settings and invalidates related data after a revision conflict',
+  { timeout: 15_000 },
+  () => {
+    const result = runSettingsSurfaceFixture()
+
+    assert.equal(result.conflictFormClosed, true)
+    assert.equal(result.conflictMonitorQueryInvalidated, true)
+    assert.equal(result.conflictExecutionsQueryInvalidated, true)
+    assert.equal(result.conflictHistoryQueryInvalidated, true)
   }
 )

@@ -189,7 +189,13 @@ export interface ChannelTestResponse {
     error?: string
     first_token_ms?: number | null
     tokens_per_second?: number | null
+    usage_available?: boolean
+    input_tokens?: number
     output_tokens?: number
+    total_tokens?: number
+    cached_tokens?: number
+    cache_write_tokens?: number
+    reasoning_tokens?: number
     smart_schedule_sample_recorded?: boolean
     smart_schedule_sample_message?: string
   }

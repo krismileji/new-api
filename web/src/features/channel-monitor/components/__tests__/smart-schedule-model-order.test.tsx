@@ -17,35 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { describe, test } from 'node:test'
 
-import { Window } from 'happy-dom'
 import { useState } from 'react'
 
 import { ChannelMonitorSmartScheduleModelOrder } from '../channel-monitor-smart-schedule-model-order'
-
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
+import './test-dom'
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
@@ -143,8 +120,4 @@ describe('smart schedule model card order', () => {
     await act(async () => root.unmount())
     container.remove()
   })
-})
-
-after(() => {
-  domWindow.close()
 })

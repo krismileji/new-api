@@ -189,11 +189,14 @@ func InitOptionMap() {
 }
 
 func loadOptionsFromDatabase() {
-	options, _ := AllOption()
+	options, err := AllOption()
+	if err != nil {
+		common.SysError("failed to load options from database: " + err.Error())
+		return
+	}
 	for _, option := range options {
-		err := updateOptionMap(option.Key, option.Value)
-		if err != nil {
-			common.SysLog("failed to update option map: " + err.Error())
+		if updateErr := updateOptionMapFromDatabase(option.Key, option.Value); updateErr != nil {
+			common.SysLog("failed to update option map: " + updateErr.Error())
 		}
 	}
 }
@@ -216,6 +219,10 @@ func validateOptionValue(key string, value string) error {
 func UpdateOption(key string, value string) error {
 	if err := validateOptionValue(key, value); err != nil {
 		return err
+	}
+	if isChannelMonitorManagedOption(key) {
+		channelMonitorOptionMu.Lock()
+		defer channelMonitorOptionMu.Unlock()
 	}
 	// Save to database first
 	option := Option{
@@ -240,6 +247,13 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	for key := range values {
+		if isChannelMonitorManagedOption(key) {
+			channelMonitorOptionMu.Lock()
+			defer channelMonitorOptionMu.Unlock()
+			break
+		}
 	}
 	for key, value := range values {
 		if err := validateOptionValue(key, value); err != nil {

@@ -16,17 +16,31 @@ func LookupChannelSmartScheduleProbeRoute(
 	modelName string,
 ) (ChannelSmartScheduleRoute, *Channel, bool, error) {
 	group = strings.TrimSpace(group)
-	modelName = strings.TrimSpace(modelName)
-	if channelId <= 0 || group == "" || modelName == "" {
+	modelNames := channelSmartScheduleRouteModelNames(modelName)
+	if channelId <= 0 || group == "" || len(modelNames) == 0 {
 		return ChannelSmartScheduleRoute{}, nil, false, nil
 	}
 
 	var ability Ability
-	if err := DB.Where(&Ability{ChannelId: channelId, Group: group, Model: modelName}).First(&ability).Error; err != nil {
+	foundAbility := false
+	for _, candidateModel := range modelNames {
+		err := DB.Where(&Ability{
+			ChannelId: channelId,
+			Group:     group,
+			Model:     candidateModel,
+			Enabled:   true,
+		}).First(&ability).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ChannelSmartScheduleRoute{}, nil, false, nil
+			continue
 		}
-		return ChannelSmartScheduleRoute{}, nil, false, err
+		if err != nil {
+			return ChannelSmartScheduleRoute{}, nil, false, err
+		}
+		foundAbility = true
+		break
+	}
+	if !foundAbility {
+		return ChannelSmartScheduleRoute{}, nil, false, nil
 	}
 
 	channel, err := GetChannelById(channelId, true)
@@ -41,7 +55,7 @@ func LookupChannelSmartScheduleProbeRoute(
 	if err := DB.Where(&ChannelSmartScheduleRouteState{
 		ChannelId: channelId,
 		GroupName: group,
-		ModelName: modelName,
+		ModelName: ability.Model,
 	}).First(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ChannelSmartScheduleRoute{}, nil, false, nil

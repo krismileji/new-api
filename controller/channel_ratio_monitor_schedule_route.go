@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 type channelSmartScheduleRouteKey struct {
@@ -40,6 +42,7 @@ type channelSmartScheduleRouteDirectAction struct {
 	stability              *model.ChannelSmartScheduleStabilityUpdate
 	runtimeProtectionClear bool
 	routingSnapshot        *model.ChannelSmartScheduleRoutingSnapshotUpdate
+	reapplyManualPrimary   bool
 }
 
 func channelSmartScheduleSetPerformanceMetric(
@@ -261,6 +264,16 @@ func runChannelSmartScheduleByRouteOnce(
 	if err != nil {
 		return result, err
 	}
+	cacheDirty := manualRoutingChanged
+	defer func() {
+		if cacheDirty {
+			model.InitChannelCache()
+		}
+	}()
+	controlRevision, err := model.GetChannelSmartScheduleControlRevision()
+	if err != nil {
+		return result, err
+	}
 	routes, err := model.GetChannelSmartScheduleRoutes()
 	if err != nil {
 		return result, err
@@ -285,12 +298,6 @@ func runChannelSmartScheduleByRouteOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
-	cacheDirty := manualRoutingChanged
-	defer func() {
-		if cacheDirty {
-			model.InitChannelCache()
-		}
-	}()
 
 	monitors, err := model.GetChannelRatioMonitors()
 	if err != nil {
@@ -321,7 +328,10 @@ func runChannelSmartScheduleByRouteOnce(
 			return result, metricErr
 		}
 		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
 			performanceByModel[key] = channelSmartScheduleSetPerformanceMetric(nil, metric)
 		}
 	}
@@ -332,7 +342,10 @@ func runChannelSmartScheduleByRouteOnce(
 			return result, metricErr
 		}
 		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
 			stabilityPerformanceByModel[key] = channelSmartScheduleSetPerformanceMetric(nil, metric)
 		}
 	}
@@ -343,7 +356,10 @@ func runChannelSmartScheduleByRouteOnce(
 			return result, metricErr
 		}
 		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{channelId: metric.ChannelId, model: metric.ModelName}
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
 			stabilityPerformanceByModel[key] = channelSmartScheduleSetStabilityMetric(
 				stabilityPerformanceByModel[key], metric,
 			)
@@ -367,7 +383,10 @@ func runChannelSmartScheduleByRouteOnce(
 		degradeStabilityScore := policy.DegradeStabilityScore / 100
 		recoveryStabilityScore := policy.RecoveryStabilityScore / 100
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: route.Model}
+		modelKey := channelSmartScheduleModelKey{
+			channelId: route.ChannelId,
+			model:     ratio_setting.FormatMatchingModelName(route.Model),
+		}
 		routeByKey[key] = route
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
 			channelSmartScheduleCandidate{ChannelId: route.ChannelId, ManualPrimary: manualPrimary},
@@ -414,7 +433,24 @@ func runChannelSmartScheduleByRouteOnce(
 		runtimeProtectionExpired := route.State.RuntimeProtectionUntil > 0 &&
 			route.State.RuntimeProtectionUntil <= now
 		if runtimeProtectionActive {
+			reason := fmt.Sprintf(
+				"运行时稳定性保护中，保留上一轮优先级和权重，保护至 %s",
+				time.Unix(route.State.RuntimeProtectionUntil, 0).Format("2006-01-02 15:04:05"),
+			)
 			result.Skipped++
+			channelSmartScheduleSetAdjustmentReason(scoreDetailsByRoute[key], reason)
+			result.recordAdjustment(channelSmartScheduleTaskAdjustment{
+				ChannelId: route.ChannelId, ChannelName: route.ChannelName,
+				Group: route.Group, Model: route.Model,
+				Action:      channelSmartScheduleAdjustmentSkipped,
+				OldPriority: route.Priority, NewPriority: route.Priority,
+				OldWeight: route.Weight, NewWeight: route.Weight,
+				ScoreDetails:                       scoreDetailsByRoute[key],
+				Reason:                             reason,
+				ManualPrimary:                      manualPrimary,
+				ManualPrimaryUntil:                 route.State.ManualPrimaryUntil,
+				ManualPrimaryAllowStabilityDegrade: route.State.ManualPrimaryAllowStabilityDegrade,
+			})
 			continue
 		}
 		if runtimeProtectionExpired &&
@@ -431,6 +467,7 @@ func runChannelSmartScheduleByRouteOnce(
 				},
 				runtimeProtectionClear: true,
 				routingSnapshot:        channelSmartScheduleClearTemporaryTraffic(route.State),
+				reapplyManualPrimary:   manualPrimary,
 			})
 			continue
 		}
@@ -607,8 +644,9 @@ func runChannelSmartScheduleByRouteOnce(
 				status: model.ChannelSmartScheduleStatusSucceeded,
 				message: fmt.Sprintf("%s，已达到恢复阈值 %.1f%%，解除保护并恢复原优先级和权重",
 					stabilityDescription, policy.RecoveryStabilityScore),
-				stability:       &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
-				routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
+				stability:            &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
+				routingSnapshot:      channelSmartScheduleClearTemporaryTraffic(route.State),
+				reapplyManualPrimary: manualPrimary,
 			})
 			continue
 		} else if route.State.StabilityState == "" && route.State.StabilitySince > 0 &&
@@ -664,26 +702,64 @@ func runChannelSmartScheduleByRouteOnce(
 		routeKeyByPoolChannel[poolKey][route.ChannelId] = key
 	}
 
-	for poolKey, candidates := range poolCandidates {
-		policy := policyByGroup[poolKey.group]
+	fixedChannelByPool := make(map[channelSmartScheduleRoutePoolKey]int)
+	fixedPriorityByPool := make(map[channelSmartScheduleRoutePoolKey]int64)
+	fixedPriorityBlockedByPool := make(map[channelSmartScheduleRoutePoolKey]bool)
+	for poolKey, routes := range poolRoutes {
 		fixedChannelId := 0
-		fixedTargetPriority := int64(len(candidates))
-		for index := range candidates {
-			if !candidates[index].ManualPrimary {
+		fixedTargetPriority := int64(1)
+		for _, route := range routes {
+			if route.State.ManualPrimaryUntil > now &&
+				route.State.Participates() && route.ChannelStatus == common.ChannelStatusEnabled && route.Enabled {
+				fixedChannelId = route.ChannelId
+				fixedTargetPriority = max(
+					fixedTargetPriority,
+					route.Priority,
+					route.State.LastSchedulePriority,
+					route.State.StabilitySavedPriority,
+				)
+				break
+			}
+		}
+		if fixedChannelId == 0 {
+			continue
+		}
+		for _, route := range routes {
+			if route.ChannelId == fixedChannelId || route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled {
 				continue
 			}
-			fixedChannelId = candidates[index].ChannelId
-			for _, route := range poolRoutes[poolKey] {
-				if route.ChannelId == fixedChannelId || route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled {
-					continue
-				}
-				if route.Priority >= fixedTargetPriority {
-					if route.Priority == math.MaxInt64 {
-						fixedTargetPriority = math.MaxInt64
-						break
-					}
-					fixedTargetPriority = route.Priority + 1
-				}
+			if route.Priority == math.MaxInt64 {
+				fixedPriorityBlockedByPool[poolKey] = true
+				break
+			}
+			fixedTargetPriority = max(fixedTargetPriority, route.Priority+1)
+		}
+		fixedChannelByPool[poolKey] = fixedChannelId
+		fixedPriorityByPool[poolKey] = fixedTargetPriority
+	}
+	for index := range directActions {
+		action := &directActions[index]
+		if !action.reapplyManualPrimary {
+			continue
+		}
+		poolKey := channelSmartScheduleRoutePoolKey{group: action.key.group, model: action.key.model}
+		if fixedChannelByPool[poolKey] != action.key.channelId {
+			continue
+		}
+		if fixedPriorityBlockedByPool[poolKey] {
+			return result, errors.New("池内存在最大优先级路由，无法把恢复后的固定主渠道提升到更高优先级")
+		}
+		action.targetPriority = fixedPriorityByPool[poolKey]
+		action.targetWeight = 1000
+	}
+
+	for poolKey, candidates := range poolCandidates {
+		policy := policyByGroup[poolKey.group]
+		fixedChannelId := fixedChannelByPool[poolKey]
+		fixedTargetPriority := fixedPriorityByPool[poolKey]
+		for index := range candidates {
+			if candidates[index].ChannelId != fixedChannelId {
+				continue
 			}
 			candidates[index].ManualTargetPriority = fixedTargetPriority
 			if policy.ApplyMode == channelMonitorSmartScheduleApplyWeight {
@@ -691,7 +767,7 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 			break
 		}
-		if fixedChannelId > 0 && fixedTargetPriority == math.MaxInt64 {
+		if fixedChannelId > 0 && fixedPriorityBlockedByPool[poolKey] {
 			failure := fmt.Errorf("池内存在最大优先级路由，无法把固定主渠道提升到更高优先级")
 			for _, candidate := range candidates {
 				key := routeKeyByPoolChannel[poolKey][candidate.ChannelId]
@@ -1009,12 +1085,17 @@ func runChannelSmartScheduleByRouteOnce(
 
 	processed := result.Skipped
 	updatesByPool := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRouteResultUpdate)
+	updatesByKey := make(map[channelSmartScheduleRouteKey]struct{}, len(statusUpdates))
 	for _, update := range statusUpdates {
 		key := channelSmartScheduleRouteKey{channelId: update.ChannelId, group: update.Group, model: update.Model}
 		route := routeByKey[key]
-		update.GuardCurrent = true
+		update.PoolGuard = true
 		update.ExpectedRevision = route.State.Revision
-		update.ExpectedControlRevision = settings.SmartScheduleControlRevision
+		update.ExpectedControlRevision = controlRevision
+		update.ExpectedParticipationSet = route.State.ParticipationSet
+		update.ExpectedExcluded = route.State.Excluded
+		update.ExpectedAbilityEnabled = route.Enabled
+		update.ExpectedChannelStatus = route.ChannelStatus
 		update.ExpectedPriority = route.Priority
 		update.ExpectedWeight = route.Weight
 		update.ApplyPriorityWeight = update.Priority != route.Priority || update.Weight != route.Weight
@@ -1025,6 +1106,26 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		poolKey := channelSmartScheduleRoutePoolKey{group: update.Group, model: update.Model}
 		updatesByPool[poolKey] = append(updatesByPool[poolKey], update)
+		updatesByKey[key] = struct{}{}
+	}
+	for poolKey := range updatesByPool {
+		for _, route := range poolRoutes[poolKey] {
+			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+			if _, exists := updatesByKey[key]; exists {
+				continue
+			}
+			updatesByPool[poolKey] = append(updatesByPool[poolKey], model.ChannelSmartScheduleRouteResultUpdate{
+				ChannelId: route.ChannelId, Group: route.Group, Model: route.Model,
+				Priority: route.Priority, Weight: route.Weight,
+				PoolGuard: true, ObservationOnly: true,
+				ExpectedRevision: route.State.Revision, ExpectedControlRevision: controlRevision,
+				ExpectedParticipationSet: route.State.ParticipationSet,
+				ExpectedExcluded:         route.State.Excluded,
+				ExpectedAbilityEnabled:   route.Enabled,
+				ExpectedChannelStatus:    route.ChannelStatus,
+				ExpectedPriority:         route.Priority, ExpectedWeight: route.Weight,
+			})
+		}
 	}
 	poolOrder := make([]channelSmartScheduleRoutePoolKey, 0, len(updatesByPool))
 	for poolKey := range updatesByPool {
@@ -1053,6 +1154,9 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 		}
 		for index, update := range updates {
+			if update.ObservationOnly {
+				continue
+			}
 			key := channelSmartScheduleRouteKey{channelId: update.ChannelId, group: update.Group, model: update.Model}
 			route := routeByKey[key]
 			adjustment := channelSmartScheduleTaskAdjustment{
@@ -1081,7 +1185,8 @@ func runChannelSmartScheduleByRouteOnce(
 					update.ChannelId, route.ChannelName, update.Group, update.Model, adjustment.FailureStage,
 					fmt.Errorf("调度执行期间渠道或配置已变化，整池保留上一轮结果"),
 				)
-			} else if outcomes[index].RoutingChanged || update.Stability != nil || update.RoutingSnapshot != nil {
+			} else if outcomes[index].RoutingChanged ||
+				channelSmartScheduleRouteResultChangesTrafficState(route.State, update) {
 				result.Updated++
 				cacheDirty = cacheDirty || outcomes[index].RoutingChanged
 				adjustment.Action = channelSmartScheduleAdjustmentUpdated
@@ -1112,6 +1217,28 @@ func runChannelSmartScheduleByRouteOnce(
 		return result, fmt.Errorf("%d 条智能调度路由未能应用，失败池已保留上一轮结果", result.Failed)
 	}
 	return result, nil
+}
+
+func channelSmartScheduleRouteResultChangesTrafficState(
+	state model.ChannelSmartScheduleRouteState,
+	update model.ChannelSmartScheduleRouteResultUpdate,
+) bool {
+	if stability := update.Stability; stability != nil &&
+		(stability.State != state.StabilityState ||
+			(stability.State != "" && stability.Until != state.StabilityUntil)) {
+		return true
+	}
+	if update.RuntimeProtectionUntil != nil &&
+		*update.RuntimeProtectionUntil != state.RuntimeProtectionUntil {
+		return true
+	}
+	if snapshot := update.RoutingSnapshot; snapshot != nil &&
+		(snapshot.TemporaryTrafficKind != state.TemporaryTrafficKind ||
+			snapshot.TemporaryTrafficSince != state.TemporaryTrafficSince ||
+			snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent) {
+		return true
+	}
+	return false
 }
 
 func channelSmartScheduleScoredAdjustmentReason(score *float64, priorityChanged bool, weightChanged bool) string {
@@ -1153,8 +1280,7 @@ func channelSmartScheduleRouteRestoreTarget(state model.ChannelSmartScheduleRout
 }
 
 func channelSmartScheduleRouteProbeTarget(state model.ChannelSmartScheduleRouteState) (int64, uint) {
-	priority, weight := channelSmartScheduleRouteRestoreTarget(state)
-	return priority, min(weight, channelMonitorSmartScheduleMinWeight)
+	return channelMonitorSmartScheduleDegradedPriority, channelMonitorSmartScheduleMinWeight
 }
 
 func channelSmartScheduleClearTemporaryTraffic(

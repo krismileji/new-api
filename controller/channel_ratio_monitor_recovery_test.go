@@ -630,3 +630,31 @@ func TestCostRatioRecoveryUsesGroupCoefficient(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusAutoDisabled, storedChannel.Status)
 }
+
+func TestCostRatioRecoverySkipsStaleMonitorRevision(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	channel := model.Channel{
+		Id: 1, Name: "stale recovery", Group: "vip", Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{
+		"status_reason": channelMonitorCostRatioPolicyDisableReason,
+	})
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1, UpstreamRevision: 2,
+	}).Error)
+
+	enabledChannelIds, err := autoEnableChannelsAfterCostRatioRecovery(
+		context.Background(),
+		[]*model.Channel{&channel},
+		map[int]channelMonitorPolicyInput{1: {UpstreamRevision: 1, CostRatio: 0.5}},
+		map[string]float64{"vip": 1},
+		map[string]float64{},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, enabledChannelIds)
+
+	storedChannel, err := model.GetChannelById(1, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, storedChannel.Status)
+}

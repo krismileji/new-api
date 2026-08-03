@@ -17,41 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
-
-import { Window } from 'happy-dom'
+import { describe, test } from 'node:test'
 
 import type { ChannelMonitorSmartScheduleRoute } from '../../types'
-import {
-  ChannelMonitorSmartSchedulePrimaryControls,
-  ChannelMonitorSmartSchedulePrimaryStabilityField,
-} from '../channel-monitor-smart-schedule-primary-controls'
-
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
+import './test-dom'
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
+const {
+  ChannelMonitorSmartSchedulePrimaryControls,
+  ChannelMonitorSmartSchedulePrimaryStabilityField,
+} = await import('../channel-monitor-smart-schedule-primary-controls')
 const reactTestGlobals = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
@@ -199,8 +175,4 @@ describe('smart schedule fixed primary controls', () => {
     await act(async () => root.unmount())
     container.remove()
   })
-})
-
-after(() => {
-  domWindow.close()
 })

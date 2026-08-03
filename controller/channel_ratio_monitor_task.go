@@ -97,12 +97,13 @@ type channelRatioMonitorEmailChange struct {
 }
 
 type channelRatioMonitorBalanceWarning struct {
-	ChannelId     int
-	ChannelName   string
-	ChannelRemark string
-	UpstreamType  string
-	Balance       float64
-	Threshold     float64
+	ChannelId        int
+	UpstreamRevision int64
+	ChannelName      string
+	ChannelRemark    string
+	UpstreamType     string
+	Balance          float64
+	Threshold        float64
 }
 
 type channelRatioMonitorDisabledChannel struct {
@@ -135,40 +136,21 @@ func ListChannelMonitorTasks(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	var scheduleDetails map[string][]model.ChannelSmartScheduleExecutionDetailPayload
-	if taskType == channelMonitorSmartScheduleTaskType {
-		taskIds := make([]string, 0, len(tasks))
-		for _, task := range tasks {
-			taskIds = append(taskIds, task.TaskID)
-		}
-		scheduleDetails, err = model.GetChannelSmartScheduleExecutionDetails(taskIds)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
-
 	responses := make([]model.SystemTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
 		response := task.ToResponse()
 		if taskType == channelMonitorSmartScheduleTaskType && strings.TrimSpace(task.Result) != "" {
 			var result channelSmartScheduleTaskResult
 			if err := common.UnmarshalJsonStr(task.Result, &result); err == nil {
+				// Execution details are loaded by the dedicated detail endpoint.
+				result.GroupPolicyCount = len(result.GroupPolicies)
+				result.GroupPolicies = nil
 				result.Adjustments = nil
-				for _, stored := range scheduleDetails[task.TaskID] {
-					var adjustment channelSmartScheduleTaskAdjustment
-					if err := common.UnmarshalJsonStr(stored.Payload, &adjustment); err != nil {
-						common.ApiError(c, fmt.Errorf(
-							"解析智能调度执行明细失败: task_id=%s adjustment_index=%d: %w",
-							task.TaskID,
-							stored.AdjustmentIndex,
-							err,
-						))
-						return
-					}
-					result.Adjustments = append(result.Adjustments, adjustment)
-				}
 				response.Result = result
+			} else {
+				// Do not allow a legacy or malformed result payload to reintroduce
+				// an unbounded adjustments array into the paginated list response.
+				response.Result = nil
 			}
 		}
 		responses = append(responses, response)
@@ -264,11 +246,15 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		if !channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeBalanceWarning) || len(balanceWarnings) == 0 {
 			return
 		}
-		channelIds := make([]int, 0, len(balanceWarnings))
+		alertGuards := make([]model.ChannelRatioMonitorBalanceAlertGuard, 0, len(balanceWarnings))
 		for _, warning := range balanceWarnings {
-			channelIds = append(channelIds, warning.ChannelId)
+			alertGuards = append(alertGuards, model.ChannelRatioMonitorBalanceAlertGuard{
+				ChannelId:        warning.ChannelId,
+				UpstreamRevision: warning.UpstreamRevision,
+				WarningThreshold: warning.Threshold,
+			})
 		}
-		if err := model.MarkChannelRatioMonitorBalanceAlertsNotified(channelIds); err != nil {
+		if err := model.MarkChannelRatioMonitorBalanceAlertsNotified(alertGuards); err != nil {
 			if taskErr == nil {
 				taskErr = fmt.Errorf("记录余额预警通知状态失败: %w", err)
 			} else {
@@ -317,7 +303,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		channel, err := model.GetChannelById(monitor.ChannelId, true)
 		if err != nil {
 			summary.recordFailure(monitor.ChannelId, "", "", err)
-			if statusErr := model.RecordChannelRatioMonitorFetchFailure(monitor.ChannelId, err.Error()); statusErr != nil {
+			_, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
+				monitor.ChannelId,
+				monitor.UpstreamRevision,
+				err.Error(),
+			)
+			if statusErr != nil {
 				logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure status update failed: %v", monitor.ChannelId, statusErr))
 			}
 			logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d lookup failed: %v", monitor.ChannelId, err))
@@ -409,6 +400,11 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			reportProgress(index+1, summary.Total)
 			continue
 		}
+		if errors.Is(err, model.ErrChannelRatioMonitorConfigChanged) {
+			summary.Skipped++
+			reportProgress(index+1, summary.Total)
+			continue
+		}
 		if recordedBalance != nil {
 			balance := *recordedBalance
 			balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
@@ -431,12 +427,13 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				!monitor.BalanceAlertNotified {
 				summary.BalanceWarnings++
 				balanceWarnings = append(balanceWarnings, channelRatioMonitorBalanceWarning{
-					ChannelId:     monitor.ChannelId,
-					ChannelName:   channel.Name,
-					ChannelRemark: channelRemark,
-					UpstreamType:  monitor.UpstreamType,
-					Balance:       balance,
-					Threshold:     *monitor.BalanceWarningThreshold,
+					ChannelId:        monitor.ChannelId,
+					UpstreamRevision: monitor.UpstreamRevision,
+					ChannelName:      channel.Name,
+					ChannelRemark:    channelRemark,
+					UpstreamType:     monitor.UpstreamType,
+					Balance:          balance,
+					Threshold:        *monitor.BalanceWarningThreshold,
 				})
 			}
 		}
@@ -446,16 +443,30 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				failureErr = fmt.Errorf("重试 %d 次后仍失败: %w", retriesUsed, err)
 			}
 			summary.recordFailure(monitor.ChannelId, channel.Name, channelRemark, failureErr)
-			if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled &&
-				model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, channelMonitorUpdateFailureDisableReason) {
-				summary.ChannelsDisabled++
-				channelStatusChanged = true
-				disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
-					ChannelId:     channel.Id,
-					ChannelName:   channel.Name,
-					ChannelRemark: channelRemark,
-					Reason:        "上游倍率或余额更新失败",
-				})
+			if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled {
+				disabled, revisionCurrent, _, disableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+					channel.Id,
+					monitor.UpstreamRevision,
+					model.CaptureChannelMonitorStatus(channel),
+					common.ChannelStatusAutoDisabled,
+					channelMonitorUpdateFailureDisableReason,
+				)
+				if disableErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
+				}
+				if !revisionCurrent {
+					disabled = false
+				}
+				if disabled {
+					summary.ChannelsDisabled++
+					channelStatusChanged = true
+					disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
+						ChannelId:     channel.Id,
+						ChannelName:   channel.Name,
+						ChannelRemark: channelRemark,
+						Reason:        "上游倍率或余额更新失败",
+					})
+				}
 			}
 			logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d update failed: %v", monitor.ChannelId, failureErr))
 		} else {
@@ -469,15 +480,30 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
 				if recoveryErr != nil {
 					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
-				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, recordedBalance) &&
-					model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "") {
-					channel.Status = common.ChannelStatusEnabled
-					summary.ChannelsEnabled++
-					channelStatusChanged = true
+				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, recordedBalance) {
+					enabled, revisionCurrent, _, enableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+						channel.Id,
+						monitor.UpstreamRevision,
+						model.CaptureChannelMonitorStatus(recoveryChannel),
+						common.ChannelStatusEnabled,
+						"",
+					)
+					if enableErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic recovery failed: %v", channel.Id, enableErr))
+					}
+					if !revisionCurrent {
+						enabled = false
+					}
+					if enabled {
+						channel.Status = common.ChannelStatusEnabled
+						summary.ChannelsEnabled++
+						channelStatusChanged = true
+					}
 				}
 			}
 			if ratioUpdated {
 				policyInputs[monitor.ChannelId] = channelMonitorPolicyInput{
+					UpstreamRevision:                 monitor.UpstreamRevision,
 					CostRatio:                        outcome.Result.CostRatio,
 					BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
 					SingleChannelAction:              monitor.SingleChannelAction,
@@ -521,6 +547,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 				if costRatioAvailable {
 					balanceRecoveryInputs[monitor.ChannelId] = channelMonitorPolicyInput{
+						UpstreamRevision:                 monitor.UpstreamRevision,
 						CostRatio:                        costRatio,
 						BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
 					}

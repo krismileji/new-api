@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,52 +12,57 @@ import (
 )
 
 const (
-	ChannelRatioFetchStatusSucceeded                   = "succeeded"
-	ChannelRatioFetchStatusFailed                      = "failed"
-	ChannelSmartScheduleStatusSucceeded                = "succeeded"
-	ChannelSmartScheduleStatusSkipped                  = "skipped"
-	ChannelSmartScheduleStatusFailed                   = "failed"
-	ChannelSmartScheduleStabilityDegraded              = "degraded"
-	ChannelSmartScheduleStabilityProbing               = "probing"
-	ChannelSmartScheduleControlRevisionOption          = "ChannelMonitorSmartScheduleControlRevision"
+	ChannelRatioFetchStatusSucceeded          = "succeeded"
+	ChannelRatioFetchStatusFailed             = "failed"
+	ChannelSmartScheduleStatusSucceeded       = "succeeded"
+	ChannelSmartScheduleStatusSkipped         = "skipped"
+	ChannelSmartScheduleStatusFailed          = "failed"
+	ChannelSmartScheduleStabilityDegraded     = "degraded"
+	ChannelSmartScheduleStabilityProbing      = "probing"
+	ChannelSmartScheduleControlRevisionOption = "ChannelMonitorSmartScheduleControlRevision"
 )
 
+// ErrChannelRatioMonitorConfigChanged indicates that an upstream response was
+// produced from a stale monitor configuration and must not be applied.
+var ErrChannelRatioMonitorConfigChanged = errors.New("渠道监控配置已变更，已丢弃本次上游结果")
+
 type ChannelRatioMonitor struct {
-	Id                            int      `json:"id"`
-	ChannelId                     int      `json:"channel_id" gorm:"uniqueIndex;not null"`
-	Ratio                         float64  `json:"ratio" gorm:"not null"`
-	PreviousRatio                 *float64 `json:"previous_ratio"`
-	Remark                        string   `json:"remark" gorm:"type:varchar(255);default:''"`
-	UpdatedTime                   int64    `json:"updated_time" gorm:"bigint;index"`
-	UpdatedBy                     int      `json:"updated_by" gorm:"index"`
-	UpdatedByUsername             string   `json:"updated_by_username" gorm:"type:varchar(64);default:''"`
-	LastFetchStatus               string   `json:"last_fetch_status" gorm:"type:varchar(16);index"`
-	LastFetchError                string   `json:"last_fetch_error" gorm:"type:varchar(255)"`
-	LastFetchTime                 int64    `json:"last_fetch_time" gorm:"bigint;index"`
-	ConsecutiveFailures           int      `json:"consecutive_failures"`
-	UpstreamBalance               *float64 `json:"upstream_balance"`
-	LastBalanceTime               int64    `json:"last_balance_time" gorm:"bigint"`
-	LastBalanceError              string   `json:"last_balance_error" gorm:"type:varchar(255)"`
-	BalanceConsecutiveFailures    int      `json:"balance_consecutive_failures"`
-	BalanceWarningThreshold       *float64 `json:"balance_warning_threshold"`
-	BalanceAutoDisableThreshold   *float64 `json:"balance_auto_disable_threshold"`
-	BalanceAlertNotified          bool     `json:"balance_alert_notified"`
-	UpstreamType                  string   `json:"upstream_type" gorm:"type:varchar(32)"`
-	UpstreamBaseURL               string   `json:"upstream_base_url" gorm:"type:text"`
-	UpstreamGroup                 string   `json:"upstream_group" gorm:"type:varchar(64)"`
-	UpstreamAuthType              string   `json:"upstream_auth_type" gorm:"type:varchar(16)"`
-	UpstreamUserId                int      `json:"upstream_user_id"`
-	UpstreamAccessToken           string   `json:"-" gorm:"type:text"`
-	UpstreamAccount               string   `json:"-" gorm:"type:varchar(320)"`
-	UpstreamPassword              string   `json:"-" gorm:"type:text"`
-	CostConversion                string   `json:"-" gorm:"type:text"`
-	CustomUpstreamConfig          string   `json:"-" gorm:"type:text"`
-	UpstreamRatioSyncDisabled     bool     `json:"-"`
-	UpstreamBalanceSyncDisabled   bool     `json:"-"`
-	SingleChannelAction           string   `json:"single_channel_action" gorm:"type:varchar(32)"`
-	MultipleChannelsAction        string   `json:"multiple_channels_action" gorm:"type:varchar(32)"`
-	ConcurrencyLimit    int   `json:"concurrency_limit"`
-	ConcurrencyRevision int64 `json:"-" gorm:"bigint"`
+	Id                          int      `json:"id"`
+	ChannelId                   int      `json:"channel_id" gorm:"uniqueIndex;not null"`
+	Ratio                       float64  `json:"ratio" gorm:"not null"`
+	PreviousRatio               *float64 `json:"previous_ratio"`
+	Remark                      string   `json:"remark" gorm:"type:varchar(255);default:''"`
+	UpdatedTime                 int64    `json:"updated_time" gorm:"bigint;index"`
+	UpdatedBy                   int      `json:"updated_by" gorm:"index"`
+	UpdatedByUsername           string   `json:"updated_by_username" gorm:"type:varchar(64);default:''"`
+	LastFetchStatus             string   `json:"last_fetch_status" gorm:"type:varchar(16);index"`
+	LastFetchError              string   `json:"last_fetch_error" gorm:"type:varchar(255)"`
+	LastFetchTime               int64    `json:"last_fetch_time" gorm:"bigint;index"`
+	ConsecutiveFailures         int      `json:"consecutive_failures"`
+	UpstreamBalance             *float64 `json:"upstream_balance"`
+	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
+	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
+	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
+	BalanceWarningThreshold     *float64 `json:"balance_warning_threshold"`
+	BalanceAutoDisableThreshold *float64 `json:"balance_auto_disable_threshold"`
+	BalanceAlertNotified        bool     `json:"balance_alert_notified"`
+	UpstreamType                string   `json:"upstream_type" gorm:"type:varchar(32)"`
+	UpstreamBaseURL             string   `json:"upstream_base_url" gorm:"type:text"`
+	UpstreamGroup               string   `json:"upstream_group" gorm:"type:varchar(64)"`
+	UpstreamAuthType            string   `json:"upstream_auth_type" gorm:"type:varchar(16)"`
+	UpstreamUserId              int      `json:"upstream_user_id"`
+	UpstreamAccessToken         string   `json:"-" gorm:"type:text"`
+	UpstreamAccount             string   `json:"-" gorm:"type:varchar(320)"`
+	UpstreamPassword            string   `json:"-" gorm:"type:text"`
+	UpstreamRevision            int64    `json:"-" gorm:"bigint"`
+	CostConversion              string   `json:"-" gorm:"type:text"`
+	CustomUpstreamConfig        string   `json:"-" gorm:"type:text"`
+	UpstreamRatioSyncDisabled   bool     `json:"-"`
+	UpstreamBalanceSyncDisabled bool     `json:"-"`
+	SingleChannelAction         string   `json:"single_channel_action" gorm:"type:varchar(32)"`
+	MultipleChannelsAction      string   `json:"multiple_channels_action" gorm:"type:varchar(32)"`
+	ConcurrencyLimit            int      `json:"concurrency_limit"`
+	ConcurrencyRevision         int64    `json:"-" gorm:"bigint"`
 }
 
 type ChannelConcurrencyConfig struct {
@@ -133,7 +139,13 @@ func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
 }
 
 func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatioMonitor, err error) {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
+			return err
+		}
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			monitor = ChannelRatioMonitor{ChannelId: channelId}
@@ -151,7 +163,13 @@ func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatio
 }
 
 func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL string, group string, authType string, userId int, accessToken string, options ChannelRatioUpstreamOptions) (monitor ChannelRatioMonitor, err error) {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
+			return err
+		}
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			monitor = ChannelRatioMonitor{ChannelId: channelId}
@@ -177,6 +195,25 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			monitor.CostConversion != options.CostConversion ||
 			ratioSyncChanged
 		balanceRequestChanged := upstreamAccountChanged || balanceSyncChanged
+		upstreamConfigChanged := upstreamAccountChanged ||
+			monitor.UpstreamGroup != group ||
+			monitor.CostConversion != options.CostConversion ||
+			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig ||
+			ratioSyncChanged || balanceSyncChanged ||
+			monitor.SingleChannelAction != options.SingleChannelAction ||
+			(monitor.BalanceWarningThreshold == nil) != (options.BalanceWarningThreshold == nil) ||
+			(monitor.BalanceWarningThreshold != nil && options.BalanceWarningThreshold != nil &&
+				*monitor.BalanceWarningThreshold != *options.BalanceWarningThreshold) ||
+			(monitor.BalanceAutoDisableThreshold == nil) != (options.BalanceAutoDisableThreshold == nil) ||
+			(monitor.BalanceAutoDisableThreshold != nil && options.BalanceAutoDisableThreshold != nil &&
+				*monitor.BalanceAutoDisableThreshold != *options.BalanceAutoDisableThreshold) ||
+			monitor.MultipleChannelsAction != options.MultipleChannelsAction
+		if upstreamConfigChanged {
+			if monitor.UpstreamRevision == math.MaxInt64 {
+				return errors.New("渠道监控上游配置修订号已达上限")
+			}
+			monitor.UpstreamRevision++
+		}
 
 		monitor.UpstreamType = upstreamType
 		monitor.UpstreamBaseURL = baseURL
@@ -236,7 +273,25 @@ func UpdateChannelRatioMonitorFromUpstream(channelId int, ratio float64, remark 
 	return updateChannelRatioMonitor(channelId, ratio, remark, operatorId, operatorUsername, true)
 }
 
+// UpdateChannelRatioMonitorFromUpstreamIfRevision applies a fetched ratio only
+// when the upstream configuration has not changed since the request started.
+// The bool is false when the response was stale and was intentionally ignored.
+func UpdateChannelRatioMonitorFromUpstreamIfRevision(channelId int, expectedRevision int64, ratio float64, remark string, operatorId int, operatorUsername string) (monitor ChannelRatioMonitor, created bool, changed bool, applied bool, err error) {
+	return updateChannelRatioMonitorWithRevision(channelId, ratio, remark, operatorId, operatorUsername, true, &expectedRevision)
+}
+
 func RecordChannelRatioMonitorFetchFailure(channelId int, fetchError string) error {
+	_, err := recordChannelRatioMonitorFetchFailure(channelId, fetchError, nil)
+	return err
+}
+
+// RecordChannelRatioMonitorFetchFailureIfRevision records a failure only when
+// it belongs to the currently saved upstream configuration.
+func RecordChannelRatioMonitorFetchFailureIfRevision(channelId int, expectedRevision int64, fetchError string) (bool, error) {
+	return recordChannelRatioMonitorFetchFailure(channelId, fetchError, &expectedRevision)
+}
+
+func recordChannelRatioMonitorFetchFailure(channelId int, fetchError string, expectedRevision *int64) (applied bool, err error) {
 	message := strings.TrimSpace(fetchError)
 	if message == "" {
 		message = "上游倍率获取失败"
@@ -246,13 +301,22 @@ func RecordChannelRatioMonitorFetchFailure(channelId int, fetchError string) err
 		message = string(messageRunes[:255])
 	}
 
-	return DB.Transaction(func(tx *gorm.DB) error {
+	applied = true
+	err = DB.Transaction(func(tx *gorm.DB) error {
 		var monitor ChannelRatioMonitor
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			if expectedRevision != nil {
+				applied = false
+				return nil
+			}
 			monitor = ChannelRatioMonitor{ChannelId: channelId}
 		} else if findErr != nil {
 			return findErr
+		}
+		if expectedRevision != nil && monitor.UpstreamRevision != *expectedRevision {
+			applied = false
+			return nil
 		}
 
 		monitor.LastFetchStatus = ChannelRatioFetchStatusFailed
@@ -266,9 +330,21 @@ func RecordChannelRatioMonitorFetchFailure(channelId int, fetchError string) err
 		}
 		return tx.Save(&monitor).Error
 	})
+	return applied, err
 }
 
 func RecordChannelRatioMonitorBalance(channelId int, balance *float64, fetchError string) error {
+	_, err := recordChannelRatioMonitorBalance(channelId, balance, fetchError, nil)
+	return err
+}
+
+// RecordChannelRatioMonitorBalanceIfRevision records a balance only when it
+// belongs to the currently saved upstream configuration.
+func RecordChannelRatioMonitorBalanceIfRevision(channelId int, expectedRevision int64, balance *float64, fetchError string) (bool, error) {
+	return recordChannelRatioMonitorBalance(channelId, balance, fetchError, &expectedRevision)
+}
+
+func recordChannelRatioMonitorBalance(channelId int, balance *float64, fetchError string, expectedRevision *int64) (applied bool, err error) {
 	message := strings.TrimSpace(fetchError)
 	if balance != nil && (math.IsNaN(*balance) || math.IsInf(*balance, 0)) {
 		balance = nil
@@ -279,16 +355,25 @@ func RecordChannelRatioMonitorBalance(channelId int, balance *float64, fetchErro
 		message = string(messageRunes[:255])
 	}
 	if balance == nil && message == "" {
-		return nil
+		return true, nil
 	}
 
-	return DB.Transaction(func(tx *gorm.DB) error {
+	applied = true
+	err = DB.Transaction(func(tx *gorm.DB) error {
 		var monitor ChannelRatioMonitor
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			if expectedRevision != nil {
+				applied = false
+				return nil
+			}
 			monitor = ChannelRatioMonitor{ChannelId: channelId}
 		} else if findErr != nil {
 			return findErr
+		}
+		if expectedRevision != nil && monitor.UpstreamRevision != *expectedRevision {
+			applied = false
+			return nil
 		}
 
 		if balance != nil {
@@ -311,23 +396,84 @@ func RecordChannelRatioMonitorBalance(channelId int, balance *float64, fetchErro
 		}
 		return tx.Save(&monitor).Error
 	})
+	return applied, err
 }
 
-func MarkChannelRatioMonitorBalanceAlertsNotified(channelIds []int) error {
-	if len(channelIds) == 0 {
+type ChannelRatioMonitorBalanceAlertGuard struct {
+	ChannelId        int
+	UpstreamRevision int64
+	WarningThreshold float64
+}
+
+func MarkChannelRatioMonitorBalanceAlertsNotified(guards []ChannelRatioMonitorBalanceAlertGuard) error {
+	for _, guard := range guards {
+		if guard.ChannelId <= 0 || math.IsNaN(guard.WarningThreshold) || math.IsInf(guard.WarningThreshold, 0) {
+			return errors.New("余额预警通知快照无效")
+		}
+	}
+	if len(guards) == 0 {
 		return nil
 	}
-	return DB.Model(&ChannelRatioMonitor{}).
-		Where("channel_id IN ?", channelIds).
-		Update("balance_alert_notified", true).Error
+	orderedGuards := append([]ChannelRatioMonitorBalanceAlertGuard(nil), guards...)
+	sort.Slice(orderedGuards, func(i, j int) bool {
+		return orderedGuards[i].ChannelId < orderedGuards[j].ChannelId
+	})
+	return DB.Transaction(func(tx *gorm.DB) error {
+		for _, guard := range orderedGuards {
+			var monitor ChannelRatioMonitor
+			findErr := lockForUpdate(tx).
+				Where("channel_id = ?", guard.ChannelId).
+				First(&monitor).Error
+			if errors.Is(findErr, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if findErr != nil {
+				return findErr
+			}
+			if monitor.UpstreamRevision != guard.UpstreamRevision ||
+				monitor.BalanceWarningThreshold == nil ||
+				*monitor.BalanceWarningThreshold != guard.WarningThreshold ||
+				monitor.UpstreamBalance == nil ||
+				*monitor.UpstreamBalance >= guard.WarningThreshold ||
+				monitor.BalanceAlertNotified {
+				continue
+			}
+			if err := tx.Model(&ChannelRatioMonitor{}).
+				Where("id = ?", monitor.Id).
+				Update("balance_alert_notified", true).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func updateChannelRatioMonitor(channelId int, ratio float64, remark string, operatorId int, operatorUsername string, fetchedFromUpstream bool) (monitor ChannelRatioMonitor, created bool, changed bool, err error) {
+	monitor, created, changed, _, err = updateChannelRatioMonitorWithRevision(channelId, ratio, remark, operatorId, operatorUsername, fetchedFromUpstream, nil)
+	return
+}
+
+func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark string, operatorId int, operatorUsername string, fetchedFromUpstream bool, expectedRevision *int64) (monitor ChannelRatioMonitor, created bool, changed bool, applied bool, err error) {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
+	applied = true
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
+			if expectedRevision != nil && errors.Is(err, gorm.ErrRecordNotFound) {
+				applied = false
+				return nil
+			}
+			return err
+		}
 		query := lockForUpdate(tx).Where("channel_id = ?", channelId)
 		findErr := query.First(&monitor).Error
 		now := common.GetTimestamp()
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			if expectedRevision != nil {
+				applied = false
+				return nil
+			}
 			monitor = ChannelRatioMonitor{
 				ChannelId:         channelId,
 				Ratio:             ratio,
@@ -345,6 +491,10 @@ func updateChannelRatioMonitor(channelId int, ratio float64, remark string, oper
 		}
 		if findErr != nil {
 			return findErr
+		}
+		if expectedRevision != nil && monitor.UpstreamRevision != *expectedRevision {
+			applied = false
+			return nil
 		}
 
 		if monitor.UpdatedTime == 0 {
@@ -393,7 +543,7 @@ func updateChannelRatioMonitor(channelId int, ratio float64, remark string, oper
 		}
 		return tx.Save(&monitor).Error
 	})
-	return monitor, created, changed, err
+	return monitor, created, changed, applied, err
 }
 
 func GetChannelRatioHistory(channelId int, startIdx int, num int) (history []ChannelRatioHistory, total int64, err error) {

@@ -1,10 +1,7 @@
 package model
 
 import (
-	"errors"
 	"fmt"
-	"math"
-	"math/rand"
 	"sort"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,11 +12,45 @@ type channelSmartScheduleCachedRoute struct {
 	channelId int
 	priority  int64
 	weight    uint
+	managed   bool
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
 
 func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]*Channel) map[string]map[string][]channelSmartScheduleCachedRoute {
+	var states []ChannelSmartScheduleRouteState
+	if DB != nil && DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
+		if err := DB.
+			Select("group_name", "model_name").
+			Where("participation_set = ? AND excluded = ?", true, false).
+			Find(&states).Error; err != nil {
+			common.SysError("load smart schedule managed pools failed: " + err.Error())
+			return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, nil, true)
+		}
+	}
+	return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states)
+}
+
+func buildChannelSmartScheduleRouteCacheFromStates(
+	abilities []*Ability,
+	channels map[int]*Channel,
+	states []ChannelSmartScheduleRouteState,
+) map[string]map[string][]channelSmartScheduleCachedRoute {
+	managedPools := make(map[channelSmartScheduleRoutePool]struct{})
+	for _, state := range states {
+		if state.Participates() {
+			managedPools[channelSmartScheduleRoutePool{group: state.GroupName, model: state.ModelName}] = struct{}{}
+		}
+	}
+	return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, managedPools, false)
+}
+
+func buildChannelSmartScheduleRouteCacheWithManagedPools(
+	abilities []*Ability,
+	channels map[int]*Channel,
+	managedPools map[channelSmartScheduleRoutePool]struct{},
+	managedLookupFailed bool,
+) map[string]map[string][]channelSmartScheduleCachedRoute {
 	cache := make(map[string]map[string][]channelSmartScheduleCachedRoute)
 	for _, ability := range abilities {
 		channel := channels[ability.ChannelId]
@@ -31,10 +62,12 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 			modelRoutes = make(map[string][]channelSmartScheduleCachedRoute)
 			cache[ability.Group] = modelRoutes
 		}
+		_, managed := managedPools[channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}]
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
 			channelId: ability.ChannelId,
 			priority:  abilityPriority(*ability),
 			weight:    ability.Weight,
+			managed:   managedLookupFailed || managed,
 		})
 	}
 	for _, modelRoutes := range cache {
@@ -82,53 +115,30 @@ func getRandomSatisfiedChannelByAbility(group string, modelName string, retry in
 	}
 	targetPriority := priorities[retry]
 	targetRoutes := make([]channelSmartScheduleCachedRoute, 0, len(routes))
-	var sumWeight uint64
 	for _, route := range routes {
 		if route.priority != targetPriority {
 			continue
 		}
 		targetRoutes = append(targetRoutes, route)
-		if uint64(route.weight) > math.MaxUint64-sumWeight {
-			return nil, true, errors.New("渠道路由权重溢出")
-		}
-		sumWeight += uint64(route.weight)
 	}
 	if len(targetRoutes) == 0 {
 		return nil, true, fmt.Errorf("no channel found, group: %s, model: %s, priority: %d", group, modelName, targetPriority)
 	}
-	if len(targetRoutes) == 1 {
-		channel := channelsIDM[targetRoutes[0].channelId]
-		if channel == nil {
-			return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", targetRoutes[0].channelId)
-		}
-		return channel, true, nil
+	channelIDs := make([]int, len(targetRoutes))
+	weights := make([]uint, len(targetRoutes))
+	for index, route := range targetRoutes {
+		channelIDs[index] = route.channelId
+		weights[index] = route.weight
 	}
-
-	var smoothingFactor uint64 = 1
-	var smoothingAdjustment uint64
-	if sumWeight == 0 {
-		sumWeight = uint64(len(targetRoutes)) * 100
-		smoothingAdjustment = 100
-	} else if sumWeight/uint64(len(targetRoutes)) < 10 {
-		smoothingFactor = 100
+	channelId, selectionErr := chooseChannelByWeights(channelIDs, weights)
+	if selectionErr != nil {
+		return nil, true, selectionErr
 	}
-	if sumWeight > math.MaxInt64/smoothingFactor {
-		return nil, true, errors.New("渠道路由权重溢出")
+	channel := channelsIDM[channelId]
+	if channel == nil {
+		return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 	}
-	totalWeight := sumWeight * smoothingFactor
-	randomWeight := uint64(rand.Int63n(int64(totalWeight)))
-	for _, route := range targetRoutes {
-		effectiveWeight := uint64(route.weight)*smoothingFactor + smoothingAdjustment
-		if randomWeight < effectiveWeight {
-			channel := channelsIDM[route.channelId]
-			if channel == nil {
-				return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", route.channelId)
-			}
-			return channel, true, nil
-		}
-		randomWeight -= effectiveWeight
-	}
-	return nil, true, errors.New("未找到可用渠道")
+	return channel, true, nil
 }
 
 func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedRoute, requestPath string, requestModel string, options ChannelSelectionOptions) []channelSmartScheduleCachedRoute {

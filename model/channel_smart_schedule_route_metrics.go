@@ -8,6 +8,7 @@ import (
 
 type ChannelMonitorRoutePerformanceMetric struct {
 	ChannelId                     int                            `json:"channel_id"`
+	GroupName                     string                         `json:"group,omitempty"`
 	ModelName                     string                         `json:"model"`
 	GroupCount                    int                            `json:"group_count"`
 	SampleCount                   int                            `json:"sample_count"`
@@ -97,6 +98,7 @@ func getChannelMonitorRoutePerformanceMetrics(
 		query = query.Where("channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
+		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
 	var aggregates []performanceAggregate
@@ -164,6 +166,7 @@ func GetChannelMonitorRoutePerformanceMetric(
 	channelId int,
 	modelName string,
 ) (ChannelMonitorRoutePerformanceMetric, error) {
+	modelName = channelSmartScheduleModelName(modelName)
 	metrics, err := getChannelMonitorRoutePerformanceMetrics(ctx, startTimestamp, 0, ChannelMonitorSuccessFilter{
 		ChannelId: channelId,
 		ModelName: modelName,
@@ -232,6 +235,7 @@ func getChannelMonitorRouteStabilityAggregates(
 		query = query.Where("channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
+		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
 		query = query.Where("model_name = ?", filter.ModelName)
 	}
 	var aggregates []channelMonitorRouteStabilityAggregate
@@ -301,6 +305,7 @@ func GetChannelMonitorRouteStabilityMetrics(ctx context.Context, startTimestamp 
 }
 
 func GetChannelMonitorRouteStabilityMetric(ctx context.Context, startTimestamp int64, channelId int, modelName string) (ChannelMonitorRouteStabilityMetric, error) {
+	modelName = channelSmartScheduleModelName(modelName)
 	aggregates, err := getChannelMonitorRouteStabilityAggregates(ctx, startTimestamp, 0, ChannelMonitorSuccessFilter{
 		ChannelId: channelId,
 		ModelName: modelName,

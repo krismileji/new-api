@@ -43,7 +43,7 @@ type testResult struct {
 	originalModelName         string
 	firstResponseMilliseconds *float64
 	tokensPerSecond           *float64
-	outputTokens              int
+	usageMetrics              channelTestUsageMetrics
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -102,6 +102,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	c.Set(channelTestContextKey, true)
+	c.Set(channelTestRequestDispatchedKey, false)
 
 	testModel = strings.TrimSpace(testModel)
 	if testModel == "" {
@@ -179,7 +181,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
-	c.Set("group", group)
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	applyChannelSmartScheduleProbeTestContext(ctx, c)
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
@@ -445,8 +447,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
-	requestDispatched := true
 	resp, err := adaptor.DoRequest(c, info, requestBody)
+	requestDispatched := wasChannelTestRequestDispatched(c, resp, err)
 	if err != nil {
 		return testResult{
 			context:           c,
@@ -536,7 +538,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	_, pointerUsage := usageA.(*dto.Usage)
 	_, valueUsage := usageA.(dto.Usage)
-	service.RecordChannelTestDailyCost(c, info, quota, tieredResult, usage, pointerUsage || valueUsage)
+	usageIsAuthoritative := pointerUsage || valueUsage
+	service.RecordChannelTestDailyCost(c, info, quota, tieredResult, usage, usageIsAuthoritative)
 	consumedTime := time.Since(tik).Seconds()
 	if isSmartScheduleProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
 		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
@@ -572,7 +575,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		originalModelName:         info.OriginModelName,
 		firstResponseMilliseconds: firstResponseMilliseconds,
 		tokensPerSecond:           tokensPerSecond,
-		outputTokens:              usage.CompletionTokens,
+		usageMetrics:              buildChannelTestUsageMetrics(usage, usageIsAuthoritative),
 	}
 }
 
@@ -930,13 +933,16 @@ func TestChannel(c *gin.Context) {
 	//}()
 	testModel := c.Query("model")
 	endpointType := strings.TrimSpace(c.Query("endpoint_type"))
-	if endpointType == "" {
-		endpointType = string(constant.EndpointTypeOpenAIResponse)
-	}
 	isStream := true
 	if streamValue, exists := c.GetQuery("stream"); exists {
 		if parsedStream, parseErr := strconv.ParseBool(streamValue); parseErr == nil {
 			isStream = parsedStream
+		}
+	}
+	recordSample := true
+	if recordSampleValue, exists := c.GetQuery("record_sample"); exists {
+		if parsedRecordSample, parseErr := strconv.ParseBool(recordSampleValue); parseErr == nil {
+			recordSample = parsedRecordSample
 		}
 	}
 	testUserID, err := resolveChannelTestUserID(c)
@@ -952,19 +958,23 @@ func TestChannel(c *gin.Context) {
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
 	finishedAt := time.Now()
 	durationMs := float64(finishedAt.Sub(tik)) / float64(time.Millisecond)
-	sampleRecorded, sampleMessage := recordManualChannelSmartScheduleProbeResult(
-		channel,
-		result,
-		durationMs,
-	)
+	sampleRecorded := false
+	sampleMessage := "已关闭渠道样本记录，本次未计入样本"
+	if recordSample {
+		sampleRecorded, sampleMessage = recordManualChannelSmartScheduleProbeResult(
+			channel,
+			result,
+			durationMs,
+		)
+	}
 	responseData := gin.H{
 		"response_time":                  durationMs,
 		"first_token_ms":                 result.firstResponseMilliseconds,
 		"tokens_per_second":              result.tokensPerSecond,
-		"output_tokens":                  result.outputTokens,
 		"smart_schedule_sample_recorded": sampleRecorded,
 		"smart_schedule_sample_message":  sampleMessage,
 	}
+	addChannelTestUsageMetrics(responseData, result.usageMetrics)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,

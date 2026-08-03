@@ -144,6 +144,25 @@ func TestAggregateChannelMonitorMinuteBucketsRetryFailureDurations(t *testing.T)
 	assert.Equal(t, int64(1), metric.RetryFailureOver60sCount)
 }
 
+func TestAggregateChannelMonitorMinuteUsesFormattedRoutingModelName(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1,
+		Group:     "vip",
+		ModelName: "gemini-2.5-pro-thinking-2048",
+		CreatedAt: 121,
+		Type:      LogTypeConsume,
+	}).Error)
+
+	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where(
+		"minute_start = ? AND channel_id = ?", 120, 1,
+	).First(&metric).Error)
+	assert.Equal(t, "gemini-2.5-pro-thinking-*", metric.ModelName)
+	assert.Equal(t, int64(1), metric.ActualSuccessCount)
+}
+
 func TestAggregateChannelMonitorMinuteKeeps429ErrorsButExcludesThemFromStability(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	rateLimitDuration := int64(5_000)

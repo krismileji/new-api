@@ -40,6 +40,26 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmart
     },
   }
 
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
+  jitterTolerancePercent: 5,
+  jitterThresholdMultiplier: 5,
+  jitterAbsoluteToleranceSeconds: 10,
+  jitterBaselineMinutes: 60,
+  minSamples: 5,
+  degradeStabilityScore: 90,
+  recoveryStabilityScore: 95,
+  fastFailurePenaltyPercent: 40,
+  fastFailureSeconds: 1,
+  slowFailureSeconds: 10,
+  cooldownMinutes: 30,
+  explorationTrafficPercent: 3,
+  probeIntervalMinutes: 10,
+  prioritySamplingIntervalMinutes: 10,
+  prioritySamplingBasePercent: 3,
+  prioritySamplingDecayPercent: 70,
+  prioritySamplingMinPercent: 0.5,
+} as const
+
 export const CHANNEL_MONITOR_STATUS_LABELS: Partial<Record<number, string>> = {
   0: '未知',
   1: '已启用',

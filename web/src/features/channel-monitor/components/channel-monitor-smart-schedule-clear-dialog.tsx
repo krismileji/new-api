@@ -65,7 +65,13 @@ export function ChannelMonitorSmartScheduleClearDialog(
   })
 
   return (
-    <AlertDialog open={props.route != null} onOpenChange={props.onOpenChange}>
+    <AlertDialog
+      open={props.route != null}
+      onOpenChange={(open) => {
+        if (!open && mutation.isPending) return
+        props.onOpenChange(open)
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认解除智能调度保护？</AlertDialogTitle>

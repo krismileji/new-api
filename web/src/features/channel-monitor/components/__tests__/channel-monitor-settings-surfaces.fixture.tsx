@@ -18,9 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import type { AxiosAdapter } from 'axios'
 import { Window } from 'happy-dom'
 
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../../lib/email-notification'
+import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+} from '../../lib/query-options'
 import type { ChannelMonitorSettings } from '../../types'
 
 const domWindow = new Window()
@@ -61,6 +66,7 @@ const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
+const { api } = await import('@/lib/api')
 const {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -134,9 +140,13 @@ const settings = {
   smart_schedule_performance_window_minutes: 60,
   smart_schedule_stability_window_minutes: 120,
   smart_schedule_rate_limit_cooldown_seconds: 30,
+  smart_schedule_control_revision: 'revision-a',
 } satisfies ChannelMonitorSettings
 
-async function renderSettingsSurface(surface: 'general' | 'schedule') {
+async function renderSettingsSurface(
+  surface: 'general' | 'schedule',
+  onOpenChange: (open: boolean) => void = () => {}
+) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -149,7 +159,7 @@ async function renderSettingsSurface(surface: 'general' | 'schedule') {
           <ChannelMonitorSettingsDialog
             settings={settings}
             open
-            onOpenChange={() => {}}
+            onOpenChange={onOpenChange}
           />
         ) : (
           <ChannelMonitorSmartScheduleSettingsSheet
@@ -157,14 +167,14 @@ async function renderSettingsSurface(surface: 'general' | 'schedule') {
             modelOptionsByGroup={new Map([['default', ['model-a']]])}
             groupOptions={['default', 'vip']}
             open
-            onOpenChange={() => {}}
+            onOpenChange={onOpenChange}
           />
         )}
       </QueryClientProvider>
     )
   })
 
-  return { container, root }
+  return { container, queryClient, root }
 }
 
 async function unmountSettingsSurface(
@@ -303,10 +313,10 @@ const policyDialogStabilityInputsAligned =
     'cooldownMinutes',
   ].every((name) => stabilityFailureGrid.querySelector(`input[name="${name}"]`))
 const policyDialogExplainsExplicitScope = policyDialogText.includes(
-  '保存策略后，该分组才会进入智能调度'
+  '应用到当前设置并保存智能调度设置后，该分组才会进入调度范围'
 )
 const savePolicyButton = [...policyDialog.querySelectorAll('button')].find(
-  (button) => button.textContent?.includes('保存分组策略')
+  (button) => button.textContent?.includes('应用到当前设置')
 )
 assert.ok(savePolicyButton)
 await act(async () => savePolicyButton.click())
@@ -314,10 +324,80 @@ const policyRows = [...sheet.querySelectorAll('tbody tr')]
 const newPolicyVisible =
   policyRows.length === 2 &&
   policyRows.some((row) => row.textContent?.includes('default'))
+await unmountSettingsSurface(scheduleSurface)
+
+let conflictFormClosed = false
+let resolveConflictClose: (() => void) | undefined
+const conflictClose = new Promise<void>((resolve) => {
+  resolveConflictClose = resolve
+})
+const conflictSurface = await renderSettingsSurface('schedule', (open) => {
+  if (open) return
+  conflictFormClosed = true
+  resolveConflictClose?.()
+})
+conflictSurface.queryClient.setQueryData(['channel-monitor'], {})
+conflictSurface.queryClient.setQueryData(
+  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+  {}
+)
+conflictSurface.queryClient.setQueryData(
+  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+  {}
+)
+
+const originalAdapter = api.defaults.adapter
+const conflictAdapter: AxiosAdapter = async (config) => {
+  throw Object.assign(new Error('智能调度配置已被其他管理员更新'), {
+    config,
+    isAxiosError: true,
+    response: {
+      config,
+      data: { message: '智能调度配置已被其他管理员更新' },
+      headers: {},
+      status: 409,
+      statusText: 'Conflict',
+    },
+  })
+}
+api.defaults.adapter = conflictAdapter
+
+try {
+  const conflictSheet = document.body.querySelector(
+    '[data-slot="sheet-content"]'
+  )
+  assert.ok(conflictSheet)
+  const saveSettingsButton = [...conflictSheet.querySelectorAll('button')].find(
+    (button) => button.textContent?.trim() === '保存'
+  )
+  assert.ok(saveSettingsButton)
+  await act(async () => {
+    saveSettingsButton.click()
+    await conflictClose
+  })
+} finally {
+  api.defaults.adapter = originalAdapter
+}
+
+const conflictMonitorQueryInvalidated =
+  conflictSurface.queryClient.getQueryState(['channel-monitor'])
+    ?.isInvalidated === true
+const conflictExecutionsQueryInvalidated =
+  conflictSurface.queryClient.getQueryState(
+    CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY
+  )?.isInvalidated === true
+const conflictHistoryQueryInvalidated =
+  conflictSurface.queryClient.getQueryState(
+    CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY
+  )?.isInvalidated === true
 
 process.stdout.write(
   `${JSON.stringify({
     allNotificationTypesSelected,
+    conflictExecutionsQueryInvalidated,
+    conflictFormClosed,
+    conflictHistoryQueryInvalidated,
+    conflictMonitorQueryInvalidated,
     generalHasSchedule,
     generalTitle,
     notificationTypeCanBeUnchecked,
@@ -340,5 +420,5 @@ process.stdout.write(
   })}\n`
 )
 
-await unmountSettingsSurface(scheduleSurface)
+await unmountSettingsSurface(conflictSurface)
 domWindow.close()

@@ -34,6 +34,7 @@ import type {
   ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
+  ChannelMonitorSmartScheduleExecutionDetailPage,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
   ChannelMonitorTaskRunResult,
@@ -176,6 +177,35 @@ export async function getChannelMonitorTasks(
     '/api/channel_monitor/tasks',
     channelMonitorRequestConfig({
       params: { p: page, page_size: pageSize, kind },
+    })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorSmartScheduleExecutionDetails(
+  taskId: string,
+  request: {
+    page: number
+    pageSize: number
+    search?: string
+    group?: string
+    model?: string
+    action?: string
+  }
+) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleExecutionDetailPage>
+  >(
+    `/api/channel_monitor/tasks/${encodeURIComponent(taskId)}/details`,
+    channelMonitorRequestConfig({
+      params: {
+        p: request.page,
+        page_size: request.pageSize,
+        q: request.search || undefined,
+        group: request.group || undefined,
+        model: request.model || undefined,
+        action: request.action || undefined,
+      },
     })
   )
   return ensureChannelMonitorSuccess(response.data)
@@ -402,16 +432,7 @@ export async function updateChannelMonitorGroupChannels(request: {
     },
     channelMonitorRequestConfig()
   )
-  const result = ensureChannelMonitorSuccess(response.data)
-  return {
-    ...result,
-    data: {
-      ...result.data,
-      channel_ids: result.data.channel_ids ?? [],
-      added_channel_ids: result.data.added_channel_ids ?? [],
-      removed_channel_ids: result.data.removed_channel_ids ?? [],
-    },
-  }
+  return ensureChannelMonitorSuccess(response.data)
 }
 
 export async function syncChannelMonitorGroupRatio(request: {

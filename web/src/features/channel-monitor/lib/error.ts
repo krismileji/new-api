@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { AxiosError } from 'axios'
+import axios from 'axios'
 import { toast } from 'sonner'
 
 type ChannelMonitorErrorResponse = {
@@ -25,7 +25,7 @@ type ChannelMonitorErrorResponse = {
 }
 
 export function handleChannelMonitorMutationError(error: unknown) {
-  if (error instanceof AxiosError) {
+  if (axios.isAxiosError(error)) {
     const response = error.response?.data as
       | ChannelMonitorErrorResponse
       | undefined
@@ -41,4 +41,10 @@ export function handleChannelMonitorMutationError(error: unknown) {
   toast.error(
     error instanceof Error && error.message ? error.message : '渠道监控请求失败'
   )
+}
+
+export function shouldReloadChannelMonitorSettings(error: unknown) {
+  if (!axios.isAxiosError<ChannelMonitorErrorResponse>(error)) return false
+  if (error.response?.status === 409) return true
+  return error.response?.data?.message?.startsWith('设置已保存') === true
 }

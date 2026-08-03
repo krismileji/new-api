@@ -377,7 +377,7 @@ func aggregateChannelMonitorMinuteLogs(
 			log.RateLimited = channelMonitorMinuteRateLimited(parsedOther.StatusCode)
 		}
 		log.AttemptDurationMs = durationMs
-		modelName := channelMonitorMinuteMetricNames(log.ModelName, 255)
+		modelName := channelMonitorMinuteMetricNames(channelSmartScheduleModelName(log.ModelName), 255)
 		groupName := channelMonitorMinuteMetricNames(log.GroupName, 255)
 		apiKeyName := channelMonitorMinuteMetricNames(log.TokenName, 255)
 		modelKey := channelMonitorMinuteDimensionKey(modelName)

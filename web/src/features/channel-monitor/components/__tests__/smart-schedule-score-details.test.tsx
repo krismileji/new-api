@@ -113,6 +113,12 @@ describe('smart schedule score calculation details', () => {
         details={createScoreDetails()}
         snapshotLabel='本次执行快照'
         defaultOpen
+        channelNameById={
+          new Map([
+            [7, '低延迟主渠道'],
+            [8, '原主渠道'],
+          ])
+        }
       />
     )
 
@@ -156,8 +162,9 @@ describe('smart schedule score calculation details', () => {
       )
     )
     assert.ok(markup.includes('原主渠道'))
-    assert.ok(markup.includes('渠道 8'))
+    assert.ok(markup.includes('原主渠道（ID 8）'))
     assert.ok(markup.includes('评分第一'))
+    assert.ok(markup.includes('低延迟主渠道（ID 7）'))
     assert.ok(markup.includes('实际主渠道'))
     assert.ok(markup.includes('基础排名'))
     assert.ok(markup.includes('当前应用'))

@@ -34,6 +34,14 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'routes',
 ] as const
 
+export const CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY = [
+  'channel-monitor-smart-schedule-executions',
+] as const
+
+export const CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY = [
+  'channel-monitor-task-history',
+] as const
+
 export function getChannelMonitorOverviewQueryOptions() {
   return queryOptions({
     queryKey: ['channel-monitor'],

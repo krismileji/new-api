@@ -52,16 +52,22 @@ import {
 import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleRoute,
+  ChannelMonitorSmartScheduleRoutePerformance,
+  ChannelMonitorSmartScheduleRouteStability,
 } from '../types'
 import { ChannelMonitorSmartSchedulePrimaryControls } from './channel-monitor-smart-schedule-primary-controls'
 import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
+import { ChannelMonitorSmartScheduleSampleDetails } from './channel-monitor-smart-schedule-sample-details'
 import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart-schedule-score-details'
 
 type ChannelMonitorSmartScheduleRouteDetailsProps = {
   open: boolean
   route: ChannelMonitorSmartScheduleRoute | null
   channel: ChannelMonitorItem | undefined
+  poolRoutes: readonly ChannelMonitorSmartScheduleRoute[]
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
+  performance: ChannelMonitorSmartScheduleRoutePerformance | undefined
+  stability: ChannelMonitorSmartScheduleRouteStability | undefined
   updatePending: boolean
   manualRoutingPending: boolean
   updateDisabled: boolean
@@ -123,7 +129,7 @@ function DetailMetric(props: { label: string; value: string }) {
         {props.label}
       </div>
       <div
-        className='mt-1 break-words font-mono text-sm font-medium leading-5 tabular-nums'
+        className='mt-1 font-mono text-sm leading-5 font-medium break-words tabular-nums'
         title={props.value}
       >
         {props.value}
@@ -132,66 +138,15 @@ function DetailMetric(props: { label: string; value: string }) {
   )
 }
 
-function SharedSampleDetails(props: {
-  route: ChannelMonitorSmartScheduleRoute
-}) {
-  const samples = props.route.shared_samples
-  if (samples.sample_count === 0 && samples.last_time === 0) {
-    return (
-      <section className='border-t px-4 py-4' aria-label='共享样本'>
-        <h3 className='text-sm font-medium'>渠道 + 模型共享样本</h3>
-        <p className='text-muted-foreground mt-1 text-sm'>暂无可用样本</p>
-      </section>
-    )
-  }
-
-  return (
-    <section className='border-t px-4 py-4' aria-label='共享样本'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <div>
-          <h3 className='text-sm font-medium'>渠道 + 模型共享样本</h3>
-          <p className='text-muted-foreground mt-0.5 text-xs'>
-            同一渠道和模型的请求样本会供所有关联分组使用
-          </p>
-        </div>
-        {samples.last_time > 0 ? (
-          <Badge variant={samples.last_success ? 'secondary' : 'destructive'}>
-            {samples.last_success ? '最近成功' : '最近失败'}
-          </Badge>
-        ) : null}
-      </div>
-
-      <div className='mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4'>
-        <DetailMetric label='样本总数' value={`${samples.sample_count} 次`} />
-        <DetailMetric label='成功次数' value={`${samples.success_count} 次`} />
-        <DetailMetric
-          label='首字均值'
-          value={
-            samples.average_first_token_ms == null
-              ? '-'
-              : `${samples.average_first_token_ms.toFixed(0)} ms`
-          }
-        />
-        <DetailMetric
-          label='平均 TPS'
-          value={
-            samples.average_tps == null ? '-' : samples.average_tps.toFixed(2)
-          }
-        />
-      </div>
-
-      {samples.last_time > 0 ? (
-        <p className='text-muted-foreground mt-3 text-xs'>
-          最近样本 {formatTimestampToDate(samples.last_time)}
-        </p>
-      ) : null}
-      {samples.last_error ? (
-        <p className='text-destructive mt-2 text-xs break-words'>
-          {samples.last_error}
-        </p>
-      ) : null}
-    </section>
-  )
+function formatPoolChannelReference(
+  routes: readonly ChannelMonitorSmartScheduleRoute[],
+  channelId: number
+) {
+  if (channelId <= 0) return '-'
+  const route = routes.find((item) => item.channel_id === channelId)
+  return route
+    ? `${route.channel_name}（ID ${channelId}）`
+    : `渠道 ID ${channelId}`
 }
 
 export function ChannelMonitorSmartScheduleRouteDetails(
@@ -226,9 +181,22 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     props.placement?.actualTopLayerChannelIds ??
     decision?.actual_top_layer_channel_ids ??
     []
+  const pending = props.updatePending || props.manualRoutingPending
+  const channelNameById = new Map(
+    props.poolRoutes.map((poolRoute) => [
+      poolRoute.channel_id,
+      poolRoute.channel_name,
+    ])
+  )
 
   return (
-    <Sheet open={props.open} onOpenChange={props.onOpenChange}>
+    <Sheet
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open && pending) return
+        props.onOpenChange(open)
+      }}
+    >
       <SheetContent
         id={`channel-monitor-route-details-${route.channel_id}`}
         className='w-full gap-0 sm:max-w-3xl'
@@ -258,6 +226,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             {remark ? ` · ${remark}` : ''}
           </SheetDescription>
           <SheetClose
+            disabled={pending}
             render={
               <Button
                 type='button'
@@ -273,10 +242,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
         </SheetHeader>
 
         <div className='min-h-0 flex-1 overflow-y-auto'>
-          <section
-            className='bg-muted/20 px-4 py-4'
-            aria-label='渠道调度摘要'
-          >
+          <section className='bg-muted/20 px-4 py-4' aria-label='渠道调度摘要'>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div className='min-w-0'>
                 <div className='text-muted-foreground text-xs'>当前状态</div>
@@ -289,7 +255,8 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                   {props.updatePending ? <Spinner className='size-4' /> : null}
                   {route.state.last_schedule_time > 0 ? (
                     <span className='text-muted-foreground text-xs'>
-                      更新于 {formatTimestampToDate(route.state.last_schedule_time)}
+                      更新于{' '}
+                      {formatTimestampToDate(route.state.last_schedule_time)}
                     </span>
                   ) : null}
                 </div>
@@ -361,26 +328,33 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             <div className='grid gap-x-5 gap-y-3 sm:grid-cols-3'>
               <DetailMetric
                 label='评分第一'
-                value={
-                  scoringWinnerChannelId > 0
-                    ? `渠道 ID ${scoringWinnerChannelId}`
-                    : '-'
-                }
+                value={formatPoolChannelReference(
+                  props.poolRoutes,
+                  scoringWinnerChannelId
+                )}
               />
               <DetailMetric
                 label='实际主渠道'
-                value={
-                  actualPrimaryChannelId > 0
-                    ? `渠道 ID ${actualPrimaryChannelId}`
-                    : '-'
-                }
+                value={formatPoolChannelReference(
+                  props.poolRoutes,
+                  actualPrimaryChannelId
+                )}
               />
               <DetailMetric
                 label='实际最高层'
                 value={
                   actualHighestPriority == null
                     ? '-'
-                    : `P${actualHighestPriority} · 渠道 ${actualTopLayerChannelIds.join('、') || '-'}`
+                    : `P${actualHighestPriority} · ${
+                        actualTopLayerChannelIds
+                          .map((channelId) =>
+                            formatPoolChannelReference(
+                              props.poolRoutes,
+                              channelId
+                            )
+                          )
+                          .join('、') || '渠道 -'
+                      }`
                 }
               />
             </div>
@@ -490,6 +464,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             details={route.state.last_schedule_score_details}
             snapshotLabel='最近一次调度快照'
             defaultOpen={false}
+            channelNameById={channelNameById}
           />
           {!route.state.last_schedule_score_details ? (
             <section className='border-t px-4 py-4' aria-label='评分计算'>
@@ -508,7 +483,11 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               </div>
             </section>
           ) : null}
-          <SharedSampleDetails route={route} />
+          <ChannelMonitorSmartScheduleSampleDetails
+            route={route}
+            performance={props.performance}
+            stability={props.stability}
+          />
         </div>
       </SheetContent>
     </Sheet>

@@ -142,7 +142,7 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
       <Alert className='pr-28'>
         <AlertTitle>智能调度设置</AlertTitle>
         <AlertDescription>
-          所有分组统一使用智能调度中选择的调度方式和统计规则。
+          各分组按智能调度设置中的独立策略执行；未配置策略的分组不参与智能调度。
         </AlertDescription>
         <AlertAction>
           <Button

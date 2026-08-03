@@ -71,7 +71,11 @@ type ChannelMonitorModelPerformanceViewProps = {
 export function ChannelMonitorModelPerformanceView(
   props: ChannelMonitorModelPerformanceViewProps
 ) {
-  const [page, setPage] = useState(1)
+  const paginationKey = `${props.selectedModel}\u0000${props.search}`
+  const [pagination, setPagination] = useState({
+    key: paginationKey,
+    page: 1,
+  })
   const rows = useMemo(() => {
     const metricByChannel = new Map(
       props.metrics
@@ -130,6 +134,10 @@ export function ChannelMonitorModelPerformanceView(
     props.successMetrics,
   ])
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / PERFORMANCE_PAGE_SIZE))
+  const currentPage =
+    pagination.key === paginationKey ? Math.min(pagination.page, totalPages) : 1
+
   if (props.isLoading) {
     return <Skeleton className='h-96 w-full rounded-lg' />
   }
@@ -166,8 +174,6 @@ export function ChannelMonitorModelPerformanceView(
     )
   }
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / PERFORMANCE_PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
   const visibleRows = rows.slice(
     (currentPage - 1) * PERFORMANCE_PAGE_SIZE,
     currentPage * PERFORMANCE_PAGE_SIZE
@@ -307,7 +313,12 @@ export function ChannelMonitorModelPerformanceView(
             size='icon-sm'
             aria-label='上一页'
             title='上一页'
-            onClick={() => setPage(Math.max(1, currentPage - 1))}
+            onClick={() =>
+              setPagination({
+                key: paginationKey,
+                page: Math.max(1, currentPage - 1),
+              })
+            }
             disabled={currentPage <= 1}
           >
             <HugeiconsIcon icon={ArrowLeft01Icon} />
@@ -320,7 +331,12 @@ export function ChannelMonitorModelPerformanceView(
             size='icon-sm'
             aria-label='下一页'
             title='下一页'
-            onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+            onClick={() =>
+              setPagination({
+                key: paginationKey,
+                page: Math.min(totalPages, currentPage + 1),
+              })
+            }
             disabled={currentPage >= totalPages}
           >
             <HugeiconsIcon icon={ArrowRight01Icon} />
