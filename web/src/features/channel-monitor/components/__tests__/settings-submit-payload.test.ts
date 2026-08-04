@@ -35,6 +35,14 @@ const formValues = {
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
   probeResponseEnabled: true,
+  probeResponseMatchInput: 'health check',
+  probeResponseText: 'healthy',
+  probeResponseMinDelayMs: 125,
+  probeResponseMaxDelayMs: 875,
+  probeResponseInputTokens: 7,
+  probeResponseCacheWriteTokens: 1,
+  probeResponseCachedTokens: 2,
+  probeResponseOutputTokens: 11,
   relayResponseHeaderTimeoutSeconds: 45,
   smartScheduleEnabled: true,
   smartScheduleGroupPolicies: [
@@ -211,7 +219,15 @@ describe('channel monitor settings submit payload', () => {
       'email_notification_enabled',
       'email_notification_types',
       'notification_email',
+      'probe_response_cache_write_tokens',
+      'probe_response_cached_tokens',
       'probe_response_enabled',
+      'probe_response_input_tokens',
+      'probe_response_match_input',
+      'probe_response_max_delay_ms',
+      'probe_response_min_delay_ms',
+      'probe_response_output_tokens',
+      'probe_response_text',
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
@@ -219,6 +235,14 @@ describe('channel monitor settings submit payload', () => {
       'balance_warning',
       'task_failed',
     ])
+    assert.equal(payload.probe_response_match_input, 'health check')
+    assert.equal(payload.probe_response_text, 'healthy')
+    assert.equal(payload.probe_response_min_delay_ms, 125)
+    assert.equal(payload.probe_response_max_delay_ms, 875)
+    assert.equal(payload.probe_response_input_tokens, 7)
+    assert.equal(payload.probe_response_cache_write_tokens, 1)
+    assert.equal(payload.probe_response_cached_tokens, 2)
+    assert.equal(payload.probe_response_output_tokens, 11)
     assert.equal('smart_schedule_enabled' in payload, false)
     assert.equal('smart_schedule_group_policies' in payload, false)
     assert.equal('relay_response_header_timeout_seconds' in payload, false)

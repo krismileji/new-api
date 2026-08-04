@@ -80,6 +80,14 @@ import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
+  DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
+  DEFAULT_PROBE_RESPONSE_INPUT_TOKENS,
+  DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
+  DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS,
+  DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS,
+  DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS,
+  DEFAULT_PROBE_RESPONSE_TEXT,
   DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
@@ -307,6 +315,29 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
+      probeResponseMatchInput:
+        props.settings.probe_response_match_input ??
+        DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
+      probeResponseText:
+        props.settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT,
+      probeResponseMinDelayMs:
+        props.settings.probe_response_min_delay_ms ??
+        DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS,
+      probeResponseMaxDelayMs:
+        props.settings.probe_response_max_delay_ms ??
+        DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS,
+      probeResponseInputTokens:
+        props.settings.probe_response_input_tokens ??
+        DEFAULT_PROBE_RESPONSE_INPUT_TOKENS,
+      probeResponseCacheWriteTokens:
+        props.settings.probe_response_cache_write_tokens ??
+        DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
+      probeResponseCachedTokens:
+        props.settings.probe_response_cached_tokens ??
+        DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
+      probeResponseOutputTokens:
+        props.settings.probe_response_output_tokens ??
+        DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS,
       relayResponseHeaderTimeoutSeconds:
         props.settings.relay_response_header_timeout_seconds ?? 0,
       smartScheduleEnabled: props.settings.smart_schedule_enabled,

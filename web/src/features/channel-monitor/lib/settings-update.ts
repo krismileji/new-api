@@ -64,5 +64,13 @@ export function createChannelMonitorSettingsUpdatePayload(
     notification_email: values.notificationEmail,
     email_notification_types: values.emailNotificationTypes,
     probe_response_enabled: values.probeResponseEnabled,
+    probe_response_match_input: values.probeResponseMatchInput,
+    probe_response_text: values.probeResponseText,
+    probe_response_min_delay_ms: values.probeResponseMinDelayMs,
+    probe_response_max_delay_ms: values.probeResponseMaxDelayMs,
+    probe_response_input_tokens: values.probeResponseInputTokens,
+    probe_response_cache_write_tokens: values.probeResponseCacheWriteTokens,
+    probe_response_cached_tokens: values.probeResponseCachedTokens,
+    probe_response_output_tokens: values.probeResponseOutputTokens,
   }
 }

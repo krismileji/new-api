@@ -26,27 +26,84 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 
-import type { ChannelMonitorSettingsFormValues } from '../lib/schema'
+import {
+  MAX_PROBE_RESPONSE_DELAY_MS,
+  MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
+  MAX_PROBE_RESPONSE_TEXT_LENGTH,
+  MAX_PROBE_RESPONSE_TOKEN_COUNT,
+  type ChannelMonitorSettingsFormValues,
+} from '../lib/schema'
 
-const probeResponseRules = [
-  { label: '匹配输入', value: 'hi' },
-  { label: '固定响应', value: 'Hi. What are you working on?' },
-  { label: '随机延迟', value: '0.5-2 秒' },
-  { label: '支持接口', value: '/v1/responses、/v1/chat/completions' },
-] as const
+type ProbeResponseNumberFieldName =
+  | 'probeResponseMinDelayMs'
+  | 'probeResponseMaxDelayMs'
+  | 'probeResponseInputTokens'
+  | 'probeResponseCacheWriteTokens'
+  | 'probeResponseCachedTokens'
+  | 'probeResponseOutputTokens'
+
+function ProbeResponseNumberField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  label: string
+  max: number
+  name: ProbeResponseNumberFieldName
+  suffix: string
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{props.label}</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={0}
+                max={props.max}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(props.form.formState.errors[props.name])}
+              />
+              <InputGroupAddon align='inline-end'>
+                {props.suffix}
+              </InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
 
 export function ChannelMonitorProbeResponseFields(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
 }) {
+  const enabled = props.form.watch('probeResponseEnabled')
+
   return (
     <div className='flex flex-col gap-5'>
       <FormField
         control={props.form.control}
         name='probeResponseEnabled'
         render={({ field }) => (
-          <FormItem className='flex items-start justify-between gap-4 rounded-md border p-4'>
+          <FormItem className='flex items-start justify-between gap-4'>
             <div className='flex min-w-0 flex-col gap-1'>
               <FormLabel>启用本地探针响应</FormLabel>
               <FormDescription>
@@ -65,24 +122,110 @@ export function ChannelMonitorProbeResponseFields(props: {
         )}
       />
 
-      <dl
-        className='divide-y rounded-md border text-sm'
-        aria-label='探针响应规则'
+      <fieldset
+        className='flex flex-col gap-5 disabled:opacity-60'
+        disabled={!enabled}
+        aria-label='探针响应配置'
       >
-        {probeResponseRules.map((rule) => (
-          <div
-            key={rule.label}
-            className='grid grid-cols-[6rem_minmax(0,1fr)] gap-3 px-4 py-3'
-          >
-            <dt className='text-muted-foreground'>{rule.label}</dt>
-            <dd className='min-w-0 font-medium break-words'>{rule.value}</dd>
+        <FormField
+          control={props.form.control}
+          name='probeResponseMatchInput'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>匹配输入</FormLabel>
+              <FormControl>
+                <Input
+                  maxLength={MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH}
+                  autoComplete='off'
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>
+                去除首尾空白后进行不区分大小写的完整匹配
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={props.form.control}
+          name='probeResponseText'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>响应文本</FormLabel>
+              <FormControl>
+                <Textarea
+                  className='min-h-24 resize-y'
+                  maxLength={MAX_PROBE_RESPONSE_TEXT_LENGTH}
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <ProbeResponseNumberField
+            form={props.form}
+            name='probeResponseMinDelayMs'
+            label='最小延迟'
+            max={MAX_PROBE_RESPONSE_DELAY_MS}
+            suffix='毫秒'
+          />
+          <ProbeResponseNumberField
+            form={props.form}
+            name='probeResponseMaxDelayMs'
+            label='最大延迟'
+            max={MAX_PROBE_RESPONSE_DELAY_MS}
+            suffix='毫秒'
+          />
+        </div>
+
+        <div className='flex flex-col gap-3'>
+          <div className='space-y-1'>
+            <p className='text-sm font-medium'>Usage</p>
+            <p className='text-muted-foreground text-sm'>
+              总 Token 自动按输入 Token 与输出 Token 相加
+            </p>
           </div>
-        ))}
-      </dl>
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <ProbeResponseNumberField
+              form={props.form}
+              name='probeResponseInputTokens'
+              label='输入 Token'
+              max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
+              suffix='Token'
+            />
+            <ProbeResponseNumberField
+              form={props.form}
+              name='probeResponseOutputTokens'
+              label='输出 Token'
+              max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
+              suffix='Token'
+            />
+            <ProbeResponseNumberField
+              form={props.form}
+              name='probeResponseCacheWriteTokens'
+              label='缓存写 Token'
+              max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
+              suffix='Token'
+            />
+            <ProbeResponseNumberField
+              form={props.form}
+              name='probeResponseCachedTokens'
+              label='缓存命中 Token'
+              max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
+              suffix='Token'
+            />
+          </div>
+        </div>
+      </fieldset>
 
       <p className='text-muted-foreground text-sm leading-relaxed'>
-        仅匹配单轮纯文本
-        hi。历史对话、其他文本、图片和工具结果仍按正常流程请求上游；渠道连通性测试不经过此拦截。
+        支持 /v1/responses 和 /v1/chat/completions
+        的单轮纯文本请求；历史对话、图片和工具结果仍请求上游，渠道连通性测试不经过此拦截。
       </p>
     </div>
   )

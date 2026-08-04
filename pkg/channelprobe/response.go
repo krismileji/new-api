@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"math/rand/v2"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,16 +18,7 @@ import (
 )
 
 const (
-	OptionKey                    = "ChannelMonitorProbeResponseEnabled"
-	validatedRequestContextKey   = "channel_probe_validated_request"
-	channelProbeResponseText     = "Hi. What are you working on?"
-	channelProbeResponseMinDelay = 500 * time.Millisecond
-	channelProbeResponseMaxDelay = 2 * time.Second
-	channelProbeInputTokens      = 4387
-	channelProbeCacheWriteTokens = 172
-	channelProbeCachedTokens     = 4001
-	channelProbeOutputTokens     = 12
-	channelProbeTotalTokens      = 4399
+	validatedRequestContextKey = "channel_probe_validated_request"
 )
 
 type channelProbeResponsesInput struct {
@@ -204,12 +194,7 @@ type validatedRequest struct {
 
 // IsChannelMonitorProbeResponseEnabled reports whether local probe responses are enabled.
 func IsChannelMonitorProbeResponseEnabled() bool {
-	common.OptionMapRWMutex.RLock()
-	rawEnabled := common.OptionMap[OptionKey]
-	common.OptionMapRWMutex.RUnlock()
-
-	enabled, err := strconv.ParseBool(rawEnabled)
-	return err == nil && enabled
+	return GetResponseConfig().Enabled
 }
 
 func Middleware() gin.HandlerFunc {
@@ -239,7 +224,8 @@ func tryChannelProbeResponse(c *gin.Context) bool {
 	default:
 		return false
 	}
-	if !IsChannelMonitorProbeResponseEnabled() {
+	config := GetResponseConfig()
+	if !config.Enabled {
 		return false
 	}
 
@@ -248,13 +234,13 @@ func tryChannelProbeResponse(c *gin.Context) bool {
 		return false
 	}
 	c.Set(validatedRequestContextKey, validatedRequest{format: relayFormat, request: request})
-	if !matchesChannelProbeRequest(relayMode, request) {
+	if !matchesChannelProbeRequest(relayMode, request, config.MatchInput) {
 		return false
 	}
 
-	delayRange := channelProbeResponseMaxDelay - channelProbeResponseMinDelay
-	delay := channelProbeResponseMinDelay + time.Duration(rand.Int64N(int64(delayRange)+1))
-	serveChannelProbeResponse(c, relayMode, request, delay)
+	delayRangeMs := config.MaxDelayMs - config.MinDelayMs
+	delayMs := config.MinDelayMs + rand.IntN(delayRangeMs+1)
+	serveChannelProbeResponse(c, relayMode, request, config, time.Duration(delayMs)*time.Millisecond)
 	return true
 }
 
@@ -270,7 +256,7 @@ func ValidatedRequest(c *gin.Context, format types.RelayFormat) (dto.Request, bo
 	return request.request, true
 }
 
-func matchesChannelProbeRequest(relayMode int, request dto.Request) bool {
+func matchesChannelProbeRequest(relayMode int, request dto.Request, matchInput string) bool {
 	switch relayMode {
 	case relayconstant.RelayModeResponses:
 		responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
@@ -278,7 +264,7 @@ func matchesChannelProbeRequest(relayMode int, request dto.Request) bool {
 			channelProbeRawHasValue(responsesRequest.Conversation) {
 			return false
 		}
-		return matchesChannelProbeResponsesInput(responsesRequest.Input)
+		return matchesChannelProbeResponsesInput(responsesRequest.Input, matchInput)
 	case relayconstant.RelayModeChatCompletions:
 		chatRequest, ok := request.(*dto.GeneralOpenAIRequest)
 		if !ok || chatRequest.Input != nil || chatRequest.Prompt != nil ||
@@ -293,7 +279,7 @@ func matchesChannelProbeRequest(relayMode int, request dto.Request) bool {
 				continue
 			case "user":
 				userMessages++
-				if !matchesChannelProbeChatContent(message.Content) {
+				if !matchesChannelProbeChatContent(message.Content, matchInput) {
 					return false
 				}
 			default:
@@ -306,11 +292,11 @@ func matchesChannelProbeRequest(relayMode int, request dto.Request) bool {
 	}
 }
 
-func matchesChannelProbeResponsesInput(rawInput json.RawMessage) bool {
+func matchesChannelProbeResponsesInput(rawInput json.RawMessage, matchInput string) bool {
 	switch common.GetJsonType(rawInput) {
 	case "string":
 		var input string
-		return common.Unmarshal(rawInput, &input) == nil && isChannelProbeHi(input)
+		return common.Unmarshal(rawInput, &input) == nil && isChannelProbeInput(input, matchInput)
 	case "array":
 		var inputs []channelProbeResponsesInput
 		if common.Unmarshal(rawInput, &inputs) != nil || len(inputs) == 0 {
@@ -328,7 +314,7 @@ func matchesChannelProbeResponsesInput(rawInput json.RawMessage) bool {
 				continue
 			case "user":
 				userInputs++
-				if !matchesChannelProbeResponsesContent(input.Content) {
+				if !matchesChannelProbeResponsesContent(input.Content, matchInput) {
 					return false
 				}
 			default:
@@ -341,10 +327,10 @@ func matchesChannelProbeResponsesInput(rawInput json.RawMessage) bool {
 	}
 }
 
-func matchesChannelProbeResponsesContent(rawContent json.RawMessage) bool {
+func matchesChannelProbeResponsesContent(rawContent json.RawMessage, matchInput string) bool {
 	if common.GetJsonType(rawContent) == "string" {
 		var content string
-		return common.Unmarshal(rawContent, &content) == nil && isChannelProbeHi(content)
+		return common.Unmarshal(rawContent, &content) == nil && isChannelProbeInput(content, matchInput)
 	}
 	if common.GetJsonType(rawContent) != "array" {
 		return false
@@ -355,12 +341,12 @@ func matchesChannelProbeResponsesContent(rawContent json.RawMessage) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(content[0].Type), "input_text") &&
-		isChannelProbeHi(content[0].Text)
+		isChannelProbeInput(content[0].Text, matchInput)
 }
 
-func matchesChannelProbeChatContent(content any) bool {
+func matchesChannelProbeChatContent(content any, matchInput string) bool {
 	if text, ok := content.(string); ok {
-		return isChannelProbeHi(text)
+		return isChannelProbeInput(text, matchInput)
 	}
 
 	rawContent, err := common.Marshal(content)
@@ -371,7 +357,8 @@ func matchesChannelProbeChatContent(content any) bool {
 	if common.Unmarshal(rawContent, &parts) != nil || len(parts) != 1 {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(parts[0].Type), "text") && isChannelProbeHi(parts[0].Text)
+	return strings.EqualFold(strings.TrimSpace(parts[0].Type), "text") &&
+		isChannelProbeInput(parts[0].Text, matchInput)
 }
 
 func channelProbeRawHasValue(raw json.RawMessage) bool {
@@ -379,11 +366,17 @@ func channelProbeRawHasValue(raw json.RawMessage) bool {
 	return len(value) > 0 && !bytes.Equal(value, []byte("null")) && !bytes.Equal(value, []byte(`""`))
 }
 
-func isChannelProbeHi(value string) bool {
-	return strings.EqualFold(strings.TrimSpace(value), "hi")
+func isChannelProbeInput(value string, matchInput string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), matchInput)
 }
 
-func serveChannelProbeResponse(c *gin.Context, relayMode int, request dto.Request, delay time.Duration) {
+func serveChannelProbeResponse(
+	c *gin.Context,
+	relayMode int,
+	request dto.Request,
+	config ResponseConfig,
+	delay time.Duration,
+) {
 	createdAt := time.Now().Unix()
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -398,10 +391,13 @@ func serveChannelProbeResponse(c *gin.Context, relayMode int, request dto.Reques
 	case relayconstant.RelayModeResponses:
 		responsesRequest := request.(*dto.OpenAIResponsesRequest)
 		if responsesRequest.IsStream(c) {
-			writeChannelProbeResponsesStream(c, buildChannelProbeResponsesStreamResponse(responsesRequest, createdAt, completedAt))
+			writeChannelProbeResponsesStream(
+				c,
+				buildChannelProbeResponsesStreamResponse(responsesRequest, config, createdAt, completedAt),
+			)
 			return
 		}
-		response := buildChannelProbeResponsesResponse(responsesRequest, createdAt, completedAt)
+		response := buildChannelProbeResponsesResponse(responsesRequest, config, createdAt, completedAt)
 		data, err := common.Marshal(response)
 		if err == nil {
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
@@ -409,7 +405,7 @@ func serveChannelProbeResponse(c *gin.Context, relayMode int, request dto.Reques
 	case relayconstant.RelayModeChatCompletions:
 		chatRequest := request.(*dto.GeneralOpenAIRequest)
 		if chatRequest.IsStream(c) {
-			writeChannelProbeChatStream(c, chatRequest, createdAt)
+			writeChannelProbeChatStream(c, chatRequest, config, createdAt)
 			return
 		}
 		response := channelProbeChatResponse{
@@ -421,17 +417,17 @@ func serveChannelProbeResponse(c *gin.Context, relayMode int, request dto.Reques
 				Index: 0,
 				Message: channelProbeChatMessage{
 					Role:    "assistant",
-					Content: channelProbeResponseText,
+					Content: config.ResponseText,
 				},
 				FinishReason: "stop",
 			}},
 			Usage: channelProbeChatUsage{
-				PromptTokens:     channelProbeInputTokens,
-				CompletionTokens: channelProbeOutputTokens,
-				TotalTokens:      channelProbeTotalTokens,
+				PromptTokens:     config.InputTokens,
+				CompletionTokens: config.OutputTokens,
+				TotalTokens:      config.TotalTokens(),
 				PromptTokensDetails: channelProbeResponsesInputTokenDetails{
-					CacheWriteTokens: channelProbeCacheWriteTokens,
-					CachedTokens:     channelProbeCachedTokens,
+					CacheWriteTokens: config.CacheWriteTokens,
+					CachedTokens:     config.CachedTokens,
 				},
 			},
 		}
@@ -442,8 +438,13 @@ func serveChannelProbeResponse(c *gin.Context, relayMode int, request dto.Reques
 	}
 }
 
-func buildChannelProbeResponsesResponse(request *dto.OpenAIResponsesRequest, createdAt int64, completedAt int64) *channelProbeResponsesResponse {
-	fields := buildChannelProbeResponsesFields(request, createdAt, completedAt)
+func buildChannelProbeResponsesResponse(
+	request *dto.OpenAIResponsesRequest,
+	config ResponseConfig,
+	createdAt int64,
+	completedAt int64,
+) *channelProbeResponsesResponse {
+	fields := buildChannelProbeResponsesFields(request, config, createdAt, completedAt)
 	return &channelProbeResponsesResponse{
 		channelProbeResponsesFields: fields,
 		Output: []channelProbeResponsesJSONOutput{{
@@ -451,14 +452,19 @@ func buildChannelProbeResponsesResponse(request *dto.OpenAIResponsesRequest, cre
 			Role: "assistant",
 			Content: []channelProbeResponsesJSONOutputContent{{
 				Type: "output_text",
-				Text: channelProbeResponseText,
+				Text: config.ResponseText,
 			}},
 		}},
 	}
 }
 
-func buildChannelProbeResponsesStreamResponse(request *dto.OpenAIResponsesRequest, createdAt int64, completedAt int64) *channelProbeResponsesStreamResponse {
-	fields := buildChannelProbeResponsesFields(request, createdAt, completedAt)
+func buildChannelProbeResponsesStreamResponse(
+	request *dto.OpenAIResponsesRequest,
+	config ResponseConfig,
+	createdAt int64,
+	completedAt int64,
+) *channelProbeResponsesStreamResponse {
+	fields := buildChannelProbeResponsesFields(request, config, createdAt, completedAt)
 	return &channelProbeResponsesStreamResponse{
 		channelProbeResponsesFields: fields,
 		Output: []channelProbeResponsesStreamOutput{{
@@ -468,7 +474,7 @@ func buildChannelProbeResponsesStreamResponse(request *dto.OpenAIResponsesReques
 			Role:   "assistant",
 			Content: []channelProbeResponsesStreamOutputContent{{
 				Type:        "output_text",
-				Text:        channelProbeResponseText,
+				Text:        config.ResponseText,
 				Annotations: []any{},
 				Logprobs:    []any{},
 			}},
@@ -476,7 +482,12 @@ func buildChannelProbeResponsesStreamResponse(request *dto.OpenAIResponsesReques
 	}
 }
 
-func buildChannelProbeResponsesFields(request *dto.OpenAIResponsesRequest, createdAt int64, completedAt int64) channelProbeResponsesFields {
+func buildChannelProbeResponsesFields(
+	request *dto.OpenAIResponsesRequest,
+	config ResponseConfig,
+	createdAt int64,
+	completedAt int64,
+) channelProbeResponsesFields {
 	temperature := 1.0
 	if request.Temperature != nil {
 		temperature = *request.Temperature
@@ -525,17 +536,17 @@ func buildChannelProbeResponsesFields(request *dto.OpenAIResponsesRequest, creat
 		TopP:                 topP,
 		Truncation:           channelProbeRawOrDefault(request.Truncation, `"disabled"`),
 		Usage: &channelProbeResponsesUsage{
-			InputTokens: channelProbeInputTokens,
+			InputTokens: config.InputTokens,
 			InputTokensDetails: channelProbeResponsesInputTokenDetails{
-				CacheWriteTokens: channelProbeCacheWriteTokens,
-				CachedTokens:     channelProbeCachedTokens,
+				CacheWriteTokens: config.CacheWriteTokens,
+				CachedTokens:     config.CachedTokens,
 			},
-			OutputTokens:        channelProbeOutputTokens,
+			OutputTokens:        config.OutputTokens,
 			OutputTokensDetails: channelProbeResponsesOutputTokenDetails{},
-			TotalTokens:         channelProbeTotalTokens,
+			TotalTokens:         config.TotalTokens(),
 			PromptTokensDetails: channelProbeResponsesInputTokenDetails{
-				CacheWriteTokens: channelProbeCacheWriteTokens,
-				CachedTokens:     channelProbeCachedTokens,
+				CacheWriteTokens: config.CacheWriteTokens,
+				CachedTokens:     config.CachedTokens,
 			},
 		},
 		User:     request.User,
@@ -599,7 +610,7 @@ func writeChannelProbeResponsesStream(c *gin.Context, response *channelProbeResp
 			OutputIndex:    &outputIndex,
 			ContentIndex:   &contentIndex,
 			ItemID:         completedOutput.ID,
-			Delta:          channelProbeResponseText,
+			Delta:          completedPart.Text,
 			Logprobs:       &emptyLogprobs,
 		},
 		{
@@ -608,7 +619,7 @@ func writeChannelProbeResponsesStream(c *gin.Context, response *channelProbeResp
 			OutputIndex:    &outputIndex,
 			ContentIndex:   &contentIndex,
 			ItemID:         completedOutput.ID,
-			Text:           channelProbeResponseText,
+			Text:           completedPart.Text,
 			Logprobs:       &emptyLogprobs,
 		},
 		{
@@ -638,7 +649,12 @@ func writeChannelProbeResponsesStream(c *gin.Context, response *channelProbeResp
 	}
 }
 
-func writeChannelProbeChatStream(c *gin.Context, request *dto.GeneralOpenAIRequest, createdAt int64) {
+func writeChannelProbeChatStream(
+	c *gin.Context,
+	request *dto.GeneralOpenAIRequest,
+	config ResponseConfig,
+	createdAt int64,
+) {
 	helper.SetEventStreamHeaders(c)
 	responseID := "chatcmpl-" + common.GetUUID()
 	start := helper.GenerateStartEmptyResponse(responseID, createdAt, request.Model, nil)
@@ -650,7 +666,7 @@ func writeChannelProbeChatStream(c *gin.Context, request *dto.GeneralOpenAIReque
 		Choices: []dto.ChatCompletionsStreamResponseChoice{{
 			Index: 0,
 			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
-				Content: common.GetPointer(channelProbeResponseText),
+				Content: common.GetPointer(config.ResponseText),
 			},
 		}},
 	}
@@ -662,19 +678,19 @@ func writeChannelProbeChatStream(c *gin.Context, request *dto.GeneralOpenAIReque
 	}
 	if request.StreamOptions != nil && request.StreamOptions.IncludeUsage {
 		usage := dto.Usage{
-			PromptTokens:     channelProbeInputTokens,
-			CompletionTokens: channelProbeOutputTokens,
-			TotalTokens:      channelProbeTotalTokens,
+			PromptTokens:     config.InputTokens,
+			CompletionTokens: config.OutputTokens,
+			TotalTokens:      config.TotalTokens(),
 			PromptTokensDetails: dto.InputTokenDetails{
-				CacheWriteTokens: channelProbeCacheWriteTokens,
-				CachedTokens:     channelProbeCachedTokens,
+				CacheWriteTokens: config.CacheWriteTokens,
+				CachedTokens:     config.CachedTokens,
 			},
 			CompletionTokenDetails: dto.OutputTokenDetails{},
-			InputTokens:            channelProbeInputTokens,
-			OutputTokens:           channelProbeOutputTokens,
+			InputTokens:            config.InputTokens,
+			OutputTokens:           config.OutputTokens,
 			InputTokensDetails: &dto.InputTokenDetails{
-				CacheWriteTokens: channelProbeCacheWriteTokens,
-				CachedTokens:     channelProbeCachedTokens,
+				CacheWriteTokens: config.CacheWriteTokens,
+				CachedTokens:     config.CachedTokens,
 			},
 		}
 		if helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseID, createdAt, request.Model, usage)) != nil {

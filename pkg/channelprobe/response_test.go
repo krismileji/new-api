@@ -19,6 +19,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func useProbeResponseOptionMap(t *testing.T, values map[string]string) {
+	t.Helper()
+	common.OptionMapRWMutex.Lock()
+	original := common.OptionMap
+	common.OptionMap = make(map[string]string, len(values))
+	for key, value := range values {
+		common.OptionMap[key] = value
+	}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = original
+		common.OptionMapRWMutex.Unlock()
+	})
+}
+
+func testProbeResponseConfig() ResponseConfig {
+	config := DefaultResponseConfig()
+	config.ResponseText = "Configured probe response"
+	config.InputTokens = 7
+	config.CacheWriteTokens = 1
+	config.CachedTokens = 2
+	config.OutputTokens = 11
+	return config
+}
+
 func TestMatchesChannelProbeRequest(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -152,32 +178,30 @@ func TestMatchesChannelProbeRequest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.want, matchesChannelProbeRequest(test.relayMode, test.request))
+			assert.Equal(t, test.want, matchesChannelProbeRequest(test.relayMode, test.request, DefaultMatchInput))
 		})
 	}
 }
 
-func TestMiddlewareRoutesProbeRequestsBeforeDownstream(t *testing.T) {
-	common.OptionMapRWMutex.Lock()
-	optionMapWasNil := common.OptionMap == nil
-	if optionMapWasNil {
-		common.OptionMap = make(map[string]string)
+func TestMatchesChannelProbeRequestUsesConfiguredInput(t *testing.T) {
+	request := &dto.OpenAIResponsesRequest{
+		Model: "gpt-5.6-sol",
+		Input: json.RawMessage(`" health check "`),
 	}
-	previousValue, hadPreviousValue := common.OptionMap[OptionKey]
-	common.OptionMap[OptionKey] = "true"
-	common.OptionMapRWMutex.Unlock()
-	t.Cleanup(func() {
-		common.OptionMapRWMutex.Lock()
-		defer common.OptionMapRWMutex.Unlock()
-		if optionMapWasNil {
-			common.OptionMap = nil
-			return
-		}
-		if hadPreviousValue {
-			common.OptionMap[OptionKey] = previousValue
-			return
-		}
-		delete(common.OptionMap, OptionKey)
+
+	assert.True(t, matchesChannelProbeRequest(relayconstant.RelayModeResponses, request, "health check"))
+	assert.False(t, matchesChannelProbeRequest(relayconstant.RelayModeResponses, request, DefaultMatchInput))
+}
+
+func TestMiddlewareRoutesProbeRequestsBeforeDownstream(t *testing.T) {
+	useProbeResponseOptionMap(t, map[string]string{
+		OptionKey:             "true",
+		MatchInputOptionKey:   "health check",
+		ResponseTextOptionKey: "healthy",
+		MinDelayMsOptionKey:   "0",
+		MaxDelayMsOptionKey:   "0",
+		InputTokensOptionKey:  "7",
+		OutputTokensOptionKey: "11",
 	})
 
 	t.Run("intercepts a matching request without calling downstream", func(t *testing.T) {
@@ -190,20 +214,22 @@ func TestMiddlewareRoutesProbeRequestsBeforeDownstream(t *testing.T) {
 			c.Status(http.StatusNoContent)
 		})
 
-		requestContext, cancel := context.WithCancel(context.Background())
-		cancel()
 		request := httptest.NewRequest(
 			http.MethodPost,
 			"/v1/responses",
-			strings.NewReader(`{"model":"gpt-5.6-sol","input":"hi"}`),
-		).WithContext(requestContext)
+			strings.NewReader(`{"model":"gpt-5.6-sol","input":"health check"}`),
+		)
 		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 
 		router.ServeHTTP(recorder, request)
 
 		assert.False(t, downstreamCalled)
-		assert.Empty(t, recorder.Body.String())
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"text":"healthy"`)
+		assert.Contains(t, recorder.Body.String(), `"input_tokens":7`)
+		assert.Contains(t, recorder.Body.String(), `"output_tokens":11`)
+		assert.Contains(t, recorder.Body.String(), `"total_tokens":18`)
 	})
 
 	t.Run("passes a non-matching request with its body reusable", func(t *testing.T) {
@@ -251,8 +277,9 @@ func TestServeChannelProbeResponsesJSON(t *testing.T) {
 		Temperature:       &temperature,
 		TopP:              &topP,
 	}
+	config := testProbeResponseConfig()
 
-	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, 0)
+	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, config, 0)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "application/json; charset=utf-8", recorder.Header().Get("Content-Type"))
@@ -266,11 +293,11 @@ func TestServeChannelProbeResponsesJSON(t *testing.T) {
 	require.Len(t, response.Output, 1)
 	assert.Equal(t, "assistant", response.Output[0].Role)
 	require.Len(t, response.Output[0].Content, 1)
-	assert.Equal(t, channelProbeResponseText, response.Output[0].Content[0].Text)
+	assert.Equal(t, config.ResponseText, response.Output[0].Content[0].Text)
 	require.NotNil(t, response.Usage)
-	assert.Equal(t, 4399, response.Usage.TotalTokens)
-	assert.Equal(t, 172, response.Usage.InputTokensDetails.CacheWriteTokens)
-	assert.Equal(t, 4001, response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 18, response.Usage.TotalTokens)
+	assert.Equal(t, 1, response.Usage.InputTokensDetails.CacheWriteTokens)
+	assert.Equal(t, 2, response.Usage.InputTokensDetails.CachedTokens)
 	assert.Zero(t, response.Usage.OutputTokensDetails.ReasoningTokens)
 	assert.Zero(t, response.ToolUsage.ImageGen.TotalTokens)
 	assert.Zero(t, response.ToolUsage.WebSearch.NumRequests)
@@ -288,7 +315,7 @@ func TestServeChannelProbeResponsesJSON(t *testing.T) {
 		Usage     json.RawMessage `json:"usage"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &wire))
-	assert.JSONEq(t, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hi. What are you working on?"}]}]`, string(wire.Output))
+	assert.JSONEq(t, `[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Configured probe response"}]}]`, string(wire.Output))
 	assert.JSONEq(t, `{
 		"image_gen": {
 			"input_tokens": 0,
@@ -300,12 +327,12 @@ func TestServeChannelProbeResponsesJSON(t *testing.T) {
 		"web_search": {"num_requests": 0}
 	}`, string(wire.ToolUsage))
 	assert.JSONEq(t, `{
-		"input_tokens": 4387,
-		"input_tokens_details": {"cache_write_tokens": 172, "cached_tokens": 4001},
-		"output_tokens": 12,
+		"input_tokens": 7,
+		"input_tokens_details": {"cache_write_tokens": 1, "cached_tokens": 2},
+		"output_tokens": 11,
 		"output_tokens_details": {"reasoning_tokens": 0},
-		"total_tokens": 4399,
-		"prompt_tokens_details": {"cache_write_tokens": 172, "cached_tokens": 4001}
+		"total_tokens": 18,
+		"prompt_tokens_details": {"cache_write_tokens": 1, "cached_tokens": 2}
 	}`, string(wire.Usage))
 }
 
@@ -320,8 +347,9 @@ func TestServeChannelProbeResponsesStream(t *testing.T) {
 		Input:  json.RawMessage(`"hi"`),
 		Stream: &stream,
 	}
+	config := testProbeResponseConfig()
 
-	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, 0)
+	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, config, 0)
 
 	assert.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 	body := recorder.Body.String()
@@ -369,24 +397,24 @@ func TestServeChannelProbeResponsesStream(t *testing.T) {
 	assert.Empty(t, events[3].Part.Text)
 	assert.Empty(t, events[3].Part.Annotations)
 	assert.Empty(t, events[3].Part.Logprobs)
-	assert.Equal(t, channelProbeResponseText, events[4].Delta)
+	assert.Equal(t, config.ResponseText, events[4].Delta)
 	require.NotNil(t, events[4].Logprobs)
 	assert.Empty(t, *events[4].Logprobs)
-	assert.Equal(t, channelProbeResponseText, events[5].Text)
+	assert.Equal(t, config.ResponseText, events[5].Text)
 	require.NotNil(t, events[6].Part)
-	assert.Equal(t, channelProbeResponseText, events[6].Part.Text)
+	assert.Equal(t, config.ResponseText, events[6].Part.Text)
 	require.NotNil(t, events[7].Item)
 	assert.Equal(t, "completed", events[7].Item.Status)
 	require.NotNil(t, events[8].Response)
 	assert.Equal(t, "completed", events[8].Response.Status)
 	require.Len(t, events[8].Response.Output, 1)
-	assert.Equal(t, channelProbeResponseText, events[8].Response.Output[0].Content[0].Text)
+	assert.Equal(t, config.ResponseText, events[8].Response.Output[0].Content[0].Text)
 	require.NotNil(t, events[8].Response.Usage)
-	assert.Equal(t, 4387, events[8].Response.Usage.InputTokens)
-	assert.Equal(t, 12, events[8].Response.Usage.OutputTokens)
-	assert.Equal(t, 4399, events[8].Response.Usage.TotalTokens)
-	assert.Equal(t, 4001, events[8].Response.Usage.InputTokensDetails.CachedTokens)
-	assert.Equal(t, 172, events[8].Response.Usage.InputTokensDetails.CacheWriteTokens)
+	assert.Equal(t, 7, events[8].Response.Usage.InputTokens)
+	assert.Equal(t, 11, events[8].Response.Usage.OutputTokens)
+	assert.Equal(t, 18, events[8].Response.Usage.TotalTokens)
+	assert.Equal(t, 2, events[8].Response.Usage.InputTokensDetails.CachedTokens)
+	assert.Equal(t, 1, events[8].Response.Usage.InputTokensDetails.CacheWriteTokens)
 	assert.NotContains(t, body, "data: [DONE]")
 }
 
@@ -399,8 +427,9 @@ func TestServeChannelProbeChatJSON(t *testing.T) {
 		Model:    "gpt-5.6-sol",
 		Messages: []dto.Message{{Role: "user", Content: "hi"}},
 	}
+	config := testProbeResponseConfig()
 
-	serveChannelProbeResponse(c, relayconstant.RelayModeChatCompletions, request, 0)
+	serveChannelProbeResponse(c, relayconstant.RelayModeChatCompletions, request, config, 0)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response channelProbeChatResponse
@@ -410,13 +439,13 @@ func TestServeChannelProbeChatJSON(t *testing.T) {
 	assert.Equal(t, "gpt-5.6-sol", response.Model)
 	require.Len(t, response.Choices, 1)
 	assert.Equal(t, "assistant", response.Choices[0].Message.Role)
-	assert.Equal(t, channelProbeResponseText, response.Choices[0].Message.Content)
+	assert.Equal(t, config.ResponseText, response.Choices[0].Message.Content)
 	assert.Equal(t, "stop", response.Choices[0].FinishReason)
-	assert.Equal(t, 4387, response.Usage.PromptTokens)
-	assert.Equal(t, 12, response.Usage.CompletionTokens)
-	assert.Equal(t, 4399, response.Usage.TotalTokens)
-	assert.Equal(t, 4001, response.Usage.PromptTokensDetails.CachedTokens)
-	assert.Equal(t, 172, response.Usage.PromptTokensDetails.CacheWriteTokens)
+	assert.Equal(t, 7, response.Usage.PromptTokens)
+	assert.Equal(t, 11, response.Usage.CompletionTokens)
+	assert.Equal(t, 18, response.Usage.TotalTokens)
+	assert.Equal(t, 2, response.Usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 1, response.Usage.PromptTokensDetails.CacheWriteTokens)
 }
 
 func TestServeChannelProbeChatStream(t *testing.T) {
@@ -431,20 +460,21 @@ func TestServeChannelProbeChatStream(t *testing.T) {
 		Stream:        &stream,
 		StreamOptions: &dto.StreamOptions{IncludeUsage: true},
 	}
+	config := testProbeResponseConfig()
 
-	serveChannelProbeResponse(c, relayconstant.RelayModeChatCompletions, request, 0)
+	serveChannelProbeResponse(c, relayconstant.RelayModeChatCompletions, request, config, 0)
 
 	assert.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 	body := recorder.Body.String()
 	assert.Contains(t, body, `"object":"chat.completion.chunk"`)
-	assert.Contains(t, body, channelProbeResponseText)
+	assert.Contains(t, body, config.ResponseText)
 	assert.Contains(t, body, `"finish_reason":"stop"`)
 	assert.Contains(t, body, `"usage":{`)
-	assert.Contains(t, body, `"prompt_tokens":4387`)
-	assert.Contains(t, body, `"completion_tokens":12`)
-	assert.Contains(t, body, `"total_tokens":4399`)
-	assert.Contains(t, body, `"cached_tokens":4001`)
-	assert.Contains(t, body, `"cache_write_tokens":172`)
+	assert.Contains(t, body, `"prompt_tokens":7`)
+	assert.Contains(t, body, `"completion_tokens":11`)
+	assert.Contains(t, body, `"total_tokens":18`)
+	assert.Contains(t, body, `"cached_tokens":2`)
+	assert.Contains(t, body, `"cache_write_tokens":1`)
 	assert.Contains(t, body, "data: [DONE]")
 }
 
@@ -460,7 +490,7 @@ func TestServeChannelProbeResponseStopsWhenClientCancels(t *testing.T) {
 		Input: json.RawMessage(`"hi"`),
 	}
 
-	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, time.Hour)
+	serveChannelProbeResponse(c, relayconstant.RelayModeResponses, request, DefaultResponseConfig(), time.Hour)
 
 	assert.Empty(t, recorder.Body.String())
 }

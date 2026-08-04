@@ -504,6 +504,14 @@ export type ChannelMonitorSettings = {
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
   probe_response_enabled: boolean
+  probe_response_match_input?: string
+  probe_response_text?: string
+  probe_response_min_delay_ms?: number
+  probe_response_max_delay_ms?: number
+  probe_response_input_tokens?: number
+  probe_response_cache_write_tokens?: number
+  probe_response_cached_tokens?: number
+  probe_response_output_tokens?: number
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]

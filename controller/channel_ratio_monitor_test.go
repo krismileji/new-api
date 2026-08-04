@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -289,6 +290,114 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			assert.Equal(t, test.wantTaskInterval, handler.Interval())
 			assert.Equal(t, model.SystemTaskTypeChannelRatioMonitor, handler.Type())
 		})
+	}
+}
+
+func TestChannelMonitorProbeResponseSettingsUseDefaultsAndStoredValues(t *testing.T) {
+	t.Run("missing options keep the existing response contract", func(t *testing.T) {
+		useChannelMonitorOptionMap(t, map[string]string{})
+		settings := getChannelMonitorSettings()
+
+		assert.Equal(t, channelprobe.DefaultMatchInput, settings.ProbeResponseMatchInput)
+		assert.Equal(t, channelprobe.DefaultResponseText, settings.ProbeResponseText)
+		assert.Equal(t, channelprobe.DefaultMinDelayMs, settings.ProbeResponseMinDelayMs)
+		assert.Equal(t, channelprobe.DefaultMaxDelayMs, settings.ProbeResponseMaxDelayMs)
+		assert.Equal(t, channelprobe.DefaultInputTokens, settings.ProbeResponseInputTokens)
+		assert.Equal(t, channelprobe.DefaultCacheWriteTokens, settings.ProbeResponseCacheWriteTokens)
+		assert.Equal(t, channelprobe.DefaultCachedTokens, settings.ProbeResponseCachedTokens)
+		assert.Equal(t, channelprobe.DefaultOutputTokens, settings.ProbeResponseOutputTokens)
+	})
+
+	t.Run("stored options are returned", func(t *testing.T) {
+		useChannelMonitorOptionMap(t, map[string]string{
+			channelMonitorProbeResponseOption:                 "true",
+			channelMonitorProbeResponseMatchInputOption:       "health check",
+			channelMonitorProbeResponseTextOption:             "healthy",
+			channelMonitorProbeResponseMinDelayMsOption:       "125",
+			channelMonitorProbeResponseMaxDelayMsOption:       "875",
+			channelMonitorProbeResponseInputTokensOption:      "7",
+			channelMonitorProbeResponseCacheWriteTokensOption: "1",
+			channelMonitorProbeResponseCachedTokensOption:     "2",
+			channelMonitorProbeResponseOutputTokensOption:     "11",
+		})
+		settings := getChannelMonitorSettings()
+
+		assert.True(t, settings.ProbeResponseEnabled)
+		assert.Equal(t, "health check", settings.ProbeResponseMatchInput)
+		assert.Equal(t, "healthy", settings.ProbeResponseText)
+		assert.Equal(t, 125, settings.ProbeResponseMinDelayMs)
+		assert.Equal(t, 875, settings.ProbeResponseMaxDelayMs)
+		assert.Equal(t, 7, settings.ProbeResponseInputTokens)
+		assert.Equal(t, 1, settings.ProbeResponseCacheWriteTokens)
+		assert.Equal(t, 2, settings.ProbeResponseCachedTokens)
+		assert.Equal(t, 11, settings.ProbeResponseOutputTokens)
+	})
+}
+
+func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	invalidRequests := []map[string]any{
+		{"probe_response_match_input": " "},
+		{"probe_response_match_input": strings.Repeat("x", channelprobe.MaxMatchInputLength+1)},
+		{"probe_response_text": " "},
+		{"probe_response_text": strings.Repeat("x", channelprobe.MaxResponseTextLength+1)},
+		{"probe_response_min_delay_ms": -1},
+		{"probe_response_min_delay_ms": channelprobe.DefaultMaxDelayMs + 1},
+		{"probe_response_max_delay_ms": channelprobe.DefaultMinDelayMs - 1},
+		{"probe_response_max_delay_ms": channelprobe.MaxDelayMs + 1},
+		{"probe_response_input_tokens": -1},
+		{"probe_response_output_tokens": channelprobe.MaxTokenCount + 1},
+	}
+	for _, request := range invalidRequests {
+		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", request)
+		UpdateChannelMonitorSettings(ctx)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	}
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"probe_response_enabled":            true,
+		"probe_response_match_input":        " health check ",
+		"probe_response_text":               " healthy ",
+		"probe_response_min_delay_ms":       125,
+		"probe_response_max_delay_ms":       875,
+		"probe_response_input_tokens":       7,
+		"probe_response_cache_write_tokens": 1,
+		"probe_response_cached_tokens":      2,
+		"probe_response_output_tokens":      11,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.True(t, response.Data.ProbeResponseEnabled)
+	assert.Equal(t, "health check", response.Data.ProbeResponseMatchInput)
+	assert.Equal(t, "healthy", response.Data.ProbeResponseText)
+	assert.Equal(t, 125, response.Data.ProbeResponseMinDelayMs)
+	assert.Equal(t, 875, response.Data.ProbeResponseMaxDelayMs)
+	assert.Equal(t, 7, response.Data.ProbeResponseInputTokens)
+	assert.Equal(t, 1, response.Data.ProbeResponseCacheWriteTokens)
+	assert.Equal(t, 2, response.Data.ProbeResponseCachedTokens)
+	assert.Equal(t, 11, response.Data.ProbeResponseOutputTokens)
+
+	wantOptions := map[string]string{
+		channelMonitorProbeResponseOption:                 "true",
+		channelMonitorProbeResponseMatchInputOption:       "health check",
+		channelMonitorProbeResponseTextOption:             "healthy",
+		channelMonitorProbeResponseMinDelayMsOption:       "125",
+		channelMonitorProbeResponseMaxDelayMsOption:       "875",
+		channelMonitorProbeResponseInputTokensOption:      "7",
+		channelMonitorProbeResponseCacheWriteTokensOption: "1",
+		channelMonitorProbeResponseCachedTokensOption:     "2",
+		channelMonitorProbeResponseOutputTokensOption:     "11",
+	}
+	for key, want := range wantOptions {
+		var option model.Option
+		require.NoError(t, db.Where("key = ?", key).First(&option).Error)
+		assert.Equal(t, want, option.Value)
 	}
 }
 

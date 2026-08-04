@@ -53,6 +53,18 @@ export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
 export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
+export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
+export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
+export const DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS = 500
+export const DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS = 2_000
+export const DEFAULT_PROBE_RESPONSE_INPUT_TOKENS = 4_387
+export const DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS = 172
+export const DEFAULT_PROBE_RESPONSE_CACHED_TOKENS = 4_001
+export const DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS = 12
+export const MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH = 4_096
+export const MAX_PROBE_RESPONSE_TEXT_LENGTH = 16_384
+export const MAX_PROBE_RESPONSE_DELAY_MS = 600_000
+export const MAX_PROBE_RESPONSE_TOKEN_COUNT = 1_000_000
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
@@ -558,6 +570,58 @@ export function createChannelMonitorSettingsSchema() {
           '请输入有效的通知邮箱'
         ),
       probeResponseEnabled: z.boolean(),
+      probeResponseMatchInput: z
+        .string()
+        .trim()
+        .min(1, '探针匹配输入不能为空')
+        .max(
+          MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
+          '探针匹配输入不能超过 4096 个字符'
+        ),
+      probeResponseText: z
+        .string()
+        .trim()
+        .min(1, '探针响应文本不能为空')
+        .max(
+          MAX_PROBE_RESPONSE_TEXT_LENGTH,
+          '探针响应文本不能超过 16384 个字符'
+        ),
+      probeResponseMinDelayMs: z.coerce
+        .number()
+        .int('探针最小延迟必须是整数')
+        .min(0, '探针最小延迟不能小于 0 毫秒')
+        .max(MAX_PROBE_RESPONSE_DELAY_MS, '探针最小延迟不能超过 600000 毫秒'),
+      probeResponseMaxDelayMs: z.coerce
+        .number()
+        .int('探针最大延迟必须是整数')
+        .min(0, '探针最大延迟不能小于 0 毫秒')
+        .max(MAX_PROBE_RESPONSE_DELAY_MS, '探针最大延迟不能超过 600000 毫秒'),
+      probeResponseInputTokens: z.coerce
+        .number()
+        .int('探针输入 Token 必须是整数')
+        .min(0, '探针输入 Token 不能小于 0')
+        .max(MAX_PROBE_RESPONSE_TOKEN_COUNT, '探针输入 Token 不能超过 1000000'),
+      probeResponseCacheWriteTokens: z.coerce
+        .number()
+        .int('探针缓存写 Token 必须是整数')
+        .min(0, '探针缓存写 Token 不能小于 0')
+        .max(
+          MAX_PROBE_RESPONSE_TOKEN_COUNT,
+          '探针缓存写 Token 不能超过 1000000'
+        ),
+      probeResponseCachedTokens: z.coerce
+        .number()
+        .int('探针缓存命中 Token 必须是整数')
+        .min(0, '探针缓存命中 Token 不能小于 0')
+        .max(
+          MAX_PROBE_RESPONSE_TOKEN_COUNT,
+          '探针缓存命中 Token 不能超过 1000000'
+        ),
+      probeResponseOutputTokens: z.coerce
+        .number()
+        .int('探针输出 Token 必须是整数')
+        .min(0, '探针输出 Token 不能小于 0')
+        .max(MAX_PROBE_RESPONSE_TOKEN_COUNT, '探针输出 Token 不能超过 1000000'),
       relayResponseHeaderTimeoutSeconds: z.coerce
         .number()
         .int('上游响应等待时间必须是整数')
@@ -629,6 +693,13 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['smartScheduleGroupPolicies'],
           message: '启用智能调度前请至少配置一个分组策略',
+        })
+      }
+      if (values.probeResponseMinDelayMs > values.probeResponseMaxDelayMs) {
+        context.addIssue({
+          code: 'custom',
+          path: ['probeResponseMinDelayMs'],
+          message: '探针最小延迟不能大于最大延迟',
         })
       }
       const configuredGroups = new Set<string>()

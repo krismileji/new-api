@@ -73,7 +73,17 @@ function UpstreamRequestTimeoutFieldFixture() {
 
 function ProbeResponseFieldsFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
-    defaultValues: { probeResponseEnabled: true },
+    defaultValues: {
+      probeResponseEnabled: true,
+      probeResponseMatchInput: 'hi',
+      probeResponseText: 'Hi. What are you working on?',
+      probeResponseMinDelayMs: 500,
+      probeResponseMaxDelayMs: 2000,
+      probeResponseInputTokens: 4387,
+      probeResponseCacheWriteTokens: 172,
+      probeResponseCachedTokens: 4001,
+      probeResponseOutputTokens: 12,
+    },
   })
   return (
     <Form {...form}>
@@ -268,8 +278,13 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('启用本地探针响应'))
     assert.ok(markup.includes('aria-label="启用本地探针响应"'))
     assert.ok(markup.includes('data-checked'))
+    assert.ok(markup.includes('匹配输入'))
+    assert.ok(markup.includes('响应文本'))
+    assert.ok(markup.includes('最小延迟'))
+    assert.ok(markup.includes('最大延迟'))
+    assert.ok(markup.includes('输入 Token'))
+    assert.ok(markup.includes('输出 Token'))
     assert.ok(markup.includes('Hi. What are you working on?'))
-    assert.ok(markup.includes('0.5-2 秒'))
     assert.ok(markup.includes('/v1/responses'))
     assert.ok(markup.includes('/v1/chat/completions'))
     assert.ok(markup.includes('渠道连通性测试不经过此拦截'))

@@ -56,6 +56,14 @@
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
 | `email_notification_types` | `ChannelMonitorEmailNotificationTypes` | 六类全选 | `ratio_change`、`balance_warning`、`channel_disabled`、`group_membership_removed`、`upstream_sync_failed`、`task_failed`；开启邮件通知时至少选择一类 |
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
+| `probe_response_match_input` | `ChannelMonitorProbeResponseMatchInput` | `hi` | 去首尾空白后不能为空，最长 4096 个字符 |
+| `probe_response_text` | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 去首尾空白后不能为空，最长 16384 个字符 |
+| `probe_response_min_delay_ms` | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000` 毫秒，不能大于最大延迟 |
+| `probe_response_max_delay_ms` | `ChannelMonitorProbeResponseMaxDelayMilliseconds` | `2000` | `0..600000` 毫秒，不能小于最小延迟 |
+| `probe_response_input_tokens` | `ChannelMonitorProbeResponseInputTokens` | `4387` | `0..1000000` |
+| `probe_response_cache_write_tokens` | `ChannelMonitorProbeResponseCacheWriteTokens` | `172` | `0..1000000` |
+| `probe_response_cached_tokens` | `ChannelMonitorProbeResponseCachedTokens` | `4001` | `0..1000000` |
+| `probe_response_output_tokens` | `ChannelMonitorProbeResponseOutputTokens` | `12` | `0..1000000` |
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；流式请求限制首个有效模型事件，非流式请求限制响应头；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个完整分组策略；未配置分组不参与调度 |

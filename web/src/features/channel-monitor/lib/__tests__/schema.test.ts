@@ -28,6 +28,8 @@ import {
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
+  MAX_PROBE_RESPONSE_DELAY_MS,
+  MAX_PROBE_RESPONSE_TOKEN_COUNT,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
@@ -132,6 +134,14 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: true,
+      probeResponseMatchInput: ' health check ',
+      probeResponseText: ' healthy ',
+      probeResponseMinDelayMs: 125,
+      probeResponseMaxDelayMs: 875,
+      probeResponseInputTokens: 7,
+      probeResponseCacheWriteTokens: 1,
+      probeResponseCachedTokens: 2,
+      probeResponseOutputTokens: 11,
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
@@ -148,6 +158,14 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.autoUpdateConsecutiveFailureLimit, 2)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.probeResponseEnabled, true)
+    assert.equal(settings.probeResponseMatchInput, 'health check')
+    assert.equal(settings.probeResponseText, 'healthy')
+    assert.equal(settings.probeResponseMinDelayMs, 125)
+    assert.equal(settings.probeResponseMaxDelayMs, 875)
+    assert.equal(settings.probeResponseInputTokens, 7)
+    assert.equal(settings.probeResponseCacheWriteTokens, 1)
+    assert.equal(settings.probeResponseCachedTokens, 2)
+    assert.equal(settings.probeResponseOutputTokens, 11)
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
     assert.equal(settings.smartSchedulePerformanceWindowMinutes, 60)
     assert.equal(settings.smartScheduleStabilityWindowMinutes, 120)
@@ -168,6 +186,14 @@ describe('channel monitor settings schema', () => {
       notificationEmail: 'alerts@example.com',
       emailNotificationTypes: [],
       probeResponseEnabled: false,
+      probeResponseMatchInput: 'hi',
+      probeResponseText: 'Hi. What are you working on?',
+      probeResponseMinDelayMs: 500,
+      probeResponseMaxDelayMs: 2000,
+      probeResponseInputTokens: 4387,
+      probeResponseCacheWriteTokens: 172,
+      probeResponseCachedTokens: 4001,
+      probeResponseOutputTokens: 12,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
@@ -201,6 +227,14 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: false,
+      probeResponseMatchInput: 'hi',
+      probeResponseText: 'Hi. What are you working on?',
+      probeResponseMinDelayMs: 500,
+      probeResponseMaxDelayMs: 2000,
+      probeResponseInputTokens: 4387,
+      probeResponseCacheWriteTokens: 172,
+      probeResponseCachedTokens: 4001,
+      probeResponseOutputTokens: 12,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
@@ -211,6 +245,20 @@ describe('channel monitor settings schema', () => {
       smartScheduleForceReset: false,
     }
     const schema = createChannelMonitorSettingsSchema()
+    for (const patch of [
+      { probeResponseMatchInput: '' },
+      { probeResponseText: '' },
+      { probeResponseMinDelayMs: -1 },
+      { probeResponseMaxDelayMs: MAX_PROBE_RESPONSE_DELAY_MS + 1 },
+      { probeResponseMinDelayMs: 2001, probeResponseMaxDelayMs: 2000 },
+      { probeResponseInputTokens: -1 },
+      { probeResponseOutputTokens: MAX_PROBE_RESPONSE_TOKEN_COUNT + 1 },
+    ]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, ...patch }).success,
+        false
+      )
+    }
     for (const autoUpdateConsecutiveFailureLimit of [
       MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
       MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
@@ -419,6 +467,14 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: false,
+      probeResponseMatchInput: 'hi',
+      probeResponseText: 'Hi. What are you working on?',
+      probeResponseMinDelayMs: 500,
+      probeResponseMaxDelayMs: 2000,
+      probeResponseInputTokens: 4387,
+      probeResponseCacheWriteTokens: 172,
+      probeResponseCachedTokens: 4001,
+      probeResponseOutputTokens: 12,
       relayResponseHeaderTimeoutSeconds: 0,
       smartScheduleEnabled: true,
       smartScheduleGroupPolicies: [groupPolicy],

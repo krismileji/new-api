@@ -32,6 +32,14 @@ const (
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
+	channelMonitorProbeResponseMatchInputOption                = channelprobe.MatchInputOptionKey
+	channelMonitorProbeResponseTextOption                      = channelprobe.ResponseTextOptionKey
+	channelMonitorProbeResponseMinDelayMsOption                = channelprobe.MinDelayMsOptionKey
+	channelMonitorProbeResponseMaxDelayMsOption                = channelprobe.MaxDelayMsOptionKey
+	channelMonitorProbeResponseInputTokensOption               = channelprobe.InputTokensOptionKey
+	channelMonitorProbeResponseCacheWriteTokensOption          = channelprobe.CacheWriteTokensOptionKey
+	channelMonitorProbeResponseCachedTokensOption              = channelprobe.CachedTokensOptionKey
+	channelMonitorProbeResponseOutputTokensOption              = channelprobe.OutputTokensOptionKey
 	channelMonitorGroupCoefficientsOption                      = model.ChannelMonitorGroupCoefficientsOption
 	channelMonitorChannelOrderOption                           = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption                   = "ChannelMonitorSmartScheduleEnabled"
@@ -110,6 +118,14 @@ type channelMonitorSettings struct {
 	NotificationEmail                     string                     `json:"notification_email"`
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
 	ProbeResponseEnabled                  bool                       `json:"probe_response_enabled"`
+	ProbeResponseMatchInput               string                     `json:"probe_response_match_input"`
+	ProbeResponseText                     string                     `json:"probe_response_text"`
+	ProbeResponseMinDelayMs               int                        `json:"probe_response_min_delay_ms"`
+	ProbeResponseMaxDelayMs               int                        `json:"probe_response_max_delay_ms"`
+	ProbeResponseInputTokens              int                        `json:"probe_response_input_tokens"`
+	ProbeResponseCacheWriteTokens         int                        `json:"probe_response_cache_write_tokens"`
+	ProbeResponseCachedTokens             int                        `json:"probe_response_cached_tokens"`
+	ProbeResponseOutputTokens             int                        `json:"probe_response_output_tokens"`
 	RelayHeaderTimeoutSeconds             int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled                  bool                       `json:"smart_schedule_enabled"`
 	SmartScheduleGroupPolicies            smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
@@ -136,6 +152,14 @@ type channelMonitorSettingsUpdateRequest struct {
 	NotificationEmail                     *string                     `json:"notification_email"`
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
 	ProbeResponseEnabled                  *bool                       `json:"probe_response_enabled"`
+	ProbeResponseMatchInput               *string                     `json:"probe_response_match_input"`
+	ProbeResponseText                     *string                     `json:"probe_response_text"`
+	ProbeResponseMinDelayMs               *int                        `json:"probe_response_min_delay_ms"`
+	ProbeResponseMaxDelayMs               *int                        `json:"probe_response_max_delay_ms"`
+	ProbeResponseInputTokens              *int                        `json:"probe_response_input_tokens"`
+	ProbeResponseCacheWriteTokens         *int                        `json:"probe_response_cache_write_tokens"`
+	ProbeResponseCachedTokens             *int                        `json:"probe_response_cached_tokens"`
+	ProbeResponseOutputTokens             *int                        `json:"probe_response_output_tokens"`
 	RelayHeaderTimeoutSeconds             *int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled                  *bool                       `json:"smart_schedule_enabled"`
 	SmartScheduleGroupPolicies            *smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
@@ -164,7 +188,6 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
 	rawEmailNotificationTypes := common.OptionMap[channelMonitorEmailNotificationTypesOption]
-	rawProbeResponseEnabled := common.OptionMap[channelMonitorProbeResponseOption]
 	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleGroupPolicies := common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption]
@@ -218,10 +241,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		emailNotificationEnabled = false
 	}
 	emailNotificationTypes := parseChannelMonitorEmailNotificationTypes(rawEmailNotificationTypes)
-	probeResponseEnabled, err := strconv.ParseBool(rawProbeResponseEnabled)
-	if err != nil {
-		probeResponseEnabled = false
-	}
+	probeResponseConfig := channelprobe.GetResponseConfig()
 	relayResponseHeaderTimeoutSeconds, err := strconv.Atoi(rawRelayResponseHeaderTimeout)
 	if err != nil || relayResponseHeaderTimeoutSeconds < 0 ||
 		relayResponseHeaderTimeoutSeconds > common.MaxRelayResponseHeaderTimeoutSeconds {
@@ -263,7 +283,15 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		EmailNotificationEnabled:              emailNotificationEnabled,
 		NotificationEmail:                     notificationEmail,
 		EmailNotificationTypes:                emailNotificationTypes,
-		ProbeResponseEnabled:                  probeResponseEnabled,
+		ProbeResponseEnabled:                  probeResponseConfig.Enabled,
+		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
+		ProbeResponseText:                     probeResponseConfig.ResponseText,
+		ProbeResponseMinDelayMs:               probeResponseConfig.MinDelayMs,
+		ProbeResponseMaxDelayMs:               probeResponseConfig.MaxDelayMs,
+		ProbeResponseInputTokens:              probeResponseConfig.InputTokens,
+		ProbeResponseCacheWriteTokens:         probeResponseConfig.CacheWriteTokens,
+		ProbeResponseCachedTokens:             probeResponseConfig.CachedTokens,
+		ProbeResponseOutputTokens:             probeResponseConfig.OutputTokens,
 		RelayHeaderTimeoutSeconds:             relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:                  smartScheduleEnabled,
 		SmartScheduleGroupPolicies:            smartScheduleGroupPolicies,
@@ -551,6 +579,14 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.NotificationEmail == nil &&
 		request.EmailNotificationTypes == nil &&
 		request.ProbeResponseEnabled == nil &&
+		request.ProbeResponseMatchInput == nil &&
+		request.ProbeResponseText == nil &&
+		request.ProbeResponseMinDelayMs == nil &&
+		request.ProbeResponseMaxDelayMs == nil &&
+		request.ProbeResponseInputTokens == nil &&
+		request.ProbeResponseCacheWriteTokens == nil &&
+		request.ProbeResponseCachedTokens == nil &&
+		request.ProbeResponseOutputTokens == nil &&
 		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
 		request.SmartScheduleGroupPolicies == nil &&
@@ -578,7 +614,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings = getChannelMonitorSettings()
 	}
-	values := make(map[string]string, 21)
+	values := make(map[string]string, 29)
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -688,9 +724,95 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "开启邮件通知时请至少选择一种通知类型"})
 		return
 	}
-	if request.ProbeResponseEnabled != nil {
-		settings.ProbeResponseEnabled = *request.ProbeResponseEnabled
-		values[channelMonitorProbeResponseOption] = strconv.FormatBool(settings.ProbeResponseEnabled)
+	probeResponseSettingsChanged := request.ProbeResponseEnabled != nil ||
+		request.ProbeResponseMatchInput != nil ||
+		request.ProbeResponseText != nil ||
+		request.ProbeResponseMinDelayMs != nil ||
+		request.ProbeResponseMaxDelayMs != nil ||
+		request.ProbeResponseInputTokens != nil ||
+		request.ProbeResponseCacheWriteTokens != nil ||
+		request.ProbeResponseCachedTokens != nil ||
+		request.ProbeResponseOutputTokens != nil
+	if probeResponseSettingsChanged {
+		probeResponseConfig := channelprobe.ResponseConfig{
+			Enabled:          settings.ProbeResponseEnabled,
+			MatchInput:       settings.ProbeResponseMatchInput,
+			ResponseText:     settings.ProbeResponseText,
+			MinDelayMs:       settings.ProbeResponseMinDelayMs,
+			MaxDelayMs:       settings.ProbeResponseMaxDelayMs,
+			InputTokens:      settings.ProbeResponseInputTokens,
+			CacheWriteTokens: settings.ProbeResponseCacheWriteTokens,
+			CachedTokens:     settings.ProbeResponseCachedTokens,
+			OutputTokens:     settings.ProbeResponseOutputTokens,
+		}
+		if request.ProbeResponseEnabled != nil {
+			probeResponseConfig.Enabled = *request.ProbeResponseEnabled
+		}
+		if request.ProbeResponseMatchInput != nil {
+			probeResponseConfig.MatchInput = *request.ProbeResponseMatchInput
+		}
+		if request.ProbeResponseText != nil {
+			probeResponseConfig.ResponseText = *request.ProbeResponseText
+		}
+		if request.ProbeResponseMinDelayMs != nil {
+			probeResponseConfig.MinDelayMs = *request.ProbeResponseMinDelayMs
+		}
+		if request.ProbeResponseMaxDelayMs != nil {
+			probeResponseConfig.MaxDelayMs = *request.ProbeResponseMaxDelayMs
+		}
+		if request.ProbeResponseInputTokens != nil {
+			probeResponseConfig.InputTokens = *request.ProbeResponseInputTokens
+		}
+		if request.ProbeResponseCacheWriteTokens != nil {
+			probeResponseConfig.CacheWriteTokens = *request.ProbeResponseCacheWriteTokens
+		}
+		if request.ProbeResponseCachedTokens != nil {
+			probeResponseConfig.CachedTokens = *request.ProbeResponseCachedTokens
+		}
+		if request.ProbeResponseOutputTokens != nil {
+			probeResponseConfig.OutputTokens = *request.ProbeResponseOutputTokens
+		}
+		normalizedProbeResponseConfig, err := channelprobe.NormalizeResponseConfig(probeResponseConfig)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.ProbeResponseEnabled = normalizedProbeResponseConfig.Enabled
+		settings.ProbeResponseMatchInput = normalizedProbeResponseConfig.MatchInput
+		settings.ProbeResponseText = normalizedProbeResponseConfig.ResponseText
+		settings.ProbeResponseMinDelayMs = normalizedProbeResponseConfig.MinDelayMs
+		settings.ProbeResponseMaxDelayMs = normalizedProbeResponseConfig.MaxDelayMs
+		settings.ProbeResponseInputTokens = normalizedProbeResponseConfig.InputTokens
+		settings.ProbeResponseCacheWriteTokens = normalizedProbeResponseConfig.CacheWriteTokens
+		settings.ProbeResponseCachedTokens = normalizedProbeResponseConfig.CachedTokens
+		settings.ProbeResponseOutputTokens = normalizedProbeResponseConfig.OutputTokens
+		if request.ProbeResponseEnabled != nil {
+			values[channelMonitorProbeResponseOption] = strconv.FormatBool(settings.ProbeResponseEnabled)
+		}
+		if request.ProbeResponseMatchInput != nil {
+			values[channelMonitorProbeResponseMatchInputOption] = settings.ProbeResponseMatchInput
+		}
+		if request.ProbeResponseText != nil {
+			values[channelMonitorProbeResponseTextOption] = settings.ProbeResponseText
+		}
+		if request.ProbeResponseMinDelayMs != nil {
+			values[channelMonitorProbeResponseMinDelayMsOption] = strconv.Itoa(settings.ProbeResponseMinDelayMs)
+		}
+		if request.ProbeResponseMaxDelayMs != nil {
+			values[channelMonitorProbeResponseMaxDelayMsOption] = strconv.Itoa(settings.ProbeResponseMaxDelayMs)
+		}
+		if request.ProbeResponseInputTokens != nil {
+			values[channelMonitorProbeResponseInputTokensOption] = strconv.Itoa(settings.ProbeResponseInputTokens)
+		}
+		if request.ProbeResponseCacheWriteTokens != nil {
+			values[channelMonitorProbeResponseCacheWriteTokensOption] = strconv.Itoa(settings.ProbeResponseCacheWriteTokens)
+		}
+		if request.ProbeResponseCachedTokens != nil {
+			values[channelMonitorProbeResponseCachedTokensOption] = strconv.Itoa(settings.ProbeResponseCachedTokens)
+		}
+		if request.ProbeResponseOutputTokens != nil {
+			values[channelMonitorProbeResponseOutputTokensOption] = strconv.Itoa(settings.ProbeResponseOutputTokens)
+		}
 	}
 	if request.RelayHeaderTimeoutSeconds != nil &&
 		(*request.RelayHeaderTimeoutSeconds < 0 ||
@@ -854,6 +976,14 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"notification_email_configured":              settings.NotificationEmail != "",
 		"email_notification_types":                   settings.EmailNotificationTypes,
 		"probe_response_enabled":                     settings.ProbeResponseEnabled,
+		"probe_response_match_input":                 settings.ProbeResponseMatchInput,
+		"probe_response_text":                        settings.ProbeResponseText,
+		"probe_response_min_delay_ms":                settings.ProbeResponseMinDelayMs,
+		"probe_response_max_delay_ms":                settings.ProbeResponseMaxDelayMs,
+		"probe_response_input_tokens":                settings.ProbeResponseInputTokens,
+		"probe_response_cache_write_tokens":          settings.ProbeResponseCacheWriteTokens,
+		"probe_response_cached_tokens":               settings.ProbeResponseCachedTokens,
+		"probe_response_output_tokens":               settings.ProbeResponseOutputTokens,
 		"smart_schedule_enabled":                     settings.SmartScheduleEnabled,
 		"smart_schedule_group_policies":              settings.SmartScheduleGroupPolicies,
 		"smart_schedule_interval_minutes":            settings.SmartScheduleIntervalMinutes,

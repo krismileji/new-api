@@ -1,12 +1,12 @@
 # 本地探针响应
 
-渠道监控可以通过 `ChannelMonitorProbeResponseEnabled` 开启本地探针响应，默认关闭。开关位于“渠道监控设置 > 探针响应”。
+渠道监控可以通过 `ChannelMonitorProbeResponseEnabled` 开启本地探针响应，默认关闭。开关和响应参数位于“渠道监控设置 > 探针响应”。历史部署未保存新参数时，会继续使用下表默认值。
 
 ## 命中规则
 
 本地响应仅处理 `/v1/responses` 和 `/v1/chat/completions`，并要求请求是单轮纯文本探针：
 
-- 唯一的用户输入在去除首尾空白后等于 `hi`，匹配不区分大小写。
+- 唯一的用户输入在去除首尾空白后等于配置的“匹配输入”（默认 `hi`），匹配不区分大小写。
 - 允许请求携带 system、developer 或 Responses `instructions` 指令。
 - 存在历史 assistant 消息、多个 user 消息、`previous_response_id`、conversation、图片、文件、音频、工具结果或其他文本时不命中。
 - 其他端点和未命中的请求继续执行正常渠道选择、计费和中继流程。
@@ -16,13 +16,26 @@
 
 ## 返回行为
 
-命中后，服务随机等待 `0.5-2` 秒并固定返回：
+命中后，服务在配置的最小和最大延迟（默认 `500-2000` 毫秒）之间随机等待，并返回配置的响应文本（默认）：
 
 ```text
 Hi. What are you working on?
 ```
 
-Responses API 的非流式返回模拟真实 `gpt-5.6-sol` 响应字段，包括完整 usage、tool_usage、moderation 和惩罚参数；流式返回按 Responses 协议依次发送 created、in_progress、output item、content part、text delta/done 和 completed 事件，并带连续 sequence_number。Chat Completions 返回 assistant message。两种接口同时支持流式和非流式请求，响应中的 model 沿用客户端请求值，usage 使用真实样本的模拟值：输入 4387、缓存写 172、缓存命中 4001、输出 12、总计 4399。
+Responses API 的非流式返回模拟真实 `gpt-5.6-sol` 响应字段，包括完整 usage、tool_usage、moderation 和惩罚参数；流式返回按 Responses 协议依次发送 created、in_progress、output item、content part、text delta/done 和 completed 事件，并带连续 sequence_number。Chat Completions 返回 assistant message。两种接口同时支持流式和非流式请求，usage 的输入、缓存写、缓存命中和输出 Token 都可配置，总 Token 自动按输入加输出计算；默认值分别为 `4387`、`172`、`4001`、`12`，总计 `4399`。
+
+配置对应的系统 Option 和默认值如下：
+
+| 管理端字段 | Option 键 | 默认值 | 有效范围 |
+| --- | --- | ---: | --- |
+| 匹配输入 | `ChannelMonitorProbeResponseMatchInput` | `hi` | 去首尾空白后不能为空，最长 4096 个字符 |
+| 响应文本 | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 去首尾空白后不能为空，最长 16384 个字符 |
+| 最小延迟 | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000` 毫秒，不能大于最大延迟 |
+| 最大延迟 | `ChannelMonitorProbeResponseMaxDelayMilliseconds` | `2000` | `0..600000` 毫秒，不能小于最小延迟 |
+| 输入 Token | `ChannelMonitorProbeResponseInputTokens` | `4387` | `0..1000000` |
+| 缓存写 Token | `ChannelMonitorProbeResponseCacheWriteTokens` | `172` | `0..1000000` |
+| 缓存命中 Token | `ChannelMonitorProbeResponseCachedTokens` | `4001` | `0..1000000` |
+| 输出 Token | `ChannelMonitorProbeResponseOutputTokens` | `12` | `0..1000000` |
 
 等待过程监听客户端请求上下文。客户端断开后立即停止，不继续占用计时器或写响应。
 
