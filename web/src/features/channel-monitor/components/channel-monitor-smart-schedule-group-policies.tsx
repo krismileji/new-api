@@ -88,6 +88,7 @@ import {
   getChannelMonitorSmartScheduleApplyModeLabel,
   getChannelMonitorSmartScheduleStrategyLabel,
 } from '../lib/smart-schedule-options'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorSettingLabel } from './channel-monitor-setting-label'
 import { ChannelMonitorSmartScheduleGroupPolicyFields } from './channel-monitor-smart-schedule-group-policy-fields'
 
@@ -377,7 +378,11 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
           if (!open) setEditingGroup(null)
         }}
       >
-        <DialogContent className='max-h-[min(92dvh,58rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-4xl'>
+        <DialogContent
+          className={channelMonitorDialogContentClassName(
+            'grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-5xl'
+          )}
+        >
           <DialogHeader>
             <DialogTitle>
               {editingGroup ? `编辑 ${editingGroup} 分组策略` : '新增分组策略'}

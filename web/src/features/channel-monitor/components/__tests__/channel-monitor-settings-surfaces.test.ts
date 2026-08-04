@@ -29,9 +29,11 @@ type SettingsSurfaceResult = {
   conflictMonitorQueryInvalidated: boolean
   generalHasSchedule: boolean
   generalTitle: string
+  generalUsesContentSizedViewport: boolean
   notificationTypeCanBeUnchecked: boolean
   policyDialogBlocksHorizontalOverflow: boolean
   policyDialogCentered: boolean
+  policyDialogUsesContentSizedViewport: boolean
   policyDialogExplainsExplicitScope: boolean
   policyDialogHasGroupSettingHelp: boolean
   policyDialogHasCompletePolicyControls: boolean
@@ -76,6 +78,7 @@ test(
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
     assert.equal(result.generalHasSchedule, false)
+    assert.equal(result.generalUsesContentSizedViewport, true)
     assert.equal(result.allNotificationTypesSelected, true)
     assert.equal(result.notificationTypeCanBeUnchecked, true)
     assert.equal(result.previewEmailButtonEnabled, true)
@@ -86,6 +89,7 @@ test(
     assert.equal(result.scheduleHasExplicitPolicyScope, true)
     assert.equal(result.scheduleHasNoImplicitPolicyControls, true)
     assert.equal(result.policyDialogCentered, true)
+    assert.equal(result.policyDialogUsesContentSizedViewport, true)
     assert.equal(result.policyDialogBlocksHorizontalOverflow, true)
     assert.equal(result.policyDialogHasCompletePolicyControls, true)
     assert.equal(result.policyDialogHasNoLegacyWeightControls, true)

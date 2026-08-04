@@ -221,6 +221,13 @@ const ratioRendered = await renderDialog(
   ratioQueryClient
 )
 assert.ok(ratioRendered.dialog.textContent?.includes('倍率与余额更新记录'))
+assert.ok(ratioRendered.dialog.classList.contains('max-h-[calc(100dvh-2rem)]'))
+assert.equal(
+  [...ratioRendered.dialog.classList].some((className) =>
+    className.startsWith('h-[')
+  ),
+  false
+)
 assert.equal(ratioRendered.dialog.querySelectorAll('[role="tab"]').length, 0)
 assert.equal(
   ratioRendered.dialog.textContent?.includes('智能调度执行详情'),
@@ -372,11 +379,18 @@ const scheduleRendered = await renderDialog(
   scheduleQueryClient
 )
 assert.ok(scheduleRendered.dialog.textContent?.includes('智能调度执行记录'))
+assert.ok(
+  scheduleRendered.dialog.classList.contains('max-h-[calc(100dvh-2rem)]')
+)
+assert.equal(
+  [...scheduleRendered.dialog.classList].some((className) =>
+    className.startsWith('h-[')
+  ),
+  false
+)
 assert.equal(scheduleRendered.dialog.querySelectorAll('[role="tab"]').length, 0)
 assert.ok(scheduleRendered.dialog.textContent?.includes('高速稳定渠道'))
-assert.ok(
-  scheduleRendered.dialog.textContent?.includes('按 2 个分组策略执行')
-)
+assert.ok(scheduleRendered.dialog.textContent?.includes('按 2 个分组策略执行'))
 const detailNextButton =
   scheduleRendered.dialog.querySelector<HTMLButtonElement>(
     '[aria-label="下一页明细"]'

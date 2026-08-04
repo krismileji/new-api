@@ -105,6 +105,7 @@ import {
 } from '../lib/settings-update'
 import { channelMonitorSmartScheduleGroupPoliciesToForm } from '../lib/smart-schedule-group-policy'
 import type { ChannelMonitorSettings } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorEmailNotificationFields } from './channel-monitor-email-notification-fields'
 import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
@@ -424,7 +425,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         onOpenChangeComplete={props.onOpenChangeComplete}
       >
         <SheetContent
-          className={sideDrawerContentClassName('sm:max-w-5xl')}
+          className={sideDrawerContentClassName('sm:max-w-6xl')}
           showCloseButton={!mutation.isPending}
         >
           <SheetHeader className={sideDrawerHeaderClassName()}>
@@ -484,7 +485,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       }}
     >
       <DialogContent
-        className='max-h-[min(90dvh,48rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl'
+        className={channelMonitorDialogContentClassName(
+          'grid-rows-[auto_minmax(0,1fr)] sm:max-w-2xl'
+        )}
         showCloseButton={!mutation.isPending}
       >
         <DialogHeader>

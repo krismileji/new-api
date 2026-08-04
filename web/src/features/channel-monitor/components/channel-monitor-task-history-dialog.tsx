@@ -69,6 +69,7 @@ import {
   isActiveChannelMonitorTask,
 } from '../lib/task-status'
 import type { ChannelMonitorTask, ChannelMonitorTaskStatus } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
@@ -607,7 +608,9 @@ export function ChannelMonitorTaskHistoryDialog(
       }}
     >
       <DialogContent
-        className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'
+        className={channelMonitorDialogContentClassName(
+          'grid-rows-[auto_minmax(0,1fr)] sm:max-w-6xl'
+        )}
         showCloseButton={!ratioUpdateMutation.isPending}
       >
         <DialogHeader className='pr-10'>

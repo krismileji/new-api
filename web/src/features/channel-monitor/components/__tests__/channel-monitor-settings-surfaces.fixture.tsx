@@ -199,6 +199,9 @@ const generalDialog = document.body.querySelector(
 assert.ok(generalDialog)
 const generalTitle = generalDialog.textContent ?? ''
 const generalHasSchedule = generalTitle.includes('智能调度')
+const generalUsesContentSizedViewport =
+  generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
+  ![...generalDialog.classList].some((className) => className.startsWith('h-['))
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
 ]
@@ -237,7 +240,7 @@ const scheduleUsesChannelDrawerLayout =
   sheet.classList.contains('w-full') &&
   sheet.classList.contains('overflow-hidden') &&
   sheet.classList.contains('p-0') &&
-  sheet.classList.contains('sm:max-w-5xl') &&
+  sheet.classList.contains('sm:max-w-6xl') &&
   scheduleHeader?.classList.contains('border-b') === true &&
   scheduleHeader.classList.contains('sm:px-6') &&
   scheduleForm?.classList.contains('overflow-y-auto') === true &&
@@ -271,6 +274,10 @@ assert.ok(policyDialog)
 const policyDialogCentered =
   policyDialog.className.includes('top-1/2') &&
   policyDialog.className.includes('left-1/2')
+const policyDialogUsesContentSizedViewport =
+  policyDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
+  policyDialog.classList.contains('sm:max-w-5xl') &&
+  ![...policyDialog.classList].some((className) => className.startsWith('h-['))
 const policyDialogScrollArea = policyDialog.querySelector(
   '[data-slot="group-policy-dialog-scroll-area"]'
 )
@@ -407,9 +414,11 @@ process.stdout.write(
     conflictMonitorQueryInvalidated,
     generalHasSchedule,
     generalTitle,
+    generalUsesContentSizedViewport,
     notificationTypeCanBeUnchecked,
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,
+    policyDialogUsesContentSizedViewport,
     policyTableScrollable,
     previewEmailButtonEnabled,
     newPolicyVisible,

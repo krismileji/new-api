@@ -67,6 +67,7 @@ import type { ChannelMonitorCostOverview } from '../types'
 import { ChannelMonitorAPIKeyCostTable } from './channel-monitor-api-key-cost-table'
 import { ChannelMonitorChannelCostTable } from './channel-monitor-channel-cost-table'
 import { ChannelMonitorDailyBarChart } from './channel-monitor-daily-bar-chart'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
 const COST_HISTORY_RANGE_OPTIONS = [
   { value: '7', label: '近 7 天' },
@@ -127,7 +128,11 @@ export function ChannelMonitorCostHistoryDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='flex max-h-[min(78dvh,48rem)] flex-col overflow-hidden sm:max-w-5xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'flex flex-col sm:max-w-5xl'
+        )}
+      >
         <DialogHeader className='shrink-0 pr-10'>
           <DialogTitle>
             {props.channelName ? `渠道成本：${props.channelName}` : '渠道成本'}

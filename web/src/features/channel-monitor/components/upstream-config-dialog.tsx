@@ -101,6 +101,7 @@ import type {
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { EditChannelRatioDialog } from './edit-channel-ratio-dialog'
 
 type UpstreamConfigDialogProps = {
@@ -550,7 +551,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-3xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'flex flex-col sm:max-w-3xl'
+        )}
+      >
         <DialogHeader className='shrink-0 pr-10'>
           <DialogTitle>上游配置与策略</DialogTitle>
           <DialogDescription>

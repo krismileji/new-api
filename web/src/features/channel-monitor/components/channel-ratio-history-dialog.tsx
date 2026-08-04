@@ -52,6 +52,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { getChannelMonitorHistory } from '../api'
 import { formatChangePercent, formatMonitorRatio } from '../lib/format'
 import type { ChannelMonitorItem } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
 type ChannelRatioHistoryPanelProps = {
   channel: ChannelMonitorItem
@@ -67,7 +68,9 @@ export function ChannelRatioHistoryDialog(
 ) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-hidden sm:max-w-4xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName('sm:max-w-4xl')}
+      >
         <DialogHeader className='pr-10'>
           <DialogTitle>上游倍率变更历史</DialogTitle>
           <DialogDescription>

@@ -64,6 +64,7 @@ import type {
   ChannelMonitorSuccessMode,
   ChannelMonitorSuccessSummary,
 } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
 
 type ChannelMonitorSuccessDetailDialogProps = {
@@ -535,7 +536,11 @@ export function ChannelMonitorSuccessDetailDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-4xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'flex flex-col sm:max-w-5xl'
+        )}
+      >
         <DialogHeader className='shrink-0 pr-10'>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

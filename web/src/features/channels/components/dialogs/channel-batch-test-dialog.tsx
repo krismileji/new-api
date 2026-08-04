@@ -889,7 +889,6 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
       onOpenChange={handleOpenChange}
       title={isSingleModel ? '渠道连通性测试' : '批量测试渠道'}
       description={dialogDescription}
-      contentHeight='min(68vh, 720px)'
       contentClassName='sm:max-w-5xl'
       bodyClassName='flex flex-col gap-5'
       footer={footer}

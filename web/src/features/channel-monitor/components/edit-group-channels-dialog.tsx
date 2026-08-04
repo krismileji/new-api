@@ -38,7 +38,6 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
@@ -47,6 +46,7 @@ import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
 import { orderGroupChannelOptions } from '../lib/group-channel-order'
 import type { ChannelMonitorItem, GroupMonitorItem } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
 type EditGroupChannelsDialogProps = {
@@ -183,7 +183,11 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='sm:max-w-2xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-2xl'
+        )}
+      >
         <DialogHeader>
           <DialogTitle>管理分组渠道</DialogTitle>
           <DialogDescription className='flex flex-col gap-0.5'>
@@ -196,7 +200,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className='flex flex-col gap-3'>
+        <div className='flex min-h-0 flex-col gap-3'>
           <div className='flex flex-col gap-2 sm:flex-row'>
             <InputGroup className='h-9 flex-1'>
               <InputGroupAddon>
@@ -241,9 +245,12 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
             )}
           </div>
 
-          <ScrollArea className='h-[min(420px,55vh)] rounded-lg border'>
+          <div
+            data-slot='group-channel-list'
+            className='min-h-0 flex-1 overflow-y-auto rounded-lg border'
+          >
             {visibleChannels.length === 0 ? (
-              <div className='text-muted-foreground flex h-full min-h-40 items-center justify-center text-sm'>
+              <div className='text-muted-foreground flex min-h-40 items-center justify-center text-sm'>
                 没有匹配的渠道
               </div>
             ) : (
@@ -332,7 +339,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
                 })}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </div>
 
         <DialogFooter>

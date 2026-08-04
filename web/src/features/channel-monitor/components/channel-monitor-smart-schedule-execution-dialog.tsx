@@ -80,6 +80,7 @@ import type {
   ChannelMonitorTaskAdjustment,
   ChannelMonitorTaskStatus,
 } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import {
   ChannelMonitorSmartScheduleExecutionAdjustments,
   ChannelMonitorSmartScheduleExecutionLayout,
@@ -794,9 +795,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               size='icon-sm'
               aria-label='下一页'
               title='下一页'
-              onClick={() =>
-                changeTaskPage(Math.min(totalPages, page + 1))
-              }
+              onClick={() => changeTaskPage(Math.min(totalPages, page + 1))}
               disabled={page >= totalPages || query.isFetching}
             >
               <HugeiconsIcon icon={ArrowRight01Icon} />
@@ -832,7 +831,11 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
 ) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='h-[min(90dvh,56rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-6xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'grid-rows-[auto_minmax(0,1fr)] sm:max-w-6xl'
+        )}
+      >
         <DialogHeader className='pr-10'>
           <DialogTitle>智能调度执行记录</DialogTitle>
           <DialogDescription>

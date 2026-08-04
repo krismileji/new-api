@@ -61,6 +61,7 @@ import type {
   ChannelMonitorTodaySuccessResult,
 } from '../types'
 import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
 
@@ -516,7 +517,11 @@ export function ChannelMonitorTodaySuccessDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-5xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'flex flex-col sm:max-w-5xl'
+        )}
+      >
         <DialogHeader className='shrink-0 pr-10'>
           <DialogTitle>成功率、缓存率与缓存写</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

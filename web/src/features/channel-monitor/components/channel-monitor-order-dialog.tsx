@@ -42,6 +42,7 @@ import { updateChannelMonitorChannelOrder } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { orderChannelsByCustomOrder } from '../lib/sort'
 import type { ChannelMonitorItem } from '../types'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
 type ChannelMonitorOrderDialogProps = {
   channels: ChannelMonitorItem[]
@@ -161,7 +162,11 @@ export function ChannelMonitorOrderDialog(
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className='sm:max-w-2xl'>
+      <DialogContent
+        className={channelMonitorDialogContentClassName(
+          'grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-2xl'
+        )}
+      >
         <DialogHeader>
           <DialogTitle>自定义渠道顺序</DialogTitle>
           <DialogDescription>
@@ -169,7 +174,10 @@ export function ChannelMonitorOrderDialog(
           </DialogDescription>
         </DialogHeader>
 
-        <div className='max-h-[60vh] space-y-2 overflow-y-auto pr-1'>
+        <div
+          data-slot='channel-order-list'
+          className='min-h-0 space-y-2 overflow-y-auto pr-1'
+        >
           {orderedChannels.map((channel, index) => {
             const isDragging = channel.id === draggedChannelId
             const isDropTarget =

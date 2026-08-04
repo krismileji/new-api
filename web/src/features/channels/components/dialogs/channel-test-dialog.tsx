@@ -1019,8 +1019,7 @@ function ChannelTestDialogContent({
             <span className='min-w-0 truncate'>{currentRow.name}</span>
           </span>
         }
-        contentClassName='max-h-[90vh] overflow-hidden sm:max-w-4xl'
-        contentHeight='auto'
+        contentClassName='sm:max-w-4xl'
         bodyClassName='space-y-4'
         footer={
           <Button variant='outline' onClick={handleClose}>
@@ -1028,7 +1027,7 @@ function ChannelTestDialogContent({
           </Button>
         }
       >
-        <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
+        <div className='space-y-4 py-4'>
           <div className='grid gap-4 md:grid-cols-3'>
             <div className='grid gap-2'>
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>

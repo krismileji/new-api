@@ -61,6 +61,7 @@ import {
 } from '../lib/email-notification'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import type { ChannelMonitorSettingsFormValues } from '../lib/schema'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
 type ChannelMonitorEmailNotificationFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -268,7 +269,11 @@ export function ChannelMonitorEmailNotificationFields(
           if (!open) previewMutation.reset()
         }}
       >
-        <DialogContent className='max-h-[min(92dvh,48rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-3xl'>
+        <DialogContent
+          className={channelMonitorDialogContentClassName(
+            'grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-3xl'
+          )}
+        >
           <DialogHeader>
             <DialogTitle>渠道监控邮件预览</DialogTitle>
             <DialogDescription>
