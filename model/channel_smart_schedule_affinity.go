@@ -18,9 +18,16 @@ const (
 // ChannelSmartScheduleAffinityEligibility keeps an affinity hit only when it
 // belongs to the highest usable priority for the current request. Pools
 // without an active participating route retain the official affinity behavior.
-func ChannelSmartScheduleAffinityEligibility(group string, modelName string, channelId int, requestPath string) ChannelSmartScheduleAffinityStatus {
+func ChannelSmartScheduleAffinityEligibility(
+	group string,
+	modelName string,
+	channelId int,
+	requestPath string,
+	options ...ChannelSelectionOptions,
+) ChannelSmartScheduleAffinityStatus {
 	group = strings.TrimSpace(group)
 	requestModelName := strings.TrimSpace(modelName)
+	selectionOptions := channelSelectionOptions(options)
 	modelNames := channelSmartScheduleRouteModelNames(requestModelName)
 	if group == "" || len(modelNames) == 0 || channelId <= 0 {
 		return ChannelSmartScheduleAffinityInvalid
@@ -71,6 +78,30 @@ func ChannelSmartScheduleAffinityEligibility(group string, modelName string, cha
 		if selectedModel == "" {
 			return ChannelSmartScheduleAffinityInvalid
 		}
+		originalAbilities := append([]Ability(nil), abilities...)
+		preferredInOriginal := false
+		for _, ability := range originalAbilities {
+			if ability.ChannelId == channelId {
+				preferredInOriginal = true
+				break
+			}
+		}
+		if selectionOptions.HasRequestSize() {
+			channelIDs := make([]int, 0, len(originalAbilities))
+			for _, ability := range originalAbilities {
+				channelIDs = append(channelIDs, ability.ChannelId)
+			}
+			explorationStates, err := loadChannelSmartScheduleExplorationStates(
+				group, selectedModel, channelIDs,
+			)
+			if err != nil {
+				return ChannelSmartScheduleAffinityTemporarilyUnavailable
+			}
+			abilities = filterAbilitiesByExplorationRequest(abilities, explorationStates, selectionOptions)
+			if preferredInOriginal && !containsAbilityChannel(abilities, channelId) {
+				return ChannelSmartScheduleAffinityTemporarilyUnavailable
+			}
+		}
 
 		var activeStateCount int64
 		if err := DB.Model(&ChannelSmartScheduleRouteState{}).
@@ -112,14 +143,22 @@ func ChannelSmartScheduleAffinityEligibility(group string, modelName string, cha
 	}
 
 	var routes []channelSmartScheduleCachedRoute
+	var allRoutes []channelSmartScheduleCachedRoute
+	baseOptions := selectionOptions
+	baseOptions.EstimatedPromptTokens = 0
+	baseOptions.RequestBodyBytes = 0
 	channelSyncLock.RLock()
 	for _, candidateModel := range modelNames {
 		candidateRoutes := channelSmartScheduleRouteCache[group][candidateModel]
 		candidateRoutes = filterChannelSmartScheduleCachedRoutes(
-			candidateRoutes, requestPath, requestModelName, ChannelSelectionOptions{},
+			candidateRoutes, requestPath, requestModelName, selectionOptions,
 		)
 		if len(candidateRoutes) > 0 {
 			routes = candidateRoutes
+			allRoutes = filterChannelSmartScheduleCachedRoutes(
+				channelSmartScheduleRouteCache[group][candidateModel],
+				requestPath, requestModelName, baseOptions,
+			)
 			break
 		}
 	}
@@ -142,11 +181,34 @@ func ChannelSmartScheduleAffinityEligibility(group string, modelName string, cha
 			preferredFound = true
 		}
 	}
+	preferredInAll := false
+	preferredFilteredByExploration := false
+	for _, route := range allRoutes {
+		if route.channelId == channelId {
+			preferredInAll = true
+			preferredFilteredByExploration =
+				route.temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficExploration &&
+					selectionOptions.ShouldAvoidExploration(route.explorationMaxPromptTokens)
+			break
+		}
+	}
 	if !preferredFound {
+		if preferredInAll && preferredFilteredByExploration {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
 		return ChannelSmartScheduleAffinityInvalid
 	}
 	if !managed || preferredPriority == highestPriority {
 		return ChannelSmartScheduleAffinityEligible
 	}
 	return ChannelSmartScheduleAffinityTemporarilyUnavailable
+}
+
+func containsAbilityChannel(abilities []Ability, channelId int) bool {
+	for _, ability := range abilities {
+		if ability.ChannelId == channelId {
+			return true
+		}
+	}
+	return false
 }

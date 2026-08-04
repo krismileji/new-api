@@ -92,3 +92,142 @@ func TestGetRandomSatisfiedChannelExcludesFailedChannelsWithoutMemoryCache(t *te
 	require.NoError(t, err)
 	assert.Nil(t, channel)
 }
+
+func TestGetRandomSatisfiedChannelPrefersStableRouteForLargeRequest(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	channelSyncLock.Lock()
+	originalRouteCache := channelSmartScheduleRouteCache
+	originalChannelsIDM := channelsIDM
+	priorityExploration := int64(100)
+	priorityStable := int64(90)
+	weight := uint(10)
+	channelSmartScheduleRouteCache = map[string]map[string][]channelSmartScheduleCachedRoute{
+		"vip": {
+			"model-a": {
+				{channelId: 1, priority: priorityExploration, weight: weight,
+					temporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
+					explorationMaxPromptTokens: 100},
+				{channelId: 2, priority: priorityStable, weight: weight},
+			},
+		},
+	}
+	channelsIDM = map[int]*Channel{
+		1: {Id: 1, Status: common.ChannelStatusEnabled},
+		2: {Id: 2, Status: common.ChannelStatusEnabled},
+	}
+	channelSyncLock.Unlock()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelSyncLock.Lock()
+		channelSmartScheduleRouteCache = originalRouteCache
+		channelsIDM = originalChannelsIDM
+		channelSyncLock.Unlock()
+	})
+
+	channel, err := GetRandomSatisfiedChannel(
+		"vip", "model-a", 0, "",
+		ChannelSelectionOptions{EstimatedPromptTokens: 101},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 2, channel.Id)
+
+	channel, err = GetRandomSatisfiedChannel(
+		"vip", "model-a", 0, "",
+		ChannelSelectionOptions{EstimatedPromptTokens: 100},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 1, channel.Id)
+}
+
+func TestGetRandomSatisfiedChannelFallsBackToExplorationWhenItIsTheOnlyRoute(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	channelSyncLock.Lock()
+	originalRouteCache := channelSmartScheduleRouteCache
+	originalChannelsIDM := channelsIDM
+	priority := int64(100)
+	weight := uint(10)
+	channelSmartScheduleRouteCache = map[string]map[string][]channelSmartScheduleCachedRoute{
+		"vip": {
+			"model-a": {{
+				channelId: 1, priority: priority, weight: weight,
+				temporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
+				explorationMaxPromptTokens: 100,
+			}},
+		},
+	}
+	channelsIDM = map[int]*Channel{1: {Id: 1, Status: common.ChannelStatusEnabled}}
+	channelSyncLock.Unlock()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelSyncLock.Lock()
+		channelSmartScheduleRouteCache = originalRouteCache
+		channelsIDM = originalChannelsIDM
+		channelSyncLock.Unlock()
+	})
+
+	channel, err := GetRandomSatisfiedChannel(
+		"vip", "model-a", 0, "",
+		ChannelSelectionOptions{EstimatedPromptTokens: 101},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 1, channel.Id)
+}
+
+func TestGetRandomSatisfiedChannelPrefersStableRouteWithoutMemoryCache(t *testing.T) {
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+	if !DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
+		require.NoError(t, DB.AutoMigrate(&ChannelSmartScheduleRouteState{}))
+	}
+
+	channelIDs := []int{9201, 9202}
+	require.NoError(t, DB.Where("channel_id IN ?", channelIDs).Delete(&ChannelSmartScheduleRouteState{}).Error)
+	require.NoError(t, DB.Where("channel_id IN ?", channelIDs).Delete(&Ability{}).Error)
+	require.NoError(t, DB.Where("id IN ?", channelIDs).Delete(&Channel{}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, DB.Where("channel_id IN ?", channelIDs).Delete(&ChannelSmartScheduleRouteState{}).Error)
+		require.NoError(t, DB.Where("channel_id IN ?", channelIDs).Delete(&Ability{}).Error)
+		require.NoError(t, DB.Where("id IN ?", channelIDs).Delete(&Channel{}).Error)
+	})
+
+	priorityExploration := int64(100)
+	priorityStable := int64(90)
+	weight := uint(10)
+	require.NoError(t, DB.Create(&[]Channel{
+		{Id: 9201, Name: "exploration", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
+		{Id: 9202, Name: "stable", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, DB.Create(&[]Ability{
+		{Group: "vip", Model: "model-a", ChannelId: 9201, Enabled: true, Priority: &priorityExploration, Weight: weight},
+		{Group: "vip", Model: "model-a", ChannelId: 9202, Enabled: true, Priority: &priorityStable, Weight: weight},
+	}).Error)
+	require.NoError(t, DB.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 9201, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		TemporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
+		ExplorationMaxPromptTokens: 100,
+	}).Error)
+
+	channel, err := GetRandomSatisfiedChannel(
+		"vip", "model-a", 0, "",
+		ChannelSelectionOptions{EstimatedPromptTokens: 101},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 9202, channel.Id)
+
+	channel, err = GetRandomSatisfiedChannel(
+		"vip", "model-a", 0, "",
+		ChannelSelectionOptions{EstimatedPromptTokens: 100},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 9201, channel.Id)
+}

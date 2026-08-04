@@ -198,11 +198,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
-		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
-		Retry:       common.GetPointer(0),
+		Ctx:              c,
+		TokenGroup:       relayInfo.TokenGroup,
+		ModelName:        relayInfo.OriginModelName,
+		RequestPath:      c.Request.URL.Path,
+		Retry:            common.GetPointer(0),
+		SelectionOptions: service.ChannelSelectionOptionsForRequest(c, tokens),
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
@@ -399,6 +400,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
+	}
+	if types.IsModelCapacityError(openaiErr) {
+		if operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) {
+			return false
+		}
+		return true
 	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
@@ -621,11 +628,12 @@ func RelayTask(c *gin.Context) {
 	}()
 
 	retryParam := &service.RetryParam{
-		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
-		ModelName:   relayInfo.OriginModelName,
-		RequestPath: c.Request.URL.Path,
-		Retry:       common.GetPointer(0),
+		Ctx:              c,
+		TokenGroup:       relayInfo.TokenGroup,
+		ModelName:        relayInfo.OriginModelName,
+		RequestPath:      c.Request.URL.Path,
+		Retry:            common.GetPointer(0),
+		SelectionOptions: service.ChannelSelectionOptionsForRequest(c, 0),
 	}
 	retryRouting := newRelayRetryRouting()
 

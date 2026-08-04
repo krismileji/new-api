@@ -50,6 +50,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 import {
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
+  MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
   MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
@@ -492,42 +493,82 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         />
 
         {sampleMode === 'traffic' ? (
-          <FormField
-            control={props.form.control}
-            name='explorationTrafficPercent'
-            render={({ field }) => (
-              <FormItem className='max-w-72'>
-                <ChannelMonitorSettingLabel
-                  label='目标探索流量'
-                  helpKey='explorationTraffic'
-                />
-                <FormControl>
-                  <InputGroup>
-                    <InputGroupInput
-                      type='number'
-                      min={0.1}
-                      max={MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT}
-                      step={0.1}
-                      inputMode='decimal'
-                      value={field.value}
-                      onBlur={field.onBlur}
-                      onChange={field.onChange}
-                      name={field.name}
-                      ref={field.ref}
-                      aria-invalid={Boolean(
-                        props.form.formState.errors.explorationTrafficPercent
-                      )}
-                    />
-                    <InputGroupAddon align='inline-end'>%</InputGroupAddon>
-                  </InputGroup>
-                </FormControl>
-                <FormDescription>
-                  每个分组和模型同时只探索一个渠道，实际比例会受整数权重影响
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className='grid items-start gap-4 sm:grid-cols-2'>
+            <FormField
+              control={props.form.control}
+              name='explorationTrafficPercent'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='目标探索流量'
+                    helpKey='explorationTraffic'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={0.1}
+                        max={MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT}
+                        step={0.1}
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .explorationTrafficPercent
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    每个分组和模型同时只探索一个渠道，实际比例会受整数权重影响
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='explorationMaxPromptTokens'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='探索请求上限'
+                    helpKey='explorationMaxPromptTokens'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .explorationMaxPromptTokens
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>Token</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    超过上限的请求优先使用稳定渠道，避免长上下文切换导致缓存失效
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         ) : null}
 
         {sampleMode === 'probe' ? (

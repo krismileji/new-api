@@ -158,7 +158,7 @@ function formatSampleMode(
 ) {
   if (!policy || policy.sample_mode === 'off') return '样本补充关闭'
   if (policy.sample_mode === 'traffic') {
-    return `探索流量 ${policy.exploration_traffic_percent}%`
+    return `探索流量 ${policy.exploration_traffic_percent}% · ≤ ${policy.exploration_max_prompt_tokens ?? 4096} Token`
   }
   return `每 ${policy.probe_interval_minutes} 分钟文本探测`
 }

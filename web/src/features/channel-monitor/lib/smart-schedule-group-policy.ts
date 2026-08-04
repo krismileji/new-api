@@ -113,6 +113,9 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     cooldownMinutes: policy.cooldown_minutes,
     sampleMode: policy.sample_mode,
     explorationTrafficPercent: policy.exploration_traffic_percent,
+    explorationMaxPromptTokens:
+      policy.exploration_max_prompt_tokens ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptTokens,
     probeIntervalMinutes: policy.probe_interval_minutes,
     prioritySamplingEnabled: policy.priority_sampling_enabled,
     prioritySamplingIntervalMinutes: policy.priority_sampling_interval_minutes,
@@ -146,6 +149,7 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     cooldown_minutes: policy.cooldownMinutes,
     sample_mode: policy.sampleMode,
     exploration_traffic_percent: policy.explorationTrafficPercent,
+    exploration_max_prompt_tokens: policy.explorationMaxPromptTokens,
     probe_interval_minutes: policy.probeIntervalMinutes,
     priority_sampling_enabled: policy.prioritySamplingEnabled,
     priority_sampling_interval_minutes: policy.prioritySamplingIntervalMinutes,
@@ -180,6 +184,7 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     cooldownMinutes: policy.cooldownMinutes,
     sampleMode: policy.sampleMode,
     explorationTrafficPercent: policy.explorationTrafficPercent,
+    explorationMaxPromptTokens: policy.explorationMaxPromptTokens,
     probeIntervalMinutes: policy.probeIntervalMinutes,
     prioritySamplingEnabled: policy.prioritySamplingEnabled,
     prioritySamplingIntervalMinutes: policy.prioritySamplingIntervalMinutes,

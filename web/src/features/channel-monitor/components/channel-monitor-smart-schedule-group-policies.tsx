@@ -113,7 +113,8 @@ function GroupPolicySampleModeBadge(props: {
   if (props.policy.sampleMode === 'traffic') {
     return (
       <Badge variant='warning'>
-        探索流量 {props.policy.explorationTrafficPercent}%
+        探索流量 {props.policy.explorationTrafficPercent}% · ≤{' '}
+        {props.policy.explorationMaxPromptTokens} Token
       </Badge>
     )
   }

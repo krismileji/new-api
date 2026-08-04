@@ -125,6 +125,46 @@ func TestChannelSmartScheduleAffinityEligibilityUsesActivePoolCacheWithoutDataba
 	assert.Zero(t, queryCount)
 }
 
+func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeRequest(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	channelSyncLock.Lock()
+	originalRouteCache := channelSmartScheduleRouteCache
+	originalChannelsIDM := channelsIDM
+	channelSyncLock.Unlock()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelSyncLock.Lock()
+		channelSmartScheduleRouteCache = originalRouteCache
+		channelsIDM = originalChannelsIDM
+		channelSyncLock.Unlock()
+	})
+
+	explorationPriority := int64(100)
+	stablePriority := int64(80)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1726, Name: "exploration", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+		{Id: 1727, Name: "stable", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1726, Group: "vip", Model: "model-a", Enabled: true, Priority: &explorationPriority, Weight: 100},
+		{ChannelId: 1727, Group: "vip", Model: "model-a", Enabled: true, Priority: &stablePriority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1726, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		TemporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
+		ExplorationMaxPromptTokens: 100,
+	}).Error)
+	InitChannelCache()
+
+	largeRequest := ChannelSelectionOptions{EstimatedPromptTokens: 101}
+	assert.Equal(t, ChannelSmartScheduleAffinityEligible,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1727, "/v1/chat/completions", largeRequest))
+	assert.Equal(t, ChannelSmartScheduleAffinityTemporarilyUnavailable,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1726, "/v1/chat/completions", largeRequest))
+}
+
 func TestChannelSmartScheduleAffinityEligibilitySkipsDisabledHigherPriority(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	highPriority := int64(100)

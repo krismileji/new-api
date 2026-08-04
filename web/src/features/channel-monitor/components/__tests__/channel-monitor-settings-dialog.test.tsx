@@ -158,6 +158,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               cooldownMinutes: 30,
               sampleMode: props.sampleMode ?? 'traffic',
               explorationTrafficPercent: 3,
+              explorationMaxPromptTokens: 4096,
               probeIntervalMinutes: 10,
               prioritySamplingEnabled: true,
               prioritySamplingIntervalMinutes: 10,
@@ -226,6 +227,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       cooldownMinutes: 30,
       sampleMode: props.sampleMode,
       explorationTrafficPercent: 3,
+      explorationMaxPromptTokens: 4096,
       probeIntervalMinutes: 15,
       prioritySamplingEnabled: props.prioritySamplingEnabled ?? true,
       prioritySamplingIntervalMinutes: 10,
@@ -463,6 +465,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('按成本倍率'))
     assert.ok(markup.includes('优先级分层 + 权重'))
     assert.ok(markup.includes('探索流量 3%'))
+    assert.ok(markup.includes('≤ 4096 Token'))
     assert.ok(markup.includes('每 10 分钟 · 3% 起'))
     assert.ok(markup.includes('全部模型'))
     assert.equal(markup.includes('未参与调度'), false)
@@ -493,6 +496,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('探索流量'))
     assert.ok(markup.includes('定时探测'))
     assert.ok(markup.includes('目标探索流量'))
+    assert.ok(markup.includes('探索请求上限'))
     assert.equal(markup.includes('探测间隔'), false)
   })
 

@@ -12,12 +12,13 @@ import (
 )
 
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	RequestPath  string
-	Retry        *int
-	resetNextTry bool
+	Ctx              *gin.Context
+	TokenGroup       string
+	ModelName        string
+	RequestPath      string
+	Retry            *int
+	SelectionOptions model.ChannelSelectionOptions
+	resetNextTry     bool
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -87,8 +88,21 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 	selectionOptions := model.ChannelSelectionOptions{}
+	if param != nil {
+		selectionOptions = param.SelectionOptions
+	}
 	if len(options) > 0 {
-		selectionOptions = options[len(options)-1]
+		providedOptions := options[len(options)-1]
+		selectionOptions.ExcludedChannelIds = append(
+			append([]int(nil), selectionOptions.ExcludedChannelIds...),
+			providedOptions.ExcludedChannelIds...,
+		)
+		if providedOptions.EstimatedPromptTokens > 0 {
+			selectionOptions.EstimatedPromptTokens = providedOptions.EstimatedPromptTokens
+		}
+		if providedOptions.RequestBodyBytes > 0 {
+			selectionOptions.RequestBodyBytes = providedOptions.RequestBodyBytes
+		}
 	}
 	selectionOptions = applyChannelRateLimitCooldowns(param.ModelName, selectionOptions)
 	hasExcludedChannels := selectionOptions.HasExcludedChannels()

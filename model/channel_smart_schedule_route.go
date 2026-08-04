@@ -46,6 +46,7 @@ type ChannelSmartScheduleRouteState struct {
 	TemporaryTrafficKind          string  `json:"temporary_traffic_kind" gorm:"type:varchar(32);index"`
 	TemporaryTrafficSince         int64   `json:"temporary_traffic_since" gorm:"bigint"`
 	TemporaryTrafficTargetPercent float64 `json:"temporary_traffic_target_percent"`
+	ExplorationMaxPromptTokens    int     `json:"exploration_max_prompt_tokens"`
 	LastPrioritySampleTime        int64   `json:"last_priority_sample_time" gorm:"bigint;index"`
 
 	// ManualPrimaryUntil keeps an administrator-selected primary route in
@@ -169,6 +170,7 @@ type ChannelSmartScheduleRoutingSnapshotUpdate struct {
 	TemporaryTrafficKind          string
 	TemporaryTrafficSince         int64
 	TemporaryTrafficTargetPercent float64
+	ExplorationMaxPromptTokens    int
 	LastPrioritySampleTime        int64
 }
 
@@ -444,6 +446,7 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 			targetState.TemporaryTrafficKind = ""
 			targetState.TemporaryTrafficSince = 0
 			targetState.TemporaryTrafficTargetPercent = 0
+			targetState.ExplorationMaxPromptTokens = 0
 			targetState.RuntimeProtectionUntil = 0
 		}
 		if !wasParticipating && !excluded && targetState.StabilityState == ChannelSmartScheduleStabilityProbing {
@@ -571,6 +574,7 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 				state.TemporaryTrafficKind = ""
 				state.TemporaryTrafficSince = 0
 				state.TemporaryTrafficTargetPercent = 0
+				state.ExplorationMaxPromptTokens = 0
 				state.RuntimeProtectionUntil = 0
 			}
 			if !wasParticipating && !excluded && state.StabilityState == ChannelSmartScheduleStabilityProbing {
@@ -761,6 +765,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 			targetState.TemporaryTrafficKind = ""
 			targetState.TemporaryTrafficSince = 0
 			targetState.TemporaryTrafficTargetPercent = 0
+			targetState.ExplorationMaxPromptTokens = 0
 		}
 
 		if targetState.ManualPrimaryUntil <= now || !targetState.ManualPrimarySaved {
@@ -1014,6 +1019,7 @@ func clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
 		state.TemporaryTrafficKind = ""
 		state.TemporaryTrafficSince = 0
 		state.TemporaryTrafficTargetPercent = 0
+		state.ExplorationMaxPromptTokens = 0
 		state.Revision++
 		if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 			return false, err
@@ -1118,6 +1124,7 @@ func clearChannelSmartScheduleTemporaryTrafficTx(tx *gorm.DB) (routingChanged bo
 		state.TemporaryTrafficKind = ""
 		state.TemporaryTrafficSince = 0
 		state.TemporaryTrafficTargetPercent = 0
+		state.ExplorationMaxPromptTokens = 0
 		state.Revision++
 		if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 			return false, err
@@ -1235,6 +1242,7 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 			state.TemporaryTrafficKind = ""
 			state.TemporaryTrafficSince = 0
 			state.TemporaryTrafficTargetPercent = 0
+			state.ExplorationMaxPromptTokens = 0
 		}
 		if savedPriority <= 0 {
 			savedPriority = abilityPriority(*ability)
@@ -1477,6 +1485,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state.TemporaryTrafficKind = result.RoutingSnapshot.TemporaryTrafficKind
 				state.TemporaryTrafficSince = result.RoutingSnapshot.TemporaryTrafficSince
 				state.TemporaryTrafficTargetPercent = result.RoutingSnapshot.TemporaryTrafficTargetPercent
+				state.ExplorationMaxPromptTokens = result.RoutingSnapshot.ExplorationMaxPromptTokens
 				state.LastPrioritySampleTime = result.RoutingSnapshot.LastPrioritySampleTime
 			}
 			if state.Revision == math.MaxInt64 {

@@ -17,6 +17,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func normalizeModelCapacityError(apiErr *types.NewAPIError) *types.NewAPIError {
+	if types.IsModelCapacityError(apiErr) && apiErr.StatusCode >= http.StatusOK && apiErr.StatusCode < http.StatusMultipleChoices {
+		apiErr.StatusCode = http.StatusServiceUnavailable
+	}
+	return apiErr
+}
+
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -30,8 +37,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "" || oaiError.Code != nil) {
+		return nil, normalizeModelCapacityError(types.WithOpenAIError(*oaiError, resp.StatusCode))
 	}
 
 	// 写入新的 response body
@@ -84,6 +91,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responseTextBuilder strings.Builder
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
+	var streamErr *types.NewAPIError
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -93,6 +101,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		if streamResponse.Type == "response.failed" && streamResponse.Response != nil {
+			if oaiError := streamResponse.Response.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "" || oaiError.Code != nil) {
+				candidate := normalizeModelCapacityError(types.WithOpenAIError(*oaiError, resp.StatusCode))
+				if types.IsModelCapacityError(candidate) {
+					streamErr = candidate
+					sr.Stop(candidate)
+					return
+				}
+			}
 		}
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
@@ -157,6 +175,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+	if streamErr != nil {
+		return nil, streamErr
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量

@@ -9,10 +9,12 @@ import (
 )
 
 type channelSmartScheduleCachedRoute struct {
-	channelId int
-	priority  int64
-	weight    uint
-	managed   bool
+	channelId                  int
+	priority                   int64
+	weight                     uint
+	managed                    bool
+	temporaryTrafficKind       string
+	explorationMaxPromptTokens int
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
@@ -21,11 +23,14 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 	var states []ChannelSmartScheduleRouteState
 	if DB != nil && DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
 		if err := DB.
-			Select("group_name", "model_name").
+			Select(
+				"channel_id", "group_name", "model_name", "participation_set", "excluded",
+				"temporary_traffic_kind", "exploration_max_prompt_tokens",
+			).
 			Where("participation_set = ? AND excluded = ?", true, false).
 			Find(&states).Error; err != nil {
 			common.SysError("load smart schedule managed pools failed: " + err.Error())
-			return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, nil, true)
+			return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, nil, nil, true)
 		}
 	}
 	return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states)
@@ -37,18 +42,25 @@ func buildChannelSmartScheduleRouteCacheFromStates(
 	states []ChannelSmartScheduleRouteState,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
 	managedPools := make(map[channelSmartScheduleRoutePool]struct{})
+	statesByPool := make(map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState)
 	for _, state := range states {
 		if state.Participates() {
-			managedPools[channelSmartScheduleRoutePool{group: state.GroupName, model: state.ModelName}] = struct{}{}
+			pool := channelSmartScheduleRoutePool{group: state.GroupName, model: state.ModelName}
+			managedPools[pool] = struct{}{}
+			if statesByPool[pool] == nil {
+				statesByPool[pool] = make(map[int]ChannelSmartScheduleRouteState)
+			}
+			statesByPool[pool][state.ChannelId] = state
 		}
 	}
-	return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, managedPools, false)
+	return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, managedPools, statesByPool, false)
 }
 
 func buildChannelSmartScheduleRouteCacheWithManagedPools(
 	abilities []*Ability,
 	channels map[int]*Channel,
 	managedPools map[channelSmartScheduleRoutePool]struct{},
+	statesByPool map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState,
 	managedLookupFailed bool,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
 	cache := make(map[string]map[string][]channelSmartScheduleCachedRoute)
@@ -62,12 +74,16 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 			modelRoutes = make(map[string][]channelSmartScheduleCachedRoute)
 			cache[ability.Group] = modelRoutes
 		}
-		_, managed := managedPools[channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}]
+		pool := channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}
+		_, managed := managedPools[pool]
+		state := statesByPool[pool][ability.ChannelId]
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
-			channelId: ability.ChannelId,
-			priority:  abilityPriority(*ability),
-			weight:    ability.Weight,
-			managed:   managedLookupFailed || managed,
+			channelId:                  ability.ChannelId,
+			priority:                   abilityPriority(*ability),
+			weight:                     ability.Weight,
+			managed:                    managedLookupFailed || managed,
+			temporaryTrafficKind:       state.TemporaryTrafficKind,
+			explorationMaxPromptTokens: state.ExplorationMaxPromptTokens,
 		})
 	}
 	for _, modelRoutes := range cache {
@@ -165,5 +181,5 @@ func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedR
 			filtered = append(filtered, route)
 		}
 	}
-	return filtered
+	return filterChannelSmartScheduleExplorationRoutes(filtered, options)
 }

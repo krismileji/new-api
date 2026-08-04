@@ -61,6 +61,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   cooldownMinutes: 30,
   sampleMode: 'probe',
   explorationTrafficPercent: 3,
+  explorationMaxPromptTokens: 4096,
   probeIntervalMinutes: 15,
   prioritySamplingEnabled: true,
   prioritySamplingIntervalMinutes: 10,
@@ -135,6 +136,7 @@ describe('smart schedule group policy', () => {
         cooldown_minutes: defaultPolicy.cooldownMinutes,
         sample_mode: defaultPolicy.sampleMode,
         exploration_traffic_percent: defaultPolicy.explorationTrafficPercent,
+        exploration_max_prompt_tokens: defaultPolicy.explorationMaxPromptTokens,
         probe_interval_minutes: defaultPolicy.probeIntervalMinutes,
         priority_sampling_enabled: defaultPolicy.prioritySamplingEnabled,
         priority_sampling_interval_minutes:

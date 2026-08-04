@@ -28,6 +28,7 @@ func channelSmartScheduleTestGroupPolicy(
 	scoring := defaultChannelSmartScheduleScoring()
 	sampleMode := channelMonitorSmartScheduleSampleOff
 	explorationTrafficPercent := 3.0
+	explorationMaxPromptTokens := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
 	probeIntervalMinutes := 10
 	prioritySamplingEnabled := true
 	prioritySamplingIntervalMinutes := 10
@@ -65,6 +66,7 @@ func channelSmartScheduleTestGroupPolicy(
 		CooldownMinutes:                 &cooldownMinutes,
 		SampleMode:                      &sampleMode,
 		ExplorationTrafficPercent:       &explorationTrafficPercent,
+		ExplorationMaxPromptTokens:      &explorationMaxPromptTokens,
 		ProbeIntervalMinutes:            &probeIntervalMinutes,
 		PrioritySamplingEnabled:         &prioritySamplingEnabled,
 		PrioritySamplingIntervalMinutes: &prioritySamplingIntervalMinutes,
@@ -78,6 +80,34 @@ func channelSmartScheduleTestGroupPoliciesJSON(t *testing.T, policies ...channel
 	serialized, err := common.Marshal(policies)
 	require.NoError(t, err)
 	return string(serialized)
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsExplorationPromptLimit(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.ExplorationMaxPromptTokens = nil
+
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].ExplorationMaxPromptTokens)
+	assert.Equal(t, model.DefaultChannelSmartScheduleExplorationMaxPromptTokens, *normalized[0].ExplorationMaxPromptTokens)
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyValidatesExplorationPromptLimit(t *testing.T) {
+	for _, value := range []int{0, model.MaxChannelSmartScheduleExplorationPromptTokens + 1} {
+		policy := channelSmartScheduleTestGroupPolicy(
+			"vip", channelMonitorSmartScheduleStrategySmart, true,
+			channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+		)
+		policy.ExplorationMaxPromptTokens = &value
+
+		_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "探索请求上限")
+	}
 }
 
 func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.T) {

@@ -1052,7 +1052,11 @@ func runChannelSmartScheduleByRouteOnce(
 					TemporaryTrafficKind:          temporaryKind,
 					TemporaryTrafficSince:         temporarySince,
 					TemporaryTrafficTargetPercent: item.ScoreDetails.Decision.TemporaryTrafficTargetPercent,
+					ExplorationMaxPromptTokens:    0,
 					LastPrioritySampleTime:        lastPrioritySampleTime,
+				}
+				if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficExploration {
+					update.RoutingSnapshot.ExplorationMaxPromptTokens = policy.ExplorationMaxPromptTokens
 				}
 			}
 			statusUpdates = append(statusUpdates, update)
@@ -1235,7 +1239,8 @@ func channelSmartScheduleRouteResultChangesTrafficState(
 	if snapshot := update.RoutingSnapshot; snapshot != nil &&
 		(snapshot.TemporaryTrafficKind != state.TemporaryTrafficKind ||
 			snapshot.TemporaryTrafficSince != state.TemporaryTrafficSince ||
-			snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent) {
+			snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent ||
+			snapshot.ExplorationMaxPromptTokens != state.ExplorationMaxPromptTokens) {
 		return true
 	}
 	return false

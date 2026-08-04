@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
 
 const (
@@ -48,6 +49,7 @@ type channelSmartScheduleGroupPolicy struct {
 	CooldownMinutes                 *int                         `json:"cooldown_minutes,omitempty"`
 	SampleMode                      *string                      `json:"sample_mode,omitempty"`
 	ExplorationTrafficPercent       *float64                     `json:"exploration_traffic_percent,omitempty"`
+	ExplorationMaxPromptTokens      *int                         `json:"exploration_max_prompt_tokens,omitempty"`
 	ProbeIntervalMinutes            *int                         `json:"probe_interval_minutes,omitempty"`
 	PrioritySamplingEnabled         *bool                        `json:"priority_sampling_enabled,omitempty"`
 	PrioritySamplingIntervalMinutes *int                         `json:"priority_sampling_interval_minutes,omitempty"`
@@ -77,6 +79,7 @@ type channelSmartSchedulePolicy struct {
 	CooldownMinutes                 int
 	SampleMode                      string
 	ExplorationTrafficPercent       float64
+	ExplorationMaxPromptTokens      int
 	ProbeIntervalMinutes            int
 	PrioritySamplingEnabled         bool
 	PrioritySamplingIntervalMinutes int
@@ -126,6 +129,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			value := defaultChannelMonitorSmartScheduleJitterMinutes
 			policy.JitterBaselineMinutes = &value
 		}
+		if policy.ExplorationMaxPromptTokens == nil {
+			value := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
+			policy.ExplorationMaxPromptTokens = &value
+		}
 		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.DegradeStabilityScore == nil || policy.RecoveryStabilityScore == nil ||
@@ -135,10 +142,11 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.JitterBaselineMinutes == nil ||
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
+			policy.ExplorationMaxPromptTokens == nil ||
 			policy.ProbeIntervalMinutes == nil || policy.PrioritySamplingEnabled == nil ||
 			policy.PrioritySamplingIntervalMinutes == nil || policy.PrioritySamplingBasePercent == nil ||
 			policy.PrioritySamplingDecayPercent == nil || policy.PrioritySamplingMinPercent == nil {
-			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、降级时长、样本补充和低优先级轮转")
+			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、样本补充和低优先级轮转")
 		}
 
 		strategy := strings.TrimSpace(*policy.Strategy)
@@ -223,6 +231,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.ExplorationTrafficPercent > maxChannelMonitorSmartScheduleExplorationPercent {
 			return nil, errors.New("分组调度探索流量必须大于 0% 且不超过 20%")
 		}
+		if *policy.ExplorationMaxPromptTokens <= 0 ||
+			*policy.ExplorationMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens {
+			return nil, errors.New("分组调度探索请求上限必须在 1 到 1000000 Token 之间")
+		}
 		if *policy.ProbeIntervalMinutes <= 0 ||
 			*policy.ProbeIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes {
 			return nil, errors.New("分组调度探测间隔必须在 1 到 525600 分钟之间")
@@ -277,6 +289,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		CooldownMinutes:                 *configured.CooldownMinutes,
 		SampleMode:                      *configured.SampleMode,
 		ExplorationTrafficPercent:       *configured.ExplorationTrafficPercent,
+		ExplorationMaxPromptTokens:      *configured.ExplorationMaxPromptTokens,
 		ProbeIntervalMinutes:            *configured.ProbeIntervalMinutes,
 		PrioritySamplingEnabled:         *configured.PrioritySamplingEnabled,
 		PrioritySamplingIntervalMinutes: *configured.PrioritySamplingIntervalMinutes,

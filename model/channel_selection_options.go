@@ -5,11 +5,39 @@ import "gorm.io/gorm"
 // ChannelSelectionOptions carries request-scoped channel exclusions without
 // changing the existing selector call sites.
 type ChannelSelectionOptions struct {
-	ExcludedChannelIds []int
+	ExcludedChannelIds    []int
+	EstimatedPromptTokens int
+	RequestBodyBytes      int64
 }
+
+const (
+	DefaultChannelSmartScheduleExplorationMaxPromptTokens = 4096
+	MaxChannelSmartScheduleExplorationPromptTokens        = 1_000_000
+	requestBodyBytesPerPromptToken                        = 3
+)
 
 func (options ChannelSelectionOptions) HasExcludedChannels() bool {
 	return len(options.ExcludedChannelIds) > 0
+}
+
+func (options ChannelSelectionOptions) HasRequestSize() bool {
+	return options.EstimatedPromptTokens > 0 || options.RequestBodyBytes > 0
+}
+
+func (options ChannelSelectionOptions) ShouldAvoidExploration(maxPromptTokens int) bool {
+	if !options.HasRequestSize() {
+		return false
+	}
+	if maxPromptTokens <= 0 {
+		maxPromptTokens = DefaultChannelSmartScheduleExplorationMaxPromptTokens
+	}
+	if maxPromptTokens > MaxChannelSmartScheduleExplorationPromptTokens {
+		maxPromptTokens = MaxChannelSmartScheduleExplorationPromptTokens
+	}
+	if options.EstimatedPromptTokens > maxPromptTokens {
+		return true
+	}
+	return options.RequestBodyBytes > int64(maxPromptTokens)*requestBodyBytesPerPromptToken
 }
 
 func channelSelectionOptions(options []ChannelSelectionOptions) ChannelSelectionOptions {

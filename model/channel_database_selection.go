@@ -82,6 +82,19 @@ func getChannelFromDatabasePool(
 	if len(available) == 0 {
 		return nil, nil
 	}
+	if options.HasRequestSize() {
+		availableChannelIDs := make([]int, 0, len(available))
+		for _, ability := range available {
+			availableChannelIDs = append(availableChannelIDs, ability.ChannelId)
+		}
+		explorationStates, err := loadChannelSmartScheduleExplorationStates(
+			group, poolModelName, availableChannelIDs,
+		)
+		if err != nil {
+			return nil, err
+		}
+		available = filterAbilitiesByExplorationRequest(available, explorationStates, options)
+	}
 
 	priorities := make([]int64, 0, len(available))
 	seenPriorities := make(map[int64]struct{}, len(available))

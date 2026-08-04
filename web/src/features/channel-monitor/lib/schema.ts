@@ -70,6 +70,7 @@ export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
 export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
+export const MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS = 1_000_000
 export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
 export const MIN_SMART_SCHEDULE_WINDOW_MINUTES = 1
 export const MAX_SMART_SCHEDULE_WINDOW_MINUTES = 43_200
@@ -262,6 +263,15 @@ const smartScheduleExplorationTrafficSchema = z.coerce
   .gt(0, '探索流量必须大于 0%')
   .max(MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT, '探索流量不能超过 20%')
 
+const smartScheduleExplorationPromptTokensSchema = z.coerce
+  .number()
+  .int('探索请求上限必须是整数')
+  .min(1, '探索请求上限不能小于 1 Token')
+  .max(
+    MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
+    '探索请求上限不能超过 1000000 Token'
+  )
+
 const smartScheduleProbeIntervalSchema = z.coerce
   .number()
   .int('探测间隔必须是整数')
@@ -336,6 +346,7 @@ const smartSchedulePolicyShape = {
   cooldownMinutes: smartScheduleCooldownSchema,
   sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
   explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
+  explorationMaxPromptTokens: smartScheduleExplorationPromptTokensSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
   prioritySamplingEnabled: z.boolean(),
   prioritySamplingIntervalMinutes: smartSchedulePrioritySamplingIntervalSchema,
@@ -355,6 +366,7 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
 
   if (policy.sampleMode !== 'traffic') {
     normalized.explorationTrafficPercent = defaults.explorationTrafficPercent
+    normalized.explorationMaxPromptTokens = defaults.explorationMaxPromptTokens
   }
   if (policy.sampleMode !== 'probe') {
     normalized.probeIntervalMinutes = defaults.probeIntervalMinutes

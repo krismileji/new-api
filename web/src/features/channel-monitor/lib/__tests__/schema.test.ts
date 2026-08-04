@@ -65,6 +65,7 @@ describe('smart schedule policy schema', () => {
       slowFailureSeconds: '',
       cooldownMinutes: '',
       explorationTrafficPercent: '',
+      explorationMaxPromptTokens: '',
       probeIntervalMinutes: '',
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: '',
@@ -83,6 +84,7 @@ describe('smart schedule policy schema', () => {
     const basePolicy = CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
     const activeCases = [
       { ...basePolicy, explorationTrafficPercent: '', sampleMode: 'traffic' },
+      { ...basePolicy, explorationMaxPromptTokens: '', sampleMode: 'traffic' },
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
       { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
@@ -447,6 +449,7 @@ describe('channel monitor settings schema', () => {
       cooldownMinutes: 30,
       sampleMode: 'traffic' as const,
       explorationTrafficPercent: 3,
+      explorationMaxPromptTokens: 4096,
       probeIntervalMinutes: 10,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: 10,
@@ -792,6 +795,28 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
+    for (const explorationMaxPromptTokens of [1, 1_000_000]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, explorationMaxPromptTokens },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const explorationMaxPromptTokens of [0, 1_000_001, 1.5]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, explorationMaxPromptTokens },
+          ],
+        }).success,
+        false
+      )
+    }
     for (const prioritySamplingIntervalMinutes of [1, 1440]) {
       assert.equal(
         schema.safeParse({

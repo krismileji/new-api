@@ -97,3 +97,20 @@ func TestShouldRetry500UsesConfiguredBudget(t *testing.T) {
 	require.True(t, shouldRetry(ctx, apiErr, 1))
 	require.False(t, shouldRetry(ctx, apiErr, 0))
 }
+
+func TestShouldRetryModelCapacityErrorRegardlessOfUpstreamStatus(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	message := "Selected model is at capacity. Please try a different model."
+
+	for _, statusCode := range []int{http.StatusOK, http.StatusBadRequest} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			apiErr := types.WithOpenAIError(types.OpenAIError{
+				Type:    "server_error",
+				Code:    "server_is_overloaded",
+				Message: message,
+			}, statusCode)
+			require.True(t, shouldRetry(ctx, apiErr, 1))
+			require.False(t, shouldRetry(ctx, apiErr, 0))
+		})
+	}
+}

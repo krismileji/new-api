@@ -101,6 +101,7 @@ func Distribute() func(c *gin.Context) {
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
 					}
 				}
+				selectionOptions := service.ChannelSelectionOptionsForRequest(c, 0)
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					affinityUsable := false
@@ -117,6 +118,7 @@ func Distribute() func(c *gin.Context) {
 								}
 								affinityStatus := service.PreferredChannelAffinityStatus(
 									g, modelRequest.Model, preferred.Id, c.Request.URL.Path,
+									selectionOptions,
 								)
 								if affinityStatus == model.ChannelSmartScheduleAffinityTemporarilyUnavailable {
 									affinityTemporarilyUnavailable = true
@@ -133,6 +135,7 @@ func Distribute() func(c *gin.Context) {
 						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
 							affinityStatus := service.PreferredChannelAffinityStatus(
 								usingGroup, modelRequest.Model, preferred.Id, c.Request.URL.Path,
+								selectionOptions,
 							)
 							affinityTemporarilyUnavailable = affinityStatus == model.ChannelSmartScheduleAffinityTemporarilyUnavailable
 							if affinityStatus == model.ChannelSmartScheduleAffinityEligible {
@@ -150,11 +153,12 @@ func Distribute() func(c *gin.Context) {
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:         c,
-						ModelName:   modelRequest.Model,
-						TokenGroup:  usingGroup,
-						RequestPath: c.Request.URL.Path,
-						Retry:       common.GetPointer(0),
+						Ctx:              c,
+						ModelName:        modelRequest.Model,
+						TokenGroup:       usingGroup,
+						RequestPath:      c.Request.URL.Path,
+						Retry:            common.GetPointer(0),
+						SelectionOptions: selectionOptions,
 					})
 					if err != nil {
 						showGroup := usingGroup
