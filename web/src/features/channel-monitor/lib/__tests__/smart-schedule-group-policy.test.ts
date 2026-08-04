@@ -61,7 +61,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   cooldownMinutes: 30,
   sampleMode: 'probe',
   explorationTrafficPercent: 3,
-  explorationMaxPromptTokens: 4096,
+  explorationMaxPromptTokens: 16_384,
   probeIntervalMinutes: 15,
   prioritySamplingEnabled: true,
   prioritySamplingIntervalMinutes: 10,

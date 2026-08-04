@@ -80,7 +80,7 @@ const formValues = {
       cooldownMinutes: 30,
       sampleMode: 'probe',
       explorationTrafficPercent: 3,
-      explorationMaxPromptTokens: 4096,
+      explorationMaxPromptTokens: 16_384,
       probeIntervalMinutes: 15,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: 10,
@@ -137,7 +137,7 @@ describe('channel monitor settings submit payload', () => {
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.exploration_max_prompt_tokens,
-      4096
+      16_384
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.priority_sampling_enabled,

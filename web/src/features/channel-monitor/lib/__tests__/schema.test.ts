@@ -449,7 +449,7 @@ describe('channel monitor settings schema', () => {
       cooldownMinutes: 30,
       sampleMode: 'traffic' as const,
       explorationTrafficPercent: 3,
-      explorationMaxPromptTokens: 4096,
+      explorationMaxPromptTokens: 16_384,
       probeIntervalMinutes: 10,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: 10,

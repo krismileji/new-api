@@ -72,7 +72,7 @@ function createGroupPolicy(
     cooldown_minutes: 30,
     sample_mode: 'traffic',
     exploration_traffic_percent: 3,
-    exploration_max_prompt_tokens: 4096,
+    exploration_max_prompt_tokens: 16_384,
     probe_interval_minutes: 10,
     priority_sampling_enabled: true,
     priority_sampling_interval_minutes: 10,
