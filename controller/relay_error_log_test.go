@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -67,8 +68,14 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	c.Set(common.RequestIdKey, "retry-request")
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, "vip")
 	common.SetContextKey(c, constant.ContextKeyAutoGroup, "standard")
+	common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, service.UpstreamErrorDiagnostic{
+		Category: service.UpstreamErrorCategoryDNS,
+		Summary:  "上游域名解析失败",
+		Host:     "api.example.com",
+		Detail:   "lookup ***.***.com: no such host",
+	})
 
-	apiErr := types.NewOpenAIError(errors.New("temporary upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	apiErr := types.NewOpenAIError(errors.New("upstream error: do request failed"), types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", true, "", false), apiErr, true)
 
 	var logs []model.Log
@@ -77,7 +84,7 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	assert.True(t, logs[0].IsRetryAttempt)
 	assert.Equal(t, 9, logs[0].ChannelId)
 	assert.Equal(t, "standard", logs[0].Group)
-	assert.Contains(t, logs[0].Content, "temporary upstream failure")
+	assert.Contains(t, logs[0].Content, "upstream error: do request failed")
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 	assert.Equal(t, float64(9), other["channel_id"])
@@ -86,6 +93,11 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	adminInfo, ok := other["admin_info"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, true, adminInfo["is_multi_key"])
+	upstreamError, ok := adminInfo["upstream_error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, service.UpstreamErrorCategoryDNS, upstreamError["category"])
+	assert.Equal(t, "上游域名解析失败", upstreamError["summary"])
+	assert.Equal(t, "api.example.com", upstreamError["host"])
 	_, recorded := other["channel_monitor_attempt_duration_ms"]
 	assert.False(t, recorded)
 
@@ -94,6 +106,7 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	c.Set(channelTestContextKey, true)
 	c.Set("group", "channel-test-group")
 	common.SetContextKey(c, constant.ContextKeyAutoGroup, "")
+	common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 	channelTestErr := types.NewOpenAIError(errors.New("channel test upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
 	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", false, "", false), channelTestErr, false)
 	require.NoError(t, db.Find(&logs).Error)

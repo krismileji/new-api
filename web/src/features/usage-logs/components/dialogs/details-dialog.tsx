@@ -815,6 +815,41 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {props.isAdmin && other?.admin_info?.upstream_error && (
+          <DetailSection
+            icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+            label='上游连接诊断'
+            variant='danger'
+          >
+            <DetailRow
+              label='故障类型'
+              value={other.admin_info.upstream_error.summary}
+            />
+            <DetailRow
+              label='诊断代码'
+              value={other.admin_info.upstream_error.category}
+              mono
+            />
+            {other.admin_info.upstream_error.host && (
+              <DetailRow
+                label='上游主机'
+                value={other.admin_info.upstream_error.host}
+                mono
+              />
+            )}
+            {other.admin_info.upstream_error.via_proxy && (
+              <DetailRow label='连接方式' value='渠道代理' />
+            )}
+            {other.admin_info.upstream_error.detail && (
+              <DetailRow
+                label='具体原因'
+                value={other.admin_info.upstream_error.detail}
+                mono
+              />
+            )}
+          </DetailSection>
+        )}
+
         {/* Reject reason (admin only) */}
         {props.isAdmin && other?.reject_reason && (
           <DetailSection

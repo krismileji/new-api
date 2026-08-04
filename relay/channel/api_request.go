@@ -478,12 +478,20 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {
 		client, err = service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
 		if err != nil {
-			return nil, fmt.Errorf("new proxy http client failed: %w", err)
+			diagnostic := service.DiagnoseUpstreamRequestError(req, err, true)
+			logger.LogError(c, "new proxy http client failed: "+diagnostic.Detail)
+			common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, diagnostic)
+			return nil, types.NewError(
+				fmt.Errorf("new proxy http client failed: %w", err),
+				types.ErrorCodeDoRequestFailed,
+				types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
+			)
 		}
 	} else {
 		client = service.GetHttpClient()
@@ -526,7 +534,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
 			return nil, clientGoneErr
 		}
-		logger.LogError(c, "do request failed: "+err.Error())
+		diagnostic := service.DiagnoseUpstreamRequestError(req, err, info.ChannelSetting.Proxy != "")
+		logger.LogError(c, "do request failed: "+diagnostic.Detail)
+		common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, diagnostic)
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {

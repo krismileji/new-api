@@ -40,6 +40,9 @@ func TestDoRequestCancelsUpstreamWithClientRequest(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(clientContext)
+	common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, service.UpstreamErrorDiagnostic{
+		Category: service.UpstreamErrorCategoryNetwork,
+	})
 	upstreamRequest, err := http.NewRequest(http.MethodPost, server.URL, nil)
 	require.NoError(t, err)
 
@@ -73,6 +76,8 @@ func TestDoRequestCancelsUpstreamWithClientRequest(t *testing.T) {
 		assert.Equal(t, types.StatusClientClosedRequest, apiErr.StatusCode)
 		assert.True(t, types.IsSkipRetryError(apiErr))
 		assert.False(t, types.IsRecordErrorLog(apiErr))
+		_, hasDiagnostic := common2.GetContextKeyType[service.UpstreamErrorDiagnostic](c, service.UpstreamErrorDiagnosticContextKey)
+		assert.False(t, hasDiagnostic)
 	case <-testContext.Done():
 		require.FailNow(t, "relay request did not return after cancellation")
 	}
@@ -98,6 +103,11 @@ func TestDoRequestKeepsTransportFailureRetryable(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
 	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
 	assert.False(t, types.IsSkipRetryError(apiErr))
+	assert.Equal(t, "upstream error: do request failed", apiErr.Error())
+	diagnostic, ok := common2.GetContextKeyType[service.UpstreamErrorDiagnostic](c, service.UpstreamErrorDiagnosticContextKey)
+	require.True(t, ok)
+	assert.Equal(t, service.UpstreamErrorCategoryConnectionRefused, diagnostic.Category)
+	assert.NotEmpty(t, diagnostic.Host)
 }
 
 func TestDoRequestTreatsStreamFirstResponseTimeoutAsRetryable(t *testing.T) {

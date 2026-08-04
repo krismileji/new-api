@@ -212,6 +212,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	var finalRetryChannelError *types.ChannelError
 
 	for retryParam.GetRetry() <= common.RetryTimes {
+		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam, retryRouting)
 		if channelErr != nil {
@@ -487,6 +488,9 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		if diagnostic, ok := common.GetContextKeyType[service.UpstreamErrorDiagnostic](c, service.UpstreamErrorDiagnosticContextKey); ok {
+			adminInfo["upstream_error"] = diagnostic
+		}
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {
@@ -626,6 +630,7 @@ func RelayTask(c *gin.Context) {
 	retryRouting := newRelayRetryRouting()
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 		var channel *model.Channel
 		allowAlternative := true
 

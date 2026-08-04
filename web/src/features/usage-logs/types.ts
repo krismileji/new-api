@@ -141,6 +141,13 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    upstream_error?: {
+      category: string
+      summary: string
+      host?: string
+      detail?: string
+      via_proxy?: boolean
+    }
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.
