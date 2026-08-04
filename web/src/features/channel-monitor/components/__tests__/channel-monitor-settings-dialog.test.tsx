@@ -120,7 +120,6 @@ function SmartScheduleGroupPoliciesFixture(props: {
               stabilityEnabled: false,
               jitterEnabled: true,
               jitterTolerancePercent: 5,
-              jitterThresholdMultiplier: 5,
               jitterAbsoluteToleranceSeconds: 10,
               jitterBaselineMinutes: 60,
               scoring: {
@@ -188,7 +187,6 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       stabilityEnabled: true,
       jitterEnabled: props.jitterEnabled ?? true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 5,
       jitterAbsoluteToleranceSeconds: 10,
       jitterBaselineMinutes: 60,
       scoring: {
@@ -381,7 +379,6 @@ describe('channel monitor settings dialog', () => {
       '降级时长',
       '成功延迟抖动',
       '允许抖动',
-      '判定倍率',
       '绝对容差',
       '基线学习周期',
       '成本倍率',
@@ -573,10 +570,7 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="jitterTolerancePercent")(?=[^>]*min="0")(?=[^>]*max="50")(?=[^>]*value="5")[^>]*>/
     )
-    assert.match(
-      markup,
-      /<input(?=[^>]*name="jitterThresholdMultiplier")(?=[^>]*min="1.01")(?=[^>]*max="20")(?=[^>]*value="5")[^>]*>/
-    )
+    assert.equal(markup.includes('判定倍率'), false)
     assert.match(
       markup,
       /<input(?=[^>]*name="jitterAbsoluteToleranceSeconds")(?=[^>]*min="0")(?=[^>]*max="60")(?=[^>]*value="10")[^>]*>/
@@ -585,7 +579,8 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="jitterBaselineMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="60")[^>]*>/
     )
-    assert.ok(markup.includes('慢请求阈值取'))
+    assert.ok(markup.includes('允许高于基线的固定延迟'))
+    assert.ok(markup.includes('慢请求阈值为“基线 + 绝对容差”'))
   })
 
   test('hides successful latency jitter tuning while disabled', () => {
@@ -599,7 +594,6 @@ describe('channel monitor settings dialog', () => {
 
     assert.ok(markup.includes('成功延迟抖动'))
     assert.equal(markup.includes('name="jitterTolerancePercent"'), false)
-    assert.equal(markup.includes('name="jitterThresholdMultiplier"'), false)
     assert.equal(
       markup.includes('name="jitterAbsoluteToleranceSeconds"'),
       false

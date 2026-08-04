@@ -468,7 +468,6 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   stability_enabled: boolean
   jitter_enabled: boolean
   jitter_tolerance_percent: number
-  jitter_threshold_multiplier: number
   jitter_absolute_tolerance_seconds: number
   jitter_baseline_minutes: number
   scoring: ChannelMonitorSmartScheduleScoring

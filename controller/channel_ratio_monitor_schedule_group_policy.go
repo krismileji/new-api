@@ -14,10 +14,8 @@ const (
 	channelMonitorSmartScheduleGroupPoliciesOption       = "ChannelMonitorSmartScheduleGroupPolicies"
 	maxChannelMonitorSmartScheduleFailureSeconds         = 60
 	maxChannelMonitorSmartScheduleJitterTolerancePercent = 50
-	maxChannelMonitorSmartScheduleJitterMultiplier       = 20
 	maxChannelMonitorSmartScheduleJitterToleranceSeconds = 60
 	maxChannelMonitorSmartScheduleJitterBaselineMinutes  = 43200
-	defaultChannelMonitorSmartScheduleJitterMultiplier   = 5.0
 	defaultChannelMonitorSmartScheduleJitterSeconds      = 10.0
 	defaultChannelMonitorSmartScheduleJitterMinutes      = 60
 	maxChannelMonitorSmartScheduleSamplingInterval       = 1440
@@ -45,7 +43,6 @@ type channelSmartScheduleGroupPolicy struct {
 	SlowFailureSeconds              *float64                     `json:"slow_failure_seconds,omitempty"`
 	JitterEnabled                   *bool                        `json:"jitter_enabled,omitempty"`
 	JitterTolerancePercent          *float64                     `json:"jitter_tolerance_percent,omitempty"`
-	JitterThresholdMultiplier       *float64                     `json:"jitter_threshold_multiplier,omitempty"`
 	JitterAbsoluteToleranceSeconds  *float64                     `json:"jitter_absolute_tolerance_seconds,omitempty"`
 	JitterBaselineMinutes           *int                         `json:"jitter_baseline_minutes,omitempty"`
 	CooldownMinutes                 *int                         `json:"cooldown_minutes,omitempty"`
@@ -75,7 +72,6 @@ type channelSmartSchedulePolicy struct {
 	SlowFailureSeconds              float64
 	JitterEnabled                   bool
 	JitterTolerancePercent          float64
-	JitterThresholdMultiplier       float64
 	JitterAbsoluteToleranceSeconds  float64
 	JitterBaselineMinutes           int
 	CooldownMinutes                 int
@@ -122,10 +118,6 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("同一分组不能配置多个调度策略")
 		}
 		seenGroups[policy.Group] = struct{}{}
-		if policy.JitterThresholdMultiplier == nil {
-			value := defaultChannelMonitorSmartScheduleJitterMultiplier
-			policy.JitterThresholdMultiplier = &value
-		}
 		if policy.JitterAbsoluteToleranceSeconds == nil {
 			value := defaultChannelMonitorSmartScheduleJitterSeconds
 			policy.JitterAbsoluteToleranceSeconds = &value
@@ -139,8 +131,8 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.DegradeStabilityScore == nil || policy.RecoveryStabilityScore == nil ||
 			policy.FastFailurePenaltyPercent == nil || policy.FastFailureSeconds == nil ||
 			policy.SlowFailureSeconds == nil || policy.JitterEnabled == nil ||
-			policy.JitterTolerancePercent == nil || policy.JitterThresholdMultiplier == nil ||
-			policy.JitterAbsoluteToleranceSeconds == nil || policy.JitterBaselineMinutes == nil ||
+			policy.JitterTolerancePercent == nil || policy.JitterAbsoluteToleranceSeconds == nil ||
+			policy.JitterBaselineMinutes == nil ||
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
 			policy.ProbeIntervalMinutes == nil || policy.PrioritySamplingEnabled == nil ||
@@ -203,11 +195,6 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.JitterTolerancePercent < 0 ||
 			*policy.JitterTolerancePercent > maxChannelMonitorSmartScheduleJitterTolerancePercent {
 			return nil, errors.New("分组调度允许抖动比例必须在 0% 到 50% 之间")
-		}
-		if math.IsNaN(*policy.JitterThresholdMultiplier) || math.IsInf(*policy.JitterThresholdMultiplier, 0) ||
-			*policy.JitterThresholdMultiplier <= 1 ||
-			*policy.JitterThresholdMultiplier > maxChannelMonitorSmartScheduleJitterMultiplier {
-			return nil, errors.New("分组调度抖动阈值倍数必须大于 1 且不超过 20")
 		}
 		if math.IsNaN(*policy.JitterAbsoluteToleranceSeconds) ||
 			math.IsInf(*policy.JitterAbsoluteToleranceSeconds, 0) ||
@@ -285,7 +272,6 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		SlowFailureSeconds:              *configured.SlowFailureSeconds,
 		JitterEnabled:                   *configured.JitterEnabled,
 		JitterTolerancePercent:          *configured.JitterTolerancePercent,
-		JitterThresholdMultiplier:       *configured.JitterThresholdMultiplier,
 		JitterAbsoluteToleranceSeconds:  *configured.JitterAbsoluteToleranceSeconds,
 		JitterBaselineMinutes:           *configured.JitterBaselineMinutes,
 		CooldownMinutes:                 *configured.CooldownMinutes,

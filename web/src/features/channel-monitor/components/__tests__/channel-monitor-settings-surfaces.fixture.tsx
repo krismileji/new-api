@@ -99,7 +99,6 @@ const settings = {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_threshold_multiplier: 5,
       jitter_absolute_tolerance_seconds: 10,
       jitter_baseline_minutes: 60,
       scoring: {
@@ -289,7 +288,6 @@ const policyDialogHasCompletePolicyControls = [
   '降级时长',
   '成功延迟抖动',
   '允许抖动',
-  '判定倍率',
   '绝对容差',
   '基线学习周期',
   '智能调度指标占比',

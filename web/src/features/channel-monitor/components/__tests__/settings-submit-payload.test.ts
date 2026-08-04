@@ -44,7 +44,6 @@ const formValues = {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 5,
       jitterAbsoluteToleranceSeconds: 10,
       jitterBaselineMinutes: 60,
       scoring: {
@@ -173,8 +172,11 @@ describe('channel monitor settings submit payload', () => {
       5
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.jitter_threshold_multiplier,
-      5
+      Object.hasOwn(
+        payload.smart_schedule_group_policies?.[0] ?? {},
+        'jitter_threshold_multiplier'
+      ),
+      false
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]

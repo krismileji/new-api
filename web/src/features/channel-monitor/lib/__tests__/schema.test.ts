@@ -53,7 +53,6 @@ describe('smart schedule policy schema', () => {
         stabilityPercent: '',
       },
       jitterTolerancePercent: '',
-      jitterThresholdMultiplier: '',
       jitterAbsoluteToleranceSeconds: '',
       jitterBaselineMinutes: '',
       minSamples: '',
@@ -386,7 +385,6 @@ describe('channel monitor settings schema', () => {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterThresholdMultiplier: 5,
       jitterAbsoluteToleranceSeconds: 10,
       jitterBaselineMinutes: 60,
       scoring,
@@ -450,28 +448,6 @@ describe('channel monitor settings schema', () => {
           ...baseSettings,
           smartScheduleGroupPolicies: [
             { ...groupPolicy, jitterTolerancePercent },
-          ],
-        }).success,
-        false
-      )
-    }
-    for (const jitterThresholdMultiplier of [1.01, 20]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterThresholdMultiplier },
-          ],
-        }).success,
-        true
-      )
-    }
-    for (const jitterThresholdMultiplier of [1, 20.1]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterThresholdMultiplier },
           ],
         }).success,
         false

@@ -32,7 +32,6 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   stabilityEnabled: true,
   jitterEnabled: true,
   jitterTolerancePercent: 5,
-  jitterThresholdMultiplier: 5,
   jitterAbsoluteToleranceSeconds: 10,
   jitterBaselineMinutes: 60,
   scoring: {
@@ -105,7 +104,6 @@ describe('smart schedule group policy', () => {
         stability_enabled: false,
         jitter_enabled: defaultPolicy.jitterEnabled,
         jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
-        jitter_threshold_multiplier: defaultPolicy.jitterThresholdMultiplier,
         jitter_absolute_tolerance_seconds:
           defaultPolicy.jitterAbsoluteToleranceSeconds,
         jitter_baseline_minutes: defaultPolicy.jitterBaselineMinutes,
@@ -159,12 +157,14 @@ describe('smart schedule group policy', () => {
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
-    assert.equal(formPolicies[0]?.jitterThresholdMultiplier, 5)
     assert.equal(formPolicies[0]?.jitterAbsoluteToleranceSeconds, 10)
     assert.equal(formPolicies[0]?.jitterBaselineMinutes, 60)
     assert.equal(apiPolicies[0]?.jitter_enabled, true)
     assert.equal(apiPolicies[0]?.jitter_tolerance_percent, 5)
-    assert.equal(apiPolicies[0]?.jitter_threshold_multiplier, 5)
+    assert.equal(
+      Object.hasOwn(apiPolicies[0] ?? {}, 'jitter_threshold_multiplier'),
+      false
+    )
     assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_seconds, 10)
     assert.equal(apiPolicies[0]?.jitter_baseline_minutes, 60)
     assert.equal(apiPolicies[0]?.scoring.primary_traffic_percent, 90)
@@ -214,10 +214,6 @@ describe('smart schedule group policy', () => {
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterTolerancePercent,
-      5
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterThresholdMultiplier,
       5
     )
     assert.equal(

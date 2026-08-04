@@ -287,7 +287,6 @@ function renderBoard(
               stability_enabled: true,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_threshold_multiplier: 5,
               jitter_absolute_tolerance_seconds: 10,
               jitter_baseline_minutes: 60,
               scoring: {
@@ -330,7 +329,6 @@ function renderBoard(
               stability_enabled: false,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_threshold_multiplier: 5,
               jitter_absolute_tolerance_seconds: 10,
               jitter_baseline_minutes: 60,
               scoring: {
@@ -550,7 +548,6 @@ describe('channel monitor smart schedule board', () => {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_threshold_multiplier: 5,
       jitter_absolute_tolerance_seconds: 10,
       jitter_baseline_minutes: 60,
       scoring: {

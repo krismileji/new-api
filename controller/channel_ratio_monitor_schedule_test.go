@@ -40,7 +40,6 @@ func channelSmartScheduleTestGroupPolicy(
 	slowFailureSeconds := 10.0
 	jitterEnabled := true
 	jitterTolerancePercent := 5.0
-	jitterThresholdMultiplier := 5.0
 	jitterAbsoluteToleranceSeconds := 10.0
 	jitterBaselineMinutes := 60
 	if models == nil {
@@ -61,7 +60,6 @@ func channelSmartScheduleTestGroupPolicy(
 		SlowFailureSeconds:              &slowFailureSeconds,
 		JitterEnabled:                   &jitterEnabled,
 		JitterTolerancePercent:          &jitterTolerancePercent,
-		JitterThresholdMultiplier:       &jitterThresholdMultiplier,
 		JitterAbsoluteToleranceSeconds:  &jitterAbsoluteToleranceSeconds,
 		JitterBaselineMinutes:           &jitterBaselineMinutes,
 		CooldownMinutes:                 &cooldownMinutes,
@@ -523,7 +521,6 @@ func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) 
 		StabilityEnabled:               true,
 		JitterEnabled:                  true,
 		JitterTolerancePercent:         5,
-		JitterThresholdMultiplier:      3,
 		JitterAbsoluteToleranceSeconds: 1,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
@@ -544,7 +541,6 @@ func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T
 		StabilityEnabled:               true,
 		JitterEnabled:                  true,
 		JitterTolerancePercent:         5,
-		JitterThresholdMultiplier:      3,
 		JitterAbsoluteToleranceSeconds: 1,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
@@ -566,7 +562,6 @@ func TestChannelSmartScheduleJitterRequiresDistributionSamples(t *testing.T) {
 		StabilityEnabled:               true,
 		JitterEnabled:                  true,
 		JitterTolerancePercent:         0,
-		JitterThresholdMultiplier:      3,
 		JitterAbsoluteToleranceSeconds: 1,
 		RecoveryStabilityScore:         80,
 		JitterBaselineMinutes:          1440,

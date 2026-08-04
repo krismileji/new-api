@@ -44,7 +44,6 @@ function createGroupPolicy(
     stability_enabled: true,
     jitter_enabled: true,
     jitter_tolerance_percent: 5,
-    jitter_threshold_multiplier: 5,
     jitter_absolute_tolerance_seconds: 10,
     jitter_baseline_minutes: 60,
     scoring: {

@@ -53,7 +53,6 @@ import {
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
   MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
-  MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
   MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
@@ -880,7 +879,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
 
             {jitterEnabled ? (
               <>
-                <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+                <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
                   <FormField
                     control={props.form.control}
                     name='jitterTolerancePercent'
@@ -916,45 +915,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                         <FormDescription>
                           慢成功免罚比例，窗口内至少容忍 1 次
                         </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={props.form.control}
-                    name='jitterThresholdMultiplier'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='判定倍率'
-                          helpKey='jitterMultiplier'
-                        />
-                        <FormControl>
-                          <InputGroup>
-                            <InputGroupInput
-                              type='number'
-                              min={1.01}
-                              max={
-                                MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER
-                              }
-                              step={0.1}
-                              inputMode='decimal'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterThresholdMultiplier
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              倍
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>相对基线的慢请求界限</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1039,7 +999,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   />
                 </div>
                 <p className='text-muted-foreground text-xs'>
-                  慢请求阈值取“基线 × 判定倍率”和“基线 + 绝对容差”中的较大值
+                  慢请求阈值为“基线 + 绝对容差”
                 </p>
               </>
             ) : null}

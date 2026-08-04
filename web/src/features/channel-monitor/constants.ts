@@ -42,7 +42,6 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmart
 
 export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   jitterTolerancePercent: 5,
-  jitterThresholdMultiplier: 5,
   jitterAbsoluteToleranceSeconds: 10,
   jitterBaselineMinutes: 60,
   minSamples: 5,

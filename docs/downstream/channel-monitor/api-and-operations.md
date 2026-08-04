@@ -72,7 +72,7 @@
 
 `GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本；相同渠道模型的多条分组路由返回相同的 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。抖动阈值倍数范围为 `(1, 20]`，绝对容差使用秒且范围为 `0..60`，基准学习周期使用分钟且范围为 `1..43200`。完整策略示例：
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。抖动绝对容差使用秒且范围为 `0..60`，慢成功阈值为当前基线加上绝对容差；基准学习周期使用分钟且范围为 `1..43200`。完整策略示例：
 
 ```json
 [
@@ -90,7 +90,6 @@
     "slow_failure_seconds": 10,
     "jitter_enabled": true,
     "jitter_tolerance_percent": 5,
-    "jitter_threshold_multiplier": 5,
     "jitter_absolute_tolerance_seconds": 10,
     "jitter_baseline_minutes": 60,
     "cooldown_minutes": 30,

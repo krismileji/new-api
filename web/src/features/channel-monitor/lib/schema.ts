@@ -71,7 +71,6 @@ export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 100
 export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 0.01
 export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 5
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
-export const MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER = 20
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
 export const MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 99
 export const MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT = 100
@@ -221,15 +220,6 @@ const smartScheduleJitterToleranceSchema = z.coerce
   .min(0, '允许抖动不能小于 0%')
   .max(MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT, '允许抖动不能超过 50%')
 
-const smartScheduleJitterThresholdMultiplierSchema = z.coerce
-  .number()
-  .finite('抖动判定倍率必须是有效数字')
-  .gt(1, '抖动判定倍率必须大于 1')
-  .max(
-    MAX_SMART_SCHEDULE_JITTER_THRESHOLD_MULTIPLIER,
-    '抖动判定倍率不能超过 20'
-  )
-
 const smartScheduleJitterAbsoluteToleranceSchema = z.coerce
   .number()
   .finite('抖动绝对容差必须是有效数字')
@@ -319,7 +309,6 @@ const smartSchedulePolicyShape = {
   stabilityEnabled: z.boolean(),
   jitterEnabled: z.boolean(),
   jitterTolerancePercent: smartScheduleJitterToleranceSchema,
-  jitterThresholdMultiplier: smartScheduleJitterThresholdMultiplierSchema,
   jitterAbsoluteToleranceSeconds: smartScheduleJitterAbsoluteToleranceSchema,
   jitterBaselineMinutes: smartScheduleJitterBaselineMinutesSchema,
   scoring: smartScheduleScoringSchema,
@@ -398,7 +387,6 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
 
   if (policy.stabilityEnabled !== true || policy.jitterEnabled !== true) {
     normalized.jitterTolerancePercent = defaults.jitterTolerancePercent
-    normalized.jitterThresholdMultiplier = defaults.jitterThresholdMultiplier
     normalized.jitterAbsoluteToleranceSeconds =
       defaults.jitterAbsoluteToleranceSeconds
     normalized.jitterBaselineMinutes = defaults.jitterBaselineMinutes

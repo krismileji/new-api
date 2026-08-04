@@ -156,10 +156,7 @@ func channelSmartScheduleMeasureJitter(
 		math.IsNaN(baselineMs) || math.IsInf(baselineMs, 0) || baselineMs <= 0 {
 		return measurement
 	}
-	thresholdMs := math.Max(
-		baselineMs*policy.JitterThresholdMultiplier,
-		baselineMs+policy.JitterAbsoluteToleranceSeconds*1000,
-	)
+	thresholdMs := baselineMs + policy.JitterAbsoluteToleranceSeconds*1000
 	if math.IsNaN(thresholdMs) || math.IsInf(thresholdMs, 0) || thresholdMs <= 0 {
 		return measurement
 	}
