@@ -131,6 +131,22 @@ describe('channel monitor smart schedule cell status', () => {
     }
   })
 
+  test('opens protection clearing only from degradation and release states', () => {
+    const fixturePath = fileURLToPath(
+      new URL('./smart-schedule-cell-protection.fixture.tsx', import.meta.url)
+    )
+    const execution = spawnSync(process.execPath, [fixturePath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || '调度保护解除交互测试失败'
+    )
+  })
+
   test('shows fixed intent together with stability degradation', () => {
     const markup = renderCell([
       createRoute({

@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useState } from 'react'
+
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Popover,
   PopoverContent,
@@ -32,6 +37,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { channelMonitorSmartScheduleRouteParticipates } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
+import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 
 type ChannelMonitorSmartScheduleCellProps = {
   channelName: string
@@ -48,6 +54,7 @@ type SmartScheduleStatusBadge = {
   key: string
   label: string
   variant: 'default' | 'secondary' | 'destructive' | 'warning' | 'outline'
+  clearProtectionLabel?: string
 }
 
 function formatRemainingTime(until: number, now: number) {
@@ -66,6 +73,7 @@ function formatTrafficPercent(value: number) {
 function ChannelMonitorSmartScheduleCellStatus(props: {
   route: ChannelMonitorSmartScheduleRoute | undefined
   hasSelection: boolean
+  onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
   const route = props.route
   if (!route) {
@@ -89,12 +97,14 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       key: 'degraded',
       label: `稳定性降级${stabilityRemaining ? ` · ${stabilityRemaining}` : ''}`,
       variant: 'destructive',
+      clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`,
     })
   } else if (route.state.stability_state === 'probing') {
     statuses.push({
       key: 'probing',
       label: '稳定性释放',
       variant: 'warning',
+      clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`,
     })
   }
 
@@ -211,26 +221,51 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
 
   return (
     <Popover>
-      <PopoverTrigger
-        render={
-          <button
-            type='button'
-            className='focus-visible:ring-ring/50 flex h-5 min-w-0 items-center gap-1 rounded-sm text-left outline-none focus-visible:ring-3'
-            title={statusSummary}
-            aria-label={`查看当前调度状态详情：${statusSummary}`}
-            onClick={(event) => event.stopPropagation()}
-          />
-        }
-      >
-        {visibleStatuses.map((status) => (
-          <Badge key={status.key} variant={status.variant}>
-            {status.label}
-          </Badge>
-        ))}
+      <div className='flex h-5 min-w-0 items-center gap-1'>
+        {visibleStatuses.map((status) => {
+          if (status.clearProtectionLabel) {
+            return (
+              <Badge
+                key={status.key}
+                render={<button type='button' />}
+                variant={status.variant}
+                className='cursor-pointer'
+                title={status.clearProtectionLabel}
+                aria-label={status.clearProtectionLabel}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  props.onClearProtection(route)
+                }}
+              >
+                {status.label}
+              </Badge>
+            )
+          }
+          return (
+            <Badge key={status.key} variant={status.variant}>
+              {status.label}
+            </Badge>
+          )
+        })}
         {hiddenStatusCount > 0 ? (
           <Badge variant='outline'>+{hiddenStatusCount}</Badge>
         ) : null}
-      </PopoverTrigger>
+        <PopoverTrigger
+          render={
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon-xs'
+              className='text-muted-foreground size-5'
+              title={`查看当前调度状态详情：${statusSummary}`}
+              aria-label={`查看当前调度状态详情：${statusSummary}`}
+              onClick={(event) => event.stopPropagation()}
+            />
+          }
+        >
+          <HugeiconsIcon icon={InformationCircleIcon} aria-hidden='true' />
+        </PopoverTrigger>
+      </div>
       <PopoverContent side='right' align='start' className='w-80'>
         <PopoverHeader>
           <PopoverTitle>当前调度状态</PopoverTitle>
@@ -268,6 +303,8 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
 export function ChannelMonitorSmartScheduleCell(
   props: ChannelMonitorSmartScheduleCellProps
 ) {
+  const [clearTarget, setClearTarget] =
+    useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const selectedGroupModel = props.selectedGroupModel
   let selectedRoute: ChannelMonitorSmartScheduleRoute | undefined
   let participatingCount = 0
@@ -337,8 +374,17 @@ export function ChannelMonitorSmartScheduleCell(
         <ChannelMonitorSmartScheduleCellStatus
           route={selectedRoute}
           hasSelection={selectedGroupModel !== null}
+          onClearProtection={setClearTarget}
         />
       </div>
+      {clearTarget ? (
+        <ChannelMonitorSmartScheduleClearDialog
+          route={clearTarget}
+          onOpenChange={(open) => {
+            if (!open) setClearTarget(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }
