@@ -53,13 +53,17 @@ type channelMonitorPolicyMembership struct {
 	Group     string
 }
 
+// Active membership determines whether a single- or multiple-channel policy
+// applies. Complete fresh ratios are only required when changing group ratio.
 func collectChannelMonitorPolicyMembers(
 	group channelMonitorPolicyGroup,
 	policyInputs map[int]channelMonitorPolicyInput,
 	disabledChannelIds map[int]struct{},
 	removedMemberships map[channelMonitorPolicyMembership]struct{},
-) ([]channelMonitorPolicyMember, bool) {
+) ([]channelMonitorPolicyMember, int, bool) {
 	members := make([]channelMonitorPolicyMember, 0, len(group.ChannelIds))
+	activeChannelCount := 0
+	complete := true
 	for _, channelId := range group.ChannelIds {
 		if _, disabled := disabledChannelIds[channelId]; disabled {
 			continue
@@ -67,13 +71,16 @@ func collectChannelMonitorPolicyMembers(
 		if _, removed := removedMemberships[channelMonitorPolicyMembership{ChannelId: channelId, Group: group.Name}]; removed {
 			continue
 		}
+		activeChannelCount++
 		input, exists := policyInputs[channelId]
 		if !exists {
-			return nil, false
+			complete = false
+			continue
 		}
 		target := input.CostRatio * group.Coefficient
 		if !validateChannelMonitorRatio(&target) {
-			return nil, false
+			complete = false
+			continue
 		}
 		members = append(members, channelMonitorPolicyMember{
 			ChannelId:              channelId,
@@ -82,7 +89,7 @@ func collectChannelMonitorPolicyMembers(
 			MultipleChannelsAction: normalizeChannelMonitorPolicyAction(input.MultipleChannelsAction),
 		})
 	}
-	return members, true
+	return members, activeChannelCount, complete
 }
 
 func planChannelMonitorPolicyActions(
@@ -168,11 +175,11 @@ func planChannelMonitorPolicyActions(
 	for {
 		nextDisableChannelIds := make(map[int]struct{})
 		for _, group := range groups {
-			members, complete := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
-			if !complete || len(members) == 0 {
+			members, activeChannelCount, _ := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
+			if len(members) == 0 {
 				continue
 			}
-			if len(members) == 1 {
+			if activeChannelCount == 1 {
 				member := members[0]
 				if member.Target-group.CurrentRatio > channelMonitorRatioEpsilon &&
 					member.SingleChannelAction == channelMonitorPolicyActionDisableChannel {
@@ -196,8 +203,8 @@ func planChannelMonitorPolicyActions(
 
 		removedOne := false
 		for _, group := range groups {
-			members, complete := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
-			if !complete || len(members) <= 1 {
+			members, activeChannelCount, _ := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
+			if activeChannelCount <= 1 {
 				continue
 			}
 			for _, member := range members {
@@ -222,7 +229,7 @@ func planChannelMonitorPolicyActions(
 	}
 
 	for _, group := range groups {
-		members, complete := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
+		members, _, complete := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
 		if !complete {
 			plan.SkippedGroupCount++
 			continue
