@@ -24,6 +24,13 @@ type ChannelSmartScheduleRuntimeTemporaryRoute struct {
 	SampleSince int64
 }
 
+type ChannelSmartScheduleRuntimeRoute struct {
+	ModelName            string
+	SampleSince          int64
+	StabilityState       string
+	TemporaryTrafficKind string
+}
+
 func getChannelSmartScheduleRuntimeAbilityRoutes(channelId int, modelName string) (map[string]string, []string, error) {
 	modelNames := channelSmartScheduleRouteModelNames(modelName)
 	if channelId <= 0 || len(modelNames) == 0 {
@@ -96,6 +103,47 @@ func GetChannelSmartScheduleRuntimeParticipatingRoutes(channelId int, modelName 
 		}
 	}
 	return participating, nil
+}
+
+// GetChannelSmartScheduleRuntimeRoutes returns every participating route for
+// one channel/model request, including normal routes that may need short-term
+// runtime protection before the scheduled stability score catches up.
+func GetChannelSmartScheduleRuntimeRoutes(channelId int, modelName string) (map[string]ChannelSmartScheduleRuntimeRoute, error) {
+	selectedModelByGroup, modelNames, err := getChannelSmartScheduleRuntimeAbilityRoutes(channelId, modelName)
+	if err != nil || len(selectedModelByGroup) == 0 {
+		return map[string]ChannelSmartScheduleRuntimeRoute{}, err
+	}
+
+	groups := make([]string, 0, len(selectedModelByGroup))
+	for group := range selectedModelByGroup {
+		groups = append(groups, group)
+	}
+	var states []ChannelSmartScheduleRouteState
+	if err := DB.Select(
+		"group_name", "model_name", "temporary_traffic_kind", "temporary_traffic_since", "stability_state", "stability_since",
+	).
+		Where("channel_id = ? AND group_name IN ? AND model_name IN ?", channelId, groups, modelNames).
+		Where("participation_set = ? AND excluded = ?", true, false).
+		Find(&states).Error; err != nil {
+		return nil, err
+	}
+	routes := make(map[string]ChannelSmartScheduleRuntimeRoute, len(states))
+	for _, state := range states {
+		if selectedModelByGroup[state.GroupName] != state.ModelName {
+			continue
+		}
+		sampleSince := state.TemporaryTrafficSince
+		if state.StabilityState == ChannelSmartScheduleStabilityProbing && state.StabilitySince > sampleSince {
+			sampleSince = state.StabilitySince
+		}
+		routes[state.GroupName] = ChannelSmartScheduleRuntimeRoute{
+			ModelName:            state.ModelName,
+			SampleSince:          sampleSince,
+			StabilityState:       state.StabilityState,
+			TemporaryTrafficKind: state.TemporaryTrafficKind,
+		}
+	}
+	return routes, nil
 }
 
 func GetChannelSmartScheduleRuntimeTemporaryRoutes(channelId int, modelName string) (map[string]ChannelSmartScheduleRuntimeTemporaryRoute, error) {

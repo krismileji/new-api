@@ -257,6 +257,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		attemptDuration := time.Since(attemptStartedAt)
 
 		if newAPIError == nil {
+			if !isChannelTestContext(c) {
+				observeChannelSmartScheduleRuntimeRequestSuccess(channel.Id, relayInfo.OriginModelName)
+			}
 			relayInfo.LastError = nil
 			return
 		}
@@ -693,6 +696,9 @@ func RelayTask(c *gin.Context) {
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
 		if taskErr == nil {
+			if !isChannelTestContext(c) {
+				observeChannelSmartScheduleRuntimeRequestSuccess(channel.Id, relayInfo.OriginModelName)
+			}
 			break
 		}
 		shouldRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())

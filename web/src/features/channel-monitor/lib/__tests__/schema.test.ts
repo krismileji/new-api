@@ -446,6 +446,10 @@ describe('channel monitor settings schema', () => {
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
       slowFailureSeconds: 10,
+      burstFailureWindowSeconds: 30,
+      consecutiveFailureThreshold: 2,
+      burstFailureThreshold: 3,
+      recoverySuccessThreshold: 2,
       cooldownMinutes: 30,
       sampleMode: 'traffic' as const,
       explorationTrafficPercent: 3,
@@ -611,6 +615,56 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
+    for (const burstFailureWindowSeconds of [1, 300]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureWindowSeconds },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const burstFailureWindowSeconds of [0, 1.5, 301]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureWindowSeconds },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const field of [
+      'consecutiveFailureThreshold',
+      'burstFailureThreshold',
+      'recoverySuccessThreshold',
+    ] as const) {
+      for (const value of [1, 100]) {
+        assert.equal(
+          schema.safeParse({
+            ...baseSettings,
+            smartScheduleGroupPolicies: [
+              { ...groupPolicy, [field]: value },
+            ],
+          }).success,
+          true
+        )
+      }
+      for (const value of [0, 1.5, 101]) {
+        assert.equal(
+          schema.safeParse({
+            ...baseSettings,
+            smartScheduleGroupPolicies: [
+              { ...groupPolicy, [field]: value },
+            ],
+          }).success,
+          false
+        )
+      }
+    }
     assert.equal(
       schema.safeParse({
         ...baseSettings,

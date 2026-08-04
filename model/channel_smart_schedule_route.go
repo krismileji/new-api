@@ -1161,6 +1161,36 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 	reason string,
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	return protectChannelSmartScheduleRouteOnRuntimeFailure(
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false,
+	)
+}
+
+// ProtectChannelSmartScheduleRouteOnShortTermFailure also protects a normal
+// participating route after its shared channel/model runtime failure threshold
+// is reached.
+func ProtectChannelSmartScheduleRouteOnShortTermFailure(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+	expectedControlRevision string,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	return protectChannelSmartScheduleRouteOnRuntimeFailure(
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true,
+	)
+}
+
+func protectChannelSmartScheduleRouteOnRuntimeFailure(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+	expectedControlRevision string,
+	allowNormalRoute bool,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
 	if channelId <= 0 || group == "" || modelName == "" {
@@ -1221,7 +1251,11 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 			state.StabilityState == ChannelSmartScheduleStabilityProbing
 		activeFixedPrimary := state.ManualPrimaryUntil > now &&
 			state.ManualPrimaryAllowStabilityDegrade && state.StabilityState == ""
-		if !activeTemporaryTraffic && !activeFixedPrimary {
+		normalRouteEligible := allowNormalRoute &&
+			(state.StabilityState == "" || state.StabilityState == ChannelSmartScheduleStabilityDegraded)
+		manualPrimaryBlocksDegrade := state.ManualPrimaryUntil > now &&
+			!state.ManualPrimaryAllowStabilityDegrade && state.StabilityState == ""
+		if manualPrimaryBlocksDegrade || (!activeTemporaryTraffic && !activeFixedPrimary && !normalRouteEligible) {
 			return nil
 		}
 		if state.Revision == math.MaxInt64 {
@@ -1260,11 +1294,11 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 		degradedPriority := int64(0)
 		degradedWeight := uint(0)
 		state.StabilityState = ChannelSmartScheduleStabilityDegraded
-		state.StabilityUntil = protectionUntil
+		state.StabilityUntil = max(state.StabilityUntil, protectionUntil)
 		state.StabilitySince = 0
 		state.StabilitySavedPriority = savedPriority
 		state.StabilitySavedWeight = savedWeight
-		state.RuntimeProtectionUntil = protectionUntil
+		state.RuntimeProtectionUntil = max(state.RuntimeProtectionUntil, protectionUntil)
 
 		if state.ManualPrimaryUntil > now {
 			changed, clearErr := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(

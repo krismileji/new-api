@@ -12,20 +12,26 @@ import (
 )
 
 const (
-	channelMonitorSmartScheduleGroupPoliciesOption       = "ChannelMonitorSmartScheduleGroupPolicies"
-	maxChannelMonitorSmartScheduleFailureSeconds         = 60
-	maxChannelMonitorSmartScheduleJitterTolerancePercent = 50
-	maxChannelMonitorSmartScheduleJitterToleranceSeconds = 60
-	maxChannelMonitorSmartScheduleJitterBaselineMinutes  = 43200
-	defaultChannelMonitorSmartScheduleJitterSeconds      = 10.0
-	defaultChannelMonitorSmartScheduleJitterMinutes      = 60
-	maxChannelMonitorSmartScheduleSamplingInterval       = 1440
-	minChannelMonitorSmartScheduleSamplingBasePercent    = 0.1
-	maxChannelMonitorSmartScheduleSamplingBasePercent    = 20.0
-	minChannelMonitorSmartScheduleSamplingDecayPercent   = 1.0
-	maxChannelMonitorSmartScheduleSamplingDecayPercent   = 100.0
-	minChannelMonitorSmartScheduleSamplingFloorPercent   = 0.01
-	maxChannelMonitorSmartScheduleSamplingFloorPercent   = 5.0
+	channelMonitorSmartScheduleGroupPoliciesOption                = "ChannelMonitorSmartScheduleGroupPolicies"
+	maxChannelMonitorSmartScheduleFailureSeconds                  = 60
+	maxChannelMonitorSmartScheduleJitterTolerancePercent          = 50
+	maxChannelMonitorSmartScheduleJitterToleranceSeconds          = 60
+	maxChannelMonitorSmartScheduleJitterBaselineMinutes           = 43200
+	defaultChannelMonitorSmartScheduleJitterSeconds               = 10.0
+	defaultChannelMonitorSmartScheduleJitterMinutes               = 60
+	maxChannelMonitorSmartScheduleBurstFailureWindowSeconds       = 300
+	maxChannelMonitorSmartScheduleRuntimeFailureThreshold         = 100
+	defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds   = 30
+	defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold = 2
+	defaultChannelMonitorSmartScheduleBurstFailureThreshold       = 3
+	defaultChannelMonitorSmartScheduleRecoverySuccessThreshold    = 2
+	maxChannelMonitorSmartScheduleSamplingInterval                = 1440
+	minChannelMonitorSmartScheduleSamplingBasePercent             = 0.1
+	maxChannelMonitorSmartScheduleSamplingBasePercent             = 20.0
+	minChannelMonitorSmartScheduleSamplingDecayPercent            = 1.0
+	maxChannelMonitorSmartScheduleSamplingDecayPercent            = 100.0
+	minChannelMonitorSmartScheduleSamplingFloorPercent            = 0.01
+	maxChannelMonitorSmartScheduleSamplingFloorPercent            = 5.0
 )
 
 type channelSmartScheduleGroupPolicy struct {
@@ -42,6 +48,10 @@ type channelSmartScheduleGroupPolicy struct {
 	FastFailurePenaltyPercent       *float64                     `json:"fast_failure_penalty_percent,omitempty"`
 	FastFailureSeconds              *float64                     `json:"fast_failure_seconds,omitempty"`
 	SlowFailureSeconds              *float64                     `json:"slow_failure_seconds,omitempty"`
+	BurstFailureWindowSeconds       *int                         `json:"burst_failure_window_seconds,omitempty"`
+	ConsecutiveFailureThreshold     *int                         `json:"consecutive_failure_threshold,omitempty"`
+	BurstFailureThreshold           *int                         `json:"burst_failure_threshold,omitempty"`
+	RecoverySuccessThreshold        *int                         `json:"recovery_success_threshold,omitempty"`
 	JitterEnabled                   *bool                        `json:"jitter_enabled,omitempty"`
 	JitterTolerancePercent          *float64                     `json:"jitter_tolerance_percent,omitempty"`
 	JitterAbsoluteToleranceSeconds  *float64                     `json:"jitter_absolute_tolerance_seconds,omitempty"`
@@ -72,6 +82,10 @@ type channelSmartSchedulePolicy struct {
 	FastFailurePenaltyPercent       float64
 	FastFailureSeconds              float64
 	SlowFailureSeconds              float64
+	BurstFailureWindowSeconds       int
+	ConsecutiveFailureThreshold     int
+	BurstFailureThreshold           int
+	RecoverySuccessThreshold        int
 	JitterEnabled                   bool
 	JitterTolerancePercent          float64
 	JitterAbsoluteToleranceSeconds  float64
@@ -128,6 +142,22 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		if policy.JitterBaselineMinutes == nil {
 			value := defaultChannelMonitorSmartScheduleJitterMinutes
 			policy.JitterBaselineMinutes = &value
+		}
+		if policy.BurstFailureWindowSeconds == nil {
+			value := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
+			policy.BurstFailureWindowSeconds = &value
+		}
+		if policy.ConsecutiveFailureThreshold == nil {
+			value := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
+			policy.ConsecutiveFailureThreshold = &value
+		}
+		if policy.BurstFailureThreshold == nil {
+			value := defaultChannelMonitorSmartScheduleBurstFailureThreshold
+			policy.BurstFailureThreshold = &value
+		}
+		if policy.RecoverySuccessThreshold == nil {
+			value := defaultChannelMonitorSmartScheduleRecoverySuccessThreshold
+			policy.RecoverySuccessThreshold = &value
 		}
 		if policy.ExplorationMaxPromptTokens == nil {
 			value := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
@@ -198,6 +228,22 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.SlowFailureSeconds <= *policy.FastFailureSeconds ||
 			*policy.SlowFailureSeconds > maxChannelMonitorSmartScheduleFailureSeconds {
 			return nil, errors.New("分组调度慢失败界限必须大于快速失败界限且不超过 60 秒")
+		}
+		if *policy.BurstFailureWindowSeconds <= 0 ||
+			*policy.BurstFailureWindowSeconds > maxChannelMonitorSmartScheduleBurstFailureWindowSeconds {
+			return nil, errors.New("分组调度突发失败窗口必须在 1 到 300 秒之间")
+		}
+		if *policy.ConsecutiveFailureThreshold <= 0 ||
+			*policy.ConsecutiveFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {
+			return nil, errors.New("分组调度连续失败阈值必须在 1 到 100 次之间")
+		}
+		if *policy.BurstFailureThreshold <= 0 ||
+			*policy.BurstFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {
+			return nil, errors.New("分组调度窗口失败阈值必须在 1 到 100 次之间")
+		}
+		if *policy.RecoverySuccessThreshold <= 0 ||
+			*policy.RecoverySuccessThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {
+			return nil, errors.New("分组调度恢复探测成功次数必须在 1 到 100 次之间")
 		}
 		if math.IsNaN(*policy.JitterTolerancePercent) || math.IsInf(*policy.JitterTolerancePercent, 0) ||
 			*policy.JitterTolerancePercent < 0 ||
@@ -270,6 +316,22 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 }
 
 func (configured channelSmartScheduleGroupPolicy) policy() channelSmartSchedulePolicy {
+	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
+	if configured.BurstFailureWindowSeconds != nil {
+		burstFailureWindowSeconds = *configured.BurstFailureWindowSeconds
+	}
+	consecutiveFailureThreshold := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
+	if configured.ConsecutiveFailureThreshold != nil {
+		consecutiveFailureThreshold = *configured.ConsecutiveFailureThreshold
+	}
+	burstFailureThreshold := defaultChannelMonitorSmartScheduleBurstFailureThreshold
+	if configured.BurstFailureThreshold != nil {
+		burstFailureThreshold = *configured.BurstFailureThreshold
+	}
+	recoverySuccessThreshold := defaultChannelMonitorSmartScheduleRecoverySuccessThreshold
+	if configured.RecoverySuccessThreshold != nil {
+		recoverySuccessThreshold = *configured.RecoverySuccessThreshold
+	}
 	return channelSmartSchedulePolicy{
 		Strategy:                        *configured.Strategy,
 		StabilityEnabled:                *configured.StabilityEnabled,
@@ -282,6 +344,10 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		FastFailurePenaltyPercent:       *configured.FastFailurePenaltyPercent,
 		FastFailureSeconds:              *configured.FastFailureSeconds,
 		SlowFailureSeconds:              *configured.SlowFailureSeconds,
+		BurstFailureWindowSeconds:       burstFailureWindowSeconds,
+		ConsecutiveFailureThreshold:     consecutiveFailureThreshold,
+		BurstFailureThreshold:           burstFailureThreshold,
+		RecoverySuccessThreshold:         recoverySuccessThreshold,
 		JitterEnabled:                   *configured.JitterEnabled,
 		JitterTolerancePercent:          *configured.JitterTolerancePercent,
 		JitterAbsoluteToleranceSeconds:  *configured.JitterAbsoluteToleranceSeconds,

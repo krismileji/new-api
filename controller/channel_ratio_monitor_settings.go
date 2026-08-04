@@ -86,7 +86,8 @@ const (
 	defaultChannelMonitorCostRetentionDays                     = 120
 	defaultChannelMonitorGroupCoefficient                      = 1
 	defaultChannelMonitorSmartScheduleInterval                 = 10
-	defaultChannelMonitorSmartScheduleWindowMinutes            = 60
+	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = 60
+	defaultChannelMonitorSmartScheduleStabilityWindowMinutes   = 5
 	defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds = 30
 	channelMonitorEmailTypeRatioChange                         = "ratio_change"
 	channelMonitorEmailTypeBalanceWarning                      = "balance_warning"
@@ -257,11 +258,11 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	}
 	smartSchedulePerformanceWindow, err := strconv.Atoi(rawSmartSchedulePerformanceWindow)
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(smartSchedulePerformanceWindow) {
-		smartSchedulePerformanceWindow = defaultChannelMonitorSmartScheduleWindowMinutes
+		smartSchedulePerformanceWindow = defaultChannelMonitorSmartSchedulePerformanceWindowMinutes
 	}
 	smartScheduleStabilityWindow, err := strconv.Atoi(rawSmartScheduleStabilityWindow)
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(smartScheduleStabilityWindow) {
-		smartScheduleStabilityWindow = defaultChannelMonitorSmartScheduleWindowMinutes
+		smartScheduleStabilityWindow = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
 	}
 	smartScheduleRateLimitCooldown, err := strconv.Atoi(rawSmartScheduleRateLimitCooldown)
 	if err != nil || smartScheduleRateLimitCooldown < 0 || smartScheduleRateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {

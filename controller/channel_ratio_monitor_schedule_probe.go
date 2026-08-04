@@ -454,6 +454,9 @@ func runChannelSmartScheduleProbeOnce(
 					probeResult.newAPIError,
 				)
 			}
+			if succeeded {
+				observeChannelSmartScheduleRuntimeProbeSuccess(route.ChannelId, item.requestModel)
+			}
 		}
 		if succeeded {
 			result.Succeeded++

@@ -110,6 +110,18 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     fastFailurePenaltyPercent: policy.fast_failure_penalty_percent,
     fastFailureSeconds: policy.fast_failure_seconds,
     slowFailureSeconds: policy.slow_failure_seconds,
+    burstFailureWindowSeconds:
+      policy.burst_failure_window_seconds ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureWindowSeconds,
+    consecutiveFailureThreshold:
+      policy.consecutive_failure_threshold ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.consecutiveFailureThreshold,
+    burstFailureThreshold:
+      policy.burst_failure_threshold ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureThreshold,
+    recoverySuccessThreshold:
+      policy.recovery_success_threshold ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.recoverySuccessThreshold,
     cooldownMinutes: policy.cooldown_minutes,
     sampleMode: policy.sample_mode,
     explorationTrafficPercent: policy.exploration_traffic_percent,
@@ -146,6 +158,10 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     fast_failure_penalty_percent: policy.fastFailurePenaltyPercent,
     fast_failure_seconds: policy.fastFailureSeconds,
     slow_failure_seconds: policy.slowFailureSeconds,
+    burst_failure_window_seconds: policy.burstFailureWindowSeconds,
+    consecutive_failure_threshold: policy.consecutiveFailureThreshold,
+    burst_failure_threshold: policy.burstFailureThreshold,
+    recovery_success_threshold: policy.recoverySuccessThreshold,
     cooldown_minutes: policy.cooldownMinutes,
     sample_mode: policy.sampleMode,
     exploration_traffic_percent: policy.explorationTrafficPercent,
@@ -181,6 +197,10 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     fastFailurePenaltyPercent: policy.fastFailurePenaltyPercent,
     fastFailureSeconds: policy.fastFailureSeconds,
     slowFailureSeconds: policy.slowFailureSeconds,
+    burstFailureWindowSeconds: policy.burstFailureWindowSeconds,
+    consecutiveFailureThreshold: policy.consecutiveFailureThreshold,
+    burstFailureThreshold: policy.burstFailureThreshold,
+    recoverySuccessThreshold: policy.recoverySuccessThreshold,
     cooldownMinutes: policy.cooldownMinutes,
     sampleMode: policy.sampleMode,
     explorationTrafficPercent: policy.explorationTrafficPercent,

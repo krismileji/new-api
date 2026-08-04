@@ -74,6 +74,14 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '重试失败耗时不超过此值时按“快速失败惩罚”计算；超过后，惩罚会随耗时线性增加。',
   slowFailureThreshold:
     '重试失败耗时达到此值后按一次完整失败计算；快速失败界限与慢失败界限之间按耗时线性增加惩罚。',
+  burstFailureWindow:
+    '请求错误路径使用的短期失败统计窗口。窗口只保留最近的突发故障信号，不依赖长期累计成功率。',
+  consecutiveFailureThreshold:
+    '同一渠道和模型连续出现这些次上游失败时，立即进入稳定性降级。一次成功会清零连续失败计数。',
+  burstFailureThreshold:
+    '短期窗口内累计失败达到这些次时，立即进入稳定性降级，用于并发故障快速摘除渠道。',
+  recoverySuccessThreshold:
+    '降级到期进入探测后，需要连续成功这些次才恢复正常流量；探测期间再次失败会重新降级。',
   cooldown:
     '进入稳定性释放后保持优先级 0、权重 0 的最短时间。到期后进入小流量试放，不代表立即完全恢复。',
   jitter:

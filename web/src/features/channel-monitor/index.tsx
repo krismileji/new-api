@@ -232,7 +232,7 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   smart_schedule_group_policies: [],
   smart_schedule_interval_minutes: 10,
   smart_schedule_performance_window_minutes: 60,
-  smart_schedule_stability_window_minutes: 60,
+  smart_schedule_stability_window_minutes: 5,
   smart_schedule_rate_limit_cooldown_seconds:
     DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   smart_schedule_control_revision: '',

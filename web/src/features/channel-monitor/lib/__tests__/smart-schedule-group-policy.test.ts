@@ -58,6 +58,10 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
   slowFailureSeconds: 10,
+  burstFailureWindowSeconds: 30,
+  consecutiveFailureThreshold: 2,
+  burstFailureThreshold: 3,
+  recoverySuccessThreshold: 2,
   cooldownMinutes: 30,
   sampleMode: 'probe',
   explorationTrafficPercent: 3,
@@ -178,6 +182,10 @@ describe('smart schedule group policy', () => {
     assert.equal(apiPolicies[0]?.fast_failure_penalty_percent, 40)
     assert.equal(apiPolicies[0]?.fast_failure_seconds, 1)
     assert.equal(apiPolicies[0]?.slow_failure_seconds, 10)
+    assert.equal(apiPolicies[0]?.burst_failure_window_seconds, 30)
+    assert.equal(apiPolicies[0]?.consecutive_failure_threshold, 2)
+    assert.equal(apiPolicies[0]?.burst_failure_threshold, 3)
+    assert.equal(apiPolicies[0]?.recovery_success_threshold, 2)
     assert.equal(apiPolicies[0]?.sample_mode, 'probe')
     assert.equal(apiPolicies[0]?.exploration_traffic_percent, 3)
     assert.equal(apiPolicies[0]?.probe_interval_minutes, 15)
@@ -247,6 +255,22 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.slowFailureSeconds,
       10
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureWindowSeconds,
+      30
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.consecutiveFailureThreshold,
+      2
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureThreshold,
+      3
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.recoverySuccessThreshold,
+      2
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.explorationTrafficPercent,

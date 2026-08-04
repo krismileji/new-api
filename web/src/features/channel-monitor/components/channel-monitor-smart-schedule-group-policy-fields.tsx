@@ -892,6 +892,144 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               )}
             />
           </div>
+          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+            <FormField
+              control={props.form.control}
+              name='burstFailureWindowSeconds'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='突发失败窗口'
+                    helpKey='burstFailureWindow'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={300}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.burstFailureWindowSeconds
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>只判断最近的突发故障</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='consecutiveFailureThreshold'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='连续失败阈值'
+                    helpKey='consecutiveFailureThreshold'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={100}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.consecutiveFailureThreshold
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>连续错误立即摘除</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='burstFailureThreshold'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='窗口失败阈值'
+                    helpKey='burstFailureThreshold'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={100}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.burstFailureThreshold
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>窗口内累计错误立即摘除</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='recoverySuccessThreshold'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='恢复探测成功次数'
+                    helpKey='recoverySuccessThreshold'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={1}
+                        max={100}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.recoverySuccessThreshold
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>成功后恢复正常流量</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
           <div className='border-border/60 bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
             <FormField
               control={props.form.control}

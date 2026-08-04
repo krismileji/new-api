@@ -39,6 +39,10 @@ func channelSmartScheduleTestGroupPolicy(
 	fastFailurePenaltyPercent := 40.0
 	fastFailureSeconds := 1.0
 	slowFailureSeconds := 10.0
+	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
+	consecutiveFailureThreshold := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
+	burstFailureThreshold := defaultChannelMonitorSmartScheduleBurstFailureThreshold
+	recoverySuccessThreshold := defaultChannelMonitorSmartScheduleRecoverySuccessThreshold
 	jitterEnabled := true
 	jitterTolerancePercent := 5.0
 	jitterAbsoluteToleranceSeconds := 10.0
@@ -59,6 +63,10 @@ func channelSmartScheduleTestGroupPolicy(
 		FastFailurePenaltyPercent:       &fastFailurePenaltyPercent,
 		FastFailureSeconds:              &fastFailureSeconds,
 		SlowFailureSeconds:              &slowFailureSeconds,
+		BurstFailureWindowSeconds:       &burstFailureWindowSeconds,
+		ConsecutiveFailureThreshold:     &consecutiveFailureThreshold,
+		BurstFailureThreshold:           &burstFailureThreshold,
+		RecoverySuccessThreshold:        &recoverySuccessThreshold,
 		JitterEnabled:                   &jitterEnabled,
 		JitterTolerancePercent:          &jitterTolerancePercent,
 		JitterAbsoluteToleranceSeconds:  &jitterAbsoluteToleranceSeconds,
@@ -417,6 +425,68 @@ func TestRunChannelSmartScheduleClearsProbeStateAfterSuccessfulNewSamples(t *tes
 	require.NotNil(t, ability.Priority)
 	assert.Equal(t, int64(80), *ability.Priority)
 	assert.Equal(t, uint(30), ability.Weight)
+}
+
+func TestRunChannelSmartScheduleRecoversAfterConfiguredProbeSuccesses(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 100, 80, 30,
+	)
+	probeMode := channelMonitorSmartScheduleSampleProbe
+	recoverySuccessThreshold := 2
+	policy.SampleMode = &probeMode
+	policy.RecoverySuccessThreshold = &recoverySuccessThreshold
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	restoredPriority := int64(80)
+	probePriority := int64(0)
+	restoredWeight := uint(30)
+	probeWeight := uint(channelMonitorSmartScheduleMinWeight)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 36, Name: "runtime probe recovery", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &restoredPriority, Weight: &restoredWeight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 36, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &probePriority, Weight: probeWeight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 36, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:         model.ChannelSmartScheduleStabilityProbing,
+		StabilitySince:         common.GetTimestamp() - 60,
+		StabilitySavedPriority: restoredPriority,
+		StabilitySavedWeight:   restoredWeight,
+	}).Error)
+
+	observeChannelSmartScheduleRuntimeProbeSuccess(36, "model-a")
+	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 36, "vip", "model-a",
+	).First(&state).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityProbing, state.StabilityState)
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 36, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Zero(t, *ability.Priority)
+	assert.Equal(t, probeWeight, ability.Weight)
+
+	observeChannelSmartScheduleRuntimeProbeSuccess(36, "model-a")
+	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 36, "vip", "model-a",
+	).First(&state).Error)
+	assert.Empty(t, state.StabilityState)
+	require.NoError(t, db.Where(&model.Ability{ChannelId: 36, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, restoredPriority, *ability.Priority)
+	assert.Equal(t, restoredWeight, ability.Weight)
 }
 
 func TestRunChannelSmartScheduleKeepsProbingBetweenStabilityThresholds(t *testing.T) {

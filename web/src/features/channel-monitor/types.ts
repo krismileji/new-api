@@ -480,6 +480,10 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   fast_failure_penalty_percent: number
   fast_failure_seconds: number
   slow_failure_seconds: number
+  burst_failure_window_seconds?: number
+  consecutive_failure_threshold?: number
+  burst_failure_threshold?: number
+  recovery_success_threshold?: number
   cooldown_minutes: number
   sample_mode: ChannelMonitorSmartScheduleSampleMode
   exploration_traffic_percent: number

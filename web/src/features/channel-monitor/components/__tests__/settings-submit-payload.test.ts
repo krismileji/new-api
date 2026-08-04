@@ -77,6 +77,10 @@ const formValues = {
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
       slowFailureSeconds: 10,
+      burstFailureWindowSeconds: 45,
+      consecutiveFailureThreshold: 3,
+      burstFailureThreshold: 5,
+      recoverySuccessThreshold: 4,
       cooldownMinutes: 30,
       sampleMode: 'probe',
       explorationTrafficPercent: 3,
@@ -175,6 +179,24 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.slow_failure_seconds,
       10
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.burst_failure_window_seconds,
+      45
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.consecutive_failure_threshold,
+      3
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.burst_failure_threshold,
+      5
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.recovery_success_threshold,
+      4
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.jitter_enabled,

@@ -590,24 +590,36 @@ func runChannelSmartScheduleByRouteOnce(
 		)
 
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
-			if performance == nil || performance.Stability == nil ||
-				performance.StabilitySampleCount < int64(policy.MinSamples) {
-				sampleCount := int64(0)
-				if performance != nil {
-					sampleCount = performance.StabilitySampleCount
-				}
+			runtimeHealth := getChannelSmartScheduleRuntimeHealth(
+				route.ChannelId,
+				route.Model,
+				now,
+				policy.BurstFailureWindowSeconds,
+				settings.SmartScheduleControlRevision,
+			)
+			runtimeRecoveryReady := runtimeHealth.RecoverySuccesses >= policy.RecoverySuccessThreshold
+			legacyRecoveryReady := performance != nil && performance.Stability != nil &&
+				performance.StabilitySampleCount >= int64(policy.MinSamples) &&
+				*performance.Stability >= recoveryStabilityScore
+			if !runtimeRecoveryReady && (performance == nil || performance.Stability == nil ||
+				performance.StabilitySampleCount < int64(policy.MinSamples)) {
 				targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
 				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 					targetPriority: targetPriority, targetWeight: targetWeight,
-					status:          model.ChannelSmartScheduleStatusSkipped,
-					message:         fmt.Sprintf("稳定性试放样本不足（%d/%d）", sampleCount, policy.MinSamples),
+					status: model.ChannelSmartScheduleStatusSkipped,
+					message: fmt.Sprintf(
+						"稳定性试放成功次数不足（%d/%d）",
+						runtimeHealth.RecoverySuccesses,
+						policy.RecoverySuccessThreshold,
+					),
 					routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
 				})
 				continue
 			}
 			stabilityDescription := channelSmartScheduleStabilityDescription(performance)
-			if *performance.Stability < degradeStabilityScore {
+			if !runtimeRecoveryReady && performance != nil && performance.Stability != nil &&
+				*performance.Stability < degradeStabilityScore {
 				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 					targetPriority: channelMonitorSmartScheduleDegradedPriority,
@@ -625,7 +637,7 @@ func runChannelSmartScheduleByRouteOnce(
 				})
 				continue
 			}
-			if *performance.Stability < recoveryStabilityScore {
+			if !runtimeRecoveryReady && !legacyRecoveryReady {
 				targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
 				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
@@ -638,12 +650,19 @@ func runChannelSmartScheduleByRouteOnce(
 				continue
 			}
 			targetPriority, targetWeight := channelSmartScheduleRouteRestoreTarget(route.State)
+			recoveryMessage := fmt.Sprintf("%s，已达到恢复阈值 %.1f%%，解除保护并恢复原优先级和权重",
+				stabilityDescription, policy.RecoveryStabilityScore)
+			if runtimeRecoveryReady {
+				recoveryMessage = fmt.Sprintf(
+					"稳定性试放已连续成功 %d 次，达到恢复要求，解除保护并恢复原优先级和权重",
+					runtimeHealth.RecoverySuccesses,
+				)
+			}
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 				targetPriority: targetPriority, targetWeight: targetWeight,
-				status: model.ChannelSmartScheduleStatusSucceeded,
-				message: fmt.Sprintf("%s，已达到恢复阈值 %.1f%%，解除保护并恢复原优先级和权重",
-					stabilityDescription, policy.RecoveryStabilityScore),
+				status:               model.ChannelSmartScheduleStatusSucceeded,
+				message:              recoveryMessage,
 				stability:            &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
 				routingSnapshot:      channelSmartScheduleClearTemporaryTraffic(route.State),
 				reapplyManualPrimary: manualPrimary,

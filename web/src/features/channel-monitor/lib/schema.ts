@@ -227,6 +227,18 @@ const smartScheduleFastFailureSecondsSchema = z.coerce
   .gt(0, '快速失败界限必须大于 0 秒')
   .lt(60, '快速失败界限必须小于 60 秒')
 
+const smartScheduleRuntimeFailureThresholdSchema = z.coerce
+  .number()
+  .int('运行时失败阈值必须是整数')
+  .min(1, '运行时失败阈值不能小于 1 次')
+  .max(100, '运行时失败阈值不能超过 100 次')
+
+const smartScheduleBurstFailureWindowSchema = z.coerce
+  .number()
+  .int('突发失败窗口必须是整数')
+  .min(1, '突发失败窗口不能小于 1 秒')
+  .max(300, '突发失败窗口不能超过 300 秒')
+
 const smartScheduleJitterToleranceSchema = z.coerce
   .number()
   .finite('允许抖动必须是有效数字')
@@ -343,6 +355,12 @@ const smartSchedulePolicyShape = {
   fastFailurePenaltyPercent: smartScheduleFastFailurePenaltySchema,
   fastFailureSeconds: smartScheduleFastFailureSecondsSchema,
   slowFailureSeconds: smartScheduleFailureSecondsSchema,
+  burstFailureWindowSeconds: smartScheduleBurstFailureWindowSchema.default(30),
+  consecutiveFailureThreshold:
+    smartScheduleRuntimeFailureThresholdSchema.default(2),
+  burstFailureThreshold: smartScheduleRuntimeFailureThresholdSchema.default(3),
+  recoverySuccessThreshold:
+    smartScheduleRuntimeFailureThresholdSchema.default(2),
   cooldownMinutes: smartScheduleCooldownSchema,
   sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
   explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
@@ -395,6 +413,11 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.fastFailurePenaltyPercent = defaults.fastFailurePenaltyPercent
     normalized.fastFailureSeconds = defaults.fastFailureSeconds
     normalized.slowFailureSeconds = defaults.slowFailureSeconds
+    normalized.burstFailureWindowSeconds = defaults.burstFailureWindowSeconds
+    normalized.consecutiveFailureThreshold =
+      defaults.consecutiveFailureThreshold
+    normalized.burstFailureThreshold = defaults.burstFailureThreshold
+    normalized.recoverySuccessThreshold = defaults.recoverySuccessThreshold
     normalized.cooldownMinutes = defaults.cooldownMinutes
     if (
       typeof policy.scoring === 'object' &&
