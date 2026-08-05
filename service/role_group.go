@@ -34,10 +34,45 @@ func GroupInRoleUsableGroups(userGroup string, role int, groupName string) bool 
 func GetRoleAutoGroups(userGroup string, role int) []string {
 	groups := GetRoleUsableGroups(userGroup, role)
 	autoGroups := make([]string, 0)
+	seen := make(map[string]struct{})
 	for _, group := range setting.GetAutoGroups() {
-		if _, ok := groups[group]; ok {
-			autoGroups = append(autoGroups, group)
+		if group == "" || group == "auto" || !ratio_setting.ContainsGroupRatio(group) {
+			continue
 		}
+		if _, ok := groups[group]; !ok {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		autoGroups = append(autoGroups, group)
 	}
 	return autoGroups
+}
+
+// FilterRoleTokenAutoGroups applies current role permissions before the
+// current per-token limit without falling back to the global Auto list.
+func FilterRoleTokenAutoGroups(userGroup string, role int, groups []string) []string {
+	maxCount := setting.GetMaxTokenAutoGroups()
+	filtered := make([]string, 0, min(len(groups), maxCount))
+	usableGroups := GetRoleUsableGroups(userGroup, role)
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		if group == "" || group == "auto" || !ratio_setting.ContainsGroupRatio(group) {
+			continue
+		}
+		if _, ok := usableGroups[group]; !ok {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		filtered = append(filtered, group)
+		if len(filtered) == maxCount {
+			break
+		}
+	}
+	return filtered
 }

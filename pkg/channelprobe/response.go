@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -390,7 +390,7 @@ func serveChannelProbeResponse(
 	switch relayMode {
 	case relayconstant.RelayModeResponses:
 		responsesRequest := request.(*dto.OpenAIResponsesRequest)
-		if responsesRequest.IsStream(c) {
+		if responsesRequest.IsStream(c.Request) {
 			writeChannelProbeResponsesStream(
 				c,
 				buildChannelProbeResponsesStreamResponse(responsesRequest, config, createdAt, completedAt),
@@ -404,7 +404,7 @@ func serveChannelProbeResponse(
 		}
 	case relayconstant.RelayModeChatCompletions:
 		chatRequest := request.(*dto.GeneralOpenAIRequest)
-		if chatRequest.IsStream(c) {
+		if chatRequest.IsStream(c.Request) {
 			writeChannelProbeChatStream(c, chatRequest, config, createdAt)
 			return
 		}

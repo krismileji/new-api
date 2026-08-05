@@ -16,9 +16,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
@@ -479,22 +479,26 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
-	var client *http.Client
-	var err error
-	if info.ChannelSetting.Proxy != "" {
-		client, err = service.GetHttpClientWithProxy(info.ChannelSetting.Proxy)
-		if err != nil {
-			diagnostic := service.DiagnoseUpstreamRequestError(req, err, true)
-			logger.LogError(c, "new proxy http client failed: "+diagnostic.Detail)
-			common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, diagnostic)
-			return nil, types.NewError(
-				fmt.Errorf("new proxy http client failed: %w", err),
-				types.ErrorCodeDoRequestFailed,
-				types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
-			)
-		}
-	} else {
-		client = service.GetHttpClient()
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		diagnostic := service.DiagnoseUpstreamRequestError(req, err, info.ChannelSetting.Proxy != "")
+		logger.LogError(c, "new proxy http client failed: "+diagnostic.Detail)
+		common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, diagnostic)
+		return nil, types.NewError(
+			fmt.Errorf("new proxy http client failed: %w", err),
+			types.ErrorCodeDoRequestFailed,
+			types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
+		)
+	}
+	if common2.DebugEnabled && req != nil && req.URL != nil {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport select: host=%s protocol=%s shards=%d policy=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+		))
 	}
 
 	var stopPinger context.CancelFunc
@@ -541,6 +545,17 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
+	}
+	if common2.DebugEnabled {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport negotiated: host=%s protocol=%s shards=%d policy=%s negotiated=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+			resp.Proto,
+		))
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
