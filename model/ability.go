@@ -115,43 +115,11 @@ func getChannelQuery(group string, model string, retry int, options ChannelSelec
 }
 
 func GetChannel(group string, model string, retry int, requestPath string, options ...ChannelSelectionOptions) (*Channel, error) {
-	var abilities []Ability
-
-	var err error = nil
 	selectionOptions := channelSelectionOptions(options)
 	if selectionOptions.HasExcludedChannels() {
 		retry = 0
 	}
-	channelQuery, err := getChannelQuery(group, model, retry, selectionOptions)
-	if err != nil {
-		return nil, err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) || common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	} else {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	}
-	if err != nil {
-		return nil, err
-	}
-	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
-	channel := Channel{}
-	if len(abilities) > 0 {
-		channelIDs := make([]int, len(abilities))
-		weights := make([]uint, len(abilities))
-		for index, ability := range abilities {
-			channelIDs[index] = ability.ChannelId
-			weights[index] = ability.Weight
-		}
-		channel.Id, err = chooseChannelByWeights(channelIDs, weights)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		return nil, nil
-	}
-	err = DB.First(&channel, "id = ?", channel.Id).Error
-	return &channel, err
+	return getChannelFromDatabasePool(group, model, model, retry, requestPath, selectionOptions)
 }
 
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and
@@ -205,6 +173,14 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
+	useDB := DB
+	if tx != nil {
+		useDB = tx
+	}
+	routingByKey, err := getChannelSmartScheduleRouteRouting(useDB, channel.Id, channel)
+	if err != nil {
+		return err
+	}
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
 		for _, group := range groups_ {
@@ -218,9 +194,11 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 				Model:     model,
 				ChannelId: channel.Id,
 				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
 				Tag:       channel.Tag,
+			}
+			if routing, ok := routingByKey[channelSmartScheduleRouteKey(channel.Id, group, model)]; ok {
+				ability.Priority = routing.priority
+				ability.Weight = routing.weight
 			}
 			abilities = append(abilities, ability)
 		}
@@ -228,14 +206,37 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if len(abilities) == 0 {
 		return nil
 	}
-	// choose DB or provided tx
-	useDB := DB
-	if tx != nil {
-		useDB = tx
+	// Keep an existing ability untouched when AddAbilities is retried. Only
+	// rows exposed for the first time need the explicit NULL cleanup below;
+	// otherwise a retry could erase an administrator's excluded-route override.
+	var existingAbilities []Ability
+	if err := useDB.Select("group", "model").
+		Where("channel_id = ?", channel.Id).
+		Find(&existingAbilities).Error; err != nil {
+		return err
+	}
+	existingKeys := make(map[string]struct{}, len(existingAbilities))
+	for _, ability := range existingAbilities {
+		existingKeys[ability.Group+"|"+ability.Model] = struct{}{}
 	}
 	for _, chunk := range lo.Chunk(abilities, 50) {
 		err := useDB.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 		if err != nil {
+			return err
+		}
+	}
+	for _, ability := range abilities {
+		if _, exists := existingKeys[ability.Group+"|"+ability.Model]; exists {
+			continue
+		}
+		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
+		if _, ok := routingByKey[key]; ok {
+			continue
+		}
+		if err := clearChannelSmartScheduleAbilityRoutingTx(
+			useDB,
+			key,
+		); err != nil {
 			return err
 		}
 	}
@@ -290,7 +291,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}
 		return err
 	}
-	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id)
+	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id, channel)
 	if err != nil {
 		if isNewTx {
 			tx.Rollback()
@@ -326,8 +327,6 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				Model:     model,
 				ChannelId: channel.Id,
 				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
 				Tag:       channel.Tag,
 			}
 			if routing, ok := routingByKey[channelSmartScheduleRouteKey(channel.Id, group, model)]; ok {
@@ -342,6 +341,18 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		for _, chunk := range lo.Chunk(abilities, 50) {
 			err = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 			if err != nil {
+				if isNewTx {
+					tx.Rollback()
+				}
+				return err
+			}
+		}
+		for _, ability := range abilities {
+			key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
+			if _, ok := routingByKey[key]; ok {
+				continue
+			}
+			if err = clearChannelSmartScheduleAbilityRoutingTx(tx, key); err != nil {
 				if isNewTx {
 					tx.Rollback()
 				}

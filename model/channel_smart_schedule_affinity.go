@@ -36,6 +36,7 @@ func ChannelSmartScheduleAffinityEligibility(
 	if !common.MemoryCacheEnabled {
 		selectedModel := ""
 		var abilities []Ability
+		var usableChannels map[int]*Channel
 		for _, candidateModel := range modelNames {
 			var candidateAbilities []Ability
 			if err := DB.Select("channel_id", "priority").
@@ -55,23 +56,25 @@ func ChannelSmartScheduleAffinityEligibility(
 				Find(&channels).Error; err != nil {
 				return ChannelSmartScheduleAffinityTemporarilyUnavailable
 			}
-			usableChannels := make(map[int]struct{}, len(channels))
-			for _, channel := range channels {
+			candidateChannels := make(map[int]*Channel, len(channels))
+			for index := range channels {
+				channel := &channels[index]
 				if channel.Type == constant.ChannelTypeAdvancedCustom {
 					config := channel.GetOtherSettings().AdvancedCustom
 					if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
 						continue
 					}
 				}
-				usableChannels[channel.Id] = struct{}{}
+				candidateChannels[channel.Id] = channel
 			}
 			for _, ability := range candidateAbilities {
-				if _, usable := usableChannels[ability.ChannelId]; usable {
+				if _, usable := candidateChannels[ability.ChannelId]; usable {
 					abilities = append(abilities, ability)
 				}
 			}
 			if len(abilities) > 0 {
 				selectedModel = candidateModel
+				usableChannels = candidateChannels
 				break
 			}
 		}
@@ -104,20 +107,25 @@ func ChannelSmartScheduleAffinityEligibility(
 		}
 
 		var activeStateCount int64
-		if err := DB.Model(&ChannelSmartScheduleRouteState{}).
-			Where(
-				"group_name = ? AND model_name = ? AND participation_set = ? AND excluded = ?",
-				group, selectedModel, true, false,
-			).
-			Count(&activeStateCount).Error; err != nil {
-			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		if DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
+			if err := DB.Model(&ChannelSmartScheduleRouteState{}).
+				Where(
+					"group_name = ? AND model_name = ? AND participation_set = ? AND excluded = ?",
+					group, selectedModel, true, false,
+				).
+				Count(&activeStateCount).Error; err != nil {
+				return ChannelSmartScheduleAffinityTemporarilyUnavailable
+			}
 		}
 		highestPriority := int64(0)
 		highestPrioritySet := false
 		preferredPriority := int64(0)
 		preferredFound := false
 		for _, ability := range abilities {
-			priority := abilityPriority(ability)
+			priority, _ := channelSmartScheduleAbilityRouting(
+				ability,
+				usableChannels[ability.ChannelId],
+			)
 			if !highestPrioritySet || priority > highestPriority {
 				highestPriority = priority
 				highestPrioritySet = true

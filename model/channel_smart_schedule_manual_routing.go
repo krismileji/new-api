@@ -41,8 +41,10 @@ func SaveChannelSmartScheduleManualRouting(
 			return err
 		}
 		channelStatusById := make(map[int]int, len(channels))
+		channelById := make(map[int]Channel, len(channels))
 		for _, channel := range channels {
 			channelStatusById[channel.Id] = channel.Status
+			channelById[channel.Id] = channel
 		}
 		var states []ChannelSmartScheduleRouteState
 		if err := lockForUpdate(tx).
@@ -84,7 +86,7 @@ func SaveChannelSmartScheduleManualRouting(
 		if ability == nil {
 			return gorm.ErrRecordNotFound
 		}
-		result.RoutingChanged = abilityPriority(*ability) != priority || ability.Weight != weight
+		result.RoutingChanged = ability.Priority == nil || abilityPriority(*ability) != priority || ability.Weight != weight
 		if result.RoutingChanged {
 			key := channelSmartScheduleRouteKey(channelId, group, modelName)
 			if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight); err != nil {
@@ -130,17 +132,23 @@ func SaveChannelSmartScheduleManualRouting(
 			if channelStatusById[primaryState.ChannelId] != common.ChannelStatusEnabled {
 				continue
 			}
-			primaryPriority, err := channelSmartScheduleManualPrimaryPriority(
+			primaryChannel, channelExists := channelById[primaryState.ChannelId]
+			if !channelExists {
+				continue
+			}
+			currentPriority, currentWeight := channelSmartScheduleAbilityRouting(*primaryAbility, &primaryChannel)
+			desiredPriority, err := channelSmartScheduleManualPrimaryPriority(
 				abilities,
 				channelStatusById,
 				primaryState.ChannelId,
-				max(abilityPriority(*primaryAbility), primaryState.LastSchedulePriority),
+				max(currentPriority, primaryState.LastSchedulePriority),
+				channelById,
 			)
 			if err != nil {
 				return err
 			}
 			primaryWeight := uint(1000)
-			if abilityPriority(*primaryAbility) == primaryPriority && primaryAbility.Weight == primaryWeight {
+			if primaryAbility.Priority != nil && currentPriority == desiredPriority && currentWeight == primaryWeight {
 				break
 			}
 			if primaryState.Revision == math.MaxInt64 {
@@ -149,7 +157,7 @@ func SaveChannelSmartScheduleManualRouting(
 			if err := updateAbilitySmartSchedulePriorityWeightTx(
 				tx,
 				channelSmartScheduleRouteKey(primaryState.ChannelId, group, modelName),
-				&primaryPriority,
+				&desiredPriority,
 				&primaryWeight,
 			); err != nil {
 				return err
@@ -158,7 +166,7 @@ func SaveChannelSmartScheduleManualRouting(
 			primaryState.LastScheduleError = "池内人工路由已变更，固定主渠道已重新置顶"
 			primaryState.LastScheduleScore = nil
 			primaryState.LastScheduleScoreDetails = ""
-			primaryState.LastSchedulePriority = primaryPriority
+			primaryState.LastSchedulePriority = desiredPriority
 			primaryState.LastScheduleWeight = primaryWeight
 			primaryState.LastScheduleTime = now
 			primaryState.Revision++

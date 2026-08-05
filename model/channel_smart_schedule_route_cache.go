@@ -44,14 +44,15 @@ func buildChannelSmartScheduleRouteCacheFromStates(
 	managedPools := make(map[channelSmartScheduleRoutePool]struct{})
 	statesByPool := make(map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState)
 	for _, state := range states {
-		if state.Participates() {
-			pool := channelSmartScheduleRoutePool{group: state.GroupName, model: state.ModelName}
-			managedPools[pool] = struct{}{}
-			if statesByPool[pool] == nil {
-				statesByPool[pool] = make(map[int]ChannelSmartScheduleRouteState)
-			}
-			statesByPool[pool][state.ChannelId] = state
+		if !state.Participates() {
+			continue
 		}
+		pool := channelSmartScheduleRoutePool{group: state.GroupName, model: state.ModelName}
+		if statesByPool[pool] == nil {
+			statesByPool[pool] = make(map[int]ChannelSmartScheduleRouteState)
+		}
+		statesByPool[pool][state.ChannelId] = state
+		managedPools[pool] = struct{}{}
 	}
 	return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, managedPools, statesByPool, false)
 }
@@ -77,10 +78,14 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 		pool := channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}
 		_, managed := managedPools[pool]
 		state := statesByPool[pool][ability.ChannelId]
+		priority, weight := channelSmartScheduleAbilityRouting(
+			*ability,
+			channel,
+		)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
 			channelId:                  ability.ChannelId,
-			priority:                   abilityPriority(*ability),
-			weight:                     ability.Weight,
+			priority:                   priority,
+			weight:                     weight,
 			managed:                    managedLookupFailed || managed,
 			temporaryTrafficKind:       state.TemporaryTrafficKind,
 			explorationMaxPromptTokens: state.ExplorationMaxPromptTokens,

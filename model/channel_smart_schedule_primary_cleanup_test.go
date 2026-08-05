@@ -71,8 +71,11 @@ func assertChannelSmartSchedulePrimaryCleanup(t *testing.T, db *gorm.DB) {
 func TestSaveChannelSmartScheduleRouteConfigReportsParticipationChange(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	priority := int64(80)
+	channelPriority := int64(65)
+	channelWeight := uint(25)
 	require.NoError(t, db.Create(&Channel{
 		Id: 4201, Name: "route participation", Status: common.ChannelStatusEnabled,
+		Priority: &channelPriority, Weight: &channelWeight,
 	}).Error)
 	require.NoError(t, db.Create(&Ability{
 		ChannelId: 4201, Group: "vip", Model: "model-a", Enabled: true,
@@ -92,8 +95,9 @@ func TestSaveChannelSmartScheduleRouteConfigReportsParticipationChange(t *testin
 	require.NoError(t, db.Where(&Ability{
 		ChannelId: 4201, Group: "vip", Model: "model-a",
 	}).First(&ability).Error)
-	assert.Equal(t, priority, abilityPriority(ability))
-	assert.Equal(t, uint(40), ability.Weight)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, channelPriority, *ability.Priority)
+	assert.Equal(t, channelWeight, ability.Weight)
 }
 
 func TestSaveChannelSmartScheduleChannelConfigReportsParticipationChange(t *testing.T) {
@@ -170,7 +174,25 @@ func TestExcludeChannelSmartScheduleRoutePrimaryRestoresPoolTemporaryTraffic(t *
 	assert.True(t, routingChanged)
 	assert.True(t, state.Excluded)
 	assert.Zero(t, state.ManualPrimaryUntil)
-	assertChannelSmartSchedulePrimaryCleanup(t, db)
+
+	var fixedAbility Ability
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: 4101, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.Nil(t, fixedAbility.Priority)
+	assert.Zero(t, fixedAbility.Weight)
+
+	var temporaryAbility Ability
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: 4102, Group: "vip", Model: "model-a",
+	}).First(&temporaryAbility).Error)
+	assert.Equal(t, int64(90), abilityPriority(temporaryAbility))
+	assert.Equal(t, uint(30), temporaryAbility.Weight)
+	var temporaryState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 4102, GroupName: "vip", ModelName: "model-a",
+	}).First(&temporaryState).Error)
+	assert.Empty(t, temporaryState.TemporaryTrafficKind)
 }
 
 func TestExpireChannelSmartScheduleRoutePrimaryRestoresPoolTemporaryTraffic(t *testing.T) {

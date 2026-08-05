@@ -47,6 +47,34 @@ func TestSaveChannelSmartScheduleManualRoutingOnlyUpdatesExcludedRoute(t *testin
 	assert.Equal(t, "管理员手动设置未参与路由的优先级和权重", state.LastScheduleError)
 }
 
+func TestSaveChannelSmartScheduleManualRoutingCreatesZeroOverride(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.Create(&Channel{
+		Id: 1405, Name: "零值人工路由", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a",
+	}).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: 1405, Group: "vip", Model: "model-a", Enabled: true,
+	}).Error)
+	require.NoError(t, clearChannelSmartScheduleAbilityRoutingTx(
+		db, channelSmartScheduleRouteKey(1405, "vip", "model-a"),
+	))
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1405, GroupName: "vip", ModelName: "model-a",
+		ParticipationSet: true, Excluded: true, Revision: 1,
+	}).Error)
+
+	result, err := SaveChannelSmartScheduleManualRouting(1405, "vip", "model-a", 0, 0)
+	require.NoError(t, err)
+	assert.True(t, result.RoutingChanged)
+
+	var ability Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 1405, Group: "vip", Model: "model-a"}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Zero(t, *ability.Priority)
+	assert.Zero(t, ability.Weight)
+}
+
 func TestSaveChannelSmartScheduleManualRoutingRejectsParticipatingRoute(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	priority := int64(8)

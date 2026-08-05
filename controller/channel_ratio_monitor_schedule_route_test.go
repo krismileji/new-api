@@ -530,15 +530,19 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	assert.Equal(t, int64(2), *goldFast.Priority)
 	assert.Equal(t, int64(1), *goldSlow.Priority)
 	assert.Equal(t, goldFast.Weight, goldSlow.Weight)
-	assert.Equal(t, int64(80), *abilityByRoute[routeKey{channelId: 1301, model: "model-a"}].Priority)
-	assert.Equal(t, weight, abilityByRoute[routeKey{channelId: 1301, model: "model-a"}].Weight)
+	unconfiguredFast := abilityByRoute[routeKey{channelId: 1301, model: "model-a"}]
+	unconfiguredSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-a"}]
+	assert.Nil(t, unconfiguredFast.Priority)
+	assert.Zero(t, unconfiguredFast.Weight)
+	assert.Nil(t, unconfiguredSlow.Priority)
+	assert.Zero(t, unconfiguredSlow.Weight)
 
 	silverExpensive := abilityByRoute[routeKey{channelId: 1303, model: "model-a"}]
 	silverCheap := abilityByRoute[routeKey{channelId: 1304, model: "model-a"}]
-	assert.Equal(t, int64(80), *silverExpensive.Priority)
-	assert.Equal(t, int64(80), *silverCheap.Priority)
-	assert.Equal(t, weight, silverExpensive.Weight)
-	assert.Equal(t, weight, silverCheap.Weight)
+	assert.Nil(t, silverExpensive.Priority)
+	assert.Zero(t, silverExpensive.Weight)
+	assert.Nil(t, silverCheap.Priority)
+	assert.Zero(t, silverCheap.Weight)
 }
 
 func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *testing.T) {

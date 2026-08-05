@@ -95,11 +95,16 @@ func getChannelFromDatabasePool(
 		}
 		available = filterAbilitiesByExplorationRequest(available, explorationStates, options)
 	}
-
+	if len(available) == 0 {
+		return nil, nil
+	}
 	priorities := make([]int64, 0, len(available))
 	seenPriorities := make(map[int64]struct{}, len(available))
 	for _, ability := range available {
-		priority := abilityPriority(ability)
+		priority, _ := channelSmartScheduleAbilityRouting(
+			ability,
+			channelById[ability.ChannelId],
+		)
 		if _, exists := seenPriorities[priority]; exists {
 			continue
 		}
@@ -117,11 +122,15 @@ func getChannelFromDatabasePool(
 	channelIds = channelIds[:0]
 	weights := make([]uint, 0, len(available))
 	for _, ability := range available {
-		if abilityPriority(ability) != targetPriority {
+		priority, weight := channelSmartScheduleAbilityRouting(
+			ability,
+			channelById[ability.ChannelId],
+		)
+		if priority != targetPriority {
 			continue
 		}
 		channelIds = append(channelIds, ability.ChannelId)
-		weights = append(weights, ability.Weight)
+		weights = append(weights, weight)
 	}
 	channelId, err := chooseChannelByWeights(channelIds, weights)
 	if err != nil {

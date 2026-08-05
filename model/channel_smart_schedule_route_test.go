@@ -461,9 +461,8 @@ func TestUpdateAbilitiesRemovesDeletedRouteScheduleState(t *testing.T) {
 	require.NoError(t, channel.UpdateAbilities(nil))
 	var ability Ability
 	require.NoError(t, db.Where(&Ability{ChannelId: channel.Id, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, defaultPriority, *ability.Priority)
-	assert.Equal(t, defaultWeight, ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 
 	require.NoError(t, InitializeChannelSmartScheduleRouteStates())
 	var recreatedState ChannelSmartScheduleRouteState
@@ -1323,9 +1322,8 @@ func TestSaveChannelSmartScheduleRouteConfigReportsRestoredExplorationRouting(t 
 	assert.True(t, state.Excluded)
 	var ability Ability
 	require.NoError(t, db.Where(&Ability{ChannelId: 1009, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(80), *ability.Priority)
-	assert.Equal(t, uint(50), ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 }
 
 func TestSaveChannelSmartScheduleModelSampleAggregatesWindowWithoutOverwritingRouteState(t *testing.T) {

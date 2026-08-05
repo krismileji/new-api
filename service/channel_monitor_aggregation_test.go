@@ -410,9 +410,8 @@ func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWhenSchedulin
 
 	var ability model.Ability
 	require.NoError(t, db.First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(70), *ability.Priority)
-	assert.Equal(t, uint(40), ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.First(&state).Error)
 	assert.Zero(t, state.ManualPrimaryUntil)

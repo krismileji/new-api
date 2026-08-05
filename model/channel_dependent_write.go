@@ -28,7 +28,7 @@ func lockChannelsForDependentWriteTx(tx *gorm.DB, channelIds []int) ([]Channel, 
 
 	var channels []Channel
 	if err := lockForUpdate(tx).
-		Select("id", "status").
+		Select("id", "status", "priority", "weight").
 		Where("id IN ?", ids).
 		Order("id ASC").
 		Find(&channels).Error; err != nil {

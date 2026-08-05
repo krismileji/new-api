@@ -144,7 +144,11 @@ func TestUpdateAbilitiesKeepsActivePrimaryAboveNewRoute(t *testing.T) {
 	require.Len(t, abilities, 2)
 	assert.Equal(t, int64(501), abilityPriority(abilities[0]))
 	assert.Equal(t, uint(1000), abilities[0].Weight)
-	assert.Equal(t, newRoutePriority, abilityPriority(abilities[1]))
+	assert.Nil(t, abilities[1].Priority)
+	assert.Zero(t, abilities[1].Weight)
+	priority, effectiveWeight := channelSmartScheduleAbilityRouting(abilities[1], &newRouteChannel)
+	assert.Equal(t, newRoutePriority, priority)
+	assert.Equal(t, uint(100), effectiveWeight)
 }
 
 func TestUpdateAbilityStatusKeepsActivePrimaryAboveEnabledRoute(t *testing.T) {

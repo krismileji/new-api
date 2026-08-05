@@ -115,15 +115,17 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 		}
 		var channels []Channel
 		if err := tx.
-			Select("id", "status").
+			Select("id", "status", "priority", "weight").
 			Where("id IN ?", channelIds).
 			Order("id ASC").
 			Find(&channels).Error; err != nil {
 			return err
 		}
 		channelStatusById := make(map[int]int, len(channels))
+		channelById := make(map[int]Channel, len(channels))
 		for _, channel := range channels {
 			channelStatusById[channel.Id] = channel.Status
+			channelById[channel.Id] = channel
 		}
 		primaryAvailable := primaryState.Participates() && primaryState.StabilityState == "" &&
 			primaryAbility != nil && primaryAbility.Enabled &&
@@ -136,17 +138,23 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			}
 			continue
 		}
+		primaryChannel, primaryChannelExists := channelById[primaryState.ChannelId]
+		if !primaryChannelExists {
+			return gorm.ErrRecordNotFound
+		}
+		primaryPriority, _ := channelSmartScheduleAbilityRouting(*primaryAbility, &primaryChannel)
 		priority, err := channelSmartScheduleManualPrimaryPriority(
 			abilities,
 			channelStatusById,
 			primaryState.ChannelId,
-			max(abilityPriority(*primaryAbility), primaryState.LastSchedulePriority),
+			max(primaryPriority, primaryState.LastSchedulePriority),
+			channelById,
 		)
 		if err != nil {
 			return err
 		}
 		weight := uint(1000)
-		if abilityPriority(*primaryAbility) == priority && primaryAbility.Weight == weight {
+		if primaryAbility.Priority != nil && primaryPriority == priority && primaryAbility.Weight == weight {
 			continue
 		}
 		if primaryState.Revision == math.MaxInt64 {
