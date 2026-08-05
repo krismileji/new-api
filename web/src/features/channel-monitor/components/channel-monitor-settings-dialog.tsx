@@ -493,7 +493,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         onOpenChangeComplete={props.onOpenChangeComplete}
       >
         <SheetContent
-          className={sideDrawerContentClassName('sm:max-w-6xl')}
+          className={sideDrawerContentClassName('sm:max-w-[72em]')}
           showCloseButton={!mutation.isPending}
         >
           <SheetHeader className={sideDrawerHeaderClassName()}>

@@ -249,7 +249,7 @@ const scheduleUsesChannelDrawerLayout =
   sheet.classList.contains('w-full') &&
   sheet.classList.contains('overflow-hidden') &&
   sheet.classList.contains('p-0') &&
-  sheet.classList.contains('sm:max-w-6xl') &&
+  sheet.classList.contains('sm:max-w-[72em]') &&
   scheduleHeader?.classList.contains('border-b') === true &&
   scheduleHeader.classList.contains('sm:px-6') &&
   scheduleForm?.classList.contains('overflow-y-auto') === true &&
@@ -283,6 +283,7 @@ assert.ok(policyDialog)
 const policyDialogCentered =
   policyDialog.className.includes('top-1/2') &&
   policyDialog.className.includes('left-1/2')
+const policyDialogUsesInsetRing = policyDialog.classList.contains('ring-inset')
 const policyDialogUsesContentSizedViewport =
   policyDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
   policyDialog.classList.contains('sm:max-w-5xl') &&
@@ -437,6 +438,7 @@ process.stdout.write(
     policyDialogHasGroupSettingHelp,
     policyDialogHasCompletePolicyControls,
     policyDialogHasNoLegacyWeightControls,
+    policyDialogUsesInsetRing,
     policyDialogStabilityInputsAligned,
     scheduleHasExplicitPolicyScope,
     scheduleHasNoImplicitPolicyControls,

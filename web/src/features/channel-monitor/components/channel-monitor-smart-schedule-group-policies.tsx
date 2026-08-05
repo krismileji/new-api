@@ -380,7 +380,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
       >
         <DialogContent
           className={channelMonitorDialogContentClassName(
-            'grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-5xl'
+            'grid-rows-[auto_minmax(0,1fr)_auto] ring-inset sm:max-w-5xl'
           )}
         >
           <DialogHeader>
