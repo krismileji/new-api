@@ -284,14 +284,29 @@ const smartScheduleExplorationTrafficSchema = z.coerce
   .gt(0, '探索流量必须大于 0%')
   .max(MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT, '探索流量不能超过 20%')
 
-const smartScheduleExplorationPromptTokensSchema = z.coerce
-  .number()
-  .int('探索请求上限必须是整数')
-  .min(1, '探索请求上限不能小于 1 Token')
-  .max(
-    MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
-    '探索请求上限不能超过 1000000 Token'
-  )
+const smartScheduleExplorationPromptTokensSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .int('探索请求上限必须是整数')
+    .min(0, '探索请求上限不能小于 0 Token')
+    .max(
+      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
+      '探索请求上限不能超过 1000000 Token'
+    )
+)
+
+const smartScheduleStabilityReleasePromptTokensSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .int('稳定性释放请求上限必须是整数')
+    .min(0, '稳定性释放请求上限不能小于 0 Token')
+    .max(
+      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
+      '稳定性释放请求上限不能超过 1000000 Token'
+    )
+)
 
 const smartScheduleProbeIntervalSchema = z.coerce
   .number()
@@ -375,6 +390,8 @@ const smartSchedulePolicyShape = {
   sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
   explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
   explorationMaxPromptTokens: smartScheduleExplorationPromptTokensSchema,
+  stabilityReleaseMaxPromptTokens:
+    smartScheduleStabilityReleasePromptTokensSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
   prioritySamplingEnabled: z.boolean(),
   prioritySamplingIntervalMinutes: smartSchedulePrioritySamplingIntervalSchema,
@@ -431,6 +448,8 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.burstFailureThreshold = defaults.burstFailureThreshold
     normalized.recoverySuccessThreshold = defaults.recoverySuccessThreshold
     normalized.cooldownMinutes = defaults.cooldownMinutes
+    normalized.stabilityReleaseMaxPromptTokens =
+      defaults.stabilityReleaseMaxPromptTokens
     if (
       typeof policy.scoring === 'object' &&
       policy.scoring !== null &&

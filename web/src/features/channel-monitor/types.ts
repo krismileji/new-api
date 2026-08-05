@@ -489,7 +489,8 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   cooldown_minutes: number
   sample_mode: ChannelMonitorSmartScheduleSampleMode
   exploration_traffic_percent: number
-  exploration_max_prompt_tokens: number
+  exploration_max_prompt_tokens?: number
+  stability_release_max_prompt_tokens?: number
   probe_interval_minutes: number
   priority_sampling_enabled: boolean
   priority_sampling_interval_minutes: number
@@ -674,6 +675,7 @@ export type ChannelMonitorSmartScheduleRouteState = {
   temporary_traffic_since: number
   temporary_traffic_target_percent: number
   exploration_max_prompt_tokens?: number
+  stability_release_max_prompt_tokens?: number
   last_priority_sample_time: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean

@@ -66,6 +66,7 @@ describe('smart schedule policy schema', () => {
       cooldownMinutes: '',
       explorationTrafficPercent: '',
       explorationMaxPromptTokens: '',
+      stabilityReleaseMaxPromptTokens: '',
       probeIntervalMinutes: '',
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: '',
@@ -85,6 +86,7 @@ describe('smart schedule policy schema', () => {
     const activeCases = [
       { ...basePolicy, explorationTrafficPercent: '', sampleMode: 'traffic' },
       { ...basePolicy, explorationMaxPromptTokens: '', sampleMode: 'traffic' },
+      { ...basePolicy, stabilityReleaseMaxPromptTokens: '' },
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
       { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
@@ -515,6 +517,7 @@ describe('channel monitor settings schema', () => {
       sampleMode: 'traffic' as const,
       explorationTrafficPercent: 3,
       explorationMaxPromptTokens: 16_384,
+      stabilityReleaseMaxPromptTokens: 0,
       probeIntervalMinutes: 10,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: 10,
@@ -909,7 +912,7 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
-    for (const explorationMaxPromptTokens of [1, 1_000_000]) {
+    for (const explorationMaxPromptTokens of [0, 1, 1_000_000]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
@@ -920,12 +923,34 @@ describe('channel monitor settings schema', () => {
         true
       )
     }
-    for (const explorationMaxPromptTokens of [0, 1_000_001, 1.5]) {
+    for (const explorationMaxPromptTokens of [-1, 1_000_001, 1.5]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
             { ...groupPolicy, explorationMaxPromptTokens },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const stabilityReleaseMaxPromptTokens of [0, 1, 1_000_000]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, stabilityReleaseMaxPromptTokens },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const stabilityReleaseMaxPromptTokens of [-1, 1_000_001, 1.5]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, stabilityReleaseMaxPromptTokens },
           ],
         }).success,
         false

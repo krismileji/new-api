@@ -472,7 +472,13 @@ func runChannelSmartScheduleByRouteOnce(
 					SavedWeight:   route.State.StabilitySavedWeight,
 				},
 				runtimeProtectionClear: true,
-				routingSnapshot:        channelSmartScheduleClearTemporaryTraffic(route.State),
+				routingSnapshot: &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+					BaseRank:                        route.State.BaseRank,
+					BasePriority:                    route.State.BasePriority,
+					BaseWeight:                      route.State.BaseWeight,
+					StabilityReleaseMaxPromptTokens: policy.StabilityReleaseMaxPromptTokens,
+					LastPrioritySampleTime:          route.State.LastPrioritySampleTime,
+				},
 			})
 			continue
 		case model.ChannelSmartScheduleStabilityProbing, "":
@@ -593,7 +599,7 @@ func runChannelSmartScheduleByRouteOnce(
 						SavedPriority: route.State.StabilitySavedPriority,
 						SavedWeight:   route.State.StabilitySavedWeight,
 					},
-					routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
+					routingSnapshot: channelSmartScheduleClearTemporaryTrafficAndRelease(route.State),
 				})
 				continue
 			}
@@ -624,7 +630,7 @@ func runChannelSmartScheduleByRouteOnce(
 				status:               model.ChannelSmartScheduleStatusSucceeded,
 				message:              recoveryMessage,
 				stability:            &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
-				routingSnapshot:      channelSmartScheduleClearTemporaryTraffic(route.State),
+				routingSnapshot:      channelSmartScheduleClearTemporaryTrafficAndRelease(route.State),
 				reapplyManualPrimary: manualPrimary,
 			})
 			continue
@@ -1028,15 +1034,32 @@ func runChannelSmartScheduleByRouteOnce(
 				}
 				update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
 					BaseRank: item.BaseRank, BasePriority: item.BasePriority, BaseWeight: item.BaseWeight,
-					TemporaryTrafficKind:          temporaryKind,
-					TemporaryTrafficSince:         temporarySince,
-					TemporaryTrafficTargetPercent: item.ScoreDetails.Decision.TemporaryTrafficTargetPercent,
-					ExplorationMaxPromptTokens:    0,
-					LastPrioritySampleTime:        lastPrioritySampleTime,
+					TemporaryTrafficKind:            temporaryKind,
+					TemporaryTrafficSince:           temporarySince,
+					TemporaryTrafficTargetPercent:   item.ScoreDetails.Decision.TemporaryTrafficTargetPercent,
+					ExplorationMaxPromptTokens:      0,
+					StabilityReleaseMaxPromptTokens: 0,
+					LastPrioritySampleTime:          lastPrioritySampleTime,
 				}
 				if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficExploration {
 					update.RoutingSnapshot.ExplorationMaxPromptTokens = policy.ExplorationMaxPromptTokens
 				}
+			}
+			if routeByKey[key].State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
+				if update.RoutingSnapshot == nil {
+					state := routeByKey[key].State
+					update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+						BaseRank:                      state.BaseRank,
+						BasePriority:                  state.BasePriority,
+						BaseWeight:                    state.BaseWeight,
+						TemporaryTrafficKind:          state.TemporaryTrafficKind,
+						TemporaryTrafficSince:         state.TemporaryTrafficSince,
+						TemporaryTrafficTargetPercent: state.TemporaryTrafficTargetPercent,
+						ExplorationMaxPromptTokens:    state.ExplorationMaxPromptTokens,
+						LastPrioritySampleTime:        state.LastPrioritySampleTime,
+					}
+				}
+				update.RoutingSnapshot.StabilityReleaseMaxPromptTokens = policy.StabilityReleaseMaxPromptTokens
 			}
 			statusUpdates = append(statusUpdates, update)
 		}
@@ -1047,6 +1070,28 @@ func runChannelSmartScheduleByRouteOnce(
 			action.targetWeight, now, action.stability,
 		)
 		update.RoutingSnapshot = action.routingSnapshot
+		route := routeByKey[action.key]
+		resultingStabilityState := route.State.StabilityState
+		if action.stability != nil {
+			resultingStabilityState = action.stability.State
+		}
+		if resultingStabilityState == model.ChannelSmartScheduleStabilityProbing {
+			if update.RoutingSnapshot == nil {
+				state := route.State
+				update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+					BaseRank:                      state.BaseRank,
+					BasePriority:                  state.BasePriority,
+					BaseWeight:                    state.BaseWeight,
+					TemporaryTrafficKind:          state.TemporaryTrafficKind,
+					TemporaryTrafficSince:         state.TemporaryTrafficSince,
+					TemporaryTrafficTargetPercent: state.TemporaryTrafficTargetPercent,
+					ExplorationMaxPromptTokens:    state.ExplorationMaxPromptTokens,
+					LastPrioritySampleTime:        state.LastPrioritySampleTime,
+				}
+			}
+			update.RoutingSnapshot.StabilityReleaseMaxPromptTokens =
+				policyByGroup[action.key.group].StabilityReleaseMaxPromptTokens
+		}
 		if action.runtimeProtectionClear {
 			protectionUntil := int64(0)
 			update.RuntimeProtectionUntil = &protectionUntil
@@ -1218,7 +1263,8 @@ func channelSmartScheduleRouteResultChangesTrafficState(
 		(snapshot.TemporaryTrafficKind != state.TemporaryTrafficKind ||
 			snapshot.TemporaryTrafficSince != state.TemporaryTrafficSince ||
 			snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent ||
-			snapshot.ExplorationMaxPromptTokens != state.ExplorationMaxPromptTokens) {
+			snapshot.ExplorationMaxPromptTokens != state.ExplorationMaxPromptTokens ||
+			snapshot.StabilityReleaseMaxPromptTokens != state.StabilityReleaseMaxPromptTokens) {
 		return true
 	}
 	return false
@@ -1269,13 +1315,40 @@ func channelSmartScheduleRouteProbeTarget(state model.ChannelSmartScheduleRouteS
 func channelSmartScheduleClearTemporaryTraffic(
 	state model.ChannelSmartScheduleRouteState,
 ) *model.ChannelSmartScheduleRoutingSnapshotUpdate {
-	if state.TemporaryTrafficKind == "" {
+	preserveReleaseLimit := state.StabilityState == model.ChannelSmartScheduleStabilityProbing
+	if state.TemporaryTrafficKind == "" && state.ExplorationMaxPromptTokens == 0 &&
+		state.StabilityReleaseMaxPromptTokens == 0 {
 		return nil
 	}
-	return &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-		BaseRank:               state.BaseRank,
-		BasePriority:           state.BasePriority,
-		BaseWeight:             state.BaseWeight,
-		LastPrioritySampleTime: state.LastPrioritySampleTime,
+	releaseLimit := 0
+	if preserveReleaseLimit {
+		releaseLimit = state.StabilityReleaseMaxPromptTokens
 	}
+	return &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+		BaseRank:                        state.BaseRank,
+		BasePriority:                    state.BasePriority,
+		BaseWeight:                      state.BaseWeight,
+		StabilityReleaseMaxPromptTokens: releaseLimit,
+		LastPrioritySampleTime:          state.LastPrioritySampleTime,
+	}
+}
+
+func channelSmartScheduleClearTemporaryTrafficAndRelease(
+	state model.ChannelSmartScheduleRouteState,
+) *model.ChannelSmartScheduleRoutingSnapshotUpdate {
+	snapshot := channelSmartScheduleClearTemporaryTraffic(state)
+	if snapshot == nil {
+		if state.StabilityState != model.ChannelSmartScheduleStabilityProbing ||
+			state.StabilityReleaseMaxPromptTokens == 0 {
+			return nil
+		}
+		snapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+			BaseRank:               state.BaseRank,
+			BasePriority:           state.BasePriority,
+			BaseWeight:             state.BaseWeight,
+			LastPrioritySampleTime: state.LastPrioritySampleTime,
+		}
+	}
+	snapshot.StabilityReleaseMaxPromptTokens = 0
+	return snapshot
 }

@@ -159,7 +159,12 @@ function formatSampleMode(
 ) {
   if (!policy || policy.sample_mode === 'off') return '样本补充关闭'
   if (policy.sample_mode === 'traffic') {
-    return `探索流量 ${policy.exploration_traffic_percent}% · ≤ ${policy.exploration_max_prompt_tokens ?? DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptTokens} Token`
+    const maxPromptTokens =
+      policy.exploration_max_prompt_tokens ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptTokens
+    return maxPromptTokens === 0
+      ? `探索流量 ${policy.exploration_traffic_percent}% · 无限制`
+      : `探索流量 ${policy.exploration_traffic_percent}% · ≤ ${maxPromptTokens} Token`
   }
   return `每 ${policy.probe_interval_minutes} 分钟文本探测`
 }

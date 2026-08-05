@@ -9,12 +9,14 @@ import (
 )
 
 type channelSmartScheduleCachedRoute struct {
-	channelId                  int
-	priority                   int64
-	weight                     uint
-	managed                    bool
-	temporaryTrafficKind       string
-	explorationMaxPromptTokens int
+	channelId                       int
+	priority                        int64
+	weight                          uint
+	managed                         bool
+	temporaryTrafficKind            string
+	stabilityState                  string
+	explorationMaxPromptTokens      int
+	stabilityReleaseMaxPromptTokens int
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
@@ -25,7 +27,8 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 		if err := DB.
 			Select(
 				"channel_id", "group_name", "model_name", "participation_set", "excluded",
-				"temporary_traffic_kind", "exploration_max_prompt_tokens",
+				"temporary_traffic_kind", "stability_state", "exploration_max_prompt_tokens",
+				"stability_release_max_prompt_tokens",
 			).
 			Where("participation_set = ? AND excluded = ?", true, false).
 			Find(&states).Error; err != nil {
@@ -83,12 +86,14 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 			channel,
 		)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
-			channelId:                  ability.ChannelId,
-			priority:                   priority,
-			weight:                     weight,
-			managed:                    managedLookupFailed || managed,
-			temporaryTrafficKind:       state.TemporaryTrafficKind,
-			explorationMaxPromptTokens: state.ExplorationMaxPromptTokens,
+			channelId:                       ability.ChannelId,
+			priority:                        priority,
+			weight:                          weight,
+			managed:                         managedLookupFailed || managed,
+			temporaryTrafficKind:            state.TemporaryTrafficKind,
+			stabilityState:                  state.StabilityState,
+			explorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,
+			stabilityReleaseMaxPromptTokens: state.StabilityReleaseMaxPromptTokens,
 		})
 	}
 	for _, modelRoutes := range cache {
@@ -186,5 +191,5 @@ func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedR
 			filtered = append(filtered, route)
 		}
 	}
-	return filterChannelSmartScheduleExplorationRoutes(filtered, options)
+	return filterChannelSmartScheduleRequestLimits(filtered, options)
 }

@@ -94,13 +94,13 @@ func ChannelSmartScheduleAffinityEligibility(
 			for _, ability := range originalAbilities {
 				channelIDs = append(channelIDs, ability.ChannelId)
 			}
-			explorationStates, err := loadChannelSmartScheduleExplorationStates(
+			requestLimitStates, err := loadChannelSmartScheduleRequestLimitStates(
 				group, selectedModel, channelIDs,
 			)
 			if err != nil {
 				return ChannelSmartScheduleAffinityTemporarilyUnavailable
 			}
-			abilities = filterAbilitiesByExplorationRequest(abilities, explorationStates, selectionOptions)
+			abilities = filterAbilitiesBySmartScheduleRequestLimits(abilities, requestLimitStates, selectionOptions)
 			if preferredInOriginal && !containsAbilityChannel(abilities, channelId) {
 				return ChannelSmartScheduleAffinityTemporarilyUnavailable
 			}
@@ -190,18 +190,22 @@ func ChannelSmartScheduleAffinityEligibility(
 		}
 	}
 	preferredInAll := false
-	preferredFilteredByExploration := false
+	preferredFilteredByRequestLimit := false
 	for _, route := range allRoutes {
 		if route.channelId == channelId {
 			preferredInAll = true
-			preferredFilteredByExploration =
-				route.temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficExploration &&
-					selectionOptions.ShouldAvoidExploration(route.explorationMaxPromptTokens)
+			preferredFilteredByRequestLimit = shouldAvoidChannelSmartScheduleRoute(
+				route.temporaryTrafficKind,
+				route.stabilityState,
+				route.explorationMaxPromptTokens,
+				route.stabilityReleaseMaxPromptTokens,
+				selectionOptions,
+			)
 			break
 		}
 	}
 	if !preferredFound {
-		if preferredInAll && preferredFilteredByExploration {
+		if preferredInAll && preferredFilteredByRequestLimit {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
 		return ChannelSmartScheduleAffinityInvalid

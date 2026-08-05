@@ -87,13 +87,13 @@ func getChannelFromDatabasePool(
 		for _, ability := range available {
 			availableChannelIDs = append(availableChannelIDs, ability.ChannelId)
 		}
-		explorationStates, err := loadChannelSmartScheduleExplorationStates(
+		requestLimitStates, err := loadChannelSmartScheduleRequestLimitStates(
 			group, poolModelName, availableChannelIDs,
 		)
 		if err != nil {
 			return nil, err
 		}
-		available = filterAbilitiesByExplorationRequest(available, explorationStates, options)
+		available = filterAbilitiesBySmartScheduleRequestLimits(available, requestLimitStates, options)
 	}
 	if len(available) == 0 {
 		return nil, nil

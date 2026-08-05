@@ -61,6 +61,7 @@ type channelSmartScheduleGroupPolicy struct {
 	SampleMode                       *string                      `json:"sample_mode,omitempty"`
 	ExplorationTrafficPercent        *float64                     `json:"exploration_traffic_percent,omitempty"`
 	ExplorationMaxPromptTokens       *int                         `json:"exploration_max_prompt_tokens,omitempty"`
+	StabilityReleaseMaxPromptTokens  *int                         `json:"stability_release_max_prompt_tokens,omitempty"`
 	ProbeIntervalMinutes             *int                         `json:"probe_interval_minutes,omitempty"`
 	PrioritySamplingEnabled          *bool                        `json:"priority_sampling_enabled,omitempty"`
 	PrioritySamplingIntervalMinutes  *int                         `json:"priority_sampling_interval_minutes,omitempty"`
@@ -95,6 +96,7 @@ type channelSmartSchedulePolicy struct {
 	SampleMode                       string
 	ExplorationTrafficPercent        float64
 	ExplorationMaxPromptTokens       int
+	StabilityReleaseMaxPromptTokens  int
 	ProbeIntervalMinutes             int
 	PrioritySamplingEnabled          bool
 	PrioritySamplingIntervalMinutes  int
@@ -169,6 +171,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			value := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
 			policy.ExplorationMaxPromptTokens = &value
 		}
+		if policy.StabilityReleaseMaxPromptTokens == nil {
+			value := model.DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens
+			policy.StabilityReleaseMaxPromptTokens = &value
+		}
 		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.DegradeStabilityScore == nil || policy.RecoveryStabilityScore == nil ||
@@ -177,7 +183,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.JitterTolerancePercent == nil || policy.JitterSlowThresholdSeconds == nil ||
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
-			policy.ExplorationMaxPromptTokens == nil ||
+			policy.ExplorationMaxPromptTokens == nil || policy.StabilityReleaseMaxPromptTokens == nil ||
 			policy.ProbeIntervalMinutes == nil || policy.PrioritySamplingEnabled == nil ||
 			policy.PrioritySamplingIntervalMinutes == nil || policy.PrioritySamplingBasePercent == nil ||
 			policy.PrioritySamplingDecayPercent == nil || policy.PrioritySamplingMinPercent == nil {
@@ -282,9 +288,13 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.ExplorationTrafficPercent > maxChannelMonitorSmartScheduleExplorationPercent {
 			return nil, errors.New("分组调度探索流量必须大于 0% 且不超过 20%")
 		}
-		if *policy.ExplorationMaxPromptTokens <= 0 ||
+		if *policy.ExplorationMaxPromptTokens < 0 ||
 			*policy.ExplorationMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens {
-			return nil, errors.New("分组调度探索请求上限必须在 1 到 1000000 Token 之间")
+			return nil, errors.New("分组调度探索请求上限必须在 0 到 1000000 Token 之间")
+		}
+		if *policy.StabilityReleaseMaxPromptTokens < 0 ||
+			*policy.StabilityReleaseMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens {
+			return nil, errors.New("分组调度稳定性释放请求上限必须在 0 到 1000000 Token 之间")
 		}
 		if *policy.ProbeIntervalMinutes <= 0 ||
 			*policy.ProbeIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes {
@@ -365,6 +375,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		SampleMode:                       *configured.SampleMode,
 		ExplorationTrafficPercent:        *configured.ExplorationTrafficPercent,
 		ExplorationMaxPromptTokens:       *configured.ExplorationMaxPromptTokens,
+		StabilityReleaseMaxPromptTokens:  *configured.StabilityReleaseMaxPromptTokens,
 		ProbeIntervalMinutes:             *configured.ProbeIntervalMinutes,
 		PrioritySamplingEnabled:          *configured.PrioritySamplingEnabled,
 		PrioritySamplingIntervalMinutes:  *configured.PrioritySamplingIntervalMinutes,

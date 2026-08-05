@@ -165,6 +165,38 @@ func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeReque
 		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1726, "/v1/chat/completions", largeRequest))
 }
 
+func TestChannelSmartScheduleAffinityEligibilityDefersLimitedStabilityReleaseForLargeRequest(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	releasePriority := int64(100)
+	stablePriority := int64(80)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1728, Name: "release", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+		{Id: 1729, Name: "stable", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1728, Group: "vip", Model: "model-a", Enabled: true, Priority: &releasePriority, Weight: 100},
+		{ChannelId: 1729, Group: "vip", Model: "model-a", Enabled: true, Priority: &stablePriority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1728, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		StabilityState:                  ChannelSmartScheduleStabilityProbing,
+		StabilityReleaseMaxPromptTokens: 100,
+	}).Error)
+	InitChannelCache()
+
+	largeRequest := ChannelSelectionOptions{EstimatedPromptTokens: 101}
+	assert.Equal(t, ChannelSmartScheduleAffinityEligible,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1729, "/v1/chat/completions", largeRequest))
+	assert.Equal(t, ChannelSmartScheduleAffinityTemporarilyUnavailable,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1728, "/v1/chat/completions", largeRequest))
+}
+
 func TestChannelSmartScheduleAffinityEligibilitySkipsDisabledHigherPriority(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	highPriority := int64(100)

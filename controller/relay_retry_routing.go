@@ -92,6 +92,16 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		return channel, selectGroup, err
 	}
 
+	// Request-size limits are a soft preference. Once the normal candidates
+	// have been exhausted, give deferred exploration/stability-release routes
+	// a chance before declaring the round exhausted or restarting it.
+	fallbackRetryParam := *retryParam
+	fallbackRetryParam.SelectionOptions.IgnoreSmartScheduleRequestLimits = true
+	channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&fallbackRetryParam, selectionOptions)
+	if err != nil || channel != nil {
+		return channel, selectGroup, err
+	}
+
 	routing.restartRound(retryParam)
 	roundRetry := 0
 	roundRetryParam := *retryParam

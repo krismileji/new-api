@@ -134,18 +134,19 @@ func TestRunChannelSmartScheduleRecordsUnchangedWhenOnlyBaseSnapshotRefreshes(t 
 
 func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 	state := model.ChannelSmartScheduleRouteState{
-		StabilityState:                model.ChannelSmartScheduleStabilityDegraded,
-		StabilityUntil:                200,
-		StabilitySince:                100,
-		StabilitySavedPriority:        8,
-		StabilitySavedWeight:          900,
-		RuntimeProtectionUntil:        300,
-		BaseRank:                      2,
-		BasePriority:                  7,
-		BaseWeight:                    800,
-		TemporaryTrafficKind:          model.ChannelSmartScheduleTemporaryTrafficExploration,
-		TemporaryTrafficSince:         150,
-		TemporaryTrafficTargetPercent: 3,
+		StabilityState:                  model.ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil:                  200,
+		StabilitySince:                  100,
+		StabilitySavedPriority:          8,
+		StabilitySavedWeight:            900,
+		RuntimeProtectionUntil:          300,
+		BaseRank:                        2,
+		BasePriority:                    7,
+		BaseWeight:                      800,
+		TemporaryTrafficKind:            model.ChannelSmartScheduleTemporaryTrafficExploration,
+		TemporaryTrafficSince:           150,
+		TemporaryTrafficTargetPercent:   3,
+		StabilityReleaseMaxPromptTokens: 1234,
 	}
 	matchingStability := &model.ChannelSmartScheduleStabilityUpdate{
 		State: model.ChannelSmartScheduleStabilityDegraded, Until: 200, Since: 100,
@@ -155,6 +156,7 @@ func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 		BaseRank: 1, BasePriority: 6, BaseWeight: 700,
 		TemporaryTrafficKind:  model.ChannelSmartScheduleTemporaryTrafficExploration,
 		TemporaryTrafficSince: 150, TemporaryTrafficTargetPercent: 3,
+		StabilityReleaseMaxPromptTokens: 1234,
 	}
 
 	assert.False(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
@@ -175,12 +177,36 @@ func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
 		RoutingSnapshot: &model.ChannelSmartScheduleRoutingSnapshotUpdate{
 			BaseRank: 2, BasePriority: 7, BaseWeight: 800,
+			StabilityReleaseMaxPromptTokens: 4321,
 		},
 	}))
 	runtimeProtectionUntil := int64(0)
 	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
 		RuntimeProtectionUntil: &runtimeProtectionUntil,
 	}))
+}
+
+func TestChannelSmartScheduleTemporaryTrafficSnapshotKeepsReleaseLimitWhileProbing(t *testing.T) {
+	probing := model.ChannelSmartScheduleRouteState{
+		StabilityState:                  model.ChannelSmartScheduleStabilityProbing,
+		StabilityReleaseMaxPromptTokens: 1234,
+		BaseRank:                        2,
+		BasePriority:                    80,
+		BaseWeight:                      40,
+	}
+	snapshot := channelSmartScheduleClearTemporaryTraffic(probing)
+	require.NotNil(t, snapshot)
+	assert.Equal(t, 1234, snapshot.StabilityReleaseMaxPromptTokens)
+
+	degraded := probing
+	degraded.StabilityState = model.ChannelSmartScheduleStabilityDegraded
+	snapshot = channelSmartScheduleClearTemporaryTraffic(degraded)
+	require.NotNil(t, snapshot)
+	assert.Zero(t, snapshot.StabilityReleaseMaxPromptTokens)
+
+	snapshot = channelSmartScheduleClearTemporaryTrafficAndRelease(probing)
+	require.NotNil(t, snapshot)
+	assert.Zero(t, snapshot.StabilityReleaseMaxPromptTokens)
 }
 
 func TestRunChannelSmartScheduleRecordsActiveRuntimeProtection(t *testing.T) {

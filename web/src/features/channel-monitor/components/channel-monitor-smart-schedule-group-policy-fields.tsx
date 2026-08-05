@@ -543,7 +543,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     <InputGroup>
                       <InputGroupInput
                         type='number'
-                        min={1}
+                        min={0}
                         max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS}
                         step={1}
                         inputMode='numeric'
@@ -562,7 +562,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     </InputGroup>
                   </FormControl>
                   <FormDescription>
-                    超过上限的请求优先使用稳定渠道，避免长上下文切换导致缓存失效
+                    超过上限的请求优先使用其他候选，0 表示无限制
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -791,6 +791,41 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               )}
             />
           </div>
+          <FormField
+            control={props.form.control}
+            name='stabilityReleaseMaxPromptTokens'
+            render={({ field }) => (
+              <FormItem className='max-w-72'>
+                <ChannelMonitorSettingLabel
+                  label='稳定性释放请求上限'
+                  helpKey='stabilityReleaseMaxPromptTokens'
+                />
+                <FormControl>
+                  <InputGroup>
+                    <InputGroupInput
+                      type='number'
+                      min={0}
+                      max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS}
+                      step={1}
+                      inputMode='numeric'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors
+                          .stabilityReleaseMaxPromptTokens
+                      )}
+                    />
+                    <InputGroupAddon align='inline-end'>Token</InputGroupAddon>
+                  </InputGroup>
+                </FormControl>
+                <FormDescription>0 表示无限制</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
           <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-5'>
             <GroupPolicyPercentField
               form={props.form}

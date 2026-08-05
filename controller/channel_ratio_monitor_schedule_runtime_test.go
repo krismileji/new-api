@@ -267,6 +267,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 3, 80, 30,
 	)
+	policy.StabilityReleaseMaxPromptTokens = common.GetPointer(1234)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
@@ -289,7 +290,8 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 		ParticipationSet: true, Revision: 1,
 		StabilityState: model.ChannelSmartScheduleStabilityProbing,
 		StabilitySince: now - 30, StabilitySavedPriority: restorePriority,
-		StabilitySavedWeight: restoreWeight,
+		StabilitySavedWeight:            restoreWeight,
+		StabilityReleaseMaxPromptTokens: 1234,
 	}).Error)
 
 	oldMinute := now - now%60 - 60
@@ -306,6 +308,12 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
 	protectChannelSmartScheduleRuntimeFailure(1510, "model-a", runtimeError)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1510, GroupName: "vip", ModelName: "model-a",
+	}).First(&state).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, state.StabilityState)
+	assert.Zero(t, state.StabilityReleaseMaxPromptTokens)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1510, Group: "vip", Model: "model-a"}).First(&ability).Error)

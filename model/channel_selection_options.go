@@ -8,12 +8,17 @@ type ChannelSelectionOptions struct {
 	ExcludedChannelIds    []int
 	EstimatedPromptTokens int
 	RequestBodyBytes      int64
+	// IgnoreSmartScheduleRequestLimits is used only for the fallback pass
+	// after all non-limited candidates have been tried. It never changes the
+	// configured route state or the effective priority and weight.
+	IgnoreSmartScheduleRequestLimits bool
 }
 
 const (
-	DefaultChannelSmartScheduleExplorationMaxPromptTokens = 16_384
-	MaxChannelSmartScheduleExplorationPromptTokens        = 1_000_000
-	requestBodyBytesPerPromptToken                        = 3
+	DefaultChannelSmartScheduleExplorationMaxPromptTokens      = 16_384
+	DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens = 0
+	MaxChannelSmartScheduleExplorationPromptTokens             = 1_000_000
+	requestBodyBytesPerPromptToken                             = 3
 )
 
 func (options ChannelSelectionOptions) HasExcludedChannels() bool {
@@ -24,12 +29,12 @@ func (options ChannelSelectionOptions) HasRequestSize() bool {
 	return options.EstimatedPromptTokens > 0 || options.RequestBodyBytes > 0
 }
 
-func (options ChannelSelectionOptions) ShouldAvoidExploration(maxPromptTokens int) bool {
+func (options ChannelSelectionOptions) ShouldAvoidSmartScheduleRoute(maxPromptTokens int) bool {
 	if !options.HasRequestSize() {
 		return false
 	}
 	if maxPromptTokens <= 0 {
-		maxPromptTokens = DefaultChannelSmartScheduleExplorationMaxPromptTokens
+		return false
 	}
 	if maxPromptTokens > MaxChannelSmartScheduleExplorationPromptTokens {
 		maxPromptTokens = MaxChannelSmartScheduleExplorationPromptTokens
@@ -38,6 +43,13 @@ func (options ChannelSelectionOptions) ShouldAvoidExploration(maxPromptTokens in
 		return true
 	}
 	return options.RequestBodyBytes > int64(maxPromptTokens)*requestBodyBytesPerPromptToken
+}
+
+// ShouldAvoidExploration is kept for callers compiled against the original
+// exploration-only selector API. A zero limit now follows the shared
+// smart-schedule rule and means unlimited.
+func (options ChannelSelectionOptions) ShouldAvoidExploration(maxPromptTokens int) bool {
+	return options.ShouldAvoidSmartScheduleRoute(maxPromptTokens)
 }
 
 func channelSelectionOptions(options []ChannelSelectionOptions) ChannelSelectionOptions {

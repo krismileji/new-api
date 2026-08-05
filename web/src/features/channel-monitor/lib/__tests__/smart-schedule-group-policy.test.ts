@@ -66,6 +66,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   sampleMode: 'probe',
   explorationTrafficPercent: 3,
   explorationMaxPromptTokens: 16_384,
+  stabilityReleaseMaxPromptTokens: 0,
   probeIntervalMinutes: 15,
   prioritySamplingEnabled: true,
   prioritySamplingIntervalMinutes: 10,
@@ -143,6 +144,8 @@ describe('smart schedule group policy', () => {
         sample_mode: defaultPolicy.sampleMode,
         exploration_traffic_percent: defaultPolicy.explorationTrafficPercent,
         exploration_max_prompt_tokens: defaultPolicy.explorationMaxPromptTokens,
+        stability_release_max_prompt_tokens:
+          defaultPolicy.stabilityReleaseMaxPromptTokens,
         probe_interval_minutes: defaultPolicy.probeIntervalMinutes,
         priority_sampling_enabled: defaultPolicy.prioritySamplingEnabled,
         priority_sampling_interval_minutes:
@@ -194,6 +197,7 @@ describe('smart schedule group policy', () => {
     assert.equal(apiPolicies[0]?.recovery_success_threshold, 2)
     assert.equal(apiPolicies[0]?.sample_mode, 'probe')
     assert.equal(apiPolicies[0]?.exploration_traffic_percent, 3)
+    assert.equal(apiPolicies[0]?.stability_release_max_prompt_tokens, 0)
     assert.equal(apiPolicies[0]?.probe_interval_minutes, 15)
     assert.equal(apiPolicies[0]?.priority_sampling_enabled, true)
     assert.equal(apiPolicies[0]?.priority_sampling_interval_minutes, 10)

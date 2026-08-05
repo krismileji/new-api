@@ -404,6 +404,7 @@ func TestUpdateChannelMonitorSettingsOptionsReturnsStabilityProbeToDegradedState
 		ParticipationSet: true, Revision: 1,
 		StabilityState: ChannelSmartScheduleStabilityProbing, StabilitySince: 100,
 		StabilitySavedPriority: 80, StabilitySavedWeight: 40,
+		StabilityReleaseMaxPromptTokens: 1234,
 	}).Error)
 
 	routingChanged, err := UpdateChannelMonitorSettingsOptions(
@@ -420,6 +421,7 @@ func TestUpdateChannelMonitorSettingsOptionsReturnsStabilityProbeToDegradedState
 	assert.Zero(t, state.StabilitySince)
 	assert.Equal(t, int64(80), state.StabilitySavedPriority)
 	assert.Equal(t, uint(40), state.StabilitySavedWeight)
+	assert.Zero(t, state.StabilityReleaseMaxPromptTokens)
 	var ability Ability
 	require.NoError(t, db.Where("channel_id = ?", 1).First(&ability).Error)
 	assert.Zero(t, abilityPriority(ability))

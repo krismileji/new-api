@@ -29,6 +29,7 @@ func channelSmartScheduleTestGroupPolicy(
 	sampleMode := channelMonitorSmartScheduleSampleOff
 	explorationTrafficPercent := 3.0
 	explorationMaxPromptTokens := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
+	stabilityReleaseMaxPromptTokens := model.DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens
 	probeIntervalMinutes := 10
 	prioritySamplingEnabled := true
 	prioritySamplingIntervalMinutes := 10
@@ -75,6 +76,7 @@ func channelSmartScheduleTestGroupPolicy(
 		SampleMode:                       &sampleMode,
 		ExplorationTrafficPercent:        &explorationTrafficPercent,
 		ExplorationMaxPromptTokens:       &explorationMaxPromptTokens,
+		StabilityReleaseMaxPromptTokens:  &stabilityReleaseMaxPromptTokens,
 		ProbeIntervalMinutes:             &probeIntervalMinutes,
 		PrioritySamplingEnabled:          &prioritySamplingEnabled,
 		PrioritySamplingIntervalMinutes:  &prioritySamplingIntervalMinutes,
@@ -125,8 +127,8 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsExplorationPromptLimit(
 	assert.Equal(t, model.DefaultChannelSmartScheduleExplorationMaxPromptTokens, *normalized[0].ExplorationMaxPromptTokens)
 }
 
-func TestNormalizeChannelSmartScheduleGroupPolicyValidatesExplorationPromptLimit(t *testing.T) {
-	for _, value := range []int{0, model.MaxChannelSmartScheduleExplorationPromptTokens + 1} {
+func TestNormalizeChannelSmartScheduleGroupPolicyValidatesPromptLimits(t *testing.T) {
+	for _, value := range []int{-1, model.MaxChannelSmartScheduleExplorationPromptTokens + 1} {
 		policy := channelSmartScheduleTestGroupPolicy(
 			"vip", channelMonitorSmartScheduleStrategySmart, true,
 			channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
@@ -137,6 +139,24 @@ func TestNormalizeChannelSmartScheduleGroupPolicyValidatesExplorationPromptLimit
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "探索请求上限")
 	}
+	valid := 0
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.ExplorationMaxPromptTokens = &valid
+	policy.StabilityReleaseMaxPromptTokens = &valid
+	_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.NoError(t, err)
+
+	policy = channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.StabilityReleaseMaxPromptTokens = common.GetPointer(model.MaxChannelSmartScheduleExplorationPromptTokens + 1)
+	_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "稳定性释放请求上限")
 }
 
 func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.T) {
@@ -271,14 +291,14 @@ func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *t
 
 func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyNewSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	policy.StabilityReleaseMaxPromptTokens = common.GetPointer(1234)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption: "true",
-		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
-			channelSmartScheduleTestGroupPolicy(
-				"vip", channelMonitorSmartScheduleStrategyRatio, true,
-				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
-			),
-		),
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
 	})
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -347,6 +367,7 @@ func TestRunChannelSmartScheduleDegradesReleasesAndRechecksOnlyNewSamples(t *tes
 		"channel_id = ? AND group_name = ? AND model_name = ?", 31, "vip", "model-a",
 	).First(&state).Error)
 	assert.Equal(t, model.ChannelSmartScheduleStabilityProbing, state.StabilityState)
+	assert.Equal(t, 1234, state.StabilityReleaseMaxPromptTokens)
 	require.Positive(t, state.StabilitySince)
 	probeMinute := completedMinuteEnd - 60
 	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).

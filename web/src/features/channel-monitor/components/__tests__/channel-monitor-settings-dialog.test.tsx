@@ -164,6 +164,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               sampleMode: props.sampleMode ?? 'traffic',
               explorationTrafficPercent: 3,
               explorationMaxPromptTokens: 16_384,
+              stabilityReleaseMaxPromptTokens: 0,
               probeIntervalMinutes: 10,
               prioritySamplingEnabled: true,
               prioritySamplingIntervalMinutes: 10,
@@ -233,6 +234,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       sampleMode: props.sampleMode,
       explorationTrafficPercent: 3,
       explorationMaxPromptTokens: 16_384,
+      stabilityReleaseMaxPromptTokens: 0,
       probeIntervalMinutes: 15,
       prioritySamplingEnabled: props.prioritySamplingEnabled ?? true,
       prioritySamplingIntervalMinutes: 10,
@@ -416,6 +418,7 @@ describe('channel monitor settings dialog', () => {
       '稳定性占比',
       '降级稳定性得分',
       '恢复稳定性得分',
+      '稳定性释放请求上限',
       '最少样本',
       '快速失败惩罚',
       '快速失败界限',
@@ -435,6 +438,10 @@ describe('channel monitor settings dialog', () => {
     assert.match(
       trafficPolicyMarkup,
       /<input(?=[^>]*name="fastFailureSameChannelRetryCount")(?=[^>]*min="0")(?=[^>]*max="10")(?=[^>]*value="0")[^>]*>/
+    )
+    assert.match(
+      trafficPolicyMarkup,
+      /<input(?=[^>]*name="stabilityReleaseMaxPromptTokens")(?=[^>]*min="0")(?=[^>]*max="1000000")(?=[^>]*value="0")[^>]*>/
     )
     assert.ok(
       trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')

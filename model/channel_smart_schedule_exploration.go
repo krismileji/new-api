@@ -1,25 +1,32 @@
 package model
 
-type channelSmartScheduleExplorationState struct {
-	ChannelId                  int
-	ExplorationMaxPromptTokens int
+type channelSmartScheduleRequestLimitState struct {
+	ChannelId                       int
+	TemporaryTrafficKind            string
+	StabilityState                  string
+	ExplorationMaxPromptTokens      int
+	StabilityReleaseMaxPromptTokens int
 }
 
-func loadChannelSmartScheduleExplorationStates(
+func loadChannelSmartScheduleRequestLimitStates(
 	group string,
 	modelName string,
 	channelIDs []int,
-) (map[int]channelSmartScheduleExplorationState, error) {
-	statesByChannel := make(map[int]channelSmartScheduleExplorationState)
+) (map[int]channelSmartScheduleRequestLimitState, error) {
+	statesByChannel := make(map[int]channelSmartScheduleRequestLimitState)
 	if DB == nil || len(channelIDs) == 0 || !DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
 		return statesByChannel, nil
 	}
-	var states []channelSmartScheduleExplorationState
+	var states []channelSmartScheduleRequestLimitState
 	err := DB.Model(&ChannelSmartScheduleRouteState{}).
-		Select("channel_id", "exploration_max_prompt_tokens").
+		Select(
+			"channel_id", "temporary_traffic_kind", "stability_state",
+			"exploration_max_prompt_tokens", "stability_release_max_prompt_tokens",
+		).
 		Where(
-			"group_name = ? AND model_name = ? AND channel_id IN ? AND participation_set = ? AND excluded = ? AND temporary_traffic_kind = ?",
-			group, modelName, channelIDs, true, false, ChannelSmartScheduleTemporaryTrafficExploration,
+			"group_name = ? AND model_name = ? AND channel_id IN ? AND participation_set = ? AND excluded = ? AND (temporary_traffic_kind = ? OR stability_state = ?)",
+			group, modelName, channelIDs, true, false,
+			ChannelSmartScheduleTemporaryTrafficExploration, ChannelSmartScheduleStabilityProbing,
 		).
 		Find(&states).Error
 	if err != nil {
@@ -31,43 +38,70 @@ func loadChannelSmartScheduleExplorationStates(
 	return statesByChannel, nil
 }
 
-func filterAbilitiesByExplorationRequest(
-	abilities []Ability,
-	statesByChannel map[int]channelSmartScheduleExplorationState,
+func shouldAvoidChannelSmartScheduleRoute(
+	temporaryTrafficKind string,
+	stabilityState string,
+	explorationMaxPromptTokens int,
+	stabilityReleaseMaxPromptTokens int,
 	options ChannelSelectionOptions,
-) []Ability {
-	if len(abilities) == 0 || len(statesByChannel) == 0 {
-		return abilities
+) bool {
+	if temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficExploration {
+		return options.ShouldAvoidSmartScheduleRoute(explorationMaxPromptTokens)
 	}
-	stable := make([]Ability, 0, len(abilities))
-	for _, ability := range abilities {
-		state, exploring := statesByChannel[ability.ChannelId]
-		if !exploring || !options.ShouldAvoidExploration(state.ExplorationMaxPromptTokens) {
-			stable = append(stable, ability)
-		}
+	if stabilityState == ChannelSmartScheduleStabilityProbing {
+		return options.ShouldAvoidSmartScheduleRoute(stabilityReleaseMaxPromptTokens)
 	}
-	if len(stable) == 0 {
-		return abilities
-	}
-	return stable
+	return false
 }
 
-func filterChannelSmartScheduleExplorationRoutes(
+func filterAbilitiesBySmartScheduleRequestLimits(
+	abilities []Ability,
+	statesByChannel map[int]channelSmartScheduleRequestLimitState,
+	options ChannelSelectionOptions,
+) []Ability {
+	if options.IgnoreSmartScheduleRequestLimits || len(abilities) == 0 || len(statesByChannel) == 0 {
+		return abilities
+	}
+	preferred := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		state, specialRoute := statesByChannel[ability.ChannelId]
+		if !specialRoute || !shouldAvoidChannelSmartScheduleRoute(
+			state.TemporaryTrafficKind,
+			state.StabilityState,
+			state.ExplorationMaxPromptTokens,
+			state.StabilityReleaseMaxPromptTokens,
+			options,
+		) {
+			preferred = append(preferred, ability)
+		}
+	}
+	if len(preferred) == 0 {
+		return abilities
+	}
+	return preferred
+}
+
+func filterChannelSmartScheduleRequestLimits(
 	routes []channelSmartScheduleCachedRoute,
 	options ChannelSelectionOptions,
 ) []channelSmartScheduleCachedRoute {
-	if len(routes) == 0 || !options.HasRequestSize() {
+	if options.IgnoreSmartScheduleRequestLimits || len(routes) == 0 || !options.HasRequestSize() {
 		return routes
 	}
-	stable := make([]channelSmartScheduleCachedRoute, 0, len(routes))
+	preferred := make([]channelSmartScheduleCachedRoute, 0, len(routes))
 	for _, route := range routes {
-		if route.temporaryTrafficKind != ChannelSmartScheduleTemporaryTrafficExploration ||
-			!options.ShouldAvoidExploration(route.explorationMaxPromptTokens) {
-			stable = append(stable, route)
+		if !shouldAvoidChannelSmartScheduleRoute(
+			route.temporaryTrafficKind,
+			route.stabilityState,
+			route.explorationMaxPromptTokens,
+			route.stabilityReleaseMaxPromptTokens,
+			options,
+		) {
+			preferred = append(preferred, route)
 		}
 	}
-	if len(stable) == 0 {
+	if len(preferred) == 0 {
 		return routes
 	}
-	return stable
+	return preferred
 }
