@@ -80,29 +80,32 @@ func getChannelMonitorRoutePerformanceMetrics(
 		TPSTotal              float64
 		LastUsedTime          int64
 	}
+	metricTable := channelMonitorMinuteMetricTable
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(
-			"channel_id, model_name, COUNT(DISTINCT group_name) AS group_count, "+
-				"SUM(sample_count) AS sample_count, "+
-				"SUM(first_token_sample_count) AS first_token_sample_count, "+
-				"SUM(tps_sample_count) AS tps_sample_count, "+
-				"SUM(first_token_total_ms) AS first_token_total_ms, "+
-				"SUM(tps_total) AS tps_total, "+
-				"MAX(last_used_time) AS last_used_time",
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+				"COUNT(DISTINCT "+metricTable+".group_name) AS group_count, "+
+				"SUM("+metricTable+".sample_count) AS sample_count, "+
+				"SUM("+metricTable+".first_token_sample_count) AS first_token_sample_count, "+
+				"SUM("+metricTable+".tps_sample_count) AS tps_sample_count, "+
+				"SUM("+metricTable+".first_token_total_ms) AS first_token_total_ms, "+
+				"SUM("+metricTable+".tps_total) AS tps_total, "+
+				"MAX("+metricTable+".last_used_time) AS last_used_time",
 		).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-		Where("sample_count > ?", 0)
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
+		Where(metricTable+".sample_count > ?", 0)
+	query = applyChannelMonitorObservationBoundary(query, metricTable)
 	if filter.ChannelId > 0 {
-		query = query.Where("channel_id = ?", filter.ChannelId)
+		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
 		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
-		query = query.Where("model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
 	}
 	var aggregates []performanceAggregate
 	err := query.
-		Group("channel_id, model_name").
+		Group(metricTable + ".channel_id, " + metricTable + ".model_name").
 		Scan(&aggregates).Error
 	if err != nil {
 		return nil, err
@@ -211,34 +214,37 @@ func getChannelMonitorRouteStabilityAggregates(
 	if startTimestamp >= endTimestamp {
 		return []channelMonitorRouteStabilityAggregate{}, nil
 	}
+	metricTable := channelMonitorMinuteMetricTable
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(
-			"channel_id, model_name, COUNT(DISTINCT group_name) AS group_count, "+
-				"SUM(actual_success_count) AS actual_success_count, "+
-				"SUM(actual_failure_count) AS actual_failure_count, "+
-				"SUM(final_failure_count) AS final_failure_count, "+
-				"SUM(rate_limit_actual_failure_count) AS rate_limit_actual_failure_count, "+
-				"SUM(rate_limit_final_failure_count) AS rate_limit_final_failure_count, "+
-				"SUM(retry_failure_count) AS retry_failure_count, "+
-				"SUM(retry_failure_duration_total_ms) AS retry_failure_duration_total_ms, "+
-				"SUM(retry_failure_under_1s_count) AS retry_failure_under_1s_count, "+
-				"SUM(retry_failure_1_to_3s_count) AS retry_failure_1_to_3s_count, "+
-				"SUM(retry_failure_3_to_10s_count) AS retry_failure_3_to_10s_count, "+
-				"SUM(retry_failure_10_to_30s_count) AS retry_failure_10_to_30s_count, "+
-				"SUM(retry_failure_30_to_60s_count) AS retry_failure_30_to_60s_count, "+
-				"SUM(retry_failure_over_60s_count) AS retry_failure_over_60s_count",
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+				"COUNT(DISTINCT "+metricTable+".group_name) AS group_count, "+
+				"SUM("+metricTable+".actual_success_count) AS actual_success_count, "+
+				"SUM("+metricTable+".actual_failure_count) AS actual_failure_count, "+
+				"SUM("+metricTable+".final_failure_count) AS final_failure_count, "+
+				"SUM("+metricTable+".rate_limit_actual_failure_count) AS rate_limit_actual_failure_count, "+
+				"SUM("+metricTable+".rate_limit_final_failure_count) AS rate_limit_final_failure_count, "+
+				"SUM("+metricTable+".retry_failure_count) AS retry_failure_count, "+
+				"SUM("+metricTable+".retry_failure_duration_total_ms) AS retry_failure_duration_total_ms, "+
+				"SUM("+metricTable+".retry_failure_under_1s_count) AS retry_failure_under_1s_count, "+
+				"SUM("+metricTable+".retry_failure_1_to_3s_count) AS retry_failure_1_to_3s_count, "+
+				"SUM("+metricTable+".retry_failure_3_to_10s_count) AS retry_failure_3_to_10s_count, "+
+				"SUM("+metricTable+".retry_failure_10_to_30s_count) AS retry_failure_10_to_30s_count, "+
+				"SUM("+metricTable+".retry_failure_30_to_60s_count) AS retry_failure_30_to_60s_count, "+
+				"SUM("+metricTable+".retry_failure_over_60s_count) AS retry_failure_over_60s_count",
 		).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp)
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp)
+	query = applyChannelMonitorObservationBoundary(query, metricTable)
 	if filter.ChannelId > 0 {
-		query = query.Where("channel_id = ?", filter.ChannelId)
+		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
 		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
-		query = query.Where("model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
 	}
 	var aggregates []channelMonitorRouteStabilityAggregate
-	if err := query.Group("channel_id, model_name").Scan(&aggregates).Error; err != nil {
+	if err := query.Group(metricTable + ".channel_id, " + metricTable + ".model_name").Scan(&aggregates).Error; err != nil {
 		return nil, err
 	}
 	return aggregates, nil

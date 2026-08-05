@@ -306,6 +306,7 @@ func TestEnsureChannelMonitorAggregationFreshInvalidatesCacheAfterSharedAdvance(
 	require.NoError(t, db.AutoMigrate(
 		&model.ChannelMonitorMinuteMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelSmartScheduleModelSampleState{},
 	))
 	key := channelMonitorAggregationDatabaseKey{db: db, logDB: db}
 	channelMonitorAggregationStateMu.Lock()

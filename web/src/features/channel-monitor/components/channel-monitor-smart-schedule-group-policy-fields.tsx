@@ -243,6 +243,10 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
     control: props.form.control,
     name: 'stabilityEnabled',
   })
+  const degradedProbeEnabled = useWatch({
+    control: props.form.control,
+    name: 'degradedProbeEnabled',
+  })
   const jitterEnabled = useWatch({
     control: props.form.control,
     name: 'jitterEnabled',
@@ -571,7 +575,8 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
           </div>
         ) : null}
 
-        {sampleMode === 'probe' ? (
+        {sampleMode === 'probe' ||
+        (stabilityEnabled && degradedProbeEnabled) ? (
           <FormField
             control={props.form.control}
             name='probeIntervalMinutes'
@@ -602,7 +607,9 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   </InputGroup>
                 </FormControl>
                 <FormDescription>
-                  非文本模型会跳过；文本探测按配置间隔持续运行并滚动更新窗口内样本
+                  {sampleMode === 'probe'
+                    ? '非文本模型会跳过；文本探测按配置间隔持续运行并滚动更新窗口内样本'
+                    : '降级渠道按配置间隔探测；达到恢复探测成功次数后可提前恢复'}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -738,6 +745,30 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
 
       {stabilityEnabled && (
         <div className='flex flex-col gap-4'>
+          <FormField
+            control={props.form.control}
+            name='degradedProbeEnabled'
+            render={({ field }) => (
+              <FormItem className='flex items-center justify-between gap-4'>
+                <div className='flex flex-col gap-1'>
+                  <ChannelMonitorSettingLabel
+                    label='降级期间定时探测'
+                    helpKey='degradedProbe'
+                  />
+                  <FormDescription>
+                    降级期间主动探测渠道，达到恢复探测成功次数后可提前恢复
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    aria-label='降级期间定时探测'
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
           <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
             <GroupPolicyPercentField
               form={props.form}

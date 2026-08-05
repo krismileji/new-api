@@ -235,14 +235,45 @@ func GetChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64) 
 }
 
 func getChannelMonitorSuccessMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64, includeCacheMetrics bool) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
-	rows, err := getChannelMonitorMinuteSuccessRows(
-		ctx,
-		startTimestamp,
-		endTimestamp,
-		ChannelMonitorSuccessFilter{},
-		includeCacheMetrics,
-		false,
+	return getChannelMonitorSuccessMetricsWithObservationBoundary(
+		ctx, startTimestamp, endTimestamp, includeCacheMetrics, false,
 	)
+}
+
+func getChannelMonitorObservedSuccessMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64, includeCacheMetrics bool) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
+	return getChannelMonitorSuccessMetricsWithObservationBoundary(
+		ctx, startTimestamp, endTimestamp, includeCacheMetrics, true,
+	)
+}
+
+func getChannelMonitorSuccessMetricsWithObservationBoundary(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	includeCacheMetrics bool,
+	applyObservationBoundary bool,
+) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
+	var rows []channelMonitorSuccessRow
+	var err error
+	if applyObservationBoundary {
+		rows, err = getChannelMonitorObservedMinuteSuccessRows(
+			ctx,
+			startTimestamp,
+			endTimestamp,
+			ChannelMonitorSuccessFilter{},
+			includeCacheMetrics,
+			false,
+		)
+	} else {
+		rows, err = getChannelMonitorMinuteSuccessRows(
+			ctx,
+			startTimestamp,
+			endTimestamp,
+			ChannelMonitorSuccessFilter{},
+			includeCacheMetrics,
+			false,
+		)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

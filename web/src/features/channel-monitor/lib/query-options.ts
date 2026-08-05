@@ -23,7 +23,10 @@ import {
   getChannelMonitorPerformance,
   getChannelMonitorSmartScheduleRoutes,
 } from '../api'
-import type { ChannelMonitorPerformanceRangeMinutes } from '../types'
+import type {
+  ChannelMonitorPerformanceRangeMinutes,
+  ChannelMonitorPerformanceRangeSource,
+} from '../types'
 
 const CHANNEL_MONITOR_PERFORMANCE_STALE_TIME = 60_000
 const CHANNEL_MONITOR_REFETCH_INTERVAL = 60_000
@@ -51,10 +54,11 @@ export function getChannelMonitorOverviewQueryOptions() {
 }
 
 export function getChannelMonitorPerformanceQueryOptions(
-  minutes: ChannelMonitorPerformanceRangeMinutes
+  minutes: ChannelMonitorPerformanceRangeMinutes,
+  source: ChannelMonitorPerformanceRangeSource
 ) {
   return queryOptions({
-    queryKey: ['channel-monitor-performance', minutes],
+    queryKey: ['channel-monitor-performance', source, minutes],
     queryFn: () => getChannelMonitorPerformance(minutes),
     staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
     refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,

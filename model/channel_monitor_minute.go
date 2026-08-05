@@ -667,36 +667,86 @@ func getChannelMonitorMinuteSuccessRows(
 	includeCacheMetrics bool,
 	includeAPIKeyMetrics bool,
 ) ([]channelMonitorSuccessRow, error) {
+	return getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
+		ctx,
+		startTimestamp,
+		endTimestamp,
+		filter,
+		includeCacheMetrics,
+		includeAPIKeyMetrics,
+		false,
+	)
+}
+
+func getChannelMonitorObservedMinuteSuccessRows(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	filter ChannelMonitorSuccessFilter,
+	includeCacheMetrics bool,
+	includeAPIKeyMetrics bool,
+) ([]channelMonitorSuccessRow, error) {
+	return getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
+		ctx,
+		startTimestamp,
+		endTimestamp,
+		filter,
+		includeCacheMetrics,
+		includeAPIKeyMetrics,
+		true,
+	)
+}
+
+func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	filter ChannelMonitorSuccessFilter,
+	includeCacheMetrics bool,
+	includeAPIKeyMetrics bool,
+	applyObservationBoundary bool,
+) ([]channelMonitorSuccessRow, error) {
 	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
 	if startTimestamp >= endTimestamp {
 		return []channelMonitorSuccessRow{}, nil
 	}
+	metricTable := channelMonitorMinuteMetricTable
 	sumColumns :=
-		"SUM(actual_success_count) AS actual_success_count, " +
-			"SUM(actual_failure_count) AS actual_failure_count, " +
-			"SUM(final_success_count) AS final_success_count, " +
-			"SUM(final_failure_count) AS final_failure_count, " +
-			"SUM(cache_hit_count) AS cache_hit_count, " +
-			"SUM(cache_sample_count) AS cache_sample_count, " +
-			"SUM(cache_write_count) AS cache_write_count"
-	selectColumns := "channel_id, model_name, group_name, " + sumColumns
-	groupColumns := "channel_id, model_name, group_name"
+		"SUM(" + metricTable + ".actual_success_count) AS actual_success_count, " +
+			"SUM(" + metricTable + ".actual_failure_count) AS actual_failure_count, " +
+			"SUM(" + metricTable + ".final_success_count) AS final_success_count, " +
+			"SUM(" + metricTable + ".final_failure_count) AS final_failure_count, " +
+			"SUM(" + metricTable + ".cache_hit_count) AS cache_hit_count, " +
+			"SUM(" + metricTable + ".cache_sample_count) AS cache_sample_count, " +
+			"SUM(" + metricTable + ".cache_write_count) AS cache_write_count"
+	selectColumns := metricTable + ".channel_id AS channel_id, " +
+		metricTable + ".model_name AS model_name, " +
+		metricTable + ".group_name AS group_name, " + sumColumns
+	groupColumns := metricTable + ".channel_id, " + metricTable + ".model_name, " + metricTable + ".group_name"
 	if includeAPIKeyMetrics {
-		selectColumns = "channel_id, model_name, group_name, api_key_id, api_key_name, api_key_key, " + sumColumns
-		groupColumns += ", api_key_id, api_key_name, api_key_key"
+		selectColumns = metricTable + ".channel_id AS channel_id, " +
+			metricTable + ".model_name AS model_name, " +
+			metricTable + ".group_name AS group_name, " +
+			metricTable + ".api_key_id AS api_key_id, " +
+			metricTable + ".api_key_name AS api_key_name, " +
+			metricTable + ".api_key_key AS api_key_key, " + sumColumns
+		groupColumns += ", " + metricTable + ".api_key_id, " + metricTable + ".api_key_name, " + metricTable + ".api_key_key"
 	}
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(selectColumns).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp)
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp)
+	if applyObservationBoundary {
+		query = applyChannelMonitorObservationBoundary(query, metricTable)
+	}
 	if filter.ChannelId > 0 {
-		query = query.Where("channel_id = ?", filter.ChannelId)
+		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
-		query = query.Where("model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
 	}
 	if filter.Group != "" {
-		query = query.Where("group_name = ?", filter.Group)
+		query = query.Where(metricTable+".group_name = ?", filter.Group)
 	}
 	var aggregates []channelMonitorMinuteSuccessAggregateRow
 	if err := query.Group(groupColumns).Scan(&aggregates).Error; err != nil {
@@ -767,13 +817,22 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 	endTimestamp int64,
 	valueColumn string,
 	timeColumn string,
+	applyObservationBoundary bool,
 ) (map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue, error) {
-	rows, err := DB.WithContext(ctx).
+	metricTable := channelMonitorMinuteMetricTable
+	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
-		Select("channel_id, model_name, "+valueColumn+", "+timeColumn).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-		Where(timeColumn+" > ?", 0).
-		Order("channel_id ASC, model_name ASC, " + timeColumn + " DESC").
+		Select(
+			metricTable+".channel_id, "+metricTable+".model_name, "+
+				metricTable+"."+valueColumn+", "+metricTable+"."+timeColumn,
+		).
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
+		Where(metricTable+"."+timeColumn+" > ?", 0)
+	if applyObservationBoundary {
+		query = applyChannelMonitorObservationBoundary(query, metricTable)
+	}
+	rows, err := query.
+		Order(metricTable + ".channel_id ASC, " + metricTable + ".model_name ASC, " + metricTable + "." + timeColumn + " DESC").
 		Rows()
 	if err != nil {
 		return nil, err
@@ -799,6 +858,23 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 }
 
 func getChannelMonitorMinutePerformanceMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorPerformanceMetric, error) {
+	return getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
+		ctx, startTimestamp, endTimestamp, false,
+	)
+}
+
+func getChannelMonitorObservedMinutePerformanceMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorPerformanceMetric, error) {
+	return getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
+		ctx, startTimestamp, endTimestamp, true,
+	)
+}
+
+func getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	applyObservationBoundary bool,
+) ([]ChannelMonitorPerformanceMetric, error) {
 	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
 	if startTimestamp >= endTimestamp {
 		return []ChannelMonitorPerformanceMetric{}, nil
@@ -813,33 +889,38 @@ func getChannelMonitorMinutePerformanceMetrics(ctx context.Context, startTimesta
 		TPSTotal              float64
 		LastUsedTime          int64
 	}
+	metricTable := channelMonitorMinuteMetricTable
 	var aggregates []performanceAggregate
-	err := DB.WithContext(ctx).
+	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteMetric{}).
 		Select(
-			"channel_id, model_name, "+
-				"SUM(sample_count) AS sample_count, "+
-				"SUM(first_token_sample_count) AS first_token_sample_count, "+
-				"SUM(tps_sample_count) AS tps_sample_count, "+
-				"SUM(first_token_total_ms) AS first_token_total_ms, "+
-				"SUM(tps_total) AS tps_total, "+
-				"MAX(last_used_time) AS last_used_time",
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+				"SUM("+metricTable+".sample_count) AS sample_count, "+
+				"SUM("+metricTable+".first_token_sample_count) AS first_token_sample_count, "+
+				"SUM("+metricTable+".tps_sample_count) AS tps_sample_count, "+
+				"SUM("+metricTable+".first_token_total_ms) AS first_token_total_ms, "+
+				"SUM("+metricTable+".tps_total) AS tps_total, "+
+				"MAX("+metricTable+".last_used_time) AS last_used_time",
 		).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-		Where("sample_count > ?", 0).
-		Group("channel_id, model_name").
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
+		Where(metricTable+".sample_count > ?", 0)
+	if applyObservationBoundary {
+		query = applyChannelMonitorObservationBoundary(query, metricTable)
+	}
+	err := query.
+		Group(metricTable + ".channel_id, " + metricTable + ".model_name").
 		Scan(&aggregates).Error
 	if err != nil {
 		return nil, err
 	}
 	latestFirstTokens, err := getChannelMonitorMinuteLatestPerformanceValues(
-		ctx, startTimestamp, endTimestamp, "latest_first_token_ms", "latest_first_token_at",
+		ctx, startTimestamp, endTimestamp, "latest_first_token_ms", "latest_first_token_at", applyObservationBoundary,
 	)
 	if err != nil {
 		return nil, err
 	}
 	latestTPSValues, err := getChannelMonitorMinuteLatestPerformanceValues(
-		ctx, startTimestamp, endTimestamp, "latest_tps", "latest_tps_at",
+		ctx, startTimestamp, endTimestamp, "latest_tps", "latest_tps_at", applyObservationBoundary,
 	)
 	if err != nil {
 		return nil, err

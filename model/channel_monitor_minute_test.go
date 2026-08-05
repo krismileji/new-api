@@ -61,6 +61,7 @@ func useChannelMonitorMinuteTestDB(t *testing.T, db *gorm.DB) {
 		&ChannelMonitorMinuteMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
 		&ChannelMonitorAggregationState{},
+		&ChannelSmartScheduleModelSampleState{},
 	))
 	t.Cleanup(func() {
 		DB = originalDB

@@ -393,6 +393,7 @@ const smartSchedulePolicyShape = {
   stabilityReleaseMaxPromptTokens:
     smartScheduleStabilityReleasePromptTokensSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
+  degradedProbeEnabled: z.boolean().default(false),
   prioritySamplingEnabled: z.boolean(),
   prioritySamplingIntervalMinutes: smartSchedulePrioritySamplingIntervalSchema,
   prioritySamplingBasePercent: smartSchedulePrioritySamplingBasePercentSchema,
@@ -413,7 +414,10 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.explorationTrafficPercent = defaults.explorationTrafficPercent
     normalized.explorationMaxPromptTokens = defaults.explorationMaxPromptTokens
   }
-  if (policy.sampleMode !== 'probe') {
+  if (
+    policy.sampleMode !== 'probe' &&
+    !(policy.stabilityEnabled === true && policy.degradedProbeEnabled === true)
+  ) {
     normalized.probeIntervalMinutes = defaults.probeIntervalMinutes
   }
 
@@ -450,6 +454,7 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.cooldownMinutes = defaults.cooldownMinutes
     normalized.stabilityReleaseMaxPromptTokens =
       defaults.stabilityReleaseMaxPromptTokens
+    normalized.degradedProbeEnabled = defaults.degradedProbeEnabled
     if (
       typeof policy.scoring === 'object' &&
       policy.scoring !== null &&

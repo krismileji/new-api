@@ -33,7 +33,10 @@ import {
 describe('channel monitor query policy', () => {
   test('refreshes overview and performance data every minute', () => {
     const overviewOptions = getChannelMonitorOverviewQueryOptions()
-    const performanceOptions = getChannelMonitorPerformanceQueryOptions(15)
+    const performanceOptions = getChannelMonitorPerformanceQueryOptions(
+      15,
+      'manual'
+    )
 
     assert.equal(overviewOptions.refetchInterval, 60_000)
     assert.equal(performanceOptions.refetchInterval, 60_000)
@@ -41,13 +44,14 @@ describe('channel monitor query policy', () => {
 
   test('deduplicates fresh reads while preserving an explicit refresh', async () => {
     let requestCount = 0
-    const options = getChannelMonitorPerformanceQueryOptions(15)
+    const options = getChannelMonitorPerformanceQueryOptions(15, 'manual')
     const response: ChannelMonitorApiResponse<ChannelMonitorPerformanceResult> =
       {
         success: true,
         message: '',
         data: {
           range_minutes: 15,
+          range_source: 'manual',
           generated_at: 1,
           items: [],
           success_metrics_available: true,
@@ -71,5 +75,12 @@ describe('channel monitor query policy', () => {
     assert.equal(requestCount, 2)
     assert.equal(options.staleTime, 60_000)
     assert.equal(options.refetchInterval, 60_000)
+  })
+
+  test('separates manual and smart schedule results with the same range', () => {
+    const manual = getChannelMonitorPerformanceQueryOptions(60, 'manual')
+    const smart = getChannelMonitorPerformanceQueryOptions(60, 'smart_schedule')
+
+    assert.notDeepEqual(manual.queryKey, smart.queryKey)
   })
 })

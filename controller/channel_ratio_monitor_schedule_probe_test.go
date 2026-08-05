@@ -54,6 +54,54 @@ func TestChannelSmartScheduleProbeHandlerUsesMinimumGroupInterval(t *testing.T) 
 	assert.Equal(t, 5*time.Minute, handler.Interval())
 }
 
+func TestChannelSmartScheduleProbeHandlerUsesEnabledDegradedProbeInterval(t *testing.T) {
+	degradedProbe := channelSmartScheduleTestGroupPolicy(
+		"degraded", channelMonitorSmartScheduleStrategyFirstToken, true,
+		channelMonitorSmartScheduleApplyWeight, nil, 5, 80, 30,
+	)
+	degradedProbeEnabled := true
+	degradedProbeInterval := 4
+	degradedProbe.DegradedProbeEnabled = &degradedProbeEnabled
+	degradedProbe.ProbeIntervalMinutes = &degradedProbeInterval
+	disabledProbe := channelSmartScheduleTestGroupPolicy(
+		"disabled", channelMonitorSmartScheduleStrategyFirstToken, true,
+		channelMonitorSmartScheduleApplyWeight, nil, 5, 80, 30,
+	)
+	disabledProbeInterval := 1
+	disabledProbe.ProbeIntervalMinutes = &disabledProbeInterval
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t, degradedProbe, disabledProbe,
+		),
+	})
+
+	handler := channelSmartScheduleProbeTaskHandler{}
+	assert.True(t, handler.Enabled())
+	assert.Equal(t, 4*time.Minute, handler.Interval())
+}
+
+func TestChannelSmartScheduleProbeRouteEnabledForDegradedPolicy(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		StabilityEnabled:     true,
+		DegradedProbeEnabled: true,
+		SampleMode:           channelMonitorSmartScheduleSampleOff,
+	}
+
+	assert.True(t, channelSmartScheduleProbeRouteEnabled(
+		model.ChannelSmartScheduleStabilityDegraded, policy,
+	))
+	policy.DegradedProbeEnabled = false
+	assert.False(t, channelSmartScheduleProbeRouteEnabled(
+		model.ChannelSmartScheduleStabilityDegraded, policy,
+	))
+	policy.SampleMode = channelMonitorSmartScheduleSampleProbe
+	assert.True(t, channelSmartScheduleProbeRouteEnabled("", policy))
+	assert.False(t, channelSmartScheduleProbeRouteEnabled(
+		model.ChannelSmartScheduleStabilityDegraded, policy,
+	))
+}
+
 func TestChannelSmartScheduleMergeSharedSamplePerformanceCombinesBusinessAndSharedSamples(t *testing.T) {
 	firstToken := 200.0
 	tps := 10.0
@@ -680,7 +728,7 @@ func TestRunChannelSmartScheduleProbeSkipsUnsupportedResponseChannels(t *testing
 	assert.Zero(t, errorLogCount)
 }
 
-func TestRunChannelSmartScheduleProbeRecordsDispatchedFailureErrorLog(t *testing.T) {
+func TestRunChannelSmartScheduleDegradedProbeFailureRenewsCooldownAndRecordsError(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
@@ -693,30 +741,41 @@ func TestRunChannelSmartScheduleProbeRecordsDispatchedFailureErrorLog(t *testing
 	require.NoError(t, db.Create(&user).Error)
 	priority := int64(80)
 	weight := uint(50)
+	degradedPriority := int64(0)
+	degradedUntil := common.GetTimestamp() + 60
 	channel := model.Channel{
 		Id: 1435, Type: constant.ChannelTypeOpenAI, Key: "sk-probe", Name: "error channel",
 		Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL), Models: "gpt-4o-mini",
 		Group: "vip", Priority: &priority, Weight: &weight,
 	}
 	require.NoError(t, db.Create(&channel).Error)
-	require.NoError(t, db.Create(&model.Ability{ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini", Enabled: true, Priority: &priority, Weight: weight}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini", Enabled: true,
+		Priority: &degradedPriority, Weight: 0,
+	}).Error)
 	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
 		ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true,
-		StabilityState:         model.ChannelSmartScheduleStabilityProbing,
+		StabilityState:         model.ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil:         degradedUntil,
 		StabilitySavedPriority: priority,
 		StabilitySavedWeight:   weight,
+		RuntimeProtectionUntil: degradedUntil,
 	}).Error)
 	policy := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, true,
 		channelMonitorSmartScheduleApplyWeight, nil, 1, 80, 30,
 	)
-	probeMode := channelMonitorSmartScheduleSampleProbe
-	policy.SampleMode = &probeMode
+	degradedProbeEnabled := true
+	failureThreshold := 100
+	policy.DegradedProbeEnabled = &degradedProbeEnabled
+	policy.ConsecutiveFailureThreshold = &failureThreshold
+	policy.BurstFailureThreshold = &failureThreshold
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
 	})
 
+	probeStartedAt := common.GetTimestamp()
 	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Probed)
@@ -747,7 +806,9 @@ func TestRunChannelSmartScheduleProbeRecordsDispatchedFailureErrorLog(t *testing
 		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "gpt-4o-mini",
 	).First(&routeState).Error)
 	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, routeState.StabilityState)
-	assert.Greater(t, routeState.RuntimeProtectionUntil, common.GetTimestamp())
+	assert.GreaterOrEqual(t, routeState.StabilityUntil, probeStartedAt+30*60)
+	assert.Equal(t, routeState.StabilityUntil, routeState.RuntimeProtectionUntil)
+	assert.Contains(t, routeState.LastScheduleError, "降级期间定时探测失败，已延长稳定性保护")
 	var consumeLogCount int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
 	assert.Zero(t, consumeLogCount)
@@ -770,6 +831,8 @@ func TestRunChannelSmartScheduleProbeRateLimitStartsCooldownWithoutStabilitySamp
 	require.NoError(t, db.Create(&user).Error)
 	priority := int64(80)
 	weight := uint(50)
+	degradedPriority := int64(0)
+	degradedUntil := common.GetTimestamp() + 10*60
 	channel := model.Channel{
 		Id: 1436, Type: constant.ChannelTypeOpenAI, Key: "sk-probe", Name: "rate limited channel",
 		Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL), Models: "gpt-4o-mini",
@@ -778,17 +841,20 @@ func TestRunChannelSmartScheduleProbeRateLimitStartsCooldownWithoutStabilitySamp
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&model.Ability{
 		ChannelId: channel.Id, Group: "vip", Model: "gpt-4o-mini", Enabled: true,
-		Priority: &priority, Weight: weight,
+		Priority: &degradedPriority, Weight: 0,
 	}).Error)
 	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
 		ChannelId: channel.Id, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true,
+		StabilityState: model.ChannelSmartScheduleStabilityDegraded,
+		StabilityUntil: degradedUntil, RuntimeProtectionUntil: degradedUntil,
+		StabilitySavedPriority: priority, StabilitySavedWeight: weight,
 	}).Error)
 	policy := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, true,
 		channelMonitorSmartScheduleApplyWeight, nil, 1, 80, 30,
 	)
-	probeMode := channelMonitorSmartScheduleSampleProbe
-	policy.SampleMode = &probeMode
+	degradedProbeEnabled := true
+	policy.DegradedProbeEnabled = &degradedProbeEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartScheduleRateLimitCooldownOption: "30",
@@ -803,6 +869,12 @@ func TestRunChannelSmartScheduleProbeRateLimitStartsCooldownWithoutStabilitySamp
 	var sampleCount int64
 	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
 	assert.Zero(t, sampleCount)
+	var routeState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", channel.Id, "vip", "gpt-4o-mini",
+	).First(&routeState).Error)
+	assert.Equal(t, degradedUntil, routeState.StabilityUntil)
+	assert.Equal(t, degradedUntil, routeState.RuntimeProtectionUntil)
 	var errorLog model.Log
 	require.NoError(t, db.Where("type = ?", model.LogTypeError).First(&errorLog).Error)
 	var other map[string]any

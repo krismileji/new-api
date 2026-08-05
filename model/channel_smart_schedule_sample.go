@@ -36,6 +36,7 @@ type ChannelSmartScheduleModelSampleState struct {
 	ModelName string `json:"model" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_smart_schedule_model_sample"`
 
 	WindowStart                int64                           `json:"window_start" gorm:"bigint"`
+	ObservationSince           int64                           `json:"observation_since" gorm:"bigint;index"`
 	LastTime                   int64                           `json:"last_time" gorm:"bigint;index"`
 	LastSuccess                bool                            `json:"last_success"`
 	LastError                  string                          `json:"last_error" gorm:"type:varchar(255)"`
@@ -105,6 +106,9 @@ const (
 )
 
 func (state ChannelSmartScheduleModelSampleState) MetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
+	if state.ObservationSince > windowStart {
+		windowStart = state.ObservationSince
+	}
 	return state.metricsSince(windowStart, "")
 }
 
@@ -223,6 +227,58 @@ func GetChannelSmartScheduleModelSampleStates() ([]ChannelSmartScheduleModelSamp
 	return states, err
 }
 
+func lockChannelSmartScheduleModelSampleStateTx(
+	tx *gorm.DB,
+	channelId int,
+	modelName string,
+) (state ChannelSmartScheduleModelSampleState, err error) {
+	conditions := &ChannelSmartScheduleModelSampleState{ChannelId: channelId, ModelName: modelName}
+	findErr := lockForUpdate(tx).Where(conditions).First(&state).Error
+	if errors.Is(findErr, gorm.ErrRecordNotFound) {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(conditions).Error; err != nil {
+			return state, err
+		}
+		if err := lockForUpdate(tx).Where(conditions).First(&state).Error; err != nil {
+			return state, err
+		}
+		return state, nil
+	}
+	return state, findErr
+}
+
+func advanceChannelSmartScheduleObservationSinceTx(
+	tx *gorm.DB,
+	channelId int,
+	modelName string,
+	observationSince int64,
+) (state ChannelSmartScheduleModelSampleState, advanced bool, err error) {
+	modelName = channelSmartScheduleModelName(modelName)
+	if channelId <= 0 || modelName == "" || observationSince <= 0 {
+		return state, false, errors.New("智能调度共享观测边界缺少渠道、模型或时间")
+	}
+	state, err = lockChannelSmartScheduleModelSampleStateTx(tx, channelId, modelName)
+	if err != nil || observationSince <= state.ObservationSince {
+		return state, false, err
+	}
+	state.ObservationSince = observationSince
+	state.WindowStart = 0
+	state.LastTime = 0
+	state.LastSuccess = false
+	state.LastError = ""
+	state.SampleCount = 0
+	state.SuccessCount = 0
+	state.FailureDurationSampleCount = 0
+	state.AverageFailureDurationMs = nil
+	state.FirstTokenSampleCount = 0
+	state.AverageFirstTokenMs = nil
+	state.TPSSampleCount = 0
+	state.AverageTPS = nil
+	if err := tx.Save(&state).Error; err != nil {
+		return state, false, err
+	}
+	return state, true, nil
+}
+
 func SaveChannelSmartScheduleModelSample(
 	result ChannelSmartScheduleModelSampleResult,
 ) (state ChannelSmartScheduleModelSampleState, err error) {
@@ -237,26 +293,22 @@ func SaveChannelSmartScheduleModelSample(
 		if err := lockChannelForDependentWriteTx(tx, result.ChannelId); err != nil {
 			return err
 		}
-		conditions := &ChannelSmartScheduleModelSampleState{ChannelId: result.ChannelId, ModelName: result.Model}
-		findErr := lockForUpdate(tx).Where(conditions).First(&state).Error
-		if errors.Is(findErr, gorm.ErrRecordNotFound) {
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(conditions).Error; err != nil {
-				return err
-			}
-			if err := lockForUpdate(tx).Where(conditions).First(&state).Error; err != nil {
-				return err
-			}
-		} else if findErr != nil {
-			return findErr
+		state, err = lockChannelSmartScheduleModelSampleStateTx(tx, result.ChannelId, result.Model)
+		if err != nil {
+			return err
 		}
 
 		sampleTime := result.Time
 		if sampleTime <= 0 {
 			sampleTime = common.GetTimestamp()
 		}
-		windowStart := result.WindowStart
-		if windowStart <= 0 || windowStart > sampleTime {
-			windowStart = sampleTime
+		retentionStart := result.WindowStart
+		if retentionStart <= 0 || retentionStart > sampleTime {
+			retentionStart = sampleTime
+		}
+		metricsStart := retentionStart
+		if state.ObservationSince > metricsStart {
+			metricsStart = state.ObservationSince
 		}
 		source := strings.TrimSpace(result.Source)
 		if source == "" {
@@ -276,7 +328,7 @@ func SaveChannelSmartScheduleModelSample(
 		}
 		retained := samples[:0]
 		for _, sample := range samples {
-			if sample.Time >= windowStart {
+			if sample.Time >= retentionStart {
 				if sampleId != "" && sample.SampleId == sampleId && sample.Source == source {
 					return nil
 				}
@@ -312,21 +364,33 @@ func SaveChannelSmartScheduleModelSample(
 		if err != nil {
 			return fmt.Errorf("保存智能调度共享样本失败: %w", err)
 		}
-		metrics := channelSmartScheduleCalculateSampleMetrics(samples, windowStart)
-		latestSample := samples[len(samples)-1]
-
+		metrics := channelSmartScheduleCalculateSampleMetrics(samples, metricsStart)
 		state.WindowStart = metrics.WindowStart
-		state.LastTime = latestSample.Time
-		state.LastSuccess = latestSample.Success
-		message := strings.TrimSpace(result.Error)
-		if latestSample.Time != sampleTime {
-			message = state.LastError
+		latestVisibleIndex := -1
+		for index := len(samples) - 1; index >= 0; index-- {
+			if samples[index].Time >= metricsStart {
+				latestVisibleIndex = index
+				break
+			}
 		}
-		messageRunes := []rune(message)
-		if len(messageRunes) > 255 {
-			message = string(messageRunes[:255])
+		if latestVisibleIndex < 0 {
+			state.LastTime = 0
+			state.LastSuccess = false
+			state.LastError = ""
+		} else {
+			latestSample := samples[latestVisibleIndex]
+			state.LastTime = latestSample.Time
+			state.LastSuccess = latestSample.Success
+			message := strings.TrimSpace(result.Error)
+			if latestSample.Time != sampleTime {
+				message = state.LastError
+			}
+			messageRunes := []rune(message)
+			if len(messageRunes) > 255 {
+				message = string(messageRunes[:255])
+			}
+			state.LastError = message
 		}
-		state.LastError = message
 		state.SampleCount = metrics.SampleCount
 		state.SuccessCount = metrics.SuccessCount
 		state.FailureDurationSampleCount = metrics.FailureDurationSampleCount

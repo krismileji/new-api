@@ -87,6 +87,7 @@ import { ChannelMonitorChannelView } from './components/channel-monitor-channel-
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
+import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -273,7 +274,7 @@ export function ChannelMonitor() {
   const [upstreamFilter, setUpstreamFilter] =
     useState<ChannelUpstreamFilter>('all')
   const [search, setSearch] = useState('')
-  const [performanceRangeMinutes, setPerformanceRangeMinutes] =
+  const [manualPerformanceRangeMinutes, setManualPerformanceRangeMinutes] =
     useState<ChannelMonitorPerformanceRangeMinutes>(() => {
       try {
         const storedMinutes = Number(
@@ -290,7 +291,7 @@ export function ChannelMonitor() {
       return DEFAULT_CHANNEL_MONITOR_PERFORMANCE_MINUTES
     })
   const [performanceRangeInput, setPerformanceRangeInput] = useState(() =>
-    String(performanceRangeMinutes)
+    String(manualPerformanceRangeMinutes)
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -367,8 +368,22 @@ export function ChannelMonitor() {
   )
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
+  const overview = query.data?.data
+  const settings = overview?.settings ?? DEFAULT_CHANNEL_MONITOR_SETTINGS
+  const smartSchedulePerformanceRangeActive =
+    settings.smart_schedule_enabled &&
+    settings.smart_schedule_group_policies.length > 0
+  const requestedPerformanceRangeMinutes = smartSchedulePerformanceRangeActive
+    ? settings.smart_schedule_performance_window_minutes
+    : manualPerformanceRangeMinutes
+  const requestedPerformanceRangeSource = smartSchedulePerformanceRangeActive
+    ? 'smart_schedule'
+    : 'manual'
   const performanceQuery = useQuery(
-    getChannelMonitorPerformanceQueryOptions(performanceRangeMinutes)
+    getChannelMonitorPerformanceQueryOptions(
+      requestedPerformanceRangeMinutes,
+      requestedPerformanceRangeSource
+    )
   )
   const smartScheduleQuery = useQuery(
     getChannelMonitorSmartScheduleQueryOptions()
@@ -444,13 +459,11 @@ export function ChannelMonitor() {
       smartScheduleQuery.refetch()
     },
   })
-  const overview = query.data?.data
   const channels = overview?.channels ?? EMPTY_CHANNELS
   const channelOrder = overview?.channel_order ?? EMPTY_CHANNEL_ORDER
   const groupRatios = overview?.group_ratios ?? EMPTY_GROUP_RATIOS
   const groupCoefficients =
     overview?.group_coefficients ?? EMPTY_GROUP_COEFFICIENTS
-  const settings = overview?.settings ?? DEFAULT_CHANNEL_MONITOR_SETTINGS
   const smartScheduleResult = smartScheduleQuery.data?.data
   const smartScheduleRoutes =
     smartScheduleResult?.routes ?? EMPTY_SMART_SCHEDULE_ROUTES
@@ -563,7 +576,13 @@ export function ChannelMonitor() {
   const smartScheduleLabel = settings.smart_schedule_enabled
     ? `智能调度：每 ${settings.smart_schedule_interval_minutes} 分钟`
     : '智能调度：已关闭'
+  const performanceRangeMinutes =
+    performanceQuery.data?.data.range_minutes ??
+    requestedPerformanceRangeMinutes
+  const performanceRangeSource =
+    performanceQuery.data?.data.range_source ?? requestedPerformanceRangeSource
   const performanceRangeLabel = `近${performanceRangeMinutes}分钟`
+  const manualPerformanceRangeLabel = `近${manualPerformanceRangeMinutes}分钟`
   const parsedPerformanceRangeMinutes = Number(performanceRangeInput)
   const isPerformanceRangeInputValid =
     Number.isInteger(parsedPerformanceRangeMinutes) &&
@@ -573,11 +592,11 @@ export function ChannelMonitor() {
   const applyPerformanceRange = () => {
     if (!isPerformanceRangeInputValid) {
       toast.error('统计范围必须是 1 到 1440 之间的整数分钟')
-      setPerformanceRangeInput(String(performanceRangeMinutes))
+      setPerformanceRangeInput(String(manualPerformanceRangeMinutes))
       return
     }
-    if (parsedPerformanceRangeMinutes === performanceRangeMinutes) return
-    setPerformanceRangeMinutes(parsedPerformanceRangeMinutes)
+    if (parsedPerformanceRangeMinutes === manualPerformanceRangeMinutes) return
+    setManualPerformanceRangeMinutes(parsedPerformanceRangeMinutes)
     try {
       localStorage.setItem(
         CHANNEL_MONITOR_PERFORMANCE_RANGE_STORAGE_KEY,
@@ -1076,27 +1095,16 @@ export function ChannelMonitor() {
                   </div>
                 )}
 
-                <InputGroup className='w-full sm:w-36'>
-                  <InputGroupAddon>近</InputGroupAddon>
-                  <InputGroupInput
-                    type='number'
-                    min={MIN_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
-                    max={MAX_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
-                    step={1}
-                    value={performanceRangeInput}
-                    onChange={(event) =>
-                      setPerformanceRangeInput(event.target.value)
-                    }
-                    onBlur={applyPerformanceRange}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') event.currentTarget.blur()
-                    }}
-                    aria-label='性能与成功率统计范围（分钟）'
-                    aria-invalid={!isPerformanceRangeInputValid}
-                    className='min-w-0 text-right font-mono'
-                  />
-                  <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-                </InputGroup>
+                <ChannelMonitorPerformanceRangeControl
+                  source={performanceRangeSource}
+                  rangeMinutes={performanceRangeMinutes}
+                  inputValue={performanceRangeInput}
+                  inputValid={isPerformanceRangeInputValid}
+                  minMinutes={MIN_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
+                  maxMinutes={MAX_CHANNEL_MONITOR_PERFORMANCE_MINUTES}
+                  onInputChange={setPerformanceRangeInput}
+                  onApply={applyPerformanceRange}
+                />
 
                 <InputGroup className='w-full sm:max-w-sm'>
                   <InputGroupAddon>
@@ -1567,8 +1575,8 @@ export function ChannelMonitor() {
         <ChannelMonitorSuccessDetailDialog
           target={successDetailTarget}
           channels={channels}
-          rangeMinutes={performanceRangeMinutes}
-          rangeLabel={performanceRangeLabel}
+          rangeMinutes={manualPerformanceRangeMinutes}
+          rangeLabel={manualPerformanceRangeLabel}
           open
           onOpenChange={(open) => {
             if (!open) setSuccessDetailTarget(null)

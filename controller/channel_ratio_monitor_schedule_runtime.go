@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,8 +86,18 @@ func observeChannelSmartScheduleRuntimeProbeSuccess(channelId int, modelName str
 		return
 	}
 	successMode := channelSmartScheduleRuntimeRegularProbeSuccess
-	for _, route := range runtimeRoutes {
-		if route.StabilityState == model.ChannelSmartScheduleStabilityProbing {
+	for _, configured := range settings.SmartScheduleGroupPolicies {
+		route, exists := runtimeRoutes[configured.Group]
+		if !exists {
+			continue
+		}
+		policy := configured.policy()
+		if len(policy.Models) > 0 && !slices.Contains(policy.Models, route.ModelName) {
+			continue
+		}
+		if route.StabilityState == model.ChannelSmartScheduleStabilityProbing ||
+			(route.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
+				policy.StabilityEnabled && policy.DegradedProbeEnabled) {
 			successMode = channelSmartScheduleRuntimeRecoveryProbeSuccess
 			break
 		}
@@ -98,6 +109,42 @@ func observeChannelSmartScheduleRuntimeProbeSuccess(channelId int, modelName str
 		settings.SmartScheduleControlRevision,
 		successMode,
 	)
+}
+
+// clearChannelSmartScheduleRuntimeHealth removes failure samples collected
+// before a route recovered. Failures recorded after recoveryAt are retained so
+// a concurrent request cannot be hidden by the reset.
+func clearChannelSmartScheduleRuntimeHealth(channelId int, modelName string, recoveryAt int64) {
+	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
+	if channelId <= 0 || modelName == "" {
+		return
+	}
+	channelSmartScheduleRuntimeHealth.Lock()
+	defer channelSmartScheduleRuntimeHealth.Unlock()
+	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked()
+	key := channelSmartScheduleRuntimeHealthKey(channelId, modelName)
+	state, exists := channelSmartScheduleRuntimeHealth.states[key]
+	if !exists {
+		return
+	}
+	if recoveryAt <= 0 {
+		delete(channelSmartScheduleRuntimeHealth.states, key)
+		return
+	}
+	retained := state.FailureTimes[:0]
+	for _, timestamp := range state.FailureTimes {
+		if timestamp > recoveryAt {
+			retained = append(retained, timestamp)
+		}
+	}
+	state.FailureTimes = retained
+	state.RecoverySuccesses = 0
+	if len(state.FailureTimes) == 0 {
+		delete(channelSmartScheduleRuntimeHealth.states, key)
+		return
+	}
+	state.ConsecutiveFailures = min(state.ConsecutiveFailures, len(state.FailureTimes))
+	channelSmartScheduleRuntimeHealth.states[key] = state
 }
 
 func pruneChannelSmartScheduleRuntimeFailureTimes(times []int64, cutoff int64) []int64 {
@@ -288,13 +335,32 @@ func isChannelSmartScheduleUpstreamRateLimit(result testResult) bool {
 		result.newAPIError.StatusCode == http.StatusTooManyRequests
 }
 
-// protectChannelSmartScheduleRuntimeFailure is intentionally called from the
-// relay error path. It protects every configured group that exposes the same
-// channel/model route because the upstream failure is shared across groups.
 func protectChannelSmartScheduleRuntimeFailure(
 	channelId int,
 	modelName string,
 	err *types.NewAPIError,
+) {
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false)
+}
+
+func protectChannelSmartScheduleScheduledProbeFailure(
+	channelId int,
+	modelName string,
+	err *types.NewAPIError,
+) {
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true)
+}
+
+// protectChannelSmartScheduleRuntimeFailureWithSource protects every
+// configured group that exposes the same channel/model route because the
+// upstream failure is shared across groups. A scheduled probe failure renews
+// an active degraded route immediately instead of waiting for traffic failure
+// thresholds that may be shorter than the configured probe interval.
+func protectChannelSmartScheduleRuntimeFailureWithSource(
+	channelId int,
+	modelName string,
+	err *types.NewAPIError,
+	scheduledProbe bool,
 ) {
 	if err == nil || types.IsSkipRetryError(err) {
 		return
@@ -420,6 +486,9 @@ func protectChannelSmartScheduleRuntimeFailure(
 			failureCount >= policy.BurstFailureThreshold
 		probing := matched.route.StabilityState == model.ChannelSmartScheduleStabilityProbing
 		temporaryTraffic := matched.route.TemporaryTrafficKind != ""
+		degradedProbe := scheduledProbe &&
+			matched.route.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
+			policy.StabilityEnabled && policy.DegradedProbeEnabled
 		if temporaryTraffic && !probing {
 			sampleStart := max(sampleWindowStart, matched.route.SampleSince)
 			sampleCount, exists := sampleCountByStart[sampleStart]
@@ -436,7 +505,7 @@ func protectChannelSmartScheduleRuntimeFailure(
 			}
 			thresholdReached = sampleCount >= int64(policy.MinSamples)
 		}
-		if !probing && !thresholdReached {
+		if !probing && !degradedProbe && !thresholdReached {
 			continue
 		}
 		cooldownMinutes := policy.CooldownMinutes
@@ -446,6 +515,8 @@ func protectChannelSmartScheduleRuntimeFailure(
 		reason := "渠道短期稳定性保护已触发"
 		if probing {
 			reason = "稳定性试放请求失败，已重新进入降级保护"
+		} else if degradedProbe {
+			reason = "降级期间定时探测失败，已延长稳定性保护"
 		} else if temporaryTraffic {
 			reason = "渠道运行时错误，稳定性样本已达到最少样本数，已停止临时流量并进入稳定性保护"
 		} else {
@@ -463,6 +534,15 @@ func protectChannelSmartScheduleRuntimeFailure(
 		var protectErr error
 		if probing || temporaryTraffic {
 			result, protectErr = model.ProtectChannelSmartScheduleRouteOnRuntimeFailure(
+				channelId,
+				matched.configured.Group,
+				matched.route.ModelName,
+				now+int64(cooldownMinutes)*60,
+				reason,
+				settings.SmartScheduleControlRevision,
+			)
+		} else if degradedProbe {
+			result, protectErr = model.ProtectChannelSmartScheduleRouteOnRecoveryProbeFailure(
 				channelId,
 				matched.configured.Group,
 				matched.route.ModelName,

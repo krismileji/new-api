@@ -157,7 +157,9 @@ func (channelSmartScheduleProbeTaskHandler) Enabled() bool {
 		return false
 	}
 	for _, configured := range settings.SmartScheduleGroupPolicies {
-		if configured.policy().SampleMode == channelMonitorSmartScheduleSampleProbe {
+		policy := configured.policy()
+		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			(policy.StabilityEnabled && policy.DegradedProbeEnabled) {
 			return true
 		}
 	}
@@ -169,7 +171,8 @@ func (channelSmartScheduleProbeTaskHandler) Interval() time.Duration {
 	settings := getChannelMonitorSettings()
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		policy := configured.policy()
-		if policy.SampleMode != channelMonitorSmartScheduleSampleProbe {
+		if policy.SampleMode != channelMonitorSmartScheduleSampleProbe &&
+			!(policy.StabilityEnabled && policy.DegradedProbeEnabled) {
 			continue
 		}
 		if minimumMinutes == 0 || policy.ProbeIntervalMinutes < minimumMinutes {
@@ -211,7 +214,8 @@ func runChannelSmartScheduleProbeOnce(
 	policyByGroup := make(map[string]channelSmartSchedulePolicy)
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		policy := configured.policy()
-		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe {
+		if policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			(policy.StabilityEnabled && policy.DegradedProbeEnabled) {
 			policyByGroup[configured.Group] = policy
 		}
 	}
@@ -289,8 +293,7 @@ func runChannelSmartScheduleProbeOnce(
 		minimumIntervalMinutes := 0
 		for _, route := range probe.routes {
 			if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() ||
-				route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded ||
-				(route.State.StabilityState != "" && route.State.StabilityState != model.ChannelSmartScheduleStabilityProbing) {
+				!channelSmartScheduleProbeRouteEnabled(route.State.StabilityState, policyByGroup[route.Group]) {
 				continue
 			}
 			eligibleRoutes = append(eligibleRoutes, route)
@@ -434,7 +437,9 @@ func runChannelSmartScheduleProbeOnce(
 			}
 		}
 		if rateLimited {
-			protectChannelSmartScheduleRuntimeFailure(route.ChannelId, item.requestModel, probeResult.newAPIError)
+			protectChannelSmartScheduleScheduledProbeFailure(
+				route.ChannelId, item.requestModel, probeResult.newAPIError,
+			)
 		} else {
 			_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
 				ChannelId: route.ChannelId, Model: item.requestModel,
@@ -448,7 +453,7 @@ func runChannelSmartScheduleProbeOnce(
 				return result, saveErr
 			}
 			if !succeeded && probeResult.newAPIError != nil {
-				protectChannelSmartScheduleRuntimeFailure(
+				protectChannelSmartScheduleScheduledProbeFailure(
 					route.ChannelId,
 					item.requestModel,
 					probeResult.newAPIError,
@@ -562,7 +567,8 @@ func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute)
 			continue
 		}
 		policy = configured.policy()
-		policyConfigured = policy.SampleMode == channelMonitorSmartScheduleSampleProbe &&
+		policyConfigured = (policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			(policy.StabilityEnabled && policy.DegradedProbeEnabled)) &&
 			(len(policy.Models) == 0 || slices.Contains(policy.Models, route.Model))
 		break
 	}
@@ -579,11 +585,20 @@ func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute)
 		return model.ChannelSmartScheduleRoute{}, nil, channelSmartSchedulePolicy{}, false, err
 	}
 	if !found || current.ChannelStatus != common.ChannelStatusEnabled || !current.Enabled || !current.State.Participates() ||
-		current.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded ||
-		(current.State.StabilityState != "" && current.State.StabilityState != model.ChannelSmartScheduleStabilityProbing) {
+		!channelSmartScheduleProbeRouteEnabled(current.State.StabilityState, policy) {
 		return model.ChannelSmartScheduleRoute{}, nil, channelSmartSchedulePolicy{}, false, nil
 	}
 	return current, channel, policy, true, nil
+}
+
+func channelSmartScheduleProbeRouteEnabled(stabilityState string, policy channelSmartSchedulePolicy) bool {
+	if stabilityState == model.ChannelSmartScheduleStabilityDegraded {
+		return policy.StabilityEnabled && policy.DegradedProbeEnabled
+	}
+	if policy.SampleMode != channelMonitorSmartScheduleSampleProbe {
+		return false
+	}
+	return stabilityState == "" || stabilityState == model.ChannelSmartScheduleStabilityProbing
 }
 
 func channelSmartScheduleMergeSharedSamplePerformance(

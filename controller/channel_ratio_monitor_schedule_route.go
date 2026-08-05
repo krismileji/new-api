@@ -395,6 +395,37 @@ func runChannelSmartScheduleByRouteOnce(
 		runtimeProtectionActive := route.State.RuntimeProtectionUntil > now
 		runtimeProtectionExpired := route.State.RuntimeProtectionUntil > 0 &&
 			route.State.RuntimeProtectionUntil <= now
+		degradedProbeRecoverySuccesses := 0
+		degradedProbeRecoveryReady := false
+		if route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
+			policy.StabilityEnabled && policy.DegradedProbeEnabled {
+			runtimeHealth := getChannelSmartScheduleRuntimeHealth(
+				route.ChannelId,
+				route.Model,
+				now,
+				policy.BurstFailureWindowSeconds,
+				settings.SmartScheduleControlRevision,
+			)
+			degradedProbeRecoverySuccesses = runtimeHealth.RecoverySuccesses
+			degradedProbeRecoveryReady = degradedProbeRecoverySuccesses >= policy.RecoverySuccessThreshold
+		}
+		if degradedProbeRecoveryReady {
+			targetPriority, targetWeight := channelSmartScheduleRouteRestoreTarget(route.State)
+			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
+				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
+				targetPriority: targetPriority, targetWeight: targetWeight,
+				status: model.ChannelSmartScheduleStatusSucceeded,
+				message: fmt.Sprintf(
+					"降级期间定时探测已连续成功 %d 次，达到恢复要求，提前恢复原优先级和权重",
+					degradedProbeRecoverySuccesses,
+				),
+				stability:              &model.ChannelSmartScheduleStabilityUpdate{},
+				runtimeProtectionClear: true,
+				routingSnapshot:        channelSmartScheduleClearTemporaryTraffic(route.State),
+				reapplyManualPrimary:   manualPrimary,
+			})
+			continue
+		}
 		if runtimeProtectionActive {
 			reason := fmt.Sprintf(
 				"运行时稳定性保护中，保留上一轮优先级和权重，保护至 %s",
@@ -499,10 +530,14 @@ func runChannelSmartScheduleByRouteOnce(
 		)
 		stabilityPerformance := channelSmartScheduleClonePerformance(stabilityPerformanceByModel[modelKey])
 		probeWindowStart := stabilityStart
-		if policy.StabilityEnabled && route.State.StabilitySince > stabilityStart {
+		probingWindowReset := policy.StabilityEnabled &&
+			route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > stabilityStart
+		if probingWindowReset {
 			probeWindowStart = route.State.StabilitySince
+			stabilityPerformance = nil
 		}
-		if policy.StabilityEnabled && logStabilityAvailable && route.State.StabilitySince > stabilityStart {
+		if probingWindowReset && logStabilityAvailable {
 			metric, metricErr := model.GetChannelMonitorRouteStabilityMetric(
 				ctx, route.State.StabilitySince, route.ChannelId, route.Model,
 			)
@@ -511,7 +546,7 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 			stabilityPerformance = channelSmartScheduleSetStabilityMetric(stabilityPerformance, metric)
 		}
-		if policy.StabilityEnabled && policy.JitterEnabled && route.State.StabilitySince > stabilityStart {
+		if probingWindowReset && policy.JitterEnabled {
 			metric, metricErr := model.GetChannelMonitorRoutePerformanceMetric(
 				ctx, route.State.StabilitySince, route.ChannelId, route.Model,
 			)
@@ -523,6 +558,9 @@ func runChannelSmartScheduleByRouteOnce(
 		stabilityPerformance = channelSmartScheduleMergeSharedSamplePerformance(
 			stabilityPerformance, route.SharedSamples, probeWindowStart,
 		)
+		if probingWindowReset && stabilityPerformance == nil {
+			stabilityPerformance = &channelSmartSchedulePerformance{}
+		}
 		performance := channelSmartScheduleCombineWindowPerformance(businessPerformance, stabilityPerformance)
 		if performance != nil {
 			performance.Stability, performance.StabilitySampleCount = channelSmartScheduleStabilityScore(
@@ -629,7 +667,7 @@ func runChannelSmartScheduleByRouteOnce(
 				targetPriority: targetPriority, targetWeight: targetWeight,
 				status:               model.ChannelSmartScheduleStatusSucceeded,
 				message:              recoveryMessage,
-				stability:            &model.ChannelSmartScheduleStabilityUpdate{Since: route.State.StabilitySince},
+				stability:            &model.ChannelSmartScheduleStabilityUpdate{},
 				routingSnapshot:      channelSmartScheduleClearTemporaryTrafficAndRelease(route.State),
 				reapplyManualPrimary: manualPrimary,
 			})
@@ -1212,17 +1250,27 @@ func runChannelSmartScheduleByRouteOnce(
 					update.ChannelId, route.ChannelName, update.Group, update.Model, adjustment.FailureStage,
 					fmt.Errorf("调度执行期间渠道或配置已变化，整池保留上一轮结果"),
 				)
-			} else if outcomes[index].RoutingChanged ||
-				channelSmartScheduleRouteResultChangesTrafficState(route.State, update) {
-				result.Updated++
-				cacheDirty = cacheDirty || outcomes[index].RoutingChanged
-				adjustment.Action = channelSmartScheduleAdjustmentUpdated
-			} else if update.Status == model.ChannelSmartScheduleStatusSkipped {
-				result.Skipped++
-				adjustment.Action = channelSmartScheduleAdjustmentSkipped
 			} else {
-				result.Unchanged++
-				adjustment.Action = channelSmartScheduleAdjustmentUnchanged
+				if outcomes[index].Applied && update.Stability != nil && update.Stability.State == "" &&
+					route.State.StabilityState != "" {
+					recoveryAt := outcomes[index].ObservationSince
+					if recoveryAt <= 0 {
+						recoveryAt = update.Time
+					}
+					clearChannelSmartScheduleRuntimeHealth(update.ChannelId, update.Model, recoveryAt)
+				}
+				if outcomes[index].RoutingChanged ||
+					channelSmartScheduleRouteResultChangesTrafficState(route.State, update) {
+					result.Updated++
+					cacheDirty = cacheDirty || outcomes[index].RoutingChanged
+					adjustment.Action = channelSmartScheduleAdjustmentUpdated
+				} else if update.Status == model.ChannelSmartScheduleStatusSkipped {
+					result.Skipped++
+					adjustment.Action = channelSmartScheduleAdjustmentSkipped
+				} else {
+					result.Unchanged++
+					adjustment.Action = channelSmartScheduleAdjustmentUnchanged
+				}
 			}
 			if adjustment.Reason == "" {
 				adjustment.Reason = channelSmartScheduleScoredAdjustmentReason(

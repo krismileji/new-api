@@ -66,6 +66,7 @@ type ChannelSmartScheduleRoutePrimaryResult struct {
 	State                      ChannelSmartScheduleRouteState
 	RoutingChanged             bool
 	StabilityProtectionCleared bool
+	ObservationSince           int64
 }
 
 type ChannelSmartScheduleRoutePrimaryOptions struct {
@@ -164,18 +165,20 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 }
 
 type ChannelSmartScheduleRouteApplyOutcome struct {
-	Key             ChannelSmartScheduleRouteKey
-	Applied         bool
-	RoutingChanged  bool
-	ObservationOnly bool
+	Key              ChannelSmartScheduleRouteKey
+	Applied          bool
+	RoutingChanged   bool
+	ObservationOnly  bool
+	ObservationSince int64
 }
 
 type ChannelSmartScheduleStabilityClearResult struct {
-	PreviousState  string
-	Cleared        bool
-	RoutingChanged bool
-	Priority       int64
-	Weight         uint
+	PreviousState    string
+	Cleared          bool
+	RoutingChanged   bool
+	Priority         int64
+	Weight           uint
+	ObservationSince int64
 }
 
 type ChannelSmartScheduleStabilityUpdate struct {
@@ -898,6 +901,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 				return clearErr
 			}
 			result.StabilityProtectionCleared = clearResult.Cleared
+			result.ObservationSince = clearResult.ObservationSince
 			result.RoutingChanged = result.RoutingChanged || clearResult.RoutingChanged
 			currentPriority, currentWeight = channelSmartScheduleAbilityRouting(*targetAbility, targetChannel)
 		}
@@ -978,6 +982,9 @@ func SaveChannelSmartScheduleRoutePrimary(
 		result.State = *targetState
 		return nil
 	})
+	if err == nil && result.ObservationSince > 0 {
+		InvalidateChannelMonitorAggregateCaches()
+	}
 	return result, err
 }
 
@@ -1359,7 +1366,7 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	return protectChannelSmartScheduleRouteOnRuntimeFailure(
-		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false,
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, false,
 	)
 }
 
@@ -1375,7 +1382,23 @@ func ProtectChannelSmartScheduleRouteOnShortTermFailure(
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	return protectChannelSmartScheduleRouteOnRuntimeFailure(
-		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true,
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true, false,
+	)
+}
+
+// ProtectChannelSmartScheduleRouteOnRecoveryProbeFailure renews an existing
+// degraded route, or returns a probing route to degradation. It does not
+// degrade a route that has already recovered while the probe was in flight.
+func ProtectChannelSmartScheduleRouteOnRecoveryProbeFailure(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+	expectedControlRevision string,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	return protectChannelSmartScheduleRouteOnRuntimeFailure(
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, true,
 	)
 }
 
@@ -1387,6 +1410,7 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 	reason string,
 	expectedControlRevision string,
 	allowNormalRoute bool,
+	recoveryProbeOnly bool,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
@@ -1455,9 +1479,13 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 			state.ManualPrimaryAllowStabilityDegrade && state.StabilityState == ""
 		normalRouteEligible := allowNormalRoute &&
 			(state.StabilityState == "" || state.StabilityState == ChannelSmartScheduleStabilityDegraded)
+		recoveryProbeEligible := recoveryProbeOnly &&
+			(state.StabilityState == ChannelSmartScheduleStabilityDegraded ||
+				state.StabilityState == ChannelSmartScheduleStabilityProbing)
 		manualPrimaryBlocksDegrade := state.ManualPrimaryUntil > now &&
 			!state.ManualPrimaryAllowStabilityDegrade && state.StabilityState == ""
-		if manualPrimaryBlocksDegrade || (!activeTemporaryTraffic && !activeFixedPrimary && !normalRouteEligible) {
+		if manualPrimaryBlocksDegrade ||
+			(!activeTemporaryTraffic && !activeFixedPrimary && !normalRouteEligible && !recoveryProbeEligible) {
 			return nil
 		}
 		if state.Revision == math.MaxInt64 {
@@ -1582,6 +1610,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
+	observationBoundaryAdvanced := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		controlRevision, err := lockChannelSmartScheduleControlRevisionTx(tx)
@@ -1692,6 +1721,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			key := outcomes[index].Key
 			state := states[index]
 			ability := abilities[index]
+			previousStabilityState := state.StabilityState
 			applyPriorityWeight := result.ApplyPriorityWeight && state.Participates()
 			message := strings.TrimSpace(result.Error)
 			messageRunes := []rune(message)
@@ -1719,6 +1749,17 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state.StabilitySince = result.Stability.Since
 				state.StabilitySavedPriority = result.Stability.SavedPriority
 				state.StabilitySavedWeight = result.Stability.SavedWeight
+				if previousStabilityState != "" && result.Stability.State == "" {
+					state.StabilitySince = 0
+					sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
+						tx, result.ChannelId, result.Model, updatedTime,
+					)
+					if observationErr != nil {
+						return observationErr
+					}
+					outcomes[index].ObservationSince = sampleState.ObservationSince
+					observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
+				}
 			}
 			if result.RuntimeProtectionUntil != nil {
 				state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
@@ -1770,6 +1811,8 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			outcomes[index].Applied = false
 			outcomes[index].RoutingChanged = false
 		}
+	} else if observationBoundaryAdvanced {
+		InvalidateChannelMonitorAggregateCaches()
 	}
 	return outcomes, err
 }
@@ -1872,6 +1915,9 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		result.Weight = manualWeight
 		return nil
 	})
+	if err == nil && result.ObservationSince > 0 {
+		InvalidateChannelMonitorAggregateCaches()
+	}
 	return result, err
 }
 
@@ -1917,7 +1963,7 @@ func clearChannelSmartScheduleRouteStabilityTx(
 	now := common.GetTimestamp()
 	state.StabilityState = ""
 	state.StabilityUntil = 0
-	state.StabilitySince = now
+	state.StabilitySince = 0
 	state.StabilitySavedPriority = 0
 	state.StabilitySavedWeight = 0
 	state.RuntimeProtectionUntil = 0
@@ -1930,6 +1976,13 @@ func clearChannelSmartScheduleRouteStabilityTx(
 	state.LastScheduleWeight = result.Weight
 	state.LastScheduleTime = now
 	state.Revision++
+	sampleState, _, observationErr := advanceChannelSmartScheduleObservationSinceTx(
+		tx, state.ChannelId, state.ModelName, now,
+	)
+	if observationErr != nil {
+		return result, observationErr
+	}
+	result.ObservationSince = sampleState.ObservationSince
 	result.Cleared = true
 	return result, saveChannelSmartScheduleRouteStateTx(tx, state)
 }

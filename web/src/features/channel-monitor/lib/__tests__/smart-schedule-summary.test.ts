@@ -65,6 +65,7 @@ function createRoute(
       channel_id: channelId,
       model,
       window_start: 0,
+      observation_since: 0,
       last_time: 0,
       last_success: false,
       last_error: '',

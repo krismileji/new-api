@@ -76,6 +76,7 @@ export function createSmartScheduleCellRoute(
       channel_id: 7,
       model: 'model-a',
       window_start: 0,
+      observation_since: 0,
       last_time: 0,
       last_success: false,
       last_error: '',

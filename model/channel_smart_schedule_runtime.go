@@ -220,6 +220,16 @@ func GetChannelSmartScheduleRouteSampleCount(
 	if channelId <= 0 || modelName == "" {
 		return 0, nil
 	}
+	var state ChannelSmartScheduleModelSampleState
+	err := DB.WithContext(ctx).
+		Where(&ChannelSmartScheduleModelSampleState{ChannelId: channelId, ModelName: modelName}).
+		First(&state).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	if state.ObservationSince > startTimestamp {
+		startTimestamp = state.ObservationSince
+	}
 
 	now := common.GetTimestamp()
 	if startTimestamp > now {
@@ -252,7 +262,7 @@ func GetChannelSmartScheduleRouteSampleCount(
 	tailAggregates := make(map[int64]channelMonitorRouteStabilityAggregate)
 	metricStart := max(liveStart, aggregateStart)
 	var minuteMetrics []ChannelMonitorMinuteMetric
-	err := DB.WithContext(ctx).
+	err = DB.WithContext(ctx).
 		Select(
 			"minute_start", "actual_success_count", "actual_failure_count", "final_failure_count",
 			"rate_limit_actual_failure_count", "rate_limit_final_failure_count",
@@ -362,15 +372,5 @@ func GetChannelSmartScheduleRouteSampleCount(
 		productionSampleCount += sampleCount
 	}
 
-	var state ChannelSmartScheduleModelSampleState
-	err = DB.WithContext(ctx).
-		Where(&ChannelSmartScheduleModelSampleState{ChannelId: channelId, ModelName: modelName}).
-		First(&state).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return productionSampleCount, nil
-	}
-	if err != nil {
-		return 0, err
-	}
 	return productionSampleCount + state.MetricsSince(startTimestamp).SampleCount, nil
 }

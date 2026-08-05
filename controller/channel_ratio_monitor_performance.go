@@ -18,6 +18,8 @@ const (
 	defaultChannelMonitorPerformanceMinutes = 15
 	minChannelMonitorPerformanceMinutes     = 1
 	maxChannelMonitorPerformanceMinutes     = 1440
+	channelMonitorPerformanceRangeManual    = "manual"
+	channelMonitorPerformanceRangeSmart     = "smart_schedule"
 )
 
 func getChannelMonitorPerformanceMinutes(c *gin.Context) (int, bool) {
@@ -37,8 +39,17 @@ func getChannelMonitorPerformanceMinutes(c *gin.Context) (int, bool) {
 	return minutes, true
 }
 
+func getChannelMonitorPerformanceRange(c *gin.Context) (minutes int, source string, ok bool) {
+	settings := getChannelMonitorSettings()
+	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
+		return settings.SmartSchedulePerformanceWindowMinutes, channelMonitorPerformanceRangeSmart, true
+	}
+	minutes, ok = getChannelMonitorPerformanceMinutes(c)
+	return minutes, channelMonitorPerformanceRangeManual, ok
+}
+
 func GetChannelMonitorPerformance(c *gin.Context) {
-	minutes, ok := getChannelMonitorPerformanceMinutes(c)
+	minutes, rangeSource, ok := getChannelMonitorPerformanceRange(c)
 	if !ok {
 		return
 	}
@@ -73,6 +84,7 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":             minutes,
+		"range_source":              rangeSource,
 		"generated_at":              generatedAt,
 		"items":                     metrics,
 		"success_metrics_available": successMetricsAvailable,

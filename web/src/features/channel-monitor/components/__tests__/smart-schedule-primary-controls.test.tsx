@@ -49,6 +49,7 @@ const fixedRoute = {
     channel_id: 7,
     model: 'cache-model',
     window_start: 0,
+    observation_since: 0,
     last_time: 0,
     last_success: false,
     last_error: '',

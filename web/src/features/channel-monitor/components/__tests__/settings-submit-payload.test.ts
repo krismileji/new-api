@@ -90,6 +90,7 @@ const formValues = {
       explorationMaxPromptTokens: 16_384,
       stabilityReleaseMaxPromptTokens: 0,
       probeIntervalMinutes: 15,
+      degradedProbeEnabled: false,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: 10,
       prioritySamplingBasePercent: 3,
@@ -142,6 +143,10 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.probe_interval_minutes,
       15
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.degraded_probe_enabled,
+      false
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.exploration_max_prompt_tokens,

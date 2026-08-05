@@ -211,22 +211,25 @@ func getChannelMonitorRouteDurationBuckets(
 	if !DB.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		return map[channelMonitorRouteMetricKey][]ChannelMonitorDurationBucket{}, nil
 	}
+	metricTable := channelMonitorMinuteDurationBucketTable
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteDurationBucket{}).
 		Select(
-			"channel_id, model_name, bucket_index, "+
-				"SUM(count) AS count, SUM(total_ms) AS total_ms",
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+				metricTable+".bucket_index AS bucket_index, "+
+				"SUM("+metricTable+".count) AS count, SUM("+metricTable+".total_ms) AS total_ms",
 		).
-		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp)
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp)
+	query = applyChannelMonitorObservationBoundary(query, metricTable)
 	if filter.ChannelId > 0 {
-		query = query.Where("channel_id = ?", filter.ChannelId)
+		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
-		query = query.Where("model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
 	}
 	var rows []channelMonitorDurationAggregateRow
 	err := query.
-		Group("channel_id, model_name, bucket_index").
+		Group(metricTable + ".channel_id, " + metricTable + ".model_name, " + metricTable + ".bucket_index").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err

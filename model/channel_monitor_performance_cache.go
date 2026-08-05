@@ -207,7 +207,7 @@ func GetChannelMonitorPerformanceMetricsCached(ctx context.Context, generatedAt 
 				return metrics, nil
 			}
 			startTimestamp := key.windowEnd - int64(key.rangeMinutes*60)
-			metrics, queryErr := getChannelMonitorMinutePerformanceMetrics(ctx, startTimestamp, key.windowEnd)
+			metrics, queryErr := getChannelMonitorObservedMinutePerformanceMetrics(ctx, startTimestamp, key.windowEnd)
 			if queryErr != nil {
 				return nil, queryErr
 			}
@@ -243,7 +243,7 @@ func GetChannelMonitorSuccessMetricsCached(ctx context.Context, generatedAt int6
 			if cached, exists := cachedChannelMonitorSuccessMetrics(key, loadTime); exists {
 				return cached, nil
 			}
-			metrics, groupMetrics, queryErr := getChannelMonitorSuccessMetrics(
+			metrics, groupMetrics, queryErr := getChannelMonitorObservedSuccessMetrics(
 				ctx,
 				key.windowEnd-int64(key.rangeMinutes*60),
 				key.windowEnd,

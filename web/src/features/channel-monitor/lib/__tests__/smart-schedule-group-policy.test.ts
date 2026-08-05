@@ -68,6 +68,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   explorationMaxPromptTokens: 16_384,
   stabilityReleaseMaxPromptTokens: 0,
   probeIntervalMinutes: 15,
+  degradedProbeEnabled: false,
   prioritySamplingEnabled: true,
   prioritySamplingIntervalMinutes: 10,
   prioritySamplingBasePercent: 3,
@@ -161,10 +162,12 @@ describe('smart schedule group policy', () => {
       channelMonitorSmartScheduleGroupPoliciesToApi(formPolicies)
 
     assert.equal(formPolicies[0]?.stabilityEnabled, false)
+    assert.equal(formPolicies[0]?.degradedProbeEnabled, false)
     assert.deepEqual(formPolicies[0]?.models, [])
     assert.deepEqual(formPolicies[0]?.modelOrder, ['model-c', 'model-a'])
     assert.equal(apiPolicies[0]?.strategy, 'smart')
     assert.equal(apiPolicies[0]?.stability_enabled, false)
+    assert.equal(apiPolicies[0]?.degraded_probe_enabled, false)
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)

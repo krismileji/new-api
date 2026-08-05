@@ -166,6 +166,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               explorationMaxPromptTokens: 16_384,
               stabilityReleaseMaxPromptTokens: 0,
               probeIntervalMinutes: 10,
+              degradedProbeEnabled: false,
               prioritySamplingEnabled: true,
               prioritySamplingIntervalMinutes: 10,
               prioritySamplingBasePercent: 3,
@@ -196,6 +197,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
   applyMode: ChannelMonitorSmartSchedulePolicyFormValues['applyMode']
   sampleMode: ChannelMonitorSmartSchedulePolicyFormValues['sampleMode']
   jitterEnabled?: boolean
+  degradedProbeEnabled?: boolean
   prioritySamplingEnabled?: boolean
 }) {
   const form = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
@@ -236,6 +238,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       explorationMaxPromptTokens: 16_384,
       stabilityReleaseMaxPromptTokens: 0,
       probeIntervalMinutes: 15,
+      degradedProbeEnabled: props.degradedProbeEnabled ?? false,
       prioritySamplingEnabled: props.prioritySamplingEnabled ?? true,
       prioritySamplingIntervalMinutes: 10,
       prioritySamplingBasePercent: 3,
@@ -396,6 +399,13 @@ describe('channel monitor settings dialog', () => {
         sampleMode='probe'
       />
     )
+    const degradedProbePolicyMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+        degradedProbeEnabled
+      />
+    )
 
     for (const label of [
       '智能调度',
@@ -415,6 +425,7 @@ describe('channel monitor settings dialog', () => {
       '模型卡片顺序',
       '样本补充方式',
       '稳定性保护',
+      '降级期间定时探测',
       '稳定性占比',
       '降级稳定性得分',
       '恢复稳定性得分',
@@ -447,6 +458,14 @@ describe('channel monitor settings dialog', () => {
       trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')
     )
     assert.ok(probePolicyMarkup.includes('aria-label="查看“探测间隔”说明"'))
+    assert.ok(
+      degradedProbePolicyMarkup.includes(
+        'aria-label="查看“降级期间定时探测”说明"'
+      )
+    )
+    assert.ok(
+      degradedProbePolicyMarkup.includes('aria-label="查看“探测间隔”说明"')
+    )
     assert.ok(
       weightPolicyMarkup.includes('aria-label="查看“主渠道目标流量”说明"')
     )

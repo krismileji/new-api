@@ -106,6 +106,7 @@ function createRoute(
       channel_id: channelId,
       model: 'cache-model',
       window_start: 1_752_700_000,
+      observation_since: 0,
       last_time: 1_752_777_845,
       last_success: true,
       last_error: '',

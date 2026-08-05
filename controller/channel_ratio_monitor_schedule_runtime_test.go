@@ -177,6 +177,23 @@ func TestChannelSmartScheduleRuntimeHealthKeepsFailuresForLongerConfiguredWindow
 	assert.Zero(t, channelSmartScheduleRuntimeFailureCount(snapshot, 200, 30))
 }
 
+func TestClearChannelSmartScheduleRuntimeHealthDropsRecoveredFailuresAndKeepsLaterFailures(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	const (
+		channelID = 1594
+		revision  = "runtime-health-recovery"
+	)
+
+	observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 100, 300, revision)
+	observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 110, 300, revision)
+	clearChannelSmartScheduleRuntimeHealth(channelID, "model-a", 105)
+
+	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", 111, 300, revision)
+	assert.Equal(t, []int64{110}, snapshot.FailureTimes)
+	assert.Equal(t, 1, snapshot.ConsecutiveFailures)
+	assert.Zero(t, snapshot.RecoverySuccesses)
+}
+
 func TestChannelSmartScheduleRuntimeRegularProbeDoesNotAccumulateRecovery(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(
@@ -216,6 +233,13 @@ func TestChannelSmartScheduleRuntimeRegularProbeDoesNotAccumulateRecovery(t *tes
 	observeChannelSmartScheduleRuntimeProbeSuccess(1593, "model-a")
 	snapshot = getChannelSmartScheduleRuntimeHealth(1593, "model-a", common.GetTimestamp(), 30, "")
 	assert.Equal(t, 1, snapshot.RecoverySuccesses)
+
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 1593, "vip", "model-a",
+	).Update("stability_state", "").Error)
+	observeChannelSmartScheduleRuntimeProbeSuccess(1593, "model-a")
+	snapshot = getChannelSmartScheduleRuntimeHealth(1593, "model-a", common.GetTimestamp(), 30, "")
+	assert.Zero(t, snapshot.RecoverySuccesses)
 }
 
 func TestProtectChannelSmartScheduleRuntimeFailureUsesBurstThresholdAcrossSuccesses(t *testing.T) {

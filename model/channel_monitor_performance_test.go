@@ -359,7 +359,11 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 	t.Cleanup(func() {
 		require.NoError(t, secondSQLDB.Close())
 	})
-	require.NoError(t, secondDB.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, secondDB.AutoMigrate(
+		&Log{},
+		&ChannelMonitorMinuteMetric{},
+		&ChannelSmartScheduleModelSampleState{},
+	))
 	DB = secondDB
 	require.NoError(t, secondDB.Create(&Log{
 		ChannelId: 2,

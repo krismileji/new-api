@@ -59,6 +59,7 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   explorationMaxPromptTokens: 16_384,
   stabilityReleaseMaxPromptTokens: 0,
   probeIntervalMinutes: 10,
+  degradedProbeEnabled: false,
   prioritySamplingIntervalMinutes: 10,
   prioritySamplingBasePercent: 3,
   prioritySamplingDecayPercent: 70,

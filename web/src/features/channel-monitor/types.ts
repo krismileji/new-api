@@ -285,6 +285,7 @@ export type ChannelMonitorCostOverview = {
 }
 
 export type ChannelMonitorPerformanceRangeMinutes = number
+export type ChannelMonitorPerformanceRangeSource = 'smart_schedule' | 'manual'
 
 export type ChannelMonitorPerformanceMetric = {
   channel_id: number
@@ -415,6 +416,7 @@ export type ChannelMonitorSuccessDetailTarget =
 
 export type ChannelMonitorPerformanceResult = {
   range_minutes: ChannelMonitorPerformanceRangeMinutes
+  range_source: ChannelMonitorPerformanceRangeSource
   generated_at: number
   items: ChannelMonitorPerformanceMetric[]
   success_metrics_available: boolean
@@ -492,6 +494,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   exploration_max_prompt_tokens?: number
   stability_release_max_prompt_tokens?: number
   probe_interval_minutes: number
+  degraded_probe_enabled?: boolean
   priority_sampling_enabled: boolean
   priority_sampling_interval_minutes: number
   priority_sampling_base_percent: number
@@ -686,6 +689,7 @@ export type ChannelMonitorSmartScheduleSharedSamples = {
   channel_id: number
   model: string
   window_start: number
+  observation_since: number
   last_time: number
   last_success: boolean
   last_error: string

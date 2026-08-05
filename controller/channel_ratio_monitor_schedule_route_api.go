@@ -101,7 +101,9 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	for _, configured := range settings.SmartScheduleGroupPolicies {
 		policy := configured.policy()
 		policyByGroup[configured.Group] = policy
-		probeMetricsAvailable = probeMetricsAvailable || policy.SampleMode == channelMonitorSmartScheduleSampleProbe
+		probeMetricsAvailable = probeMetricsAvailable ||
+			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			(policy.StabilityEnabled && policy.DegradedProbeEnabled)
 	}
 	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	stabilityByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRouteStabilityMetric)
@@ -162,7 +164,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			performance = channelSmartScheduleSetPerformanceMetric(performance, jitterMetric)
 		}
 		windowStart := stabilityStart
-		if policy.StabilityEnabled && route.State.StabilitySince > stabilityStart {
+		probingWindowReset := policy.StabilityEnabled &&
+			route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > stabilityStart
+		if probingWindowReset {
 			windowStart = route.State.StabilitySince
 			performance = nil
 			if logStabilityAvailable {
@@ -326,6 +331,9 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if result.StabilityProtectionCleared {
+		clearChannelSmartScheduleRuntimeHealth(channelId, modelName, result.ObservationSince)
+	}
 	model.InitChannelCache()
 	var taskResponse any
 	settings := getChannelMonitorSettings()
@@ -457,6 +465,7 @@ func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
 		return
 	}
 	if result.Cleared {
+		clearChannelSmartScheduleRuntimeHealth(channelId, modelName, result.ObservationSince)
 		model.InitChannelCache()
 	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_route_stability_clear", map[string]interface{}{

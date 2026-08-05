@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `GET` | `/` | 返回渠道、人工顺序、分组倍率、分组系数和全局设置 |
 | `GET` | `/cost` | 成本统计；`days`、`channel_id`、`summary_only`、`page`、`date=YYYY-MM-DD` |
-| `GET` | `/performance` | 性能与成功率；`minutes=1..1440` |
+| `GET` | `/performance` | 主表性能与成功率；智能调度启用时使用性能窗口，关闭时接受 `minutes=1..1440` |
 | `GET` | `/success/today` | 按日请求、成功率、缓存率和缓存写统计；可选 `days=1..90`、`date=YYYY-MM-DD` |
 | `GET` | `/success/detail` | 成功率明细；指定 `channel_id`（可加 `model_name`）或 `group`，二选一 |
 | `GET` | `/tasks` | 任务记录；`kind=ratio|schedule` 和通用分页参数 |
@@ -37,6 +37,8 @@
 | `PUT` | `/group` | 直接更新本地分组倍率；`group`、`ratio` |
 | `PUT` | `/group/channels` | 替换分组关联渠道；`group`、`channel_ids` |
 | `PUT` | `/group/sync` | 按最高成本倍率同步；`group`、`coefficient` |
+
+`GET /performance` 的响应必须返回后端实际采用的 `range_minutes` 和 `range_source`。智能调度实际启用时，忽略客户端手动分钟值，使用 `smart_schedule_performance_window_minutes` 并返回 `range_source=smart_schedule`，允许完整的 `1..43200` 分钟；关闭时校验 `minutes=1..1440` 并返回 `range_source=manual`。两种模式都按每个 `(渠道, 模型)` 的 `observation_since` 裁剪当前主表数据。边界后没有样本时返回样本数 `0` 和空指标，不返回伪造的 `0%`。
 
 ## 全局设置
 
@@ -71,7 +73,8 @@
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个完整分组策略；未配置分组不参与调度 |
 | `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
-| `smart_schedule_performance_minutes` | `ChannelMonitorSmartSchedulePerformanceMinutes` | `60` | `15`、`60`、`360`、`1440` |
+| `smart_schedule_performance_window_minutes` | `ChannelMonitorSmartSchedulePerformanceWindowMinutes` | `60` | `1..43200` |
+| `smart_schedule_stability_window_minutes` | `ChannelMonitorSmartScheduleStabilityWindowMinutes` | `60` | `1..43200` |
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
 
@@ -189,7 +192,7 @@
 
 - `ChannelRatioMonitor`：每渠道的倍率、上游配置、余额、策略和并发限制。
 - `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
-- `ChannelSmartScheduleModelSampleState`：每个渠道、模型唯一的一份手动测试和定时探测滚动样本。
+- `ChannelSmartScheduleModelSampleState`：每个渠道、模型唯一的一份手动测试和定时探测滚动样本，以及稳定性恢复后的共享 `observation_since`。
 - `ChannelSmartScheduleExecutionDetail`：按任务和路由保存智能调度执行时的评分与调整解释。
 - `ChannelMonitorAggregationState`：保存所有节点共享的最新完整分钟水位，聚合数据与水位在同一事务提交。
 - `ChannelMonitorMinuteMetric`：按分钟和渠道、模型、分组、API Key 维度保存性能与成功率指标。
@@ -200,7 +203,7 @@
 
 性能、成功率、缓存率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到 `ChannelMonitorMinuteMetric`。常规任务只回扫最近 2 分钟，启动回扫 5 分钟，整点在时间预算内修复最近 65 分钟；若任务跨过多个分钟，则从上次连续水位补齐缺口后再推进。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查。
 
-日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。保留任务默认按 1000 行一批清理；数据库删除会释放页供后续复用，但 SQLite、MySQL 和 PostgreSQL 都不保证物理文件立即缩小。
+日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总，并以 `max(窗口起点, observation_since)` 作为实际起点。恢复只推进边界，不删除样本、日志、分钟行或延迟分桶；历史与长期统计不应用该边界。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。保留任务默认按 1000 行一批清理；数据库删除会释放页供后续复用，但 SQLite、MySQL 和 PostgreSQL 都不保证物理文件立即缩小。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

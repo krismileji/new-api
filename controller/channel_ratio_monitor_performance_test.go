@@ -23,6 +23,7 @@ type channelMonitorPerformanceAPIResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
 		RangeMinutes            int                                      `json:"range_minutes"`
+		RangeSource             string                                   `json:"range_source"`
 		Items                   []model.ChannelMonitorPerformanceMetric  `json:"items"`
 		SuccessMetricsAvailable bool                                     `json:"success_metrics_available"`
 		SuccessItems            []model.ChannelMonitorSuccessMetric      `json:"success_items"`
@@ -49,6 +50,9 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	common.LogConsumeEnabled = true
 	constant.ErrorLogEnabled = true
 	common.IsMasterNode = true
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "false",
+	})
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-api.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -61,6 +65,7 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 		&model.Log{},
 		&model.ChannelMonitorMinuteMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelSmartScheduleModelSampleState{},
 	))
 	model.DB = db
 	model.LOG_DB = db
@@ -103,6 +108,7 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	assert.Equal(t, 30, response.Data.RangeMinutes)
+	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
 	require.Len(t, response.Data.Items, 1)
 	assert.Equal(t, 7, response.Data.Items[0].ChannelId)
 	require.NotNil(t, response.Data.Items[0].AverageFirstTokenMs)
@@ -140,9 +146,36 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.Equal(t, int64(1), detailResponse.Data.Detail.Summary.ActualFailureCount)
 	require.Len(t, detailResponse.Data.Detail.FailureCategories, 1)
 	assert.Equal(t, 503, detailResponse.Data.Detail.FailureCategories[0].StatusCode)
+
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"test-model"}, 2, 80, 30,
+	)
+	common.OptionMapRWMutex.Lock()
+	common.OptionMap = map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartScheduleGroupPoliciesOption:     channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+		channelMonitorSmartSchedulePerformanceWindowOption: "120",
+	}
+	common.OptionMapRWMutex.Unlock()
+
+	smartRecorder := httptest.NewRecorder()
+	smartContext, _ := gin.CreateTestContext(smartRecorder)
+	smartContext.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/performance?minutes=invalid", nil)
+	GetChannelMonitorPerformance(smartContext)
+
+	assert.Equal(t, http.StatusOK, smartRecorder.Code)
+	var smartResponse channelMonitorPerformanceAPIResponse
+	require.NoError(t, common.Unmarshal(smartRecorder.Body.Bytes(), &smartResponse))
+	assert.True(t, smartResponse.Success)
+	assert.Equal(t, 120, smartResponse.Data.RangeMinutes)
+	assert.Equal(t, channelMonitorPerformanceRangeSmart, smartResponse.Data.RangeSource)
 }
 
 func TestGetChannelMonitorPerformanceRejectsInvalidRange(t *testing.T) {
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "false",
+	})
 	for _, minutes := range []string{"0", "1441", "invalid"} {
 		t.Run(minutes, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)

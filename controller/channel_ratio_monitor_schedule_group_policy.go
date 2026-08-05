@@ -63,6 +63,7 @@ type channelSmartScheduleGroupPolicy struct {
 	ExplorationMaxPromptTokens       *int                         `json:"exploration_max_prompt_tokens,omitempty"`
 	StabilityReleaseMaxPromptTokens  *int                         `json:"stability_release_max_prompt_tokens,omitempty"`
 	ProbeIntervalMinutes             *int                         `json:"probe_interval_minutes,omitempty"`
+	DegradedProbeEnabled             *bool                        `json:"degraded_probe_enabled,omitempty"`
 	PrioritySamplingEnabled          *bool                        `json:"priority_sampling_enabled,omitempty"`
 	PrioritySamplingIntervalMinutes  *int                         `json:"priority_sampling_interval_minutes,omitempty"`
 	PrioritySamplingBasePercent      *float64                     `json:"priority_sampling_base_percent,omitempty"`
@@ -98,6 +99,7 @@ type channelSmartSchedulePolicy struct {
 	ExplorationMaxPromptTokens       int
 	StabilityReleaseMaxPromptTokens  int
 	ProbeIntervalMinutes             int
+	DegradedProbeEnabled             bool
 	PrioritySamplingEnabled          bool
 	PrioritySamplingIntervalMinutes  int
 	PrioritySamplingBasePercent      float64
@@ -175,6 +177,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			value := model.DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens
 			policy.StabilityReleaseMaxPromptTokens = &value
 		}
+		if policy.DegradedProbeEnabled == nil {
+			value := false
+			policy.DegradedProbeEnabled = &value
+		}
 		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.DegradeStabilityScore == nil || policy.RecoveryStabilityScore == nil ||
@@ -184,7 +190,8 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.CooldownMinutes == nil ||
 			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
 			policy.ExplorationMaxPromptTokens == nil || policy.StabilityReleaseMaxPromptTokens == nil ||
-			policy.ProbeIntervalMinutes == nil || policy.PrioritySamplingEnabled == nil ||
+			policy.ProbeIntervalMinutes == nil || policy.DegradedProbeEnabled == nil ||
+			policy.PrioritySamplingEnabled == nil ||
 			policy.PrioritySamplingIntervalMinutes == nil || policy.PrioritySamplingBasePercent == nil ||
 			policy.PrioritySamplingDecayPercent == nil || policy.PrioritySamplingMinPercent == nil {
 			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、样本补充和低优先级轮转")
@@ -351,6 +358,10 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	if configured.RecoverySuccessThreshold != nil {
 		recoverySuccessThreshold = *configured.RecoverySuccessThreshold
 	}
+	degradedProbeEnabled := false
+	if configured.DegradedProbeEnabled != nil {
+		degradedProbeEnabled = *configured.DegradedProbeEnabled
+	}
 	return channelSmartSchedulePolicy{
 		Strategy:                         *configured.Strategy,
 		StabilityEnabled:                 *configured.StabilityEnabled,
@@ -377,6 +388,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		ExplorationMaxPromptTokens:       *configured.ExplorationMaxPromptTokens,
 		StabilityReleaseMaxPromptTokens:  *configured.StabilityReleaseMaxPromptTokens,
 		ProbeIntervalMinutes:             *configured.ProbeIntervalMinutes,
+		DegradedProbeEnabled:             degradedProbeEnabled,
 		PrioritySamplingEnabled:          *configured.PrioritySamplingEnabled,
 		PrioritySamplingIntervalMinutes:  *configured.PrioritySamplingIntervalMinutes,
 		PrioritySamplingBasePercent:      *configured.PrioritySamplingBasePercent,

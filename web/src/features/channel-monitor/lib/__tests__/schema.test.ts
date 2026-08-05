@@ -68,6 +68,7 @@ describe('smart schedule policy schema', () => {
       explorationMaxPromptTokens: '',
       stabilityReleaseMaxPromptTokens: '',
       probeIntervalMinutes: '',
+      degradedProbeEnabled: true,
       prioritySamplingEnabled: true,
       prioritySamplingIntervalMinutes: '',
       prioritySamplingBasePercent: '',
@@ -78,7 +79,17 @@ describe('smart schedule policy schema', () => {
     assert.equal(result.success, true)
     if (!result.success) return
     assert.equal(result.data.prioritySamplingEnabled, false)
+    assert.equal(result.data.degradedProbeEnabled, false)
     assert.equal(result.data.scoring.stabilityPercent, 50)
+  })
+
+  test('defaults the degraded probe switch off for legacy policies', () => {
+    const legacyPolicy: Record<string, unknown> = {
+      ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
+    }
+    delete legacyPolicy.degradedProbeEnabled
+
+    assert.equal(schema.parse(legacyPolicy).degradedProbeEnabled, false)
   })
 
   test('continues to reject empty controls in active branches', () => {
@@ -88,6 +99,7 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, explorationMaxPromptTokens: '', sampleMode: 'traffic' },
       { ...basePolicy, stabilityReleaseMaxPromptTokens: '' },
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
+      { ...basePolicy, degradedProbeEnabled: true, probeIntervalMinutes: '' },
       { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
       { ...basePolicy, fastFailureSameChannelRetryCount: '' },
