@@ -261,7 +261,6 @@ const stabilityByRoute = new Map<
       average_retry_failure_duration_ms: 820,
       retry_failure_duration_buckets: [],
       jitter_available: true,
-      first_token_baseline_ms: 360,
       first_token_p50_ms: 390,
       first_token_p95_ms: 870,
       jitter_threshold_ms: 11_800,

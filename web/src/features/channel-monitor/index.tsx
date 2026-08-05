@@ -112,6 +112,9 @@ import {
 import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -216,6 +219,11 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   auto_enable_on_cost_ratio_recovery: false,
   auto_enable_on_balance_recovery: false,
   cost_retention_days: DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  execution_detail_retention_days:
+    DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+  task_retention_days: DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
+  ratio_history_retention_days:
+    DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
   email_notification_enabled: false,
   notification_email: '',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -1476,7 +1484,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
+          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_history_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
           settings={settings}
           open
           onOpenChange={setSettingsOpen}

@@ -52,8 +52,8 @@ import {
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
-  MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
-  MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
+  MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT,
+  MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
   MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
@@ -517,8 +517,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                         name={field.name}
                         ref={field.ref}
                         aria-invalid={Boolean(
-                          props.form.formState.errors
-                            .explorationTrafficPercent
+                          props.form.formState.errors.explorationTrafficPercent
                         )}
                       />
                       <InputGroupAddon align='inline-end'>%</InputGroupAddon>
@@ -554,11 +553,12 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                         name={field.name}
                         ref={field.ref}
                         aria-invalid={Boolean(
-                          props.form.formState.errors
-                            .explorationMaxPromptTokens
+                          props.form.formState.errors.explorationMaxPromptTokens
                         )}
                       />
-                      <InputGroupAddon align='inline-end'>Token</InputGroupAddon>
+                      <InputGroupAddon align='inline-end'>
+                        Token
+                      </InputGroupAddon>
                     </InputGroup>
                   </FormControl>
                   <FormDescription>
@@ -791,7 +791,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               )}
             />
           </div>
-          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-5'>
             <GroupPolicyPercentField
               form={props.form}
               name='fastFailurePenaltyPercent'
@@ -854,6 +854,43 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     </InputGroup>
                   </FormControl>
                   <FormDescription>达到后按完整失败计算</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='fastFailureSameChannelRetryCount'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='同渠道快速重试'
+                    helpKey='fastFailureSameChannelRetry'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={0}
+                        max={
+                          MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT
+                        }
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .fastFailureSameChannelRetryCount
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>0 表示关闭，独立于普通重试</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -950,7 +987,8 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                         name={field.name}
                         ref={field.ref}
                         aria-invalid={Boolean(
-                          props.form.formState.errors.consecutiveFailureThreshold
+                          props.form.formState.errors
+                            .consecutiveFailureThreshold
                         )}
                       />
                       <InputGroupAddon align='inline-end'>次</InputGroupAddon>
@@ -1057,130 +1095,87 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             />
 
             {jitterEnabled ? (
-              <>
-                <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
-                  <FormField
-                    control={props.form.control}
-                    name='jitterTolerancePercent'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='允许抖动'
-                          helpKey='jitterTolerance'
-                        />
-                        <FormControl>
-                          <InputGroup>
-                            <InputGroupInput
-                              type='number'
-                              min={0}
-                              max={MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT}
-                              step={0.1}
-                              inputMode='decimal'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterTolerancePercent
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              %
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>
-                          慢成功免罚比例，窗口内至少容忍 1 次
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={props.form.control}
-                    name='jitterAbsoluteToleranceSeconds'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='绝对容差'
-                          helpKey='jitterAbsoluteTolerance'
-                        />
-                        <FormControl>
-                          <InputGroup>
-                            <InputGroupInput
-                              type='number'
-                              min={0}
-                              max={
-                                MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS
-                              }
-                              step={0.1}
-                              inputMode='decimal'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterAbsoluteToleranceSeconds
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              秒
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>
-                          允许高于基线的固定延迟
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={props.form.control}
-                    name='jitterBaselineMinutes'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='基线学习周期'
-                          helpKey='jitterBaseline'
-                        />
-                        <FormControl>
-                          <InputGroup>
-                            <InputGroupInput
-                              type='number'
-                              min={1}
-                              max={MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES}
-                              step={1}
-                              inputMode='numeric'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterBaselineMinutes
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              分钟
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>平滑学习近期首字 P50</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                <p className='text-muted-foreground text-xs'>
-                  慢请求阈值为“基线 + 绝对容差”
-                </p>
-              </>
+              <div className='grid items-start gap-4 sm:grid-cols-2'>
+                <FormField
+                  control={props.form.control}
+                  name='jitterTolerancePercent'
+                  render={({ field }) => (
+                    <FormItem>
+                      <ChannelMonitorSettingLabel
+                        label='允许抖动'
+                        helpKey='jitterTolerance'
+                      />
+                      <FormControl>
+                        <InputGroup>
+                          <InputGroupInput
+                            type='number'
+                            min={0}
+                            max={MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT}
+                            step={0.1}
+                            inputMode='decimal'
+                            value={field.value}
+                            onBlur={field.onBlur}
+                            onChange={field.onChange}
+                            name={field.name}
+                            ref={field.ref}
+                            aria-invalid={Boolean(
+                              props.form.formState.errors.jitterTolerancePercent
+                            )}
+                          />
+                          <InputGroupAddon align='inline-end'>
+                            %
+                          </InputGroupAddon>
+                        </InputGroup>
+                      </FormControl>
+                      <FormDescription>
+                        慢成功免罚比例，窗口内至少容忍 1 次
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={props.form.control}
+                  name='jitterSlowThresholdSeconds'
+                  render={({ field }) => (
+                    <FormItem>
+                      <ChannelMonitorSettingLabel
+                        label='慢成功阈值'
+                        helpKey='jitterSlowThreshold'
+                      />
+                      <FormControl>
+                        <InputGroup>
+                          <InputGroupInput
+                            type='number'
+                            min={0}
+                            max={
+                              MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS
+                            }
+                            step={0.1}
+                            inputMode='decimal'
+                            value={field.value}
+                            onBlur={field.onBlur}
+                            onChange={field.onChange}
+                            name={field.name}
+                            ref={field.ref}
+                            aria-invalid={Boolean(
+                              props.form.formState.errors
+                                .jitterSlowThresholdSeconds
+                            )}
+                          />
+                          <InputGroupAddon align='inline-end'>
+                            秒
+                          </InputGroupAddon>
+                        </InputGroup>
+                      </FormControl>
+                      <FormDescription>
+                        首字时间达到该值即记为慢成功
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             ) : null}
           </div>
         </div>

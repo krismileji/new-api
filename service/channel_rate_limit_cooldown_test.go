@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,8 +15,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type blockingCooldownPipelineHook struct {
+	once    sync.Once
+	after   chan struct{}
+	release chan struct{}
+}
+
+func (hook *blockingCooldownPipelineHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (hook *blockingCooldownPipelineHook) AfterProcess(context.Context, redis.Cmder) error {
+	return nil
+}
+
+func (hook *blockingCooldownPipelineHook) BeforeProcessPipeline(
+	ctx context.Context,
+	_ []redis.Cmder,
+) (context.Context, error) {
+	return ctx, nil
+}
+
+func (hook *blockingCooldownPipelineHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	hook.once.Do(func() {
+		close(hook.after)
+		<-hook.release
+	})
+	return nil
+}
+
 func useChannelRateLimitCooldownRedis(t *testing.T) {
 	t.Helper()
+	stopChannelRateLimitCooldownRedisSync()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	originalEnabled := common.RedisEnabled
@@ -23,6 +55,7 @@ func useChannelRateLimitCooldownRedis(t *testing.T) {
 	common.RDB = client
 	ClearChannelRateLimitCooldowns()
 	t.Cleanup(func() {
+		stopChannelRateLimitCooldownRedisSync()
 		ClearChannelRateLimitCooldowns()
 		require.NoError(t, client.Close())
 		common.RedisEnabled = originalEnabled
@@ -61,6 +94,7 @@ func setChannelRateLimitCooldownControlRevision(t *testing.T, revision string) {
 func resetChannelRateLimitCooldownLocalState() {
 	channelRateLimitCooldowns.Lock()
 	channelRateLimitCooldowns.untilByRoute = make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry)
+	publishChannelRateLimitCooldownSnapshotLocked()
 	channelRateLimitCooldowns.Unlock()
 }
 
@@ -92,7 +126,75 @@ func TestChannelRateLimitCooldownExpiresAndCannotBeShortened(t *testing.T) {
 	assert.Equal(t, firstUntil, ChannelRateLimitCooldownUntil(21, "model-a"))
 
 	assert.Empty(t, channelRateLimitCooldownChannelIds("model-a", common.GetTimestamp()+61))
-	assert.Zero(t, ChannelRateLimitCooldownUntil(21, "model-a"))
+}
+
+func TestPruneExpiredChannelRateLimitCooldownsPublishesBoundedSnapshot(t *testing.T) {
+	stopChannelRateLimitCooldownRedisSync()
+	setChannelRateLimitCooldownControlRevision(t, "revision-prune")
+	t.Cleanup(func() {
+		stopChannelRateLimitCooldownRedisSync()
+		resetChannelRateLimitCooldownLocalState()
+	})
+
+	now := common.GetTimestamp()
+	expiredKey := channelRateLimitCooldownKey{channelId: 22, modelName: "expired"}
+	activeKey := channelRateLimitCooldownKey{channelId: 23, modelName: "active"}
+	staleKey := channelRateLimitCooldownKey{channelId: 24, modelName: "stale"}
+	channelRateLimitCooldowns.Lock()
+	channelRateLimitCooldowns.untilByRoute = map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry{
+		expiredKey: {until: now, revision: "revision-prune"},
+		activeKey:  {until: now + 60, revision: "revision-prune"},
+		staleKey:   {until: now + 60, revision: "revision-old"},
+	}
+	publishChannelRateLimitCooldownSnapshotLocked()
+	channelRateLimitCooldowns.Unlock()
+
+	pruneExpiredChannelRateLimitCooldowns()
+
+	snapshot := loadChannelRateLimitCooldownSnapshot()
+	assert.NotContains(t, snapshot.untilByRoute, expiredKey)
+	assert.NotContains(t, snapshot.untilByRoute, staleKey)
+	assert.Contains(t, snapshot.untilByRoute, activeKey)
+}
+
+func TestChannelRateLimitCooldownRejectsRedisSnapshotOlderThanLocalWrite(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	setChannelRateLimitCooldownControlRevision(t, "revision-generation")
+	resetChannelRateLimitCooldownLocalState()
+	require.NoError(t, common.RDB.Set(
+		context.Background(),
+		channelRateLimitCooldownRedisRevisionKey,
+		"revision-generation",
+		0,
+	).Err())
+
+	hook := &blockingCooldownPipelineHook{
+		after:   make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	common.RDB.AddHook(hook)
+	channelRateLimitCooldownRedisSync.client.Store(common.RDB)
+	channelRateLimitCooldownRedisSync.running.Store(true)
+	t.Cleanup(func() {
+		channelRateLimitCooldownRedisSync.running.Store(false)
+		channelRateLimitCooldownRedisSync.client.Store(nil)
+	})
+
+	done := make(chan struct{})
+	go func() {
+		syncChannelRateLimitCooldownsFromRedis(context.Background(), common.RDB)
+		close(done)
+	}()
+	<-hook.after
+	StartChannelRateLimitCooldown(25, "model-a", 60)
+	close(hook.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Redis 429 冷却同步未结束")
+	}
+
+	assert.Positive(t, ChannelRateLimitCooldownUntil(25, "model-a"))
 }
 
 func TestChannelRateLimitCooldownUsesTheSharedMatchingModelName(t *testing.T) {
@@ -115,12 +217,16 @@ func TestChannelRateLimitCooldownIsSharedAcrossInstances(t *testing.T) {
 	StartChannelRateLimitCooldown(41, "model-a", 30)
 	resetChannelRateLimitCooldownLocalState()
 
-	assert.Positive(t, ChannelRateLimitCooldownUntil(41, "model-a"))
+	require.Eventually(t, func() bool {
+		return ChannelRateLimitCooldownUntil(41, "model-a") > 0
+	}, 2*time.Second, 10*time.Millisecond)
 	options := applyChannelRateLimitCooldowns("model-a", model.ChannelSelectionOptions{})
 	assert.Equal(t, []int{41}, options.ExcludedChannelIds)
 
 	require.NoError(t, common.RDB.Del(context.Background(), channelRateLimitCooldownRedisKey).Err())
-	assert.Zero(t, ChannelRateLimitCooldownUntil(41, "model-a"))
+	require.Eventually(t, func() bool {
+		return ChannelRateLimitCooldownUntil(41, "model-a") == 0
+	}, 2*time.Second, 10*time.Millisecond)
 	assert.Empty(t, applyChannelRateLimitCooldowns("model-a", model.ChannelSelectionOptions{}).ExcludedChannelIds)
 }
 
@@ -275,7 +381,9 @@ func TestChannelRateLimitCooldownRepairsMismatchedRedisRevision(t *testing.T) {
 	assert.Positive(t, ChannelRateLimitCooldownUntil(47, "model-a"))
 	resetChannelRateLimitCooldownLocalState()
 	assert.Zero(t, ChannelRateLimitCooldownUntil(46, "stale-model"))
-	assert.Positive(t, ChannelRateLimitCooldownUntil(47, "model-a"))
+	require.Eventually(t, func() bool {
+		return ChannelRateLimitCooldownUntil(47, "model-a") > 0
+	}, 2*time.Second, 10*time.Millisecond)
 	assert.Equal(t, []int{47}, applyChannelRateLimitCooldowns(
 		"model-a", model.ChannelSelectionOptions{},
 	).ExcludedChannelIds)

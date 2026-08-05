@@ -25,6 +25,29 @@ func TestRelayRetryRoutingExcludesFailedChannelsImmediately(t *testing.T) {
 	assert.False(t, routing.candidatesExhausted())
 }
 
+func TestRelayRetryRoutingRetriesPinnedChannelOnceWithoutExcludingIt(t *testing.T) {
+	routing := newRelayRetryRouting()
+	channel := &model.Channel{Id: 26, Name: "same-channel"}
+
+	routing.retrySameChannel(channel, "vip")
+	options, hasExcludedChannels := routing.selectionOptions()
+	assert.False(t, hasExcludedChannels)
+	assert.Empty(t, options.ExcludedChannelIds)
+
+	selected, group, err := routing.selectChannel(&service.RetryParam{})
+	require.NoError(t, err)
+	assert.Same(t, channel, selected)
+	assert.Equal(t, "vip", group)
+	assert.Nil(t, routing.sameChannel)
+
+	routing.retrySameChannel(channel, "vip")
+	routing.exclude(channel.Id)
+	assert.Nil(t, routing.sameChannel)
+	options, hasExcludedChannels = routing.selectionOptions()
+	require.True(t, hasExcludedChannels)
+	assert.Equal(t, []int{channel.Id}, options.ExcludedChannelIds)
+}
+
 func TestRelayRetryRoutingRestartsRoundsUntilRetryBudgetIsUsed(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)

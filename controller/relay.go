@@ -208,13 +208,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryRouting := newRelayRetryRouting()
+	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
+	attemptIndex := 0
 	finalRetryLogPending := false
 	finalRetryAttemptDuration := time.Duration(0)
 	var finalRetryChannelError *types.ChannelError
 
 	for retryParam.GetRetry() <= common.RetryTimes {
 		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
-		relayInfo.RetryIndex = retryParam.GetRetry()
+		relayInfo.RetryIndex = attemptIndex
 		channel, channelErr := getChannel(c, relayInfo, retryParam, retryRouting)
 		if channelErr != nil {
 			if retryRouting.candidatesExhausted() && relayInfo.LastError != nil {
@@ -267,8 +269,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		shouldRetry := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
-		if shouldRetry {
+		retryDecision := fastFailureRetryBudget.decide(
+			relayRetryGroup(c, retryParam.TokenGroup),
+			relayInfo.OriginModelName,
+			channel.Id,
+			attemptDuration,
+			isFastFailureSameChannelRetryable(c, newAPIError),
+			shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()),
+		)
+		shouldRetry := retryDecision != relayRetryNone
+		switch retryDecision {
+		case relayRetryFastFailureSameChannel:
+			retryRouting.retrySameChannel(channel, relayRetryGroup(c, retryParam.TokenGroup))
+		case relayRetryOrdinary:
 			retryParam.IncreaseRetry()
 			retryRouting.exclude(channel.Id)
 		}
@@ -286,6 +299,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry {
 			break
 		}
+		attemptIndex++
 	}
 	if newAPIError != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		processChannelErrorWithTiming(c, *finalRetryChannelError,
@@ -639,16 +653,19 @@ func RelayTask(c *gin.Context) {
 		SelectionOptions: service.ChannelSelectionOptionsForRequest(c, 0),
 	}
 	retryRouting := newRelayRetryRouting()
+	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
+	attemptIndex := 0
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for retryParam.GetRetry() <= common.RetryTimes {
 		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
+		relayInfo.RetryIndex = attemptIndex
 		var channel *model.Channel
 		allowAlternative := true
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
 			allowAlternative = false
-			if retryParam.GetRetry() > 0 {
+			if attemptIndex > 0 {
 				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
 					finalRetryLogPending = false
 					finalRetryChannelError = nil
@@ -701,9 +718,25 @@ func RelayTask(c *gin.Context) {
 			}
 			break
 		}
-		shouldRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
-		if shouldRetry && allowAlternative {
-			retryRouting.exclude(channel.Id)
+		retryDecision := fastFailureRetryBudget.decide(
+			relayRetryGroup(c, retryParam.TokenGroup),
+			relayInfo.OriginModelName,
+			channel.Id,
+			attemptDuration,
+			shouldRetryTaskRelay(c, channel.Id, taskErr, 1),
+			shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()),
+		)
+		shouldRetry := retryDecision != relayRetryNone
+		switch retryDecision {
+		case relayRetryFastFailureSameChannel:
+			if allowAlternative {
+				retryRouting.retrySameChannel(channel, relayRetryGroup(c, retryParam.TokenGroup))
+			}
+		case relayRetryOrdinary:
+			retryParam.IncreaseRetry()
+			if allowAlternative {
+				retryRouting.exclude(channel.Id)
+			}
 		}
 
 		if !taskErr.LocalError {
@@ -727,6 +760,7 @@ func RelayTask(c *gin.Context) {
 		if !shouldRetry {
 			break
 		}
+		attemptIndex++
 	}
 	if taskErr != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		finalTaskError := taskErr.Error

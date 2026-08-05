@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,11 +13,15 @@ import (
 	"gorm.io/gorm"
 )
 
-const channelMonitorMetricsCacheTTL = time.Minute
+const (
+	channelMonitorMetricsCacheTTL     = 10 * time.Second
+	channelMonitorMetricsWindowBucket = time.Minute
+)
 
 type channelMonitorMetricsCacheKey struct {
 	db           *gorm.DB
 	databaseType common.DatabaseType
+	generation   uint64
 	windowEnd    int64
 	rangeMinutes int
 }
@@ -47,13 +52,15 @@ var channelMonitorMetricsCache = struct {
 }
 
 var channelMonitorMetricsSingleflight singleflight.Group
+var channelMonitorMetricsCacheGeneration atomic.Uint64
 
 func newChannelMonitorMetricsCacheKey(generatedAt int64, rangeMinutes int) channelMonitorMetricsCacheKey {
-	bucketSeconds := int64(channelMonitorMetricsCacheTTL / time.Second)
+	bucketSeconds := int64(channelMonitorMetricsWindowBucket / time.Second)
 	windowEnd := generatedAt - generatedAt%bucketSeconds
 	return channelMonitorMetricsCacheKey{
 		db:           DB,
 		databaseType: common.MainDatabaseType(),
+		generation:   channelMonitorMetricsCacheGeneration.Load(),
 		windowEnd:    windowEnd,
 		rangeMinutes: rangeMinutes,
 	}
@@ -61,10 +68,11 @@ func newChannelMonitorMetricsCacheKey(generatedAt int64, rangeMinutes int) chann
 
 func (key channelMonitorMetricsCacheKey) singleflightKey(metricType string) string {
 	return fmt.Sprintf(
-		"%s:%p:%s:%d:%d",
+		"%s:%p:%s:%d:%d:%d",
 		metricType,
 		key.db,
 		key.databaseType,
+		key.generation,
 		key.windowEnd,
 		key.rangeMinutes,
 	)
@@ -140,6 +148,10 @@ func cachedChannelMonitorSuccessMetrics(key channelMonitorMetricsCacheKey, now t
 
 func storeChannelMonitorPerformanceMetrics(key channelMonitorMetricsCacheKey, now time.Time, metrics []ChannelMonitorPerformanceMetric) {
 	channelMonitorMetricsCache.Lock()
+	if key.generation != channelMonitorMetricsCacheGeneration.Load() {
+		channelMonitorMetricsCache.Unlock()
+		return
+	}
 	for cachedKey, entry := range channelMonitorMetricsCache.performance {
 		if !now.Before(entry.expiresAt) {
 			delete(channelMonitorMetricsCache.performance, cachedKey)
@@ -159,6 +171,10 @@ func storeChannelMonitorSuccessMetrics(
 	groupMetrics []ChannelMonitorGroupSuccessMetric,
 ) {
 	channelMonitorMetricsCache.Lock()
+	if key.generation != channelMonitorMetricsCacheGeneration.Load() {
+		channelMonitorMetricsCache.Unlock()
+		return
+	}
 	for cachedKey, entry := range channelMonitorMetricsCache.success {
 		if !now.Before(entry.expiresAt) {
 			delete(channelMonitorMetricsCache.success, cachedKey)
@@ -175,67 +191,83 @@ func storeChannelMonitorSuccessMetrics(
 // GetChannelMonitorPerformanceMetricsCached reads persisted minute aggregates
 // and coalesces concurrent dashboard/task reads.
 func GetChannelMonitorPerformanceMetricsCached(ctx context.Context, generatedAt int64, rangeMinutes int) ([]ChannelMonitorPerformanceMetric, error) {
-	key := newChannelMonitorMetricsCacheKey(generatedAt, rangeMinutes)
-	now := time.Now()
-	if metrics, exists := cachedChannelMonitorPerformanceMetrics(key, now); exists {
-		return cloneChannelMonitorPerformanceMetrics(metrics), nil
-	}
+	for {
+		key := newChannelMonitorMetricsCacheKey(generatedAt, rangeMinutes)
+		now := time.Now()
+		if metrics, exists := cachedChannelMonitorPerformanceMetrics(key, now); exists {
+			if key.generation == channelMonitorMetricsCacheGeneration.Load() {
+				return cloneChannelMonitorPerformanceMetrics(metrics), nil
+			}
+			continue
+		}
 
-	result, err, _ := channelMonitorMetricsSingleflight.Do(key.singleflightKey("performance"), func() (any, error) {
-		loadTime := time.Now()
-		if metrics, exists := cachedChannelMonitorPerformanceMetrics(key, loadTime); exists {
+		result, err, _ := channelMonitorMetricsSingleflight.Do(key.singleflightKey("performance"), func() (any, error) {
+			loadTime := time.Now()
+			if metrics, exists := cachedChannelMonitorPerformanceMetrics(key, loadTime); exists {
+				return metrics, nil
+			}
+			startTimestamp := key.windowEnd - int64(key.rangeMinutes*60)
+			metrics, queryErr := getChannelMonitorMinutePerformanceMetrics(ctx, startTimestamp, key.windowEnd)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			storeChannelMonitorPerformanceMetrics(key, loadTime, metrics)
 			return metrics, nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		startTimestamp := key.windowEnd - int64(key.rangeMinutes*60)
-		metrics, queryErr := getChannelMonitorMinutePerformanceMetrics(ctx, startTimestamp, key.windowEnd)
-		if queryErr != nil {
-			return nil, queryErr
+		if key.generation != channelMonitorMetricsCacheGeneration.Load() {
+			continue
 		}
-		storeChannelMonitorPerformanceMetrics(key, loadTime, metrics)
-		return metrics, nil
-	})
-	if err != nil {
-		return nil, err
+		return cloneChannelMonitorPerformanceMetrics(result.([]ChannelMonitorPerformanceMetric)), nil
 	}
-	return cloneChannelMonitorPerformanceMetrics(result.([]ChannelMonitorPerformanceMetric)), nil
 }
 
 // GetChannelMonitorSuccessMetricsCached shares the success aggregation used by
 // the dashboard and smart scheduler without changing filtered detail queries.
 func GetChannelMonitorSuccessMetricsCached(ctx context.Context, generatedAt int64, rangeMinutes int) ([]ChannelMonitorSuccessMetric, []ChannelMonitorGroupSuccessMetric, error) {
-	key := newChannelMonitorMetricsCacheKey(generatedAt, rangeMinutes)
-	now := time.Now()
-	if result, exists := cachedChannelMonitorSuccessMetrics(key, now); exists {
-		return cloneChannelMonitorSuccessMetrics(result.metrics),
-			cloneChannelMonitorGroupSuccessMetrics(result.groupMetrics), nil
-	}
+	for {
+		key := newChannelMonitorMetricsCacheKey(generatedAt, rangeMinutes)
+		now := time.Now()
+		if result, exists := cachedChannelMonitorSuccessMetrics(key, now); exists {
+			if key.generation == channelMonitorMetricsCacheGeneration.Load() {
+				return cloneChannelMonitorSuccessMetrics(result.metrics),
+					cloneChannelMonitorGroupSuccessMetrics(result.groupMetrics), nil
+			}
+			continue
+		}
 
-	result, err, _ := channelMonitorMetricsSingleflight.Do(key.singleflightKey("success"), func() (any, error) {
-		loadTime := time.Now()
-		if cached, exists := cachedChannelMonitorSuccessMetrics(key, loadTime); exists {
-			return cached, nil
+		result, err, _ := channelMonitorMetricsSingleflight.Do(key.singleflightKey("success"), func() (any, error) {
+			loadTime := time.Now()
+			if cached, exists := cachedChannelMonitorSuccessMetrics(key, loadTime); exists {
+				return cached, nil
+			}
+			metrics, groupMetrics, queryErr := getChannelMonitorSuccessMetrics(
+				ctx,
+				key.windowEnd-int64(key.rangeMinutes*60),
+				key.windowEnd,
+				true,
+			)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			storeChannelMonitorSuccessMetrics(key, loadTime, metrics, groupMetrics)
+			return channelMonitorSuccessCacheResult{
+				metrics:      metrics,
+				groupMetrics: groupMetrics,
+			}, nil
+		})
+		if err != nil {
+			return nil, nil, err
 		}
-		metrics, groupMetrics, queryErr := getChannelMonitorSuccessMetrics(
-			ctx,
-			key.windowEnd-int64(key.rangeMinutes*60),
-			key.windowEnd,
-			true,
-		)
-		if queryErr != nil {
-			return nil, queryErr
+		if key.generation != channelMonitorMetricsCacheGeneration.Load() {
+			continue
 		}
-		storeChannelMonitorSuccessMetrics(key, loadTime, metrics, groupMetrics)
-		return channelMonitorSuccessCacheResult{
-			metrics:      metrics,
-			groupMetrics: groupMetrics,
-		}, nil
-	})
-	if err != nil {
-		return nil, nil, err
+		cached := result.(channelMonitorSuccessCacheResult)
+		return cloneChannelMonitorSuccessMetrics(cached.metrics),
+			cloneChannelMonitorGroupSuccessMetrics(cached.groupMetrics), nil
 	}
-	cached := result.(channelMonitorSuccessCacheResult)
-	return cloneChannelMonitorSuccessMetrics(cached.metrics),
-		cloneChannelMonitorGroupSuccessMetrics(cached.groupMetrics), nil
 }
 
 func GetChannelMonitorStabilityMetricsCached(ctx context.Context, generatedAt int64, rangeMinutes int) ([]ChannelMonitorStabilityMetric, error) {
@@ -248,6 +280,7 @@ func GetChannelMonitorStabilityMetricsCached(ctx context.Context, generatedAt in
 
 func resetChannelMonitorMetricsCache() {
 	channelMonitorMetricsCache.Lock()
+	channelMonitorMetricsCacheGeneration.Add(1)
 	channelMonitorMetricsCache.performance = make(map[channelMonitorMetricsCacheKey]channelMonitorPerformanceCacheEntry)
 	channelMonitorMetricsCache.success = make(map[channelMonitorMetricsCacheKey]channelMonitorSuccessCacheEntry)
 	channelMonitorMetricsCache.Unlock()

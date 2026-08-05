@@ -33,18 +33,22 @@ type channelMonitorPerformanceAPIResponse struct {
 func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
+	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogDatabaseType := common.LogDatabaseType()
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
+	originalIsMasterNode := common.IsMasterNode
 	t.Cleanup(func() {
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
-		common.SetLogDatabaseType(originalLogDatabaseType)
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		common.LogConsumeEnabled = originalLogConsumeEnabled
 		constant.ErrorLogEnabled = originalErrorLogEnabled
+		common.IsMasterNode = originalIsMasterNode
 	})
 	common.LogConsumeEnabled = true
 	constant.ErrorLogEnabled = true
+	common.IsMasterNode = true
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-api.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -53,10 +57,14 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorAggregationState{},
+	))
 	model.DB = db
 	model.LOG_DB = db
-	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	now := time.Now().Unix()
 	logTimestamp := now - 60
 	require.NoError(t, db.Create(&model.Log{

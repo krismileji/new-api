@@ -30,6 +30,7 @@ type SettingsSurfaceResult = {
   generalHasSchedule: boolean
   generalTitle: string
   generalUsesContentSizedViewport: boolean
+  legacyRetentionDefaultsApplied: boolean
   notificationTypeCanBeUnchecked: boolean
   policyDialogBlocksHorizontalOverflow: boolean
   policyDialogCentered: boolean
@@ -79,6 +80,7 @@ test(
     assert.match(result.generalTitle, /上游请求超时/)
     assert.equal(result.generalHasSchedule, false)
     assert.equal(result.generalUsesContentSizedViewport, true)
+    assert.equal(result.legacyRetentionDefaultsApplied, true)
     assert.equal(result.allNotificationTypesSelected, true)
     assert.equal(result.notificationTypeCanBeUnchecked, true)
     assert.equal(result.previewEmailButtonEnabled, true)

@@ -98,8 +98,10 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     stabilityEnabled: policy.stability_enabled,
     jitterEnabled: policy.jitter_enabled,
     jitterTolerancePercent: policy.jitter_tolerance_percent,
-    jitterAbsoluteToleranceSeconds: policy.jitter_absolute_tolerance_seconds,
-    jitterBaselineMinutes: policy.jitter_baseline_minutes,
+    jitterSlowThresholdSeconds:
+      policy.jitter_slow_threshold_seconds ??
+      policy.jitter_absolute_tolerance_seconds ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.jitterSlowThresholdSeconds,
     scoring: channelMonitorSmartScheduleScoringToForm(policy.scoring),
     applyMode: policy.apply_mode,
     models: [...policy.models],
@@ -109,6 +111,9 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     recoveryStabilityScore: policy.recovery_stability_score,
     fastFailurePenaltyPercent: policy.fast_failure_penalty_percent,
     fastFailureSeconds: policy.fast_failure_seconds,
+    fastFailureSameChannelRetryCount:
+      policy.fast_failure_same_channel_retry_count ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryCount,
     slowFailureSeconds: policy.slow_failure_seconds,
     burstFailureWindowSeconds:
       policy.burst_failure_window_seconds ??
@@ -146,8 +151,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     stability_enabled: policy.stabilityEnabled,
     jitter_enabled: policy.jitterEnabled,
     jitter_tolerance_percent: policy.jitterTolerancePercent,
-    jitter_absolute_tolerance_seconds: policy.jitterAbsoluteToleranceSeconds,
-    jitter_baseline_minutes: policy.jitterBaselineMinutes,
+    jitter_slow_threshold_seconds: policy.jitterSlowThresholdSeconds,
+    jitter_absolute_tolerance_seconds: policy.jitterSlowThresholdSeconds,
     scoring: channelMonitorSmartScheduleScoringToApi(policy.scoring),
     apply_mode: policy.applyMode,
     models: policy.models,
@@ -157,6 +162,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     recovery_stability_score: policy.recoveryStabilityScore,
     fast_failure_penalty_percent: policy.fastFailurePenaltyPercent,
     fast_failure_seconds: policy.fastFailureSeconds,
+    fast_failure_same_channel_retry_count:
+      policy.fastFailureSameChannelRetryCount,
     slow_failure_seconds: policy.slowFailureSeconds,
     burst_failure_window_seconds: policy.burstFailureWindowSeconds,
     consecutive_failure_threshold: policy.consecutiveFailureThreshold,
@@ -185,8 +192,7 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     stabilityEnabled: policy.stabilityEnabled,
     jitterEnabled: policy.jitterEnabled,
     jitterTolerancePercent: policy.jitterTolerancePercent,
-    jitterAbsoluteToleranceSeconds: policy.jitterAbsoluteToleranceSeconds,
-    jitterBaselineMinutes: policy.jitterBaselineMinutes,
+    jitterSlowThresholdSeconds: policy.jitterSlowThresholdSeconds,
     scoring: cloneScoring(policy.scoring),
     applyMode: policy.applyMode,
     models: [...policy.models],
@@ -196,6 +202,7 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     recoveryStabilityScore: policy.recoveryStabilityScore,
     fastFailurePenaltyPercent: policy.fastFailurePenaltyPercent,
     fastFailureSeconds: policy.fastFailureSeconds,
+    fastFailureSameChannelRetryCount: policy.fastFailureSameChannelRetryCount,
     slowFailureSeconds: policy.slowFailureSeconds,
     burstFailureWindowSeconds: policy.burstFailureWindowSeconds,
     consecutiveFailureThreshold: policy.consecutiveFailureThreshold,

@@ -211,4 +211,12 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 	assert.Equal(t, int64(1), second.ChannelItems[0].ActualSampleCount)
 	assert.Equal(t, int64(1), second.APIKeyItems[0].ActualSampleCount)
 	assert.Equal(t, int64(1), second.CacheWriteItems[0].RequestCount)
+
+	_, err = AggregateChannelMonitorMinuteRange(context.Background(), dayStart, dayStart+channelDailyCostDaySeconds)
+	require.NoError(t, err)
+	refreshed, err := GetChannelMonitorTodaySuccessMetricsCached(context.Background(), generatedAt)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), refreshed.Summary.ActualSampleCount)
+	require.Len(t, refreshed.ChannelItems, 1)
+	assert.Equal(t, int64(2), refreshed.ChannelItems[0].ActualSampleCount)
 }

@@ -42,13 +42,13 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmart
 
 export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   jitterTolerancePercent: 5,
-  jitterAbsoluteToleranceSeconds: 10,
-  jitterBaselineMinutes: 60,
+  jitterSlowThresholdSeconds: 10,
   minSamples: 5,
   degradeStabilityScore: 90,
   recoveryStabilityScore: 95,
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
+  fastFailureSameChannelRetryCount: 0,
   slowFailureSeconds: 10,
   burstFailureWindowSeconds: 30,
   consecutiveFailureThreshold: 2,

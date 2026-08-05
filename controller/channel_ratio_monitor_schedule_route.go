@@ -88,8 +88,7 @@ func channelSmartScheduleStabilityDescription(performance *channelSmartScheduleP
 		performance.StabilityRetryFailureCount,
 		averageRetryFailureMs,
 	)
-	if performance.JitterAvailable && performance.JitterBaselineMs != nil &&
-		performance.JitterThresholdMs != nil {
+	if performance.JitterAvailable && performance.JitterThresholdMs != nil {
 		p50Ms := 0.0
 		if performance.FirstTokenP50Ms != nil {
 			p50Ms = *performance.FirstTokenP50Ms
@@ -99,8 +98,7 @@ func channelSmartScheduleStabilityDescription(performance *channelSmartScheduleP
 			p95Ms = *performance.FirstTokenP95Ms
 		}
 		description += fmt.Sprintf(
-			"；首字抖动基准 %.0f ms、P50 %.0f ms、P95 %.0f ms、慢阈值 %.0f ms、慢成功 %d/%d（容忍 %d，处罚 %.0f）",
-			*performance.JitterBaselineMs,
+			"；首字 P50 %.0f ms、P95 %.0f ms、固定慢阈值 %.0f ms、慢成功 %d/%d（容忍 %d，处罚 %.0f）",
 			p50Ms,
 			p95Ms,
 			*performance.JitterThresholdMs,
@@ -188,23 +186,18 @@ func channelSmartScheduleCombineWindowPerformance(
 
 func channelSmartScheduleApplyJitterMeasurement(
 	performance *channelSmartSchedulePerformance,
-	state model.ChannelSmartScheduleRouteState,
 	policy channelSmartSchedulePolicy,
 ) {
-	if performance == nil || state.JitterBaselineFirstTokenMs == nil ||
-		performance.FirstTokenDurationSampleCount < int64(policy.MinSamples) {
+	if performance == nil || performance.FirstTokenDurationSampleCount < int64(policy.MinSamples) {
 		return
 	}
 	measurement := channelSmartScheduleMeasureJitter(
 		performance.FirstTokenDurationBuckets,
-		*state.JitterBaselineFirstTokenMs,
 		policy.MinSamples,
 		policy,
 	)
 	performance.JitterAvailable = measurement.Available
-	baselineMs := measurement.BaselineMs
-	performance.JitterBaselineMs = &baselineMs
-	if measurement.ThresholdMs > 0 {
+	if measurement.Available {
 		thresholdMs := measurement.ThresholdMs
 		performance.JitterThresholdMs = &thresholdMs
 	}
@@ -218,35 +211,6 @@ func channelSmartScheduleApplyJitterMeasurement(
 			performance.StabilitySampleCount,
 			measurement.Penalty,
 		)
-	}
-}
-
-func channelSmartScheduleJitterBaselineUpdate(
-	performance *channelSmartSchedulePerformance,
-	state model.ChannelSmartScheduleRouteState,
-	policy channelSmartSchedulePolicy,
-	now int64,
-) *model.ChannelSmartScheduleJitterUpdate {
-	if performance == nil || !policy.StabilityEnabled || !policy.JitterEnabled ||
-		state.StabilityState != "" || performance.FirstTokenP50Ms == nil ||
-		performance.FirstTokenDurationSampleCount < int64(policy.MinSamples) || performance.Stability == nil ||
-		*performance.Stability < policy.RecoveryStabilityScore/channelMonitorScorePercentageTotal ||
-		(performance.JitterAvailable && performance.JitterPenalty > 0) {
-		return nil
-	}
-	baselineMs, changed := channelSmartScheduleLearnJitterBaseline(
-		state.JitterBaselineFirstTokenMs,
-		state.JitterBaselineUpdatedAt,
-		*performance.FirstTokenP50Ms,
-		now,
-		policy.JitterBaselineMinutes,
-	)
-	if !changed {
-		return nil
-	}
-	return &model.ChannelSmartScheduleJitterUpdate{
-		BaselineFirstTokenMs: &baselineMs,
-		BaselineUpdatedAt:    now,
 	}
 }
 
@@ -372,7 +336,6 @@ func runChannelSmartScheduleByRouteOnce(
 	directActions := make([]channelSmartScheduleRouteDirectAction, 0)
 	statusUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(selectedRoutes))
 	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
-	jitterUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleJitterUpdate)
 	scoreDetailsByRoute := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleScoreDetails, len(selectedRoutes))
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
 	for _, route := range selectedRoutes {
@@ -563,10 +526,7 @@ func runChannelSmartScheduleByRouteOnce(
 				performance.StabilityFailureDurationBuckets,
 				policy,
 			)
-			channelSmartScheduleApplyJitterMeasurement(performance, route.State, policy)
-			if update := channelSmartScheduleJitterBaselineUpdate(performance, route.State, policy, now); update != nil {
-				jitterUpdates[key] = update
-			}
+			channelSmartScheduleApplyJitterMeasurement(performance, policy)
 		}
 		candidate := channelSmartScheduleCandidate{
 			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
@@ -1099,7 +1059,6 @@ func runChannelSmartScheduleByRouteOnce(
 			group:     statusUpdates[index].Group,
 			model:     statusUpdates[index].Model,
 		}
-		statusUpdates[index].Jitter = jitterUpdates[key]
 		statusUpdates[index].ScoreDetails = scoreDetailsByRoute[key]
 		if statusUpdates[index].ScoreDetails != nil && statusUpdates[index].Error != "" {
 			channelSmartScheduleSetAdjustmentReason(statusUpdates[index].ScoreDetails, statusUpdates[index].Error)

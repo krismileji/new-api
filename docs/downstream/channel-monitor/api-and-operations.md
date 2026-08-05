@@ -51,7 +51,10 @@
 | `auto_disable_on_update_failure` | `ChannelMonitorAutoDisableOnUpdateFailure` | `false` | 布尔值 |
 | `auto_enable_on_cost_ratio_recovery` | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `false` | 布尔值 |
 | `auto_enable_on_balance_recovery` | `ChannelMonitorAutoEnableOnBalanceRecovery` | `false` | 布尔值 |
-| `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `120` | `1..3650` |
+| `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `120` | `1..3650`；日成本、分钟指标和延迟分桶共用此保留期 |
+| `execution_detail_retention_days` | `ChannelMonitorExecutionDetailRetentionDays` | `14` | `1..3650` |
+| `task_retention_days` | `ChannelMonitorTaskRetentionDays` | `90` | `1..3650`，且不能短于调度执行明细保留期 |
+| `ratio_history_retention_days` | `ChannelMonitorRatioHistoryRetentionDays` | `365` | `1..3650` |
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
 | `email_notification_types` | `ChannelMonitorEmailNotificationTypes` | 六类全选 | `ratio_change`、`balance_warning`、`channel_disabled`、`group_membership_removed`、`upstream_sync_failed`、`task_failed`；开启邮件通知时至少选择一类 |
@@ -80,7 +83,7 @@
 
 `GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本；相同渠道模型的多条分组路由返回相同的 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。抖动绝对容差使用秒且范围为 `0..60`，慢成功阈值为当前基线加上绝对容差；基准学习周期使用分钟且范围为 `1..43200`。完整策略示例：
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。每次普通重试选中渠道后重新计算这份快速失败额度。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚。请求失败上限由 `relay_response_header_timeout_seconds` 控制。旧字段 `jitter_absolute_tolerance_seconds` 仍可作为兼容输入，在新字段缺失时自动映射；`jitter_baseline_minutes` 不再使用。完整策略示例：
 
 ```json
 [
@@ -95,11 +98,11 @@
     "recovery_stability_score": 95,
     "fast_failure_penalty_percent": 40,
     "fast_failure_seconds": 1,
+    "fast_failure_same_channel_retry_count": 2,
     "slow_failure_seconds": 10,
     "jitter_enabled": true,
     "jitter_tolerance_percent": 5,
-    "jitter_absolute_tolerance_seconds": 10,
-    "jitter_baseline_minutes": 60,
+    "jitter_slow_threshold_seconds": 10,
     "cooldown_minutes": 30,
     "sample_mode": "probe",
     "exploration_traffic_percent": 3,
@@ -172,7 +175,7 @@
 | `channel_ratio_monitor` | 设置的更新间隔或手动 API | 更新倍率和余额、执行策略、通知和恢复 |
 | `channel_smart_schedule` | 设置的调度间隔、手动 API 或强制重置 | 计算并应用优先级和权重 |
 | `channel_smart_schedule_probe` | 启用定时探测的分组所配置的最短探测间隔 | 为到期文本路由补充流式 Responses 样本；渠道并发已满时跳过 |
-| `channel_monitor_cost_retention` | 默认每天一次 | 删除超出保留期的日成本数据 |
+| `channel_monitor_cost_retention` | 默认每天一次 | 分批删除超出各自配置保留期的分钟指标、日成本、执行明细、已结束监控任务和倍率历史 |
 
 同类型业务任务已经排队或运行时，手动触发会返回现有任务并标记 `created=false`。任务结果限制失败明细数量，避免单次大规模故障无限放大任务记录。
 
@@ -188,12 +191,16 @@
 - `ChannelSmartScheduleRouteState`：每个渠道、分组、模型路由的参与、调度和稳定性状态。
 - `ChannelSmartScheduleModelSampleState`：每个渠道、模型唯一的一份手动测试和定时探测滚动样本。
 - `ChannelSmartScheduleExecutionDetail`：按任务和路由保存智能调度执行时的评分与调整解释。
+- `ChannelMonitorAggregationState`：保存所有节点共享的最新完整分钟水位，聚合数据与水位在同一事务提交。
+- `ChannelMonitorMinuteMetric`：按分钟和渠道、模型、分组、API Key 维度保存性能与成功率指标。
 - `ChannelMonitorMinuteDurationBucket`：按分钟保存首字延迟分布，供异常抖动判断和稳健延迟评分使用。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
-性能、成功率、缓存率和缓存写请求由后台每分钟从日志聚合到 `ChannelMonitorMinuteMetric`，日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。
+性能、成功率、缓存率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到 `ChannelMonitorMinuteMetric`。常规任务只回扫最近 2 分钟，启动回扫 5 分钟，整点在时间预算内修复最近 65 分钟；若任务跨过多个分钟，则从上次连续水位补齐缺口后再推进。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查。
+
+日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。保留任务默认按 1000 行一批清理；数据库删除会释放页供后续复用，但 SQLite、MySQL 和 PostgreSQL 都不保证物理文件立即缩小。
 
 SQLite、MySQL 和 PostgreSQL 都通过 GORM 迁移和方言兼容查询支持；部署升级前仍应按项目惯例备份主数据库和独立日志数据库。
 

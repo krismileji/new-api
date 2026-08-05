@@ -969,68 +969,12 @@ func TestApplyChannelSmartScheduleRouteResultsRollsBackWholePoolOnWriteFailure(t
 	}
 }
 
-func TestApplyChannelSmartScheduleRouteResultPersistsJitterBaselineWithoutChangingSharedSamples(t *testing.T) {
-	db := setupChannelSmartScheduleRouteTestDB(t)
-	priority := int64(80)
-	weight := uint(50)
-	oldBaseline := 300.0
-	require.NoError(t, db.Create(&Channel{Id: 1010, Name: "jitter", Status: common.ChannelStatusEnabled}).Error)
-	require.NoError(t, db.Create(&Ability{
-		ChannelId: 1010, Group: "vip", Model: "model-a", Enabled: true,
-		Priority: &priority, Weight: weight,
-	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1010, GroupName: "vip", ModelName: "model-a",
-		ParticipationSet: true, Revision: 1,
-		JitterBaselineFirstTokenMs: &oldBaseline, JitterBaselineUpdatedAt: 100,
-	}).Error)
-	probeAverage := 250.0
-	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
-		ChannelId: 1010, ModelName: "model-a", LastTime: 120, LastSuccess: true,
-		SampleCount: 3, SuccessCount: 2, FirstTokenSampleCount: 2,
-		AverageFirstTokenMs: &probeAverage,
-		SamplesJSON:         `[{"time":120,"success":true,"first_token_ms":250}]`,
-	}).Error)
-
-	newBaseline := 320.0
-	outcomes, err := ApplyChannelSmartScheduleRouteResults([]ChannelSmartScheduleRouteResultUpdate{{
-		ChannelId: 1010, Group: "vip", Model: "model-a",
-		Status: ChannelSmartScheduleStatusSucceeded, Priority: priority, Weight: weight,
-		Jitter: &ChannelSmartScheduleJitterUpdate{
-			BaselineFirstTokenMs: &newBaseline,
-			BaselineUpdatedAt:    200,
-		},
-	}})
-	require.NoError(t, err)
-	require.Len(t, outcomes, 1)
-	assert.True(t, outcomes[0].Applied)
-	assert.False(t, outcomes[0].RoutingChanged)
-
-	var state ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 1010, "vip", "model-a",
-	).First(&state).Error)
-	require.NotNil(t, state.JitterBaselineFirstTokenMs)
-	assert.InDelta(t, newBaseline, *state.JitterBaselineFirstTokenMs, 1e-9)
-	assert.Equal(t, int64(200), state.JitterBaselineUpdatedAt)
-	var samples ChannelSmartScheduleModelSampleState
-	require.NoError(t, db.Where(&ChannelSmartScheduleModelSampleState{
-		ChannelId: 1010, ModelName: "model-a",
-	}).First(&samples).Error)
-	assert.Equal(t, int64(120), samples.LastTime)
-	assert.Equal(t, int64(3), samples.SampleCount)
-	require.NotNil(t, samples.AverageFirstTokenMs)
-	assert.InDelta(t, probeAverage, *samples.AverageFirstTokenMs, 1e-9)
-	assert.NotEmpty(t, samples.SamplesJSON)
-}
-
 func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	channelPriority := int64(80)
 	channelWeight := uint(50)
 	degradedPriority := int64(0)
 	otherPriority := int64(70)
-	jitterBaseline := 300.0
 	require.NoError(t, db.Create(&Channel{
 		Id: 1003, Name: "protected", Status: common.ChannelStatusEnabled,
 		Group: "vip,standard", Models: "model-a",
@@ -1045,7 +989,6 @@ func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testi
 		ParticipationSet: true, Revision: 1,
 		StabilityState:         ChannelSmartScheduleStabilityDegraded,
 		StabilitySavedPriority: 95, StabilitySavedWeight: 45,
-		JitterBaselineFirstTokenMs: &jitterBaseline, JitterBaselineUpdatedAt: 123,
 	}).Error)
 
 	result, err := ClearChannelSmartScheduleRouteStability(1003, "vip", "model-a", 80, 10)
@@ -1065,12 +1008,6 @@ func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testi
 	require.NotNil(t, standard.Priority)
 	assert.Equal(t, otherPriority, *standard.Priority)
 	assert.Equal(t, uint(25), standard.Weight)
-	var state ChannelSmartScheduleRouteState
-	require.NoError(t, db.Where(
-		"channel_id = ? AND group_name = ? AND model_name = ?", 1003, "vip", "model-a",
-	).First(&state).Error)
-	assert.Nil(t, state.JitterBaselineFirstTokenMs)
-	assert.Zero(t, state.JitterBaselineUpdatedAt)
 }
 
 func TestClearChannelSmartScheduleTemporaryTrafficRestoresSavedRouteValues(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -41,7 +42,12 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 	if !ok {
 		return
 	}
-	generatedAt := time.Now().Unix()
+	requestedAt := time.Now()
+	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	generatedAt := requestedAt.Unix()
 	metrics, err := model.GetChannelMonitorPerformanceMetricsCached(
 		c.Request.Context(),
 		generatedAt,
@@ -81,7 +87,8 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		return
 	}
 
-	generatedAt := time.Now().Unix()
+	requestedAt := time.Now()
+	generatedAt := requestedAt.Unix()
 	successMetricsAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	if !successMetricsAvailable {
 		common.ApiSuccess(c, gin.H{
@@ -118,6 +125,10 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		scope = "channel"
 	} else {
 		filter.Group = group
+	}
+	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 
 	detail, err := model.GetChannelMonitorSuccessDetail(

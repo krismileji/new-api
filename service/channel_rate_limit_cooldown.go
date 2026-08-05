@@ -124,13 +124,15 @@ func StartChannelRateLimitCooldown(channelId int, modelName string, durationSeco
 	revision := channelRateLimitCooldownControlRevision()
 
 	channelRateLimitCooldowns.Lock()
-	if current := channelRateLimitCooldowns.untilByRoute[key]; current.until < until {
+	if current := channelRateLimitCooldowns.untilByRoute[key]; current.revision != revision || current.until < until {
 		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
 			until: until, revision: revision,
 		}
+		publishChannelRateLimitCooldownSnapshotLocked()
 	}
 	channelRateLimitCooldowns.Unlock()
 
+	ensureChannelRateLimitCooldownRedisSync()
 	if !common.RedisEnabled || common.RDB == nil {
 		return
 	}
@@ -146,14 +148,22 @@ func StartChannelRateLimitCooldown(channelId int, modelName string, durationSeco
 		common.SysError("同步 429 冷却到 Redis 失败: " + err.Error())
 		return
 	}
+	if channelRateLimitCooldownControlRevision() != revision {
+		return
+	}
 	channelRateLimitCooldowns.Lock()
 	current := channelRateLimitCooldowns.untilByRoute[key]
+	if current.revision != revision {
+		channelRateLimitCooldowns.Unlock()
+		return
+	}
 	if sharedUntil > current.until {
 		current.until = sharedUntil
 	}
 	current.shared = true
 	current.revision = revision
 	channelRateLimitCooldowns.untilByRoute[key] = current
+	publishChannelRateLimitCooldownSnapshotLocked()
 	channelRateLimitCooldowns.Unlock()
 }
 
@@ -165,14 +175,30 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	modelName string,
 	durationSeconds int,
 	expectedControlRevision string,
-) bool {
+) (accepted bool) {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	expectedControlRevision = strings.TrimSpace(expectedControlRevision)
 	if channelId <= 0 || modelName == "" || durationSeconds <= 0 {
 		return false
 	}
 	channelRateLimitCooldowns.Lock()
-	defer channelRateLimitCooldowns.Unlock()
+	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
+	previous, previousExists := channelRateLimitCooldowns.untilByRoute[key]
+	localChanged := false
+	defer func() {
+		if !accepted && localChanged {
+			if previousExists {
+				channelRateLimitCooldowns.untilByRoute[key] = previous
+			} else {
+				delete(channelRateLimitCooldowns.untilByRoute, key)
+			}
+			publishChannelRateLimitCooldownSnapshotLocked()
+		}
+		channelRateLimitCooldowns.Unlock()
+		if accepted {
+			ensureChannelRateLimitCooldownRedisSync()
+		}
+	}()
 	// Serialize the database revision check and local write with configuration cleanup.
 	currentRevision, err := model.GetChannelSmartScheduleControlRevision()
 	if err != nil {
@@ -184,7 +210,13 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	}
 	now := common.GetTimestamp()
 	until := now + int64(durationSeconds)
-	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
+	if current := channelRateLimitCooldowns.untilByRoute[key]; current.revision != expectedControlRevision || current.until < until {
+		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
+			until: until, revision: expectedControlRevision,
+		}
+		localChanged = true
+		publishChannelRateLimitCooldownSnapshotLocked()
+	}
 	shared := false
 	if common.RedisEnabled && common.RDB != nil {
 		sharedUntil, redisErr := common.RDB.Eval(
@@ -244,11 +276,17 @@ func StartChannelRateLimitCooldownIfControlRevision(
 		}
 	}
 
-	if current := channelRateLimitCooldowns.untilByRoute[key]; current.until < until {
+	current := channelRateLimitCooldowns.untilByRoute[key]
+	if current.revision != expectedControlRevision || current.until < until {
 		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
 			until: until, shared: shared, revision: expectedControlRevision,
 		}
+	} else if shared && until >= current.until {
+		current.shared = true
+		channelRateLimitCooldowns.untilByRoute[key] = current
 	}
+	publishChannelRateLimitCooldownSnapshotLocked()
+	accepted = true
 	return true
 }
 
@@ -276,6 +314,7 @@ func UpdateChannelRateLimitCooldownControlRevision(
 		return false, nil
 	}
 	channelRateLimitCooldowns.untilByRoute = make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry)
+	publishChannelRateLimitCooldownSnapshotLocked()
 	if !common.RedisEnabled || common.RDB == nil {
 		channelRateLimitCooldowns.Unlock()
 		return true, nil
@@ -331,13 +370,19 @@ func UpdateChannelRateLimitCooldownControlRevision(
 func ClearChannelRateLimitCooldowns() {
 	channelRateLimitCooldowns.Lock()
 	channelRateLimitCooldowns.untilByRoute = make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry)
+	publishChannelRateLimitCooldownSnapshotLocked()
 	channelRateLimitCooldowns.Unlock()
 	if common.RedisEnabled && common.RDB != nil {
 		if err := common.RDB.Del(
 			context.Background(), channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey,
 		).Err(); err != nil {
 			common.SysError("清理 Redis 429 冷却失败: " + err.Error())
+			return
 		}
+		channelRateLimitCooldowns.Lock()
+		channelRateLimitCooldowns.untilByRoute = make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry)
+		publishChannelRateLimitCooldownSnapshotLocked()
+		channelRateLimitCooldowns.Unlock()
 	}
 }
 
@@ -346,52 +391,14 @@ func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 	if channelId <= 0 || modelName == "" {
 		return 0
 	}
+	ensureChannelRateLimitCooldownRedisSync()
 	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
 	now := common.GetTimestamp()
 	controlRevision := channelRateLimitCooldownControlRevision()
-	if common.RedisEnabled && common.RDB != nil {
-		pipe := common.RDB.TxPipeline()
-		revisionCommand := pipe.Get(context.Background(), channelRateLimitCooldownRedisRevisionKey)
-		untilCommand := pipe.ZScore(
-			context.Background(), channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisMember(key),
-		)
-		_, err := pipe.Exec(context.Background())
-		observedRevision, revisionErr := revisionCommand.Result()
-		if errors.Is(revisionErr, redis.Nil) {
-			observedRevision = ""
-			revisionErr = nil
-		}
-		if (err == nil || errors.Is(err, redis.Nil)) && revisionErr == nil &&
-			observedRevision == controlRevision &&
-			(untilCommand.Err() == nil || errors.Is(untilCommand.Err(), redis.Nil)) {
-			until := int64(untilCommand.Val())
-			if until <= now {
-				until = 0
-			}
-			channelRateLimitCooldowns.Lock()
-			local := channelRateLimitCooldowns.untilByRoute[key]
-			if until > 0 {
-				channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
-					until: until, shared: true, revision: controlRevision,
-				}
-			} else if local.shared {
-				delete(channelRateLimitCooldowns.untilByRoute, key)
-			}
-			if local.revision == controlRevision && local.until > now && !local.shared && local.until > until {
-				until = local.until
-			}
-			channelRateLimitCooldowns.Unlock()
-			return until
-		}
-	}
-
-	channelRateLimitCooldowns.Lock()
-	entry := channelRateLimitCooldowns.untilByRoute[key]
+	entry := loadChannelRateLimitCooldownSnapshot().untilByRoute[key]
 	if entry.revision != controlRevision || entry.until <= now {
-		delete(channelRateLimitCooldowns.untilByRoute, key)
-		entry.until = 0
+		return 0
 	}
-	channelRateLimitCooldowns.Unlock()
 	return entry.until
 }
 
@@ -401,65 +408,14 @@ func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {
 		return nil
 	}
 
+	ensureChannelRateLimitCooldownRedisSync()
 	controlRevision := channelRateLimitCooldownControlRevision()
-	sharedUntilById := make(map[int]int64)
-	sharedLoaded := false
-	if common.RedisEnabled && common.RDB != nil {
-		pipe := common.RDB.TxPipeline()
-		revisionCommand := pipe.Get(context.Background(), channelRateLimitCooldownRedisRevisionKey)
-		pipe.ZRemRangeByScore(context.Background(), channelRateLimitCooldownRedisKey, "-inf", strconv.FormatInt(now, 10))
-		active := pipe.ZRangeByScoreWithScores(
-			context.Background(),
-			channelRateLimitCooldownRedisKey,
-			&redis.ZRangeBy{Min: "(" + strconv.FormatInt(now, 10), Max: "+inf"},
-		)
-		_, err := pipe.Exec(context.Background())
-		observedRevision, revisionErr := revisionCommand.Result()
-		if errors.Is(revisionErr, redis.Nil) {
-			observedRevision = ""
-			revisionErr = nil
+	snapshot := loadChannelRateLimitCooldownSnapshot()
+	channelIds := make([]int, 0)
+	for key, entry := range snapshot.untilByRoute {
+		if entry.revision == controlRevision && entry.until > now && key.modelName == modelName {
+			channelIds = append(channelIds, key.channelId)
 		}
-		if (err == nil || errors.Is(err, redis.Nil)) && revisionErr == nil &&
-			observedRevision == controlRevision {
-			sharedLoaded = true
-			for _, item := range active.Val() {
-				key, ok := parseChannelRateLimitCooldownRedisMember(item.Member)
-				if ok && key.modelName == modelName {
-					sharedUntilById[key.channelId] = int64(item.Score)
-				}
-			}
-		}
-	}
-
-	channelRateLimitCooldowns.Lock()
-	channelIdsById := make(map[int]struct{}, len(sharedUntilById))
-	for key, entry := range channelRateLimitCooldowns.untilByRoute {
-		if entry.revision != controlRevision || entry.until <= now {
-			delete(channelRateLimitCooldowns.untilByRoute, key)
-			continue
-		}
-		if key.modelName != modelName {
-			continue
-		}
-		if sharedLoaded && entry.shared {
-			if _, exists := sharedUntilById[key.channelId]; !exists {
-				delete(channelRateLimitCooldowns.untilByRoute, key)
-				continue
-			}
-		}
-		channelIdsById[key.channelId] = struct{}{}
-	}
-	for channelId, until := range sharedUntilById {
-		key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
-		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
-			until: until, shared: true, revision: controlRevision,
-		}
-		channelIdsById[channelId] = struct{}{}
-	}
-	channelRateLimitCooldowns.Unlock()
-	channelIds := make([]int, 0, len(channelIdsById))
-	for channelId := range channelIdsById {
-		channelIds = append(channelIds, channelId)
 	}
 	sort.Ints(channelIds)
 	return channelIds

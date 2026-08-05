@@ -31,7 +31,7 @@ import type {
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
   ChannelMonitorConsecutiveFailureLimitField,
-  ChannelMonitorCostRetentionField,
+  ChannelMonitorRetentionFields,
   ChannelMonitorUpstreamRequestTimeoutField,
 } from '../channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleFields } from '../channel-monitor-smart-schedule-fields'
@@ -40,11 +40,16 @@ import { ChannelMonitorSmartScheduleGroupPolicyFields } from '../channel-monitor
 
 function CostRetentionFieldFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
-    defaultValues: { costRetentionDays: 120 },
+    defaultValues: {
+      costRetentionDays: 120,
+      executionDetailRetentionDays: 14,
+      taskRetentionDays: 90,
+      ratioHistoryRetentionDays: 365,
+    },
   })
   return (
     <Form {...form}>
-      <ChannelMonitorCostRetentionField form={form} />
+      <ChannelMonitorRetentionFields form={form} />
     </Form>
   )
 }
@@ -130,8 +135,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               stabilityEnabled: false,
               jitterEnabled: true,
               jitterTolerancePercent: 5,
-              jitterAbsoluteToleranceSeconds: 10,
-              jitterBaselineMinutes: 60,
+              jitterSlowThresholdSeconds: 10,
               scoring: {
                 stabilityPercent: 50,
                 primaryTrafficPercent: 90,
@@ -154,6 +158,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               recoveryStabilityScore: 95,
               fastFailurePenaltyPercent: 40,
               fastFailureSeconds: 1,
+              fastFailureSameChannelRetryCount: 0,
               slowFailureSeconds: 10,
               cooldownMinutes: 30,
               sampleMode: props.sampleMode ?? 'traffic',
@@ -198,8 +203,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       stabilityEnabled: true,
       jitterEnabled: props.jitterEnabled ?? true,
       jitterTolerancePercent: 5,
-      jitterAbsoluteToleranceSeconds: 10,
-      jitterBaselineMinutes: 60,
+      jitterSlowThresholdSeconds: 10,
       scoring: {
         stabilityPercent: 50,
         primaryTrafficPercent: 90,
@@ -223,6 +227,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
+      fastFailureSameChannelRetryCount: 0,
       slowFailureSeconds: 10,
       cooldownMinutes: 30,
       sampleMode: props.sampleMode,
@@ -265,12 +270,34 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('单次倍率或余额更新超过该时间会终止'))
   })
 
-  test('shows persisted cost retention days with bounded numeric input', () => {
+  test('shows persisted retention settings with bounded numeric inputs', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
 
-    assert.ok(markup.includes('成本数据保留天数'))
-    assert.match(markup, /type="number"[^>]*min="1"[^>]*max="3650"/)
-    assert.match(markup, /value="120"/)
+    assert.ok(markup.includes('成本与指标保留天数'))
+    assert.ok(markup.includes('调度执行明细保留天数'))
+    assert.ok(markup.includes('监控任务保留天数'))
+    assert.ok(markup.includes('倍率历史保留天数'))
+    for (const [name, value] of [
+      ['costRetentionDays', '120'],
+      ['executionDetailRetentionDays', '14'],
+      ['taskRetentionDays', '90'],
+      ['ratioHistoryRetentionDays', '365'],
+    ]) {
+      const inputElement = markup.match(
+        new RegExp(
+          `<input(?=[^>]*name="${name}")(?=[^>]*min="1")(?=[^>]*max="3650")(?=[^>]*value="${value}")[^>]*>`
+        )
+      )?.[0]
+      assert.ok(inputElement)
+      const inputId = inputElement.match(/\sid="([^"]+)"/)?.[1]
+      assert.ok(inputId)
+      assert.ok(markup.includes(`for="${inputId}"`))
+      assert.ok(
+        inputElement.includes(`aria-describedby="${inputId}-description"`)
+      )
+    }
+    assert.ok(markup.includes('不能短于调度执行明细'))
+    assert.ok(markup.includes('各类始终保留最近 100 条'))
     assert.ok(markup.includes('删除后不可恢复'))
   })
 
@@ -392,12 +419,12 @@ describe('channel monitor settings dialog', () => {
       '最少样本',
       '快速失败惩罚',
       '快速失败界限',
+      '同渠道快速重试',
       '慢失败界限',
       '降级时长',
       '成功延迟抖动',
       '允许抖动',
-      '绝对容差',
-      '基线学习周期',
+      '慢成功阈值',
       '成本倍率',
       '首字时间',
       'TPS',
@@ -405,6 +432,10 @@ describe('channel monitor settings dialog', () => {
     ]) {
       assert.ok(trafficPolicyMarkup.includes(`aria-label="查看“${label}”说明"`))
     }
+    assert.match(
+      trafficPolicyMarkup,
+      /<input(?=[^>]*name="fastFailureSameChannelRetryCount")(?=[^>]*min="0")(?=[^>]*max="10")(?=[^>]*value="0")[^>]*>/
+    )
     assert.ok(
       trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')
     )
@@ -592,14 +623,10 @@ describe('channel monitor settings dialog', () => {
     assert.equal(markup.includes('判定倍率'), false)
     assert.match(
       markup,
-      /<input(?=[^>]*name="jitterAbsoluteToleranceSeconds")(?=[^>]*min="0")(?=[^>]*max="60")(?=[^>]*value="10")[^>]*>/
+      /<input(?=[^>]*name="jitterSlowThresholdSeconds")(?=[^>]*min="0")(?=[^>]*max="60")(?=[^>]*value="10")[^>]*>/
     )
-    assert.match(
-      markup,
-      /<input(?=[^>]*name="jitterBaselineMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="60")[^>]*>/
-    )
-    assert.ok(markup.includes('允许高于基线的固定延迟'))
-    assert.ok(markup.includes('慢请求阈值为“基线 + 绝对容差”'))
+    assert.ok(markup.includes('首字时间达到该值即记为慢成功'))
+    assert.equal(markup.includes('基线学习周期'), false)
   })
 
   test('hides successful latency jitter tuning while disabled', () => {
@@ -613,10 +640,6 @@ describe('channel monitor settings dialog', () => {
 
     assert.ok(markup.includes('成功延迟抖动'))
     assert.equal(markup.includes('name="jitterTolerancePercent"'), false)
-    assert.equal(
-      markup.includes('name="jitterAbsoluteToleranceSeconds"'),
-      false
-    )
-    assert.equal(markup.includes('name="jitterBaselineMinutes"'), false)
+    assert.equal(markup.includes('name="jitterSlowThresholdSeconds"'), false)
   })
 })

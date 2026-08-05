@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
-const channelMonitorTodaySuccessCacheTTL = time.Minute
+const channelMonitorTodaySuccessCacheTTL = 10 * time.Second
 
 type ChannelMonitorTodaySuccessMetrics struct {
 	Summary         ChannelMonitorSuccessSummary          `json:"summary"`
@@ -32,8 +33,9 @@ type ChannelMonitorDailySuccessMetric struct {
 }
 
 type channelMonitorTodaySuccessCacheKey struct {
-	db       *gorm.DB
-	dayStart int64
+	db         *gorm.DB
+	generation uint64
+	dayStart   int64
 }
 
 type channelMonitorTodaySuccessCacheEntry struct {
@@ -43,6 +45,7 @@ type channelMonitorTodaySuccessCacheEntry struct {
 
 type channelMonitorDailySuccessCacheKey struct {
 	db             *gorm.DB
+	generation     uint64
 	startTimestamp int64
 	endTimestamp   int64
 }
@@ -69,6 +72,7 @@ var channelMonitorDailySuccessCache = struct {
 }
 
 var channelMonitorDailySuccessSingleflight singleflight.Group
+var channelMonitorTodaySuccessCacheGeneration atomic.Uint64
 
 func getChannelMonitorTodaySuccessMetrics(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
 	return getChannelMonitorMinuteTodaySuccessMetrics(ctx, dayStart, dayStart+channelMonitorCostDaySeconds)
@@ -112,6 +116,10 @@ func cachedChannelMonitorTodaySuccessMetrics(key channelMonitorTodaySuccessCache
 
 func storeChannelMonitorTodaySuccessCacheEntry(key channelMonitorTodaySuccessCacheKey, now time.Time, entry channelMonitorTodaySuccessCacheEntry) {
 	channelMonitorTodaySuccessCache.Lock()
+	if key.generation != channelMonitorTodaySuccessCacheGeneration.Load() {
+		channelMonitorTodaySuccessCache.Unlock()
+		return
+	}
 	for cachedKey, cachedEntry := range channelMonitorTodaySuccessCache.items {
 		if !now.Before(cachedEntry.expiresAt) {
 			delete(channelMonitorTodaySuccessCache.items, cachedKey)
@@ -143,6 +151,10 @@ func cachedChannelMonitorDailySuccessMetrics(key channelMonitorDailySuccessCache
 
 func storeChannelMonitorDailySuccessMetrics(key channelMonitorDailySuccessCacheKey, now time.Time, metrics []ChannelMonitorDailySuccessMetric) {
 	channelMonitorDailySuccessCache.Lock()
+	if key.generation != channelMonitorTodaySuccessCacheGeneration.Load() {
+		channelMonitorDailySuccessCache.Unlock()
+		return
+	}
 	for cachedKey, entry := range channelMonitorDailySuccessCache.items {
 		if !now.Before(entry.expiresAt) {
 			delete(channelMonitorDailySuccessCache.items, cachedKey)
@@ -156,33 +168,44 @@ func storeChannelMonitorDailySuccessMetrics(key channelMonitorDailySuccessCacheK
 }
 
 func GetChannelMonitorDailySuccessMetricsCached(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorDailySuccessMetric, error) {
-	key := channelMonitorDailySuccessCacheKey{
-		db:             DB,
-		startTimestamp: startTimestamp,
-		endTimestamp:   endTimestamp,
-	}
-	now := time.Now()
-	if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, now); exists {
-		return cloneChannelMonitorDailySuccessMetrics(metrics), nil
-	}
+	for {
+		key := channelMonitorDailySuccessCacheKey{
+			db:             DB,
+			generation:     channelMonitorTodaySuccessCacheGeneration.Load(),
+			startTimestamp: startTimestamp,
+			endTimestamp:   endTimestamp,
+		}
+		now := time.Now()
+		if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, now); exists {
+			if key.generation == channelMonitorTodaySuccessCacheGeneration.Load() {
+				return cloneChannelMonitorDailySuccessMetrics(metrics), nil
+			}
+			continue
+		}
 
-	singleflightKey := fmt.Sprintf("daily-success:%p:%d:%d", key.db, startTimestamp, endTimestamp)
-	result, err, _ := channelMonitorDailySuccessSingleflight.Do(singleflightKey, func() (any, error) {
-		loadTime := time.Now()
-		if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, loadTime); exists {
+		singleflightKey := fmt.Sprintf(
+			"daily-success:%p:%d:%d:%d", key.db, key.generation, startTimestamp, endTimestamp,
+		)
+		result, err, _ := channelMonitorDailySuccessSingleflight.Do(singleflightKey, func() (any, error) {
+			loadTime := time.Now()
+			if metrics, exists := cachedChannelMonitorDailySuccessMetrics(key, loadTime); exists {
+				return metrics, nil
+			}
+			metrics, queryErr := getChannelMonitorDailySuccessMetrics(ctx, startTimestamp, endTimestamp)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			storeChannelMonitorDailySuccessMetrics(key, loadTime, metrics)
 			return metrics, nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		metrics, queryErr := getChannelMonitorDailySuccessMetrics(ctx, startTimestamp, endTimestamp)
-		if queryErr != nil {
-			return nil, queryErr
+		if key.generation != channelMonitorTodaySuccessCacheGeneration.Load() {
+			continue
 		}
-		storeChannelMonitorDailySuccessMetrics(key, loadTime, metrics)
-		return metrics, nil
-	})
-	if err != nil {
-		return nil, err
+		return cloneChannelMonitorDailySuccessMetrics(result.([]ChannelMonitorDailySuccessMetric)), nil
 	}
-	return cloneChannelMonitorDailySuccessMetrics(result.([]ChannelMonitorDailySuccessMetric)), nil
 }
 
 func GetChannelMonitorSuccessMetricsForDayCached(ctx context.Context, dayStart int64) (ChannelMonitorTodaySuccessMetrics, error) {
@@ -196,37 +219,47 @@ func GetChannelMonitorTodaySuccessMetricsCached(ctx context.Context, generatedAt
 }
 
 func getChannelMonitorSuccessMetricsForDayCached(ctx context.Context, dayStart int64, generatedAt int64) (ChannelMonitorTodaySuccessMetrics, error) {
-	key := channelMonitorTodaySuccessCacheKey{
-		db:       DB,
-		dayStart: dayStart,
-	}
-	now := time.Now()
-	if metrics, exists := cachedChannelMonitorTodaySuccessMetrics(key, now); exists {
-		return cloneChannelMonitorTodaySuccessMetrics(metrics), nil
-	}
+	for {
+		key := channelMonitorTodaySuccessCacheKey{
+			db:         DB,
+			generation: channelMonitorTodaySuccessCacheGeneration.Load(),
+			dayStart:   dayStart,
+		}
+		now := time.Now()
+		if metrics, exists := cachedChannelMonitorTodaySuccessMetrics(key, now); exists {
+			if key.generation == channelMonitorTodaySuccessCacheGeneration.Load() {
+				return cloneChannelMonitorTodaySuccessMetrics(metrics), nil
+			}
+			continue
+		}
 
-	singleflightKey := fmt.Sprintf("today-success:%p:%d", key.db, key.dayStart)
-	result, err, _ := channelMonitorTodaySuccessSingleflight.Do(singleflightKey, func() (any, error) {
-		loadTime := time.Now()
-		if metrics, exists := cachedChannelMonitorTodaySuccessMetrics(key, loadTime); exists {
+		singleflightKey := fmt.Sprintf("today-success:%p:%d:%d", key.db, key.generation, key.dayStart)
+		result, err, _ := channelMonitorTodaySuccessSingleflight.Do(singleflightKey, func() (any, error) {
+			loadTime := time.Now()
+			if metrics, exists := cachedChannelMonitorTodaySuccessMetrics(key, loadTime); exists {
+				return metrics, nil
+			}
+			metrics, queryErr := getChannelMonitorMinuteTodaySuccessMetrics(ctx, key.dayStart, generatedAt)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			entry := channelMonitorTodaySuccessCacheEntry{metrics: metrics}
+			storeChannelMonitorTodaySuccessCacheEntry(key, loadTime, entry)
 			return metrics, nil
+		})
+		if err != nil {
+			return ChannelMonitorTodaySuccessMetrics{}, err
 		}
-		metrics, queryErr := getChannelMonitorMinuteTodaySuccessMetrics(ctx, key.dayStart, generatedAt)
-		if queryErr != nil {
-			return nil, queryErr
+		if key.generation != channelMonitorTodaySuccessCacheGeneration.Load() {
+			continue
 		}
-		entry := channelMonitorTodaySuccessCacheEntry{metrics: metrics}
-		storeChannelMonitorTodaySuccessCacheEntry(key, loadTime, entry)
-		return metrics, nil
-	})
-	if err != nil {
-		return ChannelMonitorTodaySuccessMetrics{}, err
+		return cloneChannelMonitorTodaySuccessMetrics(result.(ChannelMonitorTodaySuccessMetrics)), nil
 	}
-	return cloneChannelMonitorTodaySuccessMetrics(result.(ChannelMonitorTodaySuccessMetrics)), nil
 }
 
 func resetChannelMonitorTodaySuccessCache() {
 	channelMonitorTodaySuccessCache.Lock()
+	channelMonitorTodaySuccessCacheGeneration.Add(1)
 	channelMonitorTodaySuccessCache.items = make(map[channelMonitorTodaySuccessCacheKey]channelMonitorTodaySuccessCacheEntry)
 	channelMonitorTodaySuccessCache.Unlock()
 	channelMonitorDailySuccessCache.Lock()

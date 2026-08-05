@@ -79,6 +79,9 @@ import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -142,18 +145,27 @@ type ChannelMonitorSettingsFormProps = {
 const EMPTY_OPTIONS: string[] = []
 const EMPTY_MODEL_OPTIONS_BY_GROUP: ReadonlyMap<string, string[]> = new Map()
 
-export function ChannelMonitorCostRetentionField(props: {
+type ChannelMonitorRetentionFieldName =
+  | 'costRetentionDays'
+  | 'executionDetailRetentionDays'
+  | 'taskRetentionDays'
+  | 'ratioHistoryRetentionDays'
+
+function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  name: ChannelMonitorRetentionFieldName
+  label: string
+  description: string
 }) {
   return (
     <FormField
       control={props.form.control}
-      name='costRetentionDays'
+      name={props.name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>成本数据保留天数</FormLabel>
-          <FormControl>
-            <InputGroup>
+          <FormLabel>{props.label}</FormLabel>
+          <InputGroup>
+            <FormControl>
               <InputGroupInput
                 type='number'
                 min={MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS}
@@ -165,20 +177,67 @@ export function ChannelMonitorCostRetentionField(props: {
                 onChange={field.onChange}
                 name={field.name}
                 ref={field.ref}
-                aria-invalid={Boolean(
-                  props.form.formState.errors.costRetentionDays
-                )}
+                aria-invalid={Boolean(props.form.formState.errors[props.name])}
               />
-              <InputGroupAddon align='inline-end'>天</InputGroupAddon>
-            </InputGroup>
-          </FormControl>
-          <FormDescription>
-            每天按北京时间清理超出范围的渠道及 API Key 成本数据；删除后不可恢复
-          </FormDescription>
+            </FormControl>
+            <InputGroupAddon align='inline-end'>天</InputGroupAddon>
+          </InputGroup>
+          <FormDescription>{props.description}</FormDescription>
           <FormMessage />
         </FormItem>
       )}
     />
+  )
+}
+
+export function ChannelMonitorCostRetentionField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <ChannelMonitorRetentionDayField
+      form={props.form}
+      name='costRetentionDays'
+      label='成本与指标保留天数'
+      description='保留分钟指标、延迟分桶及渠道和 API Key 日成本'
+    />
+  )
+}
+
+export function ChannelMonitorRetentionFields(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <section className='space-y-4' aria-labelledby='channel-monitor-retention'>
+      <div className='space-y-1'>
+        <h3 id='channel-monitor-retention' className='text-sm font-medium'>
+          数据保留
+        </h3>
+        <p className='text-muted-foreground text-sm'>
+          每天按北京时间分批清理到期数据；删除后不可恢复
+        </p>
+      </div>
+      <div className='grid gap-4 sm:grid-cols-2'>
+        <ChannelMonitorCostRetentionField form={props.form} />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='executionDetailRetentionDays'
+          label='调度执行明细保留天数'
+          description='保留每次自动调度的渠道评分、采样与决策明细'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='taskRetentionDays'
+          label='监控任务保留天数'
+          description='不能短于调度执行明细；仅清理已结束任务，各类始终保留最近 100 条'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='ratioHistoryRetentionDays'
+          label='倍率历史保留天数'
+          description='保留渠道成本倍率的历史变更记录'
+        />
+      </div>
+    </section>
   )
 }
 
@@ -312,6 +371,15 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       costRetentionDays:
         props.settings.cost_retention_days ??
         DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+      executionDetailRetentionDays:
+        props.settings.execution_detail_retention_days ??
+        DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+      taskRetentionDays:
+        props.settings.task_retention_days ??
+        DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
+      ratioHistoryRetentionDays:
+        props.settings.ratio_history_retention_days ??
+        DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
@@ -656,7 +724,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                   )}
                 />
 
-                <ChannelMonitorCostRetentionField form={form} />
+                <ChannelMonitorRetentionFields form={form} />
 
                 <ChannelMonitorEmailNotificationFields form={form} />
               </TabsContent>

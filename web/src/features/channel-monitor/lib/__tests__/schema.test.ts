@@ -55,13 +55,13 @@ describe('smart schedule policy schema', () => {
         stabilityPercent: '',
       },
       jitterTolerancePercent: '',
-      jitterAbsoluteToleranceSeconds: '',
-      jitterBaselineMinutes: '',
+      jitterSlowThresholdSeconds: '',
       minSamples: '',
       degradeStabilityScore: '',
       recoveryStabilityScore: '',
       fastFailurePenaltyPercent: '',
       fastFailureSeconds: '',
+      fastFailureSameChannelRetryCount: '',
       slowFailureSeconds: '',
       cooldownMinutes: '',
       explorationTrafficPercent: '',
@@ -88,7 +88,8 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
       { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
-      { ...basePolicy, jitterBaselineMinutes: '' },
+      { ...basePolicy, fastFailureSameChannelRetryCount: '' },
+      { ...basePolicy, jitterSlowThresholdSeconds: '' },
     ]
 
     for (const policy of activeCases) {
@@ -132,6 +133,9 @@ describe('channel monitor settings schema', () => {
       autoEnableOnCostRatioRecovery: true,
       autoEnableOnBalanceRecovery: true,
       costRetentionDays: 120,
+      executionDetailRetentionDays: 14,
+      taskRetentionDays: 90,
+      ratioHistoryRetentionDays: 365,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -159,6 +163,9 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.upstreamRequestTimeoutSeconds, 30)
     assert.equal(settings.autoUpdateConsecutiveFailureLimit, 2)
     assert.equal(settings.costRetentionDays, 120)
+    assert.equal(settings.executionDetailRetentionDays, 14)
+    assert.equal(settings.taskRetentionDays, 90)
+    assert.equal(settings.ratioHistoryRetentionDays, 365)
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(settings.probeResponseMatchInput, 'health check')
     assert.equal(settings.probeResponseText, 'healthy')
@@ -184,6 +191,9 @@ describe('channel monitor settings schema', () => {
       autoEnableOnCostRatioRecovery: false,
       autoEnableOnBalanceRecovery: false,
       costRetentionDays: 120,
+      executionDetailRetentionDays: 14,
+      taskRetentionDays: 90,
+      ratioHistoryRetentionDays: 365,
       emailNotificationEnabled: true,
       notificationEmail: 'alerts@example.com',
       emailNotificationTypes: [],
@@ -225,6 +235,9 @@ describe('channel monitor settings schema', () => {
       autoEnableOnCostRatioRecovery: false,
       autoEnableOnBalanceRecovery: false,
       costRetentionDays: 120,
+      executionDetailRetentionDays: 14,
+      taskRetentionDays: 90,
+      ratioHistoryRetentionDays: 365,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -316,6 +329,54 @@ describe('channel monitor settings schema', () => {
       assert.equal(
         schema.parse({ ...baseSettings, costRetentionDays }).costRetentionDays,
         costRetentionDays
+      )
+    }
+
+    for (const field of [
+      'executionDetailRetentionDays',
+      'taskRetentionDays',
+      'ratioHistoryRetentionDays',
+    ] as const) {
+      for (const retentionDays of [
+        MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+        MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+      ]) {
+        const candidate = { ...baseSettings, [field]: retentionDays }
+        if (field === 'executionDetailRetentionDays') {
+          candidate.taskRetentionDays = Math.max(
+            candidate.taskRetentionDays,
+            retentionDays
+          )
+        } else if (field === 'taskRetentionDays') {
+          candidate.executionDetailRetentionDays = Math.min(
+            candidate.executionDetailRetentionDays,
+            retentionDays
+          )
+        }
+        assert.equal(schema.parse(candidate)[field], retentionDays)
+      }
+      for (const retentionDays of [
+        MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS - 1,
+        1.5,
+        MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS + 1,
+      ]) {
+        assert.equal(
+          schema.safeParse({ ...baseSettings, [field]: retentionDays }).success,
+          false
+        )
+      }
+    }
+    const invalidRetentionRelationship = schema.safeParse({
+      ...baseSettings,
+      executionDetailRetentionDays: 91,
+      taskRetentionDays: 90,
+    })
+    assert.equal(invalidRetentionRelationship.success, false)
+    if (!invalidRetentionRelationship.success) {
+      assert.ok(
+        invalidRetentionRelationship.error.issues.some(
+          (issue) => issue.path.join('.') === 'taskRetentionDays'
+        )
       )
     }
     for (const costRetentionDays of [
@@ -435,8 +496,7 @@ describe('channel monitor settings schema', () => {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterAbsoluteToleranceSeconds: 10,
-      jitterBaselineMinutes: 60,
+      jitterSlowThresholdSeconds: 10,
       scoring,
       applyMode: 'priority_weight' as const,
       models: [],
@@ -445,6 +505,7 @@ describe('channel monitor settings schema', () => {
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
+      fastFailureSameChannelRetryCount: 2,
       slowFailureSeconds: 10,
       burstFailureWindowSeconds: 30,
       consecutiveFailureThreshold: 2,
@@ -470,6 +531,9 @@ describe('channel monitor settings schema', () => {
       autoEnableOnCostRatioRecovery: false,
       autoEnableOnBalanceRecovery: false,
       costRetentionDays: 120,
+      executionDetailRetentionDays: 14,
+      taskRetentionDays: 90,
+      ratioHistoryRetentionDays: 365,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -516,45 +580,23 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
-    for (const jitterAbsoluteToleranceSeconds of [0, 1.5, 60]) {
+    for (const jitterSlowThresholdSeconds of [0, 1.5, 60]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterAbsoluteToleranceSeconds },
+            { ...groupPolicy, jitterSlowThresholdSeconds },
           ],
         }).success,
         true
       )
     }
-    for (const jitterAbsoluteToleranceSeconds of [-1, 61]) {
+    for (const jitterSlowThresholdSeconds of [-1, 61]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterAbsoluteToleranceSeconds },
-          ],
-        }).success,
-        false
-      )
-    }
-    for (const jitterBaselineMinutes of [1, 43_200]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterBaselineMinutes },
-          ],
-        }).success,
-        true
-      )
-    }
-    for (const jitterBaselineMinutes of [0, 1.5, 43_201]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, jitterBaselineMinutes },
+            { ...groupPolicy, jitterSlowThresholdSeconds },
           ],
         }).success,
         false
@@ -615,6 +657,28 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
+    for (const fastFailureSameChannelRetryCount of [0, 10]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, fastFailureSameChannelRetryCount },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const fastFailureSameChannelRetryCount of [-1, 1.5, 11]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, fastFailureSameChannelRetryCount },
+          ],
+        }).success,
+        false
+      )
+    }
     for (const burstFailureWindowSeconds of [1, 300]) {
       assert.equal(
         schema.safeParse({
@@ -646,9 +710,7 @@ describe('channel monitor settings schema', () => {
         assert.equal(
           schema.safeParse({
             ...baseSettings,
-            smartScheduleGroupPolicies: [
-              { ...groupPolicy, [field]: value },
-            ],
+            smartScheduleGroupPolicies: [{ ...groupPolicy, [field]: value }],
           }).success,
           true
         )
@@ -657,9 +719,7 @@ describe('channel monitor settings schema', () => {
         assert.equal(
           schema.safeParse({
             ...baseSettings,
-            smartScheduleGroupPolicies: [
-              { ...groupPolicy, [field]: value },
-            ],
+            smartScheduleGroupPolicies: [{ ...groupPolicy, [field]: value }],
           }).success,
           false
         )

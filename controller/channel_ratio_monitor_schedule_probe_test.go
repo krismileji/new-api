@@ -178,10 +178,17 @@ func TestRunChannelSmartScheduleUsesSharedScheduledSamplesInFormalScoring(t *tes
 		require.NoError(t, err)
 	}
 	minuteStart := now - now%60 - 60
-	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
-		MinuteStart: minuteStart, ChannelId: 1402, ModelKey: "model-a", GroupKey: "vip",
-		APIKeyKey: "all", ModelName: "model-a", GroupName: "vip",
-		SampleCount: 2, FirstTokenSampleCount: 2, FirstTokenTotalMs: 200, LastUsedTime: minuteStart,
+	require.NoError(t, db.Create(&[]model.Log{
+		{
+			ChannelId: 1402, ModelName: "model-a", Group: "vip",
+			CreatedAt: minuteStart + 1, Type: model.LogTypeConsume, IsStream: true,
+			CompletionTokens: 10, UseTime: 1, Other: `{"frt":100}`,
+		},
+		{
+			ChannelId: 1402, ModelName: "model-a", Group: "vip",
+			CreatedAt: minuteStart + 2, Type: model.LogTypeConsume, IsStream: true,
+			CompletionTokens: 10, UseTime: 1, Other: `{"frt":100}`,
+		},
 	}).Error)
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)

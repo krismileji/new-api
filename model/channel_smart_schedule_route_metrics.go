@@ -39,7 +39,6 @@ type ChannelMonitorRouteStabilityMetric struct {
 	AverageRetryFailureDurationMs float64                               `json:"average_retry_failure_duration_ms"`
 	RetryFailureDurationBuckets   []ChannelMonitorFailureDurationBucket `json:"retry_failure_duration_buckets"`
 	JitterAvailable               bool                                  `json:"jitter_available"`
-	FirstTokenBaselineMs          *float64                              `json:"first_token_baseline_ms"`
 	FirstTokenP50Ms               *float64                              `json:"first_token_p50_ms"`
 	FirstTokenP95Ms               *float64                              `json:"first_token_p95_ms"`
 	JitterThresholdMs             *float64                              `json:"jitter_threshold_ms"`

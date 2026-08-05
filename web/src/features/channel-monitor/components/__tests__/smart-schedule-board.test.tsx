@@ -241,7 +241,6 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
         average_retry_failure_duration_ms: 500,
         retry_failure_duration_buckets: [],
         jitter_available: true,
-        first_token_baseline_ms: 350,
         first_token_p50_ms: 380,
         first_token_p95_ms: 760,
         jitter_threshold_ms: 11_750,
@@ -287,8 +286,7 @@ function renderBoard(
               stability_enabled: true,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_absolute_tolerance_seconds: 10,
-              jitter_baseline_minutes: 60,
+              jitter_slow_threshold_seconds: 10,
               scoring: {
                 stability_percent: 50,
                 primary_traffic_percent: 90,
@@ -330,8 +328,7 @@ function renderBoard(
               stability_enabled: false,
               jitter_enabled: true,
               jitter_tolerance_percent: 5,
-              jitter_absolute_tolerance_seconds: 10,
-              jitter_baseline_minutes: 60,
+              jitter_slow_threshold_seconds: 10,
               scoring: {
                 stability_percent: 50,
                 primary_traffic_percent: 90,
@@ -550,8 +547,7 @@ describe('channel monitor smart schedule board', () => {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_absolute_tolerance_seconds: 10,
-      jitter_baseline_minutes: 60,
+      jitter_slow_threshold_seconds: 10,
       scoring: {
         stability_percent: 50,
         primary_traffic_percent: 90,

@@ -5,10 +5,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,7 +63,8 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		days = parsedDays
 	}
 
-	generatedAt := common.GetTimestamp()
+	requestedAt := time.Now()
+	generatedAt := requestedAt.Unix()
 	todayStart := model.ChannelDailyCostDayStart(generatedAt)
 	detailDayStart := todayStart
 	if rawDetailDate := c.Query("date"); rawDetailDate != "" {
@@ -89,6 +92,10 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	}
 	if !overview.SuccessMetricsAvailable && !overview.CacheWriteMetricsAvailable {
 		common.ApiSuccess(c, overview)
+		return
+	}
+	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 

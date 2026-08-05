@@ -31,6 +31,9 @@ const formValues = {
   autoEnableOnCostRatioRecovery: true,
   autoEnableOnBalanceRecovery: false,
   costRetentionDays: 90,
+  executionDetailRetentionDays: 14,
+  taskRetentionDays: 90,
+  ratioHistoryRetentionDays: 365,
   emailNotificationEnabled: true,
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
@@ -52,8 +55,7 @@ const formValues = {
       stabilityEnabled: true,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
-      jitterAbsoluteToleranceSeconds: 10,
-      jitterBaselineMinutes: 60,
+      jitterSlowThresholdSeconds: 10,
       scoring: {
         stabilityPercent: 50,
         primaryTrafficPercent: 90,
@@ -76,6 +78,7 @@ const formValues = {
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
+      fastFailureSameChannelRetryCount: 2,
       slowFailureSeconds: 10,
       burstFailureWindowSeconds: 45,
       consecutiveFailureThreshold: 3,
@@ -177,17 +180,20 @@ describe('channel monitor settings submit payload', () => {
       1
     )
     assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.fast_failure_same_channel_retry_count,
+      2
+    )
+    assert.equal(
       payload.smart_schedule_group_policies?.[0]?.slow_failure_seconds,
       10
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]
-        ?.burst_failure_window_seconds,
+      payload.smart_schedule_group_policies?.[0]?.burst_failure_window_seconds,
       45
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]
-        ?.consecutive_failure_threshold,
+      payload.smart_schedule_group_policies?.[0]?.consecutive_failure_threshold,
       3
     )
     assert.equal(
@@ -214,13 +220,20 @@ describe('channel monitor settings submit payload', () => {
       false
     )
     assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.jitter_slow_threshold_seconds,
+      10
+    )
+    assert.equal(
       payload.smart_schedule_group_policies?.[0]
         ?.jitter_absolute_tolerance_seconds,
       10
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.jitter_baseline_minutes,
-      60
+      Object.hasOwn(
+        payload.smart_schedule_group_policies?.[0] ?? {},
+        'jitter_baseline_minutes'
+      ),
+      false
     )
     assert.equal('smart_schedule_groups' in payload, false)
     assert.equal('smart_schedule_strategy' in payload, false)
@@ -245,6 +258,7 @@ describe('channel monitor settings submit payload', () => {
       'cost_retention_days',
       'email_notification_enabled',
       'email_notification_types',
+      'execution_detail_retention_days',
       'notification_email',
       'probe_response_cache_write_tokens',
       'probe_response_cached_tokens',
@@ -255,9 +269,14 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_min_delay_ms',
       'probe_response_output_tokens',
       'probe_response_text',
+      'ratio_history_retention_days',
+      'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
+    assert.equal(payload.execution_detail_retention_days, 14)
+    assert.equal(payload.task_retention_days, 90)
+    assert.equal(payload.ratio_history_retention_days, 365)
     assert.deepEqual(payload.email_notification_types, [
       'balance_warning',
       'task_failed',

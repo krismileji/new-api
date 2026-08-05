@@ -107,8 +107,7 @@ const settings = {
       stability_enabled: true,
       jitter_enabled: true,
       jitter_tolerance_percent: 5,
-      jitter_absolute_tolerance_seconds: 10,
-      jitter_baseline_minutes: 60,
+      jitter_slow_threshold_seconds: 10,
       scoring: {
         stability_percent: 50,
         primary_traffic_percent: 90,
@@ -131,6 +130,7 @@ const settings = {
       recovery_stability_score: 95,
       fast_failure_penalty_percent: 40,
       fast_failure_seconds: 1,
+      fast_failure_same_channel_retry_count: 2,
       slow_failure_seconds: 10,
       cooldown_minutes: 30,
       sample_mode: 'traffic',
@@ -202,6 +202,15 @@ const generalHasSchedule = generalTitle.includes('智能调度')
 const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
+const legacyRetentionDefaultsApplied = [
+  ['executionDetailRetentionDays', '14'],
+  ['taskRetentionDays', '90'],
+  ['ratioHistoryRetentionDays', '365'],
+].every(
+  ([name, value]) =>
+    generalDialog.querySelector<HTMLInputElement>(`input[name="${name}"]`)
+      ?.value === value
+)
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
 ]
@@ -300,12 +309,12 @@ const policyDialogHasCompletePolicyControls = [
   '最少样本',
   '快速失败惩罚',
   '快速失败界限',
+  '同渠道快速重试',
   '慢失败界限',
   '降级时长',
   '成功延迟抖动',
   '允许抖动',
-  '绝对容差',
-  '基线学习周期',
+  '慢成功阈值',
   '智能调度指标占比',
   '主渠道切换分差',
 ].every((label) => policyDialogText.includes(label))
@@ -316,13 +325,14 @@ const fastFailureInput = policyDialog.querySelector(
   'input[name="fastFailureSeconds"]'
 )
 const stabilityFailureGrid = fastFailureInput?.closest(
-  '[class*="lg:grid-cols-4"]'
+  '[class*="lg:grid-cols-5"]'
 )
 const policyDialogStabilityInputsAligned =
   stabilityFailureGrid?.classList.contains('items-start') === true &&
   [
     'fastFailurePenaltyPercent',
     'fastFailureSeconds',
+    'fastFailureSameChannelRetryCount',
     'slowFailureSeconds',
     'cooldownMinutes',
   ].every((name) => stabilityFailureGrid.querySelector(`input[name="${name}"]`))
@@ -415,6 +425,7 @@ process.stdout.write(
     generalHasSchedule,
     generalTitle,
     generalUsesContentSizedViewport,
+    legacyRetentionDefaultsApplied,
     notificationTypeCanBeUnchecked,
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,

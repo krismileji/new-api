@@ -60,7 +60,6 @@ type channelSmartSchedulePerformance struct {
 	StabilityRetryFailureDurationTotalMs float64
 	StabilityFailureDurationBuckets      []model.ChannelMonitorFailureDurationBucket
 	JitterAvailable                      bool
-	JitterBaselineMs                     *float64
 	JitterThresholdMs                    *float64
 	JitterSampleCount                    int64
 	JitterSlowCount                      int64
@@ -360,6 +359,9 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	}
 	if !settings.SmartScheduleEnabled {
 		return result, fmt.Errorf("智能调度已禁用")
+	}
+	if err := service.EnsureChannelMonitorAggregationFresh(ctx, time.Now()); err != nil {
+		return result, err
 	}
 	result, err := runChannelSmartScheduleByRouteOnce(ctx, reportProgress, forceReset, settings, result)
 	result.finalizeAdjustments()

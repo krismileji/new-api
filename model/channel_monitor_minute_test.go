@@ -57,7 +57,11 @@ func useChannelMonitorMinuteTestDB(t *testing.T, db *gorm.DB) {
 	originalDatabaseType := common.MainDatabaseType()
 	DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
-	require.NoError(t, db.AutoMigrate(&ChannelMonitorMinuteMetric{}, &ChannelMonitorMinuteDurationBucket{}))
+	require.NoError(t, db.AutoMigrate(
+		&ChannelMonitorMinuteMetric{},
+		&ChannelMonitorMinuteDurationBucket{},
+		&ChannelMonitorAggregationState{},
+	))
 	t.Cleanup(func() {
 		DB = originalDB
 		common.SetMainDatabaseType(originalDatabaseType)
@@ -88,6 +92,68 @@ func setupChannelMonitorMinuteAggregationTestDB(t *testing.T) *gorm.DB {
 		require.NoError(t, sqlDB.Close())
 	})
 	return db
+}
+
+func TestAggregateChannelMonitorMinuteRangeWithResultReportsWork(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	firstTokenMs := 250.0
+	consumeOther, err := common.Marshal(channelMonitorMinuteLogOther{FirstResponseTime: &firstTokenMs})
+	require.NoError(t, err)
+	probeOther, err := common.Marshal(channelMonitorMinuteLogOther{SmartScheduleProbe: true})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 1, TokenName: "key-a",
+			CreatedAt: 61, Type: LogTypeConsume, IsStream: true, Other: string(consumeOther),
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", Group: "vip", TokenId: 1, TokenName: "key-a",
+			CreatedAt: 62, Type: LogTypeError,
+		},
+		{
+			ChannelId: 2, ModelName: "probe", Group: "vip", TokenId: 1, TokenName: "key-a",
+			CreatedAt: 63, Type: LogTypeConsume, Other: string(probeOther),
+		},
+		{
+			ChannelId: 3, ModelName: "outside", Group: "vip", TokenId: 1, TokenName: "key-a",
+			CreatedAt: 181, Type: LogTypeConsume,
+		},
+	}).Error)
+
+	result, err := AggregateChannelMonitorMinuteRangeWithResult(context.Background(), 61, 180)
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), result.StartTimestamp)
+	assert.Equal(t, int64(180), result.EndTimestamp)
+	assert.Equal(t, 3, result.ScannedLogRows)
+	assert.Equal(t, 1, result.MetricRows)
+	assert.Equal(t, 1, result.DurationBucketRows)
+}
+
+func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume,
+	}).Error)
+
+	result, err := AggregateChannelMonitorMinuteRangeWithState(context.Background(), 60, 120, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.MetricRows)
+	var state ChannelMonitorAggregationState
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, int64(120), state.CompletedThrough)
+	assert.Equal(t, int64(1), state.Revision)
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume,
+	}).Error)
+	_, err = AggregateChannelMonitorMinuteRangeWithState(context.Background(), 60, 120, false)
+	require.NoError(t, err)
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, int64(120), state.CompletedThrough)
+	assert.Equal(t, int64(2), state.Revision)
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
+	assert.Equal(t, int64(2), metric.ActualSuccessCount)
 }
 
 func TestChannelMonitorMinuteMetricMigrationBackfillsRetryColumns(t *testing.T) {

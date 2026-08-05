@@ -468,8 +468,9 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   stability_enabled: boolean
   jitter_enabled: boolean
   jitter_tolerance_percent: number
-  jitter_absolute_tolerance_seconds: number
-  jitter_baseline_minutes: number
+  jitter_slow_threshold_seconds?: number
+  jitter_absolute_tolerance_seconds?: number
+  jitter_baseline_minutes?: number
   scoring: ChannelMonitorSmartScheduleScoring
   apply_mode: ChannelMonitorSmartScheduleApplyMode
   models: string[]
@@ -479,6 +480,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   recovery_stability_score: number
   fast_failure_penalty_percent: number
   fast_failure_seconds: number
+  fast_failure_same_channel_retry_count?: number
   slow_failure_seconds: number
   burst_failure_window_seconds?: number
   consecutive_failure_threshold?: number
@@ -505,6 +507,9 @@ export type ChannelMonitorSettings = {
   auto_enable_on_cost_ratio_recovery: boolean
   auto_enable_on_balance_recovery: boolean
   cost_retention_days: number
+  execution_detail_retention_days?: number
+  task_retention_days?: number
+  ratio_history_retention_days?: number
   email_notification_enabled: boolean
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
@@ -739,7 +744,6 @@ export type ChannelMonitorSmartScheduleRouteStability = {
   average_retry_failure_duration_ms: number
   retry_failure_duration_buckets: ChannelMonitorFailureDurationBucket[]
   jitter_available: boolean
-  first_token_baseline_ms: number | null
   first_token_p50_ms: number | null
   first_token_p95_ms: number | null
   jitter_threshold_ms: number | null

@@ -32,8 +32,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   stabilityEnabled: true,
   jitterEnabled: true,
   jitterTolerancePercent: 5,
-  jitterAbsoluteToleranceSeconds: 10,
-  jitterBaselineMinutes: 60,
+  jitterSlowThresholdSeconds: 10,
   scoring: {
     stabilityPercent: 50,
     primaryTrafficPercent: 90,
@@ -57,6 +56,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   recoveryStabilityScore: 95,
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
+  fastFailureSameChannelRetryCount: 2,
   slowFailureSeconds: 10,
   burstFailureWindowSeconds: 30,
   consecutiveFailureThreshold: 2,
@@ -110,8 +110,8 @@ describe('smart schedule group policy', () => {
         jitter_enabled: defaultPolicy.jitterEnabled,
         jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
         jitter_absolute_tolerance_seconds:
-          defaultPolicy.jitterAbsoluteToleranceSeconds,
-        jitter_baseline_minutes: defaultPolicy.jitterBaselineMinutes,
+          defaultPolicy.jitterSlowThresholdSeconds,
+        jitter_baseline_minutes: 60,
         scoring: {
           stability_percent: defaultPolicy.scoring.stabilityPercent,
           primary_traffic_percent: defaultPolicy.scoring.primaryTrafficPercent,
@@ -136,6 +136,8 @@ describe('smart schedule group policy', () => {
         recovery_stability_score: defaultPolicy.recoveryStabilityScore,
         fast_failure_penalty_percent: defaultPolicy.fastFailurePenaltyPercent,
         fast_failure_seconds: defaultPolicy.fastFailureSeconds,
+        fast_failure_same_channel_retry_count:
+          defaultPolicy.fastFailureSameChannelRetryCount,
         slow_failure_seconds: defaultPolicy.slowFailureSeconds,
         cooldown_minutes: defaultPolicy.cooldownMinutes,
         sample_mode: defaultPolicy.sampleMode,
@@ -163,16 +165,19 @@ describe('smart schedule group policy', () => {
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
-    assert.equal(formPolicies[0]?.jitterAbsoluteToleranceSeconds, 10)
-    assert.equal(formPolicies[0]?.jitterBaselineMinutes, 60)
+    assert.equal(formPolicies[0]?.jitterSlowThresholdSeconds, 10)
     assert.equal(apiPolicies[0]?.jitter_enabled, true)
     assert.equal(apiPolicies[0]?.jitter_tolerance_percent, 5)
     assert.equal(
       Object.hasOwn(apiPolicies[0] ?? {}, 'jitter_threshold_multiplier'),
       false
     )
+    assert.equal(apiPolicies[0]?.jitter_slow_threshold_seconds, 10)
     assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_seconds, 10)
-    assert.equal(apiPolicies[0]?.jitter_baseline_minutes, 60)
+    assert.equal(
+      Object.hasOwn(apiPolicies[0] ?? {}, 'jitter_baseline_minutes'),
+      false
+    )
     assert.equal(apiPolicies[0]?.scoring.primary_traffic_percent, 90)
     assert.equal(apiPolicies[0]?.scoring.primary_switch_threshold_percent, 3)
     assert.deepEqual(apiPolicies[0]?.models, [])
@@ -181,6 +186,7 @@ describe('smart schedule group policy', () => {
     assert.equal(apiPolicies[0]?.recovery_stability_score, 95)
     assert.equal(apiPolicies[0]?.fast_failure_penalty_percent, 40)
     assert.equal(apiPolicies[0]?.fast_failure_seconds, 1)
+    assert.equal(apiPolicies[0]?.fast_failure_same_channel_retry_count, 2)
     assert.equal(apiPolicies[0]?.slow_failure_seconds, 10)
     assert.equal(apiPolicies[0]?.burst_failure_window_seconds, 30)
     assert.equal(apiPolicies[0]?.consecutive_failure_threshold, 2)
@@ -227,12 +233,8 @@ describe('smart schedule group policy', () => {
       5
     )
     assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterAbsoluteToleranceSeconds,
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterSlowThresholdSeconds,
       10
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterBaselineMinutes,
-      60
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring
@@ -251,6 +253,10 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSeconds,
       1
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSameChannelRetryCount,
+      0
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.slowFailureSeconds,

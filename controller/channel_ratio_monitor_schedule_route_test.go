@@ -629,10 +629,7 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 		constant.ErrorLogEnabled = originalErrorLogEnabled
 	})
 
-	const (
-		exactModel      = "gemini-2.5-pro-thinking-2048"
-		normalizedModel = "gemini-2.5-pro-thinking-*"
-	)
+	const exactModel = "gemini-2.5-pro-thinking-2048"
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{exactModel}, 1, 90, 30,
@@ -660,11 +657,15 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	}).Error)
 	now := common.GetTimestamp()
 	minuteStart := now - now%60 - 60
-	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
-		MinuteStart: minuteStart, ChannelId: 1307,
-		ModelKey: normalizedModel, GroupKey: "vip", APIKeyKey: "all",
-		ModelName: normalizedModel, GroupName: "vip", SampleCount: 2,
-		ActualSuccessCount: 2, FirstTokenSampleCount: 2, FirstTokenTotalMs: 400,
+	require.NoError(t, db.Create(&[]model.Log{
+		{
+			CreatedAt: minuteStart + 1, Type: model.LogTypeConsume, ChannelId: 1307,
+			ModelName: exactModel, Group: "vip", IsStream: true, Other: `{"frt":200}`,
+		},
+		{
+			CreatedAt: minuteStart + 2, Type: model.LogTypeConsume, ChannelId: 1307,
+			ModelName: exactModel, Group: "vip", IsStream: true, Other: `{"frt":200}`,
+		},
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(

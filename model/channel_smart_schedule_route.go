@@ -30,14 +30,12 @@ type ChannelSmartScheduleRouteState struct {
 	LastScheduleTime         int64                                `json:"last_schedule_time" gorm:"bigint;index"`
 	LastScheduleScoreDetails ChannelSmartScheduleScoreDetailsJSON `json:"last_schedule_score_details,omitempty" gorm:"type:text"`
 
-	StabilityState             string   `json:"stability_state" gorm:"type:varchar(16);index"`
-	StabilityUntil             int64    `json:"stability_until" gorm:"bigint;index"`
-	StabilitySince             int64    `json:"stability_since" gorm:"bigint"`
-	StabilitySavedPriority     int64    `json:"stability_saved_priority" gorm:"bigint"`
-	StabilitySavedWeight       uint     `json:"stability_saved_weight"`
-	RuntimeProtectionUntil     int64    `json:"runtime_protection_until" gorm:"bigint;index"`
-	JitterBaselineFirstTokenMs *float64 `json:"jitter_baseline_first_token_ms"`
-	JitterBaselineUpdatedAt    int64    `json:"jitter_baseline_updated_at" gorm:"bigint"`
+	StabilityState         string `json:"stability_state" gorm:"type:varchar(16);index"`
+	StabilityUntil         int64  `json:"stability_until" gorm:"bigint;index"`
+	StabilitySince         int64  `json:"stability_since" gorm:"bigint"`
+	StabilitySavedPriority int64  `json:"stability_saved_priority" gorm:"bigint"`
+	StabilitySavedWeight   uint   `json:"stability_saved_weight"`
+	RuntimeProtectionUntil int64  `json:"runtime_protection_until" gorm:"bigint;index"`
 
 	BaseRank     int   `json:"base_rank"`
 	BasePriority int64 `json:"base_priority" gorm:"bigint"`
@@ -118,7 +116,6 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	Weight                   uint
 	Time                     int64
 	Stability                *ChannelSmartScheduleStabilityUpdate
-	Jitter                   *ChannelSmartScheduleJitterUpdate
 	RuntimeProtectionUntil   *int64
 	RoutingSnapshot          *ChannelSmartScheduleRoutingSnapshotUpdate
 	GuardCurrent             bool
@@ -156,11 +153,6 @@ type ChannelSmartScheduleStabilityUpdate struct {
 	Since         int64
 	SavedPriority int64
 	SavedWeight   uint
-}
-
-type ChannelSmartScheduleJitterUpdate struct {
-	BaselineFirstTokenMs *float64
-	BaselineUpdatedAt    int64
 }
 
 type ChannelSmartScheduleRoutingSnapshotUpdate struct {
@@ -1501,10 +1493,6 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state.StabilitySavedPriority = result.Stability.SavedPriority
 				state.StabilitySavedWeight = result.Stability.SavedWeight
 			}
-			if result.Jitter != nil {
-				state.JitterBaselineFirstTokenMs = result.Jitter.BaselineFirstTokenMs
-				state.JitterBaselineUpdatedAt = result.Jitter.BaselineUpdatedAt
-			}
 			if result.RuntimeProtectionUntil != nil {
 				state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
 			}
@@ -1690,8 +1678,6 @@ func clearChannelSmartScheduleRouteStabilityTx(
 	state.StabilitySavedPriority = 0
 	state.StabilitySavedWeight = 0
 	state.RuntimeProtectionUntil = 0
-	state.JitterBaselineFirstTokenMs = nil
-	state.JitterBaselineUpdatedAt = 0
 	state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 	state.LastScheduleError = reason
 	state.LastScheduleScore = nil

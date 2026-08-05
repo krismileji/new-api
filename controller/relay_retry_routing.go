@@ -11,6 +11,8 @@ type relayRetryRouting struct {
 	excluded      map[int]struct{}
 	excludedOrder []int
 	exhausted     bool
+	sameChannel   *model.Channel
+	sameGroup     string
 }
 
 func newRelayRetryRouting() *relayRetryRouting {
@@ -23,11 +25,24 @@ func (routing *relayRetryRouting) exclude(channelID int) {
 	if routing == nil || channelID <= 0 {
 		return
 	}
+	if routing.sameChannel != nil && routing.sameChannel.Id == channelID {
+		routing.sameChannel = nil
+		routing.sameGroup = ""
+	}
 	if _, exists := routing.excluded[channelID]; exists {
 		return
 	}
 	routing.excluded[channelID] = struct{}{}
 	routing.excludedOrder = append(routing.excludedOrder, channelID)
+	routing.exhausted = false
+}
+
+func (routing *relayRetryRouting) retrySameChannel(channel *model.Channel, group string) {
+	if routing == nil || channel == nil || channel.Id <= 0 {
+		return
+	}
+	routing.sameChannel = channel
+	routing.sameGroup = group
 	routing.exhausted = false
 }
 
@@ -47,6 +62,8 @@ func (routing *relayRetryRouting) restartRound(retryParam *service.RetryParam) {
 	routing.excluded = make(map[int]struct{})
 	routing.excludedOrder = nil
 	routing.exhausted = false
+	routing.sameChannel = nil
+	routing.sameGroup = ""
 	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
 		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, 0)
 		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex, 0)
@@ -58,6 +75,13 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		return service.CacheGetRandomSatisfiedChannel(retryParam)
 	}
 	routing.exhausted = false
+	if routing.sameChannel != nil {
+		channel := routing.sameChannel
+		group := routing.sameGroup
+		routing.sameChannel = nil
+		routing.sameGroup = ""
+		return channel, group, nil
+	}
 
 	selectionOptions, hasExcludedChannels := routing.selectionOptions()
 	if !hasExcludedChannels {

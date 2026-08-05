@@ -72,6 +72,8 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '上游快速报错但后续重试成功时，每次失败按该比例计入惩罚；最终仍失败的请求始终按一次完整失败计。',
   fastFailureThreshold:
     '重试失败耗时不超过此值时按“快速失败惩罚”计算；超过后，惩罚会随耗时线性增加。',
+  fastFailureSameChannelRetry:
+    '错误符合原有重试规则且耗时不超过快速失败界限时，优先在当前渠道额外重试这些次。该额度不消耗系统普通重试次数，用尽后才进入普通重试并切换渠道；0 表示关闭。',
   slowFailureThreshold:
     '重试失败耗时达到此值后按一次完整失败计算；快速失败界限与慢失败界限之间按耗时线性增加惩罚。',
   burstFailureWindow:
@@ -88,10 +90,8 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '允许将偶发慢成功视为正常波动。超过允许数量的慢成功才会扣减稳定性得分，同时首字评分会使用去极值后的均值。',
   jitterTolerance:
     '统计窗口内允许免罚的慢成功比例。设为 0% 时不免罚；大于 0% 时向下取整且至少允许 1 次，超过的部分按其样本占比扣减稳定性得分。',
-  jitterAbsoluteTolerance:
-    '允许高于当前基线的固定延迟，慢请求阈值为当前基线加上该绝对容差。',
-  jitterBaseline:
-    '使用近期健康状态下成功请求的首字 P50 平滑学习基线。周期越长更新越慢；异常窗口不参与学习，每次学习最多只向当前基线的上下 10% 移动。',
+  jitterSlowThreshold:
+    '直接按首字耗时判断慢成功，不再叠加历史基线。达到该阈值仍是成功请求，只参与抖动处罚；请求失败上限由“上游响应等待时间”控制。',
   costRatioPercent:
     '成本倍率越低得分越高。该百分比是它在业务得分中的占比；成本倍率、首字时间和 TPS 三项合计必须为 100%。',
   firstTokenPercent:

@@ -137,7 +137,6 @@ type channelSmartScheduleScorePart struct {
 
 type channelSmartScheduleJitterMeasurement struct {
 	Available    bool
-	BaselineMs   float64
 	ThresholdMs  float64
 	SampleCount  int64
 	SlowCount    int64
@@ -147,17 +146,15 @@ type channelSmartScheduleJitterMeasurement struct {
 
 func channelSmartScheduleMeasureJitter(
 	buckets []model.ChannelMonitorDurationBucket,
-	baselineMs float64,
 	minSamples int,
 	policy channelSmartSchedulePolicy,
 ) channelSmartScheduleJitterMeasurement {
-	measurement := channelSmartScheduleJitterMeasurement{BaselineMs: baselineMs}
-	if !policy.StabilityEnabled || !policy.JitterEnabled || minSamples <= 0 ||
-		math.IsNaN(baselineMs) || math.IsInf(baselineMs, 0) || baselineMs <= 0 {
+	measurement := channelSmartScheduleJitterMeasurement{}
+	if !policy.StabilityEnabled || !policy.JitterEnabled || minSamples <= 0 {
 		return measurement
 	}
-	thresholdMs := baselineMs + policy.JitterAbsoluteToleranceSeconds*1000
-	if math.IsNaN(thresholdMs) || math.IsInf(thresholdMs, 0) || thresholdMs <= 0 {
+	thresholdMs := policy.JitterSlowThresholdSeconds * 1000
+	if math.IsNaN(thresholdMs) || math.IsInf(thresholdMs, 0) || thresholdMs < 0 {
 		return measurement
 	}
 	measurement.ThresholdMs = thresholdMs
@@ -172,7 +169,7 @@ func channelSmartScheduleMeasureJitter(
 		case lowerMs >= thresholdMs:
 			measurement.SlowCount += bucket.Count
 		case bucket.UpperBoundMs > 0 && upperMs > thresholdMs && bucket.TotalMs > 0:
-			// A bucket can straddle the dynamic threshold. Count only the
+			// A bucket can straddle the configured threshold. Count only the
 			// samples that must be above it given the bucket's total duration,
 			// which deliberately favors avoiding false jitter releases.
 			excessTotal := bucket.TotalMs - float64(bucket.Count)*thresholdMs
@@ -207,28 +204,6 @@ func channelSmartScheduleApplyJitterPenalty(score *float64, sampleCount int64, p
 		value = 1
 	}
 	return &value
-}
-
-func channelSmartScheduleLearnJitterBaseline(
-	current *float64,
-	currentUpdatedAt int64,
-	observedMs float64,
-	now int64,
-	learningMinutes int,
-) (float64, bool) {
-	if math.IsNaN(observedMs) || math.IsInf(observedMs, 0) || observedMs <= 0 || now <= 0 {
-		return 0, false
-	}
-	if current == nil || math.IsNaN(*current) || math.IsInf(*current, 0) || *current <= 0 {
-		return observedMs, true
-	}
-	if learningMinutes <= 0 || currentUpdatedAt <= 0 || now <= currentUpdatedAt {
-		return *current, false
-	}
-	alpha := math.Min(1, float64(now-currentUpdatedAt)/float64(learningMinutes*60))
-	learned := *current + (observedMs-*current)*alpha
-	learned = min(max(learned, *current*0.9), *current*1.1)
-	return learned, true
 }
 
 func channelSmartScheduleRetryFailurePenalty(durationMs float64, policy channelSmartSchedulePolicy) float64 {

@@ -52,6 +52,9 @@ export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
 export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
+export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 14
+export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
 export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
@@ -87,8 +90,8 @@ export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
 export const MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 99
 export const MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT = 100
-export const MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS = 60
-export const MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES = 43_200
+export const MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS = 60
+export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT = 10
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -227,6 +230,18 @@ const smartScheduleFastFailureSecondsSchema = z.coerce
   .gt(0, '快速失败界限必须大于 0 秒')
   .lt(60, '快速失败界限必须小于 60 秒')
 
+const smartScheduleFastFailureSameChannelRetryCountSchema = z.preprocess(
+  (value) => (value === '' ? Number.NaN : value),
+  z.coerce
+    .number()
+    .int('快速失败同渠道重试次数必须是整数')
+    .min(0, '快速失败同渠道重试次数不能小于 0 次')
+    .max(
+      MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT,
+      '快速失败同渠道重试次数不能超过 10 次'
+    )
+)
+
 const smartScheduleRuntimeFailureThresholdSchema = z.coerce
   .number()
   .int('运行时失败阈值必须是整数')
@@ -245,23 +260,17 @@ const smartScheduleJitterToleranceSchema = z.coerce
   .min(0, '允许抖动不能小于 0%')
   .max(MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT, '允许抖动不能超过 50%')
 
-const smartScheduleJitterAbsoluteToleranceSchema = z.coerce
-  .number()
-  .finite('抖动绝对容差必须是有效数字')
-  .min(0, '抖动绝对容差不能小于 0 秒')
-  .max(
-    MAX_SMART_SCHEDULE_JITTER_ABSOLUTE_TOLERANCE_SECONDS,
-    '抖动绝对容差不能超过 60 秒'
-  )
-
-const smartScheduleJitterBaselineMinutesSchema = z.coerce
-  .number()
-  .int('抖动基线学习周期必须是整数')
-  .min(1, '抖动基线学习周期不能小于 1 分钟')
-  .max(
-    MAX_SMART_SCHEDULE_JITTER_BASELINE_MINUTES,
-    '抖动基线学习周期不能超过 43200 分钟'
-  )
+const smartScheduleJitterSlowThresholdSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .finite('慢成功阈值必须是有效数字')
+    .min(0, '慢成功阈值不能小于 0 秒')
+    .max(
+      MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS,
+      '慢成功阈值不能超过 60 秒'
+    )
+)
 
 const smartScheduleCooldownSchema = z.coerce
   .number()
@@ -343,8 +352,7 @@ const smartSchedulePolicyShape = {
   stabilityEnabled: z.boolean(),
   jitterEnabled: z.boolean(),
   jitterTolerancePercent: smartScheduleJitterToleranceSchema,
-  jitterAbsoluteToleranceSeconds: smartScheduleJitterAbsoluteToleranceSchema,
-  jitterBaselineMinutes: smartScheduleJitterBaselineMinutesSchema,
+  jitterSlowThresholdSeconds: smartScheduleJitterSlowThresholdSchema,
   scoring: smartScheduleScoringSchema,
   applyMode: z.enum(channelMonitorSmartScheduleApplyModes),
   models: smartScheduleModelsSchema,
@@ -354,6 +362,8 @@ const smartSchedulePolicyShape = {
   recoveryStabilityScore: smartScheduleStabilityScoreSchema,
   fastFailurePenaltyPercent: smartScheduleFastFailurePenaltySchema,
   fastFailureSeconds: smartScheduleFastFailureSecondsSchema,
+  fastFailureSameChannelRetryCount:
+    smartScheduleFastFailureSameChannelRetryCountSchema.default(0),
   slowFailureSeconds: smartScheduleFailureSecondsSchema,
   burstFailureWindowSeconds: smartScheduleBurstFailureWindowSchema.default(30),
   consecutiveFailureThreshold:
@@ -412,6 +422,8 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.recoveryStabilityScore = defaults.recoveryStabilityScore
     normalized.fastFailurePenaltyPercent = defaults.fastFailurePenaltyPercent
     normalized.fastFailureSeconds = defaults.fastFailureSeconds
+    normalized.fastFailureSameChannelRetryCount =
+      defaults.fastFailureSameChannelRetryCount
     normalized.slowFailureSeconds = defaults.slowFailureSeconds
     normalized.burstFailureWindowSeconds = defaults.burstFailureWindowSeconds
     normalized.consecutiveFailureThreshold =
@@ -434,9 +446,7 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
 
   if (policy.stabilityEnabled !== true || policy.jitterEnabled !== true) {
     normalized.jitterTolerancePercent = defaults.jitterTolerancePercent
-    normalized.jitterAbsoluteToleranceSeconds =
-      defaults.jitterAbsoluteToleranceSeconds
-    normalized.jitterBaselineMinutes = defaults.jitterBaselineMinutes
+    normalized.jitterSlowThresholdSeconds = defaults.jitterSlowThresholdSeconds
   }
 
   return normalized
@@ -584,6 +594,39 @@ export function createChannelMonitorSettingsSchema() {
           MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
           '成本数据保留天数不能超过 3650 天'
         ),
+      executionDetailRetentionDays: z.coerce
+        .number()
+        .int('调度执行明细保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '调度执行明细保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '调度执行明细保留天数不能超过 3650 天'
+        ),
+      taskRetentionDays: z.coerce
+        .number()
+        .int('监控任务保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '监控任务保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '监控任务保留天数不能超过 3650 天'
+        ),
+      ratioHistoryRetentionDays: z.coerce
+        .number()
+        .int('倍率历史保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '倍率历史保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '倍率历史保留天数不能超过 3650 天'
+        ),
       emailNotificationEnabled: z.boolean(),
       emailNotificationTypes: z
         .array(
@@ -703,6 +746,13 @@ export function createChannelMonitorSettingsSchema() {
       smartScheduleForceReset: z.boolean(),
     })
     .superRefine((values, context) => {
+      if (values.taskRetentionDays < values.executionDetailRetentionDays) {
+        context.addIssue({
+          code: 'custom',
+          path: ['taskRetentionDays'],
+          message: '监控任务保留天数不能小于调度执行明细保留天数',
+        })
+      }
       if (values.emailNotificationEnabled && !values.notificationEmail) {
         context.addIssue({
           code: 'custom',

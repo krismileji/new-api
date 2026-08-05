@@ -124,11 +124,13 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	originalLogDatabaseType := common.LogDatabaseType()
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalRedisEnabled := common.RedisEnabled
+	originalIsMasterNode := common.IsMasterNode
 
 	gin.SetMode(gin.TestMode)
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.MemoryCacheEnabled = false
 	common.RedisEnabled = false
+	common.IsMasterNode = true
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -148,6 +150,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelDailyCost{},
 		&model.ChannelDailyAPIKeyCost{},
 		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorAggregationState{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
 	))
@@ -159,6 +162,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 		common.RedisEnabled = originalRedisEnabled
+		common.IsMasterNode = originalIsMasterNode
 		service.ResetChannelDailyCostSnapshotCache()
 		sqlDB, sqlErr := db.DB()
 		if sqlErr == nil {
@@ -521,8 +525,8 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
+	policy.JitterSlowThresholdSeconds = nil
 	policy.JitterAbsoluteToleranceSeconds = nil
-	policy.JitterBaselineMinutes = nil
 	policy.BurstFailureWindowSeconds = nil
 	policy.ConsecutiveFailureThreshold = nil
 	policy.BurstFailureThreshold = nil
@@ -530,10 +534,9 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
 	require.NoError(t, err)
 	require.Len(t, normalized, 1)
-	require.NotNil(t, normalized[0].JitterAbsoluteToleranceSeconds)
-	assert.Equal(t, 10.0, *normalized[0].JitterAbsoluteToleranceSeconds)
-	require.NotNil(t, normalized[0].JitterBaselineMinutes)
-	assert.Equal(t, 60, *normalized[0].JitterBaselineMinutes)
+	require.NotNil(t, normalized[0].JitterSlowThresholdSeconds)
+	assert.Equal(t, 10.0, *normalized[0].JitterSlowThresholdSeconds)
+	assert.Nil(t, normalized[0].JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, normalized[0].BurstFailureWindowSeconds)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *normalized[0].BurstFailureWindowSeconds)
 	require.NotNil(t, normalized[0].ConsecutiveFailureThreshold)
@@ -542,6 +545,27 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThreshold, *normalized[0].BurstFailureThreshold)
 	require.NotNil(t, normalized[0].RecoverySuccessThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *normalized[0].RecoverySuccessThreshold)
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyMigratesLegacyJitterTolerance(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	legacyThreshold := 12.5
+	policy.JitterSlowThresholdSeconds = nil
+	policy.JitterAbsoluteToleranceSeconds = &legacyThreshold
+
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].JitterSlowThresholdSeconds)
+	assert.Equal(t, legacyThreshold, *normalized[0].JitterSlowThresholdSeconds)
+	assert.Nil(t, normalized[0].JitterAbsoluteToleranceSeconds)
+
+	serialized := channelSmartScheduleTestGroupPoliciesJSON(t, normalized...)
+	assert.Contains(t, serialized, `"jitter_slow_threshold_seconds":12.5`)
+	assert.NotContains(t, serialized, "jitter_absolute_tolerance_seconds")
 }
 
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
@@ -610,18 +634,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	)
 	invalidJitterToleranceValue := 51.0
 	invalidJitterTolerance.JitterTolerancePercent = &invalidJitterToleranceValue
-	invalidJitterAbsoluteTolerance := channelSmartScheduleTestGroupPolicy(
+	invalidJitterSlowThreshold := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	invalidJitterAbsoluteToleranceValue := 60.001
-	invalidJitterAbsoluteTolerance.JitterAbsoluteToleranceSeconds = &invalidJitterAbsoluteToleranceValue
-	invalidJitterBaselineMinutes := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyRatio, true,
-		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
-	)
-	invalidJitterBaselineMinutesValue := 0
-	invalidJitterBaselineMinutes.JitterBaselineMinutes = &invalidJitterBaselineMinutesValue
+	invalidJitterSlowThresholdValue := 60.001
+	invalidJitterSlowThreshold.JitterSlowThresholdSeconds = &invalidJitterSlowThresholdValue
 	invalidBurstFailureWindow := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
@@ -721,8 +739,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidMinSamples}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSuccessRate}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterTolerance}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterAbsoluteTolerance}},
-		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterBaselineMinutes}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidJitterSlowThreshold}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidBurstFailureWindow}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidConsecutiveFailureThreshold}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidBurstFailureThreshold}},
@@ -782,7 +799,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"min_samples": 8, "degrade_stability_score": 90, "recovery_stability_score": 95,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5,
-				"jitter_absolute_tolerance_seconds": 10, "jitter_baseline_minutes": 60,
+				"jitter_absolute_tolerance_seconds": 12, "jitter_baseline_minutes": 60,
 				"cooldown_minutes":            45,
 				"sample_mode":                 channelMonitorSmartScheduleSampleOff,
 				"exploration_traffic_percent": 3, "probe_interval_minutes": 10,
@@ -798,13 +815,14 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
 				"min_samples": 8, "degrade_stability_score": 75.5, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
-				"burst_failure_window_seconds": 45, "consecutive_failure_threshold": 4,
+				"fast_failure_same_channel_retry_count": 2,
+				"burst_failure_window_seconds":          45, "consecutive_failure_threshold": 4,
 				"burst_failure_threshold": 6, "recovery_success_threshold": 3,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5,
-				"jitter_absolute_tolerance_seconds": 10, "jitter_baseline_minutes": 60,
-				"cooldown_minutes":            45,
-				"sample_mode":                 channelMonitorSmartScheduleSampleTraffic,
-				"exploration_traffic_percent": 5, "probe_interval_minutes": 5,
+				"jitter_slow_threshold_seconds": 10,
+				"cooldown_minutes":              45,
+				"sample_mode":                   channelMonitorSmartScheduleSampleTraffic,
+				"exploration_traffic_percent":   5, "probe_interval_minutes": 5,
 				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
 				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
 				"priority_sampling_min_percent": 0.5,
@@ -868,6 +886,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 40.0, *defaultGroupPolicy.FastFailurePenaltyPercent)
 	require.NotNil(t, defaultGroupPolicy.FastFailureSeconds)
 	assert.Equal(t, 1.0, *defaultGroupPolicy.FastFailureSeconds)
+	require.NotNil(t, defaultGroupPolicy.FastFailureSameChannelRetryCount)
+	assert.Equal(t, 2, *defaultGroupPolicy.FastFailureSameChannelRetryCount)
 	require.NotNil(t, defaultGroupPolicy.SlowFailureSeconds)
 	assert.Equal(t, 10.0, *defaultGroupPolicy.SlowFailureSeconds)
 	require.NotNil(t, defaultGroupPolicy.BurstFailureWindowSeconds)
@@ -882,10 +902,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.True(t, *defaultGroupPolicy.JitterEnabled)
 	require.NotNil(t, defaultGroupPolicy.JitterTolerancePercent)
 	assert.Equal(t, 5.0, *defaultGroupPolicy.JitterTolerancePercent)
-	require.NotNil(t, defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
-	assert.Equal(t, 10.0, *defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
-	require.NotNil(t, defaultGroupPolicy.JitterBaselineMinutes)
-	assert.Equal(t, 60, *defaultGroupPolicy.JitterBaselineMinutes)
+	require.NotNil(t, defaultGroupPolicy.JitterSlowThresholdSeconds)
+	assert.Equal(t, 10.0, *defaultGroupPolicy.JitterSlowThresholdSeconds)
+	assert.Nil(t, defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, defaultGroupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *defaultGroupPolicy.CooldownMinutes)
 
@@ -907,6 +926,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 90.0, *groupPolicy.DegradeStabilityScore)
 	require.NotNil(t, groupPolicy.RecoveryStabilityScore)
 	assert.Equal(t, 95.0, *groupPolicy.RecoveryStabilityScore)
+	require.NotNil(t, groupPolicy.FastFailureSameChannelRetryCount)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount, *groupPolicy.FastFailureSameChannelRetryCount)
 	require.NotNil(t, groupPolicy.BurstFailureWindowSeconds)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *groupPolicy.BurstFailureWindowSeconds)
 	require.NotNil(t, groupPolicy.ConsecutiveFailureThreshold)
@@ -915,6 +936,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThreshold, *groupPolicy.BurstFailureThreshold)
 	require.NotNil(t, groupPolicy.RecoverySuccessThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *groupPolicy.RecoverySuccessThreshold)
+	require.NotNil(t, groupPolicy.JitterSlowThresholdSeconds)
+	assert.Equal(t, 12.0, *groupPolicy.JitterSlowThresholdSeconds)
+	assert.Nil(t, groupPolicy.JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, groupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *groupPolicy.CooldownMinutes)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
@@ -960,8 +984,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	var storedGroupPolicies smartScheduleGroupPolicies
 	require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedGroupPolicies))
 	assert.Equal(t, response.Data.SmartScheduleGroupPolicies, storedGroupPolicies)
-	assert.Contains(t, option.Value, `"jitter_absolute_tolerance_seconds":10`)
-	assert.Contains(t, option.Value, `"jitter_baseline_minutes":60`)
+	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":10`)
+	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":12`)
+	assert.NotContains(t, option.Value, "jitter_absolute_tolerance_seconds")
+	assert.NotContains(t, option.Value, "jitter_baseline_minutes")
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
 	assert.Equal(t, "10", option.Value)

@@ -38,6 +38,7 @@ func channelSmartScheduleTestGroupPolicy(
 	recoveryStabilityScore := math.Min(degradeStabilityScore+5, 100)
 	fastFailurePenaltyPercent := 40.0
 	fastFailureSeconds := 1.0
+	fastFailureSameChannelRetryCount := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
 	slowFailureSeconds := 10.0
 	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
 	consecutiveFailureThreshold := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
@@ -45,42 +46,62 @@ func channelSmartScheduleTestGroupPolicy(
 	recoverySuccessThreshold := defaultChannelMonitorSmartScheduleRecoverySuccessThreshold
 	jitterEnabled := true
 	jitterTolerancePercent := 5.0
-	jitterAbsoluteToleranceSeconds := 10.0
-	jitterBaselineMinutes := 60
+	jitterSlowThresholdSeconds := 10.0
 	if models == nil {
 		models = []string{}
 	}
 	return channelSmartScheduleGroupPolicy{
-		Group:                           group,
-		Strategy:                        &strategy,
-		StabilityEnabled:                &stabilityEnabled,
-		Scoring:                         &scoring,
-		ApplyMode:                       &applyMode,
-		Models:                          &models,
-		MinSamples:                      &minSamples,
-		DegradeStabilityScore:           &degradeStabilityScore,
-		RecoveryStabilityScore:          &recoveryStabilityScore,
-		FastFailurePenaltyPercent:       &fastFailurePenaltyPercent,
-		FastFailureSeconds:              &fastFailureSeconds,
-		SlowFailureSeconds:              &slowFailureSeconds,
-		BurstFailureWindowSeconds:       &burstFailureWindowSeconds,
-		ConsecutiveFailureThreshold:     &consecutiveFailureThreshold,
-		BurstFailureThreshold:           &burstFailureThreshold,
-		RecoverySuccessThreshold:        &recoverySuccessThreshold,
-		JitterEnabled:                   &jitterEnabled,
-		JitterTolerancePercent:          &jitterTolerancePercent,
-		JitterAbsoluteToleranceSeconds:  &jitterAbsoluteToleranceSeconds,
-		JitterBaselineMinutes:           &jitterBaselineMinutes,
-		CooldownMinutes:                 &cooldownMinutes,
-		SampleMode:                      &sampleMode,
-		ExplorationTrafficPercent:       &explorationTrafficPercent,
-		ExplorationMaxPromptTokens:      &explorationMaxPromptTokens,
-		ProbeIntervalMinutes:            &probeIntervalMinutes,
-		PrioritySamplingEnabled:         &prioritySamplingEnabled,
-		PrioritySamplingIntervalMinutes: &prioritySamplingIntervalMinutes,
-		PrioritySamplingBasePercent:     &prioritySamplingBasePercent,
-		PrioritySamplingDecayPercent:    &prioritySamplingDecayPercent,
-		PrioritySamplingMinPercent:      &prioritySamplingMinPercent,
+		Group:                            group,
+		Strategy:                         &strategy,
+		StabilityEnabled:                 &stabilityEnabled,
+		Scoring:                          &scoring,
+		ApplyMode:                        &applyMode,
+		Models:                           &models,
+		MinSamples:                       &minSamples,
+		DegradeStabilityScore:            &degradeStabilityScore,
+		RecoveryStabilityScore:           &recoveryStabilityScore,
+		FastFailurePenaltyPercent:        &fastFailurePenaltyPercent,
+		FastFailureSeconds:               &fastFailureSeconds,
+		FastFailureSameChannelRetryCount: &fastFailureSameChannelRetryCount,
+		SlowFailureSeconds:               &slowFailureSeconds,
+		BurstFailureWindowSeconds:        &burstFailureWindowSeconds,
+		ConsecutiveFailureThreshold:      &consecutiveFailureThreshold,
+		BurstFailureThreshold:            &burstFailureThreshold,
+		RecoverySuccessThreshold:         &recoverySuccessThreshold,
+		JitterEnabled:                    &jitterEnabled,
+		JitterTolerancePercent:           &jitterTolerancePercent,
+		JitterSlowThresholdSeconds:       &jitterSlowThresholdSeconds,
+		CooldownMinutes:                  &cooldownMinutes,
+		SampleMode:                       &sampleMode,
+		ExplorationTrafficPercent:        &explorationTrafficPercent,
+		ExplorationMaxPromptTokens:       &explorationMaxPromptTokens,
+		ProbeIntervalMinutes:             &probeIntervalMinutes,
+		PrioritySamplingEnabled:          &prioritySamplingEnabled,
+		PrioritySamplingIntervalMinutes:  &prioritySamplingIntervalMinutes,
+		PrioritySamplingBasePercent:      &prioritySamplingBasePercent,
+		PrioritySamplingDecayPercent:     &prioritySamplingDecayPercent,
+		PrioritySamplingMinPercent:       &prioritySamplingMinPercent,
+	}
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsAndValidatesFastFailureSameChannelRetries(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.FastFailureSameChannelRetryCount = nil
+
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].FastFailureSameChannelRetryCount)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount, *normalized[0].FastFailureSameChannelRetryCount)
+
+	for _, value := range []int{-1, maxChannelMonitorSmartScheduleFastFailureSameChannelRetryCount + 1} {
+		policy.FastFailureSameChannelRetryCount = &value
+		_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "快速失败同渠道重试次数")
 	}
 }
 
@@ -616,17 +637,17 @@ func TestChannelSmartScheduleStabilityScoreFullyPenalizesFinalFailure(t *testing
 	assert.Less(t, *finalScore, *retryScore)
 }
 
-func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) {
+func TestChannelSmartScheduleJitterUsesFixedSlowThreshold(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:               true,
-		JitterEnabled:                  true,
-		JitterTolerancePercent:         5,
-		JitterAbsoluteToleranceSeconds: 1,
+		StabilityEnabled:           true,
+		JitterEnabled:              true,
+		JitterTolerancePercent:     5,
+		JitterSlowThresholdSeconds: 1.3,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
 		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 99, TotalMs: 29700},
-		{LowerBoundMs: 10000, UpperBoundMs: 15000, Count: 1, TotalMs: 10000},
-	}, 300, 20, policy)
+		{LowerBoundMs: 1300, UpperBoundMs: 1500, Count: 1, TotalMs: 1300},
+	}, 20, policy)
 
 	assert.True(t, measurement.Available)
 	assert.InDelta(t, 1300, measurement.ThresholdMs, 1e-9)
@@ -638,15 +659,15 @@ func TestChannelSmartScheduleJitterToleratesOccasionalSlowSuccess(t *testing.T) 
 
 func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:               true,
-		JitterEnabled:                  true,
-		JitterTolerancePercent:         5,
-		JitterAbsoluteToleranceSeconds: 1,
+		StabilityEnabled:           true,
+		JitterEnabled:              true,
+		JitterTolerancePercent:     5,
+		JitterSlowThresholdSeconds: 1,
 	}
 	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
 		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 80, TotalMs: 24000},
 		{LowerBoundMs: 5000, UpperBoundMs: 10000, Count: 20, TotalMs: 120000},
-	}, 300, 20, policy)
+	}, 20, policy)
 	baseScore := 1.0
 	adjusted := channelSmartScheduleApplyJitterPenalty(&baseScore, 100, measurement.Penalty)
 
@@ -659,46 +680,42 @@ func TestChannelSmartScheduleJitterPenalizesOnlyExcessSlowSuccesses(t *testing.T
 
 func TestChannelSmartScheduleJitterRequiresDistributionSamples(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		StabilityEnabled:               true,
-		JitterEnabled:                  true,
-		JitterTolerancePercent:         0,
-		JitterAbsoluteToleranceSeconds: 1,
-		RecoveryStabilityScore:         80,
-		JitterBaselineMinutes:          1440,
-		MinSamples:                     5,
+		StabilityEnabled:           true,
+		JitterEnabled:              true,
+		JitterTolerancePercent:     0,
+		JitterSlowThresholdSeconds: 1,
+		MinSamples:                 5,
 	}
-	p50 := 10_000.0
 	stability := 1.0
 	performance := &channelSmartSchedulePerformance{
 		FirstTokenSampleCount:         1000,
 		FirstTokenDurationSampleCount: 1,
-		FirstTokenP50Ms:               &p50,
 		FirstTokenDurationBuckets: []model.ChannelMonitorDurationBucket{
 			{LowerBoundMs: 10_000, UpperBoundMs: 15_000, Count: 1, TotalMs: 10_000},
 		},
 		Stability:            &stability,
 		StabilitySampleCount: 1000,
 	}
-	baseline := 300.0
-	state := model.ChannelSmartScheduleRouteState{JitterBaselineFirstTokenMs: &baseline}
-
-	channelSmartScheduleApplyJitterMeasurement(performance, state, policy)
-	update := channelSmartScheduleJitterBaselineUpdate(performance, model.ChannelSmartScheduleRouteState{}, policy, 200)
+	channelSmartScheduleApplyJitterMeasurement(performance, policy)
 
 	assert.False(t, performance.JitterAvailable)
 	assert.InDelta(t, 1, *performance.Stability, 1e-9)
-	assert.Nil(t, update)
 }
 
-func TestChannelSmartScheduleJitterBaselineLearnsGradually(t *testing.T) {
-	current := 300.0
-	learned, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 3700, 1440)
+func TestChannelSmartScheduleJitterZeroThresholdMarksEverySuccessSlow(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		StabilityEnabled:           true,
+		JitterEnabled:              true,
+		JitterSlowThresholdSeconds: 0,
+	}
+	measurement := channelSmartScheduleMeasureJitter([]model.ChannelMonitorDurationBucket{
+		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: 3, TotalMs: 900},
+	}, 1, policy)
 
-	assert.True(t, changed)
-	assert.InDelta(t, 325, learned, 1e-9)
-	capped, changed := channelSmartScheduleLearnJitterBaseline(&current, 100, 900, 86500, 1440)
-	assert.True(t, changed)
-	assert.InDelta(t, 330, capped, 1e-9)
+	assert.True(t, measurement.Available)
+	assert.Zero(t, measurement.ThresholdMs)
+	assert.Equal(t, int64(3), measurement.SlowCount)
+	assert.Equal(t, 3.0, measurement.Penalty)
 }
 
 func TestPlanChannelSmartScheduleWeightOnlyKeepsPriorityCohorts(t *testing.T) {

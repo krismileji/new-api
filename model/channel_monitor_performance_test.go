@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -156,13 +157,97 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 	assert.Equal(t, "vip", groups[0].Group)
 	aggregateChannelMonitorMinuteTestRange(t, 0, 1020)
 
-	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1020, 15)
+	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1001, 15)
 	require.NoError(t, err)
 	require.Len(t, performance, 1)
 	assert.Equal(t, 2, performance[0].SampleCount)
-	success, _, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1020, 15)
+	success, _, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1001, 15)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), success[0].ActualSuccessCount)
+}
+
+func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalidatesInFlightQuery(t *testing.T) {
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	resetChannelMonitorMetricsCache()
+	t.Cleanup(func() {
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+		resetChannelMonitorMetricsCache()
+	})
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache-generation.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	useChannelMonitorMinuteTestDB(t, db)
+	LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 900, Type: LogTypeConsume,
+		IsStream: true, CompletionTokens: 100, UseTime: 10, Other: `{"frt":1000}`,
+	}).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
+
+	queryLoaded := make(chan struct{})
+	releaseQuery := make(chan struct{})
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(releaseQuery)
+		}
+	})
+	var blocked atomic.Bool
+	const callbackName = "test:block_stale_channel_monitor_cache_query"
+	require.NoError(t, db.Callback().Row().After("gorm:row").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "channel_monitor_minute_metrics" ||
+			!blocked.CompareAndSwap(false, true) {
+			return
+		}
+		close(queryLoaded)
+		<-releaseQuery
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Row().Remove(callbackName))
+	})
+
+	type queryResult struct {
+		metrics []ChannelMonitorPerformanceMetric
+		err     error
+	}
+	result := make(chan queryResult, 1)
+	go func() {
+		metrics, queryErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+		result <- queryResult{metrics: metrics, err: queryErr}
+	}()
+	select {
+	case <-queryLoaded:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "performance query did not reach cache race point")
+	}
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 901, Type: LogTypeConsume,
+		IsStream: true, CompletionTokens: 100, UseTime: 10, Other: `{"frt":2000}`,
+	}).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
+	close(releaseQuery)
+	released = true
+
+	select {
+	case loaded := <-result:
+		require.NoError(t, loaded.err)
+		require.Len(t, loaded.metrics, 1)
+		assert.Equal(t, 2, loaded.metrics[0].SampleCount)
+		require.NotNil(t, loaded.metrics[0].AverageFirstTokenMs)
+		assert.InDelta(t, 1500, *loaded.metrics[0].AverageFirstTokenMs, 0.001)
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "performance query did not retry after cache invalidation")
+	}
 }
 
 func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *testing.T) {

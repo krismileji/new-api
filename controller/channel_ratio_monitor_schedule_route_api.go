@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -56,7 +57,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	generatedAt := common.GetTimestamp()
+	requestedAt := time.Now()
+	generatedAt := requestedAt.Unix()
 	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                generatedAt,
@@ -69,6 +71,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			"stability_metrics_available": false,
 			"stability_items":             []model.ChannelMonitorRouteStabilityMetric{},
 		})
+		return
+	}
+	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	performanceStart := generatedAt - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
@@ -193,7 +199,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			performance.StabilityFailureDurationBuckets,
 			policy,
 		)
-		channelSmartScheduleApplyJitterMeasurement(performance, route.State, policy)
+		channelSmartScheduleApplyJitterMeasurement(performance, policy)
 		if performance.StabilitySampleCount <= 0 {
 			delete(stabilityByRoute, key)
 			continue
@@ -218,15 +224,14 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 				[]model.ChannelMonitorFailureDurationBucket(nil),
 				performance.StabilityFailureDurationBuckets...,
 			),
-			JitterAvailable:      performance.JitterAvailable,
-			FirstTokenBaselineMs: performance.JitterBaselineMs,
-			FirstTokenP50Ms:      performance.FirstTokenP50Ms,
-			FirstTokenP95Ms:      performance.FirstTokenP95Ms,
-			JitterThresholdMs:    performance.JitterThresholdMs,
-			JitterSampleCount:    performance.JitterSampleCount,
-			JitterSlowCount:      performance.JitterSlowCount,
-			JitterAllowedCount:   performance.JitterAllowedCount,
-			JitterPenalty:        performance.JitterPenalty,
+			JitterAvailable:    performance.JitterAvailable,
+			FirstTokenP50Ms:    performance.FirstTokenP50Ms,
+			FirstTokenP95Ms:    performance.FirstTokenP95Ms,
+			JitterThresholdMs:  performance.JitterThresholdMs,
+			JitterSampleCount:  performance.JitterSampleCount,
+			JitterSlowCount:    performance.JitterSlowCount,
+			JitterAllowedCount: performance.JitterAllowedCount,
+			JitterPenalty:      performance.JitterPenalty,
 		}
 		metric.SuccessRate = float64(metric.SuccessCount) / float64(metric.SampleCount)
 		if policy.StabilityEnabled {

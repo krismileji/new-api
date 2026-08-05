@@ -311,13 +311,22 @@ func aggregateChannelMonitorMinuteLogs(
 	ctx context.Context,
 	startTimestamp int64,
 	endTimestamp int64,
-) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, error) {
+) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
+	return aggregateChannelMonitorMinuteLogsFromDatabase(ctx, LOG_DB, startTimestamp, endTimestamp)
+}
+
+func aggregateChannelMonitorMinuteLogsFromDatabase(
+	ctx context.Context,
+	logDB *gorm.DB,
+	startTimestamp int64,
+	endTimestamp int64,
+) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
 	if startTimestamp >= endTimestamp {
-		return []ChannelMonitorMinuteMetric{}, []ChannelMonitorMinuteDurationBucket{}, nil
+		return []ChannelMonitorMinuteMetric{}, []ChannelMonitorMinuteDurationBucket{}, 0, nil
 	}
 	groupColumn := channelMonitorLogGroupColumn()
 	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, completion_tokens, use_time, other, created_at, request_id"
-	rows, err := LOG_DB.WithContext(ctx).
+	rows, err := logDB.WithContext(ctx).
 		Model(&Log{}).
 		Select(selectColumns).
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
@@ -326,10 +335,11 @@ func aggregateChannelMonitorMinuteLogs(
 		Order("created_at ASC").
 		Rows()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	defer rows.Close()
 
+	scannedLogRows := 0
 	aggregates := make(map[channelMonitorMinuteAggregateKey]*ChannelMonitorMinuteMetric)
 	durationBuckets := make(map[channelMonitorMinuteDurationBucketKey]*ChannelMonitorMinuteDurationBucket)
 	type pendingRetry struct {
@@ -355,8 +365,9 @@ func aggregateChannelMonitorMinuteLogs(
 			&log.CreatedAt,
 			&log.RequestId,
 		); err != nil {
-			return nil, nil, err
+			return nil, nil, scannedLogRows, err
 		}
+		scannedLogRows++
 		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
 		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
 			continue
@@ -453,7 +464,7 @@ func aggregateChannelMonitorMinuteLogs(
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, scannedLogRows, err
 	}
 	for requestId, summaries := range finalSummariesByRequest {
 		retries := retriesByRequest[requestId]
@@ -487,47 +498,143 @@ func aggregateChannelMonitorMinuteLogs(
 	for _, bucket := range durationBuckets {
 		buckets = append(buckets, *bucket)
 	}
-	return metrics, buckets, nil
+	return metrics, buckets, scannedLogRows, nil
+}
+
+// ChannelMonitorMinuteAggregationResult describes the work performed while
+// rebuilding a minute range.
+type ChannelMonitorMinuteAggregationResult struct {
+	StartTimestamp     int64
+	EndTimestamp       int64
+	ScannedLogRows     int
+	MetricRows         int
+	DurationBucketRows int
 }
 
 // AggregateChannelMonitorMinuteRange replaces the selected minute range with
 // fresh aggregates. Replacing a short range makes delayed log writes harmless
 // and keeps the task independent of the log database dialect.
 func AggregateChannelMonitorMinuteRange(ctx context.Context, startTimestamp int64, endTimestamp int64) (int, error) {
-	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
-	if startTimestamp >= endTimestamp {
-		return 0, nil
-	}
-	metrics, durationBuckets, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
+	result, err := AggregateChannelMonitorMinuteRangeWithResult(ctx, startTimestamp, endTimestamp)
 	if err != nil {
 		return 0, err
+	}
+	return result.MetricRows, nil
+}
+
+// AggregateChannelMonitorMinuteRangeWithResult rebuilds the selected range and
+// reports how many source and aggregate rows were processed.
+func AggregateChannelMonitorMinuteRangeWithResult(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+) (ChannelMonitorMinuteAggregationResult, error) {
+	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
+	result := ChannelMonitorMinuteAggregationResult{
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+	}
+	if startTimestamp >= endTimestamp {
+		return result, nil
+	}
+	metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
+	result.ScannedLogRows = scannedLogRows
+	result.MetricRows = len(metrics)
+	result.DurationBucketRows = len(durationBuckets)
+	if err != nil {
+		return result, err
 	}
 	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		hasDurationBuckets := tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{})
-		if hasDurationBuckets {
-			if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-				Delete(&ChannelMonitorMinuteDurationBucket{}).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-			Delete(&ChannelMonitorMinuteMetric{}).Error; err != nil {
-			return err
-		}
-		if len(metrics) > 0 {
-			if err := tx.CreateInBatches(metrics, 500).Error; err != nil {
-				return err
-			}
-		}
-		if hasDurationBuckets && len(durationBuckets) > 0 {
-			return tx.CreateInBatches(durationBuckets, 500).Error
-		}
-		return nil
+		return replaceChannelMonitorMinuteAggregates(
+			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+		)
 	})
 	if err != nil {
-		return 0, err
+		return result, err
 	}
-	return len(metrics), nil
+	InvalidateChannelMonitorAggregateCaches()
+	return result, nil
+}
+
+// AggregateChannelMonitorMinuteRangeWithState serializes monitor writers on
+// the primary database and commits aggregate rows and the shared watermark in
+// one transaction.
+func AggregateChannelMonitorMinuteRangeWithState(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	publishWatermark bool,
+) (ChannelMonitorMinuteAggregationResult, error) {
+	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
+	result := ChannelMonitorMinuteAggregationResult{
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+	}
+	if startTimestamp >= endTimestamp {
+		return result, nil
+	}
+	if err := ensureChannelMonitorAggregationState(ctx); err != nil {
+		return result, err
+	}
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		state, err := lockChannelMonitorAggregationState(tx)
+		if err != nil {
+			return err
+		}
+		logDB := LOG_DB
+		if LOG_DB == DB {
+			logDB = tx
+		}
+		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+			ctx, logDB, startTimestamp, endTimestamp,
+		)
+		result.ScannedLogRows = scannedLogRows
+		result.MetricRows = len(metrics)
+		result.DurationBucketRows = len(durationBuckets)
+		if err != nil {
+			return err
+		}
+		if err := replaceChannelMonitorMinuteAggregates(
+			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+		); err != nil {
+			return err
+		}
+		return updateChannelMonitorAggregationStateWithTx(tx, state, endTimestamp, publishWatermark)
+	})
+	if err != nil {
+		return result, err
+	}
+	InvalidateChannelMonitorAggregateCaches()
+	return result, nil
+}
+
+func replaceChannelMonitorMinuteAggregates(
+	tx *gorm.DB,
+	startTimestamp int64,
+	endTimestamp int64,
+	metrics []ChannelMonitorMinuteMetric,
+	durationBuckets []ChannelMonitorMinuteDurationBucket,
+) error {
+	hasDurationBuckets := tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{})
+	if hasDurationBuckets {
+		if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
+			Delete(&ChannelMonitorMinuteDurationBucket{}).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
+		Delete(&ChannelMonitorMinuteMetric{}).Error; err != nil {
+		return err
+	}
+	if len(metrics) > 0 {
+		if err := tx.CreateInBatches(metrics, 500).Error; err != nil {
+			return err
+		}
+	}
+	if hasDurationBuckets && len(durationBuckets) > 0 {
+		return tx.CreateInBatches(durationBuckets, 500).Error
+	}
+	return nil
 }
 
 func channelMonitorMinuteRange(startTimestamp int64, endTimestamp int64) (int64, int64) {
