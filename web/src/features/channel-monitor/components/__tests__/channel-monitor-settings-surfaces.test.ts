@@ -41,7 +41,7 @@ type SettingsSurfaceResult = {
   policyDialogHasNoLegacyWeightControls: boolean
   policyDialogUsesInsetRing: boolean
   policyDialogStabilityInputsAligned: boolean
-  policyTableScrollable: boolean
+  policyListAvoidsHorizontalOverflow: boolean
   previewEmailButtonEnabled: boolean
   newPolicyVisible: boolean
   scheduleHasExplicitPolicyScope: boolean
@@ -100,7 +100,7 @@ test(
     assert.equal(result.policyDialogStabilityInputsAligned, true)
     assert.equal(result.policyDialogExplainsExplicitScope, true)
     assert.equal(result.policyDialogHasGroupSettingHelp, true)
-    assert.equal(result.policyTableScrollable, true)
+    assert.equal(result.policyListAvoidsHorizontalOverflow, true)
     assert.equal(result.newPolicyVisible, true)
   }
 )

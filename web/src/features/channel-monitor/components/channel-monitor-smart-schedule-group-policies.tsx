@@ -61,14 +61,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -232,9 +224,9 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
   })
 
   return (
-    <div className='flex flex-col gap-4'>
-      <div className='flex flex-wrap items-start justify-between gap-3'>
-        <div>
+    <div className='flex min-w-0 flex-col gap-4'>
+      <div className='flex min-w-0 flex-wrap items-start justify-between gap-3'>
+        <div className='min-w-0 flex-1 basis-72'>
           <h3 className='text-sm font-medium'>分组策略</h3>
           <p className='text-muted-foreground mt-1 text-sm'>
             只有已配置策略的分组参与智能调度；新增、编辑或删除后，需保存智能调度设置才会生效
@@ -243,6 +235,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
         <Button
           type='button'
           variant='outline'
+          className='shrink-0'
           disabled={availableGroups.length === 0}
           onClick={() => openEditor()}
         >
@@ -276,100 +269,100 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
           )}
         </Empty>
       ) : (
-        <div className='overflow-x-auto rounded-md border'>
-          <Table className='min-w-205'>
-            <TableHeader>
-              <TableRow>
-                <TableHead>分组</TableHead>
-                <TableHead>调度方式</TableHead>
-                <TableHead>调整方式</TableHead>
-                <TableHead>样本补充</TableHead>
-                <TableHead>轮转采样</TableHead>
-                <TableHead>模型范围</TableHead>
-                <TableHead>稳定性</TableHead>
-                <TableHead className='w-24 text-right'>操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((policy) => (
-                <TableRow key={policy.group}>
-                  <TableCell>
-                    <span
-                      className='block max-w-44 truncate font-medium'
-                      title={policy.group}
-                    >
-                      {policy.group}
-                    </span>
-                  </TableCell>
-                  <TableCell>
+        <div
+          data-slot='group-policy-list'
+          className='min-w-0 overflow-hidden rounded-md border'
+        >
+          {rows.map((policy) => (
+            <article
+              key={policy.group}
+              data-slot='group-policy-summary'
+              className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-4 border-b p-3 last:border-b-0 sm:p-4'
+              aria-label={`${policy.group} 分组策略`}
+            >
+              <div className='min-w-0'>
+                <h4 className='min-w-0 font-medium break-words'>
+                  {policy.group}
+                </h4>
+                <p
+                  className='text-muted-foreground mt-1 min-w-0 truncate text-xs'
+                  title={policy.models.join(', ') || '全部模型'}
+                >
+                  模型范围：{groupPolicyModelSummary(policy.models)}
+                </p>
+              </div>
+
+              <div className='flex shrink-0 justify-end gap-1'>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => openEditor(policy.group)}
+                        aria-label={`编辑分组策略 ${policy.group}`}
+                      >
+                        <HugeiconsIcon icon={Edit02Icon} />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>编辑</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => removePolicy(policy.group)}
+                        aria-label={`删除分组调度策略 ${policy.group}`}
+                      >
+                        <HugeiconsIcon icon={Delete02Icon} />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>删除策略</TooltipContent>
+                </Tooltip>
+              </div>
+
+              <dl className='col-span-2 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                <div className='min-w-0'>
+                  <dt className='text-muted-foreground text-xs'>调度与调整</dt>
+                  <dd className='mt-1 min-w-0 break-words'>
                     {getChannelMonitorSmartScheduleStrategyLabel(
                       policy.strategy
-                    )}
-                  </TableCell>
-                  <TableCell>
+                    )}{' '}
+                    ·{' '}
                     {getChannelMonitorSmartScheduleApplyModeLabel(
                       policy.applyMode
                     )}
-                  </TableCell>
-                  <TableCell>
+                  </dd>
+                </div>
+                <div className='min-w-0'>
+                  <dt className='text-muted-foreground text-xs'>样本补充</dt>
+                  <dd className='mt-1 flex min-w-0'>
                     <GroupPolicySampleModeBadge policy={policy} />
-                  </TableCell>
-                  <TableCell>
+                  </dd>
+                </div>
+                <div className='min-w-0'>
+                  <dt className='text-muted-foreground text-xs'>轮转采样</dt>
+                  <dd className='mt-1 flex min-w-0'>
                     <GroupPolicyPrioritySamplingBadge policy={policy} />
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className='block max-w-48 truncate'
-                      title={policy.models.join(', ') || '全部模型'}
-                    >
-                      {groupPolicyModelSummary(policy.models)}
-                    </span>
-                  </TableCell>
-                  <TableCell>
+                  </dd>
+                </div>
+                <div className='min-w-0'>
+                  <dt className='text-muted-foreground text-xs'>稳定性</dt>
+                  <dd className='mt-1 min-w-0 break-words'>
                     {policy.stabilityEnabled
                       ? `降级 ${policy.degradeStabilityScore}% · 恢复 ${policy.recoveryStabilityScore}% · ${policy.minSamples} 次`
                       : '关闭'}
-                  </TableCell>
-                  <TableCell>
-                    <div className='flex justify-end gap-1'>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => openEditor(policy.group)}
-                              aria-label={`编辑分组策略 ${policy.group}`}
-                            >
-                              <HugeiconsIcon icon={Edit02Icon} />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>编辑</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              onClick={() => removePolicy(policy.group)}
-                              aria-label={`删除分组调度策略 ${policy.group}`}
-                            >
-                              <HugeiconsIcon icon={Delete02Icon} />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>删除策略</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          ))}
         </div>
       )}
 

@@ -275,6 +275,46 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
     sampleModeDescription =
       '仅探测文本模型，固定使用 /v1/responses 流式请求，不改变真实业务请求的路由'
   }
+  const probeIntervalField = (
+    <FormField
+      control={props.form.control}
+      name='probeIntervalMinutes'
+      render={({ field }) => (
+        <FormItem className='max-w-72'>
+          <ChannelMonitorSettingLabel
+            label='探测间隔'
+            helpKey='probeInterval'
+          />
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={1}
+                max={MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.probeIntervalMinutes
+                )}
+              />
+              <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            {sampleMode === 'probe'
+              ? '非文本模型会跳过；文本探测按配置间隔持续运行并滚动更新窗口内样本'
+              : '降级渠道按配置间隔探测；达到恢复探测成功次数后可提前恢复'}
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 
   return (
     <div className='flex flex-col gap-5'>
@@ -575,47 +615,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
           </div>
         ) : null}
 
-        {sampleMode === 'probe' ||
-        (stabilityEnabled && degradedProbeEnabled) ? (
-          <FormField
-            control={props.form.control}
-            name='probeIntervalMinutes'
-            render={({ field }) => (
-              <FormItem className='max-w-72'>
-                <ChannelMonitorSettingLabel
-                  label='探测间隔'
-                  helpKey='probeInterval'
-                />
-                <FormControl>
-                  <InputGroup>
-                    <InputGroupInput
-                      type='number'
-                      min={1}
-                      max={MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES}
-                      step={1}
-                      inputMode='numeric'
-                      value={field.value}
-                      onBlur={field.onBlur}
-                      onChange={field.onChange}
-                      name={field.name}
-                      ref={field.ref}
-                      aria-invalid={Boolean(
-                        props.form.formState.errors.probeIntervalMinutes
-                      )}
-                    />
-                    <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-                  </InputGroup>
-                </FormControl>
-                <FormDescription>
-                  {sampleMode === 'probe'
-                    ? '非文本模型会跳过；文本探测按配置间隔持续运行并滚动更新窗口内样本'
-                    : '降级渠道按配置间隔探测；达到恢复探测成功次数后可提前恢复'}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ) : null}
+        {sampleMode === 'probe' ? probeIntervalField : null}
       </div>
 
       <div className='bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
@@ -769,6 +769,9 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               </FormItem>
             )}
           />
+          {degradedProbeEnabled && sampleMode !== 'probe'
+            ? probeIntervalField
+            : null}
           <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
             <GroupPolicyPercentField
               form={props.form}

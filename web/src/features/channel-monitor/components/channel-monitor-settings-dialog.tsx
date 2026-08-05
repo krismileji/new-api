@@ -511,7 +511,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
           <Form {...form}>
             <form
               id='channel-monitor-smart-schedule-settings-form'
-              className={sideDrawerFormClassName('gap-5')}
+              className={sideDrawerFormClassName(
+                'min-w-0 gap-5 overflow-x-hidden'
+              )}
               onSubmit={handleSubmit}
             >
               <ChannelMonitorSmartScheduleFields

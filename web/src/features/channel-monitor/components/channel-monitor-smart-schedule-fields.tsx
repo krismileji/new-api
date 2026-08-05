@@ -183,7 +183,7 @@ export function ChannelMonitorSmartScheduleFields(
   props: ChannelMonitorSmartScheduleFieldsProps
 ) {
   return (
-    <div className='flex flex-col gap-5'>
+    <div className='flex min-w-0 flex-col gap-5'>
       <FormField
         control={props.form.control}
         name='smartScheduleEnabled'
@@ -283,7 +283,7 @@ export function ChannelMonitorSmartScheduleFields(
         control={props.form.control}
         name='smartScheduleGroupPolicies'
         render={() => (
-          <FormItem>
+          <FormItem className='min-w-0'>
             <ChannelMonitorSmartScheduleGroupPolicies
               form={props.form}
               groupOptions={props.groupOptions}

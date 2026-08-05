@@ -513,11 +513,14 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('新增分组策略'))
   })
 
-  test('summarizes each explicitly configured group policy in a table row', () => {
+  test('summarizes each explicitly configured group policy without horizontal scrolling', () => {
     const markup = renderToStaticMarkup(
       <SmartScheduleGroupPoliciesFixture configured />
     )
 
+    assert.ok(markup.includes('data-slot="group-policy-list"'))
+    assert.ok(markup.includes('data-slot="group-policy-summary"'))
+    assert.equal(markup.includes('overflow-x-auto'), false)
     assert.ok(markup.includes('vip'))
     assert.ok(markup.includes('按成本倍率'))
     assert.ok(markup.includes('优先级分层 + 权重'))
@@ -573,6 +576,21 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('固定使用 /v1/responses 流式请求'))
     assert.ok(markup.includes('非文本模型会跳过'))
     assert.ok(markup.includes('需要先将调整方式设为'))
+  })
+
+  test('places the downgrade probe interval below its setting when sample probing is off', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='off'
+        degradedProbeEnabled
+      />
+    )
+    const degradedProbeIndex = markup.indexOf('降级期间定时探测')
+    const probeIntervalIndex = markup.indexOf('name="probeIntervalMinutes"')
+
+    assert.ok(degradedProbeIndex >= 0)
+    assert.ok(probeIntervalIndex > degradedProbeIndex)
   })
 
   test('shows bounded low-priority rotation fields only in priority mode while enabled', () => {

@@ -253,6 +253,8 @@ const scheduleUsesChannelDrawerLayout =
   scheduleHeader?.classList.contains('border-b') === true &&
   scheduleHeader.classList.contains('sm:px-6') &&
   scheduleForm?.classList.contains('overflow-y-auto') === true &&
+  scheduleForm.classList.contains('overflow-x-hidden') &&
+  scheduleForm.classList.contains('min-w-0') &&
   scheduleForm.classList.contains('sm:px-6') &&
   scheduleFooter?.classList.contains('border-t') === true &&
   scheduleFooter.classList.contains('sm:px-6')
@@ -268,10 +270,13 @@ const scheduleHasExplicitPolicyScope =
 const scheduleHasNoImplicitPolicyControls =
   !scheduleTitle.includes('参与分组') && !scheduleTitle.includes('默认策略')
 
-const policyTable = sheet.querySelector('table')
-assert.ok(policyTable)
-const policyTableScrollable =
-  policyTable.parentElement?.className.includes('overflow-x-auto')
+const policyList = sheet.querySelector('[data-slot="group-policy-list"]')
+assert.ok(policyList)
+const policyListAvoidsHorizontalOverflow =
+  policyList.classList.contains('min-w-0') &&
+  policyList.classList.contains('overflow-hidden') &&
+  !policyList.classList.contains('overflow-x-auto') &&
+  policyList.querySelector('table') === null
 const addPolicyButton = [...sheet.querySelectorAll('button')].find((button) =>
   button.textContent?.includes('新增分组策略')
 )
@@ -345,7 +350,9 @@ const savePolicyButton = [...policyDialog.querySelectorAll('button')].find(
 )
 assert.ok(savePolicyButton)
 await act(async () => savePolicyButton.click())
-const policyRows = [...sheet.querySelectorAll('tbody tr')]
+const policyRows = [
+  ...sheet.querySelectorAll('[data-slot="group-policy-summary"]'),
+]
 const newPolicyVisible =
   policyRows.length === 2 &&
   policyRows.some((row) => row.textContent?.includes('default'))
@@ -431,7 +438,7 @@ process.stdout.write(
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,
     policyDialogUsesContentSizedViewport,
-    policyTableScrollable,
+    policyListAvoidsHorizontalOverflow,
     previewEmailButtonEnabled,
     newPolicyVisible,
     policyDialogExplainsExplicitScope,
