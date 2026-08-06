@@ -487,6 +487,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   fast_failure_penalty_percent: number
   fast_failure_seconds: number
   fast_failure_same_channel_retry_count?: number
+  fast_failure_same_channel_retry_delay_ms?: number
   slow_failure_seconds: number
   burst_failure_window_seconds?: number
   consecutive_failure_threshold?: number

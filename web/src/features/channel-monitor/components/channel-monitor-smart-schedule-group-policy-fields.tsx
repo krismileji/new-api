@@ -53,6 +53,7 @@ import {
   MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT,
+  MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS,
   MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
@@ -853,7 +854,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               </FormItem>
             )}
           />
-          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-5'>
+          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6'>
             <GroupPolicyPercentField
               form={props.form}
               name='fastFailurePenaltyPercent'
@@ -953,6 +954,43 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     </InputGroup>
                   </FormControl>
                   <FormDescription>0 表示关闭，独立于普通重试</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='fastFailureSameChannelRetryDelayMs'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='快速重试间隔'
+                    helpKey='fastFailureSameChannelRetryDelay'
+                  />
+                  <FormControl>
+                    <InputGroup>
+                      <InputGroupInput
+                        type='number'
+                        min={0}
+                        max={
+                          MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS
+                        }
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .fastFailureSameChannelRetryDelayMs
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>毫秒</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>每次同渠道快速重试前等待</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

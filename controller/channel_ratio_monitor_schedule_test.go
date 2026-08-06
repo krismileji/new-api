@@ -43,6 +43,7 @@ func channelSmartScheduleTestGroupPolicy(
 	fastFailurePenaltyPercent := 40.0
 	fastFailureSeconds := 1.0
 	fastFailureSameChannelRetryCount := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
+	fastFailureRetryDelayMs := defaultChannelMonitorSmartScheduleFastRetryDelayMs
 	slowFailureSeconds := 10.0
 	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
 	consecutiveFailureThreshold := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
@@ -67,6 +68,7 @@ func channelSmartScheduleTestGroupPolicy(
 		FastFailurePenaltyPercent:        &fastFailurePenaltyPercent,
 		FastFailureSeconds:               &fastFailureSeconds,
 		FastFailureSameChannelRetryCount: &fastFailureSameChannelRetryCount,
+		FastFailureRetryDelayMs:          &fastFailureRetryDelayMs,
 		SlowFailureSeconds:               &slowFailureSeconds,
 		BurstFailureWindowSeconds:        &burstFailureWindowSeconds,
 		ConsecutiveFailureThreshold:      &consecutiveFailureThreshold,
@@ -95,18 +97,35 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsAndValidatesFastFailure
 		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
 	)
 	policy.FastFailureSameChannelRetryCount = nil
+	policy.FastFailureRetryDelayMs = nil
 
 	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
 	require.NoError(t, err)
 	require.Len(t, normalized, 1)
 	require.NotNil(t, normalized[0].FastFailureSameChannelRetryCount)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount, *normalized[0].FastFailureSameChannelRetryCount)
+	require.NotNil(t, normalized[0].FastFailureRetryDelayMs)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleFastRetryDelayMs, *normalized[0].FastFailureRetryDelayMs)
 
 	for _, value := range []int{-1, maxChannelMonitorSmartScheduleFastFailureSameChannelRetryCount + 1} {
-		policy.FastFailureSameChannelRetryCount = &value
-		_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+		invalidPolicy := channelSmartScheduleTestGroupPolicy(
+			"vip", channelMonitorSmartScheduleStrategySmart, true,
+			channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+		)
+		invalidPolicy.FastFailureSameChannelRetryCount = &value
+		_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{invalidPolicy})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "快速失败同渠道重试次数")
+	}
+	for _, value := range []int{-1, maxChannelMonitorSmartScheduleFastRetryDelayMs + 1} {
+		invalidPolicy := channelSmartScheduleTestGroupPolicy(
+			"vip", channelMonitorSmartScheduleStrategySmart, true,
+			channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+		)
+		invalidPolicy.FastFailureRetryDelayMs = &value
+		_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{invalidPolicy})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "快速失败同渠道重试延迟")
 	}
 }
 

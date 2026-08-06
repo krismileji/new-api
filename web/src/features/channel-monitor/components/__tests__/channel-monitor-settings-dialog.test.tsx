@@ -159,6 +159,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
               fastFailurePenaltyPercent: 40,
               fastFailureSeconds: 1,
               fastFailureSameChannelRetryCount: 0,
+              fastFailureSameChannelRetryDelayMs: 1_000,
               slowFailureSeconds: 10,
               cooldownMinutes: 30,
               sampleMode: props.sampleMode ?? 'traffic',
@@ -231,6 +232,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
       fastFailureSameChannelRetryCount: 0,
+      fastFailureSameChannelRetryDelayMs: 1_000,
       slowFailureSeconds: 10,
       cooldownMinutes: 30,
       sampleMode: props.sampleMode,
@@ -433,6 +435,7 @@ describe('channel monitor settings dialog', () => {
       '快速失败惩罚',
       '快速失败界限',
       '同渠道快速重试',
+      '快速重试间隔',
       '慢失败界限',
       '降级时长',
       '保护失败窗口',
@@ -453,6 +456,10 @@ describe('channel monitor settings dialog', () => {
     assert.match(
       trafficPolicyMarkup,
       /<input(?=[^>]*name="fastFailureSameChannelRetryCount")(?=[^>]*min="0")(?=[^>]*max="10")(?=[^>]*value="0")[^>]*>/
+    )
+    assert.match(
+      trafficPolicyMarkup,
+      /<input(?=[^>]*name="fastFailureSameChannelRetryDelayMs")(?=[^>]*min="0")(?=[^>]*max="60000")(?=[^>]*value="1000")[^>]*>/
     )
     assert.match(
       trafficPolicyMarkup,

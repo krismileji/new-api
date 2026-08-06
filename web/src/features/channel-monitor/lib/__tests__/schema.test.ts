@@ -62,6 +62,7 @@ describe('smart schedule policy schema', () => {
       fastFailurePenaltyPercent: '',
       fastFailureSeconds: '',
       fastFailureSameChannelRetryCount: '',
+      fastFailureSameChannelRetryDelayMs: '',
       slowFailureSeconds: '',
       cooldownMinutes: '',
       explorationTrafficPercent: '',
@@ -83,13 +84,16 @@ describe('smart schedule policy schema', () => {
     assert.equal(result.data.scoring.stabilityPercent, 50)
   })
 
-  test('defaults the degraded probe switch off for legacy policies', () => {
+  test('defaults newly added controls for legacy policies', () => {
     const legacyPolicy: Record<string, unknown> = {
       ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
     }
     delete legacyPolicy.degradedProbeEnabled
+    delete legacyPolicy.fastFailureSameChannelRetryDelayMs
 
-    assert.equal(schema.parse(legacyPolicy).degradedProbeEnabled, false)
+    const parsed = schema.parse(legacyPolicy)
+    assert.equal(parsed.degradedProbeEnabled, false)
+    assert.equal(parsed.fastFailureSameChannelRetryDelayMs, 1_000)
   })
 
   test('continues to reject empty controls in active branches', () => {
@@ -103,6 +107,7 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
       { ...basePolicy, fastFailureSameChannelRetryCount: '' },
+      { ...basePolicy, fastFailureSameChannelRetryDelayMs: '' },
       { ...basePolicy, jitterSlowThresholdSeconds: '' },
     ]
 
@@ -520,6 +525,7 @@ describe('channel monitor settings schema', () => {
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
       fastFailureSameChannelRetryCount: 2,
+      fastFailureSameChannelRetryDelayMs: 750,
       slowFailureSeconds: 10,
       burstFailureWindowSeconds: 30,
       consecutiveFailureThreshold: 2,
@@ -689,6 +695,28 @@ describe('channel monitor settings schema', () => {
           ...baseSettings,
           smartScheduleGroupPolicies: [
             { ...groupPolicy, fastFailureSameChannelRetryCount },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const fastFailureSameChannelRetryDelayMs of [0, 60_000]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, fastFailureSameChannelRetryDelayMs },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const fastFailureSameChannelRetryDelayMs of [-1, 1.5, 60_001]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, fastFailureSameChannelRetryDelayMs },
           ],
         }).success,
         false

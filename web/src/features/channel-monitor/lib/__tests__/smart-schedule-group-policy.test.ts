@@ -57,6 +57,7 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
   fastFailureSameChannelRetryCount: 2,
+  fastFailureSameChannelRetryDelayMs: 750,
   slowFailureSeconds: 10,
   burstFailureWindowSeconds: 30,
   consecutiveFailureThreshold: 2,
@@ -193,6 +194,11 @@ describe('smart schedule group policy', () => {
     assert.equal(apiPolicies[0]?.fast_failure_penalty_percent, 40)
     assert.equal(apiPolicies[0]?.fast_failure_seconds, 1)
     assert.equal(apiPolicies[0]?.fast_failure_same_channel_retry_count, 2)
+    assert.equal(formPolicies[0]?.fastFailureSameChannelRetryDelayMs, 1_000)
+    assert.equal(
+      apiPolicies[0]?.fast_failure_same_channel_retry_delay_ms,
+      1_000
+    )
     assert.equal(apiPolicies[0]?.slow_failure_seconds, 10)
     assert.equal(apiPolicies[0]?.burst_failure_window_seconds, 30)
     assert.equal(apiPolicies[0]?.consecutive_failure_threshold, 2)
@@ -264,6 +270,10 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSameChannelRetryCount,
       0
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSameChannelRetryDelayMs,
+      1_000
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.slowFailureSeconds,

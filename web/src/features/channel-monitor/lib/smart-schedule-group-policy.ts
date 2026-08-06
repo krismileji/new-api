@@ -114,6 +114,9 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     fastFailureSameChannelRetryCount:
       policy.fast_failure_same_channel_retry_count ??
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryCount,
+    fastFailureSameChannelRetryDelayMs:
+      policy.fast_failure_same_channel_retry_delay_ms ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryDelayMs,
     slowFailureSeconds: policy.slow_failure_seconds,
     burstFailureWindowSeconds:
       policy.burst_failure_window_seconds ??
@@ -168,6 +171,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     fast_failure_seconds: policy.fastFailureSeconds,
     fast_failure_same_channel_retry_count:
       policy.fastFailureSameChannelRetryCount,
+    fast_failure_same_channel_retry_delay_ms:
+      policy.fastFailureSameChannelRetryDelayMs,
     slow_failure_seconds: policy.slowFailureSeconds,
     burst_failure_window_seconds: policy.burstFailureWindowSeconds,
     consecutive_failure_threshold: policy.consecutiveFailureThreshold,
@@ -209,6 +214,8 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     fastFailurePenaltyPercent: policy.fastFailurePenaltyPercent,
     fastFailureSeconds: policy.fastFailureSeconds,
     fastFailureSameChannelRetryCount: policy.fastFailureSameChannelRetryCount,
+    fastFailureSameChannelRetryDelayMs:
+      policy.fastFailureSameChannelRetryDelayMs,
     slowFailureSeconds: policy.slowFailureSeconds,
     burstFailureWindowSeconds: policy.burstFailureWindowSeconds,
     consecutiveFailureThreshold: policy.consecutiveFailureThreshold,

@@ -131,6 +131,7 @@ const settings = {
       fast_failure_penalty_percent: 40,
       fast_failure_seconds: 1,
       fast_failure_same_channel_retry_count: 2,
+      fast_failure_same_channel_retry_delay_ms: 750,
       slow_failure_seconds: 10,
       cooldown_minutes: 30,
       sample_mode: 'traffic',
@@ -315,6 +316,7 @@ const policyDialogHasCompletePolicyControls = [
   '快速失败惩罚',
   '快速失败界限',
   '同渠道快速重试',
+  '快速重试间隔',
   '慢失败界限',
   '降级时长',
   '保护失败窗口',
@@ -336,7 +338,7 @@ const fastFailureInput = policyDialog.querySelector(
   'input[name="fastFailureSeconds"]'
 )
 const stabilityFailureGrid = fastFailureInput?.closest(
-  '[class*="lg:grid-cols-5"]'
+  '[class*="lg:grid-cols-3"]'
 )
 const policyDialogStabilityInputsAligned =
   stabilityFailureGrid?.classList.contains('items-start') === true &&
@@ -344,6 +346,7 @@ const policyDialogStabilityInputsAligned =
     'fastFailurePenaltyPercent',
     'fastFailureSeconds',
     'fastFailureSameChannelRetryCount',
+    'fastFailureSameChannelRetryDelayMs',
     'slowFailureSeconds',
     'cooldownMinutes',
   ].every((name) => stabilityFailureGrid.querySelector(`input[name="${name}"]`))

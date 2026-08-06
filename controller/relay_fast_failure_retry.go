@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"slices"
 	"time"
 
@@ -33,15 +34,17 @@ func (budget *relayFastFailureRetryBudget) decide(
 	attemptDuration time.Duration,
 	fastFailureRetryable bool,
 	ordinaryRetryable bool,
-) relayRetryDecision {
-	if fastFailureRetryable && budget.take(group, modelName, channelID, attemptDuration) {
-		return relayRetryFastFailureSameChannel
+) (relayRetryDecision, time.Duration) {
+	if fastFailureRetryable {
+		if retryDelay, ok := budget.take(group, modelName, channelID, attemptDuration); ok {
+			return relayRetryFastFailureSameChannel, retryDelay
+		}
 	}
 	if ordinaryRetryable {
 		budget.resetChannelVisit()
-		return relayRetryOrdinary
+		return relayRetryOrdinary, 0
 	}
-	return relayRetryNone
+	return relayRetryNone, 0
 }
 
 func (budget *relayFastFailureRetryBudget) take(
@@ -49,9 +52,9 @@ func (budget *relayFastFailureRetryBudget) take(
 	modelName string,
 	channelID int,
 	attemptDuration time.Duration,
-) bool {
+) (time.Duration, bool) {
 	if channelID <= 0 || attemptDuration < 0 {
-		return false
+		return 0, false
 	}
 	if budget.channelID != channelID {
 		budget.channelID = channelID
@@ -64,7 +67,7 @@ func (budget *relayFastFailureRetryBudget) take(
 		budget.policies = settings.SmartScheduleGroupPolicies
 	}
 	if !budget.enabled {
-		return false
+		return 0, false
 	}
 
 	for _, configured := range budget.policies {
@@ -73,20 +76,34 @@ func (budget *relayFastFailureRetryBudget) take(
 		}
 		policy := configured.policy()
 		if len(policy.Models) > 0 && !slices.Contains(policy.Models, modelName) {
-			return false
+			return 0, false
 		}
 		if policy.FastFailureSameChannelRetryCount <= 0 ||
 			budget.used >= policy.FastFailureSameChannelRetryCount {
-			return false
+			return 0, false
 		}
 		fastFailureThreshold := time.Duration(policy.FastFailureSeconds * float64(time.Second))
 		if attemptDuration > fastFailureThreshold {
-			return false
+			return 0, false
 		}
 		budget.used++
+		return time.Duration(policy.FastFailureRetryDelayMs) * time.Millisecond, true
+	}
+	return 0, false
+}
+
+func waitForRelayFastFailureRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
 		return true
 	}
-	return false
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (budget *relayFastFailureRetryBudget) resetChannelVisit() {

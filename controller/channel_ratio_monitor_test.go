@@ -817,8 +817,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
 				"min_samples": 8, "degrade_stability_score": 95, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
-				"fast_failure_same_channel_retry_count": 2,
-				"burst_failure_window_seconds":          45, "consecutive_failure_threshold": 4,
+				"fast_failure_same_channel_retry_count":    2,
+				"fast_failure_same_channel_retry_delay_ms": 750,
+				"burst_failure_window_seconds":             45, "consecutive_failure_threshold": 4,
 				"burst_failure_threshold": 6, "recovery_success_threshold": 3,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5,
 				"jitter_slow_threshold_seconds": 10,
@@ -890,6 +891,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 1.0, *defaultGroupPolicy.FastFailureSeconds)
 	require.NotNil(t, defaultGroupPolicy.FastFailureSameChannelRetryCount)
 	assert.Equal(t, 2, *defaultGroupPolicy.FastFailureSameChannelRetryCount)
+	require.NotNil(t, defaultGroupPolicy.FastFailureRetryDelayMs)
+	assert.Equal(t, 750, *defaultGroupPolicy.FastFailureRetryDelayMs)
 	require.NotNil(t, defaultGroupPolicy.SlowFailureSeconds)
 	assert.Equal(t, 10.0, *defaultGroupPolicy.SlowFailureSeconds)
 	require.NotNil(t, defaultGroupPolicy.BurstFailureWindowSeconds)
@@ -930,6 +933,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 95.0, *groupPolicy.RecoveryStabilityScore)
 	require.NotNil(t, groupPolicy.FastFailureSameChannelRetryCount)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount, *groupPolicy.FastFailureSameChannelRetryCount)
+	require.NotNil(t, groupPolicy.FastFailureRetryDelayMs)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleFastRetryDelayMs, *groupPolicy.FastFailureRetryDelayMs)
 	require.NotNil(t, groupPolicy.BurstFailureWindowSeconds)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *groupPolicy.BurstFailureWindowSeconds)
 	require.NotNil(t, groupPolicy.ConsecutiveFailureThreshold)

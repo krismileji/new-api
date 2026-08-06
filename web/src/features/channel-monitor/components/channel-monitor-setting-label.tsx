@@ -77,7 +77,9 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
   fastFailureThreshold:
     '重试失败耗时不超过此值时按“快速失败惩罚”计算；超过后，惩罚会随耗时线性增加。',
   fastFailureSameChannelRetry:
-    '错误符合原有重试规则且耗时不超过快速失败界限时，优先在当前渠道额外重试这些次。该额度不消耗系统普通重试次数，用尽后才进入普通重试并切换渠道；0 表示关闭。',
+    '错误符合原有重试规则且耗时不超过快速失败界限时，优先在当前渠道额外重试这些次。每次重试前按快速重试间隔等待；该额度不消耗系统普通重试次数，用尽后才进入普通重试并切换渠道；0 表示关闭。',
+  fastFailureSameChannelRetryDelay:
+    '每次同渠道快速重试前等待的固定时间，只影响快速失败的额外重试，不延迟普通跨渠道重试。请求被取消时会立即停止等待；0 表示不等待。',
   slowFailureThreshold:
     '重试失败耗时达到此值后按一次完整失败计算；快速失败界限与慢失败界限之间按耗时线性增加惩罚。',
   burstFailureWindow:

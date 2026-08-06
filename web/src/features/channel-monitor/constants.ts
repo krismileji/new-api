@@ -49,6 +49,7 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
   fastFailureSameChannelRetryCount: 0,
+  fastFailureSameChannelRetryDelayMs: 1_000,
   slowFailureSeconds: 10,
   burstFailureWindowSeconds: 30,
   consecutiveFailureThreshold: 2,

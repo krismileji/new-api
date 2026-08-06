@@ -92,6 +92,7 @@ export const MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 99
 export const MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT = 100
 export const MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS = 60
 export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT = 10
+export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS = 60_000
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -242,6 +243,18 @@ const smartScheduleFastFailureSameChannelRetryCountSchema = z.preprocess(
     )
 )
 
+const smartScheduleFastFailureSameChannelRetryDelaySchema = z.preprocess(
+  (value) => (value === '' ? Number.NaN : value),
+  z.coerce
+    .number()
+    .int('快速失败同渠道重试延迟必须是整数')
+    .min(0, '快速失败同渠道重试延迟不能小于 0 毫秒')
+    .max(
+      MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS,
+      '快速失败同渠道重试延迟不能超过 60000 毫秒'
+    )
+)
+
 const smartScheduleRuntimeFailureThresholdSchema = z.coerce
   .number()
   .int('运行时失败阈值必须是整数')
@@ -379,6 +392,10 @@ const smartSchedulePolicyShape = {
   fastFailureSeconds: smartScheduleFastFailureSecondsSchema,
   fastFailureSameChannelRetryCount:
     smartScheduleFastFailureSameChannelRetryCountSchema.default(0),
+  fastFailureSameChannelRetryDelayMs:
+    smartScheduleFastFailureSameChannelRetryDelaySchema.default(
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryDelayMs
+    ),
   slowFailureSeconds: smartScheduleFailureSecondsSchema,
   burstFailureWindowSeconds: smartScheduleBurstFailureWindowSchema.default(30),
   consecutiveFailureThreshold:
@@ -445,6 +462,8 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.fastFailureSeconds = defaults.fastFailureSeconds
     normalized.fastFailureSameChannelRetryCount =
       defaults.fastFailureSameChannelRetryCount
+    normalized.fastFailureSameChannelRetryDelayMs =
+      defaults.fastFailureSameChannelRetryDelayMs
     normalized.slowFailureSeconds = defaults.slowFailureSeconds
     normalized.burstFailureWindowSeconds = defaults.burstFailureWindowSeconds
     normalized.consecutiveFailureThreshold =

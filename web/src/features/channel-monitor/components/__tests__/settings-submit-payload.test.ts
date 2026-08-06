@@ -79,6 +79,7 @@ const formValues = {
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
       fastFailureSameChannelRetryCount: 2,
+      fastFailureSameChannelRetryDelayMs: 750,
       slowFailureSeconds: 10,
       burstFailureWindowSeconds: 45,
       consecutiveFailureThreshold: 3,
@@ -194,6 +195,11 @@ describe('channel monitor settings submit payload', () => {
       payload.smart_schedule_group_policies?.[0]
         ?.fast_failure_same_channel_retry_count,
       2
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.fast_failure_same_channel_retry_delay_ms,
+      750
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.slow_failure_seconds,

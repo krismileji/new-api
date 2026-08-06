@@ -276,7 +276,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		retryDecision := fastFailureRetryBudget.decide(
+		retryDecision, fastFailureRetryDelay := fastFailureRetryBudget.decide(
 			relayRetryGroup(c, retryParam.TokenGroup),
 			relayInfo.OriginModelName,
 			channel.Id,
@@ -304,6 +304,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if !shouldRetry {
+			break
+		}
+		if retryDecision == relayRetryFastFailureSameChannel &&
+			!waitForRelayFastFailureRetry(c.Request.Context(), fastFailureRetryDelay) {
 			break
 		}
 		attemptIndex++
@@ -728,7 +732,7 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
-		retryDecision := fastFailureRetryBudget.decide(
+		retryDecision, fastFailureRetryDelay := fastFailureRetryBudget.decide(
 			relayRetryGroup(c, retryParam.TokenGroup),
 			relayInfo.OriginModelName,
 			channel.Id,
@@ -768,6 +772,10 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !shouldRetry {
+			break
+		}
+		if retryDecision == relayRetryFastFailureSameChannel &&
+			!waitForRelayFastFailureRetry(c.Request.Context(), fastFailureRetryDelay) {
 			break
 		}
 		attemptIndex++

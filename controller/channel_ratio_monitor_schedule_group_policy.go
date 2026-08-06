@@ -20,11 +20,13 @@ const (
 	maxChannelMonitorSmartScheduleBurstFailureWindowSeconds            = 300
 	maxChannelMonitorSmartScheduleRuntimeFailureThreshold              = 100
 	maxChannelMonitorSmartScheduleFastFailureSameChannelRetryCount     = 10
+	maxChannelMonitorSmartScheduleFastRetryDelayMs                     = 60_000
 	defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds        = 30
 	defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold      = 2
 	defaultChannelMonitorSmartScheduleBurstFailureThreshold            = 3
 	defaultChannelMonitorSmartScheduleRecoverySuccessThreshold         = 2
 	defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount = 0
+	defaultChannelMonitorSmartScheduleFastRetryDelayMs                 = 1_000
 	maxChannelMonitorSmartScheduleSamplingInterval                     = 1440
 	minChannelMonitorSmartScheduleSamplingBasePercent                  = 0.1
 	maxChannelMonitorSmartScheduleSamplingBasePercent                  = 20.0
@@ -48,6 +50,7 @@ type channelSmartScheduleGroupPolicy struct {
 	FastFailurePenaltyPercent        *float64                     `json:"fast_failure_penalty_percent,omitempty"`
 	FastFailureSeconds               *float64                     `json:"fast_failure_seconds,omitempty"`
 	FastFailureSameChannelRetryCount *int                         `json:"fast_failure_same_channel_retry_count,omitempty"`
+	FastFailureRetryDelayMs          *int                         `json:"fast_failure_same_channel_retry_delay_ms,omitempty"`
 	SlowFailureSeconds               *float64                     `json:"slow_failure_seconds,omitempty"`
 	BurstFailureWindowSeconds        *int                         `json:"burst_failure_window_seconds,omitempty"`
 	ConsecutiveFailureThreshold      *int                         `json:"consecutive_failure_threshold,omitempty"`
@@ -85,6 +88,7 @@ type channelSmartSchedulePolicy struct {
 	FastFailurePenaltyPercent        float64
 	FastFailureSeconds               float64
 	FastFailureSameChannelRetryCount int
+	FastFailureRetryDelayMs          int
 	SlowFailureSeconds               float64
 	BurstFailureWindowSeconds        int
 	ConsecutiveFailureThreshold      int
@@ -156,6 +160,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		if policy.FastFailureSameChannelRetryCount == nil {
 			value := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
 			policy.FastFailureSameChannelRetryCount = &value
+		}
+		if policy.FastFailureRetryDelayMs == nil {
+			value := defaultChannelMonitorSmartScheduleFastRetryDelayMs
+			policy.FastFailureRetryDelayMs = &value
 		}
 		if policy.ConsecutiveFailureThreshold == nil {
 			value := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
@@ -245,6 +253,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		if *policy.FastFailureSameChannelRetryCount < 0 ||
 			*policy.FastFailureSameChannelRetryCount > maxChannelMonitorSmartScheduleFastFailureSameChannelRetryCount {
 			return nil, errors.New("分组调度快速失败同渠道重试次数必须在 0 到 10 次之间")
+		}
+		if *policy.FastFailureRetryDelayMs < 0 ||
+			*policy.FastFailureRetryDelayMs > maxChannelMonitorSmartScheduleFastRetryDelayMs {
+			return nil, errors.New("分组调度快速失败同渠道重试延迟必须在 0 到 60000 毫秒之间")
 		}
 		if math.IsNaN(*policy.SlowFailureSeconds) || math.IsInf(*policy.SlowFailureSeconds, 0) ||
 			*policy.SlowFailureSeconds <= *policy.FastFailureSeconds ||
@@ -342,6 +354,10 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	if configured.FastFailureSameChannelRetryCount != nil {
 		fastFailureSameChannelRetryCount = *configured.FastFailureSameChannelRetryCount
 	}
+	fastFailureRetryDelayMs := defaultChannelMonitorSmartScheduleFastRetryDelayMs
+	if configured.FastFailureRetryDelayMs != nil {
+		fastFailureRetryDelayMs = *configured.FastFailureRetryDelayMs
+	}
 	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
 	if configured.BurstFailureWindowSeconds != nil {
 		burstFailureWindowSeconds = *configured.BurstFailureWindowSeconds
@@ -374,6 +390,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		FastFailurePenaltyPercent:        *configured.FastFailurePenaltyPercent,
 		FastFailureSeconds:               *configured.FastFailureSeconds,
 		FastFailureSameChannelRetryCount: fastFailureSameChannelRetryCount,
+		FastFailureRetryDelayMs:          fastFailureRetryDelayMs,
 		SlowFailureSeconds:               *configured.SlowFailureSeconds,
 		BurstFailureWindowSeconds:        burstFailureWindowSeconds,
 		ConsecutiveFailureThreshold:      consecutiveFailureThreshold,

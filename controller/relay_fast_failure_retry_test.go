@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -17,29 +18,41 @@ func TestRelayFastFailureRetryBudgetDoesNotConsumeOrdinaryRetry(t *testing.T) {
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 5, 80, 30,
 	)
 	count := 2
+	delayMs := 750
 	policy.FastFailureSameChannelRetryCount = &count
+	policy.FastFailureRetryDelayMs = &delayMs
 	budget := &relayFastFailureRetryBudget{
 		loaded:   true,
 		enabled:  true,
 		policies: smartScheduleGroupPolicies{policy},
 	}
 
-	assert.Equal(t, relayRetryFastFailureSameChannel, budget.decide(
+	decision, delay := budget.decide(
 		"vip", "model-a", 7, time.Second, true, false,
-	))
-	assert.Equal(t, relayRetryFastFailureSameChannel, budget.decide(
+	)
+	assert.Equal(t, relayRetryFastFailureSameChannel, decision)
+	assert.Equal(t, 750*time.Millisecond, delay)
+	decision, delay = budget.decide(
 		"vip", "model-a", 7, 500*time.Millisecond, true, false,
-	))
-	assert.Equal(t, relayRetryNone, budget.decide(
+	)
+	assert.Equal(t, relayRetryFastFailureSameChannel, decision)
+	assert.Equal(t, 750*time.Millisecond, delay)
+	decision, delay = budget.decide(
 		"vip", "model-a", 7, 500*time.Millisecond, true, false,
-	))
+	)
+	assert.Equal(t, relayRetryNone, decision)
+	assert.Zero(t, delay)
 
-	assert.Equal(t, relayRetryOrdinary, budget.decide(
+	decision, delay = budget.decide(
 		"vip", "model-a", 7, 500*time.Millisecond, true, true,
-	))
-	assert.Equal(t, relayRetryFastFailureSameChannel, budget.decide(
+	)
+	assert.Equal(t, relayRetryOrdinary, decision)
+	assert.Zero(t, delay)
+	decision, delay = budget.decide(
 		"vip", "model-a", 7, 500*time.Millisecond, true, false,
-	))
+	)
+	assert.Equal(t, relayRetryFastFailureSameChannel, decision)
+	assert.Equal(t, 750*time.Millisecond, delay)
 }
 
 func TestRelayFastFailureRetryBudgetRequiresMatchingFastFailure(t *testing.T) {
@@ -68,9 +81,11 @@ func TestRelayFastFailureRetryBudgetRequiresMatchingFastFailure(t *testing.T) {
 				enabled:  test.enabled,
 				policies: smartScheduleGroupPolicies{policy},
 			}
-			assert.Equal(t, relayRetryOrdinary, budget.decide(
+			decision, delay := budget.decide(
 				test.group, test.modelName, 7, test.duration, true, true,
-			))
+			)
+			assert.Equal(t, relayRetryOrdinary, decision)
+			assert.Zero(t, delay)
 		})
 	}
 }
@@ -90,7 +105,17 @@ func TestRelayFastFailureRetryBudgetLoadsPolicyForSelectedAutoGroup(t *testing.T
 	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "vip")
 
 	budget := &relayFastFailureRetryBudget{}
-	assert.Equal(t, relayRetryFastFailureSameChannel, budget.decide(
+	decision, delay := budget.decide(
 		relayRetryGroup(ctx, "auto"), "model-a", 7, time.Millisecond, true, false,
-	))
+	)
+	assert.Equal(t, relayRetryFastFailureSameChannel, decision)
+	assert.Equal(t, time.Second, delay)
+}
+
+func TestWaitForRelayFastFailureRetryHonorsCancellationAndZeroDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.False(t, waitForRelayFastFailureRetry(ctx, time.Hour))
+	assert.True(t, waitForRelayFastFailureRetry(ctx, 0))
 }
