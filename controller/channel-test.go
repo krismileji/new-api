@@ -1082,8 +1082,13 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 
 		// enable channel
 		if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-			service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-			summary.Enabled++
+			allowEnable, enableErr := channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
+			if enableErr != nil {
+				common.SysLog(fmt.Sprintf("渠道 #%d 健康检查自动启用条件校验失败：%v", channel.Id, enableErr))
+			} else if allowEnable {
+				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+				summary.Enabled++
+			}
 		}
 
 		channel.UpdateResponseTime(milliseconds)
