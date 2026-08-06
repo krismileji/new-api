@@ -105,6 +105,7 @@ func TestPlanChannelSmartScheduleRecordsEffectiveWeightAfterUnavailableMetrics(t
 
 func TestRunChannelSmartSchedulePersistsExecutionTimeScoreDetails(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,

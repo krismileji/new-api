@@ -177,6 +177,34 @@ describe('smart schedule pool status', () => {
       '低优先级轮转'
     )
   })
+
+  test('reports break-even fallback takeover only when it is the actual top layer', () => {
+    const normal = createRoute(1, 'vip', 'model-a', 2, 1000)
+    const fallback = createRoute(2, 'vip', 'model-a', 1, 1000)
+    fallback.economic_role = 'break_even_fallback'
+
+    const normalSummary = summarizeChannelMonitorSmartSchedulePools([
+      normal,
+      fallback,
+    ])[0]
+    assert.equal(normalSummary.breakEvenFallbackCount, 1)
+    assert.equal(normalSummary.breakEvenFallbackTakingOver, false)
+    assert.equal(
+      placeChannelMonitorSmartScheduleRoutes([normal, fallback]).get(
+        channelMonitorSmartScheduleRouteKey(fallback)
+      )?.estimatedShare,
+      null
+    )
+
+    const fallbackOnlySummary = summarizeChannelMonitorSmartSchedulePools([
+      fallback,
+    ])[0]
+    assert.equal(fallbackOnlySummary.breakEvenFallbackTakingOver, true)
+    assert.equal(
+      getChannelMonitorSmartSchedulePoolStatus(fallbackOnlySummary),
+      '保本兜底接管'
+    )
+  })
 })
 
 describe('smart schedule route placement', () => {

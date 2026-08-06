@@ -35,7 +35,10 @@ import { Switch } from '@/components/ui/switch'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
-import { channelMonitorSmartScheduleRouteParticipates } from '../lib/smart-schedule-summary'
+import {
+  channelMonitorSmartScheduleRouteIsBreakEvenFallback,
+  channelMonitorSmartScheduleRouteParticipates,
+} from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 
@@ -112,7 +115,26 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     route.state.manual_primary_until,
     now
   )
-  if (fixedRemaining) {
+  const breakEvenFallback =
+    channelMonitorSmartScheduleRouteIsBreakEvenFallback(route)
+  const decision = route.state.last_schedule_score_details?.decision
+  const breakEvenTakingOver =
+    breakEvenFallback &&
+    ((decision?.actual_highest_priority === route.priority &&
+      (decision.actual_top_layer_channel_ids ?? []).includes(
+        route.channel_id
+      )) ||
+      decision?.selection_reason.includes('保本兜底层接管') === true)
+  if (breakEvenFallback) {
+    let label = '保本兜底'
+    if (fixedRemaining) label = '保本兜底 · 已手动固定'
+    else if (breakEvenTakingOver) label = '保本兜底 · 接管中'
+    statuses.push({
+      key: 'break-even-fallback',
+      label,
+      variant: fixedRemaining || breakEvenTakingOver ? 'warning' : 'outline',
+    })
+  } else if (fixedRemaining) {
     statuses.push({
       key: 'fixed',
       label: `固定主渠道 · ${fixedRemaining}`,
@@ -160,6 +182,22 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     label: '当前路由',
     value: `P${route.priority} · W${route.weight}`,
   })
+  if (breakEvenFallback) {
+    details.push(
+      {
+        label: '成本倍率',
+        value: route.cost_ratio == null ? '-' : route.cost_ratio.toFixed(6),
+      },
+      {
+        label: '分组倍率',
+        value: route.group_ratio == null ? '-' : route.group_ratio.toFixed(6),
+      },
+      {
+        label: '倍率差',
+        value: route.gross_margin == null ? '-' : route.gross_margin.toFixed(6),
+      }
+    )
+  }
   if (route.state.stability_since > 0) {
     details.push({
       label:

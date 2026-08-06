@@ -165,6 +165,26 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(markup.includes('查看当前调度状态详情'))
   })
 
+  test('shows break-even fallback without disabling manual fixed intent', () => {
+    const fallback = createRoute({
+      economic_role: 'break_even_fallback',
+      cost_ratio: 1,
+      group_ratio: 1,
+      gross_margin: 0,
+    })
+    const fallbackMarkup = renderCell([fallback])
+
+    assert.ok(fallbackMarkup.includes('保本兜底'))
+
+    const fixedMarkup = renderCell([
+      createRoute({
+        economic_role: 'break_even_fallback',
+        state: { manual_primary_until: 4_102_444_800 },
+      }),
+    ])
+    assert.ok(fixedMarkup.includes('保本兜底 · 已手动固定'))
+  })
+
   test('opens the selected route status details from the third line', () => {
     const fixturePath = fileURLToPath(
       new URL('./smart-schedule-cell-interaction.fixture.tsx', import.meta.url)

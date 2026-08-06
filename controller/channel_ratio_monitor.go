@@ -604,13 +604,17 @@ func SyncChannelMonitorGroupRatio(c *gin.Context) {
 		return
 	}
 
-	if _, err := model.MergeChannelMonitorGroupOptions(
+	groupsUpdated, err := model.MergeChannelMonitorGroupOptions(
 		map[string]float64{request.Group: targetRatio},
 		map[string]float64{request.Group: *request.Coefficient},
 		false,
-	); err != nil {
+	)
+	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if groupsUpdated > 0 {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.monitor_group_ratio_sync", map[string]interface{}{
 		"group": request.Group, "upstream_ratio": highestUpstreamRatio,
@@ -663,6 +667,7 @@ func UpdateChannelMonitorRatio(c *gin.Context) {
 		return
 	}
 	service.InvalidateChannelDailyCostSnapshot(channelId)
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.monitor_ratio_update", map[string]interface{}{
 		"id": channelId, "ratio": *request.Ratio, "changed": changed,
 	})
@@ -904,6 +909,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		auditDetails["custom_balance_source"] = config.CustomConfig.Balance.Source
 	}
 	recordManageAudit(c, "channel.monitor_upstream_config_update", auditDetails)
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	common.ApiSuccess(c, channelMonitorUpstreamFromModel(monitor))
 }
 
@@ -1278,6 +1284,7 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		"conversion_factor": outcome.Result.ConversionFactor, "changed": outcome.Changed,
 		"balance_auto_disabled": balanceAutoDisabled,
 	})
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1462,6 +1469,7 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		"conversion_factor": applyResult.Result.ConversionFactor,
 		"changed":           changed,
 	})
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1513,13 +1521,17 @@ func UpdateChannelMonitorGroupRatio(c *gin.Context) {
 		return
 	}
 
-	if _, err := model.MergeChannelMonitorGroupOptions(
+	groupsUpdated, err := model.MergeChannelMonitorGroupOptions(
 		map[string]float64{request.Group: *request.Ratio},
 		nil,
 		false,
-	); err != nil {
+	)
+	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if groupsUpdated > 0 {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.monitor_group_ratio_update", map[string]interface{}{
 		"group": request.Group,

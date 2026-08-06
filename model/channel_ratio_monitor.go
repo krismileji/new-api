@@ -167,6 +167,10 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 	defer channelStatusLock.Unlock()
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		economicRevision, err := lockChannelMonitorEconomicRevisionTx(tx)
+		if err != nil {
+			return err
+		}
 		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
 			return err
 		}
@@ -190,14 +194,15 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 					*monitor.BalanceWarningThreshold != *options.BalanceWarningThreshold)
 		ratioSyncChanged := monitor.UpstreamRatioSyncDisabled != !options.RatioSyncEnabled
 		balanceSyncChanged := monitor.UpstreamBalanceSyncDisabled != !options.BalanceSyncEnabled
+		costConversionChanged := monitor.CostConversion != options.CostConversion
 		ratioRequestChanged := upstreamAccountChanged ||
 			monitor.UpstreamGroup != group ||
-			monitor.CostConversion != options.CostConversion ||
+			costConversionChanged ||
 			ratioSyncChanged
 		balanceRequestChanged := upstreamAccountChanged || balanceSyncChanged
 		upstreamConfigChanged := upstreamAccountChanged ||
 			monitor.UpstreamGroup != group ||
-			monitor.CostConversion != options.CostConversion ||
+			costConversionChanged ||
 			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig ||
 			ratioSyncChanged || balanceSyncChanged ||
 			monitor.SingleChannelAction != options.SingleChannelAction ||
@@ -259,6 +264,11 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		}
 		if upstreamAccountChanged || balanceWarningThresholdChanged || balanceSyncChanged {
 			monitor.BalanceAlertNotified = false
+		}
+		if costConversionChanged {
+			if err := economicRevision.bump(tx); err != nil {
+				return err
+			}
 		}
 		return tx.Save(&monitor).Error
 	})
@@ -459,6 +469,10 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 
 	applied = true
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		economicRevision, err := lockChannelMonitorEconomicRevisionTx(tx)
+		if err != nil {
+			return err
+		}
 		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
 			if expectedRevision != nil && errors.Is(err, gorm.ErrRecordNotFound) {
 				applied = false
@@ -487,6 +501,9 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 				monitor.LastFetchTime = now
 			}
 			created = true
+			if err := economicRevision.bump(tx); err != nil {
+				return err
+			}
 			return tx.Create(&monitor).Error
 		}
 		if findErr != nil {
@@ -509,9 +526,13 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 				monitor.LastFetchTime = now
 				monitor.ConsecutiveFailures = 0
 			}
+			if err := economicRevision.bump(tx); err != nil {
+				return err
+			}
 			return tx.Save(&monitor).Error
 		}
 
+		economicRatioChanged := monitor.Ratio != ratio
 		changed = math.Abs(monitor.Ratio-ratio) > 1e-9
 		if changed {
 			history := ChannelRatioHistory{
@@ -540,6 +561,11 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 			monitor.LastFetchError = ""
 			monitor.LastFetchTime = now
 			monitor.ConsecutiveFailures = 0
+		}
+		if economicRatioChanged {
+			if err := economicRevision.bump(tx); err != nil {
+				return err
+			}
 		}
 		return tx.Save(&monitor).Error
 	})

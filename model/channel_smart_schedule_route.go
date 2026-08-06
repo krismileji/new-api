@@ -132,6 +132,10 @@ type ChannelSmartScheduleRoute struct {
 	Enabled         bool                                 `json:"enabled"`
 	Priority        int64                                `json:"priority"`
 	Weight          uint                                 `json:"weight"`
+	CostRatio       *float64                             `json:"cost_ratio,omitempty"`
+	GroupRatio      *float64                             `json:"group_ratio,omitempty"`
+	GrossMargin     *float64                             `json:"gross_margin,omitempty"`
+	EconomicRole    string                               `json:"economic_role,omitempty"`
 	State           ChannelSmartScheduleRouteState       `json:"state"`
 	SharedSamples   ChannelSmartScheduleModelSampleState `json:"shared_samples"`
 }
@@ -155,6 +159,7 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	ObservationOnly          bool
 	ExpectedRevision         int64
 	ExpectedControlRevision  string
+	ExpectedEconomicRevision string
 	ExpectedParticipationSet bool
 	ExpectedExcluded         bool
 	ExpectedAbilityEnabled   bool
@@ -1613,7 +1618,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	observationBoundaryAdvanced := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		controlRevision, err := lockChannelSmartScheduleControlRevisionTx(tx)
+		controlRevision, economicRevision, err := lockChannelSmartScheduleRevisionsTx(tx)
 		if err != nil {
 			return err
 		}
@@ -1692,6 +1697,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			currentPriority, currentWeight := channelSmartScheduleAbilityRouting(ability, &channel)
 			if result.PoolGuard {
 				if !channelExists || controlRevision != result.ExpectedControlRevision ||
+					economicRevision != result.ExpectedEconomicRevision ||
 					state.Revision != result.ExpectedRevision ||
 					state.ParticipationSet != result.ExpectedParticipationSet ||
 					state.Excluded != result.ExpectedExcluded ||
@@ -1702,7 +1708,9 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 					return nil
 				}
 			} else if result.GuardCurrent {
-				if controlRevision != result.ExpectedControlRevision || state.Revision != result.ExpectedRevision ||
+				if controlRevision != result.ExpectedControlRevision ||
+					economicRevision != result.ExpectedEconomicRevision ||
+					state.Revision != result.ExpectedRevision ||
 					!state.Participates() || !ability.Enabled || currentPriority != result.ExpectedPriority ||
 					currentWeight != result.ExpectedWeight ||
 					channelStatusById[result.ChannelId] != common.ChannelStatusEnabled {

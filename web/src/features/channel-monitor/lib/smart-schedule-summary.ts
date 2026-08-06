@@ -69,6 +69,9 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   insufficientSampleCount: number
   prioritySamplingCount: number
   failedCount: number
+  breakEvenFallbackCount: number
+  breakEvenFallbackFixedCount: number
+  breakEvenFallbackTakingOver: boolean
   topPriority: number | null
   candidateCount: number
   scoringWinnerChannelId: number
@@ -89,6 +92,7 @@ export type ChannelMonitorSmartSchedulePoolStatus =
   | '稳定性试放'
   | '样本不足补量'
   | '低优先级轮转'
+  | '保本兜底接管'
   | '最近失败'
   | '未参与调度'
   | '当前不可调度'
@@ -189,6 +193,12 @@ export function channelMonitorSmartScheduleRouteIsActive(
     route.enabled &&
     route.channel_status === CHANNEL_STATUS.ENABLED
   )
+}
+
+export function channelMonitorSmartScheduleRouteIsBreakEvenFallback(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.economic_role === 'break_even_fallback'
 }
 
 export function filterChannelMonitorSmartScheduleRoutes(
@@ -598,6 +608,14 @@ export function summarizeChannelMonitorSmartSchedulePools(
         prioritySamplingCount:
           route.state.temporary_traffic_kind === 'priority_sampling' ? 1 : 0,
         failedCount: route.state.last_schedule_status === 'failed' ? 1 : 0,
+        breakEvenFallbackCount:
+          route.economic_role === 'break_even_fallback' ? 1 : 0,
+        breakEvenFallbackFixedCount:
+          route.economic_role === 'break_even_fallback' &&
+          route.state.manual_primary_until > 0
+            ? 1
+            : 0,
+        breakEvenFallbackTakingOver: false,
         topPriority: active ? route.priority : null,
         candidateCount: active ? 1 : 0,
         scoringWinnerChannelId: 0,
@@ -623,10 +641,20 @@ export function summarizeChannelMonitorSmartSchedulePools(
       existing.prioritySamplingCount += 1
     }
     if (route.state.last_schedule_status === 'failed') existing.failedCount += 1
+    if (route.economic_role === 'break_even_fallback') {
+      existing.breakEvenFallbackCount += 1
+      if (route.state.manual_primary_until > 0) {
+        existing.breakEvenFallbackFixedCount += 1
+      }
+    }
   }
   const summaries = [...poolMap.entries()].map(([key, summary]) => {
-    const snapshot = getChannelMonitorSmartSchedulePoolRoutingSnapshot(
-      routesByPool.get(key) ?? []
+    const poolRoutes = routesByPool.get(key) ?? []
+    const snapshot =
+      getChannelMonitorSmartSchedulePoolRoutingSnapshot(poolRoutes)
+    const topLayerChannelIdSet = new Set(snapshot.actualTopLayerChannelIds)
+    const topLayerRoutes = poolRoutes.filter((route) =>
+      topLayerChannelIdSet.has(route.channel_id)
     )
     return {
       ...summary,
@@ -636,6 +664,13 @@ export function summarizeChannelMonitorSmartSchedulePools(
       actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
       actualTopLayerChannelIds: snapshot.actualTopLayerChannelIds,
+      breakEvenFallbackTakingOver:
+        topLayerRoutes.length > 0 &&
+        topLayerRoutes.every(
+          (route) =>
+            channelMonitorSmartScheduleRouteIsBreakEvenFallback(route) &&
+            route.state.manual_primary_until <= 0
+        ),
     }
   })
   return summaries.sort((first, second) => {
@@ -671,12 +706,14 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   insufficientSampleCount: number
   prioritySamplingCount: number
   failedCount?: number
+  breakEvenFallbackTakingOver?: boolean
 }): ChannelMonitorSmartSchedulePoolStatus {
   if (pool.degradedCount > 0) return '稳定性降级'
   if (pool.probingCount > 0) return '稳定性试放'
   if (pool.insufficientSampleCount > 0) return '样本不足补量'
   if (pool.prioritySamplingCount > 0) return '低优先级轮转'
   if ((pool.failedCount ?? 0) > 0) return '最近失败'
+  if (pool.breakEvenFallbackTakingOver) return '保本兜底接管'
   if (pool.participatingCount === 0) return '未参与调度'
   if (pool.activeCount === 0) return '当前不可调度'
   if (pool.activeCount < pool.participatingCount) return '部分可调度'
@@ -728,7 +765,8 @@ export function summarizeChannelMonitorSmartScheduleOverview(
         pool.probingCount === 0 &&
         pool.insufficientSampleCount === 0 &&
         pool.prioritySamplingCount === 0 &&
-        pool.failedCount === 0
+        pool.failedCount === 0 &&
+        !pool.breakEvenFallbackTakingOver
     ).length,
     degradedCount,
     probingCount,

@@ -64,8 +64,13 @@ func channelSmartScheduleNewScoreDetails(
 		minSamples = channelMonitorSmartScheduleFallbackMinSamples
 	}
 	costRatioPercent, firstTokenPercent, tpsPercent := channelSmartScheduleConfiguredMetricWeights(strategy, scoring)
+	economics := channelSmartScheduleCandidateEconomics(candidate)
+	costRatio := candidate.Ratio
+	if costRatio == nil {
+		costRatio = economics.CostRatio
+	}
 	costSamples := int64(0)
-	if candidate.Ratio != nil {
+	if costRatio != nil {
 		// Cost ratio is a current configuration snapshot rather than an
 		// aggregated latency sample, so presence is represented as one input.
 		costSamples = 1
@@ -76,9 +81,15 @@ func channelSmartScheduleNewScoreDetails(
 		MinSamples:       minSamples,
 		SampleScope:      model.ChannelSmartScheduleSampleScopeChannelModel,
 		SampleGroupCount: candidate.SampleGroupCount,
+		Economics: &model.ChannelSmartScheduleEconomicsDetails{
+			CostRatio:    economics.CostRatio,
+			GroupRatio:   economics.GroupRatio,
+			GrossMargin:  economics.GrossMargin,
+			EconomicRole: economics.EconomicRole,
+		},
 		Inputs: model.ChannelSmartScheduleScoreInputs{
 			CostRatio: model.ChannelSmartScheduleScoreInput{
-				Value: channelSmartScheduleCopyFloat(candidate.Ratio), SampleCount: costSamples,
+				Value: channelSmartScheduleCopyFloat(costRatio), SampleCount: costSamples,
 			},
 			FirstTokenMs: model.ChannelSmartScheduleScoreInput{
 				Value:       channelSmartScheduleCopyFloat(candidate.FirstTokenMs),
@@ -93,7 +104,7 @@ func channelSmartScheduleNewScoreDetails(
 		},
 		Components: model.ChannelSmartScheduleScoreComponents{
 			CostRatio: model.ChannelSmartScheduleScoreComponent{
-				RawValue:                channelSmartScheduleCopyFloat(candidate.Ratio),
+				RawValue:                channelSmartScheduleCopyFloat(costRatio),
 				ConfiguredWeightPercent: costRatioPercent,
 			},
 			FirstTokenMs: model.ChannelSmartScheduleScoreComponent{

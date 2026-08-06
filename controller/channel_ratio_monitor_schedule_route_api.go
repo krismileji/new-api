@@ -57,6 +57,30 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(economicSnapshot.Monitors))
+	for _, monitor := range economicSnapshot.Monitors {
+		monitorByChannel[monitor.ChannelId] = monitor
+	}
+	groupRatios := economicSnapshot.GroupRatios
+	for index := range routes {
+		monitor, monitorAvailable := monitorByChannel[routes[index].ChannelId]
+		groupRatio, groupRatioAvailable := groupRatios[routes[index].Group]
+		economics := channelSmartScheduleClassifyEconomics(
+			monitor,
+			monitorAvailable,
+			groupRatio,
+			groupRatioAvailable,
+		)
+		routes[index].CostRatio = economics.CostRatio
+		routes[index].GroupRatio = economics.GroupRatio
+		routes[index].GrossMargin = economics.GrossMargin
+		routes[index].EconomicRole = economics.EconomicRole
+	}
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
 	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
@@ -385,12 +409,15 @@ func UpdateChannelMonitorSmartScheduleRouteConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	state, _, err := model.SaveChannelSmartScheduleRouteConfig(channelId, group, modelName, *request.Excluded)
+	state, routingChanged, err := model.SaveChannelSmartScheduleRouteConfig(channelId, group, modelName, *request.Excluded)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.InitChannelCache()
+	if routingChanged {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_route_config_update", map[string]interface{}{
 		"id": channelId, "group": group, "model": modelName, "excluded": *request.Excluded,
 	})
@@ -430,6 +457,9 @@ func UpdateChannelMonitorSmartScheduleChannelConfig(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	if result.Updated > 0 {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_channel_config_update", map[string]interface{}{
 		"id": channelId, "excluded": *request.Excluded,
 		"total": result.Total, "updated": result.Updated,

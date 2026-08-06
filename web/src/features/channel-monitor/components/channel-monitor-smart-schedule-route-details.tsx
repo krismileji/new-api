@@ -45,6 +45,7 @@ import {
   formatChannelMonitorSmartScheduleTemporaryTraffic,
 } from '../lib/smart-schedule-display'
 import {
+  channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteParticipates,
   getChannelMonitorSmartScheduleRouteDisplayStatus,
   type ChannelMonitorSmartScheduleRoutePlacement,
@@ -112,6 +113,18 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   }
   if (status === 'priority_sampling') {
     return <Badge variant='warning'>低优先级轮转</Badge>
+  }
+  if (
+    channelMonitorSmartScheduleRouteIsBreakEvenFallback(props.route) &&
+    (status === 'primary' || status === 'candidate' || status === 'backup')
+  ) {
+    if (props.route.state.manual_primary_until > 0) {
+      return <Badge variant='warning'>保本兜底 · 已手动固定</Badge>
+    }
+    if (props.placement?.isActualTopLayer) {
+      return <Badge variant='warning'>保本兜底 · 接管中</Badge>
+    }
+    return <Badge variant='outline'>保本兜底</Badge>
   }
   if (status === 'primary') return <Badge>实际主渠道</Badge>
   if (status === 'candidate') {
@@ -211,6 +224,9 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             {route.state.manual_primary_until > 0 ? (
               <Badge variant='secondary'>管理员固定</Badge>
             ) : null}
+            {channelMonitorSmartScheduleRouteIsBreakEvenFallback(route) ? (
+              <Badge variant='warning'>保本兜底</Badge>
+            ) : null}
             {props.placement?.isScoringWinner ? (
               <Badge variant='outline'>评分第一</Badge>
             ) : null}
@@ -271,10 +287,20 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               </div>
             </div>
 
-            <div className='mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3'>
+            <div className='mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4'>
               <DetailMetric
                 label='成本倍率'
-                value={formatMonitorRatio(props.channel?.cost_ratio)}
+                value={formatMonitorRatio(
+                  route.cost_ratio ?? props.channel?.cost_ratio
+                )}
+              />
+              <DetailMetric
+                label='分组倍率'
+                value={formatMonitorRatio(route.group_ratio)}
+              />
+              <DetailMetric
+                label='倍率差'
+                value={formatMonitorRatio(route.gross_margin)}
               />
               <DetailMetric label='最终得分' value={score} />
               <DetailMetric

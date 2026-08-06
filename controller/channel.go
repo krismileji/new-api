@@ -1089,6 +1089,9 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	if channel.Group != originChannel.Group || channel.Models != originChannel.Models {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	if proxyChanged {
 		service.InvalidateProxyClient(originProxy)
 	}

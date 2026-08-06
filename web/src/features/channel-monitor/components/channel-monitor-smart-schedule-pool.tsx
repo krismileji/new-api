@@ -146,6 +146,7 @@ function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
     status === '稳定性试放' ||
     status === '样本不足补量' ||
     status === '低优先级轮转' ||
+    status === '保本兜底接管' ||
     status === '部分可调度'
   ) {
     return 'warning'
@@ -449,8 +450,7 @@ function RouteActions(props: {
         className={cn(fixed && 'text-primary')}
         disabled={
           props.disabled ||
-          (!fixed &&
-            !channelMonitorSmartScheduleRouteParticipates(props.route))
+          (!fixed && !channelMonitorSmartScheduleRouteParticipates(props.route))
         }
         onClick={() => {
           if (fixed) {
@@ -536,12 +536,12 @@ export function ChannelMonitorSmartSchedulePool(
           )
         }
         if (sort === 'cost') {
-          const firstRatio = props.channelsById.get(
-            first.channel_id
-          )?.cost_ratio
-          const secondRatio = props.channelsById.get(
-            second.channel_id
-          )?.cost_ratio
+          const firstRatio =
+            first.cost_ratio ??
+            props.channelsById.get(first.channel_id)?.cost_ratio
+          const secondRatio =
+            second.cost_ratio ??
+            props.channelsById.get(second.channel_id)?.cost_ratio
           if (firstRatio == null && secondRatio == null) return 0
           if (firstRatio == null) return 1
           if (secondRatio == null) return -1
@@ -617,6 +617,14 @@ export function ChannelMonitorSmartSchedulePool(
                 ? '无实际最高层'
                 : `实际最高层 P${props.pool.summary.topPriority} · ${props.pool.summary.candidateCount} 条`}
             </span>
+            {props.pool.summary.breakEvenFallbackCount > 0 ? (
+              <span>
+                保本兜底 {props.pool.summary.breakEvenFallbackCount} 条
+                {props.pool.summary.breakEvenFallbackFixedCount > 0
+                  ? ` · 已固定 ${props.pool.summary.breakEvenFallbackFixedCount} 条`
+                  : ''}
+              </span>
+            ) : null}
             <span>{formatSampleMode(props.policy)}</span>
           </p>
         </div>
@@ -801,7 +809,9 @@ export function ChannelMonitorSmartSchedulePool(
                       </td>
                       <td className='px-2 py-2 align-middle font-mono'>
                         <span className='block'>
-                          {formatMonitorRatio(channel?.cost_ratio)}
+                          {formatMonitorRatio(
+                            route.cost_ratio ?? channel?.cost_ratio
+                          )}
                         </span>
                         <span className='text-muted-foreground mt-0.5 block'>
                           {route.state.last_schedule_score == null
@@ -916,7 +926,10 @@ export function ChannelMonitorSmartSchedulePool(
                         成本倍率 / 最终得分
                       </span>
                       <span className='font-mono font-medium tabular-nums'>
-                        {formatMonitorRatio(channel?.cost_ratio)} /{' '}
+                        {formatMonitorRatio(
+                          route.cost_ratio ?? channel?.cost_ratio
+                        )}{' '}
+                        /{' '}
                         {route.state.last_schedule_score == null
                           ? '-'
                           : (route.state.last_schedule_score * 100).toFixed(1)}

@@ -88,7 +88,7 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	raw, err := common.Marshal(routes[0])
 	require.NoError(t, err)
 	serialized := string(raw)
-	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":3`)
+	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":4`)
 	assert.Contains(t, serialized, `"sample_scope":"channel_model"`)
 	assert.False(t, strings.Contains(serialized, `"last_schedule_score_details":"{`))
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,6 +131,14 @@ func channelSmartScheduleTestGroupPoliciesJSON(t *testing.T, policies ...channel
 	return string(serialized)
 }
 
+func useChannelSmartScheduleGroupRatio(t *testing.T, raw string) {
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(raw))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+}
+
 func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsExplorationPromptLimit(t *testing.T) {
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategySmart, true,
@@ -178,6 +187,7 @@ func TestNormalizeChannelSmartScheduleGroupPolicyValidatesPromptLimits(t *testin
 
 func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
@@ -255,6 +265,7 @@ func TestRunChannelSmartScheduleForceResetSetsBaselineBeforePlanning(t *testing.
 
 func TestRunChannelSmartScheduleForceResetKeepsBaselineWhenCohortIsTooSmall(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
@@ -1750,6 +1761,7 @@ func TestRunChannelSmartScheduleKeepsFixedPrimaryAtMaximumPriority(t *testing.T)
 
 func TestRunChannelSmartScheduleFixedPrimaryPreservesBaseRankingAndClearsImmediately(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
@@ -2126,6 +2138,7 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 
 func TestRunChannelSmartSchedulePrioritySamplingUsesRankDecayAndFairRotation(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyPriorityWeight, nil, 2, 80, 30,

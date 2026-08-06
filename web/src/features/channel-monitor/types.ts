@@ -565,6 +565,11 @@ export type ChannelMonitorSmartScheduleStrategy =
 
 export type ChannelMonitorSmartScheduleApplyMode = 'weight' | 'priority_weight'
 
+export type ChannelMonitorSmartScheduleEconomicRole =
+  | 'normal'
+  | 'break_even_fallback'
+  | 'unknown'
+
 export type ChannelMonitorSmartScheduleSampleMode = 'off' | 'traffic' | 'probe'
 
 export type ChannelMonitorSmartScheduleScoreMetricInput = {
@@ -592,6 +597,12 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
   minimum_samples: number
   sample_scope: 'channel_model'
   sample_group_count: number
+  economics?: {
+    cost_ratio?: number | null
+    group_ratio?: number | null
+    gross_margin?: number | null
+    role: ChannelMonitorSmartScheduleEconomicRole
+  }
   inputs: {
     cost_ratio: ChannelMonitorSmartScheduleScoreMetricInput
     first_token_ms: ChannelMonitorSmartScheduleScoreMetricInput
@@ -718,6 +729,10 @@ export type ChannelMonitorSmartScheduleRoute = {
   enabled: boolean
   priority: number
   weight: number
+  cost_ratio?: number | null
+  group_ratio?: number | null
+  gross_margin?: number | null
+  economic_role?: ChannelMonitorSmartScheduleEconomicRole
   state: ChannelMonitorSmartScheduleRouteState
   shared_samples: ChannelMonitorSmartScheduleSharedSamples
 }

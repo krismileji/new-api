@@ -17,6 +17,7 @@ import (
 
 func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
@@ -805,6 +806,7 @@ func TestRunChannelSmartScheduleUsesManualSamplesInEverySampleMode(t *testing.T)
 
 func TestGetChannelMonitorSmartScheduleRoutesKeepsParticipationRoutesWhenDisabled(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":1}`)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "false",
 		channelMonitorSmartScheduleGroupPoliciesOption: "[]",
@@ -818,6 +820,9 @@ func TestGetChannelMonitorSmartScheduleRoutesKeepsParticipationRoutesWhenDisable
 	require.NoError(t, db.Create(&model.Ability{
 		ChannelId: 1306, Group: "vip", Model: "model-a", Enabled: true,
 		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1306, Ratio: 1, UpdatedTime: 1,
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(
@@ -840,6 +845,13 @@ func TestGetChannelMonitorSmartScheduleRoutesKeepsParticipationRoutesWhenDisable
 	assert.False(t, response.Data.Enabled)
 	require.Len(t, response.Data.Routes, 1)
 	assert.False(t, response.Data.Routes[0].State.Participates())
+	require.NotNil(t, response.Data.Routes[0].CostRatio)
+	require.NotNil(t, response.Data.Routes[0].GroupRatio)
+	require.NotNil(t, response.Data.Routes[0].GrossMargin)
+	assert.InDelta(t, 1, *response.Data.Routes[0].CostRatio, 1e-9)
+	assert.InDelta(t, 1, *response.Data.Routes[0].GroupRatio, 1e-9)
+	assert.Zero(t, *response.Data.Routes[0].GrossMargin)
+	assert.Equal(t, channelSmartScheduleEconomicRoleBreakEvenFallback, response.Data.Routes[0].EconomicRole)
 	assert.Empty(t, response.Data.PerformanceItems)
 	assert.False(t, response.Data.StabilityMetricsAvailable)
 	assert.Empty(t, response.Data.StabilityItems)

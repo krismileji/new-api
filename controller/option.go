@@ -363,10 +363,17 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	}
-	err = model.UpdateOption(option.Key, option.Value.(string))
+	if option.Key == "GroupRatio" {
+		err = model.UpdateChannelMonitorGroupRatioOption(option.Value.(string))
+	} else {
+		err = model.UpdateOption(option.Key, option.Value.(string))
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if option.Key == "GroupRatio" {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
 	recordManageAudit(c, "option.update", map[string]interface{}{

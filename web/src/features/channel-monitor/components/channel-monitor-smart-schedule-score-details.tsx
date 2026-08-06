@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils'
 
 import type {
+  ChannelMonitorSmartScheduleEconomicRole,
   ChannelMonitorSmartScheduleScoreComponent,
   ChannelMonitorSmartScheduleScoreDetails,
   ChannelMonitorSmartScheduleScoreMetricInput,
@@ -76,6 +77,17 @@ function formatMetricValue(key: ScoreMetricKey, value: number | null) {
   if (key === 'cost_ratio') return `x${value.toFixed(4)}`
   if (key === 'first_token_ms') return `${value.toFixed(0)} ms`
   return `${value.toFixed(2)} token/s`
+}
+
+function formatEconomicRatio(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return value.toFixed(6)
+}
+
+function getEconomicRoleLabel(role: ChannelMonitorSmartScheduleEconomicRole) {
+  if (role === 'break_even_fallback') return '保本兜底'
+  if (role === 'normal') return '正常盈利'
+  return '无法判断'
 }
 
 function formatChannelReference(
@@ -305,6 +317,48 @@ export function ChannelMonitorSmartScheduleScoreDetails(
             越高越好；本轮只使用达到样本门槛的指标，并把它们的配置权重按比例重新分配到
             100%。
           </p>
+
+          {details.economics ? (
+            <div className='grid gap-2 border-t px-3 py-2 text-xs sm:grid-cols-4'>
+              <div>
+                <span className='text-muted-foreground block'>成本倍率</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatEconomicRatio(details.economics.cost_ratio)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>分组倍率</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatEconomicRatio(details.economics.group_ratio)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>倍率差</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatEconomicRatio(details.economics.gross_margin)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>经济身份</span>
+                <Badge
+                  variant={
+                    details.economics.role === 'break_even_fallback'
+                      ? 'warning'
+                      : 'outline'
+                  }
+                  className='mt-0.5'
+                >
+                  {getEconomicRoleLabel(details.economics.role)}
+                </Badge>
+              </div>
+              {details.economics.role === 'break_even_fallback' ? (
+                <p className='text-muted-foreground sm:col-span-4'>
+                  成本倍率与分组倍率相等，自动调度将该路由放入 P1
+                  保本兜底层；管理员手动固定时仍按固定结果执行。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div role='table' aria-label='评分输入与分项计算'>
             <div

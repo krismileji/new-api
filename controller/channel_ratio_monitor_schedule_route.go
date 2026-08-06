@@ -263,14 +263,16 @@ func runChannelSmartScheduleByRouteOnce(
 		return result, nil
 	}
 
-	monitors, err := model.GetChannelRatioMonitors()
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
 	if err != nil {
 		return result, err
 	}
-	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
-	for _, monitor := range monitors {
+	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(economicSnapshot.Monitors))
+	for _, monitor := range economicSnapshot.Monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
+	groupRatios := economicSnapshot.GroupRatios
+	economicRevision := economicSnapshot.Revision
 
 	needsPerformance := false
 	needsJitterPerformance := false
@@ -338,6 +340,8 @@ func runChannelSmartScheduleByRouteOnce(
 	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
 	scoreDetailsByRoute := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleScoreDetails, len(selectedRoutes))
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
+	economicsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleEconomics, len(selectedRoutes))
+	breakEvenPool := make(map[channelSmartScheduleRoutePoolKey]bool)
 	for _, route := range selectedRoutes {
 		policy := policyByGroup[route.Group]
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
@@ -349,9 +353,23 @@ func runChannelSmartScheduleByRouteOnce(
 			channelId: route.ChannelId,
 			model:     ratio_setting.FormatMatchingModelName(route.Model),
 		}
+		monitor, monitorAvailable := monitorByChannel[route.ChannelId]
+		groupRatio, groupRatioAvailable := groupRatios[route.Group]
+		economics := channelSmartScheduleClassifyEconomics(
+			monitor,
+			monitorAvailable,
+			groupRatio,
+			groupRatioAvailable,
+		)
+		economicsByRoute[key] = economics
 		routeByKey[key] = route
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
-			channelSmartScheduleCandidate{ChannelId: route.ChannelId, ManualPrimary: manualPrimary},
+			channelSmartScheduleCandidate{
+				ChannelId: route.ChannelId, ManualPrimary: manualPrimary,
+				Ratio: economics.CostRatio, CostRatio: economics.CostRatio,
+				GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,
+				EconomicRole: economics.EconomicRole,
+			},
 			policy.Strategy, policy.StabilityEnabled, policy.ApplyMode, policy.MinSamples,
 			forceReset, policy.Scoring,
 		)
@@ -390,6 +408,9 @@ func runChannelSmartScheduleByRouteOnce(
 				ManualPrimaryAllowStabilityDegrade: route.State.ManualPrimaryAllowStabilityDegrade,
 			})
 			continue
+		}
+		if economics.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+			breakEvenPool[poolKey] = true
 		}
 		runtimeProtectionActive := route.State.RuntimeProtectionUntil > now
 		runtimeProtectionExpired := route.State.RuntimeProtectionUntil > 0 &&
@@ -574,6 +595,9 @@ func runChannelSmartScheduleByRouteOnce(
 		candidate := channelSmartScheduleCandidate{
 			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
 			StabilityAvailable: routeStabilityAvailable, ManualPrimary: manualPrimary,
+			Ratio: economics.CostRatio, CostRatio: economics.CostRatio,
+			GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,
+			EconomicRole: economics.EconomicRole,
 		}
 		if performance != nil {
 			candidate.SampleGroupCount = performance.SampleGroupCount
@@ -657,15 +681,6 @@ func runChannelSmartScheduleByRouteOnce(
 			stabilityUpdates[key] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
-		monitor := monitorByChannel[route.ChannelId]
-		var ratio *float64
-		if monitor.UpdatedTime > 0 && validateChannelMonitorRatio(&monitor.Ratio) {
-			value, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
-			if conversionErr == nil {
-				ratio = &value
-			}
-		}
-		candidate.Ratio = ratio
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
 			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
 			policy.MinSamples, forceReset, policy.Scoring,
@@ -712,6 +727,36 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		fixedChannelByPool[poolKey] = fixedChannelId
 		fixedPriorityByPool[poolKey] = fixedTargetPriority
+	}
+	for index := range directActions {
+		action := &directActions[index]
+		if action.stability == nil || action.stability.State != "" {
+			continue
+		}
+		poolKey := channelSmartScheduleRoutePoolKey{group: action.key.group, model: action.key.model}
+		economics := economicsByRoute[action.key]
+		if economics.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+			action.targetPriority = 1
+			action.targetWeight = channelMonitorSmartScheduleAllocationWeightTotal
+			state := routeByKey[action.key].State
+			if action.routingSnapshot == nil {
+				action.routingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
+					TemporaryTrafficKind:            state.TemporaryTrafficKind,
+					TemporaryTrafficSince:           state.TemporaryTrafficSince,
+					TemporaryTrafficTargetPercent:   state.TemporaryTrafficTargetPercent,
+					ExplorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,
+					StabilityReleaseMaxPromptTokens: state.StabilityReleaseMaxPromptTokens,
+					LastPrioritySampleTime:          state.LastPrioritySampleTime,
+				}
+			}
+			action.routingSnapshot.BaseRank = max(1, state.BaseRank)
+			action.routingSnapshot.BasePriority = 1
+			action.routingSnapshot.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
+			continue
+		}
+		if breakEvenPool[poolKey] && action.targetPriority < 2 {
+			action.targetPriority = 2
+		}
 	}
 	for index := range directActions {
 		action := &directActions[index]
@@ -797,6 +842,9 @@ func runChannelSmartScheduleByRouteOnce(
 					continue
 				}
 				candidate := candidateByChannel[item.ChannelId]
+				if candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+					continue
+				}
 				if channelSmartScheduleCandidateNeedsExplorationWithScoring(
 					candidate, policy.Strategy, policy.StabilityEnabled, policy.MinSamples, policy.Scoring,
 				) {
@@ -831,6 +879,9 @@ func runChannelSmartScheduleByRouteOnce(
 				for index, item := range plan.Items {
 					if !item.Scored || item.BaseRank <= 1 || item.ChannelId == plan.ActualPrimaryId ||
 						item.ChannelId == fixedChannelId {
+						continue
+					}
+					if candidateByChannel[item.ChannelId].EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
 						continue
 					}
 					samplingIndexes = append(samplingIndexes, index)
@@ -1110,6 +1161,7 @@ func runChannelSmartScheduleByRouteOnce(
 		update.PoolGuard = true
 		update.ExpectedRevision = route.State.Revision
 		update.ExpectedControlRevision = controlRevision
+		update.ExpectedEconomicRevision = economicRevision
 		update.ExpectedParticipationSet = route.State.ParticipationSet
 		update.ExpectedExcluded = route.State.Excluded
 		update.ExpectedAbilityEnabled = route.Enabled
@@ -1137,6 +1189,7 @@ func runChannelSmartScheduleByRouteOnce(
 				Priority: route.Priority, Weight: route.Weight,
 				PoolGuard: true, ObservationOnly: true,
 				ExpectedRevision: route.State.Revision, ExpectedControlRevision: controlRevision,
+				ExpectedEconomicRevision: economicRevision,
 				ExpectedParticipationSet: route.State.ParticipationSet,
 				ExpectedExcluded:         route.State.Excluded,
 				ExpectedAbilityEnabled:   route.Enabled,
@@ -1155,6 +1208,7 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		return poolOrder[i].model < poolOrder[j].model
 	})
+	rescheduleRequired := false
 	for _, poolKey := range poolOrder {
 		select {
 		case <-ctx.Done():
@@ -1171,6 +1225,7 @@ func runChannelSmartScheduleByRouteOnce(
 				poolConflict = poolConflict || !outcome.Applied
 			}
 		}
+		rescheduleRequired = rescheduleRequired || poolConflict
 		for index, update := range updates {
 			if update.ObservationOnly {
 				continue
@@ -1241,6 +1296,9 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 	}
 	reportProgress(result.Total, result.Total)
+	if rescheduleRequired {
+		_ = requestChannelSmartScheduleRun(ctx)
+	}
 	if result.Failed > 0 {
 		return result, fmt.Errorf("%d 条智能调度路由未能应用，失败池已保留上一轮结果", result.Failed)
 	}

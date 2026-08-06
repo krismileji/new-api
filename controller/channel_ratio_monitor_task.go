@@ -214,6 +214,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	disabledChannels := make([]channelRatioMonitorDisabledChannel, 0)
 	removedGroupMemberships := make([]channelRatioMonitorRemovedGroupMembership, 0)
 	channelStatusChanged := false
+	economicInputsChanged := false
+	defer func() {
+		if economicInputsChanged || channelStatusChanged {
+			_ = requestChannelSmartScheduleRun(ctx)
+		}
+	}()
 	defer func() {
 		if channelStatusChanged {
 			model.InitChannelCache()
@@ -502,6 +508,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 			}
 			if ratioUpdated {
+				economicInputsChanged = true
 				policyInputs[monitor.ChannelId] = channelMonitorPolicyInput{
 					UpstreamRevision:                 monitor.UpstreamRevision,
 					CostRatio:                        outcome.Result.CostRatio,
@@ -608,6 +615,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	summary.GroupUpdateFailed = groupUpdateFailed
 	if err != nil {
 		return summary, err
+	}
+	if groupsUpdated > 0 || len(removedMemberships) > 0 {
+		economicInputsChanged = true
 	}
 	if len(removedMemberships) > 0 || len(disabledChannelIds) > 0 {
 		channelNames := make(map[int]string, len(channels))

@@ -192,6 +192,35 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('未计入：样本 2/5'))
   })
 
+  test('shows the break-even economic snapshot while keeping old snapshots optional', () => {
+    const details = createScoreDetails()
+    details.version = 4
+    details.economics = {
+      cost_ratio: 1,
+      group_ratio: 1,
+      gross_margin: 0,
+      role: 'break_even_fallback',
+    }
+
+    const markup = renderToStaticMarkup(
+      <ScoreDetails details={details} defaultOpen />
+    )
+
+    assert.ok(markup.includes('经济身份'))
+    assert.ok(markup.includes('保本兜底'))
+    assert.ok(markup.includes('1.000000'))
+    assert.ok(markup.includes('0.000000'))
+    assert.ok(markup.includes('管理员手动固定时仍按固定结果执行'))
+
+    const legacy = createScoreDetails()
+    assert.equal(
+      renderToStaticMarkup(
+        <ScoreDetails details={legacy} defaultOpen />
+      ).includes('经济身份'),
+      false
+    )
+  })
+
   test('renders skipped decisions when the backend has no actual top layer', () => {
     const details = createScoreDetails()
     details.decision.actual_highest_priority = 0

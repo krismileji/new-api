@@ -6,7 +6,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ChannelSmartScheduleScoreDetailsVersion = 3
+const ChannelSmartScheduleScoreDetailsVersion = 4
+
+type ChannelSmartScheduleEconomicsDetails struct {
+	CostRatio    *float64 `json:"cost_ratio,omitempty"`
+	GroupRatio   *float64 `json:"group_ratio,omitempty"`
+	GrossMargin  *float64 `json:"gross_margin,omitempty"`
+	EconomicRole string   `json:"role"`
+}
 
 type ChannelSmartScheduleScoreInput struct {
 	Value       *float64 `json:"value"`
@@ -90,6 +97,7 @@ type ChannelSmartScheduleScoreDetails struct {
 	MinSamples       int                                       `json:"minimum_samples"`
 	SampleScope      string                                    `json:"sample_scope"`
 	SampleGroupCount int                                       `json:"sample_group_count"`
+	Economics        *ChannelSmartScheduleEconomicsDetails     `json:"economics,omitempty"`
 	Inputs           ChannelSmartScheduleScoreInputs           `json:"inputs"`
 	Cohort           ChannelSmartScheduleScoreCohort           `json:"cohort"`
 	Components       ChannelSmartScheduleScoreComponents       `json:"components"`

@@ -98,6 +98,7 @@ func MergeChannelMonitorGroupOptionsIfCurrent(
 		seeds := map[string]string{}
 		if len(ratioUpdates) > 0 {
 			seeds["GroupRatio"] = string(ratioSeed)
+			seeds[ChannelMonitorEconomicRevisionOption] = ""
 		}
 		if len(coefficientUpdates) > 0 || len(valueGuards) > 0 {
 			seeds[ChannelMonitorGroupCoefficientsOption] = coefficientSeed
@@ -246,6 +247,7 @@ func MergeChannelMonitorGroupOptionsIfCurrent(
 					return marshalErr
 				}
 				committedValues["GroupRatio"] = string(encoded)
+				committedValues[ChannelMonitorEconomicRevisionOption] = common.GetUUID()
 			}
 		}
 
@@ -302,6 +304,10 @@ func UpdateChannelMonitorSettingsOptions(
 			return false, errors.New("智能调度配置更新缺少新修订号")
 		}
 	}
+	committedValues := make(map[string]string, len(values)+1)
+	for key, value := range values {
+		committedValues[key] = value
+	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
@@ -310,12 +316,15 @@ func UpdateChannelMonitorSettingsOptions(
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if len(values) > 0 {
-			seeds := values
+			seeds := make(map[string]string, len(committedValues)+1)
+			for key, value := range committedValues {
+				seeds[key] = value
+			}
+			if _, exists := values["GroupRatio"]; exists {
+				seeds["GroupRatio"] = ratio_setting.GroupRatio2JSONString()
+				seeds[ChannelMonitorEconomicRevisionOption] = ""
+			}
 			if expectedSmartScheduleControlRevision != nil {
-				seeds = make(map[string]string, len(values))
-				for key, value := range values {
-					seeds[key] = value
-				}
 				seeds[ChannelSmartScheduleControlRevisionOption] = *expectedSmartScheduleControlRevision
 			}
 			options, lockErr := lockChannelMonitorOptionsTx(tx, seeds)
@@ -326,7 +335,10 @@ func UpdateChannelMonitorSettingsOptions(
 				options[ChannelSmartScheduleControlRevisionOption].Value != *expectedSmartScheduleControlRevision {
 				return ErrChannelMonitorSettingsChanged
 			}
-			if saveErr := saveLockedChannelMonitorOptionsTx(tx, values); saveErr != nil {
+			if groupRatio, exists := values["GroupRatio"]; exists && options["GroupRatio"].Value != groupRatio {
+				committedValues[ChannelMonitorEconomicRevisionOption] = common.GetUUID()
+			}
+			if saveErr := saveLockedChannelMonitorOptionsTx(tx, committedValues); saveErr != nil {
 				return saveErr
 			}
 		}
@@ -346,7 +358,7 @@ func UpdateChannelMonitorSettingsOptions(
 		}
 		return false, err
 	}
-	if err := refreshChannelMonitorOptions(values); err != nil {
+	if err := refreshChannelMonitorOptions(committedValues); err != nil {
 		return routingChanged, err
 	}
 	if expectedSmartScheduleControlRevision != nil {
