@@ -231,7 +231,7 @@ function RouteSamples(props: {
       ? 'TPS -'
       : `TPS ${props.performance.average_tps.toFixed(2)}`
   const sharedLabel = `测试/探测 ${samples.sample_count} 次`
-  const detail = `稳定性窗口 ${stabilitySampleCount} 次，${stabilityLabel}；性能窗口 ${performanceSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${sharedLabel}，成功 ${samples.success_count} 次`
+  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，${stabilityLabel}；性能窗口 ${performanceSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${sharedLabel}，成功 ${samples.success_count} 次`
 
   return (
     <div className='min-w-0 text-xs tabular-nums' title={detail}>

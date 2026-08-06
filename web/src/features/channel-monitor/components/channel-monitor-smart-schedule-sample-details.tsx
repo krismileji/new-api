@@ -114,7 +114,7 @@ export function ChannelMonitorSmartScheduleSampleDetails(
         <div className='min-w-0'>
           <h3 className='text-sm font-medium'>渠道 + 模型共享数据</h3>
           <p className='text-muted-foreground mt-0.5 text-xs'>
-            同一渠道和模型在所有关联分组产生的数据统一汇总；稳定性和性能按当前配置窗口统计。
+            同一渠道和模型在所有关联分组产生的数据统一汇总；稳定性软评分和性能按各自配置窗口统计。
           </p>
         </div>
         {businessGroupCount > 0 ? (
@@ -128,9 +128,9 @@ export function ChannelMonitorSmartScheduleSampleDetails(
 
       <div className='mt-4'>
         <div>
-          <h4 className='text-sm font-medium'>稳定性窗口</h4>
+          <h4 className='text-sm font-medium'>稳定性评分窗口</h4>
           <p className='text-muted-foreground mt-0.5 text-xs'>
-            有效业务请求与窗口内测试、探测合并后的稳定性结果
+            有效业务请求与窗口内测试、探测合并后的软评分结果
           </p>
           <div className='mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3'>
             <SampleMetric label='有效样本' value={stabilitySampleCount} />

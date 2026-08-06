@@ -310,7 +310,6 @@ const policyDialogHasCompletePolicyControls = [
   '定时探测',
   '稳定性保护',
   '稳定性占比',
-  '降级稳定性得分',
   '恢复稳定性得分',
   '最少样本',
   '快速失败惩罚',
@@ -318,12 +317,18 @@ const policyDialogHasCompletePolicyControls = [
   '同渠道快速重试',
   '慢失败界限',
   '降级时长',
+  '保护失败窗口',
+  '连续失败阈值',
+  '窗口失败阈值',
+  '恢复探测成功次数',
   '成功延迟抖动',
   '允许抖动',
   '慢成功阈值',
   '智能调度指标占比',
   '主渠道切换分差',
 ].every((label) => policyDialogText.includes(label))
+const policyDialogHidesLegacyDegradeScore =
+  !policyDialogText.includes('降级稳定性得分')
 const policyDialogHasNoLegacyWeightControls =
   !policyDialogText.includes('得分曲线指数') &&
   !policyDialogText.includes('相对权重拉伸')
@@ -444,6 +449,7 @@ process.stdout.write(
     policyDialogExplainsExplicitScope,
     policyDialogHasGroupSettingHelp,
     policyDialogHasCompletePolicyControls,
+    policyDialogHidesLegacyDegradeScore,
     policyDialogHasNoLegacyWeightControls,
     policyDialogUsesInsetRing,
     policyDialogStabilityInputsAligned,

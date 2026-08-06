@@ -201,10 +201,10 @@ func GetChannelSmartScheduleRuntimeTemporaryRoutes(channelId int, modelName stri
 }
 
 // GetChannelSmartScheduleRouteSampleCount returns the total stability samples
-// available for one channel/model route in the requested window. Production
-// request samples come from minute metrics plus the not-yet-aggregated log
-// tail; manual tests and scheduled probes are stored in the shared sample
-// buffer because their logs are excluded from the production aggregation.
+// available for one channel/model route in the requested window. It is kept
+// for sample reporting; runtime hard protection uses its own failure window.
+// Production requests come from minute metrics plus the not-yet-aggregated
+// log tail, while tests and probes use the shared sample buffer.
 func GetChannelSmartScheduleRouteSampleCount(
 	ctx context.Context,
 	startTimestamp int64,
@@ -292,11 +292,11 @@ func GetChannelSmartScheduleRouteSampleCount(
 
 	// The aggregation worker intentionally excludes the open minute and may
 	// still be replacing its short retry tail. Read that same tail from the log
-	// database and keep the larger count for each minute. This lets a
-	// just-persisted failure satisfy the configured sample gate without being
-	// double-counted after aggregation catches up. A partial first minute is
-	// also read from logs when it falls before the live tail, because its
-	// aggregate includes samples from before the temporary state began.
+	// database and keep the larger count for each minute. This includes a
+	// just-persisted sample without double-counting it after aggregation catches
+	// up. A partial first minute is also read from logs when it falls before the
+	// live tail, because its aggregate includes samples from before the requested
+	// window began.
 	type logRange struct {
 		start int64
 		end   int64

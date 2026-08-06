@@ -411,7 +411,7 @@ describe('channel monitor settings dialog', () => {
       '智能调度',
       '调度间隔',
       '性能窗口',
-      '稳定性窗口',
+      '稳定性评分窗口',
       '429 冷却时间',
       '上游响应等待时间',
       '强制重置优先级和权重',
@@ -427,7 +427,6 @@ describe('channel monitor settings dialog', () => {
       '稳定性保护',
       '降级期间定时探测',
       '稳定性占比',
-      '降级稳定性得分',
       '恢复稳定性得分',
       '稳定性释放请求上限',
       '最少样本',
@@ -436,6 +435,10 @@ describe('channel monitor settings dialog', () => {
       '同渠道快速重试',
       '慢失败界限',
       '降级时长',
+      '保护失败窗口',
+      '连续失败阈值',
+      '窗口失败阈值',
+      '恢复探测成功次数',
       '成功延迟抖动',
       '允许抖动',
       '慢成功阈值',
@@ -446,6 +449,7 @@ describe('channel monitor settings dialog', () => {
     ]) {
       assert.ok(trafficPolicyMarkup.includes(`aria-label="查看“${label}”说明"`))
     }
+    assert.equal(trafficPolicyMarkup.includes('降级稳定性得分'), false)
     assert.match(
       trafficPolicyMarkup,
       /<input(?=[^>]*name="fastFailureSameChannelRetryCount")(?=[^>]*min="0")(?=[^>]*max="10")(?=[^>]*value="0")[^>]*>/

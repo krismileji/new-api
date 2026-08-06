@@ -643,7 +643,7 @@ describe('channel monitor settings schema', () => {
           { ...groupPolicy, recoveryStabilityScore: 90 },
         ],
       }).success,
-      false
+      true
     )
     assert.equal(
       schema.safeParse({

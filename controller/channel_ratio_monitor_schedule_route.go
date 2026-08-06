@@ -343,7 +343,6 @@ func runChannelSmartScheduleByRouteOnce(
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
 		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
 		manualPrimary := route.State.ManualPrimaryUntil > now
-		degradeStabilityScore := policy.DegradeStabilityScore / 100
 		recoveryStabilityScore := policy.RecoveryStabilityScore / 100
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		modelKey := channelSmartScheduleModelKey{
@@ -622,25 +621,6 @@ func runChannelSmartScheduleByRouteOnce(
 				continue
 			}
 			stabilityDescription := channelSmartScheduleStabilityDescription(performance)
-			if !runtimeRecoveryReady && performance != nil && performance.Stability != nil &&
-				*performance.Stability < degradeStabilityScore {
-				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-					targetPriority: channelMonitorSmartScheduleDegradedPriority,
-					targetWeight:   channelMonitorSmartScheduleDegradedWeight,
-					status:         model.ChannelSmartScheduleStatusSucceeded,
-					message: fmt.Sprintf("%s，低于降级阈值 %.1f%%，再次降级",
-						stabilityDescription, policy.DegradeStabilityScore),
-					stability: &model.ChannelSmartScheduleStabilityUpdate{
-						State:         model.ChannelSmartScheduleStabilityDegraded,
-						Until:         now + int64(policy.CooldownMinutes*60),
-						SavedPriority: route.State.StabilitySavedPriority,
-						SavedWeight:   route.State.StabilitySavedWeight,
-					},
-					routingSnapshot: channelSmartScheduleClearTemporaryTrafficAndRelease(route.State),
-				})
-				continue
-			}
 			if !runtimeRecoveryReady && !legacyRecoveryReady {
 				targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
 				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
@@ -675,33 +655,6 @@ func runChannelSmartScheduleByRouteOnce(
 		} else if route.State.StabilityState == "" && route.State.StabilitySince > 0 &&
 			route.State.StabilitySince <= stabilityStart {
 			stabilityUpdates[key] = &model.ChannelSmartScheduleStabilityUpdate{}
-		}
-
-		if (!manualPrimary || route.State.ManualPrimaryAllowStabilityDegrade) &&
-			policy.StabilityEnabled && route.State.StabilityState == "" &&
-			performance != nil && performance.Stability != nil &&
-			performance.StabilitySampleCount >= int64(policy.MinSamples) &&
-			*performance.Stability < degradeStabilityScore {
-			savedPriority, savedWeight := channelSmartScheduleSavedTarget(currentPriority, currentWeight)
-			if route.State.TemporaryTrafficKind != "" {
-				savedPriority = route.State.BasePriority
-				savedWeight = route.State.BaseWeight
-			}
-			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-				targetPriority: channelMonitorSmartScheduleDegradedPriority,
-				targetWeight:   channelMonitorSmartScheduleDegradedWeight,
-				status:         model.ChannelSmartScheduleStatusSucceeded,
-				message: fmt.Sprintf("%s，低于降级阈值 %.1f%%，已在当前分组和模型降级至优先级 0、权重 0",
-					channelSmartScheduleStabilityDescription(performance), policy.DegradeStabilityScore),
-				stability: &model.ChannelSmartScheduleStabilityUpdate{
-					State:         model.ChannelSmartScheduleStabilityDegraded,
-					Until:         now + int64(policy.CooldownMinutes*60),
-					SavedPriority: savedPriority, SavedWeight: savedWeight,
-				},
-				routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
-			})
-			continue
 		}
 
 		monitor := monitorByChannel[route.ChannelId]

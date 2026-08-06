@@ -13,18 +13,20 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestProtectChannelSmartScheduleRuntimeFailureWaitsForMinimumSamples(t *testing.T) {
+func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	service.ClearChannelRateLimitCooldowns()
 	t.Cleanup(service.ClearChannelRateLimitCooldowns)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
-		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 100, 80, 30,
 	)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
@@ -49,15 +51,6 @@ func TestProtectChannelSmartScheduleRuntimeFailureWaitsForMinimumSamples(t *test
 		TemporaryTrafficSince: common.GetTimestamp() - 30,
 	}).Error)
 
-	now := common.GetTimestamp()
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
-		ChannelId: 1501, Model: "model-a",
-		Source:   model.ChannelSmartScheduleSampleSourceManualTest,
-		SampleId: "runtime-gate-initial-sample", WindowStart: now - 3600,
-		Time: now - 20, Success: true,
-	})
-	require.NoError(t, err)
-
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
 	protectChannelSmartScheduleRuntimeFailure(1501, "model-a", runtimeError)
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1501, "model-a"))
@@ -68,17 +61,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureWaitsForMinimumSamples(t *test
 	assert.Equal(t, priority, *ability.Priority)
 	assert.Equal(t, weight, ability.Weight)
 
-	_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
-		ChannelId:   1501,
-		Model:       "model-a",
-		Source:      model.ChannelSmartScheduleSampleSourceManualTest,
-		SampleId:    "runtime-gate-sample",
-		WindowStart: now - 3600,
-		Time:        now - 30,
-		Success:     true,
-	})
-	require.NoError(t, err)
-
+	now := common.GetTimestamp()
 	protectChannelSmartScheduleRuntimeFailure(1501, "model-a", runtimeError)
 	assert.Greater(t, service.ChannelRateLimitCooldownUntil(1501, "model-a"), now)
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1501, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -285,6 +268,71 @@ func TestProtectChannelSmartScheduleRuntimeFailureUsesBurstThresholdAcrossSucces
 	assert.Zero(t, ability.Weight)
 }
 
+func TestProtectChannelSmartScheduleRuntimeFailureSharesBurstWindowThroughRedis(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
+		require.NoError(t, client.Close())
+	})
+
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 100, 80, 30,
+	)
+	consecutiveFailureThreshold := 100
+	burstFailureThreshold := 2
+	policy.ConsecutiveFailureThreshold = &consecutiveFailureThreshold
+	policy.BurstFailureThreshold = &burstFailureThreshold
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1513, Name: "redis burst failures", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1513, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1513, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
+	protectChannelSmartScheduleRuntimeFailure(1513, "model-a", runtimeError)
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 1513, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
+
+	channelSmartScheduleRuntimeHealth.Lock()
+	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
+	channelSmartScheduleRuntimeHealth.Unlock()
+
+	protectChannelSmartScheduleRuntimeFailure(1513, "model-a", runtimeError)
+
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 1513, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Zero(t, *ability.Priority)
+	assert.Zero(t, ability.Weight)
+}
+
 func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(
@@ -362,7 +410,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 	assert.Zero(t, ability.Weight)
 }
 
-func TestProtectChannelSmartScheduleRuntimeFailureCountsEachPersistedLiveErrorOnce(t *testing.T) {
+func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	originalErrorLogEnabled := constant.ErrorLogEnabled
 	constant.ErrorLogEnabled = true
@@ -422,7 +470,6 @@ func TestProtectChannelSmartScheduleRuntimeFailureCountsEachPersistedLiveErrorOn
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
 	protectChannelSmartScheduleRuntimeFailure(1505, "model-a", runtimeError)
-	protectChannelSmartScheduleRuntimeFailure(1505, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1505, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -458,6 +505,8 @@ func TestProtectChannelSmartScheduleRuntimeFailureMatchesParameterizedModelRoute
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{routeModel}, 1, 80, 30,
 	)
+	failureThreshold := 1
+	policy.ConsecutiveFailureThreshold = &failureThreshold
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
@@ -510,6 +559,8 @@ func TestProtectChannelSmartScheduleRuntimeFailurePrefersExactParameterizedRoute
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{exactModel}, 1, 80, 30,
 	)
+	failureThreshold := 1
+	policy.ConsecutiveFailureThreshold = &failureThreshold
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
@@ -573,7 +624,7 @@ func TestProtectChannelSmartScheduleRuntimeFailurePrefersExactParameterizedRoute
 	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficExploration, wildcardState.TemporaryTrafficKind)
 }
 
-func TestProtectChannelSmartScheduleRuntimeFailureIgnoresNormalScheduledRoute(t *testing.T) {
+func TestProtectChannelSmartScheduleRuntimeFailureWaitsForThresholdOnNormalRoute(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,

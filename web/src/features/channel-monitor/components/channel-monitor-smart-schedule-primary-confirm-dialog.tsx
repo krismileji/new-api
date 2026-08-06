@@ -52,7 +52,7 @@ export function ChannelMonitorSmartSchedulePrimaryConfirmDialog(
           <AlertDialogDescription>
             “{props.route?.channel_name} / {props.route?.group} /{' '}
             {props.route?.model}”当前处于{protectionLabel}
-            状态。继续后会立即解除当前保护并固定为主渠道；如果保留“允许稳定性降级”，后续再次达到阈值时仍会重新进入保护。
+            状态。继续后会立即解除当前保护并固定为主渠道；如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -136,6 +136,8 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
 	service.ResetChannelDailyCostSnapshotCache()
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{},
@@ -813,7 +815,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"apply_mode":  channelMonitorSmartScheduleApplyPriorityWeight,
 				"models":      []string{"claude-3-5-sonnet", "gpt-4o-mini"},
 				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
-				"min_samples": 8, "degrade_stability_score": 75.5, "recovery_stability_score": 85,
+				"min_samples": 8, "degrade_stability_score": 95, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"fast_failure_same_channel_retry_count": 2,
 				"burst_failure_window_seconds":          45, "consecutive_failure_threshold": 4,
@@ -879,7 +881,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotNil(t, defaultGroupPolicy.MinSamples)
 	assert.Equal(t, 8, *defaultGroupPolicy.MinSamples)
 	require.NotNil(t, defaultGroupPolicy.DegradeStabilityScore)
-	assert.Equal(t, 75.5, *defaultGroupPolicy.DegradeStabilityScore)
+	assert.Equal(t, 95.0, *defaultGroupPolicy.DegradeStabilityScore)
 	require.NotNil(t, defaultGroupPolicy.RecoveryStabilityScore)
 	assert.Equal(t, 85.0, *defaultGroupPolicy.RecoveryStabilityScore)
 	require.NotNil(t, defaultGroupPolicy.FastFailurePenaltyPercent)

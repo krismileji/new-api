@@ -269,8 +269,8 @@ export function ChannelMonitorSmartScheduleFields(
           <ChannelMonitorSmartScheduleWindowField
             form={props.form}
             name='smartScheduleStabilityWindowMinutes'
-            label='稳定性窗口'
-            description='用于成功率、失败耗时和首字抖动'
+            label='稳定性评分窗口'
+            description='用于成功率、失败耗时和首字抖动的软评分'
           />
 
           <ChannelMonitorRateLimitCooldownField form={props.form} />

@@ -230,9 +230,9 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("分组调度降级稳定性得分必须在 0% 到 100% 之间")
 		}
 		if math.IsNaN(*policy.RecoveryStabilityScore) || math.IsInf(*policy.RecoveryStabilityScore, 0) ||
-			*policy.RecoveryStabilityScore <= *policy.DegradeStabilityScore ||
+			*policy.RecoveryStabilityScore < 0 ||
 			*policy.RecoveryStabilityScore > maxChannelMonitorSmartScheduleSuccessRate {
-			return nil, errors.New("分组调度恢复稳定性得分必须大于降级得分且不超过 100%")
+			return nil, errors.New("分组调度恢复稳定性得分必须在 0% 到 100% 之间")
 		}
 		if math.IsNaN(*policy.FastFailurePenaltyPercent) || math.IsInf(*policy.FastFailurePenaltyPercent, 0) ||
 			*policy.FastFailurePenaltyPercent < 0 || *policy.FastFailurePenaltyPercent > maxChannelMonitorSmartScheduleSuccessRate {
@@ -253,7 +253,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		}
 		if *policy.BurstFailureWindowSeconds <= 0 ||
 			*policy.BurstFailureWindowSeconds > maxChannelMonitorSmartScheduleBurstFailureWindowSeconds {
-			return nil, errors.New("分组调度突发失败窗口必须在 1 到 300 秒之间")
+			return nil, errors.New("分组调度保护失败窗口必须在 1 到 300 秒之间")
 		}
 		if *policy.ConsecutiveFailureThreshold <= 0 ||
 			*policy.ConsecutiveFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {

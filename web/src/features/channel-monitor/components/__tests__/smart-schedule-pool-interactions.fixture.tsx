@@ -403,7 +403,7 @@ const sharedWindow = details.querySelector<HTMLElement>(
 )
 assert.ok(sharedWindow)
 assert.ok(sharedWindow.textContent?.includes('覆盖 3 个业务分组'))
-assert.ok(sharedWindow.textContent?.includes('稳定性窗口'))
+assert.ok(sharedWindow.textContent?.includes('稳定性评分窗口'))
 assert.ok(sharedWindow.textContent?.includes('1260 次'))
 assert.ok(sharedWindow.textContent?.includes('性能窗口'))
 assert.ok(sharedWindow.textContent?.includes('1248 次'))

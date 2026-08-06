@@ -270,8 +270,8 @@ export function ChannelMonitorTaskPolicySummary(props: {
           {result.force_reset ? ' · 强制重算' : ''}
         </span>
         <span className='text-muted-foreground'>
-          性能窗口 {result.performance_window_minutes ?? 0} 分钟 · 稳定性窗口{' '}
-          {result.stability_window_minutes ?? 0} 分钟
+          性能窗口 {result.performance_window_minutes ?? 0} 分钟 ·
+          稳定性评分窗口 {result.stability_window_minutes ?? 0} 分钟
         </span>
       </div>
     )

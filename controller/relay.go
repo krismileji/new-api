@@ -527,9 +527,9 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
 	}
-	// Stability protection reads the persisted error sample after it has been
-	// written. The live log tail fills the minute-aggregation delay, so the Nth
-	// sample can trigger protection without waiting for the background worker.
+	// Stability protection records this failure in the per-channel runtime
+	// window immediately, so a burst can trigger protection without waiting for
+	// the minute-level stability aggregation worker.
 	if runtimeProtectionEligible && err != nil && err.StatusCode != http.StatusTooManyRequests {
 		protectChannelSmartScheduleRuntimeFailure(
 			channelError.ChannelId,

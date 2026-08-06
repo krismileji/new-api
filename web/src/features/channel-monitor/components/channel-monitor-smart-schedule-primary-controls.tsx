@@ -55,7 +55,7 @@ export function ChannelMonitorSmartSchedulePrimaryStabilityField(
           允许稳定性降级
         </FieldLabel>
         <FieldDescription>
-          开启后，稳定性得分低于阈值时会临时进入降级保护，固定到期时间仍保留，恢复后继续作为固定主渠道。关闭时固定优先，仍保留稳定性样本和得分。
+          开启后，连续失败或保护失败窗口达到阈值时会临时进入降级保护，固定到期时间仍保留，恢复后继续作为固定主渠道。关闭时固定优先，仍保留稳定性样本和评分。
         </FieldDescription>
       </FieldContent>
       <Switch

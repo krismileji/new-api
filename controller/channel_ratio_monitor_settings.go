@@ -934,7 +934,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if request.SmartScheduleStabilityWindowMinutes != nil &&
 		!isChannelMonitorSmartScheduleWindowSupported(*request.SmartScheduleStabilityWindowMinutes) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度稳定性窗口必须在 1 到 43200 分钟之间"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度稳定性评分窗口必须在 1 到 43200 分钟之间"})
 		return
 	}
 	if request.SmartScheduleStabilityWindowMinutes != nil {

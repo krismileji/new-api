@@ -250,9 +250,13 @@ func TestRecordManualChannelSmartScheduleProbeResultPrefersExactParameterizedRou
 	assert.Equal(t, int64(1), samples[0].SampleCount)
 }
 
-func TestRecordManualChannelSmartScheduleProbeFailureProtectsAfterMinimumSamples(t *testing.T) {
+func TestRecordManualChannelSmartScheduleProbeFailureProtectsWithoutMinimumSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	policy := manualProbeTestPolicy("vip", []string{"model-a"}, channelMonitorSmartScheduleSampleOff)
+	minSamples := 100
+	consecutiveFailureThreshold := 1
+	policy.MinSamples = &minSamples
+	policy.ConsecutiveFailureThreshold = &consecutiveFailureThreshold
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),

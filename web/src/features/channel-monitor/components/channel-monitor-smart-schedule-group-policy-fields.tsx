@@ -90,7 +90,6 @@ function GroupPolicyPercentField(props: {
   form: UseFormReturn<ChannelMonitorSmartSchedulePolicyFormValues>
   name:
     | 'scoring.stabilityPercent'
-    | 'degradeStabilityScore'
     | 'recoveryStabilityScore'
     | 'fastFailurePenaltyPercent'
     | `scoring.${SmartScheduleMetricGroup}.costRatioPercent`
@@ -729,7 +728,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                 helpKey='stability'
               />
               <FormDescription>
-                同时考虑原始成功率与重试失败耗时，快速报错轻罚，慢失败完整惩罚
+                稳定性得分参与软评分；近期连续失败或窗口累计失败触发硬保护
               </FormDescription>
             </div>
             <FormControl>
@@ -772,18 +771,12 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
           {degradedProbeEnabled && sampleMode !== 'probe'
             ? probeIntervalField
             : null}
-          <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+          <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
             <GroupPolicyPercentField
               form={props.form}
               name='scoring.stabilityPercent'
               label='稳定性占比'
               helpKey='stabilityPercent'
-            />
-            <GroupPolicyPercentField
-              form={props.form}
-              name='degradeStabilityScore'
-              label='降级稳定性得分'
-              helpKey='degradeStabilityScore'
             />
             <GroupPolicyPercentField
               form={props.form}
@@ -1005,7 +998,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               render={({ field }) => (
                 <FormItem>
                   <ChannelMonitorSettingLabel
-                    label='突发失败窗口'
+                    label='保护失败窗口'
                     helpKey='burstFailureWindow'
                   />
                   <FormControl>
@@ -1028,7 +1021,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
                     </InputGroup>
                   </FormControl>
-                  <FormDescription>只判断最近的突发故障</FormDescription>
+                  <FormDescription>只累计窗口内的近期失败</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

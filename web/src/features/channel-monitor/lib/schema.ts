@@ -250,9 +250,9 @@ const smartScheduleRuntimeFailureThresholdSchema = z.coerce
 
 const smartScheduleBurstFailureWindowSchema = z.coerce
   .number()
-  .int('突发失败窗口必须是整数')
-  .min(1, '突发失败窗口不能小于 1 秒')
-  .max(300, '突发失败窗口不能超过 300 秒')
+  .int('保护失败窗口必须是整数')
+  .min(1, '保护失败窗口不能小于 1 秒')
+  .max(300, '保护失败窗口不能超过 300 秒')
 
 const smartScheduleJitterToleranceSchema = z.coerce
   .number()
@@ -480,8 +480,6 @@ function validateSmartSchedulePolicy(
   values: {
     applyMode: ChannelMonitorSmartScheduleApplyMode
     sampleMode: ChannelMonitorSmartScheduleSampleMode
-    degradeStabilityScore: number
-    recoveryStabilityScore: number
     fastFailureSeconds: number
     slowFailureSeconds: number
   },
@@ -492,13 +490,6 @@ function validateSmartSchedulePolicy(
       code: 'custom',
       path: ['sampleMode'],
       message: '探索流量只适用于优先级分层 + 权重',
-    })
-  }
-  if (values.recoveryStabilityScore <= values.degradeStabilityScore) {
-    context.addIssue({
-      code: 'custom',
-      path: ['recoveryStabilityScore'],
-      message: '恢复稳定性得分必须大于降级得分',
     })
   }
   if (values.slowFailureSeconds <= values.fastFailureSeconds) {
@@ -752,11 +743,14 @@ export function createChannelMonitorSettingsSchema() {
         .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 43200 分钟'),
       smartScheduleStabilityWindowMinutes: z.coerce
         .number()
-        .int('稳定性窗口必须是整数')
-        .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性窗口不能小于 1 分钟')
+        .int('稳定性评分窗口必须是整数')
+        .min(
+          MIN_SMART_SCHEDULE_WINDOW_MINUTES,
+          '稳定性评分窗口不能小于 1 分钟'
+        )
         .max(
           MAX_SMART_SCHEDULE_WINDOW_MINUTES,
-          '稳定性窗口不能超过 43200 分钟'
+          '稳定性评分窗口不能超过 43200 分钟'
         ),
       smartScheduleRateLimitCooldownSeconds: z.coerce
         .number()
