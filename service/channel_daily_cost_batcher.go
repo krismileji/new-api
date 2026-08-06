@@ -175,17 +175,23 @@ func (b *channelDailyCostBatcher) run() {
 	for {
 		select {
 		case <-ticker.C:
-			if err := b.flushOne(); err != nil {
+			err := b.flushOne()
+			if err != nil {
 				b.reportFlushError(err)
 			}
 			b.reportDroppedEvents()
-			b.signalIfPending()
+			if err == nil {
+				b.signalIfPending()
+			}
 		case <-b.wake:
-			if err := b.flushOne(); err != nil {
+			err := b.flushOne()
+			if err != nil {
 				b.reportFlushError(err)
 			}
 			b.reportDroppedEvents()
-			b.signalIfPending()
+			if err == nil {
+				b.signalIfPending()
+			}
 		case <-b.stopCh:
 			return
 		}
@@ -201,11 +207,7 @@ func (b *channelDailyCostBatcher) flushOne() error {
 	}
 	err := b.writeWithRetry(batch)
 	if err != nil {
-		b.mu.Lock()
-		for _, delta := range batch {
-			b.addDroppedEventsLocked(delta)
-		}
-		b.mu.Unlock()
+		b.requeueBatch(batch)
 	}
 	return err
 }
@@ -219,13 +221,40 @@ func (b *channelDailyCostBatcher) flushAll() error {
 			return nil
 		}
 		if err := b.writeWithRetry(batch); err != nil {
-			b.mu.Lock()
-			for _, delta := range batch {
-				b.addDroppedEventsLocked(delta)
-			}
-			b.mu.Unlock()
+			b.requeueBatch(batch)
 			return err
 		}
+	}
+}
+
+func (b *channelDailyCostBatcher) requeueBatch(batch []model.ChannelDailyCostDelta) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, delta := range batch {
+		key := channelDailyCostAggregateKey{
+			ChannelId:      delta.ChannelId,
+			DayStart:       model.ChannelDailyCostDayStart(delta.OccurredAt),
+			KeyFingerprint: delta.KeyFingerprint,
+		}
+		current, exists := b.pending[key]
+		if !exists {
+			b.pending[key] = delta
+			continue
+		}
+		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
+			b.addDroppedEventsLocked(delta)
+			continue
+		}
+		current.CostNanoCNY += delta.CostNanoCNY
+		current.SettledDelta += delta.SettledDelta
+		current.UnresolvedDelta += delta.UnresolvedDelta
+		if delta.OccurredAt >= current.OccurredAt {
+			current.OccurredAt = delta.OccurredAt
+			current.APIKeyId = delta.APIKeyId
+			current.APIKeyName = delta.APIKeyName
+			current.KeyDisplay = delta.KeyDisplay
+		}
+		b.pending[key] = current
 	}
 }
 
@@ -320,7 +349,7 @@ func (b *channelDailyCostBatcher) reportFlushError(err error) {
 	}
 	b.lastErrorLog = now
 	b.mu.Unlock()
-	logger.LogError(context.Background(), fmt.Sprintf("批量记录渠道每日成本失败，已丢弃当前批次: %s", err.Error()))
+	logger.LogError(context.Background(), fmt.Sprintf("批量记录渠道每日成本失败，当前批次已保留等待重试: %s", err.Error()))
 }
 
 func (b *channelDailyCostBatcher) pendingCount() int {
@@ -368,6 +397,12 @@ func resetChannelDailyCostBatcherForTest(config channelDailyCostBatcherConfig, w
 }
 
 func flushChannelDailyCostEventsForTest() error {
+	return FlushChannelDailyCostEvents()
+}
+
+// FlushChannelDailyCostEvents persists all currently buffered channel cost
+// events. It is called during graceful shutdown before the database closes.
+func FlushChannelDailyCostEvents() error {
 	channelDailyCostBatcherMu.RLock()
 	batcher := dailyCostBatcher
 	err := batcher.flushAll()

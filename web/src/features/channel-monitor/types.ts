@@ -226,6 +226,7 @@ export type ChannelMonitorCostDay = {
   date: string
   start_at: number
   cost_cny: number
+  settled_count: number
   unresolved_count: number
 }
 
@@ -263,7 +264,10 @@ export type ChannelMonitorCostAPIKeyChannel = {
 export type ChannelMonitorCostCoverage = {
   included_channel_count: number
   unresolved_channel_count: number
+  missing_cost_config_channel_count: number
   free_group_channel_count: number
+  settled_count: number
+  unresolved_count: number
 }
 
 export type ChannelMonitorCostOverview = {

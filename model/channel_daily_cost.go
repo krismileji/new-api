@@ -34,6 +34,7 @@ type ChannelDailyCost struct {
 type ChannelDailyCostDayTotal struct {
 	DayStart        int64 `gorm:"column:day_start"`
 	CostNanoCNY     int64 `gorm:"column:cost_nano_cny"`
+	SettledCount    int64 `gorm:"column:settled_count"`
 	UnresolvedCount int64 `gorm:"column:unresolved_count"`
 }
 
@@ -109,7 +110,7 @@ func getChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, end
 	}
 	query := DB.WithContext(ctx).
 		Model(&ChannelDailyCost{}).
-		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(unresolved_count) AS unresolved_count").
+		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
 		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp)
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)

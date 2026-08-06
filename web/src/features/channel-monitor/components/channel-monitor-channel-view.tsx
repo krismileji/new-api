@@ -276,14 +276,23 @@ function ChannelTodayCostCell(props: {
   channel: ChannelMonitorItem
   onOpenCostHistory: (channel: ChannelMonitorItem) => void
 }) {
+  const unresolvedCount = props.channel.today_cost_unresolved_count
+  let costDetailLabel = `查看渠道 ${props.channel.name} 的今日已结算成本详情`
+  if (unresolvedCount > 0) {
+    costDetailLabel += `，另有 ${unresolvedCount} 次成本未解析`
+  }
   return (
     <Button
       type='button'
       variant='link'
       onClick={() => props.onOpenCostHistory(props.channel)}
-      aria-label={`查看渠道 ${props.channel.name} 的今日成本详情`}
+      aria-label={costDetailLabel}
       className='mt-1 h-auto max-w-full min-w-0 justify-start gap-1.5 p-0 text-left text-xs font-normal'
-      title='查看每日成本详情'
+      title={
+        unresolvedCount > 0
+          ? `当前金额不包含 ${unresolvedCount} 次未解析的上游请求尝试`
+          : '查看每日成本详情'
+      }
     >
       {!props.channel.today_cost_configured ? (
         <span className='text-muted-foreground text-xs'>未配置</span>
@@ -292,6 +301,9 @@ function ChannelTodayCostCell(props: {
           {formatChannelMonitorCost(props.channel.today_cost_cny)}
         </span>
       )}
+      {unresolvedCount > 0 ? (
+        <span className='text-warning'>未解析 {unresolvedCount}</span>
+      ) : null}
     </Button>
   )
 }

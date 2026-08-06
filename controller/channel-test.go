@@ -81,7 +81,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) (result testResult) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -447,8 +447,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+	service.BeginChannelDailyCostAttempt(c, channel.Id)
+	defer func() {
+		service.FinalizeChannelDailyCostAttempt(c, channel.Id, result.requestDispatched)
+	}()
 	resp, err := adaptor.DoRequest(c, info, requestBody)
-	requestDispatched := wasChannelTestRequestDispatched(c, resp, err)
+	requestDispatched := wasChannelTestRequestDispatched(c, resp)
 	if err != nil {
 		return testResult{
 			context:           c,
@@ -483,6 +487,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
+	requestDispatched = wasChannelTestRequestDispatched(c, resp)
 	if respErr != nil {
 		return testResult{
 			context:           c,
@@ -493,6 +498,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 	usage, usageErr := coerceTestUsage(usageA, isStream, info.GetEstimatePromptTokens())
+	if usageErr != nil && priceData.UsePrice {
+		usage = &dto.Usage{}
+		usageErr = nil
+	}
 	if usageErr != nil {
 		return testResult{
 			context:           c,
@@ -502,8 +511,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			originalModelName: info.OriginModelName,
 		}
 	}
-	result := w.Result()
-	respBody, err := readTestResponseBody(result.Body, isStream)
+	recordedResponse := w.Result()
+	respBody, err := readTestResponseBody(recordedResponse.Body, isStream)
 	if err != nil {
 		return testResult{
 			context:           c,

@@ -236,6 +236,9 @@ func main() {
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
 	}
+	if err := service.FlushChannelDailyCostEvents(); err != nil {
+		common.SysError(fmt.Sprintf("failed to flush channel daily cost events: %v", err))
+	}
 	common.SysLog("server exited")
 }
 

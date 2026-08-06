@@ -121,3 +121,66 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		assert.Equal(t, true, other[model.ChannelMonitorSmartScheduleProbeLogKey])
 	})
 }
+
+func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.ChannelRatioMonitor{},
+		&model.ChannelDailyCost{},
+		&model.ChannelDailyAPIKeyCost{},
+	))
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	service.ResetChannelDailyCostSnapshotCache()
+	t.Cleanup(service.ResetChannelDailyCostSnapshotCache)
+
+	user := &model.User{
+		Username: "failed-channel-test-user",
+		Password: "failed-channel-test-password",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    1_000_000,
+	}
+	require.NoError(t, db.Create(user).Error)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, err := w.Write([]byte(`{"error":{"message":"temporary upstream failure"}}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
+
+	conversion, err := service.MarshalChannelMonitorCostConversion(service.ChannelMonitorCostConversion{
+		Mode: service.ChannelMonitorCostConversionNone,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:      43,
+		Ratio:          1,
+		UpdatedTime:    1,
+		CostConversion: conversion,
+	}).Error)
+	channel := &model.Channel{
+		Id:      43,
+		Type:    constant.ChannelTypeOpenAI,
+		Key:     "sk-failed-channel-test",
+		Name:    "failed channel test",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: common.GetPointer(upstream.URL),
+		Models:  "gpt-3.5-turbo",
+		Group:   "default",
+	}
+
+	result := testChannel(context.Background(), channel, user.Id, "gpt-3.5-turbo", "", false)
+	require.Error(t, result.localErr)
+	assert.True(t, result.requestDispatched)
+	require.NoError(t, service.FlushChannelDailyCostEvents())
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", channel.Id).Error)
+	assert.Zero(t, cost.CostNanoCNY)
+	assert.Zero(t, cost.SettledCount)
+	assert.Equal(t, int64(1), cost.UnresolvedCount)
+}

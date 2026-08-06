@@ -403,7 +403,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(balanceCell.includes(costText))
     assert.equal(balanceCell.includes('不完整'), false)
     assert.match(balanceCell, /<button\b/)
-    assert.ok(balanceCell.includes('查看渠道 测试渠道 的今日成本详情'))
+    assert.ok(balanceCell.includes('查看渠道 测试渠道 的今日已结算成本详情'))
   })
 
   test('shows an explicit state when cost conversion is not configured', () => {
@@ -414,7 +414,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.doesNotMatch(cells[1] ?? '', />\s*今日成本\s*</)
     assert.ok(cells[1]?.includes('未配置'))
     assert.match(cells[1] ?? '', /<button\b/)
-    assert.ok(cells[1]?.includes('查看渠道 测试渠道 的今日成本详情'))
+    assert.ok(cells[1]?.includes('查看渠道 测试渠道 的今日已结算成本详情'))
   })
 
   test('shows the low-balance warning badge immediately after the balance', () => {
@@ -436,7 +436,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.match(balanceCell, /4\.5[\s\S]*data-slot="badge"[\s\S]*低于预警值/)
   })
 
-  test('keeps zero visible without exposing unresolved settlements', () => {
+  test('keeps zero visible and exposes unresolved upstream attempts', () => {
     const cells = getTableCells(
       renderView(
         createChannel({
@@ -448,8 +448,13 @@ describe('channel monitor channel view timestamps', () => {
     )
 
     assert.ok(cells[1]?.includes(formatChannelMonitorCost(0)))
-    assert.equal(cells[1]?.includes('不完整'), false)
-    assert.equal(cells[1]?.includes('未确认'), false)
+    assert.ok(cells[1]?.includes('未解析 2'))
+    assert.ok(cells[1]?.includes('当前金额不包含 2 次未解析的上游请求尝试'))
+    assert.ok(
+      cells[1]?.includes(
+        '查看渠道 测试渠道 的今日已结算成本详情，另有 2 次成本未解析'
+      )
+    )
   })
 
   test('shows channel concurrency limit as active over configured limit', () => {

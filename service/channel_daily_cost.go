@@ -27,6 +27,7 @@ import (
 
 const (
 	channelDailyCostSnapshotContextKey = "channel_daily_cost_snapshot"
+	channelDailyCostAttemptContextKey  = "channel_daily_cost_attempt"
 	channelDailyCostSnapshotTTL        = time.Minute
 )
 
@@ -47,6 +48,13 @@ type channelDailyCostSnapshotCacheEntry struct {
 	Version   uint64
 }
 
+type channelDailyCostAttemptState struct {
+	mu         sync.Mutex
+	ChannelId  int
+	Dispatched bool
+	Recorded   bool
+}
+
 var (
 	channelDailyCostSnapshotCache    sync.Map
 	channelDailyCostSnapshotVersions sync.Map
@@ -63,6 +71,83 @@ func CaptureChannelDailyCostSnapshot(ctx *gin.Context, channelId int) {
 	}
 	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	ctx.Set(channelDailyCostSnapshotContextKey, snapshot)
+}
+
+// BeginChannelDailyCostAttempt resets request-local accounting state for one
+// selected channel attempt. Local setup failures remain unrecorded until the
+// transport marks the attempt as dispatched.
+func BeginChannelDailyCostAttempt(ctx *gin.Context, channelId int) {
+	if ctx == nil || channelId <= 0 {
+		return
+	}
+	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{ChannelId: channelId})
+}
+
+// MarkChannelDailyCostRequestDispatched marks the exact boundary where a
+// request enters an upstream HTTP, WebSocket, or provider SDK transport.
+func MarkChannelDailyCostRequestDispatched(ctx *gin.Context) {
+	if ctx == nil {
+		return
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil {
+		return
+	}
+	state.mu.Lock()
+	state.Dispatched = true
+	state.mu.Unlock()
+	if ctx.GetBool("channel_test") {
+		ctx.Set("channel_test_request_dispatched", true)
+	}
+}
+
+// FinalizeChannelDailyCostAttempt records one unresolved event when an
+// upstream attempt was dispatched but no settlement event classified it.
+func FinalizeChannelDailyCostAttempt(ctx *gin.Context, channelId int, requestDispatched bool) {
+	if ctx == nil || channelId <= 0 {
+		return
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return
+	}
+
+	state.mu.Lock()
+	if requestDispatched {
+		state.Dispatched = true
+	}
+	if !state.Dispatched || state.Recorded {
+		state.mu.Unlock()
+		return
+	}
+	state.Recorded = true
+	state.mu.Unlock()
+	recordChannelDailyCostUnresolved(ctx, channelId)
+}
+
+func markChannelDailyCostAttemptRecorded(ctx *gin.Context, channelId int) {
+	if ctx == nil {
+		return
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return
+	}
+	state.mu.Lock()
+	state.Recorded = true
+	state.mu.Unlock()
 }
 
 func InvalidateChannelDailyCostSnapshot(channelId int) {
@@ -223,9 +308,6 @@ func recordChannelDailyCostFromQuota(ctx *gin.Context, channelId int, quotaBefor
 
 func recordChannelDailyCostUnresolved(ctx *gin.Context, channelId int) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
-	if !snapshot.Configured {
-		return
-	}
 	recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 }
 
@@ -242,6 +324,7 @@ func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bo
 func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) {
 	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	if !snapshot.Configured {
+		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
 	if math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
@@ -276,17 +359,18 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		KeyFingerprint:  snapshot.KeyFingerprint,
 		KeyDisplay:      snapshot.KeyDisplay,
 	})
+	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
 }
 
 func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, billingUsage *dto.Usage, originUsage *dto.Usage, summary textQuotaSummary, tieredBillingApplied bool, tieredResult *billingexpr.TieredResult) {
 	if relayInfo == nil {
 		return
 	}
-	if !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
-		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
-		return
-	}
 	if tieredBillingApplied {
+		if !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
+			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+			return
+		}
 		if tieredResult == nil {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
@@ -301,7 +385,11 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, quotaBeforeGroup)
 		return
 	}
-	if billingUsage == nil || summary.TotalTokens <= 0 {
+	if !relayInfo.PriceData.UsePrice && !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
+		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+		return
+	}
+	if !relayInfo.PriceData.UsePrice && (billingUsage == nil || !summary.hasBillableUsage()) {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
@@ -322,11 +410,11 @@ func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayI
 	if relayInfo == nil {
 		return
 	}
-	if !authoritativeUsage {
-		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
-		return
-	}
 	if tieredBillingApplied {
+		if !authoritativeUsage {
+			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+			return
+		}
 		if tieredResult == nil {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
@@ -334,7 +422,11 @@ func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayI
 		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, tieredResult.ActualQuotaBeforeGroup)
 		return
 	}
-	if totalTokens <= 0 {
+	if !quotaInfo.UsePrice && !authoritativeUsage {
+		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+		return
+	}
+	if !quotaInfo.UsePrice && totalTokens <= 0 {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
@@ -351,16 +443,20 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	if relayInfo == nil {
 		return
 	}
-	if !authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage) {
-		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
-		return
-	}
 	if relayInfo.TieredBillingSnapshot != nil {
+		if !authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage) {
+			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+			return
+		}
 		if tieredResult == nil {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
 		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, tieredResult.ActualQuotaBeforeGroup)
+		return
+	}
+	if !relayInfo.PriceData.UsePrice && (!authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage)) {
+		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
 	recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, float64(quota))
@@ -369,9 +465,6 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 // RecordPerCallChannelDailyCost records successful task and Midjourney calls.
 func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
-	if !snapshot.Configured {
-		return
-	}
 
 	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
 	if !priceData.UsePrice {

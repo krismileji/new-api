@@ -104,7 +104,11 @@ import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from './lib/email-notification'
 import { handleChannelMonitorMutationError } from './lib/error'
-import { formatChannelMonitorCost, formatMonitorRatio } from './lib/format'
+import {
+  formatChannelMonitorCost,
+  formatChannelMonitorResolutionRate,
+  formatMonitorRatio,
+} from './lib/format'
 import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
@@ -794,12 +798,23 @@ export function ChannelMonitor() {
 
   const costOverview = costQuery.data?.data
   let costDescription = costOverview
-    ? `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 结算时固化`
-    : '按北京时间记录结算成本'
+    ? `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 近 2 日解析率 ${formatChannelMonitorResolutionRate(
+        costOverview.coverage.settled_count,
+        costOverview.coverage.unresolved_count
+      )}`
+    : '按北京时间记录已结算成本'
+  if (costOverview && costOverview.coverage.unresolved_count > 0) {
+    costDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
+  }
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
-  } else if (costOverview?.coverage.included_channel_count === 0) {
-    costDescription = '暂无已记录的成本'
+  } else if (
+    costOverview &&
+    costOverview.coverage.settled_count +
+      costOverview.coverage.unresolved_count ===
+      0
+  ) {
+    costDescription = '暂无已记录的上游请求尝试'
   }
   const newAPIChannelCount = channels.filter(
     (channel) => channel.upstream?.type === 'new_api'
@@ -846,7 +861,7 @@ export function ChannelMonitor() {
             icon={Analytics01Icon}
           />
           <MonitorStatCard
-            label='今日累计成本'
+            label='今日已结算成本'
             value={
               costQuery.isLoading ? (
                 <Skeleton className='h-7 w-24' />

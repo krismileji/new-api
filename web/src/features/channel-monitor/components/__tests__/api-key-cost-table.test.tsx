@@ -81,11 +81,12 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes(`title="${channelRemark}"`))
     assert.ok(markup.includes(`title="${maskedKey}"`))
     assert.ok(markup.includes(formatChannelMonitorCost(12.3456)))
-    assert.ok(markup.includes('1 个渠道'))
-    assert.equal(markup.includes('仅未确认渠道'), false)
-    assert.equal(markup.includes('仅未确认 API Key'), false)
-    assert.equal(markup.includes('未确认'), false)
-    assert.equal(markup.includes('title="2 次成本未确认"'), false)
+    assert.ok(markup.includes('2 个渠道'))
+    assert.ok(markup.includes('仅未确认渠道'))
+    assert.ok(markup.includes('仅未确认 API Key'))
+    assert.ok(markup.includes('未解析 2'))
+    assert.ok(markup.includes('解析率 81.8%'))
+    assert.ok(markup.includes('0%'))
   })
 
   test('explains that API key costs start with newly settled requests', () => {
@@ -93,8 +94,8 @@ describe('channel monitor API key cost table', () => {
       <ChannelMonitorAPIKeyCostTable items={[]} />
     )
 
-    assert.ok(markup.includes('暂无 API Key 成本'))
-    assert.ok(markup.includes('新请求结算后开始记录'))
+    assert.ok(markup.includes('暂无 API Key 成本尝试'))
+    assert.ok(markup.includes('上游请求结算或进入未解析后开始记录'))
   })
 
   test('uses the masked upstream key when historical rows have no stored name', () => {

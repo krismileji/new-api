@@ -37,13 +37,17 @@ function createOverview(): ChannelMonitorCostOverview {
     coverage: {
       included_channel_count: 1,
       unresolved_channel_count: 0,
+      missing_cost_config_channel_count: 0,
       free_group_channel_count: 0,
+      settled_count: 1,
+      unresolved_count: 0,
     },
     items: [
       {
         date: '2026-07-23',
         start_at: 1_752_681_600,
         cost_cny: 1.2,
+        settled_count: 1,
         unresolved_count: 0,
       },
     ],
@@ -52,6 +56,7 @@ function createOverview(): ChannelMonitorCostOverview {
         date: '2026-07-23',
         start_at: 1_752_681_600,
         cost_cny: 1.2,
+        settled_count: 1,
         unresolved_count: 0,
       },
     ],
@@ -135,9 +140,9 @@ describe('channel monitor cost history dialog layout', () => {
       {
         channel_id: 2,
         channel_name: '仅未确认渠道',
-        channel_remark: '不应展示',
+        channel_remark: '成本待解析',
         status: 1,
-        cost_ratio: 0.2,
+        cost_ratio: null,
         cost_cny: 0,
         settled_count: 0,
         unresolved_count: 3,
@@ -155,14 +160,18 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('启用'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('0.5'))
-    assert.equal(markup.includes('仅未确认渠道'), false)
-    assert.equal(markup.includes('不完整'), false)
-    assert.equal(markup.includes('未确认'), false)
+    assert.ok(markup.includes('仅未确认渠道'))
+    assert.ok(markup.includes('成本待解析'))
+    assert.ok(markup.includes('已结算 0 · 未解析 3'))
+    assert.ok(markup.includes('解析率 0%'))
+    assert.ok(markup.includes('配置缺失'))
   })
 
-  test('does not expose unresolved cost indicators in the trend view', () => {
+  test('shows unresolved attempts and resolution rate in the trend view', () => {
     const overview = createOverview()
     overview.coverage.unresolved_channel_count = 2
+    overview.coverage.unresolved_count = 2
+    overview.coverage.missing_cost_config_channel_count = 1
     overview.items = overview.items.map((item) => ({
       ...item,
       unresolved_count: 2,
@@ -174,9 +183,11 @@ describe('channel monitor cost history dialog layout', () => {
 
     const markup = renderToStaticMarkup(<CostHistoryData overview={overview} />)
 
-    assert.ok(markup.includes('已结算 1 个渠道'))
-    assert.equal(markup.includes('不完整'), false)
-    assert.equal(markup.includes('未确认'), false)
+    assert.ok(markup.includes('已结算请求 1 · 未解析请求 2 · 解析率 33.3%'))
+    assert.ok(markup.includes('当前金额不包含 2 次未解析的上游请求尝试'))
+    assert.ok(markup.includes('其中 1 个渠道缺少有效成本配置'))
+    assert.ok(markup.includes('已结算成本'))
+    assert.ok(markup.includes('未解析'))
   })
 
   test('orders cost channels by enabled status and then ascending ratio', () => {

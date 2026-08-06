@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -10,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,12 +23,8 @@ func isChannelTestContext(c *gin.Context) bool {
 	return c != nil && c.GetBool(channelTestContextKey)
 }
 
-func wasChannelTestRequestDispatched(c *gin.Context, response any, requestErr error) bool {
-	if c.GetBool(channelTestRequestDispatchedKey) || response != nil {
-		return true
-	}
-	var apiErr *types.NewAPIError
-	return errors.As(requestErr, &apiErr) && apiErr.GetErrorCode() == types.ErrorCodeDoRequestFailed
+func wasChannelTestRequestDispatched(c *gin.Context, response any) bool {
+	return c.GetBool(channelTestRequestDispatchedKey) || response != nil
 }
 
 func recordManualChannelSmartScheduleProbeResult(

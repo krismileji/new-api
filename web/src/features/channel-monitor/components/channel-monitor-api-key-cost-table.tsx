@@ -35,7 +35,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-import { formatChannelMonitorCost } from '../lib/format'
+import {
+  formatChannelMonitorCost,
+  formatChannelMonitorResolutionRate,
+} from '../lib/format'
 import type { ChannelMonitorCostAPIKey } from '../types'
 
 type ChannelMonitorAPIKeyCostTableProps = {
@@ -45,14 +48,15 @@ type ChannelMonitorAPIKeyCostTableProps = {
 export function ChannelMonitorAPIKeyCostTable(
   props: ChannelMonitorAPIKeyCostTableProps
 ) {
-  const settledItems = useMemo(
+  const costItems = useMemo(
     () =>
       props.items
-        .filter((item) => item.settled_count > 0)
+        .filter((item) => item.settled_count > 0 || item.unresolved_count > 0)
         .map((item) => ({
           ...item,
           channels: item.channels.filter(
-            (channel) => channel.settled_count > 0
+            (channel) =>
+              channel.settled_count > 0 || channel.unresolved_count > 0
           ),
         })),
     [props.items]
@@ -66,17 +70,19 @@ export function ChannelMonitorAPIKeyCostTable(
       <h3 id='api-key-cost-title' className='text-sm font-medium'>
         API Key 成本（按名称）
       </h3>
-      {settledItems.length === 0 ? (
+      {costItems.length === 0 ? (
         <Empty className='min-h-32 border'>
           <EmptyHeader>
-            <EmptyTitle>暂无 API Key 成本</EmptyTitle>
-            <EmptyDescription>新请求结算后开始记录</EmptyDescription>
+            <EmptyTitle>暂无 API Key 成本尝试</EmptyTitle>
+            <EmptyDescription>
+              上游请求结算或进入未解析后开始记录
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
         <div className='max-h-[min(30rem,50dvh)] overflow-auto rounded-md border'>
           <div className='divide-border divide-y'>
-            {settledItems.map((item) => {
+            {costItems.map((item) => {
               let apiKeyName = item.api_key_name
               if (!apiKeyName && item.api_key_id > 0) {
                 apiKeyName = `未命名 API Key #${item.api_key_id}`
@@ -117,8 +123,18 @@ export function ChannelMonitorAPIKeyCostTable(
                         </span>
                       ) : null}
                     </span>
-                    <span className='text-muted-foreground shrink-0 text-xs'>
-                      {item.channels.length} 个渠道
+                    <span className='hidden shrink-0 flex-col items-end text-xs sm:flex'>
+                      <span className='text-muted-foreground'>
+                        {item.channels.length} 个渠道
+                      </span>
+                      <span className='font-mono tabular-nums'>
+                        已结算 {item.settled_count} · 未解析{' '}
+                        {item.unresolved_count} · 解析率{' '}
+                        {formatChannelMonitorResolutionRate(
+                          item.settled_count,
+                          item.unresolved_count
+                        )}
+                      </span>
                     </span>
                     <span className='shrink-0 text-right font-mono font-semibold tabular-nums'>
                       {formatChannelMonitorCost(item.cost_cny)}
@@ -130,15 +146,21 @@ export function ChannelMonitorAPIKeyCostTable(
                         暂无渠道明细
                       </p>
                     ) : (
-                      <Table className='min-w-[520px] table-fixed'>
+                      <Table className='min-w-[680px] table-fixed'>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className='w-[64%]'>关联渠道</TableHead>
-                            <TableHead className='w-[24%] text-right'>
-                              渠道成本
+                            <TableHead className='w-[44%]'>关联渠道</TableHead>
+                            <TableHead className='w-[20%] text-right'>
+                              已结算成本
                             </TableHead>
                             <TableHead className='w-[12%] text-right'>
-                              结算
+                              已结算
+                            </TableHead>
+                            <TableHead className='w-[12%] text-right'>
+                              未解析
+                            </TableHead>
+                            <TableHead className='w-[12%] text-right'>
+                              解析率
                             </TableHead>
                           </TableRow>
                         </TableHeader>
@@ -168,6 +190,15 @@ export function ChannelMonitorAPIKeyCostTable(
                               </TableCell>
                               <TableCell className='text-right font-mono tabular-nums'>
                                 {channel.settled_count}
+                              </TableCell>
+                              <TableCell className='text-right font-mono tabular-nums'>
+                                {channel.unresolved_count}
+                              </TableCell>
+                              <TableCell className='text-right font-mono tabular-nums'>
+                                {formatChannelMonitorResolutionRate(
+                                  channel.settled_count,
+                                  channel.unresolved_count
+                                )}
                               </TableCell>
                             </TableRow>
                           ))}

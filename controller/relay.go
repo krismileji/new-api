@@ -259,9 +259,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
+		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
 
 		if newAPIError == nil {
 			if !isChannelTestContext(c) {
@@ -659,6 +661,7 @@ func RelayTask(c *gin.Context) {
 	retryRouting := newRelayRetryRouting()
 	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
 	attemptIndex := 0
+	successfulChannelID := 0
 
 	for retryParam.GetRetry() <= common.RetryTimes {
 		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
@@ -713,15 +716,18 @@ func RelayTask(c *gin.Context) {
 		addUsedChannel(c, channel.Id)
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
 		if taskErr == nil {
+			successfulChannelID = channel.Id
 			if !isChannelTestContext(c) {
 				observeChannelSmartScheduleRuntimeRequestSuccess(channel.Id, relayInfo.OriginModelName)
 			}
 			break
 		}
+		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
 		retryDecision := fastFailureRetryBudget.decide(
 			relayRetryGroup(c, retryParam.TokenGroup),
 			relayInfo.OriginModelName,
@@ -788,6 +794,7 @@ func RelayTask(c *gin.Context) {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
 		service.LogTaskConsumption(c, relayInfo)
+		service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
 
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID

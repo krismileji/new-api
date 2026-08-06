@@ -26,6 +26,7 @@ type channelMonitorCostDay struct {
 	Date            string  `json:"date"`
 	StartAt         int64   `json:"start_at"`
 	CostCNY         float64 `json:"cost_cny"`
+	SettledCount    int64   `json:"settled_count"`
 	UnresolvedCount int64   `json:"unresolved_count"`
 }
 
@@ -61,9 +62,12 @@ type channelMonitorCostAPIKey struct {
 }
 
 type channelMonitorCostCoverage struct {
-	IncludedChannelCount   int `json:"included_channel_count"`
-	UnresolvedChannelCount int `json:"unresolved_channel_count"`
-	FreeGroupChannelCount  int `json:"free_group_channel_count"`
+	IncludedChannelCount          int   `json:"included_channel_count"`
+	UnresolvedChannelCount        int   `json:"unresolved_channel_count"`
+	MissingCostConfigChannelCount int   `json:"missing_cost_config_channel_count"`
+	FreeGroupChannelCount         int   `json:"free_group_channel_count"`
+	SettledCount                  int64 `json:"settled_count"`
+	UnresolvedCount               int64 `json:"unresolved_count"`
 }
 
 type channelMonitorCostOverview struct {
@@ -169,6 +173,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 			totalsByDay[row.DayStart] = total
 		}
 		total.CostNanoCNY += row.CostNanoCNY
+		total.SettledCount += row.SettledCount
 		total.UnresolvedCount += row.UnresolvedCount
 		if row.SettledCount > 0 {
 			includedChannels[row.ChannelId] = struct{}{}
@@ -201,6 +206,8 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	}
 	for _, item := range items {
 		overview.TotalCostCNY += item.CostCNY
+		overview.Coverage.SettledCount += item.SettledCount
+		overview.Coverage.UnresolvedCount += item.UnresolvedCount
 	}
 	if len(items) > 0 {
 		overview.TodayCostCNY = items[len(items)-1].CostCNY
@@ -291,12 +298,20 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	channelCosts := make(map[int]*channelCostSummary)
 	includedChannels := make(map[int]struct{})
 	unresolvedChannels := make(map[int]struct{})
+	missingCostConfigChannels := make(map[int]struct{})
+	var settledCount int64
+	var unresolvedCount int64
 	for _, row := range rows {
+		settledCount += row.SettledCount
+		unresolvedCount += row.UnresolvedCount
 		if row.SettledCount > 0 {
 			includedChannels[row.ChannelId] = struct{}{}
 		}
 		if row.UnresolvedCount > 0 {
 			unresolvedChannels[row.ChannelId] = struct{}{}
+		}
+		if _, configured := channelCostRatios[row.ChannelId]; !configured {
+			missingCostConfigChannels[row.ChannelId] = struct{}{}
 		}
 	}
 	for _, row := range rows {
@@ -575,8 +590,11 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		GeneratedAt:  now,
 		TotalCostCNY: totalCostCNY,
 		Coverage: channelMonitorCostCoverage{
-			IncludedChannelCount:   len(includedChannels),
-			UnresolvedChannelCount: len(unresolvedChannels),
+			IncludedChannelCount:          len(includedChannels),
+			UnresolvedChannelCount:        len(unresolvedChannels),
+			MissingCostConfigChannelCount: len(missingCostConfigChannels),
+			SettledCount:                  settledCount,
+			UnresolvedCount:               unresolvedCount,
 		},
 		Items:         items,
 		ChartItems:    chartItems,
@@ -606,6 +624,7 @@ func channelMonitorCostDaysFromTotals(startTimestamp int64, endTimestamp int64, 
 			Date:            channelMonitorCostDate(row.DayStart),
 			StartAt:         row.DayStart,
 			CostCNY:         channelMonitorCostCNY(row.CostNanoCNY),
+			SettledCount:    row.SettledCount,
 			UnresolvedCount: row.UnresolvedCount,
 		}
 	}

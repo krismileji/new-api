@@ -62,7 +62,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { getChannelMonitorCostOverview } from '../api'
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
-import { formatChannelMonitorCost } from '../lib/format'
+import {
+  formatChannelMonitorCost,
+  formatChannelMonitorResolutionRate,
+} from '../lib/format'
 import type { ChannelMonitorCostOverview } from '../types'
 import { ChannelMonitorAPIKeyCostTable } from './channel-monitor-api-key-cost-table'
 import { ChannelMonitorChannelCostTable } from './channel-monitor-channel-cost-table'
@@ -138,7 +141,7 @@ export function ChannelMonitorCostHistoryDialog(
             {props.channelName ? `渠道成本：${props.channelName}` : '渠道成本'}
           </DialogTitle>
           <DialogDescription>
-            按北京时间记录请求结算时固化的上游成本；后续配置更新不会改写历史金额。
+            按北京时间记录请求结算时固化的已结算上游成本；未解析尝试单独展示，后续配置更新不会改写历史金额。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 flex-1 overflow-y-auto pr-1'>
@@ -214,15 +217,15 @@ function CostSummary(props: {
   return (
     <div className='grid min-w-0 grid-cols-3 gap-4 sm:gap-8'>
       <CostSummaryValue
-        label='今日成本'
+        label='今日已结算成本'
         value={props.overview?.today_cost_cny}
       />
       <CostSummaryValue
-        label='昨日成本'
+        label='昨日已结算成本'
         value={props.overview?.yesterday_cost_cny}
       />
       <CostSummaryValue
-        label='区间累计'
+        label='区间已结算成本'
         value={props.overview?.total_cost_cny}
       />
     </div>
@@ -268,7 +271,11 @@ function CostHistoryContent(props: {
         </EmptyHeader>
       </Empty>
     )
-  } else if (props.overview.coverage.included_channel_count === 0) {
+  } else if (
+    props.overview.coverage.settled_count +
+      props.overview.coverage.unresolved_count ===
+    0
+  ) {
     content = (
       <Empty className='min-h-64 border'>
         <EmptyHeader>
@@ -277,7 +284,7 @@ function CostHistoryContent(props: {
           </EmptyMedia>
           <EmptyTitle>暂无成本记录</EmptyTitle>
           <EmptyDescription>
-            从功能启用后的成功上游请求开始记录
+            从功能启用后的上游请求尝试开始记录
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -329,6 +336,12 @@ export function CostHistoryData(props: {
           values: chartItems.map((item) => ({
             date: item.date,
             cost: item.cost_cny,
+            settledCount: item.settled_count,
+            unresolvedCount: item.unresolved_count,
+            resolutionRate: formatChannelMonitorResolutionRate(
+              item.settled_count,
+              item.unresolved_count
+            ),
             selected: item.date === detailDate,
           })),
         },
@@ -349,9 +362,23 @@ export function CostHistoryData(props: {
           title: { value: (datum: { date: string }) => datum.date },
           content: [
             {
-              key: '成本',
+              key: '已结算成本',
               value: (datum: { cost: number }) =>
                 formatChannelMonitorCost(datum.cost),
+            },
+            {
+              key: '已结算请求',
+              value: (datum: { settledCount: number }) => datum.settledCount,
+            },
+            {
+              key: '未解析请求',
+              value: (datum: { unresolvedCount: number }) =>
+                datum.unresolvedCount,
+            },
+            {
+              key: '解析率',
+              value: (datum: { resolutionRate: string }) =>
+                datum.resolutionRate,
             },
           ],
         },
@@ -422,11 +449,14 @@ export function CostHistoryData(props: {
           <section className='flex min-w-0 flex-col gap-2'>
             <h3 className='text-sm font-medium'>按日成本</h3>
             <div className='overflow-auto rounded-md border'>
-              <Table className='min-w-[360px]'>
+              <Table className='min-w-[650px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead>日期</TableHead>
-                    <TableHead className='text-right'>成本</TableHead>
+                    <TableHead className='text-right'>已结算成本</TableHead>
+                    <TableHead className='text-right'>已结算</TableHead>
+                    <TableHead className='text-right'>未解析</TableHead>
+                    <TableHead className='text-right'>解析率</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -442,6 +472,18 @@ export function CostHistoryData(props: {
                         <TableCell className='font-mono'>{item.date}</TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {formatChannelMonitorCost(item.cost_cny)}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {item.settled_count}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {item.unresolved_count}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {formatChannelMonitorResolutionRate(
+                            item.settled_count,
+                            item.unresolved_count
+                          )}
                         </TableCell>
                       </TableRow>
                     )
@@ -503,10 +545,38 @@ export function CostHistoryData(props: {
 function CostCoverage(props: {
   coverage: ChannelMonitorCostOverview['coverage']
 }) {
+  const resolutionRate = formatChannelMonitorResolutionRate(
+    props.coverage.settled_count,
+    props.coverage.unresolved_count
+  )
   return (
-    <div className='text-muted-foreground flex items-start gap-2 text-xs'>
-      <HugeiconsIcon icon={ChartLineData01Icon} className='mt-0.5 shrink-0' />
-      <span>已结算 {props.coverage.included_channel_count} 个渠道</span>
+    <div className='bg-muted/30 flex items-start gap-2 rounded-md border px-3 py-2 text-xs'>
+      <HugeiconsIcon
+        icon={ChartLineData01Icon}
+        className='text-muted-foreground mt-0.5 shrink-0'
+      />
+      <div className='flex min-w-0 flex-col gap-1'>
+        <span className='font-medium'>
+          已结算请求 {props.coverage.settled_count} · 未解析请求{' '}
+          {props.coverage.unresolved_count} · 解析率 {resolutionRate}
+        </span>
+        <span className='text-muted-foreground'>
+          已结算渠道 {props.coverage.included_channel_count} 个 ·
+          存在未解析尝试的渠道 {props.coverage.unresolved_channel_count} 个
+        </span>
+        {props.coverage.unresolved_count > 0 ? (
+          <span className='text-warning'>
+            当前金额不包含 {props.coverage.unresolved_count}{' '}
+            次未解析的上游请求尝试。
+          </span>
+        ) : null}
+        {props.coverage.missing_cost_config_channel_count > 0 ? (
+          <span className='text-warning'>
+            其中 {props.coverage.missing_cost_config_channel_count}{' '}
+            个渠道缺少有效成本配置。
+          </span>
+        ) : null}
+      </div>
     </div>
   )
 }

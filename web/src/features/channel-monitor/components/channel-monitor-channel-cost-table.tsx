@@ -37,7 +37,11 @@ import {
 } from '@/components/ui/table'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 
-import { formatChannelMonitorCost, formatMonitorRatio } from '../lib/format'
+import {
+  formatChannelMonitorCost,
+  formatChannelMonitorResolutionRate,
+  formatMonitorRatio,
+} from '../lib/format'
 import type { ChannelMonitorCostChannel } from '../types'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
@@ -81,16 +85,18 @@ export function ChannelMonitorChannelCostTable(
       }),
     [props.items]
   )
-  const settledItems = orderedItems.filter((item) => item.settled_count > 0)
+  const costItems = orderedItems.filter(
+    (item) => item.settled_count > 0 || item.unresolved_count > 0
+  )
 
-  if (settledItems.length === 0) {
+  if (costItems.length === 0) {
     return (
       <Empty className='min-h-56 border'>
         <EmptyHeader>
           <EmptyMedia variant='icon'>
             <HugeiconsIcon icon={MoneyBag02Icon} />
           </EmptyMedia>
-          <EmptyTitle>所选日期暂无渠道成本</EmptyTitle>
+          <EmptyTitle>所选日期暂无渠道成本尝试</EmptyTitle>
           <EmptyDescription>{props.detailDate}</EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -105,22 +111,25 @@ export function ChannelMonitorChannelCostTable(
           {props.detailDate}
         </span>
       </div>
-      <div className='overflow-hidden rounded-md border'>
-        <Table className='w-full table-fixed'>
+      <div className='overflow-auto rounded-md border'>
+        <Table className='min-w-[760px] table-fixed'>
           <TableHeader>
             <TableRow>
-              <TableHead className='w-[28%] whitespace-normal'>渠道</TableHead>
-              <TableHead className='w-[32%] whitespace-normal'>备注</TableHead>
-              <TableHead className='w-[18%] text-right whitespace-normal'>
+              <TableHead className='w-[22%] whitespace-normal'>渠道</TableHead>
+              <TableHead className='w-[22%] whitespace-normal'>备注</TableHead>
+              <TableHead className='w-[14%] text-right whitespace-normal'>
                 成本倍率
               </TableHead>
-              <TableHead className='w-[22%] text-right whitespace-normal'>
-                成本
+              <TableHead className='w-[18%] text-right whitespace-normal'>
+                已结算成本
+              </TableHead>
+              <TableHead className='w-[24%] text-right whitespace-normal'>
+                成本覆盖
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {settledItems.map((channel) => (
+            {costItems.map((channel) => (
               <TableRow key={channel.channel_id}>
                 <TableCell className='min-w-0 whitespace-normal'>
                   <div className='flex min-w-0 flex-col gap-1'>
@@ -151,10 +160,29 @@ export function ChannelMonitorChannelCostTable(
                   )}
                 </TableCell>
                 <TableCell className='text-right font-mono font-medium tabular-nums'>
-                  {formatMonitorRatio(channel.cost_ratio)}
+                  {channel.cost_ratio == null ? (
+                    <span className='text-warning'>配置缺失</span>
+                  ) : (
+                    formatMonitorRatio(channel.cost_ratio)
+                  )}
                 </TableCell>
                 <TableCell className='text-right font-mono tabular-nums'>
                   {formatChannelMonitorCost(channel.cost_cny)}
+                </TableCell>
+                <TableCell className='text-right'>
+                  <div className='flex flex-col items-end gap-0.5 text-xs'>
+                    <span className='font-mono tabular-nums'>
+                      已结算 {channel.settled_count} · 未解析{' '}
+                      {channel.unresolved_count}
+                    </span>
+                    <span className='text-muted-foreground'>
+                      解析率{' '}
+                      {formatChannelMonitorResolutionRate(
+                        channel.settled_count,
+                        channel.unresolved_count
+                      )}
+                    </span>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

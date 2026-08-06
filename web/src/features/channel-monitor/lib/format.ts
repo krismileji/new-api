@@ -23,6 +23,11 @@ const channelMonitorCostFormatter = new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 4,
 })
 
+const channelMonitorResolutionRateFormatter = new Intl.NumberFormat('zh-CN', {
+  style: 'percent',
+  maximumFractionDigits: 1,
+})
+
 export function formatMonitorRatio(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-'
   return value.toLocaleString(undefined, {
@@ -38,6 +43,23 @@ export function formatChannelMonitorCost(
   return channelMonitorCostFormatter.format(
     Math.abs(value) < 0.00005 ? 0 : value
   )
+}
+
+export function formatChannelMonitorResolutionRate(
+  settledCount: number,
+  unresolvedCount: number
+): string {
+  if (
+    !Number.isFinite(settledCount) ||
+    !Number.isFinite(unresolvedCount) ||
+    settledCount < 0 ||
+    unresolvedCount < 0
+  ) {
+    return '-'
+  }
+  const totalCount = settledCount + unresolvedCount
+  if (totalCount <= 0) return '-'
+  return channelMonitorResolutionRateFormatter.format(settledCount / totalCount)
 }
 
 export function getRatioChange(
