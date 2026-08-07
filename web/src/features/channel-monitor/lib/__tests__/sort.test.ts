@@ -32,13 +32,17 @@ function createChannel(
   id: number,
   status: number,
   costRatio: number,
-  name = `渠道 ${id}`
+  name = `渠道 ${id}`,
+  todayCost = 0,
+  todayCostConfigured = true
 ): ChannelMonitorItem {
   return {
     id,
     name,
     status,
     cost_ratio: costRatio,
+    today_cost_cny: todayCost,
+    today_cost_configured: todayCostConfigured,
   } as ChannelMonitorItem
 }
 
@@ -122,6 +126,8 @@ test('keeps enabled channels first in every derived sort mode', () => {
     'channel_desc',
     'ratio_asc',
     'ratio_desc',
+    'today_cost_asc',
+    'today_cost_desc',
     'first_token_asc',
     'first_token_desc',
     'tps_asc',
@@ -138,6 +144,37 @@ test('keeps enabled channels first in every derived sort mode', () => {
 
     assert.equal(sorted[0]?.id, 2, sortMode)
   }
+})
+
+test('sorts configured today costs while keeping unconfigured channels last', () => {
+  const channels = [
+    createChannel(1, CHANNEL_STATUS.ENABLED, 1, '渠道 A', 12.5),
+    createChannel(2, CHANNEL_STATUS.ENABLED, 1, '渠道 B', 0),
+    createChannel(3, CHANNEL_STATUS.ENABLED, 1, '渠道 C', 7.25),
+    createChannel(4, CHANNEL_STATUS.ENABLED, 1, '渠道 D', 0, false),
+  ]
+
+  const ascending = sortChannelMonitorItems(
+    channels,
+    'today_cost_asc',
+    [],
+    new Map()
+  )
+  const descending = sortChannelMonitorItems(
+    channels,
+    'today_cost_desc',
+    [],
+    new Map()
+  )
+
+  assert.deepEqual(
+    ascending.map((channel) => channel.id),
+    [2, 3, 1, 4]
+  )
+  assert.deepEqual(
+    descending.map((channel) => channel.id),
+    [1, 3, 2, 4]
+  )
 })
 
 test('keeps enabled channels first without losing custom relative order', () => {

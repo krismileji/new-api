@@ -269,6 +269,8 @@ const CHANNEL_MONITOR_SORT_OPTIONS: Array<{
   { value: 'channel_desc', label: '渠道名称：降序' },
   { value: 'ratio_desc', label: '成本倍率：从高到低' },
   { value: 'ratio_asc', label: '成本倍率：从低到高' },
+  { value: 'today_cost_desc', label: '今日累计成本：降序' },
+  { value: 'today_cost_asc', label: '今日累计成本：升序' },
   { value: 'first_token_asc', label: '首字：从低到高' },
   { value: 'first_token_desc', label: '首字：从高到低' },
   { value: 'tps_desc', label: 'TPS：从高到低' },
@@ -352,6 +354,8 @@ export function ChannelMonitor() {
         case 'channel_desc':
         case 'ratio_asc':
         case 'ratio_desc':
+        case 'today_cost_asc':
+        case 'today_cost_desc':
         case 'first_token_asc':
         case 'first_token_desc':
         case 'tps_asc':

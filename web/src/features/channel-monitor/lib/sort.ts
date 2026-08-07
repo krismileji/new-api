@@ -91,6 +91,19 @@ export function sortChannelMonitorItems(
       return compareChannelNames(first, second)
     }
 
+    if (sortMode === 'today_cost_asc' || sortMode === 'today_cost_desc') {
+      if (!first.today_cost_configured && !second.today_cost_configured) {
+        return compareChannelNames(first, second)
+      }
+      if (!first.today_cost_configured) return 1
+      if (!second.today_cost_configured) return -1
+      const costComparison = first.today_cost_cny - second.today_cost_cny
+      if (costComparison !== 0) {
+        return sortMode === 'today_cost_asc' ? costComparison : -costComparison
+      }
+      return compareChannelNames(first, second)
+    }
+
     const firstPerformance = performanceByChannel.get(first.id)
     const secondPerformance = performanceByChannel.get(second.id)
     const firstTokenSort =

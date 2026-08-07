@@ -452,6 +452,8 @@ export type ChannelMonitorSortMode =
   | 'channel_desc'
   | 'ratio_asc'
   | 'ratio_desc'
+  | 'today_cost_asc'
+  | 'today_cost_desc'
   | 'first_token_asc'
   | 'first_token_desc'
   | 'tps_asc'
