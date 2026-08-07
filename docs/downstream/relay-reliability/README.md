@@ -44,6 +44,15 @@ Chat Completions、Responses、其他文本中继和任务中继共享渠道排�
 
 普通用户的日志查询会过滤中间重试记录，并把错误正文收敛为可识别的 HTTP 状态码；管理员日志保留排障所需的渠道、错误类型、错误码和受保护调试信息。
 
+### Responses 图像能力错误
+
+当 `/v1/responses` 的上游响应同时满足以下条件时，系统将其视为可选图像生成能力与上游分组不匹配，而不是渠道健康故障：
+
+- HTTP 状态码为 `403`。
+- 错误消息不区分大小写地包含 `Image generation is not enabled for this group`。
+
+该错误会立即停止重试，包括快速失败重试；同时不写入数据库错误日志，因此不会进入渠道监控的实际调用或最终结果失败样本，也不会影响成功率。客户端仍会收到原始 `403`，服务端运行时错误日志也会保留。其他 `403` 错误继续遵循常规重试和记录规则。
+
 ## 与渠道监控的关系
 
 渠道监控的成功率和稳定性保护使用“实际调用口径”，因此一次最终成功的请求如果经历过失败重试，仍会降低对应渠道的实际成功率。最终成功率用于观察请求对用户的最终影响。
@@ -54,11 +63,12 @@ Chat Completions、Responses、其他文本中继和任务中继共享渠道排�
 
 - `controller/relay_retry_routing.go`：失败渠道排除和候选耗尽判断。
 - `controller/relay.go`：文本与任务中继集成、最终错误记录。
+- `relay/responses_error_policy.go`：Responses 特定上游错误的重试与记录策略。
 - `model/log.go`：重试标记和用户日志过滤。
 - `setting/operation_setting/status_code_ranges.go`：常规状态码重试规则。
 
 ## 验证
 
 ```powershell
-go test ./controller ./model ./setting/operation_setting
+go test ./controller ./model ./relay ./setting/operation_setting
 ```
