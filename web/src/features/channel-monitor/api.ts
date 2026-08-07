@@ -31,6 +31,7 @@ import type {
   ChannelMonitorPerformanceRangeMinutes,
   ChannelMonitorPerformanceResult,
   ChannelMonitorSettings,
+  ChannelMonitorSmartScheduleExplorationClearResult,
   ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
@@ -365,6 +366,21 @@ export async function clearChannelMonitorSmartScheduleRouteStability(request: {
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleStabilityClearResult>
   >(
     `/api/channel_monitor/channel/${request.channelId}/schedule/route/stability/clear`,
+    { group: request.group, model: request.model },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function clearChannelMonitorSmartScheduleRouteExploration(request: {
+  channelId: number
+  group: string
+  model: string
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleExplorationClearResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/exploration/clear`,
     { group: request.group, model: request.model },
     channelMonitorRequestConfig()
   )

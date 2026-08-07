@@ -594,6 +594,45 @@ func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
 	})
 }
 
+func ClearChannelMonitorSmartScheduleRouteExploration(c *gin.Context) {
+	channelId, ok := channelSmartScheduleRouteChannelId(c)
+	if !ok {
+		return
+	}
+	var request channelSmartScheduleRouteRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	group, modelName, ok := normalizeChannelSmartScheduleRouteRequest(c, request.Group, request.Model)
+	if !ok {
+		return
+	}
+	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := model.ClearChannelSmartScheduleRouteExploration(channelId, group, modelName)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if result.Cleared {
+		model.InitChannelCache()
+	}
+	recordManageAudit(c, "channel.monitor_smart_schedule_route_exploration_clear", map[string]interface{}{
+		"id": channelId, "group": group, "model": modelName,
+		"previous_kind": result.PreviousKind, "cleared": result.Cleared,
+		"priority": result.Priority, "weight": result.Weight,
+	})
+	common.ApiSuccess(c, gin.H{
+		"cleared":       result.Cleared,
+		"previous_kind": result.PreviousKind,
+		"priority":      result.Priority,
+		"weight":        result.Weight,
+	})
+}
+
 func channelSmartScheduleRouteChannelId(c *gin.Context) (int, bool) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelId <= 0 {

@@ -22,6 +22,7 @@ import { describe, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import type { ChannelMonitorSmartScheduleRoute } from '../../types'
+import { ChannelMonitorSmartScheduleRouteStatus } from '../channel-monitor-smart-schedule-route-details'
 import { ChannelMonitorSmartScheduleRouteState } from '../channel-monitor-smart-schedule-route-state'
 
 function createProtectedRoute(
@@ -120,6 +121,29 @@ describe('smart schedule route protection state', () => {
     assert.match(
       markup,
       /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的稳定性试放"[^>]*>/
+    )
+    assert.equal(markup.includes('路由禁用'), false)
+  })
+
+  test('keeps exploration traffic clickable while the route is available', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    route.state.stability_state = ''
+    route.state.temporary_traffic_kind = 'insufficient_samples'
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteStatus
+        route={route}
+        placement={undefined}
+        onClearProtection={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('样本不足补量'))
+    assert.ok(markup.includes('解除 测试渠道 vip model-a 的探索流量'))
+    assert.match(
+      markup,
+      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的探索流量"[^>]*>/
     )
     assert.equal(markup.includes('路由禁用'), false)
   })

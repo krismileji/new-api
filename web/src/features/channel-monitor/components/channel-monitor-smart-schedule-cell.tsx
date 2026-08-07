@@ -147,6 +147,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       key: 'exploration',
       label: `探索流量 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
       variant: 'warning',
+      clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`,
     })
   } else if (route.state.temporary_traffic_kind === 'priority_sampling') {
     statuses.push({

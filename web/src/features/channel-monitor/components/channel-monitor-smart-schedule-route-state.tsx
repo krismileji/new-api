@@ -58,7 +58,17 @@ export function ChannelMonitorSmartScheduleRouteState(
     )
   }
   if (route.state.temporary_traffic_kind === 'insufficient_samples') {
-    return <Badge variant='warning'>样本不足补量</Badge>
+    return (
+      <Badge
+        render={<button type='button' />}
+        variant='warning'
+        className='cursor-pointer'
+        onClick={props.onProtectedStatusClick}
+        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`}
+      >
+        样本不足补量
+      </Badge>
+    )
   }
   if (route.state.temporary_traffic_kind === 'priority_sampling') {
     return <Badge variant='warning'>低优先级轮转</Badge>

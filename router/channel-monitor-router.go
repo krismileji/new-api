@@ -30,6 +30,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.PUT("/channel/:id/schedule/route/routing", controller.UpdateChannelMonitorSmartScheduleManualRouting)
 		monitorRoute.PUT("/channel/:id/schedule/route/primary", controller.UpdateChannelMonitorSmartScheduleRoutePrimary)
 		monitorRoute.POST("/channel/:id/schedule/route/stability/clear", controller.ClearChannelMonitorSmartScheduleRouteStability)
+		monitorRoute.POST("/channel/:id/schedule/route/exploration/clear", controller.ClearChannelMonitorSmartScheduleRouteExploration)
 		monitorRoute.PUT("/channel/:id/concurrency", controller.UpdateChannelMonitorConcurrencyLimit)
 		monitorRoute.GET("/channel/:id/history", controller.GetChannelMonitorHistory)
 		monitorRoute.PUT("/channel/:id/upstream", controller.SaveChannelMonitorUpstreamConfig)

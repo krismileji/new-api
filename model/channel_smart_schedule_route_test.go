@@ -1054,6 +1054,116 @@ func TestClearChannelSmartScheduleRouteStabilityRestoresOnlyTargetRoute(t *testi
 	assert.Equal(t, uint(25), standard.Weight)
 }
 
+func TestClearChannelSmartScheduleRouteExplorationRestoresOnlyTargetRoute(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	defaultPriority := int64(80)
+	defaultWeight := uint(50)
+	targetTemporaryPriority := int64(100)
+	otherTemporaryPriority := int64(101)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1013, Name: "target", Status: common.ChannelStatusEnabled, Priority: &defaultPriority, Weight: &defaultWeight},
+		{Id: 1014, Name: "other", Status: common.ChannelStatusEnabled, Priority: &defaultPriority, Weight: &defaultWeight},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1013, Group: "vip", Model: "model-a", Enabled: true, Priority: &targetTemporaryPriority, Weight: 2},
+		{ChannelId: 1014, Group: "vip", Model: "model-a", Enabled: true, Priority: &otherTemporaryPriority, Weight: 3},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 1013, GroupName: "vip", ModelName: "model-a",
+			ParticipationSet: true, Revision: 1,
+			BaseRank: 2, BasePriority: 20, BaseWeight: 40,
+			TemporaryTrafficKind:  ChannelSmartScheduleTemporaryTrafficExploration,
+			TemporaryTrafficSince: 123, TemporaryTrafficTargetPercent: 3,
+			ExplorationMaxPromptTokens: 4096,
+		},
+		{
+			ChannelId: 1014, GroupName: "vip", ModelName: "model-a",
+			ParticipationSet: true, Revision: 4,
+			BaseRank: 3, BasePriority: 10, BaseWeight: 30,
+			TemporaryTrafficKind:  ChannelSmartScheduleTemporaryTrafficExploration,
+			TemporaryTrafficSince: 456, TemporaryTrafficTargetPercent: 4,
+			ExplorationMaxPromptTokens: 2048,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
+		ChannelId: 1013, ModelName: "model-a", ObservationSince: 777,
+	}).Error)
+
+	result, err := ClearChannelSmartScheduleRouteExploration(1013, "vip", "model-a")
+	require.NoError(t, err)
+	assert.True(t, result.Cleared)
+	assert.True(t, result.RoutingChanged)
+	assert.Equal(t, ChannelSmartScheduleTemporaryTrafficExploration, result.PreviousKind)
+	assert.Equal(t, int64(20), result.Priority)
+	assert.Equal(t, uint(40), result.Weight)
+
+	var targetAbility Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 1013, Group: "vip", Model: "model-a"}).First(&targetAbility).Error)
+	require.NotNil(t, targetAbility.Priority)
+	assert.Equal(t, int64(20), *targetAbility.Priority)
+	assert.Equal(t, uint(40), targetAbility.Weight)
+	var targetState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 1013, GroupName: "vip", ModelName: "model-a",
+	}).First(&targetState).Error)
+	assert.Empty(t, targetState.TemporaryTrafficKind)
+	assert.Zero(t, targetState.TemporaryTrafficSince)
+	assert.Zero(t, targetState.TemporaryTrafficTargetPercent)
+	assert.Zero(t, targetState.ExplorationMaxPromptTokens)
+	assert.Equal(t, int64(2), targetState.Revision)
+
+	var otherAbility Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 1014, Group: "vip", Model: "model-a"}).First(&otherAbility).Error)
+	require.NotNil(t, otherAbility.Priority)
+	assert.Equal(t, otherTemporaryPriority, *otherAbility.Priority)
+	assert.Equal(t, uint(3), otherAbility.Weight)
+	var otherState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 1014, GroupName: "vip", ModelName: "model-a",
+	}).First(&otherState).Error)
+	assert.Equal(t, ChannelSmartScheduleTemporaryTrafficExploration, otherState.TemporaryTrafficKind)
+	assert.Equal(t, int64(4), otherState.Revision)
+
+	var sampleState ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND model_name = ?", 1013, "model-a",
+	).First(&sampleState).Error)
+	assert.Equal(t, int64(777), sampleState.ObservationSince)
+}
+
+func TestClearChannelSmartScheduleRouteExplorationLeavesPrioritySamplingUntouched(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	currentPriority := int64(100)
+	require.NoError(t, db.Create(&Channel{Id: 1015, Name: "sampling", Status: common.ChannelStatusEnabled}).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: 1015, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &currentPriority, Weight: 2,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1015, GroupName: "vip", ModelName: "model-a",
+		ParticipationSet: true, Revision: 3,
+		BaseRank: 2, BasePriority: 20, BaseWeight: 40,
+		TemporaryTrafficKind:  ChannelSmartScheduleTemporaryTrafficPrioritySampling,
+		TemporaryTrafficSince: 123, TemporaryTrafficTargetPercent: 2,
+	}).Error)
+
+	result, err := ClearChannelSmartScheduleRouteExploration(1015, "vip", "model-a")
+	require.NoError(t, err)
+	assert.False(t, result.Cleared)
+	assert.False(t, result.RoutingChanged)
+	assert.Equal(t, ChannelSmartScheduleTemporaryTrafficPrioritySampling, result.PreviousKind)
+	assert.Equal(t, currentPriority, result.Priority)
+	assert.Equal(t, uint(2), result.Weight)
+
+	var state ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 1015, GroupName: "vip", ModelName: "model-a",
+	}).First(&state).Error)
+	assert.Equal(t, ChannelSmartScheduleTemporaryTrafficPrioritySampling, state.TemporaryTrafficKind)
+	assert.Equal(t, int64(3), state.Revision)
+}
+
 func TestClearChannelSmartScheduleTemporaryTrafficRestoresSavedRouteValues(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	channelPriority := int64(80)

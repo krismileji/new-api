@@ -678,6 +678,13 @@ export type ChannelMonitorSmartScheduleStabilityClearResult = {
   weight: number
 }
 
+export type ChannelMonitorSmartScheduleExplorationClearResult = {
+  cleared: boolean
+  previous_kind: '' | 'insufficient_samples' | 'priority_sampling'
+  priority: number
+  weight: number
+}
+
 export type ChannelMonitorSmartScheduleRouteState = {
   id: number
   channel_id: number

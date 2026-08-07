@@ -95,7 +95,10 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   onClearProtection: () => void
 }) {
-  if (props.route.state.stability_state !== '') {
+  if (
+    props.route.state.stability_state !== '' ||
+    props.route.state.temporary_traffic_kind === 'insufficient_samples'
+  ) {
     return (
       <ChannelMonitorSmartScheduleRouteState
         route={props.route}

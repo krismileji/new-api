@@ -25,6 +25,7 @@ import { api } from '@/lib/api'
 
 import {
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
+  clearChannelMonitorSmartScheduleRouteExploration,
   clearChannelMonitorSmartScheduleRouteStability,
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
@@ -380,6 +381,51 @@ test('posts manual stability clear for one group-model route', async () => {
   assert.equal(
     requestConfig?.url,
     '/api/channel_monitor/channel/7/schedule/route/stability/clear'
+  )
+  assert.equal(requestConfig?.method, 'post')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    group: 'vip',
+    model: 'model-a',
+  })
+})
+
+test('posts manual exploration clear for one group-model route', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          cleared: true,
+          previous_kind: 'insufficient_samples',
+          priority: 80,
+          weight: 60,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await clearChannelMonitorSmartScheduleRouteExploration({
+      channelId: 7,
+      group: 'vip',
+      model: 'model-a',
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/route/exploration/clear'
   )
   assert.equal(requestConfig?.method, 'post')
   assert.deepEqual(JSON.parse(String(requestConfig?.data)), {

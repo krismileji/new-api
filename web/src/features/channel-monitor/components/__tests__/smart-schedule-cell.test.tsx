@@ -131,7 +131,7 @@ describe('channel monitor smart schedule cell status', () => {
     }
   })
 
-  test('opens protection clearing only from degradation and release states', () => {
+  test('opens clearing from degradation, release, and exploration states only', () => {
     const fixturePath = fileURLToPath(
       new URL('./smart-schedule-cell-protection.fixture.tsx', import.meta.url)
     )

@@ -30,7 +30,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
-import { clearChannelMonitorSmartScheduleRouteStability } from '../api'
+import {
+  clearChannelMonitorSmartScheduleRouteExploration,
+  clearChannelMonitorSmartScheduleRouteStability,
+} from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
@@ -40,20 +43,43 @@ type ChannelMonitorSmartScheduleClearDialogProps = {
   onOpenChange: (open: boolean) => void
 }
 
+type ChannelMonitorSmartScheduleClearRequest = {
+  channelId: number
+  group: string
+  model: string
+  kind: 'stability' | 'exploration'
+}
+
 export function ChannelMonitorSmartScheduleClearDialog(
   props: ChannelMonitorSmartScheduleClearDialogProps
 ) {
   const queryClient = useQueryClient()
   const mutation = useMutation({
-    mutationFn: clearChannelMonitorSmartScheduleRouteStability,
+    mutationFn: async (request: ChannelMonitorSmartScheduleClearRequest) => {
+      const routeRequest = {
+        channelId: request.channelId,
+        group: request.group,
+        model: request.model,
+      }
+      if (request.kind === 'exploration') {
+        return await clearChannelMonitorSmartScheduleRouteExploration(
+          routeRequest
+        )
+      }
+      return await clearChannelMonitorSmartScheduleRouteStability(routeRequest)
+    },
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
+    onSuccess: (response, request) => {
       props.onOpenChange(false)
-      toast.success(
-        response.data.cleared
-          ? `已解除保护，恢复 P${response.data.priority} / W${response.data.weight}`
-          : '当前路由没有需要解除的保护'
-      )
+      let message = '当前路由没有需要解除的保护'
+      if (request.kind === 'exploration') {
+        message = response.data.cleared
+          ? `已解除探索流量，恢复 P${response.data.priority} / W${response.data.weight}`
+          : '当前路由没有需要解除的探索流量'
+      } else if (response.data.cleared) {
+        message = `已解除保护，恢复 P${response.data.priority} / W${response.data.weight}`
+      }
+      toast.success(message)
     },
     onSettled: () => {
       queryClient.invalidateQueries({
@@ -63,6 +89,19 @@ export function ChannelMonitorSmartScheduleClearDialog(
       queryClient.invalidateQueries({ queryKey: ['channels'] })
     },
   })
+
+  const clearingExploration =
+    props.route?.state.stability_state === '' &&
+    props.route.state.temporary_traffic_kind === 'insufficient_samples'
+  let title = '确认解除智能调度保护？'
+  let stateLabel = '稳定性试放'
+  if (props.route?.state.stability_state === 'degraded') {
+    stateLabel = '稳定性降级'
+  }
+  if (clearingExploration) {
+    title = '确认解除探索流量？'
+    stateLabel = '探索流量'
+  }
 
   return (
     <AlertDialog
@@ -74,14 +113,11 @@ export function ChannelMonitorSmartScheduleClearDialog(
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>确认解除智能调度保护？</AlertDialogTitle>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
             将立即清除“{props.route?.channel_name} / {props.route?.group} /{' '}
-            {props.route?.model}”的
-            {props.route?.state.stability_state === 'degraded'
-              ? '稳定性降级'
-              : '稳定性试放'}
-            状态，并恢复保护前保存的优先级和权重。
+            {props.route?.model}”的{stateLabel}
+            状态，并恢复调整前保存的优先级和权重。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -96,6 +132,7 @@ export function ChannelMonitorSmartScheduleClearDialog(
                 channelId: props.route.channel_id,
                 group: props.route.group,
                 model: props.route.model,
+                kind: clearingExploration ? 'exploration' : 'stability',
               })
             }}
           >

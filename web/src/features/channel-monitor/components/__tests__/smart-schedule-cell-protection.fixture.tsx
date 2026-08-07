@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import type { ChannelMonitorSmartScheduleRouteState } from '../../types'
 import { createSmartScheduleCellRoute } from './smart-schedule-cell-test-data'
 import './test-dom'
 
@@ -33,7 +34,9 @@ const container = document.createElement('div')
 document.body.append(container)
 const root = createRoot(container)
 
-async function renderProtectedState(stabilityState: 'degraded' | 'probing') {
+async function renderClearableState(
+  state: Partial<ChannelMonitorSmartScheduleRouteState>
+) {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
@@ -41,7 +44,7 @@ async function renderProtectedState(stabilityState: 'degraded' | 'probing') {
           channelName='测试渠道'
           routes={[
             createSmartScheduleCellRoute({
-              state: { stability_state: stabilityState },
+              state,
             }),
           ]}
           selectedGroupModel={{ group: 'default', model: 'model-a' }}
@@ -68,7 +71,7 @@ async function cancelDialog() {
 }
 
 try {
-  await renderProtectedState('degraded')
+  await renderClearableState({ stability_state: 'degraded' })
 
   const degradedButton = container.querySelector<HTMLButtonElement>(
     'button[aria-label="解除 测试渠道 default model-a 的稳定性降级保护"]'
@@ -96,7 +99,7 @@ try {
   })
   assert.equal(container.querySelector('button[aria-label^="解除 "]'), null)
 
-  await renderProtectedState('probing')
+  await renderClearableState({ stability_state: 'probing' })
 
   const probingButton = container.querySelector<HTMLButtonElement>(
     'button[aria-label="解除 测试渠道 default model-a 的稳定性释放"]'
@@ -108,6 +111,28 @@ try {
   assert.ok(document.body.textContent?.includes('确认解除智能调度保护？'))
   assert.ok(document.body.textContent?.includes('稳定性试放'))
   await cancelDialog()
+
+  await renderClearableState({
+    temporary_traffic_kind: 'insufficient_samples',
+    temporary_traffic_target_percent: 3,
+  })
+
+  const explorationButton = container.querySelector<HTMLButtonElement>(
+    'button[aria-label="解除 测试渠道 default model-a 的探索流量"]'
+  )
+  assert.ok(explorationButton)
+  await act(async () => {
+    explorationButton.click()
+  })
+  assert.ok(document.body.textContent?.includes('确认解除探索流量？'))
+  assert.ok(document.body.textContent?.includes('探索流量状态'))
+  await cancelDialog()
+
+  await renderClearableState({
+    temporary_traffic_kind: 'priority_sampling',
+    temporary_traffic_target_percent: 2,
+  })
+  assert.equal(container.querySelector('button[aria-label^="解除 "]'), null)
 } finally {
   await act(async () => root.unmount())
   queryClient.clear()

@@ -186,6 +186,14 @@ type ChannelSmartScheduleStabilityClearResult struct {
 	ObservationSince int64
 }
 
+type ChannelSmartScheduleExplorationClearResult struct {
+	PreviousKind   string
+	Cleared        bool
+	RoutingChanged bool
+	Priority       int64
+	Weight         uint
+}
+
 type ChannelSmartScheduleStabilityUpdate struct {
 	State         string
 	Until         int64
@@ -1938,6 +1946,66 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 	if err == nil && result.ObservationSince > 0 {
 		InvalidateChannelMonitorAggregateCaches()
 	}
+	return result, err
+}
+
+func ClearChannelSmartScheduleRouteExploration(channelId int, group string, modelName string) (result ChannelSmartScheduleExplorationClearResult, err error) {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockChannelSmartScheduleRoutePoolChannelsTx(tx, group, modelName, channelId); err != nil {
+			return err
+		}
+		var state ChannelSmartScheduleRouteState
+		if err := lockForUpdate(tx).
+			Where(&ChannelSmartScheduleRouteState{ChannelId: channelId, GroupName: group, ModelName: modelName}).
+			First(&state).Error; err != nil {
+			return err
+		}
+		var ability Ability
+		if err := lockForUpdate(tx).
+			Where(&Ability{ChannelId: channelId, Group: group, Model: modelName}).
+			First(&ability).Error; err != nil {
+			return err
+		}
+
+		result.PreviousKind = state.TemporaryTrafficKind
+		result.Priority = abilityPriority(ability)
+		result.Weight = ability.Weight
+		if result.PreviousKind != ChannelSmartScheduleTemporaryTrafficExploration {
+			return nil
+		}
+		if state.Revision == math.MaxInt64 {
+			return errors.New("智能调度路由修订号已达上限")
+		}
+
+		result.Priority = state.BasePriority
+		result.Weight = state.BaseWeight
+		if ability.Priority == nil || abilityPriority(ability) != result.Priority || ability.Weight != result.Weight {
+			key := channelSmartScheduleRouteKey(channelId, group, modelName)
+			if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &result.Priority, &result.Weight); err != nil {
+				return err
+			}
+			result.RoutingChanged = true
+		}
+
+		now := common.GetTimestamp()
+		state.TemporaryTrafficKind = ""
+		state.TemporaryTrafficSince = 0
+		state.TemporaryTrafficTargetPercent = 0
+		state.ExplorationMaxPromptTokens = 0
+		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
+		state.LastScheduleError = "管理员已手动解除探索流量"
+		state.LastScheduleScore = nil
+		state.LastScheduleScoreDetails = ""
+		state.LastSchedulePriority = result.Priority
+		state.LastScheduleWeight = result.Weight
+		state.LastScheduleTime = now
+		state.Revision++
+		result.Cleared = true
+		return saveChannelSmartScheduleRouteStateTx(tx, &state)
+	})
 	return result, err
 }
 
