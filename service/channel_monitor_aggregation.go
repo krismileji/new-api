@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	channelMonitorAggregationStartupTail   = 5 * time.Minute
 	channelMonitorAggregationRepairTail    = time.Hour + 5*time.Minute
 	channelMonitorAggregationRepairEvery   = time.Hour
+	channelMonitorAggregationBackfillChunk = time.Hour
 	channelMonitorAggregationFreshWait     = 10 * time.Second
 	channelMonitorAggregationFreshPoll     = 250 * time.Millisecond
 	channelMonitorAggregationLockPoll      = 50 * time.Millisecond
@@ -52,8 +54,11 @@ func StartChannelMonitorAggregationWorker() {
 		gopool.Go(func() {
 			run := func(startup bool) int64 {
 				targetEnd := channelMonitorAggregationReadyEnd(time.Now())
-				if err := runChannelMonitorAggregationAt(context.Background(), targetEnd, startup); err != nil {
+				ctx := context.Background()
+				if err := runChannelMonitorAggregationAt(ctx, targetEnd, startup); err != nil {
 					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控分钟聚合失败: %v", err))
+				} else if err := runChannelMonitorAggregationBackfill(ctx, targetEnd); err != nil {
+					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控历史分钟汇总补齐失败: %v", err))
 				}
 				return targetEnd
 			}
@@ -101,7 +106,7 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 	if catchUp {
 		mode += "_catch_up"
 	}
-	if err := rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true); err != nil {
+	if err := rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true, true); err != nil {
 		return err
 	}
 	repairStart, repairEnd, repair := channelMonitorAggregationRepairWindow(targetEnd)
@@ -121,6 +126,7 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 		repairStart,
 		repairEnd,
 		"hourly_repair",
+		false,
 		false,
 	)
 }
@@ -210,7 +216,7 @@ func EnsureChannelMonitorAggregationFresh(ctx context.Context, now time.Time) er
 				if catchUp {
 					mode += "_catch_up"
 				}
-				err = rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true)
+				err = rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true, true)
 			}
 			channelMonitorAggregationRunMu.Unlock()
 			if err != nil {
@@ -285,9 +291,16 @@ func rebuildChannelMonitorAggregationRange(
 	targetEnd int64,
 	mode string,
 	publishWatermark bool,
+	extendCoverage bool,
 ) error {
 	startedAt := time.Now()
-	result, err := model.AggregateChannelMonitorMinuteRangeWithState(ctx, start, targetEnd, publishWatermark)
+	var result model.ChannelMonitorMinuteAggregationResult
+	var err error
+	if extendCoverage && !publishWatermark {
+		result, err = model.BackfillChannelMonitorMinuteRangeWithState(ctx, start, targetEnd)
+	} else {
+		result, err = model.AggregateChannelMonitorMinuteRangeWithState(ctx, start, targetEnd, publishWatermark)
+	}
 	elapsed := time.Since(startedAt)
 	if err != nil {
 		return fmt.Errorf(
@@ -327,6 +340,78 @@ func rebuildChannelMonitorAggregationRange(
 		logger.LogDebug(ctx, message)
 	}
 	return nil
+}
+
+func runChannelMonitorAggregationBackfill(ctx context.Context, targetEnd int64) error {
+	if !common.LogConsumeEnabled && !constant.ErrorLogEnabled {
+		return nil
+	}
+	windowMinutes := channelMonitorAggregationBackfillWindowMinutes()
+	desiredStart := targetEnd - int64(windowMinutes*60)
+	if desiredStart < 0 {
+		desiredStart = 0
+	}
+	key := channelMonitorAggregationDatabaseKey{db: model.DB, logDB: model.LOG_DB}
+	backfilled := false
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		channelMonitorAggregationRunMu.Lock()
+		coverage, err := model.GetChannelMonitorAggregationCoverage(ctx)
+		if err != nil {
+			channelMonitorAggregationRunMu.Unlock()
+			return fmt.Errorf("读取渠道监控分钟汇总覆盖范围失败: %w", err)
+		}
+		coveredFrom := coverage.CoveredFrom
+		if coveredFrom <= 0 {
+			coveredFrom = coverage.CompletedThrough
+		}
+		if coveredFrom <= 0 || coveredFrom <= desiredStart {
+			channelMonitorAggregationRunMu.Unlock()
+			if backfilled {
+				logger.LogInfo(ctx, fmt.Sprintf(
+					"渠道监控历史分钟汇总补齐完成: covered_from=%d completed_through=%d window_minutes=%d",
+					coverage.CoveredFrom,
+					coverage.CompletedThrough,
+					windowMinutes,
+				))
+			}
+			return nil
+		}
+		chunkStart := coveredFrom - int64(channelMonitorAggregationBackfillChunk/time.Second)
+		if chunkStart < desiredStart {
+			chunkStart = desiredStart
+		}
+		err = rebuildChannelMonitorAggregationRange(
+			ctx, key, chunkStart, coveredFrom, "history_backfill", false, true,
+		)
+		channelMonitorAggregationRunMu.Unlock()
+		if err != nil {
+			return err
+		}
+		backfilled = true
+	}
+}
+
+func channelMonitorAggregationBackfillWindowMinutes() int {
+	common.OptionMapRWMutex.RLock()
+	rawPerformanceWindow := common.OptionMap[model.ChannelMonitorSmartSchedulePerformanceWindowOption]
+	rawStabilityWindow := common.OptionMap[model.ChannelMonitorSmartScheduleStabilityWindowOption]
+	common.OptionMapRWMutex.RUnlock()
+
+	performanceWindow, err := strconv.Atoi(rawPerformanceWindow)
+	if err != nil || performanceWindow <= 0 || performanceWindow > model.ChannelMonitorSmartScheduleMaxWindowMinutes {
+		performanceWindow = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
+	}
+	stabilityWindow, err := strconv.Atoi(rawStabilityWindow)
+	if err != nil || stabilityWindow <= 0 || stabilityWindow > model.ChannelMonitorSmartScheduleMaxWindowMinutes {
+		stabilityWindow = model.ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes
+	}
+	return max(performanceWindow, stabilityWindow)
 }
 
 func channelMonitorAggregationWindow(now int64, startup bool) (int64, int64, string) {

@@ -606,7 +606,13 @@ func channelSmartScheduleMergeSharedSamplePerformance(
 	state model.ChannelSmartScheduleModelSampleState,
 	windowStart int64,
 ) *channelSmartSchedulePerformance {
-	metrics := state.MetricsSince(windowStart)
+	return channelSmartScheduleMergeSampleMetrics(performance, state.MetricsSince(windowStart))
+}
+
+func channelSmartScheduleMergeSampleMetrics(
+	performance *channelSmartSchedulePerformance,
+	metrics model.ChannelSmartScheduleSampleMetrics,
+) *channelSmartSchedulePerformance {
 	if metrics.SampleCount <= 0 {
 		return performance
 	}

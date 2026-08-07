@@ -87,6 +87,7 @@ import { ChannelMonitorChannelView } from './components/channel-monitor-channel-
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
+import { ChannelMonitorPerformanceCoverageAlert } from './components/channel-monitor-performance-coverage-alert'
 import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
 import {
   ChannelMonitorSettingsDialog,
@@ -110,6 +111,7 @@ import {
   formatMonitorRatio,
 } from './lib/format'
 import {
+  CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
@@ -389,9 +391,13 @@ export function ChannelMonitor() {
       requestedPerformanceRangeSource
     )
   )
-  const smartScheduleQuery = useQuery(
-    getChannelMonitorSmartScheduleQueryOptions()
+  const smartScheduleSummaryQuery = useQuery(
+    getChannelMonitorSmartScheduleQueryOptions(false)
   )
+  const smartScheduleDetailQuery = useQuery({
+    ...getChannelMonitorSmartScheduleQueryOptions(true),
+    enabled: view === 'smart-schedule',
+  })
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
@@ -460,7 +466,9 @@ export function ChannelMonitor() {
       )
     },
     onSettled: () => {
-      smartScheduleQuery.refetch()
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+      })
     },
   })
   const channels = overview?.channels ?? EMPTY_CHANNELS
@@ -468,21 +476,22 @@ export function ChannelMonitor() {
   const groupRatios = overview?.group_ratios ?? EMPTY_GROUP_RATIOS
   const groupCoefficients =
     overview?.group_coefficients ?? EMPTY_GROUP_COEFFICIENTS
-  const smartScheduleResult = smartScheduleQuery.data?.data
+  const smartScheduleSummaryResult = smartScheduleSummaryQuery.data?.data
+  const smartScheduleResult = smartScheduleDetailQuery.data?.data
   const smartScheduleRoutes =
-    smartScheduleResult?.routes ?? EMPTY_SMART_SCHEDULE_ROUTES
+    smartScheduleSummaryResult?.routes ?? EMPTY_SMART_SCHEDULE_ROUTES
   const effectiveSmartScheduleRoutes = useMemo(
     () =>
       filterChannelMonitorSmartScheduleRoutes(
         smartScheduleRoutes,
         settings.smart_schedule_enabled &&
-          smartScheduleResult?.enabled === true,
+          smartScheduleSummaryResult?.enabled === true,
         settings.smart_schedule_group_policies
       ),
     [
       settings.smart_schedule_enabled,
       settings.smart_schedule_group_policies,
-      smartScheduleResult?.enabled,
+      smartScheduleSummaryResult?.enabled,
       smartScheduleRoutes,
     ]
   )
@@ -553,7 +562,7 @@ export function ChannelMonitor() {
   )
   const smartScheduleHasCriticalIssue =
     settings.smart_schedule_enabled &&
-    (smartScheduleQuery.isError ||
+    (smartScheduleSummaryQuery.isError ||
       smartScheduleSummary.degradedCount > 0 ||
       smartScheduleSummary.failedCount > 0)
   const smartScheduleHasProbing =
@@ -1140,6 +1149,13 @@ export function ChannelMonitor() {
             ) : null}
           </div>
 
+          {view !== 'smart-schedule' ? (
+            <ChannelMonitorPerformanceCoverageAlert
+              coverage={performanceQuery.data?.data.metric_coverage}
+              rangeLabel={performanceRangeLabel}
+            />
+          ) : null}
+
           <TabsContent value='channels'>
             <div className='flex flex-col gap-4'>
               <ChannelMonitorChannelView
@@ -1281,8 +1297,8 @@ export function ChannelMonitor() {
               groupPolicies={settings.smart_schedule_group_policies}
               groupRatios={groupRatios}
               intervalMinutes={settings.smart_schedule_interval_minutes}
-              isLoading={smartScheduleQuery.isLoading}
-              isError={smartScheduleQuery.isError}
+              isLoading={smartScheduleDetailQuery.isLoading}
+              isError={smartScheduleDetailQuery.isError}
               selection={{
                 group: activeSmartScheduleDisplayGroup,
                 model: activeSmartScheduleDisplayModel,
@@ -1404,14 +1420,19 @@ export function ChannelMonitor() {
                     performanceQuery.refetch()
                     costQuery.refetch()
                     todaySuccessQuery.refetch()
-                    smartScheduleQuery.refetch()
+                    smartScheduleSummaryQuery.refetch()
+                    if (view === 'smart-schedule') {
+                      smartScheduleDetailQuery.refetch()
+                    }
                   }}
                   disabled={
                     query.isFetching ||
                     performanceQuery.isFetching ||
                     costQuery.isFetching ||
                     todaySuccessQuery.isFetching ||
-                    smartScheduleQuery.isFetching
+                    smartScheduleSummaryQuery.isFetching ||
+                    (view === 'smart-schedule' &&
+                      smartScheduleDetailQuery.isFetching)
                   }
                   aria-label='刷新'
                 >

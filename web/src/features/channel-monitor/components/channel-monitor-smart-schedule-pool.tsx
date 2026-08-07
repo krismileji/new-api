@@ -70,6 +70,7 @@ import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteStability,
+  ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
 import {
   ChannelMonitorSmartScheduleRouteDetails,
@@ -90,10 +91,15 @@ type ChannelMonitorSmartSchedulePoolProps = {
     string,
     ChannelMonitorSmartScheduleRoutePerformance
   >
+  businessPerformanceByRoute?: ReadonlyMap<
+    string,
+    ChannelMonitorSmartScheduleRoutePerformance
+  >
   stabilityByRoute?: ReadonlyMap<
     string,
     ChannelMonitorSmartScheduleRouteStability
   >
+  samplesByModel?: ReadonlyMap<string, ChannelMonitorSmartScheduleSampleItem>
   updateRouteKey: string | null
   manualRoutingKey: string | null
   updateDisabled: boolean
@@ -125,7 +131,7 @@ const ROUTE_FILTER_OPTIONS = [
 const ROUTE_SORT_OPTIONS = [
   { value: 'schedule', label: '调度顺序' },
   { value: 'traffic', label: '预计流量从高到低' },
-  { value: 'score', label: '最终得分从高到低' },
+  { value: 'score', label: '当前窗口预计得分从高到低' },
   { value: 'cost', label: '成本倍率从低到高' },
   { value: 'name', label: '渠道名称' },
 ]
@@ -203,15 +209,25 @@ function compareNullableDescending(
 function RouteSamples(props: {
   route: ChannelMonitorSmartScheduleRoute
   performance?: ChannelMonitorSmartScheduleRoutePerformance
+  businessPerformance?: ChannelMonitorSmartScheduleRoutePerformance
   stability?: ChannelMonitorSmartScheduleRouteStability
+  samples?: ChannelMonitorSmartScheduleSampleItem
 }) {
-  const samples = props.route.shared_samples
+  const performanceSamples =
+    props.samples?.performance_window ?? props.route.shared_samples
+  const stabilitySamples =
+    props.samples?.stability_window ?? props.route.shared_samples
   const stabilitySampleCount = props.stability?.sample_count ?? 0
   const performanceSampleCount = props.performance?.sample_count ?? 0
+  const businessPerformanceSampleCount =
+    props.businessPerformance?.sample_count ?? 0
+  const performanceSharedSampleCount = performanceSamples?.sample_count ?? 0
+  const stabilitySharedSampleCount = stabilitySamples?.sample_count ?? 0
   if (
     stabilitySampleCount === 0 &&
     performanceSampleCount === 0 &&
-    samples.sample_count === 0
+    performanceSharedSampleCount === 0 &&
+    stabilitySharedSampleCount === 0
   ) {
     return <span className='text-muted-foreground text-xs'>窗口内暂无样本</span>
   }
@@ -231,8 +247,7 @@ function RouteSamples(props: {
     props.performance?.average_tps == null
       ? 'TPS -'
       : `TPS ${props.performance.average_tps.toFixed(2)}`
-  const sharedLabel = `测试/探测 ${samples.sample_count} 次`
-  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，${stabilityLabel}；性能窗口 ${performanceSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${sharedLabel}，成功 ${samples.success_count} 次`
+  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，其中测试/探测 ${stabilitySharedSampleCount} 次，${stabilityLabel}；性能窗口有效 ${performanceSampleCount} 次，其中业务 ${businessPerformanceSampleCount} 次、测试/探测 ${performanceSharedSampleCount} 次，${firstTokenLabel}，${tpsLabel}`
 
   return (
     <div className='min-w-0 text-xs tabular-nums' title={detail}>
@@ -240,8 +255,8 @@ function RouteSamples(props: {
         稳定 {stabilitySampleCount} 次 · {stabilityLabel}
       </div>
       <div className='text-muted-foreground mt-0.5 truncate font-mono'>
-        性能 {performanceSampleCount} 次 · {firstTokenLabel} · {tpsLabel} ·{' '}
-        {sharedLabel}
+        性能 {performanceSampleCount} 次（业务 {businessPerformanceSampleCount}{' '}
+        + 测试 {performanceSharedSampleCount}）· {firstTokenLabel} · {tpsLabel}
       </div>
     </div>
   )
@@ -531,8 +546,8 @@ export function ChannelMonitorSmartSchedulePool(
         }
         if (sort === 'score') {
           return compareNullableDescending(
-            first.state.last_schedule_score,
-            second.state.last_schedule_score
+            first.current_window_score,
+            second.current_window_score
           )
         }
         if (sort === 'cost') {
@@ -581,11 +596,19 @@ export function ChannelMonitorSmartSchedulePool(
   const detailPerformance = detailRouteKey
     ? props.performanceByRoute?.get(detailRouteKey)
     : undefined
+  const detailBusinessPerformance = detailRouteKey
+    ? props.businessPerformanceByRoute?.get(detailRouteKey)
+    : undefined
   const detailStability = detailRouteKey
     ? props.stabilityByRoute?.get(detailRouteKey)
     : undefined
   const detailChannel = detailRoute
     ? props.channelsById.get(detailRoute.channel_id)
+    : undefined
+  const detailSamples = detailRoute
+    ? props.samplesByModel?.get(
+        `${detailRoute.channel_id}\u0000${detailRoute.sample_model ?? detailRoute.model}`
+      )
     : undefined
   const openDetails = (route: ChannelMonitorSmartScheduleRoute) => {
     setDetailRouteKey(channelMonitorSmartScheduleRouteKey(route))
@@ -710,7 +733,7 @@ export function ChannelMonitorSmartSchedulePool(
               <SelectGroup>
                 <SelectItem value='schedule'>调度顺序</SelectItem>
                 <SelectItem value='traffic'>预计流量从高到低</SelectItem>
-                <SelectItem value='score'>最终得分从高到低</SelectItem>
+                <SelectItem value='score'>当前窗口预计得分从高到低</SelectItem>
                 <SelectItem value='cost'>成本倍率从低到高</SelectItem>
                 <SelectItem value='name'>渠道名称</SelectItem>
               </SelectGroup>
@@ -746,7 +769,7 @@ export function ChannelMonitorSmartSchedulePool(
                   <th className='w-[18%] px-3 py-2 font-medium'>渠道</th>
                   <th className='w-[10%] px-2 py-2 font-medium'>状态</th>
                   <th className='w-[9%] px-2 py-2 font-medium'>
-                    成本倍率 / 最终得分
+                    成本倍率 / 当前预计得分
                   </th>
                   <th className='w-[7%] px-2 py-2 font-medium'>基础排名</th>
                   <th className='w-[9%] px-2 py-2 font-medium'>基础 P / W</th>
@@ -813,10 +836,17 @@ export function ChannelMonitorSmartSchedulePool(
                             route.cost_ratio ?? channel?.cost_ratio
                           )}
                         </span>
-                        <span className='text-muted-foreground mt-0.5 block'>
+                        <span
+                          className='text-muted-foreground mt-0.5 block truncate text-[11px] whitespace-nowrap'
+                          title={`当前 ${route.current_window_score == null ? '-' : (route.current_window_score * 100).toFixed(1)} · 最近 ${route.state.last_schedule_score == null ? '-' : (route.state.last_schedule_score * 100).toFixed(1)}`}
+                        >
+                          {route.current_window_score == null
+                            ? '当前 -'
+                            : `当前 ${(route.current_window_score * 100).toFixed(1)}`}
+                          {' · '}
                           {route.state.last_schedule_score == null
-                            ? '得分 -'
-                            : `得分 ${(route.state.last_schedule_score * 100).toFixed(1)}`}
+                            ? '最近 -'
+                            : `最近 ${(route.state.last_schedule_score * 100).toFixed(1)}`}
                         </span>
                       </td>
                       <td className='px-2 py-2 align-middle font-mono font-medium'>
@@ -847,7 +877,13 @@ export function ChannelMonitorSmartSchedulePool(
                         <RouteSamples
                           route={route}
                           performance={props.performanceByRoute?.get(key)}
+                          businessPerformance={props.businessPerformanceByRoute?.get(
+                            key
+                          )}
                           stability={props.stabilityByRoute?.get(key)}
+                          samples={props.samplesByModel?.get(
+                            `${route.channel_id}\u0000${route.sample_model ?? route.model}`
+                          )}
                         />
                       </td>
                       <td className='px-2 py-2 text-center align-middle'>
@@ -923,12 +959,16 @@ export function ChannelMonitorSmartSchedulePool(
                   <div className='mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-y py-2 text-xs'>
                     <div>
                       <span className='text-muted-foreground block'>
-                        成本倍率 / 最终得分
+                        成本倍率 / 当前预计 / 最近调度
                       </span>
                       <span className='font-mono font-medium tabular-nums'>
                         {formatMonitorRatio(
                           route.cost_ratio ?? channel?.cost_ratio
                         )}{' '}
+                        /{' '}
+                        {route.current_window_score == null
+                          ? '-'
+                          : (route.current_window_score * 100).toFixed(1)}{' '}
                         /{' '}
                         {route.state.last_schedule_score == null
                           ? '-'
@@ -994,7 +1034,13 @@ export function ChannelMonitorSmartSchedulePool(
                     <RouteSamples
                       route={route}
                       performance={props.performanceByRoute?.get(key)}
+                      businessPerformance={props.businessPerformanceByRoute?.get(
+                        key
+                      )}
                       stability={props.stabilityByRoute?.get(key)}
+                      samples={props.samplesByModel?.get(
+                        `${route.channel_id}\u0000${route.sample_model ?? route.model}`
+                      )}
                     />
                     <div className='flex shrink-0 items-center gap-2'>
                       {updatePending ? (
@@ -1035,7 +1081,9 @@ export function ChannelMonitorSmartSchedulePool(
         poolRoutes={props.pool.routes}
         placement={detailPlacement}
         performance={detailPerformance}
+        businessPerformance={detailBusinessPerformance}
         stability={detailStability}
+        samples={detailSamples}
         updatePending={
           detailRoute != null &&
           props.updateRouteKey ===

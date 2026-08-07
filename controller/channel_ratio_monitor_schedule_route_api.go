@@ -39,20 +39,24 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
-	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	routingChanged, err := model.ClearExpiredChannelSmartScheduleRoutePrimaries(common.GetTimestamp())
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if routingChanged {
-		model.InitChannelCache()
+	includeMetrics := true
+	if rawMetrics, configured := c.GetQuery("metrics"); configured {
+		parsed, err := strconv.ParseBool(rawMetrics)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "metrics 参数必须是布尔值"})
+			return
+		}
+		includeMetrics = parsed
 	}
 	settings := getChannelMonitorSettings()
-	routes, err := model.GetChannelSmartScheduleRoutes()
+	var err error
+	var routes []model.ChannelSmartScheduleRoute
+	loadMetrics := includeMetrics && settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0
+	if loadMetrics {
+		routes, err = model.GetChannelSmartScheduleRoutes()
+	} else {
+		routes, err = model.GetChannelSmartScheduleRouteSummaries()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -83,63 +87,97 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	}
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
-	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
+	responseRoutes := channelSmartScheduleRouteResponses(routes)
+	if !loadMetrics {
 		common.ApiSuccess(c, gin.H{
-			"generated_at":                generatedAt,
-			"performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
-			"stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
-			"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
-			"enabled":                     settings.SmartScheduleEnabled,
-			"routes":                      routes,
-			"performance_items":           []model.ChannelMonitorRoutePerformanceMetric{},
-			"stability_metrics_available": false,
-			"stability_items":             []model.ChannelMonitorRouteStabilityMetric{},
+			"generated_at":                  generatedAt,
+			"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
+			"stability_window_minutes":      settings.SmartScheduleStabilityWindowMinutes,
+			"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
+			"enabled":                       settings.SmartScheduleEnabled,
+			"metrics_included":              false,
+			"metric_coverage":               nil,
+			"routes":                        responseRoutes,
+			"sample_items":                  []channelSmartScheduleSampleItem{},
+			"business_performance_items":    []model.ChannelMonitorRoutePerformanceMetric{},
+			"performance_metrics_available": false,
+			"performance_items":             []model.ChannelMonitorRoutePerformanceMetric{},
+			"stability_metrics_available":   false,
+			"stability_items":               []model.ChannelMonitorRouteStabilityMetric{},
 		})
-		return
-	}
-	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
-		common.ApiError(c, err)
 		return
 	}
 	performanceStart := generatedAt - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	stabilityStart := generatedAt - int64(settings.SmartScheduleStabilityWindowMinutes*60)
-	performanceMetrics, err := model.GetChannelMonitorRoutePerformanceMetrics(
-		c.Request.Context(), performanceStart, generatedAt,
+	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
+	selectedRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(routes))
+	needsPerformance := false
+	needsJitterPerformance := false
+	needsStability := false
+	probeMetricsAvailable := false
+	for _, configured := range settings.SmartScheduleGroupPolicies {
+		policy := configured.policy()
+		policyByGroup[configured.Group] = policy
+	}
+	for _, route := range routes {
+		policy, configured := policyByGroup[route.Group]
+		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) {
+			continue
+		}
+		selectedRoutes = append(selectedRoutes, route)
+		needsPerformance = needsPerformance || policy.needsPerformance()
+		needsJitterPerformance = needsJitterPerformance ||
+			(policy.StabilityEnabled && policy.JitterEnabled)
+		needsStability = needsStability || policy.StabilityEnabled
+		probeMetricsAvailable = probeMetricsAvailable ||
+			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
+			(policy.StabilityEnabled && policy.DegradedProbeEnabled)
+	}
+	sampleMetricCache, err := newChannelSmartScheduleSampleMetricCache(selectedRoutes)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
+	if needsPerformance || needsJitterPerformance || (needsStability && logStabilityAvailable) {
+		if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	metricCoverage, err := channelSmartScheduleMetricCoverage(
+		c.Request.Context(), generatedAt, settings,
 	)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	performanceByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
-	for _, metric := range performanceMetrics {
-		key := channelSmartScheduleModelKey{
-			channelId: metric.ChannelId,
-			model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+	performanceByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric)
+	if needsPerformance {
+		performanceMetrics, metricErr := model.GetChannelMonitorRoutePerformanceMetricsCached(
+			c.Request.Context(), performanceStart, generatedAt,
+		)
+		if metricErr != nil {
+			common.ApiError(c, metricErr)
+			return
 		}
-		performanceByModel[key] = metric
+		performanceByModel = make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceMetrics))
+		for _, metric := range performanceMetrics {
+			key := channelSmartScheduleModelKey{
+				channelId: metric.ChannelId,
+				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
+			}
+			performanceByModel[key] = metric
+		}
 	}
-	performanceByRoute := make([]model.ChannelMonitorRoutePerformanceMetric, 0, len(routes))
-	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
-	probeMetricsAvailable := false
-	sharedMetricsAvailable := false
-	for _, configured := range settings.SmartScheduleGroupPolicies {
-		policy := configured.policy()
-		policyByGroup[configured.Group] = policy
-		probeMetricsAvailable = probeMetricsAvailable ||
-			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
-			(policy.StabilityEnabled && policy.DegradedProbeEnabled)
-	}
-	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	stabilityByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRouteStabilityMetric)
 	jitterByModel := make(map[channelSmartScheduleModelKey]model.ChannelMonitorRoutePerformanceMetric)
-	stabilityByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric)
-	if logStabilityAvailable {
-		var stabilityMetrics []model.ChannelMonitorRouteStabilityMetric
-		stabilityMetrics, err = model.GetChannelMonitorRouteStabilityMetrics(
+	if needsStability && logStabilityAvailable {
+		stabilityMetrics, metricErr := model.GetChannelMonitorRouteStabilityMetricsCached(
 			c.Request.Context(), stabilityStart, generatedAt,
 		)
-		if err != nil {
-			common.ApiError(c, err)
+		if metricErr != nil {
+			common.ApiError(c, metricErr)
 			return
 		}
 		for _, metric := range stabilityMetrics {
@@ -149,7 +187,9 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			}
 			stabilityByModel[key] = metric
 		}
-		jitterMetrics, jitterErr := model.GetChannelMonitorRoutePerformanceMetrics(
+	}
+	if needsJitterPerformance {
+		jitterMetrics, jitterErr := model.GetChannelMonitorRoutePerformanceMetricsCached(
 			c.Request.Context(), stabilityStart, generatedAt,
 		)
 		if jitterErr != nil {
@@ -164,21 +204,44 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			jitterByModel[key] = metric
 		}
 	}
-	for _, route := range routes {
-		policy, configured := policyByGroup[route.Group]
-		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) {
-			continue
-		}
+	probingMetrics, err := loadChannelSmartScheduleProbingMetrics(
+		c.Request.Context(), selectedRoutes, policyByGroup, stabilityStart, generatedAt,
+		needsStability && logStabilityAvailable,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	businessPerformanceByRoute := make([]model.ChannelMonitorRoutePerformanceMetric, 0, len(selectedRoutes))
+	performanceByRoute := make([]model.ChannelMonitorRoutePerformanceMetric, 0, len(selectedRoutes))
+	stabilityByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric)
+	sharedMetricsAvailable := false
+	for _, route := range selectedRoutes {
+		policy := policyByGroup[route.Group]
 		normalizedModelName := ratio_setting.FormatMatchingModelName(route.Model)
 		modelKey := channelSmartScheduleModelKey{channelId: route.ChannelId, model: normalizedModelName}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		if metric, exists := performanceByModel[modelKey]; exists {
-			metric.GroupName = route.Group
-			metric.ModelName = route.Model
+		businessMetric, hasBusinessMetric := performanceByModel[modelKey]
+		if hasBusinessMetric {
+			businessMetric.GroupName = route.Group
+			businessMetric.ModelName = route.Model
+			businessPerformanceByRoute = append(businessPerformanceByRoute, businessMetric)
+		}
+		performanceSampleMetrics := sampleMetricCache.metrics(modelKey, performanceStart)
+		var businessMetricPointer *model.ChannelMonitorRoutePerformanceMetric
+		if hasBusinessMetric {
+			businessMetricPointer = &businessMetric
+		}
+		if metric, available := channelSmartScheduleRoutePerformanceWithSamples(
+			route, businessMetricPointer, performanceSampleMetrics,
+		); available {
 			performanceByRoute = append(performanceByRoute, metric)
 		}
-		sharedMetricsAvailable = sharedMetricsAvailable ||
-			route.SharedSamples.MetricsSince(stabilityStart).SampleCount > 0
+		stabilitySampleMetrics := sampleMetricCache.metrics(modelKey, stabilityStart)
+		sharedMetricsAvailable = sharedMetricsAvailable || stabilitySampleMetrics.SampleCount > 0
+		if !policy.StabilityEnabled {
+			continue
+		}
 		metric, hasMetric := stabilityByModel[modelKey]
 		var performance *channelSmartSchedulePerformance
 		if hasMetric {
@@ -195,28 +258,22 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			windowStart = route.State.StabilitySince
 			performance = nil
 			if logStabilityAvailable {
-				metric, err = model.GetChannelMonitorRouteStabilityMetric(
-					c.Request.Context(), windowStart, route.ChannelId, normalizedModelName,
-				)
-				if err != nil {
-					common.ApiError(c, err)
-					return
-				}
+				metricWindowStart := windowStart - windowStart%60
+				metric = probingMetrics.stabilityByWindow[channelSmartScheduleRouteMetricWindowKey{
+					modelKey: modelKey, windowStart: metricWindowStart,
+				}]
 				performance = channelSmartScheduleSetStabilityMetric(nil, metric)
 			}
 			if policy.JitterEnabled {
-				performanceMetric, performanceErr := model.GetChannelMonitorRoutePerformanceMetric(
-					c.Request.Context(), windowStart, route.ChannelId, normalizedModelName,
-				)
-				if performanceErr != nil {
-					common.ApiError(c, performanceErr)
-					return
-				}
+				metricWindowStart := windowStart - windowStart%60
+				performanceMetric := probingMetrics.performanceByWindow[channelSmartScheduleRouteMetricWindowKey{
+					modelKey: modelKey, windowStart: metricWindowStart,
+				}]
 				performance = channelSmartScheduleSetPerformanceMetric(performance, performanceMetric)
 			}
 		}
-		performance = channelSmartScheduleMergeSharedSamplePerformance(
-			performance, route.SharedSamples, windowStart,
+		performance = channelSmartScheduleMergeSampleMetrics(
+			performance, sampleMetricCache.metrics(modelKey, windowStart),
 		)
 		if performance == nil {
 			continue
@@ -290,16 +347,42 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		return performanceByRoute[i].ChannelId < performanceByRoute[j].ChannelId
 	})
+	sort.Slice(businessPerformanceByRoute, func(i int, j int) bool {
+		if businessPerformanceByRoute[i].GroupName != businessPerformanceByRoute[j].GroupName {
+			return businessPerformanceByRoute[i].GroupName < businessPerformanceByRoute[j].GroupName
+		}
+		if businessPerformanceByRoute[i].ModelName != businessPerformanceByRoute[j].ModelName {
+			return businessPerformanceByRoute[i].ModelName < businessPerformanceByRoute[j].ModelName
+		}
+		return businessPerformanceByRoute[i].ChannelId < businessPerformanceByRoute[j].ChannelId
+	})
+	channelSmartScheduleApplyCurrentWindowScores(
+		responseRoutes,
+		selectedRoutes,
+		policyByGroup,
+		performanceByRoute,
+		stabilityByRoute,
+		sampleMetricCache,
+		stabilityStart,
+		generatedAt,
+		logStabilityAvailable,
+	)
 	common.ApiSuccess(c, gin.H{
-		"generated_at":                generatedAt,
-		"performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
-		"stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
-		"sample_scope":                model.ChannelSmartScheduleSampleScopeChannelModel,
-		"enabled":                     settings.SmartScheduleEnabled,
-		"routes":                      routes,
-		"performance_items":           performanceByRoute,
-		"stability_metrics_available": logStabilityAvailable || probeMetricsAvailable || sharedMetricsAvailable,
-		"stability_items":             stabilityMetrics,
+		"generated_at":                  generatedAt,
+		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
+		"stability_window_minutes":      settings.SmartScheduleStabilityWindowMinutes,
+		"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
+		"enabled":                       settings.SmartScheduleEnabled,
+		"metrics_included":              true,
+		"metric_coverage":               metricCoverage,
+		"routes":                        responseRoutes,
+		"sample_items":                  sampleMetricCache.items(performanceStart, stabilityStart),
+		"business_performance_items":    businessPerformanceByRoute,
+		"performance_metrics_available": needsPerformance,
+		"performance_items":             performanceByRoute,
+		"stability_metrics_available": needsStability &&
+			(logStabilityAvailable || probeMetricsAvailable || sharedMetricsAvailable),
+		"stability_items": stabilityMetrics,
 	})
 }
 

@@ -65,10 +65,15 @@ export function getChannelMonitorPerformanceQueryOptions(
   })
 }
 
-export function getChannelMonitorSmartScheduleQueryOptions() {
+export function getChannelMonitorSmartScheduleQueryOptions(
+  metrics: boolean = true
+) {
   return queryOptions({
-    queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-    queryFn: getChannelMonitorSmartScheduleRoutes,
+    queryKey: [
+      ...CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+      metrics ? 'metrics' : 'summary',
+    ],
+    queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
     staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
     refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
   })

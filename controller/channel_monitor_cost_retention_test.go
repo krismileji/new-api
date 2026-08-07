@@ -213,3 +213,28 @@ func TestChannelMonitorHistoryRetentionCutoffUsesFullDays(t *testing.T) {
 
 	assert.Equal(t, now-14*channelMonitorCostDaySeconds, channelMonitorHistoryRetentionCutoff(now, 14))
 }
+
+func TestChannelMonitorMinuteRetentionCutoffProtectsLongestScheduleWindow(t *testing.T) {
+	const now = int64(2_000_000)
+	requiredStart := now - int64(180*time.Minute/time.Second)
+	requiredStart -= requiredStart % 60
+
+	cutoff, protectedMinutes := channelMonitorMinuteRetentionCutoff(
+		now,
+		now-int64(time.Hour/time.Second),
+		60,
+		180,
+	)
+	assert.Equal(t, requiredStart, cutoff)
+	assert.Equal(t, 180, protectedMinutes)
+
+	olderConfiguredCutoff := now - int64(24*time.Hour/time.Second)
+	cutoff, protectedMinutes = channelMonitorMinuteRetentionCutoff(
+		now,
+		olderConfiguredCutoff,
+		60,
+		180,
+	)
+	assert.Equal(t, olderConfiguredCutoff, cutoff)
+	assert.Equal(t, 180, protectedMinutes)
+}

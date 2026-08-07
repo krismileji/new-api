@@ -25,6 +25,8 @@ type channelMonitorCostRetentionTaskHandler struct{}
 type channelMonitorCostRetentionTaskResult struct {
 	RetentionDays                int   `json:"retention_days"`
 	Cutoff                       int64 `json:"cutoff"`
+	MinuteCutoff                 int64 `json:"minute_cutoff"`
+	ProtectedWindowMinutes       int   `json:"protected_window_minutes"`
 	ExecutionDetailRetentionDays int   `json:"execution_detail_retention_days"`
 	ExecutionDetailCutoff        int64 `json:"execution_detail_cutoff"`
 	TaskRetentionDays            int   `json:"task_retention_days"`
@@ -68,10 +70,12 @@ func channelMonitorHistoryRetentionCutoff(now int64, days int) int64 {
 
 func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSettings, error) {
 	settings := channelMonitorSettings{
-		CostRetentionDays:            defaultChannelMonitorCostRetentionDays,
-		ExecutionDetailRetentionDays: defaultChannelMonitorExecutionDetailRetentionDays,
-		TaskRetentionDays:            defaultChannelMonitorTaskRetentionDays,
-		RatioHistoryRetentionDays:    defaultChannelMonitorRatioHistoryRetentionDays,
+		CostRetentionDays:                     defaultChannelMonitorCostRetentionDays,
+		ExecutionDetailRetentionDays:          defaultChannelMonitorExecutionDetailRetentionDays,
+		TaskRetentionDays:                     defaultChannelMonitorTaskRetentionDays,
+		RatioHistoryRetentionDays:             defaultChannelMonitorRatioHistoryRetentionDays,
+		SmartSchedulePerformanceWindowMinutes: defaultChannelMonitorSmartSchedulePerformanceWindowMinutes,
+		SmartScheduleStabilityWindowMinutes:   defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
 	}
 	var options []model.Option
 	retentionOptionKeys := []string{
@@ -79,6 +83,8 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
 		channelMonitorRatioHistoryRetentionDaysOption,
+		channelMonitorSmartSchedulePerformanceWindowOption,
+		channelMonitorSmartScheduleStabilityWindowOption,
 	}
 	if err := model.DB.WithContext(ctx).
 		Select("key", "value").
@@ -87,25 +93,59 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		return channelMonitorSettings{}, fmt.Errorf("读取渠道监控保留配置失败: %w", err)
 	}
 	for _, option := range options {
-		days, err := strconv.Atoi(option.Value)
-		if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
-			return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
-		}
 		switch option.Key {
 		case channelMonitorCostRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
 			settings.CostRetentionDays = days
 		case channelMonitorExecutionDetailRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
 			settings.ExecutionDetailRetentionDays = days
 		case channelMonitorTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
 			settings.TaskRetentionDays = days
 		case channelMonitorRatioHistoryRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
 			settings.RatioHistoryRetentionDays = days
+		case channelMonitorSmartSchedulePerformanceWindowOption:
+			minutes, err := strconv.Atoi(option.Value)
+			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
+				settings.SmartSchedulePerformanceWindowMinutes = minutes
+			}
+		case channelMonitorSmartScheduleStabilityWindowOption:
+			minutes, err := strconv.Atoi(option.Value)
+			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
+				settings.SmartScheduleStabilityWindowMinutes = minutes
+			}
 		}
 	}
 	if settings.TaskRetentionDays < settings.ExecutionDetailRetentionDays {
 		return channelMonitorSettings{}, errors.New("监控任务保留天数不能小于调度执行明细保留天数")
 	}
 	return settings, nil
+}
+
+func channelMonitorMinuteRetentionCutoff(
+	now int64,
+	configuredCutoff int64,
+	performanceWindowMinutes int,
+	stabilityWindowMinutes int,
+) (int64, int) {
+	protectedWindowMinutes := max(performanceWindowMinutes, stabilityWindowMinutes)
+	requiredStart := now - int64(protectedWindowMinutes*60)
+	requiredStart -= requiredStart % 60
+	return min(configuredCutoff, requiredStart), protectedWindowMinutes
 }
 
 func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
@@ -120,6 +160,12 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 	}
 	now := common.GetTimestamp()
 	costCutoff := channelMonitorCostRetentionCutoff(now, settings.CostRetentionDays)
+	minuteCutoff, protectedWindowMinutes := channelMonitorMinuteRetentionCutoff(
+		now,
+		costCutoff,
+		settings.SmartSchedulePerformanceWindowMinutes,
+		settings.SmartScheduleStabilityWindowMinutes,
+	)
 	historyCutoffs := model.ChannelMonitorHistoryRetentionCutoffs{
 		ExecutionDetail: channelMonitorHistoryRetentionCutoff(now, settings.ExecutionDetailRetentionDays),
 		Task:            channelMonitorHistoryRetentionCutoff(now, settings.TaskRetentionDays),
@@ -128,6 +174,8 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 	result := channelMonitorCostRetentionTaskResult{
 		RetentionDays:                settings.CostRetentionDays,
 		Cutoff:                       costCutoff,
+		MinuteCutoff:                 minuteCutoff,
+		ProtectedWindowMinutes:       protectedWindowMinutes,
 		ExecutionDetailRetentionDays: settings.ExecutionDetailRetentionDays,
 		ExecutionDetailCutoff:        historyCutoffs.ExecutionDetail,
 		TaskRetentionDays:            settings.TaskRetentionDays,
@@ -152,7 +200,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
-	costDeleted, err := model.DeleteChannelMonitorCostsBefore(ctx, costCutoff, batchSize)
+	costDeleted, err := model.DeleteChannelMonitorCostsBefore(ctx, costCutoff, minuteCutoff, batchSize)
 	result.ChannelMonitorCostRetentionResult = costDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)

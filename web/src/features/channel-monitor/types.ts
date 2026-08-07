@@ -422,10 +422,19 @@ export type ChannelMonitorPerformanceResult = {
   range_minutes: ChannelMonitorPerformanceRangeMinutes
   range_source: ChannelMonitorPerformanceRangeSource
   generated_at: number
+  metric_coverage: ChannelMonitorPerformanceMetricCoverage
   items: ChannelMonitorPerformanceMetric[]
   success_metrics_available: boolean
   success_items: ChannelMonitorSuccessMetric[]
   group_success_items: ChannelMonitorGroupSuccessMetric[]
+}
+
+export type ChannelMonitorPerformanceMetricCoverage = {
+  aggregation_enabled: boolean
+  aggregated_from: number
+  aggregated_through: number
+  window_start: number
+  window_complete: boolean
 }
 
 export type ChannelMonitorChannelPerformance = {
@@ -727,6 +736,7 @@ export type ChannelMonitorSmartScheduleRoute = {
   channel_weight: number
   group: string
   model: string
+  sample_model?: string
   enabled: boolean
   priority: number
   weight: number
@@ -734,8 +744,17 @@ export type ChannelMonitorSmartScheduleRoute = {
   group_ratio?: number | null
   gross_margin?: number | null
   economic_role?: ChannelMonitorSmartScheduleEconomicRole
+  current_window_score?: number | null
+  current_window_score_details?: ChannelMonitorSmartScheduleScoreDetails | null
   state: ChannelMonitorSmartScheduleRouteState
-  shared_samples: ChannelMonitorSmartScheduleSharedSamples
+  shared_samples?: ChannelMonitorSmartScheduleSharedSamples
+}
+
+export type ChannelMonitorSmartScheduleSampleItem = {
+  channel_id: number
+  model: string
+  performance_window: ChannelMonitorSmartScheduleSharedSamples
+  stability_window: ChannelMonitorSmartScheduleSharedSamples
 }
 
 export type ChannelMonitorSmartScheduleRoutePerformance = {
@@ -791,10 +810,28 @@ export type ChannelMonitorSmartScheduleRouteResult = {
   stability_window_minutes: number
   sample_scope: 'channel_model'
   enabled: boolean
+  metrics_included?: boolean
+  metric_coverage?: ChannelMonitorSmartScheduleMetricCoverage | null
   routes: ChannelMonitorSmartScheduleRoute[]
+  sample_items?: ChannelMonitorSmartScheduleSampleItem[]
+  business_performance_items?: ChannelMonitorSmartScheduleRoutePerformance[]
+  performance_metrics_available?: boolean
   performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
   stability_metrics_available: boolean
   stability_items: ChannelMonitorSmartScheduleRouteStability[]
+}
+
+export type ChannelMonitorSmartScheduleMetricCoverage = {
+  aggregation_enabled: boolean
+  aggregated_from: number
+  aggregated_through: number
+  performance_window_start: number
+  stability_window_start: number
+  performance_window_complete: boolean
+  stability_window_complete: boolean
+  configured_retention_days: number
+  required_retention_minutes: number
+  configured_retention_sufficient: boolean
 }
 
 export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {

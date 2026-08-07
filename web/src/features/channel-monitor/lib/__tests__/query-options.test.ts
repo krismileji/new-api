@@ -28,6 +28,7 @@ import type {
 import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
+  getChannelMonitorSmartScheduleQueryOptions,
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
@@ -53,6 +54,13 @@ describe('channel monitor query policy', () => {
           range_minutes: 15,
           range_source: 'manual',
           generated_at: 1,
+          metric_coverage: {
+            aggregation_enabled: true,
+            aggregated_from: 0,
+            aggregated_through: 0,
+            window_start: 0,
+            window_complete: false,
+          },
           items: [],
           success_metrics_available: true,
           success_items: [],
@@ -82,5 +90,14 @@ describe('channel monitor query policy', () => {
     const smart = getChannelMonitorPerformanceQueryOptions(60, 'smart_schedule')
 
     assert.notDeepEqual(manual.queryKey, smart.queryKey)
+  })
+
+  test('separates lightweight schedule summaries from metric details', () => {
+    const summary = getChannelMonitorSmartScheduleQueryOptions(false)
+    const metrics = getChannelMonitorSmartScheduleQueryOptions(true)
+
+    assert.notDeepEqual(summary.queryKey, metrics.queryKey)
+    assert.equal(summary.refetchInterval, 60_000)
+    assert.equal(metrics.refetchInterval, 60_000)
   })
 })

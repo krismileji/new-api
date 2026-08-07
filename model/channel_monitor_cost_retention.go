@@ -12,10 +12,18 @@ type ChannelMonitorCostRetentionResult struct {
 	DurationBucketRowsDeleted int64 `json:"duration_bucket_rows_deleted"`
 }
 
-func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSize int) (ChannelMonitorCostRetentionResult, error) {
+func DeleteChannelMonitorCostsBefore(
+	ctx context.Context,
+	costCutoff int64,
+	minuteCutoff int64,
+	batchSize int,
+) (ChannelMonitorCostRetentionResult, error) {
 	result := ChannelMonitorCostRetentionResult{}
-	if cutoff <= 0 {
+	if costCutoff <= 0 {
 		return result, errors.New("channel monitor cost cutoff must be positive")
+	}
+	if minuteCutoff <= 0 {
+		return result, errors.New("channel monitor minute cutoff must be positive")
 	}
 	if batchSize <= 0 {
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
@@ -26,7 +34,7 @@ func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSiz
 			var ids []int64
 			if err := DB.WithContext(ctx).
 				Model(&ChannelMonitorMinuteDurationBucket{}).
-				Where("minute_start < ?", cutoff).
+				Where("minute_start < ?", minuteCutoff).
 				Order("minute_start ASC, id ASC").
 				Limit(batchSize).
 				Pluck("id", &ids).Error; err != nil {
@@ -47,7 +55,7 @@ func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSiz
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelMonitorMinuteMetric{}).
-			Where("minute_start < ?", cutoff).
+			Where("minute_start < ?", minuteCutoff).
 			Order("minute_start ASC, id ASC").
 			Limit(batchSize).
 			Pluck("id", &ids).Error; err != nil {
@@ -62,12 +70,18 @@ func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSiz
 		}
 		result.MinuteRowsDeleted += deleted.RowsAffected
 	}
+	if err := TrimChannelMonitorAggregationCoverage(ctx, minuteCutoff); err != nil {
+		return result, err
+	}
+	if result.MinuteRowsDeleted > 0 || result.DurationBucketRowsDeleted > 0 {
+		InvalidateChannelMonitorAggregateCaches()
+	}
 
 	for {
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelDailyAPIKeyCost{}).
-			Where("day_start < ?", cutoff).
+			Where("day_start < ?", costCutoff).
 			Order("day_start ASC, id ASC").
 			Limit(batchSize).
 			Pluck("id", &ids).Error; err != nil {
@@ -87,7 +101,7 @@ func DeleteChannelMonitorCostsBefore(ctx context.Context, cutoff int64, batchSiz
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelDailyCost{}).
-			Where("day_start < ?", cutoff).
+			Where("day_start < ?", costCutoff).
 			Order("day_start ASC, id ASC").
 			Limit(batchSize).
 			Pluck("id", &ids).Error; err != nil {

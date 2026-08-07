@@ -59,6 +59,13 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		return
 	}
 	generatedAt := requestedAt.Unix()
+	metricCoverage, err := channelMonitorPerformanceMetricCoverage(
+		c.Request.Context(), generatedAt, minutes,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	metrics, err := model.GetChannelMonitorPerformanceMetricsCached(
 		c.Request.Context(),
 		generatedAt,
@@ -86,6 +93,7 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		"range_minutes":             minutes,
 		"range_source":              rangeSource,
 		"generated_at":              generatedAt,
+		"metric_coverage":           metricCoverage,
 		"items":                     metrics,
 		"success_metrics_available": successMetricsAvailable,
 		"success_items":             successMetrics,

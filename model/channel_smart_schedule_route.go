@@ -379,6 +379,14 @@ func InitializeChannelSmartScheduleRouteStates() error {
 }
 
 func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
+	return getChannelSmartScheduleRoutes(true)
+}
+
+func GetChannelSmartScheduleRouteSummaries() ([]ChannelSmartScheduleRoute, error) {
+	return getChannelSmartScheduleRoutes(false)
+}
+
+func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartScheduleRoute, error) {
 	var abilities []Ability
 	if err := DB.Find(&abilities).Error; err != nil {
 		return nil, err
@@ -391,9 +399,13 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 	if err := DB.Find(&states).Error; err != nil {
 		return nil, err
 	}
-	sharedSampleStates, err := GetChannelSmartScheduleModelSampleStates()
-	if err != nil {
-		return nil, err
+	var sharedSampleStates []ChannelSmartScheduleModelSampleState
+	if includeSharedSamples {
+		var err error
+		sharedSampleStates, err = GetChannelSmartScheduleModelSampleStates()
+		if err != nil {
+			return nil, err
+		}
 	}
 	channelById := make(map[int]Channel, len(channels))
 	for _, channel := range channels {

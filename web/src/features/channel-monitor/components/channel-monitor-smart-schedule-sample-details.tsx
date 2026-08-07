@@ -24,12 +24,35 @@ import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteStability,
+  ChannelMonitorSmartScheduleSampleItem,
+  ChannelMonitorSmartScheduleSharedSamples,
 } from '../types'
 
 type ChannelMonitorSmartScheduleSampleDetailsProps = {
   route: ChannelMonitorSmartScheduleRoute
   performance: ChannelMonitorSmartScheduleRoutePerformance | undefined
+  businessPerformance: ChannelMonitorSmartScheduleRoutePerformance | undefined
   stability: ChannelMonitorSmartScheduleRouteStability | undefined
+  samples: ChannelMonitorSmartScheduleSampleItem | undefined
+}
+
+const EMPTY_SHARED_SAMPLES: ChannelMonitorSmartScheduleSharedSamples = {
+  id: 0,
+  channel_id: 0,
+  model: '',
+  window_start: 0,
+  observation_since: 0,
+  last_time: 0,
+  last_success: false,
+  last_error: '',
+  sample_count: 0,
+  success_count: 0,
+  failure_duration_sample_count: 0,
+  average_failure_duration_ms: null,
+  first_token_sample_count: 0,
+  average_first_token_ms: null,
+  tps_sample_count: 0,
+  average_tps: null,
 }
 
 function SampleMetric(props: { label: string; value: string }) {
@@ -51,9 +74,12 @@ function SampleMetric(props: { label: string; value: string }) {
 export function ChannelMonitorSmartScheduleSampleDetails(
   props: ChannelMonitorSmartScheduleSampleDetailsProps
 ) {
-  const samples = props.route.shared_samples
+  const fallbackSamples = props.route.shared_samples ?? EMPTY_SHARED_SAMPLES
+  const performanceSamples =
+    props.samples?.performance_window ?? fallbackSamples
+  const stabilitySamples = props.samples?.stability_window ?? fallbackSamples
   const businessGroupCount = Math.max(
-    props.performance?.group_count ?? 0,
+    props.businessPerformance?.group_count ?? 0,
     props.stability?.group_count ?? 0
   )
   const stabilitySampleCount = props.stability
@@ -80,8 +106,11 @@ export function ChannelMonitorSmartScheduleSampleDetails(
   const performanceSampleCount = props.performance
     ? `${props.performance.sample_count} 次`
     : '-'
-  const performanceGroupCount = props.performance
-    ? `${props.performance.group_count} 个`
+  const businessPerformanceSampleCount = props.businessPerformance
+    ? `${props.businessPerformance.sample_count} 次`
+    : '-'
+  const performanceGroupCount = props.businessPerformance
+    ? `${props.businessPerformance.group_count} 个`
     : '-'
   const performanceFirstTokenSampleCount = props.performance
     ? `${props.performance.first_token_duration_sample_count} 次`
@@ -97,16 +126,22 @@ export function ChannelMonitorSmartScheduleSampleDetails(
       ? '-'
       : props.performance.average_tps.toFixed(2)
 
-  const probeFailureCount = Math.max(
-    samples.sample_count - samples.success_count,
+  const performanceProbeFailureCount = Math.max(
+    performanceSamples.sample_count - performanceSamples.success_count,
+    0
+  )
+  const stabilityProbeFailureCount = Math.max(
+    stabilitySamples.sample_count - stabilitySamples.success_count,
     0
   )
   const probeFirstTokenAverage =
-    samples.average_first_token_ms == null
+    performanceSamples.average_first_token_ms == null
       ? '-'
-      : `${samples.average_first_token_ms.toFixed(0)} ms`
+      : `${performanceSamples.average_first_token_ms.toFixed(0)} ms`
   const probeAverageTPS =
-    samples.average_tps == null ? '-' : samples.average_tps.toFixed(2)
+    performanceSamples.average_tps == null
+      ? '-'
+      : performanceSamples.average_tps.toFixed(2)
 
   return (
     <section className='border-t px-4 py-4' aria-label='渠道与模型共享窗口数据'>
@@ -150,10 +185,18 @@ export function ChannelMonitorSmartScheduleSampleDetails(
         <div>
           <h4 className='text-sm font-medium'>性能窗口</h4>
           <p className='text-muted-foreground mt-0.5 text-xs'>
-            所有关联分组产生的真实业务请求性能数据
+            调度有效数据等于真实业务性能与当前性能窗口内的测试、探测样本合并结果
           </p>
           <div className='mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3'>
-            <SampleMetric label='业务请求样本' value={performanceSampleCount} />
+            <SampleMetric label='调度有效样本' value={performanceSampleCount} />
+            <SampleMetric
+              label='真实业务性能样本'
+              value={businessPerformanceSampleCount}
+            />
+            <SampleMetric
+              label='测试 / 探测样本'
+              value={`${performanceSamples.sample_count} 次`}
+            />
             <SampleMetric label='覆盖业务分组' value={performanceGroupCount} />
             <SampleMetric
               label='首字有效样本'
@@ -171,7 +214,7 @@ export function ChannelMonitorSmartScheduleSampleDetails(
           </div>
           {props.performance?.last_used_time ? (
             <p className='text-muted-foreground mt-2 text-xs'>
-              最近业务请求{' '}
+              最近有效性能样本{' '}
               {formatTimestampToDate(props.performance.last_used_time)}
             </p>
           ) : null}
@@ -182,36 +225,45 @@ export function ChannelMonitorSmartScheduleSampleDetails(
         <div>
           <h4 className='text-sm font-medium'>测试 / 探测</h4>
           <p className='text-muted-foreground mt-0.5 text-xs'>
-            手动测试和定时探测独立保留；调度时仅取对应窗口内的样本与业务数据合并
+            性能窗口和稳定性窗口分别裁剪，避免两个窗口显示同一个样本数
           </p>
           <div className='mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3'>
             <SampleMetric
-              label='测试 / 探测样本'
-              value={`${samples.sample_count} 次`}
+              label='性能窗口样本'
+              value={`${performanceSamples.sample_count} 次`}
             />
             <SampleMetric
-              label='成功 / 失败'
-              value={`${samples.success_count} / ${probeFailureCount}`}
+              label='性能窗口成功 / 失败'
+              value={`${performanceSamples.success_count} / ${performanceProbeFailureCount}`}
+            />
+            <SampleMetric
+              label='稳定性窗口样本'
+              value={`${stabilitySamples.sample_count} 次`}
+            />
+            <SampleMetric
+              label='稳定性窗口成功 / 失败'
+              value={`${stabilitySamples.success_count} / ${stabilityProbeFailureCount}`}
             />
             <SampleMetric
               label='首字有效样本'
-              value={`${samples.first_token_sample_count} 次`}
+              value={`${performanceSamples.first_token_sample_count} 次`}
             />
             <SampleMetric label='首字均值' value={probeFirstTokenAverage} />
             <SampleMetric
               label='TPS 有效样本'
-              value={`${samples.tps_sample_count} 次`}
+              value={`${performanceSamples.tps_sample_count} 次`}
             />
             <SampleMetric label='平均 TPS' value={probeAverageTPS} />
           </div>
-          {samples.last_time > 0 ? (
+          {performanceSamples.last_time > 0 ? (
             <p className='text-muted-foreground mt-2 text-xs'>
-              最近测试或探测 {formatTimestampToDate(samples.last_time)}
+              最近性能窗口测试或探测{' '}
+              {formatTimestampToDate(performanceSamples.last_time)}
             </p>
           ) : null}
-          {samples.last_error ? (
+          {performanceSamples.last_error ? (
             <p className='text-destructive mt-2 text-xs break-words'>
-              {samples.last_error}
+              {performanceSamples.last_error}
             </p>
           ) : null}
         </div>

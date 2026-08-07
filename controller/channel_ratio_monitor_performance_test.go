@@ -22,12 +22,14 @@ import (
 type channelMonitorPerformanceAPIResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
-		RangeMinutes            int                                      `json:"range_minutes"`
-		RangeSource             string                                   `json:"range_source"`
-		Items                   []model.ChannelMonitorPerformanceMetric  `json:"items"`
-		SuccessMetricsAvailable bool                                     `json:"success_metrics_available"`
-		SuccessItems            []model.ChannelMonitorSuccessMetric      `json:"success_items"`
-		GroupSuccessItems       []model.ChannelMonitorGroupSuccessMetric `json:"group_success_items"`
+		RangeMinutes            int                                             `json:"range_minutes"`
+		RangeSource             string                                          `json:"range_source"`
+		GeneratedAt             int64                                           `json:"generated_at"`
+		MetricCoverage          channelMonitorPerformanceMetricCoverageResponse `json:"metric_coverage"`
+		Items                   []model.ChannelMonitorPerformanceMetric         `json:"items"`
+		SuccessMetricsAvailable bool                                            `json:"success_metrics_available"`
+		SuccessItems            []model.ChannelMonitorSuccessMetric             `json:"success_items"`
+		GroupSuccessItems       []model.ChannelMonitorGroupSuccessMetric        `json:"group_success_items"`
 	} `json:"data"`
 }
 
@@ -109,6 +111,11 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.True(t, response.Success)
 	assert.Equal(t, 30, response.Data.RangeMinutes)
 	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
+	windowEnd := response.Data.GeneratedAt - response.Data.GeneratedAt%60
+	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
+	assert.Equal(t, windowEnd, response.Data.MetricCoverage.AggregatedThrough)
+	assert.Equal(t, windowEnd-30*60, response.Data.MetricCoverage.WindowStart)
+	assert.False(t, response.Data.MetricCoverage.WindowComplete)
 	require.Len(t, response.Data.Items, 1)
 	assert.Equal(t, 7, response.Data.Items[0].ChannelId)
 	require.NotNil(t, response.Data.Items[0].AverageFirstTokenMs)

@@ -67,6 +67,8 @@ type ChannelSmartScheduleModelSampleResult struct {
 
 type ChannelSmartScheduleSampleMetrics struct {
 	WindowStart                   int64
+	LastTime                      int64
+	LastSuccess                   bool
 	SampleCount                   int64
 	SuccessCount                  int64
 	FailureCount                  int64
@@ -81,6 +83,14 @@ type ChannelSmartScheduleSampleMetrics struct {
 	FirstTokenDurationBuckets     []ChannelMonitorDurationBucket
 	TPSSampleCount                int64
 	AverageTPS                    *float64
+}
+
+// ChannelSmartScheduleSampleSeries is one parsed channel/model rolling sample
+// buffer. Callers can reuse it across the performance, stability, and probing
+// windows without repeatedly decoding SamplesJSON.
+type ChannelSmartScheduleSampleSeries struct {
+	observationSince int64
+	samples          []channelSmartScheduleSample
 }
 
 type channelSmartScheduleSample struct {
@@ -106,37 +116,89 @@ const (
 )
 
 func (state ChannelSmartScheduleModelSampleState) MetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
-	if state.ObservationSince > windowStart {
-		windowStart = state.ObservationSince
+	series, err := state.SampleSeries()
+	if err != nil {
+		common.SysError(err.Error())
+		return ChannelSmartScheduleSampleMetrics{}
 	}
-	return state.metricsSince(windowStart, "")
+	return series.MetricsSince(windowStart)
 }
 
 func (state ChannelSmartScheduleModelSampleState) ManualTestMetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
-	return state.metricsSince(windowStart, ChannelSmartScheduleSampleSourceManualTest)
+	series, err := state.SampleSeries()
+	if err != nil {
+		common.SysError(err.Error())
+		return ChannelSmartScheduleSampleMetrics{}
+	}
+	return series.ManualTestMetricsSince(windowStart)
 }
 
-func (state ChannelSmartScheduleModelSampleState) metricsSince(
-	windowStart int64,
-	source string,
-) ChannelSmartScheduleSampleMetrics {
+func (state ChannelSmartScheduleModelSampleState) SampleSeries() (ChannelSmartScheduleSampleSeries, error) {
+	series := ChannelSmartScheduleSampleSeries{observationSince: state.ObservationSince}
 	if strings.TrimSpace(string(state.SamplesJSON)) == "" {
-		return ChannelSmartScheduleSampleMetrics{}
+		return series, nil
 	}
-	var samples []channelSmartScheduleSample
-	if err := common.UnmarshalJsonStr(string(state.SamplesJSON), &samples); err != nil {
-		return ChannelSmartScheduleSampleMetrics{}
+	if err := common.UnmarshalJsonStr(string(state.SamplesJSON), &series.samples); err != nil {
+		return ChannelSmartScheduleSampleSeries{}, fmt.Errorf(
+			"解析渠道 %d 模型 %s 的智能调度共享样本失败: %w",
+			state.ChannelId,
+			state.ModelName,
+			err,
+		)
 	}
-	if source != "" {
-		filtered := samples[:0]
-		for _, sample := range samples {
-			if sample.Source == source {
-				filtered = append(filtered, sample)
-			}
+	return series, nil
+}
+
+func (series ChannelSmartScheduleSampleSeries) MetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
+	if series.observationSince > windowStart {
+		windowStart = series.observationSince
+	}
+	return channelSmartScheduleCalculateSampleMetrics(series.samples, windowStart)
+}
+
+func (series ChannelSmartScheduleSampleSeries) ManualTestMetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
+	if series.observationSince > windowStart {
+		windowStart = series.observationSince
+	}
+	manualSamples := make([]channelSmartScheduleSample, 0)
+	for _, sample := range series.samples {
+		if sample.Source == ChannelSmartScheduleSampleSourceManualTest {
+			manualSamples = append(manualSamples, sample)
 		}
-		samples = filtered
 	}
-	return channelSmartScheduleCalculateSampleMetrics(samples, windowStart)
+	return channelSmartScheduleCalculateSampleMetrics(manualSamples, windowStart)
+}
+
+// Windowed returns the public sample-state snapshot for the requested
+// scheduling window without mutating the persisted rolling sample buffer.
+func (state ChannelSmartScheduleModelSampleState) Windowed(windowStart int64) ChannelSmartScheduleModelSampleState {
+	metrics := state.MetricsSince(windowStart)
+	return state.WindowedWithMetrics(metrics)
+}
+
+func (state ChannelSmartScheduleModelSampleState) WindowedWithMetrics(
+	metrics ChannelSmartScheduleSampleMetrics,
+) ChannelSmartScheduleModelSampleState {
+	windowed := state
+	windowed.WindowStart = metrics.WindowStart
+	windowed.LastTime = metrics.LastTime
+	windowed.LastSuccess = metrics.LastSuccess
+	windowed.SampleCount = metrics.SampleCount
+	windowed.SuccessCount = metrics.SuccessCount
+	windowed.FailureDurationSampleCount = metrics.FailureDurationSampleCount
+	windowed.AverageFailureDurationMs = nil
+	if metrics.FailureDurationSampleCount > 0 {
+		value := metrics.FailureDurationTotalMs / float64(metrics.FailureDurationSampleCount)
+		windowed.AverageFailureDurationMs = &value
+	}
+	windowed.FirstTokenSampleCount = metrics.FirstTokenSampleCount
+	windowed.AverageFirstTokenMs = metrics.AverageFirstTokenMs
+	windowed.TPSSampleCount = metrics.TPSSampleCount
+	windowed.AverageTPS = metrics.AverageTPS
+	if metrics.LastTime == 0 || metrics.LastTime != state.LastTime || metrics.LastSuccess {
+		windowed.LastError = ""
+	}
+	return windowed
 }
 
 func channelSmartScheduleCalculateSampleMetrics(
@@ -154,6 +216,10 @@ func channelSmartScheduleCalculateSampleMetrics(
 		}
 		if metrics.WindowStart == 0 || sample.Time < metrics.WindowStart {
 			metrics.WindowStart = sample.Time
+		}
+		if sample.Time >= metrics.LastTime {
+			metrics.LastTime = sample.Time
+			metrics.LastSuccess = sample.Success
 		}
 		metrics.SampleCount++
 		if sample.Success {

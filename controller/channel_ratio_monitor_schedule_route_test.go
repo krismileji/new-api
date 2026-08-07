@@ -649,6 +649,198 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 	assert.InDelta(t, 0.8, *metric.StabilityScore, 1e-9)
 }
 
+func TestGetChannelMonitorSmartScheduleRoutesReturnsWindowedSharedSamples(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = false
+	constant.ErrorLogEnabled = false
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartSchedulePerformanceWindowOption: "5",
+		channelMonitorSmartScheduleStabilityWindowOption:   "1",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 90, 30,
+			),
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1306, Name: "windowed samples", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1306, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1306, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+	now := common.GetTimestamp()
+	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1306, Model: "model-a", WindowStart: now - 3600,
+		Time: now - 120, Success: false, Error: "过期失败",
+	})
+	require.NoError(t, err)
+	_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		ChannelId: 1306, Model: "model-a", WindowStart: now - 3600,
+		Time: now - 5, Success: true,
+	})
+	require.NoError(t, err)
+
+	var stored model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Where("channel_id = ? AND model_name = ?", 1306, "model-a").First(&stored).Error)
+	assert.Equal(t, int64(2), stored.SampleCount)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule", nil,
+	)
+	GetChannelMonitorSmartScheduleRoutes(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Routes                   []channelSmartScheduleRouteResponse          `json:"routes"`
+			SampleItems              []channelSmartScheduleSampleItem             `json:"sample_items"`
+			BusinessPerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"business_performance_items"`
+			PerformanceItems         []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	require.Len(t, response.Data.Routes, 1)
+	require.Len(t, response.Data.SampleItems, 1)
+	performanceSamples := response.Data.SampleItems[0].PerformanceWindow
+	assert.Equal(t, int64(2), performanceSamples.SampleCount)
+	assert.Equal(t, int64(1), performanceSamples.SuccessCount)
+	assert.Equal(t, now-5, performanceSamples.LastTime)
+	assert.Empty(t, performanceSamples.LastError)
+	stabilitySamples := response.Data.SampleItems[0].StabilityWindow
+	assert.Equal(t, int64(1), stabilitySamples.SampleCount)
+	assert.Equal(t, now-5, stabilitySamples.LastTime)
+	assert.Empty(t, response.Data.BusinessPerformanceItems)
+	require.Len(t, response.Data.PerformanceItems, 1)
+	assert.Equal(t, 2, response.Data.PerformanceItems[0].SampleCount)
+	assert.NotContains(t, recorder.Body.String(), `"shared_samples"`)
+}
+
+func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+				channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 90, 30,
+			),
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1308, Name: "summary only", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1308, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1308, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleModelSampleState{
+		ChannelId: 1308, ModelName: "model-a", SamplesJSON: model.ChannelSmartScheduleSamplesJSON("invalid-json"),
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule?metrics=false", nil,
+	)
+	GetChannelMonitorSmartScheduleRoutes(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			MetricsIncluded  bool                                         `json:"metrics_included"`
+			Routes           []channelSmartScheduleRouteResponse          `json:"routes"`
+			SampleItems      []channelSmartScheduleSampleItem             `json:"sample_items"`
+			PerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
+			StabilityItems   []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.False(t, response.Data.MetricsIncluded)
+	require.Len(t, response.Data.Routes, 1)
+	assert.Equal(t, "model-a", response.Data.Routes[0].SampleModel)
+	assert.Empty(t, response.Data.SampleItems)
+	assert.Empty(t, response.Data.PerformanceItems)
+	assert.Empty(t, response.Data.StabilityItems)
+}
+
+func TestGetChannelMonitorSmartScheduleRoutesDoesNotInitializeOrClearRouteStates(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t,
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 90, 30,
+			),
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1309, Name: "missing state", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 1310, Name: "expired fixed primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1309, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1310, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	expiredAt := common.GetTimestamp() - 60
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1310, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+		ManualPrimaryUntil: expiredAt, ManualPrimarySaved: true,
+		ManualPrimarySavedPriority: 70, ManualPrimarySavedWeight: 40,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule", nil,
+	)
+	GetChannelMonitorSmartScheduleRoutes(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var stateCount int64
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).Count(&stateCount).Error)
+	assert.Equal(t, int64(1), stateCount)
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 1310, "vip", "model-a",
+	).First(&state).Error)
+	assert.Equal(t, expiredAt, state.ManualPrimaryUntil)
+	assert.True(t, state.ManualPrimarySaved)
+	assert.Equal(t, int64(70), state.ManualPrimarySavedPriority)
+	assert.Equal(t, uint(40), state.ManualPrimarySavedWeight)
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 1310, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
+}
+
 func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	originalLogConsumeEnabled := common.LogConsumeEnabled
@@ -707,12 +899,20 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
+			GeneratedAt      int64                                        `json:"generated_at"`
+			MetricCoverage   *channelSmartScheduleMetricCoverageResponse  `json:"metric_coverage"`
 			PerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
 			StabilityItems   []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
+	require.NotNil(t, response.Data.MetricCoverage)
+	windowEnd := response.Data.GeneratedAt - response.Data.GeneratedAt%60
+	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
+	assert.Equal(t, windowEnd, response.Data.MetricCoverage.AggregatedThrough)
+	assert.Equal(t, windowEnd-60*60, response.Data.MetricCoverage.PerformanceWindowStart)
+	assert.Equal(t, windowEnd-60*60, response.Data.MetricCoverage.StabilityWindowStart)
 	require.Len(t, response.Data.PerformanceItems, 1)
 	performance := response.Data.PerformanceItems[0]
 	assert.Equal(t, "vip", performance.GroupName)

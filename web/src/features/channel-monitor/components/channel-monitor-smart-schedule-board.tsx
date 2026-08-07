@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  Alert02Icon,
   Cancel01Icon,
   HistoryIcon,
   PinIcon,
@@ -29,6 +30,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -89,6 +91,7 @@ import type {
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteResult,
   ChannelMonitorSmartScheduleRouteStability,
+  ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 import {
@@ -122,6 +125,13 @@ type PrimaryMutationVariables = {
 }
 
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
+
+function channelMonitorSmartScheduleSampleKey(
+  channelId: number,
+  model: string
+) {
+  return `${channelId}\u0000${model}`
+}
 
 export function ChannelMonitorSmartScheduleBoard(
   props: ChannelMonitorSmartScheduleBoardProps
@@ -187,6 +197,26 @@ export function ChannelMonitorSmartScheduleBoard(
         ])
       ),
     [props.result?.performance_items]
+  )
+  const businessPerformanceByRoute = useMemo(
+    () =>
+      new Map<string, ChannelMonitorSmartScheduleRoutePerformance>(
+        (props.result?.business_performance_items ?? []).map((item) => [
+          channelMonitorSmartScheduleRouteKey(item),
+          item,
+        ])
+      ),
+    [props.result?.business_performance_items]
+  )
+  const samplesByModel = useMemo(
+    () =>
+      new Map<string, ChannelMonitorSmartScheduleSampleItem>(
+        (props.result?.sample_items ?? []).map((item) => [
+          channelMonitorSmartScheduleSampleKey(item.channel_id, item.model),
+          item,
+        ])
+      ),
+    [props.result?.sample_items]
   )
   const stabilityByRoute = useMemo(
     () =>
@@ -428,6 +458,16 @@ export function ChannelMonitorSmartScheduleBoard(
     props.result?.generated_at ?? 0,
     props.intervalMinutes
   )
+  const metricCoverage = props.result?.metric_coverage
+  const incompleteMetricWindows: string[] = []
+  if (metricCoverage?.aggregation_enabled) {
+    if (!metricCoverage.performance_window_complete) {
+      incompleteMetricWindows.push('性能窗口覆盖不足')
+    }
+    if (!metricCoverage.stability_window_complete) {
+      incompleteMetricWindows.push('稳定性窗口覆盖不足')
+    }
+  }
 
   if (props.isLoading) {
     return (
@@ -546,6 +586,29 @@ export function ChannelMonitorSmartScheduleBoard(
           </Button>
         </div>
       </section>
+
+      {metricCoverage?.aggregation_enabled &&
+      incompleteMetricWindows.length > 0 ? (
+        <Alert className='mx-4 w-auto'>
+          <HugeiconsIcon icon={Alert02Icon} aria-hidden='true' />
+          <AlertTitle>调度窗口数据尚未覆盖完整</AlertTitle>
+          <AlertDescription>
+            {incompleteMetricWindows.join('、')}。当前分钟汇总覆盖从{' '}
+            {metricCoverage.aggregated_from > 0
+              ? formatTimestampToDate(metricCoverage.aggregated_from)
+              : '尚未建立'}{' '}
+            到{' '}
+            {metricCoverage.aggregated_through > 0
+              ? formatTimestampToDate(metricCoverage.aggregated_through)
+              : '尚未建立'}
+            ，后台正在分批补齐分钟汇总
+            {!metricCoverage.configured_retention_sufficient
+              ? '；保留配置短于最长调度窗口，系统会优先保留调度所需分钟汇总'
+              : ''}
+            。
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {props.result?.enabled &&
       (summary.degradedCount > 0 ||
@@ -798,7 +861,9 @@ export function ChannelMonitorSmartScheduleBoard(
                 channelsById={channelsById}
                 placements={placements}
                 performanceByRoute={performanceByRoute}
+                businessPerformanceByRoute={businessPerformanceByRoute}
                 stabilityByRoute={stabilityByRoute}
+                samplesByModel={samplesByModel}
                 updateRouteKey={updateRouteKey}
                 manualRoutingKey={manualRoutingKey}
                 updateDisabled={

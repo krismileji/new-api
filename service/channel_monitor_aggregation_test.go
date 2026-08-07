@@ -95,6 +95,74 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	assert.Equal(t, laterNow-laterNow%60, completedThrough)
 }
 
+func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *testing.T) {
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-backfill.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	model.LOG_DB = db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorAggregationState{},
+		&model.ChannelSmartScheduleRouteState{},
+	))
+	common.OptionMapRWMutex.Lock()
+	originalOptionMap := common.OptionMap
+	common.OptionMap = map[string]string{
+		model.ChannelMonitorSmartSchedulePerformanceWindowOption: "180",
+		model.ChannelMonitorSmartScheduleStabilityWindowOption:   "60",
+	}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		key := channelMonitorAggregationDatabaseKey{db: db, logDB: db}
+		channelMonitorAggregationStateMu.Lock()
+		delete(channelMonitorAggregationLocalCompletedThrough, key)
+		channelMonitorAggregationStateMu.Unlock()
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = originalOptionMap
+		common.OptionMapRWMutex.Unlock()
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+		require.NoError(t, sqlDB.Close())
+	})
+
+	targetEnd := int64(6 * time.Hour / time.Second)
+	oldMinute := targetEnd - int64(170*time.Minute/time.Second)
+	require.NoError(t, db.Create(&model.Log{
+		ChannelId: 9, ModelName: "model-a", CreatedAt: oldMinute + 1, Type: model.LogTypeConsume,
+	}).Error)
+
+	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), targetEnd, true))
+	var before int64
+	require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&before).Error)
+	assert.Zero(t, before)
+
+	require.NoError(t, runChannelMonitorAggregationBackfill(context.Background(), targetEnd))
+
+	var metric model.ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("channel_id = ?", 9).First(&metric).Error)
+	assert.Equal(t, oldMinute, metric.MinuteStart)
+	coverage, err := model.GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, targetEnd-int64(180*time.Minute/time.Second), coverage.CoveredFrom)
+	assert.Equal(t, targetEnd, coverage.CompletedThrough)
+}
+
 func TestChannelMonitorAggregationWindowUsesRecentAndStartupWindows(t *testing.T) {
 	regularNow := int64(10*time.Hour/time.Second + 17*time.Minute/time.Second + 23)
 

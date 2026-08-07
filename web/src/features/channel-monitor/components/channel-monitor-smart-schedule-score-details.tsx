@@ -216,6 +216,8 @@ type ChannelMonitorSmartScheduleScoreDetailsProps = {
   details: ChannelMonitorSmartScheduleScoreDetails | null | undefined
   className?: string
   snapshotLabel?: string
+  inputLabel?: string
+  showDecision?: boolean
   defaultOpen?: boolean
   channelNameById?: ReadonlyMap<number, string>
 }
@@ -366,7 +368,7 @@ export function ChannelMonitorSmartScheduleScoreDetails(
               className='text-muted-foreground hidden grid-cols-[7rem_minmax(8rem,1.2fr)_minmax(8rem,1fr)_5rem_minmax(7rem,auto)_5rem] gap-3 border-t px-3 py-1.5 text-[11px] sm:grid'
             >
               <div role='columnheader'>指标</div>
-              <div role='columnheader'>执行时输入</div>
+              <div role='columnheader'>{props.inputLabel ?? '执行时输入'}</div>
               <div role='columnheader'>同池归一化范围</div>
               <div role='columnheader'>得分</div>
               <div role='columnheader'>配置 / 有效权重</div>
@@ -419,89 +421,95 @@ export function ChannelMonitorSmartScheduleScoreDetails(
             </p>
           </div>
 
-          <div className='border-t px-3 py-2 text-xs'>
-            <div className='flex flex-wrap gap-x-4 gap-y-1 tabular-nums'>
-              <span>
-                <span className='text-muted-foreground'>原主渠道 </span>
-                {formatChannelReference(
-                  details.decision.current_primary_channel_id,
-                  props.channelNameById
-                )}
-              </span>
-              <span>
-                <span className='text-muted-foreground'>评分第一 </span>
-                {formatChannelReference(
-                  details.decision.raw_winner_channel_id,
-                  props.channelNameById
-                )}
-              </span>
-              <span>
-                <span className='text-muted-foreground'>实际主渠道 </span>
-                {formatChannelReference(
-                  details.decision.actual_primary_channel_id,
-                  props.channelNameById
-                )}
-              </span>
-              {details.decision.manual_primary_channel_id > 0 ? (
+          {props.showDecision !== false ? (
+            <div className='border-t px-3 py-2 text-xs'>
+              <div className='flex flex-wrap gap-x-4 gap-y-1 tabular-nums'>
                 <span>
-                  <span className='text-muted-foreground'>管理员固定 </span>
+                  <span className='text-muted-foreground'>原主渠道 </span>
                   {formatChannelReference(
-                    details.decision.manual_primary_channel_id,
+                    details.decision.current_primary_channel_id,
                     props.channelNameById
                   )}
                 </span>
-              ) : null}
-              <span>
-                <span className='text-muted-foreground'>切换分差 </span>
-                {formatPercent(details.decision.switch_threshold_percent)}
-              </span>
-              <span>
-                <span className='text-muted-foreground'>主渠道目标流量 </span>
-                {formatPercent(details.decision.primary_traffic_percent)}
-              </span>
-              {details.decision.base_rank > 0 ? (
                 <span>
-                  <span className='text-muted-foreground'>基础排名 </span>第{' '}
-                  {details.decision.base_rank} 名 · P
-                  {details.decision.base_priority} / W
-                  {details.decision.base_weight}
-                </span>
-              ) : null}
-              <span>
-                <span className='text-muted-foreground'>当前应用 </span>P
-                {details.decision.applied_priority} / W
-                {details.decision.applied_weight}
-              </span>
-              {details.decision.actual_highest_priority >= 0 ? (
-                <span>
-                  <span className='text-muted-foreground'>实际最高层 </span>P
-                  {details.decision.actual_highest_priority} ·{' '}
-                  {actualTopLayerChannels || '渠道 -'}
-                </span>
-              ) : null}
-              {temporaryTrafficLabel ? (
-                <span>
-                  <span className='text-muted-foreground'>临时流量 </span>
-                  {temporaryTrafficLabel}{' '}
-                  {formatPercent(
-                    details.decision.temporary_traffic_target_percent
+                  <span className='text-muted-foreground'>评分第一 </span>
+                  {formatChannelReference(
+                    details.decision.raw_winner_channel_id,
+                    props.channelNameById
                   )}
                 </span>
-              ) : null}
+                <span>
+                  <span className='text-muted-foreground'>实际主渠道 </span>
+                  {formatChannelReference(
+                    details.decision.actual_primary_channel_id,
+                    props.channelNameById
+                  )}
+                </span>
+                {details.decision.manual_primary_channel_id > 0 ? (
+                  <span>
+                    <span className='text-muted-foreground'>管理员固定 </span>
+                    {formatChannelReference(
+                      details.decision.manual_primary_channel_id,
+                      props.channelNameById
+                    )}
+                  </span>
+                ) : null}
+                <span>
+                  <span className='text-muted-foreground'>切换分差 </span>
+                  {formatPercent(details.decision.switch_threshold_percent)}
+                </span>
+                <span>
+                  <span className='text-muted-foreground'>主渠道目标流量 </span>
+                  {formatPercent(details.decision.primary_traffic_percent)}
+                </span>
+                {details.decision.base_rank > 0 ? (
+                  <span>
+                    <span className='text-muted-foreground'>基础排名 </span>第{' '}
+                    {details.decision.base_rank} 名 · P
+                    {details.decision.base_priority} / W
+                    {details.decision.base_weight}
+                  </span>
+                ) : null}
+                <span>
+                  <span className='text-muted-foreground'>当前应用 </span>P
+                  {details.decision.applied_priority} / W
+                  {details.decision.applied_weight}
+                </span>
+                {details.decision.actual_highest_priority >= 0 ? (
+                  <span>
+                    <span className='text-muted-foreground'>实际最高层 </span>P
+                    {details.decision.actual_highest_priority} ·{' '}
+                    {actualTopLayerChannels || '渠道 -'}
+                  </span>
+                ) : null}
+                {temporaryTrafficLabel ? (
+                  <span>
+                    <span className='text-muted-foreground'>临时流量 </span>
+                    {temporaryTrafficLabel}{' '}
+                    {formatPercent(
+                      details.decision.temporary_traffic_target_percent
+                    )}
+                  </span>
+                ) : null}
+              </div>
+              <div className='text-muted-foreground mt-2 grid gap-1 break-words'>
+                <p>
+                  <span className='text-foreground font-medium'>
+                    选择原因：
+                  </span>
+                  {details.decision.selection_reason ||
+                    details.decision.reason ||
+                    '未记录选择原因'}
+                </p>
+                <p>
+                  <span className='text-foreground font-medium'>
+                    调整原因：
+                  </span>
+                  {details.decision.adjustment_reason || '未记录调整原因'}
+                </p>
+              </div>
             </div>
-            <div className='text-muted-foreground mt-2 grid gap-1 break-words'>
-              <p>
-                <span className='text-foreground font-medium'>选择原因：</span>
-                {details.decision.selection_reason ||
-                  details.decision.reason ||
-                  '未记录选择原因'}
-              </p>
-              <p>
-                <span className='text-foreground font-medium'>调整原因：</span>
-                {details.decision.adjustment_reason || '未记录调整原因'}
-              </p>
-            </div>
-          </div>
+          ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>

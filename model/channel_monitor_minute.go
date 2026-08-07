@@ -565,6 +565,30 @@ func AggregateChannelMonitorMinuteRangeWithState(
 	endTimestamp int64,
 	publishWatermark bool,
 ) (ChannelMonitorMinuteAggregationResult, error) {
+	return aggregateChannelMonitorMinuteRangeWithState(
+		ctx, startTimestamp, endTimestamp, publishWatermark, publishWatermark,
+	)
+}
+
+// BackfillChannelMonitorMinuteRangeWithState extends the continuous coverage
+// start without moving the latest completed-minute watermark backwards.
+func BackfillChannelMonitorMinuteRangeWithState(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+) (ChannelMonitorMinuteAggregationResult, error) {
+	return aggregateChannelMonitorMinuteRangeWithState(
+		ctx, startTimestamp, endTimestamp, false, true,
+	)
+}
+
+func aggregateChannelMonitorMinuteRangeWithState(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	publishWatermark bool,
+	extendCoverage bool,
+) (ChannelMonitorMinuteAggregationResult, error) {
 	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
 	result := ChannelMonitorMinuteAggregationResult{
 		StartTimestamp: startTimestamp,
@@ -599,7 +623,9 @@ func AggregateChannelMonitorMinuteRangeWithState(
 		); err != nil {
 			return err
 		}
-		return updateChannelMonitorAggregationStateWithTx(tx, state, endTimestamp, publishWatermark)
+		return updateChannelMonitorAggregationStateWithTx(
+			tx, state, startTimestamp, endTimestamp, publishWatermark, extendCoverage,
+		)
 	})
 	if err != nil {
 		return result, err

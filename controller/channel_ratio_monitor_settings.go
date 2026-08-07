@@ -47,8 +47,8 @@ const (
 	channelMonitorChannelOrderOption                           = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption                   = "ChannelMonitorSmartScheduleEnabled"
 	channelMonitorSmartScheduleIntervalOption                  = "ChannelMonitorSmartScheduleIntervalMinutes"
-	channelMonitorSmartSchedulePerformanceWindowOption         = "ChannelMonitorSmartSchedulePerformanceWindowMinutes"
-	channelMonitorSmartScheduleStabilityWindowOption           = "ChannelMonitorSmartScheduleStabilityWindowMinutes"
+	channelMonitorSmartSchedulePerformanceWindowOption         = model.ChannelMonitorSmartSchedulePerformanceWindowOption
+	channelMonitorSmartScheduleStabilityWindowOption           = model.ChannelMonitorSmartScheduleStabilityWindowOption
 	channelMonitorSmartScheduleRateLimitCooldownOption         = "ChannelMonitorSmartScheduleRateLimitCooldownSeconds"
 	channelMonitorSmartScheduleControlRevisionOption           = model.ChannelSmartScheduleControlRevisionOption
 	channelMonitorPolicyActionNone                             = "none"
@@ -81,7 +81,7 @@ const (
 	maxChannelMonitorSmartScheduleMinSamples                   = 100000
 	maxChannelMonitorSmartScheduleSuccessRate                  = 100
 	maxChannelMonitorSmartScheduleExplorationPercent           = 20
-	maxChannelMonitorSmartScheduleWindowMinutes                = 43200
+	maxChannelMonitorSmartScheduleWindowMinutes                = model.ChannelMonitorSmartScheduleMaxWindowMinutes
 	maxChannelMonitorSmartScheduleRateLimitCooldownSeconds     = 300
 	defaultChannelMonitorAutoUpdateRetryCount                  = 2
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
@@ -92,8 +92,8 @@ const (
 	defaultChannelMonitorRatioHistoryRetentionDays             = 365
 	defaultChannelMonitorGroupCoefficient                      = 1
 	defaultChannelMonitorSmartScheduleInterval                 = 10
-	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = 60
-	defaultChannelMonitorSmartScheduleStabilityWindowMinutes   = 5
+	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
+	defaultChannelMonitorSmartScheduleStabilityWindowMinutes   = model.ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes
 	defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds = 30
 	channelMonitorEmailTypeRatioChange                         = "ratio_change"
 	channelMonitorEmailTypeBalanceWarning                      = "balance_warning"

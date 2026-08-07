@@ -55,6 +55,7 @@ import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteStability,
+  ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
 import { ChannelMonitorSmartSchedulePrimaryControls } from './channel-monitor-smart-schedule-primary-controls'
 import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
@@ -68,7 +69,9 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   poolRoutes: readonly ChannelMonitorSmartScheduleRoute[]
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   performance: ChannelMonitorSmartScheduleRoutePerformance | undefined
+  businessPerformance: ChannelMonitorSmartScheduleRoutePerformance | undefined
   stability: ChannelMonitorSmartScheduleRouteStability | undefined
+  samples: ChannelMonitorSmartScheduleSampleItem | undefined
   updatePending: boolean
   manualRoutingPending: boolean
   updateDisabled: boolean
@@ -169,7 +172,11 @@ export function ChannelMonitorSmartScheduleRouteDetails(
 
   const route = props.route
   const remark = props.channel?.channel_remark || props.channel?.remark
-  const score =
+  const currentWindowScore =
+    route.current_window_score == null
+      ? '-'
+      : `${(route.current_window_score * 100).toFixed(1)} 分`
+  const lastScheduleScore =
     route.state.last_schedule_score == null
       ? '-'
       : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`
@@ -302,7 +309,11 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                 label='倍率差'
                 value={formatMonitorRatio(route.gross_margin)}
               />
-              <DetailMetric label='最终得分' value={score} />
+              <DetailMetric
+                label='当前窗口预计得分'
+                value={currentWindowScore}
+              />
+              <DetailMetric label='最近调度得分' value={lastScheduleScore} />
               <DetailMetric
                 label='当前 P / W'
                 value={`P${route.priority} / W${route.weight}`}
@@ -487,12 +498,21 @@ export function ChannelMonitorSmartScheduleRouteDetails(
           ) : null}
 
           <ChannelMonitorSmartScheduleScoreDetails
-            details={route.state.last_schedule_score_details}
-            snapshotLabel='最近一次调度快照'
+            details={route.current_window_score_details}
+            snapshotLabel='当前窗口只读预估'
+            inputLabel='当前窗口输入'
+            showDecision={false}
             defaultOpen={false}
             channelNameById={channelNameById}
           />
-          {!route.state.last_schedule_score_details ? (
+          <ChannelMonitorSmartScheduleScoreDetails
+            details={route.state.last_schedule_score_details}
+            snapshotLabel='最近一次实际调度快照'
+            defaultOpen={false}
+            channelNameById={channelNameById}
+          />
+          {!route.current_window_score_details &&
+          !route.state.last_schedule_score_details ? (
             <section className='border-t px-4 py-4' aria-label='评分计算'>
               <div className='flex items-start gap-2'>
                 <HugeiconsIcon
@@ -503,7 +523,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                 <div>
                   <h3 className='text-sm font-medium'>评分计算</h3>
                   <p className='text-muted-foreground mt-1 text-sm'>
-                    最近一次调度没有可展示的评分快照。
+                    当前窗口和最近一次调度都没有可展示的评分快照。
                   </p>
                 </div>
               </div>
@@ -512,7 +532,9 @@ export function ChannelMonitorSmartScheduleRouteDetails(
           <ChannelMonitorSmartScheduleSampleDetails
             route={route}
             performance={props.performance}
+            businessPerformance={props.businessPerformance}
             stability={props.stability}
+            samples={props.samples}
           />
         </div>
       </SheetContent>

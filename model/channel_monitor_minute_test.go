@@ -142,6 +142,7 @@ func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *t
 	var state ChannelMonitorAggregationState
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(120), state.CompletedThrough)
+	assert.Equal(t, int64(60), state.CoveredFrom)
 	assert.Equal(t, int64(1), state.Revision)
 
 	require.NoError(t, db.Create(&Log{
@@ -151,10 +152,34 @@ func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *t
 	require.NoError(t, err)
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(120), state.CompletedThrough)
+	assert.Equal(t, int64(60), state.CoveredFrom)
 	assert.Equal(t, int64(2), state.Revision)
 	var metric ChannelMonitorMinuteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
 	assert.Equal(t, int64(2), metric.ActualSuccessCount)
+}
+
+func TestBackfillChannelMonitorMinuteRangeExtendsCoverageWithoutMovingCompletion(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&[]Log{
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 181, Type: LogTypeConsume},
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume},
+	}).Error)
+
+	_, err := AggregateChannelMonitorMinuteRangeWithState(context.Background(), 180, 240, true)
+	require.NoError(t, err)
+	_, err = BackfillChannelMonitorMinuteRangeWithState(context.Background(), 60, 180)
+	require.NoError(t, err)
+
+	coverage, err := GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), coverage.CoveredFrom)
+	assert.Equal(t, int64(240), coverage.CompletedThrough)
+
+	var metrics []ChannelMonitorMinuteMetric
+	require.NoError(t, db.Order("minute_start ASC").Find(&metrics).Error)
+	require.Len(t, metrics, 2)
+	assert.Equal(t, []int64{60, 180}, []int64{metrics[0].MinuteStart, metrics[1].MinuteStart})
 }
 
 func TestChannelMonitorMinuteMetricMigrationBackfillsRetryColumns(t *testing.T) {

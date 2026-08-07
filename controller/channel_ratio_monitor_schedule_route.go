@@ -262,6 +262,10 @@ func runChannelSmartScheduleByRouteOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
+	sampleMetricCache, err := newChannelSmartScheduleSampleMetricCache(selectedRoutes)
+	if err != nil {
+		return result, err
+	}
 
 	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
 	if err != nil {
@@ -289,7 +293,7 @@ func runChannelSmartScheduleByRouteOnce(
 	stabilityStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
 	performanceByModel := make(map[channelSmartScheduleModelKey]*channelSmartSchedulePerformance)
 	if needsPerformance {
-		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetrics(ctx, performanceStart, now)
+		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetricsCached(ctx, performanceStart, now)
 		if metricErr != nil {
 			return result, metricErr
 		}
@@ -303,7 +307,7 @@ func runChannelSmartScheduleByRouteOnce(
 	}
 	stabilityPerformanceByModel := make(map[channelSmartScheduleModelKey]*channelSmartSchedulePerformance)
 	if needsJitterPerformance {
-		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetrics(ctx, stabilityStart, now)
+		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetricsCached(ctx, stabilityStart, now)
 		if metricErr != nil {
 			return result, metricErr
 		}
@@ -317,7 +321,7 @@ func runChannelSmartScheduleByRouteOnce(
 	}
 	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
 	if needsStability && logStabilityAvailable {
-		metrics, metricErr := model.GetChannelMonitorRouteStabilityMetrics(ctx, stabilityStart, now)
+		metrics, metricErr := model.GetChannelMonitorRouteStabilityMetricsCached(ctx, stabilityStart, now)
 		if metricErr != nil {
 			return result, metricErr
 		}
@@ -330,6 +334,17 @@ func runChannelSmartScheduleByRouteOnce(
 				stabilityPerformanceByModel[key], metric,
 			)
 		}
+	}
+	probingMetrics, err := loadChannelSmartScheduleProbingMetrics(
+		ctx,
+		selectedRoutes,
+		policyByGroup,
+		stabilityStart,
+		now,
+		needsStability && logStabilityAvailable,
+	)
+	if err != nil {
+		return result, err
 	}
 
 	poolCandidates := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
@@ -375,7 +390,7 @@ func runChannelSmartScheduleByRouteOnce(
 		)
 		routeStabilityAvailable := logStabilityAvailable ||
 			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
-			route.SharedSamples.MetricsSince(stabilityStart).SampleCount > 0
+			sampleMetricCache.metrics(modelKey, stabilityStart).SampleCount > 0
 		currentPriority := route.Priority
 		currentWeight := route.Weight
 		if route.State.TemporaryTrafficKind != "" && route.State.BaseRank > 0 {
@@ -545,8 +560,8 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 
 		businessPerformance := channelSmartScheduleClonePerformance(performanceByModel[modelKey])
-		businessPerformance = channelSmartScheduleMergeSharedSamplePerformance(
-			businessPerformance, route.SharedSamples, performanceStart,
+		businessPerformance = channelSmartScheduleMergeSampleMetrics(
+			businessPerformance, sampleMetricCache.metrics(modelKey, performanceStart),
 		)
 		stabilityPerformance := channelSmartScheduleClonePerformance(stabilityPerformanceByModel[modelKey])
 		probeWindowStart := stabilityStart
@@ -558,25 +573,21 @@ func runChannelSmartScheduleByRouteOnce(
 			stabilityPerformance = nil
 		}
 		if probingWindowReset && logStabilityAvailable {
-			metric, metricErr := model.GetChannelMonitorRouteStabilityMetric(
-				ctx, route.State.StabilitySince, route.ChannelId, route.Model,
-			)
-			if metricErr != nil {
-				return result, metricErr
-			}
+			windowStart := route.State.StabilitySince - route.State.StabilitySince%60
+			metric := probingMetrics.stabilityByWindow[channelSmartScheduleRouteMetricWindowKey{
+				modelKey: modelKey, windowStart: windowStart,
+			}]
 			stabilityPerformance = channelSmartScheduleSetStabilityMetric(stabilityPerformance, metric)
 		}
 		if probingWindowReset && policy.JitterEnabled {
-			metric, metricErr := model.GetChannelMonitorRoutePerformanceMetric(
-				ctx, route.State.StabilitySince, route.ChannelId, route.Model,
-			)
-			if metricErr != nil {
-				return result, metricErr
-			}
+			windowStart := route.State.StabilitySince - route.State.StabilitySince%60
+			metric := probingMetrics.performanceByWindow[channelSmartScheduleRouteMetricWindowKey{
+				modelKey: modelKey, windowStart: windowStart,
+			}]
 			stabilityPerformance = channelSmartScheduleSetPerformanceMetric(stabilityPerformance, metric)
 		}
-		stabilityPerformance = channelSmartScheduleMergeSharedSamplePerformance(
-			stabilityPerformance, route.SharedSamples, probeWindowStart,
+		stabilityPerformance = channelSmartScheduleMergeSampleMetrics(
+			stabilityPerformance, sampleMetricCache.metrics(modelKey, probeWindowStart),
 		)
 		if probingWindowReset && stabilityPerformance == nil {
 			stabilityPerformance = &channelSmartSchedulePerformance{}

@@ -96,6 +96,7 @@ function createRoute(
     enabled: true,
     priority: 100,
     weight: 100,
+    current_window_score: 0.75,
     shared_samples: {
       id: 0,
       channel_id: channelId,
@@ -155,6 +156,18 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
     stability_window_minutes: 120,
     sample_scope: 'channel_model',
     enabled: true,
+    metric_coverage: {
+      aggregation_enabled: true,
+      aggregated_from: 1_752_770_400,
+      aggregated_through: 1_752_777_840,
+      performance_window_start: 1_752_774_240,
+      stability_window_start: 1_752_770_640,
+      performance_window_complete: true,
+      stability_window_complete: true,
+      configured_retention_days: 120,
+      required_retention_minutes: 120,
+      configured_retention_sufficient: true,
+    },
     routes: [
       createRoute(1, {
         channel_name: '高速渠道',
@@ -207,6 +220,66 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
         group: 'default',
         model: 'model-standard',
       }),
+    ],
+    sample_items: [
+      {
+        channel_id: 1,
+        model: 'model-fast',
+        performance_window: {
+          id: 1,
+          channel_id: 1,
+          model: 'model-fast',
+          window_start: 1_752_700_000,
+          observation_since: 0,
+          last_time: 1_752_777_845,
+          last_success: true,
+          last_error: '',
+          sample_count: 5,
+          success_count: 5,
+          failure_duration_sample_count: 0,
+          average_failure_duration_ms: null,
+          first_token_sample_count: 5,
+          average_first_token_ms: 420,
+          tps_sample_count: 5,
+          average_tps: 18.5,
+        },
+        stability_window: {
+          id: 1,
+          channel_id: 1,
+          model: 'model-fast',
+          window_start: 1_752_750_000,
+          observation_since: 0,
+          last_time: 1_752_777_845,
+          last_success: true,
+          last_error: '',
+          sample_count: 2,
+          success_count: 2,
+          failure_duration_sample_count: 0,
+          average_failure_duration_ms: null,
+          first_token_sample_count: 2,
+          average_first_token_ms: 400,
+          tps_sample_count: 2,
+          average_tps: 20,
+        },
+      },
+    ],
+    business_performance_items: [
+      {
+        channel_id: 1,
+        group: 'vip',
+        model: 'model-fast',
+        group_count: 2,
+        sample_count: 15,
+        first_token_sample_count: 13,
+        first_token_duration_sample_count: 13,
+        tps_sample_count: 11,
+        average_first_token_ms: 405,
+        first_token_p50_ms: 375,
+        first_token_p95_ms: 750,
+        winsorized_average_first_token_ms: 400,
+        average_tps: 27,
+        last_used_time: 1_752_777_800,
+      },
     ],
     performance_items: [
       {
@@ -425,16 +498,16 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('探索流量 3%'))
     assert.ok(markup.includes('预计流量'))
-    assert.ok(markup.includes('最终得分'))
+    assert.ok(markup.includes('title="当前 75.0 · 最近 90.0"'))
     assert.ok(markup.includes('75.0%'))
     assert.ok(markup.includes('25.0%'))
     assert.ok(markup.includes('transition-[width]'))
     assert.ok(markup.includes('窗口数据 / 测试样本'))
     assert.ok(markup.includes('稳定 25 次 · 稳定分 98.0'))
-    assert.ok(markup.includes('性能 20 次 · P50 380 ms'))
+    assert.ok(markup.includes('性能 20 次（业务 15 + 测试 5）'))
     assert.ok(markup.includes('P50 380 ms'))
     assert.ok(markup.includes('TPS 24.50'))
-    assert.ok(markup.includes('测试/探测 5 次'))
+    assert.ok(markup.includes('其中测试/探测 2 次'))
     assert.ok(markup.includes('搜索渠道名称、ID 或备注'))
     assert.ok(markup.includes('按状态筛选'))
     assert.ok(markup.includes('按渠道排序'))
@@ -459,6 +532,27 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('刷新失败，显示上次结果'))
     assert.ok(markup.includes('高速渠道'))
     assert.equal(markup.includes('智能调度加载失败'), false)
+  })
+
+  test('warns when the persisted minute coverage does not fill a schedule window', () => {
+    const result = createResult()
+    assert.ok(result.metric_coverage)
+    result.metric_coverage = {
+      ...result.metric_coverage,
+      aggregated_from: 1_752_776_000,
+      performance_window_complete: false,
+      stability_window_complete: true,
+      configured_retention_days: 1,
+      configured_retention_sufficient: false,
+    }
+
+    const markup = renderBoard({ result })
+
+    assert.ok(markup.includes('调度窗口数据尚未覆盖完整'))
+    assert.ok(markup.includes('性能窗口覆盖不足'))
+    assert.equal(markup.includes('稳定性窗口覆盖不足'), false)
+    assert.ok(markup.includes('后台正在分批补齐分钟汇总'))
+    assert.ok(markup.includes('保留配置短于最长调度窗口'))
   })
 
   test('keeps dozens of routes in a fixed-header scroll region', () => {
