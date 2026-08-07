@@ -50,6 +50,7 @@ import {
 import type { MidjourneyLog } from '../../types'
 import { ImageDialog } from '../dialogs/image-dialog'
 import { PromptDialog } from '../dialogs/prompt-dialog'
+import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
   createChannelColumn,
@@ -82,7 +83,8 @@ function getDrawingTypeIcon(action: string): LucideIcon {
 }
 
 export function useDrawingLogsColumns(
-  isAdmin: boolean
+  isAdmin: boolean,
+  showUser: boolean = isAdmin
 ): ColumnDef<MidjourneyLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<MidjourneyLog>[] = [
@@ -115,6 +117,40 @@ export function useDrawingLogsColumns(
     columns.push(
       createChannelColumn<MidjourneyLog>({ headerLabel: t('Channel') })
     )
+  }
+
+  if (showUser) {
+    columns.push({
+      id: 'user',
+      header: t('User'),
+      accessorFn: (row) => row.user_id,
+      cell: function UserCell({ row }) {
+        const { setSelectedUserId, setUserInfoDialogOpen } =
+          useUsageLogsContext()
+        const userId = row.original.user_id
+        if (!userId) return null
+
+        return (
+          <button
+            type='button'
+            className='text-left'
+            onClick={(event) => {
+              event.stopPropagation()
+              setSelectedUserId(userId)
+              setUserInfoDialogOpen(true)
+            }}
+          >
+            <StatusBadge
+              label={`#${userId}`}
+              copyText={String(userId)}
+              variant='neutral'
+              size='sm'
+              className='font-mono'
+            />
+          </button>
+        )
+      },
+    })
   }
 
   columns.push({

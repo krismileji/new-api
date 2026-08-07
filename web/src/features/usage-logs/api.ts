@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import { buildQueryParams } from './lib/utils'
+import { buildQueryParams } from './lib/query-params'
 import type {
   GetLogsParams,
   GetLogsResponse,
@@ -26,6 +26,7 @@ import type {
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
+  LogsViewScope,
   UserInfo,
 } from './types'
 
@@ -33,14 +34,16 @@ import type {
 // Generic API Helpers
 // ============================================================================
 
-function buildApiPath(endpoint: string, isAdmin: boolean): string {
-  return isAdmin ? endpoint : `${endpoint}/self`
+function buildApiPath(endpoint: string, scope: LogsViewScope): string {
+  if (scope === 'all') return endpoint
+  if (scope === 'user-visible') return `${endpoint}/user-visible`
+  return `${endpoint}/self`
 }
 
 async function fetchLogs<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  scope: LogsViewScope
 ): Promise<GetLogsResponse> {
   const paramRecord = params as unknown as Record<string, unknown>
   const queryParams = buildQueryParams({
@@ -48,7 +51,7 @@ async function fetchLogs<T>(
     page_size: paramRecord.page_size || 20,
     ...params,
   })
-  const path = buildApiPath(endpoint, isAdmin)
+  const path = buildApiPath(endpoint, scope)
   const res = await api.get(`${path}?${queryParams}`)
   return res.data
 }
@@ -56,12 +59,12 @@ async function fetchLogs<T>(
 async function fetchLogStats<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  scope: LogsViewScope
 ): Promise<GetLogStatsResponse> {
   const queryParams = buildQueryParams(
     params as unknown as Record<string, unknown>
   )
-  const path = buildApiPath(endpoint, isAdmin)
+  const path = buildApiPath(endpoint, scope)
   const res = await api.get(`${path}/stat?${queryParams}`)
   return res.data
 }
@@ -71,18 +74,24 @@ async function fetchLogStats<T>(
 // ============================================================================
 
 export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, true)
+  fetchLogs('/api/log', params, 'all')
+
+export const getAllUserVisibleLogs = (params: GetLogsParams = {}) =>
+  fetchLogs('/api/log', params, 'user-visible')
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel'> = {}
-) => fetchLogs('/api/log', params, false)
+) => fetchLogs('/api/log', params, 'self')
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
-  fetchLogStats('/api/log', params, true)
+  fetchLogStats('/api/log', params, 'all')
+
+export const getAllUserVisibleLogStats = (params: GetLogStatsParams = {}) =>
+  fetchLogStats('/api/log', params, 'user-visible')
 
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
-) => fetchLogStats('/api/log', params, false)
+) => fetchLogStats('/api/log', params, 'self')
 
 export async function getUserInfo(
   userId: number
@@ -96,17 +105,24 @@ export async function getUserInfo(
 // ============================================================================
 
 export const getAllMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, true)
+  fetchLogs('/api/mj', params, 'all')
+
+export const getAllUserVisibleMidjourneyLogs = (
+  params: GetMidjourneyLogsParams
+) => fetchLogs('/api/mj', params, 'user-visible')
 
 export const getUserMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, false)
+  fetchLogs('/api/mj', params, 'self')
 
 // ============================================================================
 // Task Logs API
 // ============================================================================
 
 export const getAllTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, true)
+  fetchLogs('/api/task', params, 'all')
+
+export const getAllUserVisibleTaskLogs = (params: GetTaskLogsParams) =>
+  fetchLogs('/api/task', params, 'user-visible')
 
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, false)
+  fetchLogs('/api/task', params, 'self')

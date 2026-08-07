@@ -21,9 +21,8 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 
 import { useIsAdmin } from '@/hooks/use-admin'
 
-import type { ChannelAffinityInfo } from '../types'
-
-export type LogsViewScope = 'all' | 'self'
+import { getLogsViewCapabilities, resolveLogsViewScope } from '../lib/scope'
+import type { ChannelAffinityInfo, LogsViewScope } from '../types'
 
 interface UsageLogsContextValue {
   selectedUserId: number | null
@@ -83,22 +82,16 @@ export function useUsageLogsContext() {
   return context
 }
 
-/**
- * Resolves the effective admin scope for usage logs: whether the current
- * user is allowed to view all users' logs (`canManageScope`), and whether
- * their current view preference (`viewScope`) has that scope active
- * (`isAdminView`). Data fetching and admin-only UI should key off
- * `isAdminView` rather than raw role, so an admin who switches to "only
- * mine" is treated exactly like a regular user for that view.
- */
+/** Resolves the requested scope and its independent data/UI capabilities. */
 export function useLogsViewScope() {
   const canManageScope = useIsAdmin()
   const { viewScope, setViewScope } = useUsageLogsContext()
+  const effectiveViewScope = resolveLogsViewScope(viewScope, canManageScope)
 
   return {
     canManageScope,
-    viewScope,
+    viewScope: effectiveViewScope,
     setViewScope,
-    isAdminView: canManageScope && viewScope === 'all',
+    ...getLogsViewCapabilities(effectiveViewScope),
   }
 }

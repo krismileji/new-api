@@ -28,12 +28,12 @@ import { useSidebarConfig } from '@/hooks/use-sidebar-config'
 
 import { UserInfoDialog } from './components/dialogs/user-info-dialog'
 import {
-  type LogsViewScope,
   UsageLogsProvider,
   useLogsViewScope,
   useUsageLogsContext,
 } from './components/usage-logs-provider'
 import { UsageLogsTable } from './components/usage-logs-table'
+import { isLogsViewScope } from './lib/scope'
 import {
   isUsageLogsSectionId,
   USAGE_LOGS_DEFAULT_SECTION,
@@ -59,6 +59,7 @@ function UsageLogsContent() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
+  const searchParams = route.useSearch()
   const activeCategory: UsageLogsSectionId =
     params.section && isUsageLogsSectionId(params.section)
       ? params.section
@@ -110,11 +111,22 @@ function UsageLogsContent() {
 
   const handleViewScopeChange = useCallback(
     (scope: string) => {
-      if (scope === 'all' || scope === 'self') {
-        setViewScope(scope as LogsViewScope)
-      }
+      if (!isLogsViewScope(scope)) return
+
+      setViewScope(scope)
+      void navigate({
+        to: '/usage-logs/$section',
+        params: { section: activeCategory },
+        search: {
+          ...searchParams,
+          page: 1,
+          channel: scope === 'all' ? searchParams.channel : undefined,
+          username: scope === 'self' ? undefined : searchParams.username,
+        },
+        replace: true,
+      })
     },
-    [setViewScope]
+    [activeCategory, navigate, searchParams, setViewScope]
   )
 
   const pageMeta =
@@ -133,6 +145,7 @@ function UsageLogsContent() {
             <Tabs value={viewScope} onValueChange={handleViewScopeChange}>
               <TabsList>
                 <TabsTrigger value='all'>{t('All')}</TabsTrigger>
+                <TabsTrigger value='user-visible'>用户侧</TabsTrigger>
                 <TabsTrigger value='self'>{t('Only Mine')}</TabsTrigger>
               </TabsList>
             </Tabs>

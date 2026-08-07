@@ -116,7 +116,7 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView, isAllUsersView } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
@@ -186,7 +186,12 @@ export function CommonLogsFilterBar<TData>(
   )
 
   const handleApply = useCallback(() => {
-    const filterParams = buildSearchParams(filters, 'common')
+    const scopedFilters: CommonLogFilters = {
+      ...filters,
+      channel: isAdminView ? filters.channel : undefined,
+      username: isAllUsersView ? filters.username : undefined,
+    }
+    const filterParams = buildSearchParams(scopedFilters, 'common')
     navigate({
       to: '/usage-logs/$section',
       params: { section: 'common' },
@@ -198,7 +203,7 @@ export function CommonLogsFilterBar<TData>(
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
     queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [filters, logType, navigate, queryClient])
+  }, [filters, isAdminView, isAllUsersView, logType, navigate, queryClient])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
@@ -235,8 +240,8 @@ export function CommonLogsFilterBar<TData>(
 
   const hasExpandedFilters =
     !!filters.token ||
-    !!filters.username ||
-    !!filters.channel ||
+    (isAllUsersView && !!filters.username) ||
+    (isAdminView && !!filters.channel) ||
     !!filters.requestId ||
     !!filters.upstreamRequestId
 
@@ -246,8 +251,8 @@ export function CommonLogsFilterBar<TData>(
 
   const expandedFilterCount = [
     filters.token,
-    isAdmin ? filters.username : undefined,
-    isAdmin ? filters.channel : undefined,
+    isAllUsersView ? filters.username : undefined,
+    isAdminView ? filters.channel : undefined,
     filters.requestId,
     filters.upstreamRequestId,
   ].filter(Boolean).length
@@ -369,7 +374,7 @@ export function CommonLogsFilterBar<TData>(
           onKeyDown={handleKeyDown}
         />
       </LogsFilterField>
-      {isAdmin && (
+      {isAllUsersView && (
         <LogsFilterField>
           <LogsFilterInput
             placeholder={t('Username')}
@@ -380,7 +385,7 @@ export function CommonLogsFilterBar<TData>(
           />
         </LogsFilterField>
       )}
-      {isAdmin && (
+      {isAdminView && (
         <LogsFilterField>
           <LogsFilterInput
             placeholder={t('Channel ID')}

@@ -70,6 +70,18 @@ func TestUserLogQueriesHideRetryAttempts(t *testing.T) {
 			RequestId: "request-final-failure",
 			Other:     `{"status_code":500}`,
 		},
+		{
+			UserId:      2,
+			Username:    "other-user",
+			CreatedAt:   5,
+			Type:        LogTypeConsume,
+			Content:     "other user final success",
+			TokenId:     8,
+			ChannelId:   12,
+			ChannelName: "private-channel",
+			RequestId:   "other-user-request",
+			Other:       `{"admin_info":{"upstream":"private"},"audit_info":{"route":"private"}}`,
+		},
 	}
 	require.NoError(t, db.Create(&logs).Error)
 
@@ -85,6 +97,26 @@ func TestUserLogQueriesHideRetryAttempts(t *testing.T) {
 		assert.NotContains(t, log.Content, "temporary upstream failure")
 	}
 
+	allUserVisibleLogs, allUserVisibleTotal, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), allUserVisibleTotal)
+	require.Len(t, allUserVisibleLogs, 3)
+	assert.ElementsMatch(t,
+		[]string{"request-retried-successfully", "request-final-failure", "other-user-request"},
+		[]string{allUserVisibleLogs[0].RequestId, allUserVisibleLogs[1].RequestId, allUserVisibleLogs[2].RequestId},
+	)
+
+	filteredUserVisibleLogs, filteredTotal, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "other-user", "", 0, 10, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), filteredTotal)
+	require.Len(t, filteredUserVisibleLogs, 1)
+	assert.Equal(t, "other-user-request", filteredUserVisibleLogs[0].RequestId)
+	assert.Empty(t, filteredUserVisibleLogs[0].ChannelName)
+	other, err := common.StrToMap(filteredUserVisibleLogs[0].Other)
+	require.NoError(t, err)
+	assert.NotContains(t, other, "admin_info")
+	assert.NotContains(t, other, "audit_info")
+
 	userErrorLogs, errorTotal, err := GetUserLogs(1, LogTypeError, 0, 0, "", "", 0, 10, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), errorTotal)
@@ -98,8 +130,8 @@ func TestUserLogQueriesHideRetryAttempts(t *testing.T) {
 
 	adminLogs, adminTotal, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, 0, "", "", "")
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), adminTotal)
-	require.Len(t, adminLogs, 4)
+	assert.Equal(t, int64(5), adminTotal)
+	require.Len(t, adminLogs, 5)
 	retryAttemptCount := 0
 	for _, log := range adminLogs {
 		if log.IsRetryAttempt {
@@ -107,8 +139,8 @@ func TestUserLogQueriesHideRetryAttempts(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, retryAttemptCount)
-	assert.Contains(t, adminLogs[3].Content, "temporary upstream failure")
-	assert.Contains(t, adminLogs[0].Content, "final upstream failure")
+	assert.Contains(t, adminLogs[4].Content, "temporary upstream failure")
+	assert.Contains(t, adminLogs[1].Content, "final upstream failure")
 }
 
 func TestClickHouseRetryAttemptColumn(t *testing.T) {
