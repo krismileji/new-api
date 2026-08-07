@@ -54,6 +54,12 @@ func getChannelFromDatabasePool(
 	for index := range abilities {
 		channelIds[index] = abilities[index].ChannelId
 	}
+	pausedChannelIds, err := loadActiveChannelSmartSchedulePausedChannelIds(
+		DB, group, channelIds, common.GetTimestamp(),
+	)
+	if err != nil {
+		return nil, err
+	}
 	var channels []Channel
 	if err := DB.
 		Where("id IN ? AND status = ?", channelIds, common.ChannelStatusEnabled).
@@ -67,6 +73,9 @@ func getChannelFromDatabasePool(
 
 	available := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
+		if _, paused := pausedChannelIds[ability.ChannelId]; paused {
+			continue
+		}
 		channel := channelById[ability.ChannelId]
 		if channel == nil {
 			continue

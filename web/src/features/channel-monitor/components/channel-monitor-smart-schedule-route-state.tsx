@@ -21,6 +21,7 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import {
   channelMonitorSmartScheduleRouteIsAvailable,
+  channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
@@ -41,6 +42,13 @@ export function ChannelMonitorSmartScheduleRouteState(
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`
   } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+  }
+  if (
+    route.channel_status === CHANNEL_STATUS.ENABLED &&
+    route.enabled &&
+    channelMonitorSmartScheduleRouteIsTrafficPaused(route)
+  ) {
+    return <Badge variant='warning'>流量已暂停</Badge>
   }
   if (!channelMonitorSmartScheduleRouteIsAvailable(route)) {
     const unavailableLabel =

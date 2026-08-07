@@ -13,6 +13,7 @@ type channelSmartScheduleCachedRoute struct {
 	priority                        int64
 	weight                          uint
 	managed                         bool
+	trafficPausedUntil              int64
 	temporaryTrafficKind            string
 	stabilityState                  string
 	explorationMaxPromptTokens      int
@@ -36,13 +37,18 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 			return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, nil, nil, true)
 		}
 	}
-	return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states)
+	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(DB, common.GetTimestamp())
+	if err != nil {
+		common.SysError("load smart schedule group pauses failed: " + err.Error())
+	}
+	return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states, groupPauses)
 }
 
 func buildChannelSmartScheduleRouteCacheFromStates(
 	abilities []*Ability,
 	channels map[int]*Channel,
 	states []ChannelSmartScheduleRouteState,
+	groupPauses ...[]ChannelSmartScheduleGroupPause,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
 	managedPools := make(map[channelSmartScheduleRoutePool]struct{})
 	statesByPool := make(map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState)
@@ -57,7 +63,18 @@ func buildChannelSmartScheduleRouteCacheFromStates(
 		statesByPool[pool][state.ChannelId] = state
 		managedPools[pool] = struct{}{}
 	}
-	return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, managedPools, statesByPool, false)
+	var pauses []ChannelSmartScheduleGroupPause
+	if len(groupPauses) > 0 {
+		pauses = groupPauses[0]
+	}
+	return buildChannelSmartScheduleRouteCacheWithManagedPools(
+		abilities,
+		channels,
+		managedPools,
+		statesByPool,
+		false,
+		channelSmartScheduleGroupPauseUntilByKey(pauses),
+	)
 }
 
 func buildChannelSmartScheduleRouteCacheWithManagedPools(
@@ -66,7 +83,12 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 	managedPools map[channelSmartScheduleRoutePool]struct{},
 	statesByPool map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState,
 	managedLookupFailed bool,
+	pausedUntilByKey ...map[channelSmartScheduleGroupKey]int64,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
+	groupPauseUntilByKey := map[channelSmartScheduleGroupKey]int64{}
+	if len(pausedUntilByKey) > 0 && pausedUntilByKey[0] != nil {
+		groupPauseUntilByKey = pausedUntilByKey[0]
+	}
 	cache := make(map[string]map[string][]channelSmartScheduleCachedRoute)
 	for _, ability := range abilities {
 		channel := channels[ability.ChannelId]
@@ -86,10 +108,14 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 			channel,
 		)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
-			channelId:                       ability.ChannelId,
-			priority:                        priority,
-			weight:                          weight,
-			managed:                         managedLookupFailed || managed,
+			channelId: ability.ChannelId,
+			priority:  priority,
+			weight:    weight,
+			managed:   managedLookupFailed || managed,
+			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleGroupKey{
+				channelId: ability.ChannelId,
+				group:     ability.Group,
+			}],
 			temporaryTrafficKind:            state.TemporaryTrafficKind,
 			stabilityState:                  state.StabilityState,
 			explorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,
@@ -172,9 +198,10 @@ func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedR
 		return nil
 	}
 	channelIds := make([]int, 0, len(routes))
+	now := common.GetTimestamp()
 	for _, route := range routes {
 		channel := channelsIDM[route.channelId]
-		if channel == nil || channel.Status != common.ChannelStatusEnabled {
+		if channel == nil || channel.Status != common.ChannelStatusEnabled || route.trafficPausedUntil > now {
 			continue
 		}
 		channelIds = append(channelIds, route.channelId)

@@ -30,6 +30,7 @@ export type ChannelMonitorSmartScheduleGroupSummary = {
   routeCount: number
   participatingCount: number
   activeCount: number
+  pausedCount: number
   priorityMin: number
   priorityMax: number
   weightMin: number
@@ -46,6 +47,7 @@ export type ChannelMonitorSmartScheduleChannelSummary = {
   routeCount: number
   participatingCount: number
   activeCount: number
+  pausedCount: number
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
@@ -61,6 +63,7 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   routeCount: number
   participatingCount: number
   activeCount: number
+  pausedCount: number
   priorityMin: number
   priorityMax: number
   weightMin: number
@@ -96,6 +99,8 @@ export type ChannelMonitorSmartSchedulePoolStatus =
   | '保本兜底接管'
   | '最近失败'
   | '未参与调度'
+  | '流量已暂停'
+  | '部分流量暂停'
   | '当前不可调度'
   | '部分可调度'
   | '部分参与'
@@ -105,6 +110,7 @@ export type ChannelMonitorSmartScheduleOverviewSummary = {
   routeCount: number
   participatingCount: number
   activeCount: number
+  pausedCount: number
   channelCount: number
   groupCount: number
   poolCount: number
@@ -120,6 +126,7 @@ export type ChannelMonitorSmartScheduleRouteRole =
   | 'primary'
   | 'candidate'
   | 'backup'
+  | 'paused'
   | 'excluded'
   | 'unavailable'
 
@@ -149,16 +156,17 @@ const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
   ChannelMonitorSmartScheduleRouteDisplayStatus,
   number
 > = {
-  degraded: 0,
-  probing: 1,
-  insufficient_samples: 2,
-  priority_sampling: 3,
-  failed: 4,
-  primary: 5,
-  candidate: 6,
-  backup: 7,
-  unavailable: 8,
-  excluded: 9,
+  paused: 0,
+  degraded: 1,
+  probing: 2,
+  insufficient_samples: 3,
+  priority_sampling: 4,
+  failed: 5,
+  primary: 6,
+  candidate: 7,
+  backup: 8,
+  unavailable: 9,
+  excluded: 10,
 }
 
 const EMPTY_GROUP_RATIOS: Readonly<Record<string, number>> = {}
@@ -189,7 +197,18 @@ export function channelMonitorSmartScheduleRouteParticipates(
 export function channelMonitorSmartScheduleRouteIsAvailable(
   route: ChannelMonitorSmartScheduleRoute
 ) {
-  return route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
+  return (
+    route.enabled &&
+    route.channel_status === CHANNEL_STATUS.ENABLED &&
+    !channelMonitorSmartScheduleRouteIsTrafficPaused(route)
+  )
+}
+
+export function channelMonitorSmartScheduleRouteIsTrafficPaused(
+  route: ChannelMonitorSmartScheduleRoute,
+  nowSeconds = Date.now() / 1000
+) {
+  return (route.traffic_paused_until ?? 0) > nowSeconds
 }
 
 export function channelMonitorSmartScheduleRouteIsActive(
@@ -239,6 +258,7 @@ export function summarizeChannelMonitorSmartScheduleChannel(
   const groupMap = new Map<string, ChannelMonitorSmartScheduleGroupSummary>()
   let participatingCount = 0
   let activeCount = 0
+  let pausedCount = 0
   let degradedCount = 0
   let probingCount = 0
   let insufficientSampleCount = 0
@@ -249,9 +269,14 @@ export function summarizeChannelMonitorSmartScheduleChannel(
   for (const route of routes) {
     const participates = channelMonitorSmartScheduleRouteParticipates(route)
     const available = channelMonitorSmartScheduleRouteIsAvailable(route)
+    const paused =
+      route.enabled &&
+      route.channel_status === CHANNEL_STATUS.ENABLED &&
+      channelMonitorSmartScheduleRouteIsTrafficPaused(route)
     const active = channelMonitorSmartScheduleRouteIsActive(route)
     if (participates) participatingCount += 1
     if (active) activeCount += 1
+    if (paused) pausedCount += 1
     if (available && route.state.stability_state === 'degraded') {
       degradedCount += 1
     }
@@ -285,6 +310,7 @@ export function summarizeChannelMonitorSmartScheduleChannel(
         routeCount: 1,
         participatingCount: participates ? 1 : 0,
         activeCount: active ? 1 : 0,
+        pausedCount: paused ? 1 : 0,
         priorityMin: route.priority,
         priorityMax: route.priority,
         weightMin: route.weight,
@@ -309,6 +335,7 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     existing.routeCount += 1
     if (participates) existing.participatingCount += 1
     if (active) existing.activeCount += 1
+    if (paused) existing.pausedCount += 1
     existing.priorityMin = Math.min(existing.priorityMin, route.priority)
     existing.priorityMax = Math.max(existing.priorityMax, route.priority)
     existing.weightMin = Math.min(existing.weightMin, route.weight)
@@ -339,6 +366,7 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     routeCount: routes.length,
     participatingCount,
     activeCount,
+    pausedCount,
     degradedCount,
     probingCount,
     insufficientSampleCount,
@@ -477,7 +505,15 @@ export function placeChannelMonitorSmartScheduleRoutes(
         actualTopLayerChannelIdSet.has(route.channel_id) &&
         channelMonitorSmartScheduleRouteIsAvailable(route)
     )
-    const scoringWinnerChannelId = snapshot.decision?.raw_winner_channel_id ?? 0
+    const recordedScoringWinnerChannelId =
+      snapshot.decision?.raw_winner_channel_id ?? 0
+    const scoringWinnerChannelId = poolRoutes.some(
+      (route) =>
+        route.channel_id === recordedScoringWinnerChannelId &&
+        channelMonitorSmartScheduleRouteIsAvailable(route)
+    )
+      ? recordedScoringWinnerChannelId
+      : 0
     const totalWeight = candidates.reduce(
       (total, route) => total + Math.max(0, route.weight),
       0
@@ -495,10 +531,16 @@ export function placeChannelMonitorSmartScheduleRoutes(
     for (const route of poolRoutes) {
       let role: ChannelMonitorSmartScheduleRouteRole = 'backup'
       let estimatedShare: number | null = null
-      const routable = channelMonitorSmartScheduleRouteIsAvailable(route)
+      const configured =
+        route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
+      const paused =
+        configured && channelMonitorSmartScheduleRouteIsTrafficPaused(route)
       const isActualTopLayer = actualTopLayerChannelIdSet.has(route.channel_id)
-      if (!routable) {
+      if (!configured) {
         role = 'unavailable'
+      } else if (paused) {
+        role = 'paused'
+        estimatedShare = 0
       } else if (isActualTopLayer) {
         estimatedShare = shares.get(route.channel_id) ?? 0
         role =
@@ -528,7 +570,10 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   route: ChannelMonitorSmartScheduleRoute,
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 ): ChannelMonitorSmartScheduleRouteDisplayStatus {
-  if (!channelMonitorSmartScheduleRouteIsAvailable(route)) return 'unavailable'
+  if (!route.enabled || route.channel_status !== CHANNEL_STATUS.ENABLED) {
+    return 'unavailable'
+  }
+  if (channelMonitorSmartScheduleRouteIsTrafficPaused(route)) return 'paused'
   if (route.state.stability_state === 'degraded') return 'degraded'
   if (route.state.stability_state === 'probing') return 'probing'
   if (route.state.temporary_traffic_kind === 'insufficient_samples') {
@@ -625,6 +670,10 @@ export function summarizeChannelMonitorSmartSchedulePools(
     else routesByPool.set(key, [route])
     const participates = channelMonitorSmartScheduleRouteParticipates(route)
     const available = channelMonitorSmartScheduleRouteIsAvailable(route)
+    const paused =
+      route.enabled &&
+      route.channel_status === CHANNEL_STATUS.ENABLED &&
+      channelMonitorSmartScheduleRouteIsTrafficPaused(route)
     const active = channelMonitorSmartScheduleRouteIsActive(route)
     const existing = poolMap.get(key)
     if (!existing) {
@@ -634,6 +683,7 @@ export function summarizeChannelMonitorSmartSchedulePools(
         routeCount: 1,
         participatingCount: participates ? 1 : 0,
         activeCount: active ? 1 : 0,
+        pausedCount: paused ? 1 : 0,
         priorityMin: route.priority,
         priorityMax: route.priority,
         weightMin: route.weight,
@@ -674,6 +724,7 @@ export function summarizeChannelMonitorSmartSchedulePools(
     existing.routeCount += 1
     if (participates) existing.participatingCount += 1
     if (active) existing.activeCount += 1
+    if (paused) existing.pausedCount += 1
     existing.priorityMin = Math.min(existing.priorityMin, route.priority)
     existing.priorityMax = Math.max(existing.priorityMax, route.priority)
     existing.weightMin = Math.min(existing.weightMin, route.weight)
@@ -718,7 +769,13 @@ export function summarizeChannelMonitorSmartSchedulePools(
       ...summary,
       topPriority: snapshot.actualHighestPriority,
       candidateCount: snapshot.actualTopLayerChannelIds.length,
-      scoringWinnerChannelId: snapshot.decision?.raw_winner_channel_id ?? 0,
+      scoringWinnerChannelId:
+        poolRoutes.find(
+          (route) =>
+            route.channel_id ===
+              (snapshot.decision?.raw_winner_channel_id ?? 0) &&
+            channelMonitorSmartScheduleRouteIsAvailable(route)
+        )?.channel_id ?? 0,
       actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
       actualTopLayerChannelIds: snapshot.actualTopLayerChannelIds,
@@ -772,6 +829,7 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   routeCount: number
   participatingCount: number
   activeCount: number
+  pausedCount?: number
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
@@ -779,6 +837,15 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   failedCount?: number
   breakEvenFallbackTakingOver?: boolean
 }): ChannelMonitorSmartSchedulePoolStatus {
+  if ((pool.pausedCount ?? 0) > 0) {
+    if (
+      pool.activeCount === 0 &&
+      (pool.pausedCount ?? 0) >= pool.participatingCount
+    ) {
+      return '流量已暂停'
+    }
+    return '部分流量暂停'
+  }
   if (pool.degradedCount > 0) return '稳定性降级'
   if (pool.probingCount > 0) return '稳定性试放'
   if (pool.insufficientSampleCount > 0) return '样本不足补量'
@@ -799,6 +866,7 @@ export function summarizeChannelMonitorSmartScheduleOverview(
   const groups = new Set<string>()
   let participatingCount = 0
   let activeCount = 0
+  let pausedCount = 0
   let degradedCount = 0
   let probingCount = 0
   let insufficientSampleCount = 0
@@ -811,6 +879,13 @@ export function summarizeChannelMonitorSmartScheduleOverview(
       participatingCount += 1
     }
     const available = channelMonitorSmartScheduleRouteIsAvailable(route)
+    if (
+      route.enabled &&
+      route.channel_status === CHANNEL_STATUS.ENABLED &&
+      channelMonitorSmartScheduleRouteIsTrafficPaused(route)
+    ) {
+      pausedCount += 1
+    }
     if (channelMonitorSmartScheduleRouteIsActive(route)) activeCount += 1
     if (available && route.state.stability_state === 'degraded') {
       degradedCount += 1
@@ -839,12 +914,14 @@ export function summarizeChannelMonitorSmartScheduleOverview(
     routeCount: routes.length,
     participatingCount,
     activeCount,
+    pausedCount,
     channelCount: channels.size,
     groupCount: groups.size,
     poolCount: pools.length,
     healthyPoolCount: pools.filter(
       (pool) =>
         pool.activeCount > 0 &&
+        pool.pausedCount === 0 &&
         pool.degradedCount === 0 &&
         pool.probingCount === 0 &&
         pool.insufficientSampleCount === 0 &&

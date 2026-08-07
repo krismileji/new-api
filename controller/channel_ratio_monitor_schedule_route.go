@@ -397,16 +397,20 @@ func runChannelSmartScheduleByRouteOnce(
 			currentPriority = route.State.BasePriority
 			currentWeight = route.State.BaseWeight
 		}
-		if forceReset && route.ChannelStatus == common.ChannelStatusEnabled && route.Enabled && route.State.Participates() && route.State.StabilityState == "" {
+		if forceReset && route.ChannelStatus == common.ChannelStatusEnabled && route.Enabled &&
+			route.State.Participates() && !route.TrafficPaused(now) && route.State.StabilityState == "" {
 			currentPriority = channelMonitorSmartScheduleBaselinePriority
 			currentWeight = channelMonitorSmartScheduleMinWeight
 		}
-		if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() {
+		if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled ||
+			!route.State.Participates() || route.TrafficPaused(now) {
 			reason := "该分组和模型路由未参与智能调度"
 			if route.ChannelStatus != common.ChannelStatusEnabled {
 				reason = "渠道已禁用，未参与本次调度"
 			} else if !route.Enabled {
 				reason = "该分组和模型路由已禁用，未参与本次调度"
+			} else if route.TrafficPaused(now) {
+				reason = "该渠道在此分组的流量暂停中，未参与本次调度"
 			}
 			result.Skipped++
 			channelSmartScheduleSetAdjustmentReason(scoreDetailsByRoute[key], reason)
@@ -712,7 +716,8 @@ func runChannelSmartScheduleByRouteOnce(
 		fixedTargetPriority := int64(1)
 		for _, route := range routes {
 			if route.State.ManualPrimaryUntil > now &&
-				route.State.Participates() && route.ChannelStatus == common.ChannelStatusEnabled && route.Enabled {
+				route.State.Participates() && route.ChannelStatus == common.ChannelStatusEnabled &&
+				route.Enabled && !route.TrafficPaused(now) {
 				fixedChannelId = route.ChannelId
 				fixedTargetPriority = max(
 					fixedTargetPriority,
@@ -727,7 +732,8 @@ func runChannelSmartScheduleByRouteOnce(
 			continue
 		}
 		for _, route := range routes {
-			if route.ChannelId == fixedChannelId || route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled {
+			if route.ChannelId == fixedChannelId || route.ChannelStatus != common.ChannelStatusEnabled ||
+				!route.Enabled || route.TrafficPaused(now) {
 				continue
 			}
 			if route.Priority == math.MaxInt64 {
@@ -944,7 +950,7 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 			routingByChannel := make(map[int]poolRouting, len(poolRoutes[poolKey]))
 			for _, route := range poolRoutes[poolKey] {
-				if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled {
+				if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || route.TrafficPaused(now) {
 					continue
 				}
 				routingByChannel[route.ChannelId] = poolRouting{priority: route.Priority, weight: route.Weight}

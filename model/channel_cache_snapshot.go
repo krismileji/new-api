@@ -3,14 +3,17 @@ package model
 import (
 	"database/sql"
 
+	"github.com/QuantumNous/new-api/common"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 type channelCacheSnapshot struct {
-	channels            []*Channel
-	abilities           []*Ability
-	smartScheduleStates []ChannelSmartScheduleRouteState
+	channels                 []*Channel
+	abilities                []*Ability
+	smartScheduleStates      []ChannelSmartScheduleRouteState
+	smartScheduleGroupPauses []ChannelSmartScheduleGroupPause
 }
 
 func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
@@ -24,6 +27,14 @@ func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
 			if err := tx.
 				Order("channel_id ASC, group_name ASC, model_name ASC").
 				Find(&snapshot.smartScheduleStates).Error; err != nil {
+				return err
+			}
+		}
+		if tx.Migrator().HasTable(&ChannelSmartScheduleGroupPause{}) {
+			if err := tx.
+				Where("paused_until > ?", common.GetTimestamp()).
+				Order("channel_id ASC, group_name ASC").
+				Find(&snapshot.smartScheduleGroupPauses).Error; err != nil {
 				return err
 			}
 		}

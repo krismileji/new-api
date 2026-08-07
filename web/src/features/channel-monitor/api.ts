@@ -35,6 +35,7 @@ import type {
   ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
+  ChannelMonitorSmartScheduleGroupPauseResult,
   ChannelMonitorSmartScheduleExecutionDetailPage,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
@@ -306,6 +307,24 @@ export async function updateChannelMonitorSmartScheduleManualRouting(request: {
       model: request.model,
       priority: request.priority,
       weight: request.weight,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function updateChannelMonitorSmartScheduleGroupPause(request: {
+  channelId: number
+  group: string
+  durationMinutes: number
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleGroupPauseResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/group/pause`,
+    {
+      group: request.group,
+      duration_minutes: request.durationMinutes,
     },
     channelMonitorRequestConfig()
   )

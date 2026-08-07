@@ -32,6 +32,7 @@ import {
   getChannelMonitorTodaySuccess,
   previewChannelMonitorNotificationEmail,
   updateChannelMonitorSmartScheduleChannelConfig,
+  updateChannelMonitorSmartScheduleGroupPause,
   updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
@@ -205,6 +206,54 @@ test('updates priority and weight for one non-participating route', async () => 
     model: 'model-a',
     priority: 30,
     weight: 400,
+  })
+})
+
+test('sets one channel group traffic pause duration', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          channel_id: 7,
+          group: 'vip',
+          duration_minutes: 90,
+          paused_until: 4_102_444_800,
+          affected_routes: 3,
+          changed: true,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    const response = await updateChannelMonitorSmartScheduleGroupPause({
+      channelId: 7,
+      group: 'vip',
+      durationMinutes: 90,
+    })
+    assert.equal(response.data.affected_routes, 3)
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/channel/7/schedule/group/pause'
+  )
+  assert.equal(requestConfig?.method, 'put')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    group: 'vip',
+    duration_minutes: 90,
   })
 })
 

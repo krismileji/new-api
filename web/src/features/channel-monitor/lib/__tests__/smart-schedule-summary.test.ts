@@ -28,6 +28,7 @@ import {
   compareChannelMonitorSmartScheduleRoutesByPool,
   getChannelMonitorSmartScheduleDisplayOptions,
   getChannelMonitorSmartSchedulePoolStatus,
+  getChannelMonitorSmartScheduleRouteDisplayStatus,
   placeChannelMonitorSmartScheduleRoutes,
   summarizeChannelMonitorSmartScheduleChannel,
   summarizeChannelMonitorSmartScheduleOverview,
@@ -38,6 +39,7 @@ const normalPool = {
   routeCount: 3,
   participatingCount: 3,
   activeCount: 3,
+  pausedCount: 0,
   degradedCount: 0,
   probingCount: 0,
   insufficientSampleCount: 0,
@@ -180,6 +182,28 @@ describe('smart schedule pool status', () => {
     )
   })
 
+  test('reports full and partial group traffic pauses before stale route states', () => {
+    assert.equal(
+      getChannelMonitorSmartSchedulePoolStatus({
+        ...normalPool,
+        routeCount: 1,
+        participatingCount: 1,
+        activeCount: 0,
+        pausedCount: 1,
+        degradedCount: 1,
+      }),
+      '流量已暂停'
+    )
+    assert.equal(
+      getChannelMonitorSmartSchedulePoolStatus({
+        ...normalPool,
+        activeCount: 2,
+        pausedCount: 1,
+      }),
+      '部分流量暂停'
+    )
+  })
+
   test('reports break-even fallback takeover only when it is the actual top layer', () => {
     const normal = createRoute(1, 'vip', 'model-a', 2, 1000)
     const fallback = createRoute(2, 'vip', 'model-a', 1, 1000)
@@ -244,6 +268,40 @@ describe('smart schedule pool status', () => {
 })
 
 describe('smart schedule route placement', () => {
+  test('removes a paused route from the actual highest layer and gives it zero traffic', () => {
+    const paused = createRoute(1, 'vip', 'model-a', 100, 80)
+    paused.traffic_paused_until = 4_102_444_800
+    paused.state.stability_state = 'degraded'
+    paused.state.temporary_traffic_kind = 'insufficient_samples'
+    const active = createRoute(2, 'vip', 'model-a', 90, 20)
+
+    const routes = [paused, active]
+    const placements = placeChannelMonitorSmartScheduleRoutes(routes)
+    const pausedPlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(paused)
+    )
+    const activePlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(active)
+    )
+    const summary = summarizeChannelMonitorSmartSchedulePools(routes)[0]
+
+    assert.equal(pausedPlacement?.role, 'paused')
+    assert.equal(pausedPlacement?.estimatedShare, 0)
+    assert.equal(pausedPlacement?.isActualTopLayer, false)
+    assert.equal(
+      getChannelMonitorSmartScheduleRouteDisplayStatus(paused, pausedPlacement),
+      'paused'
+    )
+    assert.equal(activePlacement?.role, 'primary')
+    assert.equal(activePlacement?.estimatedShare, 1)
+    assert.equal(summary.activeCount, 1)
+    assert.equal(summary.pausedCount, 1)
+    assert.equal(summary.degradedCount, 0)
+    assert.equal(summary.insufficientSampleCount, 0)
+    assert.equal(summary.actualHighestPriority, 90)
+    assert.deepEqual(summary.actualTopLayerChannelIds, [2])
+  })
+
   test('keeps nonparticipating manual routing in the actual highest layer', () => {
     const uninitialized = createRoute(1, 'vip', 'model-a', 100, 100)
     uninitialized.state.participation_set = false

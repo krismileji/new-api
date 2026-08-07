@@ -142,6 +142,7 @@ func deleteChannelMonitorDataTx(tx *gorm.DB, channelIds []int) error {
 	monitorTables := []any{
 		&ChannelRatioMonitor{},
 		&ChannelSmartScheduleRouteState{},
+		&ChannelSmartScheduleGroupPause{},
 		&ChannelSmartScheduleModelSampleState{},
 	}
 	for _, table := range monitorTables {

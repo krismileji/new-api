@@ -38,6 +38,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteIsAvailable,
+  channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
@@ -91,6 +92,10 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   const now = Math.floor(Date.now() / 1000)
   const statuses: SmartScheduleStatusBadge[] = []
   const details: Array<{ label: string; value: string }> = []
+  const trafficPaused =
+    route.channel_status === CHANNEL_STATUS.ENABLED &&
+    route.enabled &&
+    channelMonitorSmartScheduleRouteIsTrafficPaused(route, now)
   const available = channelMonitorSmartScheduleRouteIsAvailable(route)
   let unavailableClearProtectionLabel: string | undefined
   if (route.state.stability_state === 'degraded') {
@@ -187,6 +192,12 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       variant: 'destructive',
       clearProtectionLabel: unavailableClearProtectionLabel,
     })
+  } else if (trafficPaused) {
+    statuses.push({
+      key: 'traffic-paused',
+      label: '流量已暂停',
+      variant: 'warning',
+    })
   } else if (!channelMonitorSmartScheduleRouteParticipates(route)) {
     statuses.push({ key: 'excluded', label: '未参与调度', variant: 'outline' })
   } else if (route.state.last_schedule_status === 'failed') {
@@ -201,6 +212,12 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     label: '当前路由',
     value: `P${route.priority} · W${route.weight}`,
   })
+  if (trafficPaused) {
+    details.push({
+      label: '暂停至',
+      value: formatTimestampToDate(route.traffic_paused_until ?? 0),
+    })
+  }
   if (breakEvenFallback) {
     details.push(
       {

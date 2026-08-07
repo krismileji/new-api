@@ -131,6 +131,25 @@ describe('channel monitor smart schedule cell status', () => {
     }
   })
 
+  test('shows a group traffic pause instead of stale scheduling protection', () => {
+    const markup = renderCell([
+      createRoute({
+        traffic_paused_until: 4_102_444_800,
+        state: {
+          stability_state: 'degraded',
+          stability_until: 4_102_444_800,
+          temporary_traffic_kind: 'insufficient_samples',
+          temporary_traffic_target_percent: 3,
+        },
+      }),
+    ])
+
+    assert.ok(markup.includes('流量已暂停'))
+    assert.equal(markup.includes('>稳定性降级</'), false)
+    assert.equal(markup.includes('探索流量 3%'), false)
+    assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
+  })
+
   test('opens clearing from degradation, release, and exploration states only', () => {
     const fixturePath = fileURLToPath(
       new URL('./smart-schedule-cell-protection.fixture.tsx', import.meta.url)

@@ -749,6 +749,7 @@ export type ChannelMonitorSmartScheduleRoute = {
   enabled: boolean
   priority: number
   weight: number
+  traffic_paused_until?: number
   cost_ratio?: number | null
   group_ratio?: number | null
   gross_margin?: number | null
@@ -853,6 +854,15 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
   stability_protection_cleared: boolean
   routing_changed: boolean
   task: ChannelMonitorTask | null
+}
+
+export type ChannelMonitorSmartScheduleGroupPauseResult = {
+  channel_id: number
+  group: string
+  duration_minutes: number
+  paused_until: number
+  affected_routes: number
+  changed: boolean
 }
 
 export type ChannelMonitorTaskRunResult = {

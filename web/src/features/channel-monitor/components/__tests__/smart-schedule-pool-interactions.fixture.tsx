@@ -207,6 +207,7 @@ const routes = [
   }),
   createRoute(2, '北京备用渠道', 90),
   createRoute(3, '广州暂停渠道', 80, {
+    traffic_paused_until: 4_102_444_800,
     state: { excluded: true } as ChannelMonitorSmartScheduleRoute['state'],
   }),
 ]
@@ -283,6 +284,10 @@ async function renderPool(options?: {
     priority: number,
     weight: number
   ) => void
+  onGroupPauseChange?: (
+    route: ChannelMonitorSmartScheduleRoute,
+    durationMinutes: number
+  ) => void
 }) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -298,12 +303,14 @@ async function renderPool(options?: {
         stabilityByRoute={stabilityByRoute}
         updateRouteKey={null}
         manualRoutingKey={null}
+        groupPauseKey={null}
         updateDisabled={false}
         onParticipationChange={() => {}}
         onClearProtection={() => {}}
         onSetPrimary={options?.onSetPrimary ?? (() => {})}
         onClearPrimary={options?.onClearPrimary ?? (() => {})}
         onSaveManualRouting={options?.onSaveManualRouting ?? (() => {})}
+        onGroupPauseChange={options?.onGroupPauseChange ?? (() => {})}
       />
     )
   })
@@ -442,6 +449,70 @@ assert.deepEqual(
 await act(async () => primaryToggle.root.unmount())
 primaryToggle.container.remove()
 
+const groupPauseActions: Array<{
+  route: ChannelMonitorSmartScheduleRoute
+  durationMinutes: number
+}> = []
+const groupPause = await renderPool({
+  onGroupPauseChange: (route, durationMinutes) =>
+    groupPauseActions.push({ route, durationMinutes }),
+})
+const pauseButtons = groupPause.container.querySelectorAll<HTMLButtonElement>(
+  '[aria-label="暂停 上海主渠道 在 production 分组的流量"]'
+)
+assert.equal(pauseButtons.length, 2)
+await act(async () => pauseButtons[0]?.click())
+const pauseForm = document.querySelector<HTMLFormElement>(
+  '[aria-label="上海主渠道 production 分组流量暂停设置"]'
+)
+assert.ok(pauseForm)
+const pauseDuration = pauseForm.querySelector<HTMLInputElement>(
+  '#group-pause-duration-1'
+)
+const pauseSubmit = pauseForm.querySelector<HTMLButtonElement>(
+  'button[type="submit"]'
+)
+assert.ok(pauseDuration)
+assert.ok(pauseSubmit)
+pauseDuration.value = '120'
+await act(async () => pauseSubmit.click())
+assert.deepEqual(
+  groupPauseActions.map(({ route, durationMinutes }) => [
+    route.channel_id,
+    durationMinutes,
+  ]),
+  [[1, 120]]
+)
+await act(async () => groupPause.root.unmount())
+groupPause.container.remove()
+
+const groupResume = await renderPool({
+  onGroupPauseChange: (route, durationMinutes) =>
+    groupPauseActions.push({ route, durationMinutes }),
+})
+const resumeDetailButtons =
+  groupResume.container.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="恢复 广州暂停渠道 在 production 分组的流量"]'
+  )
+assert.equal(resumeDetailButtons.length, 2)
+await act(async () => resumeDetailButtons[0]?.click())
+const resumeDetails = document.querySelector<HTMLElement>(
+  '[aria-label="广州暂停渠道 调度详情"]'
+)
+assert.ok(resumeDetails)
+assert.ok(resumeDetails.textContent?.includes('流量已暂停'))
+const resumeButton = [
+  ...resumeDetails.querySelectorAll<HTMLButtonElement>('button'),
+].find((button) => button.textContent?.includes('立即恢复'))
+assert.ok(resumeButton)
+await act(async () => resumeButton.click())
+assert.deepEqual(groupPauseActions.at(-1), {
+  route: routes[2],
+  durationMinutes: 0,
+})
+await act(async () => groupResume.root.unmount())
+groupResume.container.remove()
+
 let submitted:
   | {
       route: ChannelMonitorSmartScheduleRoute
@@ -468,7 +539,10 @@ const priorityInput =
   manualDetails.querySelector<HTMLInputElement>('#manual-priority-3')
 const weightInput =
   manualDetails.querySelector<HTMLInputElement>('#manual-weight-3')
-const submit = manualDetails.querySelector<HTMLButtonElement>(
+const manualForm = manualDetails.querySelector<HTMLFormElement>(
+  '[aria-label="广州暂停渠道 production cache-model 人工路由设置"]'
+)
+const submit = manualForm?.querySelector<HTMLButtonElement>(
   'button[type="submit"]'
 )
 assert.ok(priorityInput)

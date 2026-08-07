@@ -18,7 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Cancel01Icon,
+  PauseIcon,
   PinIcon,
+  PlayIcon,
   Search01Icon,
   ViewIcon,
 } from '@hugeicons/core-free-icons'
@@ -55,6 +57,7 @@ import {
 } from '../lib/smart-schedule-display'
 import {
   channelMonitorSmartScheduleRouteKey,
+  channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
   compareChannelMonitorSmartScheduleRoutesByAttention,
   getChannelMonitorSmartSchedulePoolStatus,
@@ -102,6 +105,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
   samplesByModel?: ReadonlyMap<string, ChannelMonitorSmartScheduleSampleItem>
   updateRouteKey: string | null
   manualRoutingKey: string | null
+  groupPauseKey: string | null
   updateDisabled: boolean
   onParticipationChange: (
     route: ChannelMonitorSmartScheduleRoute,
@@ -114,6 +118,10 @@ type ChannelMonitorSmartSchedulePoolProps = {
     route: ChannelMonitorSmartScheduleRoute,
     priority: number,
     weight: number
+  ) => void
+  onGroupPauseChange: (
+    route: ChannelMonitorSmartScheduleRoute,
+    durationMinutes: number
   ) => void
 }
 
@@ -143,6 +151,7 @@ const ATTENTION_STATUSES =
     'insufficient_samples',
     'priority_sampling',
     'failed',
+    'paused',
     'unavailable',
   ])
 
@@ -153,6 +162,8 @@ function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
     status === '样本不足补量' ||
     status === '低优先级轮转' ||
     status === '保本兜底接管' ||
+    status === '流量已暂停' ||
+    status === '部分流量暂停' ||
     status === '部分可调度'
   ) {
     return 'warning'
@@ -456,6 +467,9 @@ function RouteActions(props: {
   onOpenDetails: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
   const fixed = props.route.state.manual_primary_until > 0
+  const trafficPaused = channelMonitorSmartScheduleRouteIsTrafficPaused(
+    props.route
+  )
   return (
     <div className='flex items-center justify-end gap-1'>
       <Button
@@ -483,6 +497,24 @@ function RouteActions(props: {
         title={fixed ? '取消固定' : '固定为主渠道'}
       >
         <HugeiconsIcon icon={PinIcon} aria-hidden='true' />
+      </Button>
+      <Button
+        type='button'
+        variant='ghost'
+        size='icon-xs'
+        className={cn(trafficPaused && 'text-warning')}
+        onClick={() => props.onOpenDetails(props.route)}
+        aria-label={
+          trafficPaused
+            ? `恢复 ${props.route.channel_name} 在 ${props.route.group} 分组的流量`
+            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组的流量`
+        }
+        title={trafficPaused ? '恢复分组流量' : '暂停分组流量'}
+      >
+        <HugeiconsIcon
+          icon={trafficPaused ? PlayIcon : PauseIcon}
+          aria-hidden='true'
+        />
       </Button>
       <Button
         type='button'
@@ -647,6 +679,9 @@ export function ChannelMonitorSmartSchedulePool(
                   ? ` · 已固定 ${props.pool.summary.breakEvenFallbackFixedCount} 条`
                   : ''}
               </span>
+            ) : null}
+            {props.pool.summary.pausedCount > 0 ? (
+              <span>流量暂停 {props.pool.summary.pausedCount} 条</span>
             ) : null}
             <span>{formatSampleMode(props.policy)}</span>
           </p>
@@ -1092,6 +1127,11 @@ export function ChannelMonitorSmartSchedulePool(
         manualRoutingPending={
           detailRoute != null && props.manualRoutingKey === detailRouteKey
         }
+        groupPausePending={
+          detailRoute != null &&
+          props.groupPauseKey ===
+            `${detailRoute.channel_id}\u0000${detailRoute.group}`
+        }
         updateDisabled={props.updateDisabled}
         onOpenChange={(open) => {
           if (!open) setDetailRouteKey(null)
@@ -1101,6 +1141,7 @@ export function ChannelMonitorSmartSchedulePool(
         onSetPrimary={props.onSetPrimary}
         onClearPrimary={props.onClearPrimary}
         onSaveManualRouting={props.onSaveManualRouting}
+        onGroupPauseChange={props.onGroupPauseChange}
       />
     </section>
   )

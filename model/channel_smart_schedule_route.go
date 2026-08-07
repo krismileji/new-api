@@ -122,22 +122,23 @@ type ChannelSmartScheduleRouteKey struct {
 }
 
 type ChannelSmartScheduleRoute struct {
-	ChannelId       int                                  `json:"channel_id"`
-	ChannelName     string                               `json:"channel_name"`
-	ChannelStatus   int                                  `json:"channel_status"`
-	ChannelPriority int64                                `json:"channel_priority"`
-	ChannelWeight   uint                                 `json:"channel_weight"`
-	Group           string                               `json:"group"`
-	Model           string                               `json:"model"`
-	Enabled         bool                                 `json:"enabled"`
-	Priority        int64                                `json:"priority"`
-	Weight          uint                                 `json:"weight"`
-	CostRatio       *float64                             `json:"cost_ratio,omitempty"`
-	GroupRatio      *float64                             `json:"group_ratio,omitempty"`
-	GrossMargin     *float64                             `json:"gross_margin,omitempty"`
-	EconomicRole    string                               `json:"economic_role,omitempty"`
-	State           ChannelSmartScheduleRouteState       `json:"state"`
-	SharedSamples   ChannelSmartScheduleModelSampleState `json:"shared_samples"`
+	ChannelId          int                                  `json:"channel_id"`
+	ChannelName        string                               `json:"channel_name"`
+	ChannelStatus      int                                  `json:"channel_status"`
+	ChannelPriority    int64                                `json:"channel_priority"`
+	ChannelWeight      uint                                 `json:"channel_weight"`
+	Group              string                               `json:"group"`
+	Model              string                               `json:"model"`
+	Enabled            bool                                 `json:"enabled"`
+	Priority           int64                                `json:"priority"`
+	Weight             uint                                 `json:"weight"`
+	TrafficPausedUntil int64                                `json:"traffic_paused_until"`
+	CostRatio          *float64                             `json:"cost_ratio,omitempty"`
+	GroupRatio         *float64                             `json:"group_ratio,omitempty"`
+	GrossMargin        *float64                             `json:"gross_margin,omitempty"`
+	EconomicRole       string                               `json:"economic_role,omitempty"`
+	State              ChannelSmartScheduleRouteState       `json:"state"`
+	SharedSamples      ChannelSmartScheduleModelSampleState `json:"shared_samples"`
 }
 
 type ChannelSmartScheduleRouteResultUpdate struct {
@@ -407,6 +408,10 @@ func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartSch
 	if err := DB.Find(&states).Error; err != nil {
 		return nil, err
 	}
+	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(DB, common.GetTimestamp())
+	if err != nil {
+		return nil, err
+	}
 	var sharedSampleStates []ChannelSmartScheduleModelSampleState
 	if includeSharedSamples {
 		var err error
@@ -423,6 +428,7 @@ func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartSch
 	for _, state := range states {
 		stateByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = state
 	}
+	pausedUntilByKey := channelSmartScheduleGroupPauseUntilByKey(groupPauses)
 	sharedSamplesByModel := make(map[channelSmartScheduleModelKey]ChannelSmartScheduleModelSampleState, len(sharedSampleStates))
 	for _, state := range sharedSampleStates {
 		modelName := channelSmartScheduleModelName(state.ModelName)
@@ -461,8 +467,12 @@ func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartSch
 			Enabled:         ability.Enabled,
 			Priority:        priority,
 			Weight:          weight,
-			State:           state,
-			SharedSamples:   sharedSamples,
+			TrafficPausedUntil: pausedUntilByKey[channelSmartScheduleGroupKey{
+				channelId: ability.ChannelId,
+				group:     ability.Group,
+			}],
+			State:         state,
+			SharedSamples: sharedSamples,
 		})
 	}
 	sort.Slice(routes, func(i int, j int) bool {

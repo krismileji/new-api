@@ -35,6 +35,7 @@ func setupChannelSmartScheduleRouteTestDB(t *testing.T) *gorm.DB {
 		&Ability{},
 		&ChannelRatioMonitor{},
 		&ChannelSmartScheduleRouteState{},
+		&ChannelSmartScheduleGroupPause{},
 		&ChannelSmartScheduleModelSampleState{},
 	))
 	t.Cleanup(func() {

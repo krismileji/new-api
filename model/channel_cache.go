@@ -52,6 +52,7 @@ func InitChannelCache() {
 		abilities,
 		newChannelId2channel,
 		snapshot.smartScheduleStates,
+		snapshot.smartScheduleGroupPauses,
 	)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {

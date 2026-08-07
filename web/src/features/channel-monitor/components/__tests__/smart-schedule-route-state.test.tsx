@@ -142,6 +142,24 @@ describe('smart schedule route protection state', () => {
     assert.equal(markup.includes('渠道禁用'), false)
   })
 
+  test('shows traffic paused instead of stale stability degradation', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    route.traffic_paused_until = 4_102_444_800
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteStatus
+        route={route}
+        placement={undefined}
+        onClearProtection={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('流量已暂停'))
+    assert.equal(markup.includes('>稳定性降级</'), false)
+    assert.equal(markup.includes('不可调度'), false)
+  })
+
   test('keeps exploration clearing available while the channel is disabled', () => {
     const route = createProtectedRoute('degraded')
     route.state.stability_state = ''

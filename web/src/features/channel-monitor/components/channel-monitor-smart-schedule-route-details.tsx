@@ -57,6 +57,7 @@ import type {
   ChannelMonitorSmartScheduleRouteStability,
   ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
+import { ChannelMonitorSmartScheduleGroupPause } from './channel-monitor-smart-schedule-group-pause'
 import { ChannelMonitorSmartSchedulePrimaryControls } from './channel-monitor-smart-schedule-primary-controls'
 import { ChannelMonitorSmartScheduleRouteState } from './channel-monitor-smart-schedule-route-state'
 import { ChannelMonitorSmartScheduleSampleDetails } from './channel-monitor-smart-schedule-sample-details'
@@ -74,6 +75,7 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   samples: ChannelMonitorSmartScheduleSampleItem | undefined
   updatePending: boolean
   manualRoutingPending: boolean
+  groupPausePending: boolean
   updateDisabled: boolean
   onOpenChange: (open: boolean) => void
   onParticipationChange: (
@@ -88,6 +90,10 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
     priority: number,
     weight: number
   ) => void
+  onGroupPauseChange: (
+    route: ChannelMonitorSmartScheduleRoute,
+    durationMinutes: number
+  ) => void
 }
 
 export function ChannelMonitorSmartScheduleRouteStatus(props: {
@@ -95,6 +101,13 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   onClearProtection: () => void
 }) {
+  const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
+    props.route,
+    props.placement
+  )
+  if (status === 'paused') {
+    return <Badge variant='warning'>流量已暂停</Badge>
+  }
   if (
     props.route.state.stability_state !== '' ||
     props.route.state.temporary_traffic_kind === 'insufficient_samples'
@@ -107,10 +120,6 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
     )
   }
 
-  const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
-    props.route,
-    props.placement
-  )
   if (status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>
   }
@@ -204,7 +213,8 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     props.placement?.actualTopLayerChannelIds ??
     decision?.actual_top_layer_channel_ids ??
     []
-  const pending = props.updatePending || props.manualRoutingPending
+  const pending =
+    props.updatePending || props.manualRoutingPending || props.groupPausePending
   const channelNameById = new Map(
     props.poolRoutes.map((poolRoute) => [
       poolRoute.channel_id,
@@ -278,7 +288,9 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                     placement={props.placement}
                     onClearProtection={() => props.onClearProtection(route)}
                   />
-                  {props.updatePending ? <Spinner className='size-4' /> : null}
+                  {props.updatePending || props.groupPausePending ? (
+                    <Spinner className='size-4' />
+                  ) : null}
                   {route.state.last_schedule_time > 0 ? (
                     <span className='text-muted-foreground text-xs'>
                       更新于{' '}
@@ -422,6 +434,13 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             </div>
           </section>
 
+          <ChannelMonitorSmartScheduleGroupPause
+            route={route}
+            pending={props.groupPausePending}
+            disabled={props.updateDisabled}
+            onUpdate={props.onGroupPauseChange}
+          />
+
           {!participates ? (
             <section className='border-t px-4 py-4' aria-label='人工路由设置'>
               <div className='flex items-start gap-2'>
@@ -440,6 +459,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               <form
                 key={`${route.channel_id}\u0000${route.group}\u0000${route.model}\u0000${route.priority}\u0000${route.weight}`}
                 className='mt-4 flex flex-col gap-3 sm:flex-row sm:items-end'
+                aria-label={`${route.channel_name} ${route.group} ${route.model} 人工路由设置`}
                 onSubmit={(event) => {
                   event.preventDefault()
                   const formData = new FormData(event.currentTarget)

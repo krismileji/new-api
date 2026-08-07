@@ -42,7 +42,8 @@ func channelSmartScheduleApplyCurrentWindowScores(
 	for _, route := range routes {
 		policy, configured := policyByGroup[route.Group]
 		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) ||
-			route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() {
+			route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled ||
+			!route.State.Participates() || route.TrafficPaused(now) {
 			continue
 		}
 		key := channelSmartScheduleRouteKey{

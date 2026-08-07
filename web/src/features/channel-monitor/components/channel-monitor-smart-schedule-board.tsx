@@ -59,6 +59,7 @@ import {
   type ChannelMonitorSmartSchedulePrimaryUpdateRequest,
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   runChannelMonitorSmartSchedule,
+  updateChannelMonitorSmartScheduleGroupPause,
   updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
@@ -292,7 +293,8 @@ export function ChannelMonitorSmartScheduleBoard(
         pool.summary.probingCount === 0 &&
         pool.summary.insufficientSampleCount === 0 &&
         pool.summary.prioritySamplingCount === 0 &&
-        pool.summary.failedCount === 0
+        pool.summary.failedCount === 0 &&
+        pool.summary.pausedCount === 0
       ) {
         continue
       }
@@ -309,6 +311,7 @@ export function ChannelMonitorSmartScheduleBoard(
   const firstPrioritySamplingPool = pools.find(
     (pool) => pool.summary.prioritySamplingCount > 0
   )
+  const firstPausedPool = pools.find((pool) => pool.summary.pausedCount > 0)
   const selectedGroupValue = props.selection?.group ?? selectedGroup
   const selectedModelValue = props.selection?.model ?? selectedModel
   const visibleGroup = groups.includes(selectedGroupValue)
@@ -398,6 +401,26 @@ export function ChannelMonitorSmartScheduleBoard(
     onSuccess: () => toast.success('人工优先级和权重已保存'),
     onSettled: invalidateSchedule,
   })
+  const groupPauseMutation = useMutation({
+    mutationFn: updateChannelMonitorSmartScheduleGroupPause,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: (response) => {
+      toast.success(
+        response.data.duration_minutes > 0
+          ? `已暂停“${response.data.group}”分组流量 ${response.data.duration_minutes} 分钟`
+          : `已恢复“${response.data.group}”分组流量`
+      )
+    },
+    onSettled: () => {
+      invalidateSchedule()
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+      })
+      queryClient.invalidateQueries({
+        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      })
+    },
+  })
   const runMutation = useMutation({
     mutationFn: runChannelMonitorSmartSchedule,
     onError: handleChannelMonitorMutationError,
@@ -453,6 +476,10 @@ export function ChannelMonitorSmartScheduleBoard(
           group: manualRoutingMutation.variables.group,
           model: manualRoutingMutation.variables.model,
         })
+      : null
+  const groupPauseKey =
+    groupPauseMutation.isPending && groupPauseMutation.variables
+      ? `${groupPauseMutation.variables.channelId}\u0000${groupPauseMutation.variables.group}`
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
     props.result?.generated_at ?? 0,
@@ -615,7 +642,8 @@ export function ChannelMonitorSmartScheduleBoard(
         summary.failedCount > 0 ||
         summary.probingCount > 0 ||
         summary.insufficientSampleCount > 0 ||
-        summary.prioritySamplingCount > 0) ? (
+        summary.prioritySamplingCount > 0 ||
+        summary.pausedCount > 0) ? (
         <section
           className='border-border flex flex-wrap items-center gap-2 border-b px-4 pb-3'
           aria-label='当前调度状态'
@@ -685,6 +713,18 @@ export function ChannelMonitorSmartScheduleBoard(
               }}
             >
               低优先级轮转 {summary.prioritySamplingCount}
+            </Badge>
+          ) : null}
+          {summary.pausedCount > 0 ? (
+            <Badge
+              render={<button type='button' />}
+              variant='warning'
+              className='cursor-pointer'
+              onClick={() => {
+                if (firstPausedPool) selectPool(firstPausedPool)
+              }}
+            >
+              流量已暂停 {summary.pausedCount}
             </Badge>
           ) : null}
         </section>
@@ -808,7 +848,8 @@ export function ChannelMonitorSmartScheduleBoard(
                     pool.summary.probingCount > 0 ||
                     pool.summary.insufficientSampleCount > 0 ||
                     pool.summary.prioritySamplingCount > 0 ||
-                    pool.summary.failedCount > 0
+                    pool.summary.failedCount > 0 ||
+                    pool.summary.pausedCount > 0
                   return (
                     <button
                       key={pool.summary.model}
@@ -866,10 +907,12 @@ export function ChannelMonitorSmartScheduleBoard(
                 samplesByModel={samplesByModel}
                 updateRouteKey={updateRouteKey}
                 manualRoutingKey={manualRoutingKey}
+                groupPauseKey={groupPauseKey}
                 updateDisabled={
                   updateMutation.isPending ||
                   primaryMutation.isPending ||
-                  manualRoutingMutation.isPending
+                  manualRoutingMutation.isPending ||
+                  groupPauseMutation.isPending
                 }
                 onParticipationChange={(route, checked) =>
                   updateMutation.mutate({
@@ -911,6 +954,13 @@ export function ChannelMonitorSmartScheduleBoard(
                     model: route.model,
                     priority,
                     weight,
+                  })
+                }
+                onGroupPauseChange={(route, durationMinutes) =>
+                  groupPauseMutation.mutate({
+                    channelId: route.channel_id,
+                    group: route.group,
+                    durationMinutes,
                   })
                 }
               />
