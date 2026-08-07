@@ -503,14 +503,21 @@ export function ChannelMonitor() {
     () => groupChannelMonitorSmartScheduleRoutesByChannel(smartScheduleRoutes),
     [smartScheduleRoutes]
   )
-  const smartScheduleDisplayOptions = useMemo(
-    () =>
-      getChannelMonitorSmartScheduleDisplayOptions(
-        effectiveSmartScheduleRoutes,
-        groupRatios
-      ),
-    [effectiveSmartScheduleRoutes, groupRatios]
-  )
+  const smartScheduleDisplayOptions = useMemo(() => {
+    const modelOrderByGroup = new Map<string, readonly string[]>()
+    for (const policy of settings.smart_schedule_group_policies) {
+      modelOrderByGroup.set(policy.group, policy.model_order ?? [])
+    }
+    return getChannelMonitorSmartScheduleDisplayOptions(
+      effectiveSmartScheduleRoutes,
+      groupRatios,
+      modelOrderByGroup
+    )
+  }, [
+    effectiveSmartScheduleRoutes,
+    groupRatios,
+    settings.smart_schedule_group_policies,
+  ])
   const smartScheduleDisplayGroups = useMemo(
     () =>
       [

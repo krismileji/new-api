@@ -23,6 +23,7 @@ import type {
   ChannelMonitorSmartScheduleRoute,
   ChannelMonitorSmartScheduleScoreDetails,
 } from '../types'
+import { compareChannelMonitorSmartScheduleModels } from './smart-schedule-model-order'
 
 export type ChannelMonitorSmartScheduleGroupSummary = {
   group: string
@@ -685,16 +686,29 @@ export function summarizeChannelMonitorSmartSchedulePools(
 
 export function getChannelMonitorSmartScheduleDisplayOptions(
   routes: readonly ChannelMonitorSmartScheduleRoute[],
-  groupRatios: Readonly<Record<string, number>> = EMPTY_GROUP_RATIOS
+  groupRatios: Readonly<Record<string, number>> = EMPTY_GROUP_RATIOS,
+  modelOrderByGroup?: ReadonlyMap<string, readonly string[]>
 ): ChannelMonitorSmartScheduleDisplayOption[] {
-  return summarizeChannelMonitorSmartSchedulePools(routes, groupRatios).map(
-    (pool) => ({
+  return summarizeChannelMonitorSmartSchedulePools(routes, groupRatios)
+    .sort((first, second) => {
+      const groupOrder = compareChannelMonitorSmartScheduleGroupsByRatio(
+        first.group,
+        second.group,
+        groupRatios
+      )
+      if (groupOrder !== 0) return groupOrder
+      return compareChannelMonitorSmartScheduleModels(
+        first.model,
+        second.model,
+        modelOrderByGroup?.get(first.group)
+      )
+    })
+    .map((pool) => ({
       value: JSON.stringify([pool.group, pool.model]),
       label: `${pool.group} / ${pool.model}`,
       group: pool.group,
       model: pool.model,
-    })
-  )
+    }))
 }
 
 export function getChannelMonitorSmartSchedulePoolStatus(pool: {

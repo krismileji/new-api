@@ -442,7 +442,7 @@ describe('smart schedule route placement', () => {
 })
 
 describe('smart schedule route ordering', () => {
-  test('deduplicates display options and orders them by group ratio then model', () => {
+  test('orders display options by group ratio then configured model order', () => {
     const options = getChannelMonitorSmartScheduleDisplayOptions(
       [
         createRoute(1, 'default', 'model-b', 100, 100),
@@ -451,7 +451,8 @@ describe('smart schedule route ordering', () => {
         createRoute(4, 'vip', 'model-a', 90, 50),
         createRoute(5, 'premium', 'model-a', 100, 100),
       ],
-      { vip: 0.5, default: 1, premium: 1.5 }
+      { vip: 0.5, default: 1, premium: 1.5 },
+      new Map([['vip', ['model-c', 'model-a']]])
     )
 
     assert.deepEqual(
@@ -461,8 +462,8 @@ describe('smart schedule route ordering', () => {
         label: option.label,
       })),
       [
-        { group: 'vip', model: 'model-a', label: 'vip / model-a' },
         { group: 'vip', model: 'model-c', label: 'vip / model-c' },
+        { group: 'vip', model: 'model-a', label: 'vip / model-a' },
         { group: 'default', model: 'model-b', label: 'default / model-b' },
         { group: 'premium', model: 'model-a', label: 'premium / model-a' },
       ]
