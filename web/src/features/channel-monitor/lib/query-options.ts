@@ -76,5 +76,7 @@ export function getChannelMonitorSmartScheduleQueryOptions(
     queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
     staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
     refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
   })
 }

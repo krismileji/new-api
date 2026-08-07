@@ -262,6 +262,9 @@ func FixChannelsAbilities(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if success > 0 {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -701,6 +704,9 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if len(channels) > 0 {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	recordManageAudit(c, "channel.create", map[string]interface{}{
 		"name":  addChannelRequest.Channel.Name,
 		"type":  addChannelRequest.Channel.Type,
@@ -736,6 +742,7 @@ func DeleteChannel(c *gin.Context) {
 	} else {
 		service.InvalidateProxyClient(channelProxy)
 	}
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.delete", map[string]interface{}{
 		"id":   id,
 		"name": channelName,
@@ -756,6 +763,7 @@ func DeleteDisabledChannel(c *gin.Context) {
 	model.InitChannelCache()
 	if rows > 0 {
 		service.ResetProxyClientCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.delete_disabled", map[string]interface{}{
 		"count": rows,
@@ -796,6 +804,7 @@ func DisableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.tag_disable", map[string]interface{}{
 		"tag": channelTag.Tag,
 	})
@@ -822,6 +831,7 @@ func EnableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.tag_enable", map[string]interface{}{
 		"tag": channelTag.Tag,
 	})
@@ -882,6 +892,11 @@ func EditTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	if (channelTag.Models != nil && *channelTag.Models != "") ||
+		(channelTag.Groups != nil && *channelTag.Groups != "") ||
+		channelTag.Priority != nil || channelTag.Weight != nil {
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
+	}
 	recordManageAudit(c, "channel.tag_edit", map[string]interface{}{
 		"tag": channelTag.Tag,
 	})
@@ -915,6 +930,7 @@ func DeleteChannelBatch(c *gin.Context) {
 	model.InitChannelCache()
 	if deletedCount > 0 {
 		service.ResetProxyClientCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.delete_batch", map[string]interface{}{
 		"count": deletedCount,
@@ -1089,7 +1105,10 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
-	if channel.Group != originChannel.Group || channel.Models != originChannel.Models {
+	if channel.Group != originChannel.Group ||
+		channel.Models != originChannel.Models ||
+		channel.GetPriority() != originChannel.GetPriority() ||
+		channel.GetWeight() != originChannel.GetWeight() {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	if proxyChanged {
@@ -1141,6 +1160,7 @@ func UpdateChannelStatus(c *gin.Context) {
 	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
 	if changed {
 		model.InitChannelCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.status_update", map[string]interface{}{
 		"id":      id,
@@ -1168,6 +1188,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	}
 	if changedCount > 0 {
 		model.InitChannelCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.status_update_batch", map[string]interface{}{
 		"count":  changedCount,
@@ -1453,6 +1474,7 @@ func CopyChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.copy", map[string]interface{}{
 		"sourceId": id,
 		"id":       clone.Id,

@@ -35,7 +35,7 @@ func requestChannelSmartScheduleRun(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	logger.LogWarn(ctx, fmt.Sprintf("经济调度输入已变化，但请求智能调度任务失败: %v", err))
+	logger.LogWarn(ctx, fmt.Sprintf("智能调度输入已变化，但请求调度任务失败: %v", err))
 	return err
 }
 

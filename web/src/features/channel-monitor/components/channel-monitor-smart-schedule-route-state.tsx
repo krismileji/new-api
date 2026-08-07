@@ -19,7 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { Badge } from '@/components/ui/badge'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 
-import { channelMonitorSmartScheduleRouteParticipates } from '../lib/smart-schedule-summary'
+import {
+  channelMonitorSmartScheduleRouteIsAvailable,
+  channelMonitorSmartScheduleRouteParticipates,
+} from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartScheduleRouteStateProps = {
@@ -31,6 +34,36 @@ export function ChannelMonitorSmartScheduleRouteState(
   props: ChannelMonitorSmartScheduleRouteStateProps
 ) {
   const route = props.route
+  let clearProtectionLabel: string | undefined
+  if (route.state.stability_state === 'degraded') {
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
+  } else if (route.state.stability_state === 'probing') {
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`
+  } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+  }
+  if (!channelMonitorSmartScheduleRouteIsAvailable(route)) {
+    const unavailableLabel =
+      route.channel_status !== CHANNEL_STATUS.ENABLED ? '渠道禁用' : '路由禁用'
+    if (clearProtectionLabel) {
+      return (
+        <Badge
+          render={<button type='button' />}
+          variant='destructive'
+          className='cursor-pointer'
+          title={clearProtectionLabel}
+          aria-label={clearProtectionLabel}
+          onClick={props.onProtectedStatusClick}
+        >
+          {unavailableLabel}
+        </Badge>
+      )
+    }
+    if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
+      return <Badge variant='destructive'>渠道禁用</Badge>
+    }
+    return <Badge variant='destructive'>路由禁用</Badge>
+  }
   if (route.state.stability_state === 'degraded') {
     return (
       <Badge
@@ -73,10 +106,6 @@ export function ChannelMonitorSmartScheduleRouteState(
   if (route.state.temporary_traffic_kind === 'priority_sampling') {
     return <Badge variant='warning'>低优先级轮转</Badge>
   }
-  if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
-    return <Badge variant='destructive'>渠道禁用</Badge>
-  }
-  if (!route.enabled) return <Badge variant='destructive'>路由禁用</Badge>
   if (!channelMonitorSmartScheduleRouteParticipates(route)) {
     return <Badge variant='outline'>未参与</Badge>
   }

@@ -100,4 +100,11 @@ describe('channel monitor query policy', () => {
     assert.equal(summary.refetchInterval, 60_000)
     assert.equal(metrics.refetchInterval, 60_000)
   })
+
+  test('revalidates schedule routes after returning from channel configuration', () => {
+    const options = getChannelMonitorSmartScheduleQueryOptions()
+
+    assert.equal(options.refetchOnMount, 'always')
+    assert.equal(options.refetchOnWindowFocus, 'always')
+  })
 })

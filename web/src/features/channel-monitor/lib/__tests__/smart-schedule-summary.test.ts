@@ -29,6 +29,8 @@ import {
   getChannelMonitorSmartScheduleDisplayOptions,
   getChannelMonitorSmartSchedulePoolStatus,
   placeChannelMonitorSmartScheduleRoutes,
+  summarizeChannelMonitorSmartScheduleChannel,
+  summarizeChannelMonitorSmartScheduleOverview,
   summarizeChannelMonitorSmartSchedulePools,
 } from '../smart-schedule-summary'
 
@@ -204,6 +206,40 @@ describe('smart schedule pool status', () => {
       getChannelMonitorSmartSchedulePoolStatus(fallbackOnlySummary),
       '保本兜底接管'
     )
+  })
+
+  test('ignores stale alerts from unavailable routes in every summary level', () => {
+    const channelDisabled = createRoute(1, 'vip', 'model-a', 100, 100)
+    channelDisabled.channel_status = 2
+    channelDisabled.state.stability_state = 'degraded'
+    channelDisabled.state.temporary_traffic_kind = 'insufficient_samples'
+    channelDisabled.state.last_schedule_status = 'failed'
+    const routeDisabled = createRoute(1, 'vip', 'model-b', 90, 80)
+    routeDisabled.enabled = false
+    routeDisabled.state.stability_state = 'probing'
+    routeDisabled.state.temporary_traffic_kind = 'priority_sampling'
+    routeDisabled.state.last_schedule_status = 'failed'
+    const routes = [channelDisabled, routeDisabled]
+
+    const channel = summarizeChannelMonitorSmartScheduleChannel(routes)
+    const pools = summarizeChannelMonitorSmartSchedulePools(routes)
+    const overview = summarizeChannelMonitorSmartScheduleOverview(routes)
+
+    requireSummaryHasNoActiveAlerts(channel)
+    assert.equal(channel.groups[0]?.degradedCount, 0)
+    assert.equal(channel.groups[0]?.probingCount, 0)
+    assert.equal(channel.groups[0]?.insufficientSampleCount, 0)
+    assert.equal(channel.groups[0]?.prioritySamplingCount, 0)
+    assert.equal(pools.length, 2)
+    for (const pool of pools) {
+      requireSummaryHasNoActiveAlerts(pool)
+      assert.equal(
+        getChannelMonitorSmartSchedulePoolStatus(pool),
+        '当前不可调度'
+      )
+    }
+    requireSummaryHasNoActiveAlerts(overview)
+    assert.equal(overview.healthyPoolCount, 0)
   })
 })
 
@@ -496,6 +532,7 @@ describe('smart schedule route ordering', () => {
     const standby = createRoute(6, 'vip', 'model-a', 110, 100)
     const unavailable = createRoute(7, 'vip', 'model-a', 130, 100)
     unavailable.channel_status = 2
+    unavailable.state.stability_state = 'degraded'
     const excluded = createRoute(8, 'vip', 'model-a', 100, 100)
     excluded.state.excluded = true
     const routes = [
@@ -567,3 +604,22 @@ describe('smart schedule route ordering', () => {
     )
   })
 })
+
+function requireSummaryHasNoActiveAlerts(
+  summary: {
+    activeCount: number
+    degradedCount: number
+    probingCount: number
+    insufficientSampleCount: number
+    prioritySamplingCount: number
+    failedCount: number
+  } | null
+): asserts summary {
+  assert.ok(summary)
+  assert.equal(summary.activeCount, 0)
+  assert.equal(summary.degradedCount, 0)
+  assert.equal(summary.probingCount, 0)
+  assert.equal(summary.insufficientSampleCount, 0)
+  assert.equal(summary.prioritySamplingCount, 0)
+  assert.equal(summary.failedCount, 0)
+}

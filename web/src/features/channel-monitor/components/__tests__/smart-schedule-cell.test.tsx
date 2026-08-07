@@ -215,14 +215,54 @@ describe('channel monitor smart schedule cell status', () => {
   })
 
   test('keeps participation configurable when the channel is disabled', () => {
-    const markup = renderCell([createRoute({ channel_status: 2 })])
+    const markup = renderCell([
+      createRoute({
+        channel_status: 2,
+        state: {
+          stability_state: 'degraded',
+          stability_until: 4_102_444_800,
+          temporary_traffic_kind: 'insufficient_samples',
+          temporary_traffic_target_percent: 3,
+          manual_primary_until: 4_102_444_800,
+        },
+      }),
+    ])
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''
 
     assert.ok(markup.includes('渠道禁用'))
+    assert.ok(markup.includes('查看当前调度状态详情：渠道禁用'))
+    assert.ok(
+      markup.includes(
+        'aria-label="解除 测试渠道 default model-a 的稳定性降级保护"'
+      )
+    )
+    assert.equal(markup.includes('>稳定性降级</'), false)
+    assert.equal(markup.includes('固定主渠道'), false)
+    assert.equal(markup.includes('探索流量 3%'), false)
     assert.equal(markup.includes('不可调度'), false)
     assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
     assert.ok(switchElement)
     assert.equal(switchElement.includes('aria-disabled="true"'), false)
+  })
+
+  test('shows only route disabled when an ability is unavailable', () => {
+    const markup = renderCell([
+      createRoute({
+        enabled: false,
+        state: {
+          stability_state: 'probing',
+          temporary_traffic_kind: 'priority_sampling',
+          temporary_traffic_target_percent: 1.5,
+        },
+      }),
+    ])
+
+    assert.ok(markup.includes('查看当前调度状态详情：路由禁用'))
+    assert.ok(
+      markup.includes('aria-label="解除 测试渠道 default model-a 的稳定性释放"')
+    )
+    assert.equal(markup.includes('>稳定性释放</'), false)
+    assert.equal(markup.includes('优先级采样 1.5%'), false)
   })
 
   test('shows placeholders when the selected group-model is absent', () => {

@@ -759,6 +759,7 @@ scanLoop:
 
 	if refreshNeeded {
 		refreshChannelRuntimeCache()
+		_ = requestChannelSmartScheduleRun(ctx)
 	}
 
 	summary := upstreamModelUpdateSummary{
@@ -844,6 +845,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 
 	if modelsChanged {
 		refreshChannelRuntimeCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 
 	recordManageAudit(c, "channel.upstream_apply", map[string]interface{}{
@@ -893,6 +895,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	}
 	if modelsChanged {
 		refreshChannelRuntimeCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1037,6 +1040,7 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 
 	if refreshNeeded {
 		refreshChannelRuntimeCache()
+		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 
 	recordManageAudit(c, "channel.upstream_apply_all", map[string]interface{}{

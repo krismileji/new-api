@@ -90,7 +90,7 @@ function createProtectedRoute(
 }
 
 describe('smart schedule route protection state', () => {
-  test('keeps stability degradation clickable when the route is unavailable and excluded', () => {
+  test('shows channel disabled instead of stale stability degradation', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSmartScheduleRouteState
         route={createProtectedRoute('degraded')}
@@ -98,31 +98,66 @@ describe('smart schedule route protection state', () => {
       />
     )
 
+    assert.ok(markup.includes('渠道禁用'))
+    assert.equal(markup.includes('>稳定性降级</'), false)
+    assert.ok(
+      markup.includes('aria-label="解除 测试渠道 vip model-a 的稳定性降级保护"')
+    )
+    assert.equal(markup.includes('未参与'), false)
+  })
+
+  test('shows route disabled instead of stale stability probing', () => {
+    const route = createProtectedRoute('probing')
+    route.channel_status = 1
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteState
+        route={route}
+        onProtectedStatusClick={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('路由禁用'))
+    assert.equal(markup.includes('>稳定性试放</'), false)
+    assert.ok(
+      markup.includes('aria-label="解除 测试渠道 vip model-a 的稳定性试放"')
+    )
+  })
+
+  test('keeps stability protection clickable while the route is available', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteState
+        route={route}
+        onProtectedStatusClick={() => {}}
+      />
+    )
+
     assert.ok(markup.includes('稳定性降级'))
-    assert.ok(markup.includes('解除 测试渠道 vip model-a 的稳定性降级保护'))
     assert.match(
       markup,
       /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的稳定性降级保护"[^>]*>/
     )
     assert.equal(markup.includes('渠道禁用'), false)
-    assert.equal(markup.includes('未参与'), false)
   })
 
-  test('keeps stability probing clickable when the route is unavailable and excluded', () => {
+  test('keeps exploration clearing available while the channel is disabled', () => {
+    const route = createProtectedRoute('degraded')
+    route.state.stability_state = ''
+    route.state.temporary_traffic_kind = 'insufficient_samples'
     const markup = renderToStaticMarkup(
       <ChannelMonitorSmartScheduleRouteState
-        route={createProtectedRoute('probing')}
+        route={route}
         onProtectedStatusClick={() => {}}
       />
     )
 
-    assert.ok(markup.includes('稳定性试放'))
-    assert.ok(markup.includes('解除 测试渠道 vip model-a 的稳定性试放'))
-    assert.match(
-      markup,
-      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的稳定性试放"[^>]*>/
+    assert.ok(markup.includes('渠道禁用'))
+    assert.equal(markup.includes('样本不足补量'), false)
+    assert.ok(
+      markup.includes('aria-label="解除 测试渠道 vip model-a 的探索流量"')
     )
-    assert.equal(markup.includes('路由禁用'), false)
   })
 
   test('keeps exploration traffic clickable while the route is available', () => {

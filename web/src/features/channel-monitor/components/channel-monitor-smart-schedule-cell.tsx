@@ -37,6 +37,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
+  channelMonitorSmartScheduleRouteIsAvailable,
   channelMonitorSmartScheduleRouteParticipates,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
@@ -90,19 +91,28 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   const now = Math.floor(Date.now() / 1000)
   const statuses: SmartScheduleStatusBadge[] = []
   const details: Array<{ label: string; value: string }> = []
+  const available = channelMonitorSmartScheduleRouteIsAvailable(route)
+  let unavailableClearProtectionLabel: string | undefined
+  if (route.state.stability_state === 'degraded') {
+    unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
+  } else if (route.state.stability_state === 'probing') {
+    unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`
+  } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+  }
   const stabilityRemaining = formatRemainingTime(
     Math.max(route.state.stability_until, route.state.runtime_protection_until),
     now
   )
 
-  if (route.state.stability_state === 'degraded') {
+  if (available && route.state.stability_state === 'degraded') {
     statuses.push({
       key: 'degraded',
       label: `稳定性降级${stabilityRemaining ? ` · ${stabilityRemaining}` : ''}`,
       variant: 'destructive',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`,
     })
-  } else if (route.state.stability_state === 'probing') {
+  } else if (available && route.state.stability_state === 'probing') {
     statuses.push({
       key: 'probing',
       label: '稳定性释放',
@@ -125,7 +135,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
         route.channel_id
       )) ||
       decision?.selection_reason.includes('保本兜底层接管') === true)
-  if (breakEvenFallback) {
+  if (available && breakEvenFallback) {
     let label = '保本兜底'
     if (fixedRemaining) label = '保本兜底 · 已手动固定'
     else if (breakEvenTakingOver) label = '保本兜底 · 接管中'
@@ -134,7 +144,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       label,
       variant: fixedRemaining || breakEvenTakingOver ? 'warning' : 'outline',
     })
-  } else if (fixedRemaining) {
+  } else if (available && fixedRemaining) {
     statuses.push({
       key: 'fixed',
       label: `固定主渠道 · ${fixedRemaining}`,
@@ -142,14 +152,20 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     })
   }
 
-  if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+  if (
+    available &&
+    route.state.temporary_traffic_kind === 'insufficient_samples'
+  ) {
     statuses.push({
       key: 'exploration',
       label: `探索流量 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
       variant: 'warning',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`,
     })
-  } else if (route.state.temporary_traffic_kind === 'priority_sampling') {
+  } else if (
+    available &&
+    route.state.temporary_traffic_kind === 'priority_sampling'
+  ) {
     statuses.push({
       key: 'priority-sampling',
       label: `优先级采样 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
@@ -162,12 +178,14 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       key: 'channel-disabled',
       label: '渠道禁用',
       variant: 'destructive',
+      clearProtectionLabel: unavailableClearProtectionLabel,
     })
   } else if (!route.enabled) {
     statuses.push({
       key: 'route-disabled',
       label: '路由禁用',
       variant: 'destructive',
+      clearProtectionLabel: unavailableClearProtectionLabel,
     })
   } else if (!channelMonitorSmartScheduleRouteParticipates(route)) {
     statuses.push({ key: 'excluded', label: '未参与调度', variant: 'outline' })

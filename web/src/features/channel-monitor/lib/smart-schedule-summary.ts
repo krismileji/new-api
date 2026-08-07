@@ -186,13 +186,18 @@ export function channelMonitorSmartScheduleRouteParticipates(
   return route.state.participation_set && !route.state.excluded
 }
 
+export function channelMonitorSmartScheduleRouteIsAvailable(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
+}
+
 export function channelMonitorSmartScheduleRouteIsActive(
   route: ChannelMonitorSmartScheduleRoute
 ) {
   return (
     channelMonitorSmartScheduleRouteParticipates(route) &&
-    route.enabled &&
-    route.channel_status === CHANNEL_STATUS.ENABLED
+    channelMonitorSmartScheduleRouteIsAvailable(route)
   )
 }
 
@@ -243,18 +248,31 @@ export function summarizeChannelMonitorSmartScheduleChannel(
 
   for (const route of routes) {
     const participates = channelMonitorSmartScheduleRouteParticipates(route)
+    const available = channelMonitorSmartScheduleRouteIsAvailable(route)
     const active = channelMonitorSmartScheduleRouteIsActive(route)
     if (participates) participatingCount += 1
     if (active) activeCount += 1
-    if (route.state.stability_state === 'degraded') degradedCount += 1
-    if (route.state.stability_state === 'probing') probingCount += 1
-    if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    if (available && route.state.stability_state === 'degraded') {
+      degradedCount += 1
+    }
+    if (available && route.state.stability_state === 'probing') {
+      probingCount += 1
+    }
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'insufficient_samples'
+    ) {
       insufficientSampleCount += 1
     }
-    if (route.state.temporary_traffic_kind === 'priority_sampling') {
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'priority_sampling'
+    ) {
       prioritySamplingCount += 1
     }
-    if (route.state.last_schedule_status === 'failed') failedCount += 1
+    if (available && route.state.last_schedule_status === 'failed') {
+      failedCount += 1
+    }
     lastScheduleTime = Math.max(
       lastScheduleTime,
       route.state.last_schedule_time
@@ -271,12 +289,20 @@ export function summarizeChannelMonitorSmartScheduleChannel(
         priorityMax: route.priority,
         weightMin: route.weight,
         weightMax: route.weight,
-        degradedCount: route.state.stability_state === 'degraded' ? 1 : 0,
-        probingCount: route.state.stability_state === 'probing' ? 1 : 0,
+        degradedCount:
+          available && route.state.stability_state === 'degraded' ? 1 : 0,
+        probingCount:
+          available && route.state.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
-          route.state.temporary_traffic_kind === 'insufficient_samples' ? 1 : 0,
+          available &&
+          route.state.temporary_traffic_kind === 'insufficient_samples'
+            ? 1
+            : 0,
         prioritySamplingCount:
-          route.state.temporary_traffic_kind === 'priority_sampling' ? 1 : 0,
+          available &&
+          route.state.temporary_traffic_kind === 'priority_sampling'
+            ? 1
+            : 0,
       })
       continue
     }
@@ -287,12 +313,22 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     existing.priorityMax = Math.max(existing.priorityMax, route.priority)
     existing.weightMin = Math.min(existing.weightMin, route.weight)
     existing.weightMax = Math.max(existing.weightMax, route.weight)
-    if (route.state.stability_state === 'degraded') existing.degradedCount += 1
-    if (route.state.stability_state === 'probing') existing.probingCount += 1
-    if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    if (available && route.state.stability_state === 'degraded') {
+      existing.degradedCount += 1
+    }
+    if (available && route.state.stability_state === 'probing') {
+      existing.probingCount += 1
+    }
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'insufficient_samples'
+    ) {
       existing.insufficientSampleCount += 1
     }
-    if (route.state.temporary_traffic_kind === 'priority_sampling') {
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'priority_sampling'
+    ) {
       existing.prioritySamplingCount += 1
     }
   }
@@ -355,7 +391,7 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
   }
 
   const routableRoutes = routes.filter(
-    (route) => route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
+    channelMonitorSmartScheduleRouteIsAvailable
   )
   const actualHighestPriority = routableRoutes.reduce<number | null>(
     (current, route) =>
@@ -439,8 +475,7 @@ export function placeChannelMonitorSmartScheduleRoutes(
     const candidates = poolRoutes.filter(
       (route) =>
         actualTopLayerChannelIdSet.has(route.channel_id) &&
-        route.enabled &&
-        route.channel_status === CHANNEL_STATUS.ENABLED
+        channelMonitorSmartScheduleRouteIsAvailable(route)
     )
     const scoringWinnerChannelId = snapshot.decision?.raw_winner_channel_id ?? 0
     const totalWeight = candidates.reduce(
@@ -460,8 +495,7 @@ export function placeChannelMonitorSmartScheduleRoutes(
     for (const route of poolRoutes) {
       let role: ChannelMonitorSmartScheduleRouteRole = 'backup'
       let estimatedShare: number | null = null
-      const routable =
-        route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
+      const routable = channelMonitorSmartScheduleRouteIsAvailable(route)
       const isActualTopLayer = actualTopLayerChannelIdSet.has(route.channel_id)
       if (!routable) {
         role = 'unavailable'
@@ -494,6 +528,7 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   route: ChannelMonitorSmartScheduleRoute,
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 ): ChannelMonitorSmartScheduleRouteDisplayStatus {
+  if (!channelMonitorSmartScheduleRouteIsAvailable(route)) return 'unavailable'
   if (route.state.stability_state === 'degraded') return 'degraded'
   if (route.state.stability_state === 'probing') return 'probing'
   if (route.state.temporary_traffic_kind === 'insufficient_samples') {
@@ -589,6 +624,7 @@ export function summarizeChannelMonitorSmartSchedulePools(
     if (poolRoutes) poolRoutes.push(route)
     else routesByPool.set(key, [route])
     const participates = channelMonitorSmartScheduleRouteParticipates(route)
+    const available = channelMonitorSmartScheduleRouteIsAvailable(route)
     const active = channelMonitorSmartScheduleRouteIsActive(route)
     const existing = poolMap.get(key)
     if (!existing) {
@@ -602,13 +638,22 @@ export function summarizeChannelMonitorSmartSchedulePools(
         priorityMax: route.priority,
         weightMin: route.weight,
         weightMax: route.weight,
-        degradedCount: route.state.stability_state === 'degraded' ? 1 : 0,
-        probingCount: route.state.stability_state === 'probing' ? 1 : 0,
+        degradedCount:
+          available && route.state.stability_state === 'degraded' ? 1 : 0,
+        probingCount:
+          available && route.state.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
-          route.state.temporary_traffic_kind === 'insufficient_samples' ? 1 : 0,
+          available &&
+          route.state.temporary_traffic_kind === 'insufficient_samples'
+            ? 1
+            : 0,
         prioritySamplingCount:
-          route.state.temporary_traffic_kind === 'priority_sampling' ? 1 : 0,
-        failedCount: route.state.last_schedule_status === 'failed' ? 1 : 0,
+          available &&
+          route.state.temporary_traffic_kind === 'priority_sampling'
+            ? 1
+            : 0,
+        failedCount:
+          available && route.state.last_schedule_status === 'failed' ? 1 : 0,
         breakEvenFallbackCount:
           route.economic_role === 'break_even_fallback' ? 1 : 0,
         breakEvenFallbackFixedCount:
@@ -633,15 +678,27 @@ export function summarizeChannelMonitorSmartSchedulePools(
     existing.priorityMax = Math.max(existing.priorityMax, route.priority)
     existing.weightMin = Math.min(existing.weightMin, route.weight)
     existing.weightMax = Math.max(existing.weightMax, route.weight)
-    if (route.state.stability_state === 'degraded') existing.degradedCount += 1
-    if (route.state.stability_state === 'probing') existing.probingCount += 1
-    if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    if (available && route.state.stability_state === 'degraded') {
+      existing.degradedCount += 1
+    }
+    if (available && route.state.stability_state === 'probing') {
+      existing.probingCount += 1
+    }
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'insufficient_samples'
+    ) {
       existing.insufficientSampleCount += 1
     }
-    if (route.state.temporary_traffic_kind === 'priority_sampling') {
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'priority_sampling'
+    ) {
       existing.prioritySamplingCount += 1
     }
-    if (route.state.last_schedule_status === 'failed') existing.failedCount += 1
+    if (available && route.state.last_schedule_status === 'failed') {
+      existing.failedCount += 1
+    }
     if (route.economic_role === 'break_even_fallback') {
       existing.breakEvenFallbackCount += 1
       if (route.state.manual_primary_until > 0) {
@@ -753,16 +810,29 @@ export function summarizeChannelMonitorSmartScheduleOverview(
     if (channelMonitorSmartScheduleRouteParticipates(route)) {
       participatingCount += 1
     }
+    const available = channelMonitorSmartScheduleRouteIsAvailable(route)
     if (channelMonitorSmartScheduleRouteIsActive(route)) activeCount += 1
-    if (route.state.stability_state === 'degraded') degradedCount += 1
-    if (route.state.stability_state === 'probing') probingCount += 1
-    if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+    if (available && route.state.stability_state === 'degraded') {
+      degradedCount += 1
+    }
+    if (available && route.state.stability_state === 'probing') {
+      probingCount += 1
+    }
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'insufficient_samples'
+    ) {
       insufficientSampleCount += 1
     }
-    if (route.state.temporary_traffic_kind === 'priority_sampling') {
+    if (
+      available &&
+      route.state.temporary_traffic_kind === 'priority_sampling'
+    ) {
       prioritySamplingCount += 1
     }
-    if (route.state.last_schedule_status === 'failed') failedCount += 1
+    if (available && route.state.last_schedule_status === 'failed') {
+      failedCount += 1
+    }
   }
   const pools = summarizeChannelMonitorSmartSchedulePools(routes)
   return {
