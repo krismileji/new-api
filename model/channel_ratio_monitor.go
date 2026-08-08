@@ -14,6 +14,8 @@ import (
 const (
 	ChannelRatioFetchStatusSucceeded          = "succeeded"
 	ChannelRatioFetchStatusFailed             = "failed"
+	ChannelRatioFailureAlertRatio             = "ratio"
+	ChannelRatioFailureAlertBalance           = "balance"
 	ChannelSmartScheduleStatusSucceeded       = "succeeded"
 	ChannelSmartScheduleStatusSkipped         = "skipped"
 	ChannelSmartScheduleStatusFailed          = "failed"
@@ -39,10 +41,12 @@ type ChannelRatioMonitor struct {
 	LastFetchError              string   `json:"last_fetch_error" gorm:"type:varchar(255)"`
 	LastFetchTime               int64    `json:"last_fetch_time" gorm:"bigint;index"`
 	ConsecutiveFailures         int      `json:"consecutive_failures"`
+	FetchFailureAlertNotified   bool     `json:"-"`
 	UpstreamBalance             *float64 `json:"upstream_balance"`
 	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
 	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
 	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
+	BalanceFailureAlertNotified bool     `json:"-"`
 	BalanceWarningThreshold     *float64 `json:"balance_warning_threshold"`
 	BalanceAutoDisableThreshold *float64 `json:"balance_auto_disable_threshold"`
 	BalanceAlertNotified        bool     `json:"balance_alert_notified"`
@@ -252,6 +256,7 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		}
 		if ratioRequestChanged {
 			monitor.ConsecutiveFailures = 0
+			monitor.FetchFailureAlertNotified = false
 			if monitor.LastFetchStatus == ChannelRatioFetchStatusFailed {
 				monitor.LastFetchStatus = ""
 				monitor.LastFetchError = ""
@@ -261,6 +266,7 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		if balanceRequestChanged {
 			monitor.LastBalanceError = ""
 			monitor.BalanceConsecutiveFailures = 0
+			monitor.BalanceFailureAlertNotified = false
 		}
 		if upstreamAccountChanged || balanceWarningThresholdChanged || balanceSyncChanged {
 			monitor.BalanceAlertNotified = false
@@ -392,6 +398,7 @@ func recordChannelRatioMonitorBalance(channelId int, balance *float64, fetchErro
 			monitor.LastBalanceTime = common.GetTimestamp()
 			monitor.LastBalanceError = ""
 			monitor.BalanceConsecutiveFailures = 0
+			monitor.BalanceFailureAlertNotified = false
 			if monitor.BalanceWarningThreshold == nil || value >= *monitor.BalanceWarningThreshold {
 				monitor.BalanceAlertNotified = false
 			}
@@ -451,6 +458,76 @@ func MarkChannelRatioMonitorBalanceAlertsNotified(guards []ChannelRatioMonitorBa
 			if err := tx.Model(&ChannelRatioMonitor{}).
 				Where("id = ?", monitor.Id).
 				Update("balance_alert_notified", true).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+type ChannelRatioMonitorFailureAlertGuard struct {
+	ChannelId        int
+	UpstreamRevision int64
+	FailureType      string
+	FailureCount     int
+}
+
+// MarkChannelRatioMonitorFailureAlertsNotified marks final sync failures after
+// the notification email has been sent. Revision and counter guards prevent a
+// stale task from acknowledging a newer configuration or failure cycle.
+func MarkChannelRatioMonitorFailureAlertsNotified(guards []ChannelRatioMonitorFailureAlertGuard) error {
+	for _, guard := range guards {
+		if guard.ChannelId <= 0 || guard.FailureCount <= 0 ||
+			(guard.FailureType != ChannelRatioFailureAlertRatio && guard.FailureType != ChannelRatioFailureAlertBalance) {
+			return errors.New("上游同步失败通知快照无效")
+		}
+	}
+	if len(guards) == 0 {
+		return nil
+	}
+	orderedGuards := append([]ChannelRatioMonitorFailureAlertGuard(nil), guards...)
+	sort.Slice(orderedGuards, func(i, j int) bool {
+		if orderedGuards[i].ChannelId != orderedGuards[j].ChannelId {
+			return orderedGuards[i].ChannelId < orderedGuards[j].ChannelId
+		}
+		return orderedGuards[i].FailureType < orderedGuards[j].FailureType
+	})
+	return DB.Transaction(func(tx *gorm.DB) error {
+		for _, guard := range orderedGuards {
+			var monitor ChannelRatioMonitor
+			findErr := lockForUpdate(tx).
+				Where("channel_id = ?", guard.ChannelId).
+				First(&monitor).Error
+			if errors.Is(findErr, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if findErr != nil {
+				return findErr
+			}
+			if monitor.UpstreamRevision != guard.UpstreamRevision {
+				continue
+			}
+
+			field := ""
+			switch guard.FailureType {
+			case ChannelRatioFailureAlertRatio:
+				if monitor.FetchFailureAlertNotified ||
+					monitor.LastFetchStatus != ChannelRatioFetchStatusFailed ||
+					monitor.ConsecutiveFailures < guard.FailureCount {
+					continue
+				}
+				field = "fetch_failure_alert_notified"
+			case ChannelRatioFailureAlertBalance:
+				if monitor.BalanceFailureAlertNotified ||
+					strings.TrimSpace(monitor.LastBalanceError) == "" ||
+					monitor.BalanceConsecutiveFailures < guard.FailureCount {
+					continue
+				}
+				field = "balance_failure_alert_notified"
+			}
+			if err := tx.Model(&ChannelRatioMonitor{}).
+				Where("id = ?", monitor.Id).
+				Update(field, true).Error; err != nil {
 				return err
 			}
 		}
@@ -525,6 +602,7 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 				monitor.LastFetchError = ""
 				monitor.LastFetchTime = now
 				monitor.ConsecutiveFailures = 0
+				monitor.FetchFailureAlertNotified = false
 			}
 			if err := economicRevision.bump(tx); err != nil {
 				return err
@@ -561,6 +639,7 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 			monitor.LastFetchError = ""
 			monitor.LastFetchTime = now
 			monitor.ConsecutiveFailures = 0
+			monitor.FetchFailureAlertNotified = false
 		}
 		if economicRatioChanged {
 			if err := economicRevision.bump(tx); err != nil {

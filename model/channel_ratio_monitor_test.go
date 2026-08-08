@@ -147,24 +147,77 @@ func TestChannelRatioMonitorBalanceKeepsLastValueWhenRefreshFails(t *testing.T) 
 	assert.Zero(t, monitor.BalanceConsecutiveFailures)
 }
 
+func TestChannelRatioMonitorFailureAlertsMarkOnceAndResetOnRecovery(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 10)
+
+	lowBalance := 5.0
+	threshold := 10.0
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId:                   10,
+		Ratio:                       1,
+		UpdatedTime:                 1,
+		UpstreamRevision:            4,
+		LastFetchStatus:             ChannelRatioFetchStatusFailed,
+		LastFetchError:              "倍率上游超时",
+		ConsecutiveFailures:         2,
+		UpstreamBalance:             &lowBalance,
+		LastBalanceError:            "余额上游超时",
+		BalanceConsecutiveFailures:  2,
+		BalanceWarningThreshold:     &threshold,
+		FetchFailureAlertNotified:   false,
+		BalanceFailureAlertNotified: false,
+	}).Error)
+
+	require.NoError(t, MarkChannelRatioMonitorFailureAlertsNotified([]ChannelRatioMonitorFailureAlertGuard{
+		{ChannelId: 10, UpstreamRevision: 4, FailureType: ChannelRatioFailureAlertRatio, FailureCount: 2},
+		{ChannelId: 10, UpstreamRevision: 4, FailureType: ChannelRatioFailureAlertBalance, FailureCount: 2},
+	}))
+	monitor, err := GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.True(t, monitor.FetchFailureAlertNotified)
+	assert.True(t, monitor.BalanceFailureAlertNotified)
+
+	require.NoError(t, MarkChannelRatioMonitorFailureAlertsNotified([]ChannelRatioMonitorFailureAlertGuard{
+		{ChannelId: 10, UpstreamRevision: 3, FailureType: ChannelRatioFailureAlertRatio, FailureCount: 2},
+	}))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.True(t, monitor.FetchFailureAlertNotified)
+
+	monitor, _, _, err = UpdateChannelRatioMonitorFromUpstream(10, 1.1, "恢复", 0, "系统自动更新")
+	require.NoError(t, err)
+	assert.False(t, monitor.FetchFailureAlertNotified)
+	assert.Zero(t, monitor.ConsecutiveFailures)
+
+	recoveredBalance := 12.0
+	require.NoError(t, RecordChannelRatioMonitorBalance(10, &recoveredBalance, ""))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.False(t, monitor.BalanceFailureAlertNotified)
+	assert.Zero(t, monitor.BalanceConsecutiveFailures)
+}
+
 func TestChannelRatioUpstreamConfigChangeResetsRelatedFetchFailures(t *testing.T) {
 	resetChannelRatioMonitorTables(t)
 	seedChannelRatioMonitorTestChannels(t, 10)
 
 	require.NoError(t, DB.Create(&ChannelRatioMonitor{
-		ChannelId:                  10,
-		UpstreamType:               "new_api",
-		UpstreamBaseURL:            "https://upstream.example",
-		UpstreamGroup:              "default",
-		UpstreamAuthType:           "user",
-		UpstreamUserId:             7,
-		UpstreamAccessToken:        "old-token",
-		LastFetchStatus:            ChannelRatioFetchStatusFailed,
-		LastFetchError:             "倍率失败",
-		LastFetchTime:              100,
-		ConsecutiveFailures:        2,
-		LastBalanceError:           "余额失败",
-		BalanceConsecutiveFailures: 2,
+		ChannelId:                   10,
+		UpstreamType:                "new_api",
+		UpstreamBaseURL:             "https://upstream.example",
+		UpstreamGroup:               "default",
+		UpstreamAuthType:            "user",
+		UpstreamUserId:              7,
+		UpstreamAccessToken:         "old-token",
+		LastFetchStatus:             ChannelRatioFetchStatusFailed,
+		LastFetchError:              "倍率失败",
+		LastFetchTime:               100,
+		ConsecutiveFailures:         2,
+		FetchFailureAlertNotified:   true,
+		LastBalanceError:            "余额失败",
+		BalanceConsecutiveFailures:  2,
+		BalanceFailureAlertNotified: true,
 	}).Error)
 
 	monitor, err := SaveChannelRatioUpstreamConfig(
@@ -182,8 +235,10 @@ func TestChannelRatioUpstreamConfigChangeResetsRelatedFetchFailures(t *testing.T
 	assert.Empty(t, monitor.LastFetchStatus)
 	assert.Empty(t, monitor.LastFetchError)
 	assert.Zero(t, monitor.LastFetchTime)
+	assert.False(t, monitor.FetchFailureAlertNotified)
 	assert.Equal(t, 2, monitor.BalanceConsecutiveFailures)
 	assert.Equal(t, "余额失败", monitor.LastBalanceError)
+	assert.True(t, monitor.BalanceFailureAlertNotified)
 
 	monitor, err = SaveChannelRatioUpstreamConfig(
 		10,
@@ -198,6 +253,7 @@ func TestChannelRatioUpstreamConfigChangeResetsRelatedFetchFailures(t *testing.T
 	require.NoError(t, err)
 	assert.Zero(t, monitor.BalanceConsecutiveFailures)
 	assert.Empty(t, monitor.LastBalanceError)
+	assert.False(t, monitor.BalanceFailureAlertNotified)
 }
 
 func TestChannelRatioMonitorRejectsResultsFromStaleUpstreamConfig(t *testing.T) {

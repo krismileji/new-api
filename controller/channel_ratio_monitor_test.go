@@ -528,8 +528,6 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	policy.JitterSlowThresholdSeconds = nil
-	policy.JitterAbsoluteToleranceSeconds = nil
 	policy.BurstFailureWindowSeconds = nil
 	policy.ConsecutiveFailureThreshold = nil
 	policy.BurstFailureThreshold = nil
@@ -537,9 +535,6 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
 	require.NoError(t, err)
 	require.Len(t, normalized, 1)
-	require.NotNil(t, normalized[0].JitterSlowThresholdSeconds)
-	assert.Equal(t, 10.0, *normalized[0].JitterSlowThresholdSeconds)
-	assert.Nil(t, normalized[0].JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, normalized[0].BurstFailureWindowSeconds)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *normalized[0].BurstFailureWindowSeconds)
 	require.NotNil(t, normalized[0].ConsecutiveFailureThreshold)
@@ -550,25 +545,16 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *normalized[0].RecoverySuccessThreshold)
 }
 
-func TestNormalizeChannelSmartScheduleGroupPolicyMigratesLegacyJitterTolerance(t *testing.T) {
+func TestNormalizeChannelSmartScheduleGroupPolicyRequiresCurrentJitterThreshold(t *testing.T) {
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
-	legacyThreshold := 12.5
 	policy.JitterSlowThresholdSeconds = nil
-	policy.JitterAbsoluteToleranceSeconds = &legacyThreshold
 
-	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
-	require.NoError(t, err)
-	require.Len(t, normalized, 1)
-	require.NotNil(t, normalized[0].JitterSlowThresholdSeconds)
-	assert.Equal(t, legacyThreshold, *normalized[0].JitterSlowThresholdSeconds)
-	assert.Nil(t, normalized[0].JitterAbsoluteToleranceSeconds)
-
-	serialized := channelSmartScheduleTestGroupPoliciesJSON(t, normalized...)
-	assert.Contains(t, serialized, `"jitter_slow_threshold_seconds":12.5`)
-	assert.NotContains(t, serialized, "jitter_absolute_tolerance_seconds")
+	_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "必须完整配置")
 }
 
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
@@ -799,16 +785,24 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"stability_enabled": false, "scoring": validScoring,
 				"apply_mode":  channelMonitorSmartScheduleApplyWeight,
 				"models":      []string{" gpt-4o-mini ", "gpt-4o-mini"},
-				"min_samples": 8, "degrade_stability_score": 90, "recovery_stability_score": 95,
+				"min_samples": 8, "recovery_stability_score": 95,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"jitter_enabled": true, "jitter_tolerance_percent": 5,
-				"jitter_absolute_tolerance_seconds": 12, "jitter_baseline_minutes": 60,
-				"cooldown_minutes":            45,
-				"sample_mode":                 channelMonitorSmartScheduleSampleOff,
-				"exploration_traffic_percent": 3, "probe_interval_minutes": 10,
+				"jitter_slow_threshold_seconds": 12,
+				"cooldown_minutes":              45,
+				"sample_mode":                   channelMonitorSmartScheduleSampleOff,
+				"exploration_traffic_percent":   3, "probe_interval_minutes": 10,
 				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
 				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
 				"priority_sampling_min_percent": 0.5,
+				"adaptive_sampling_enabled":     false, "adaptive_sampling_base_percent": 3,
+				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
+				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
+				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
+				"adaptive_sampling_enter_rounds": 2, "adaptive_sampling_recover_rounds": 3,
+				"adaptive_sampling_exploration_lease_minutes": 10,
+				"adaptive_sampling_switch_confirm_rounds":   2,
+				"adaptive_sampling_min_comparable_channels": 2,
 			},
 			{
 				"group": "default", "strategy": channelMonitorSmartScheduleStrategySmart,
@@ -816,7 +810,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"apply_mode":  channelMonitorSmartScheduleApplyPriorityWeight,
 				"models":      []string{"claude-3-5-sonnet", "gpt-4o-mini"},
 				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
-				"min_samples": 8, "degrade_stability_score": 95, "recovery_stability_score": 85,
+				"min_samples": 8, "recovery_stability_score": 85,
 				"fast_failure_penalty_percent": 40, "fast_failure_seconds": 1, "slow_failure_seconds": 10,
 				"fast_failure_same_channel_retry_count":    2,
 				"fast_failure_same_channel_retry_delay_ms": 750,
@@ -830,6 +824,14 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
 				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
 				"priority_sampling_min_percent": 0.5,
+				"adaptive_sampling_enabled":     true, "adaptive_sampling_base_percent": 3,
+				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
+				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
+				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
+				"adaptive_sampling_enter_rounds": 2, "adaptive_sampling_recover_rounds": 3,
+				"adaptive_sampling_exploration_lease_minutes": 10,
+				"adaptive_sampling_switch_confirm_rounds":   2,
+				"adaptive_sampling_min_comparable_channels": 2,
 			},
 		},
 		"smart_schedule_interval_minutes":            10,
@@ -882,8 +884,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, []string{"gpt-4o-mini", "claude-3-5-sonnet"}, defaultGroupPolicy.ModelOrder)
 	require.NotNil(t, defaultGroupPolicy.MinSamples)
 	assert.Equal(t, 8, *defaultGroupPolicy.MinSamples)
-	require.NotNil(t, defaultGroupPolicy.DegradeStabilityScore)
-	assert.Equal(t, 95.0, *defaultGroupPolicy.DegradeStabilityScore)
 	require.NotNil(t, defaultGroupPolicy.RecoveryStabilityScore)
 	assert.Equal(t, 85.0, *defaultGroupPolicy.RecoveryStabilityScore)
 	require.NotNil(t, defaultGroupPolicy.FastFailurePenaltyPercent)
@@ -910,7 +910,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 5.0, *defaultGroupPolicy.JitterTolerancePercent)
 	require.NotNil(t, defaultGroupPolicy.JitterSlowThresholdSeconds)
 	assert.Equal(t, 10.0, *defaultGroupPolicy.JitterSlowThresholdSeconds)
-	assert.Nil(t, defaultGroupPolicy.JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, defaultGroupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *defaultGroupPolicy.CooldownMinutes)
 
@@ -928,8 +927,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, []string{"gpt-4o-mini"}, *groupPolicy.Models)
 	require.NotNil(t, groupPolicy.MinSamples)
 	assert.Equal(t, 8, *groupPolicy.MinSamples)
-	require.NotNil(t, groupPolicy.DegradeStabilityScore)
-	assert.Equal(t, 90.0, *groupPolicy.DegradeStabilityScore)
 	require.NotNil(t, groupPolicy.RecoveryStabilityScore)
 	assert.Equal(t, 95.0, *groupPolicy.RecoveryStabilityScore)
 	require.NotNil(t, groupPolicy.FastFailureSameChannelRetryCount)
@@ -946,7 +943,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *groupPolicy.RecoverySuccessThreshold)
 	require.NotNil(t, groupPolicy.JitterSlowThresholdSeconds)
 	assert.Equal(t, 12.0, *groupPolicy.JitterSlowThresholdSeconds)
-	assert.Nil(t, groupPolicy.JitterAbsoluteToleranceSeconds)
 	require.NotNil(t, groupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *groupPolicy.CooldownMinutes)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
@@ -996,6 +992,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":12`)
 	assert.NotContains(t, option.Value, "jitter_absolute_tolerance_seconds")
 	assert.NotContains(t, option.Value, "jitter_baseline_minutes")
+	assert.NotContains(t, option.Value, "degrade_stability_score")
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
 	assert.Equal(t, "10", option.Value)
@@ -3931,9 +3928,10 @@ func TestRunChannelRatioMonitorTaskRefreshesBalanceAndDeduplicatesLowBalanceEmai
 func TestRunChannelRatioMonitorTaskEmailsUpdateFailures(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorAutoUpdateRetryCountOption: "0",
-		channelMonitorEmailNotificationOption:    "true",
-		channelMonitorNotificationEmailOption:    "alerts@example.com",
+		channelMonitorAutoUpdateRetryCountOption:              "0",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "1",
+		channelMonitorEmailNotificationOption:                 "true",
+		channelMonitorNotificationEmailOption:                 "alerts@example.com",
 	})
 	disableChannelMonitorSSRFProtection(t)
 
@@ -3976,13 +3974,88 @@ func TestRunChannelRatioMonitorTaskEmailsUpdateFailures(t *testing.T) {
 	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
 }
 
+func TestRunChannelRatioMonitorTaskEmailsOnlyAtFailureLimitAndRetriesUnacknowledgedAlert(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorAutoUpdateRetryCountOption:              "0",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "2",
+		channelMonitorEmailNotificationOption:                 "true",
+		channelMonitorNotificationEmailOption:                 "alerts@example.com",
+		channelMonitorEmailNotificationTypesOption:            `["upstream_sync_failed"]`,
+	})
+	disableChannelMonitorSSRFProtection(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Name: "failing", Key: "test-key", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic,
+		UpstreamBalanceSyncDisabled: true,
+	}).Error)
+
+	emailCalls := 0
+	emailSendError := errors.New("smtp unavailable")
+	sendEmail := func(subject string, receiver string, content string) error {
+		emailCalls++
+		assert.Contains(t, subject, "1 项更新失败")
+		assert.Equal(t, "alerts@example.com", receiver)
+		assert.Contains(t, content, "上游同步失败")
+		return emailSendError
+	}
+
+	summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Failed)
+	assert.Empty(t, summary.EmailStatus)
+	assert.Zero(t, emailCalls)
+	monitor, err := model.GetChannelRatioMonitor(1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, monitor.ConsecutiveFailures)
+	assert.False(t, monitor.FetchFailureAlertNotified)
+
+	summary, err = runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Failed)
+	assert.Equal(t, "failed", summary.EmailStatus)
+	assert.Equal(t, 1, emailCalls)
+	monitor, err = model.GetChannelRatioMonitor(1)
+	require.NoError(t, err)
+	assert.Equal(t, 2, monitor.ConsecutiveFailures)
+	assert.False(t, monitor.FetchFailureAlertNotified)
+
+	emailSendError = nil
+	summary, err = runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
+	require.NoError(t, err)
+	assert.Zero(t, summary.Failed)
+	assert.Equal(t, 1, summary.Skipped)
+	assert.Equal(t, "sent", summary.EmailStatus)
+	assert.Equal(t, 2, emailCalls)
+	monitor, err = model.GetChannelRatioMonitor(1)
+	require.NoError(t, err)
+	assert.True(t, monitor.FetchFailureAlertNotified)
+
+	summary, err = runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
+	require.NoError(t, err)
+	assert.Zero(t, summary.Failed)
+	assert.Equal(t, 1, summary.Skipped)
+	assert.Empty(t, summary.EmailStatus)
+	assert.Equal(t, 2, emailCalls)
+}
+
 func TestRunChannelRatioMonitorTaskAutoDisablesChannelAfterUpdateFailure(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorAutoUpdateRetryCountOption:       "0",
-		channelMonitorAutoDisableOnUpdateFailureOption: "true",
-		channelMonitorEmailNotificationOption:          "true",
-		channelMonitorNotificationEmailOption:          "alerts@example.com",
+		channelMonitorAutoUpdateRetryCountOption:              "0",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "1",
+		channelMonitorAutoDisableOnUpdateFailureOption:        "true",
+		channelMonitorEmailNotificationOption:                 "true",
+		channelMonitorNotificationEmailOption:                 "alerts@example.com",
 	})
 	disableChannelMonitorSSRFProtection(t)
 
