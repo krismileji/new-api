@@ -25,7 +25,7 @@ func channelSmartScheduleTestGroupPolicy(
 	applyMode string,
 	models []string,
 	minSamples int,
-	degradeStabilityScore float64,
+	recoveryStabilityScore float64,
 	cooldownMinutes int,
 ) channelSmartScheduleGroupPolicy {
 	scoring := defaultChannelSmartScheduleScoring()
@@ -39,7 +39,21 @@ func channelSmartScheduleTestGroupPolicy(
 	prioritySamplingBasePercent := 3.0
 	prioritySamplingDecayPercent := 70.0
 	prioritySamplingMinPercent := 0.5
-	recoveryStabilityScore := math.Min(degradeStabilityScore+5, 100)
+	adaptiveSamplingEnabled := applyMode == channelMonitorSmartScheduleApplyPriorityWeight
+	adaptiveSamplingBasePercent := 3.0
+	adaptiveSamplingMaxPercent := 30.0
+	adaptiveSamplingPrimaryMinPercent := 70.0
+	adaptiveSamplingErrorWarningPercent := 5.0
+	adaptiveSamplingErrorCriticalPercent := 15.0
+	adaptiveSamplingFirstTokenWarningSeconds := 5.0
+	adaptiveSamplingFirstTokenCriticalSeconds := 10.0
+	adaptiveSamplingWindowSeconds := 600
+	adaptiveSamplingEnterRequestPercent := 10.0
+	adaptiveSamplingRecoverRequestPercent := 95.0
+	adaptiveSamplingExplorationLeaseMinutes := 10
+	adaptiveSamplingSwitchConfirmRequestPercent := 95.0
+	adaptiveSamplingMinComparableChannels := 2
+	recoveryStabilityScore = math.Min(recoveryStabilityScore+5, 100)
 	fastFailurePenaltyPercent := 40.0
 	fastFailureSeconds := 1.0
 	fastFailureSameChannelRetryCount := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
@@ -56,38 +70,138 @@ func channelSmartScheduleTestGroupPolicy(
 		models = []string{}
 	}
 	return channelSmartScheduleGroupPolicy{
-		Group:                            group,
-		Strategy:                         &strategy,
-		StabilityEnabled:                 &stabilityEnabled,
-		Scoring:                          &scoring,
-		ApplyMode:                        &applyMode,
-		Models:                           &models,
-		MinSamples:                       &minSamples,
-		DegradeStabilityScore:            &degradeStabilityScore,
-		RecoveryStabilityScore:           &recoveryStabilityScore,
-		FastFailurePenaltyPercent:        &fastFailurePenaltyPercent,
-		FastFailureSeconds:               &fastFailureSeconds,
-		FastFailureSameChannelRetryCount: &fastFailureSameChannelRetryCount,
-		FastFailureRetryDelayMs:          &fastFailureRetryDelayMs,
-		SlowFailureSeconds:               &slowFailureSeconds,
-		BurstFailureWindowSeconds:        &burstFailureWindowSeconds,
-		ConsecutiveFailureThreshold:      &consecutiveFailureThreshold,
-		BurstFailureThreshold:            &burstFailureThreshold,
-		RecoverySuccessThreshold:         &recoverySuccessThreshold,
-		JitterEnabled:                    &jitterEnabled,
-		JitterTolerancePercent:           &jitterTolerancePercent,
-		JitterSlowThresholdSeconds:       &jitterSlowThresholdSeconds,
-		CooldownMinutes:                  &cooldownMinutes,
-		SampleMode:                       &sampleMode,
-		ExplorationTrafficPercent:        &explorationTrafficPercent,
-		ExplorationMaxPromptTokens:       &explorationMaxPromptTokens,
-		StabilityReleaseMaxPromptTokens:  &stabilityReleaseMaxPromptTokens,
-		ProbeIntervalMinutes:             &probeIntervalMinutes,
-		PrioritySamplingEnabled:          &prioritySamplingEnabled,
-		PrioritySamplingIntervalMinutes:  &prioritySamplingIntervalMinutes,
-		PrioritySamplingBasePercent:      &prioritySamplingBasePercent,
-		PrioritySamplingDecayPercent:     &prioritySamplingDecayPercent,
-		PrioritySamplingMinPercent:       &prioritySamplingMinPercent,
+		Group:                                       group,
+		Strategy:                                    &strategy,
+		StabilityEnabled:                            &stabilityEnabled,
+		Scoring:                                     &scoring,
+		ApplyMode:                                   &applyMode,
+		Models:                                      &models,
+		MinSamples:                                  &minSamples,
+		RecoveryStabilityScore:                      &recoveryStabilityScore,
+		FastFailurePenaltyPercent:                   &fastFailurePenaltyPercent,
+		FastFailureSeconds:                          &fastFailureSeconds,
+		FastFailureSameChannelRetryCount:            &fastFailureSameChannelRetryCount,
+		FastFailureRetryDelayMs:                     &fastFailureRetryDelayMs,
+		SlowFailureSeconds:                          &slowFailureSeconds,
+		BurstFailureWindowSeconds:                   &burstFailureWindowSeconds,
+		ConsecutiveFailureThreshold:                 &consecutiveFailureThreshold,
+		BurstFailureThreshold:                       &burstFailureThreshold,
+		RecoverySuccessThreshold:                    &recoverySuccessThreshold,
+		JitterEnabled:                               &jitterEnabled,
+		JitterTolerancePercent:                      &jitterTolerancePercent,
+		JitterSlowThresholdSeconds:                  &jitterSlowThresholdSeconds,
+		CooldownMinutes:                             &cooldownMinutes,
+		SampleMode:                                  &sampleMode,
+		ExplorationTrafficPercent:                   &explorationTrafficPercent,
+		ExplorationMaxPromptTokens:                  &explorationMaxPromptTokens,
+		StabilityReleaseMaxPromptTokens:             &stabilityReleaseMaxPromptTokens,
+		ProbeIntervalMinutes:                        &probeIntervalMinutes,
+		PrioritySamplingEnabled:                     &prioritySamplingEnabled,
+		PrioritySamplingIntervalMinutes:             &prioritySamplingIntervalMinutes,
+		PrioritySamplingBasePercent:                 &prioritySamplingBasePercent,
+		PrioritySamplingDecayPercent:                &prioritySamplingDecayPercent,
+		PrioritySamplingMinPercent:                  &prioritySamplingMinPercent,
+		AdaptiveSamplingEnabled:                     &adaptiveSamplingEnabled,
+		AdaptiveSamplingBasePercent:                 &adaptiveSamplingBasePercent,
+		AdaptiveSamplingMaxPercent:                  &adaptiveSamplingMaxPercent,
+		AdaptiveSamplingPrimaryMinPercent:           &adaptiveSamplingPrimaryMinPercent,
+		AdaptiveSamplingErrorWarningPercent:         &adaptiveSamplingErrorWarningPercent,
+		AdaptiveSamplingErrorCriticalPercent:        &adaptiveSamplingErrorCriticalPercent,
+		AdaptiveSamplingFirstTokenWarningSeconds:    &adaptiveSamplingFirstTokenWarningSeconds,
+		AdaptiveSamplingFirstTokenCriticalSeconds:   &adaptiveSamplingFirstTokenCriticalSeconds,
+		AdaptiveSamplingWindowSeconds:               &adaptiveSamplingWindowSeconds,
+		AdaptiveSamplingEnterRequestPercent:         &adaptiveSamplingEnterRequestPercent,
+		AdaptiveSamplingRecoverRequestPercent:       &adaptiveSamplingRecoverRequestPercent,
+		AdaptiveSamplingExplorationLeaseMinutes:     &adaptiveSamplingExplorationLeaseMinutes,
+		AdaptiveSamplingSwitchConfirmRequestPercent: &adaptiveSamplingSwitchConfirmRequestPercent,
+		AdaptiveSamplingMinComparableChannels:       &adaptiveSamplingMinComparableChannels,
+	}
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyRequiresAdaptiveSamplingControls(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.AdaptiveSamplingMaxPercent = nil
+
+	_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "必须完整配置")
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyValidatesAdaptiveSamplingCombinations(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*channelSmartScheduleGroupPolicy)
+		message string
+	}{
+		{
+			name: "base exceeds maximum",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				maximum := 2.0
+				base := 3.0
+				policy.AdaptiveSamplingMaxPercent = &maximum
+				policy.AdaptiveSamplingBasePercent = &base
+			},
+			message: "基础预算不能大于最大预算",
+		},
+		{
+			name: "primary floor conflicts with maximum",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				value := 80.0
+				policy.AdaptiveSamplingPrimaryMinPercent = &value
+			},
+			message: "最大预算与主渠道最低流量冲突",
+		},
+		{
+			name: "weight mode cannot enable adaptive sampling",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				mode := channelMonitorSmartScheduleApplyWeight
+				policy.ApplyMode = &mode
+			},
+			message: "仅支持按优先级和权重调整",
+		},
+		{
+			name: "adaptive window is bounded",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				value := maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds + 1
+				policy.AdaptiveSamplingWindowSeconds = &value
+			},
+			message: "统计窗口必须在 60 到 3600 秒之间",
+		},
+		{
+			name: "adaptive percentages require hysteresis",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				enter := 20.0
+				recover := 80.0
+				policy.AdaptiveSamplingEnterRequestPercent = &enter
+				policy.AdaptiveSamplingRecoverRequestPercent = &recover
+			},
+			message: "进入和恢复请求占比必须保留滞回区间",
+		},
+		{
+			name: "switch confirmation cannot be below recovery",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				value := 90.0
+				policy.AdaptiveSamplingSwitchConfirmRequestPercent = &value
+			},
+			message: "切换确认请求占比不能低于恢复请求占比",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategySmart, true,
+				channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+			)
+			test.prepare(&policy)
+
+			_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.message)
+		})
 	}
 }
 
@@ -126,6 +240,52 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsAndValidatesFastFailure
 		_, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{invalidPolicy})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "快速失败同渠道重试延迟")
+	}
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyRequiresAdaptiveWindowPercentages(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*channelSmartScheduleGroupPolicy)
+	}{
+		{
+			name: "window seconds",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				policy.AdaptiveSamplingWindowSeconds = nil
+			},
+		},
+		{
+			name: "enter request percent",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				policy.AdaptiveSamplingEnterRequestPercent = nil
+			},
+		},
+		{
+			name: "recover request percent",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				policy.AdaptiveSamplingRecoverRequestPercent = nil
+			},
+		},
+		{
+			name: "switch confirm request percent",
+			prepare: func(policy *channelSmartScheduleGroupPolicy) {
+				policy.AdaptiveSamplingSwitchConfirmRequestPercent = nil
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategySmart, true,
+				channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+			)
+			test.prepare(&policy)
+
+			_, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "必须完整配置")
+		})
 	}
 }
 
@@ -1331,7 +1491,7 @@ func TestPlanChannelSmartScheduleRequiresConfiguredSamples(t *testing.T) {
 	}, channelMonitorSmartScheduleStrategyFirstToken, false, channelMonitorSmartScheduleApplyWeight, 5, false)
 
 	assert.Empty(t, plan.Items)
-	assert.Equal(t, "同优先级可调渠道不足 2 个", plan.Skipped[1])
+	assert.Equal(t, "可比渠道不足（1/2），暂不产生相对评分", plan.Skipped[1])
 	assert.Equal(t, "首字样本不足（4/5）", plan.Skipped[2])
 }
 
@@ -2067,7 +2227,7 @@ func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExp
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 61, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(3), *ability.Priority)
+	assert.Equal(t, priorityHigh, *ability.Priority)
 	assert.Equal(t, uint(300), ability.Weight)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(
@@ -2082,8 +2242,8 @@ func TestRunChannelSmartSchedulePromotesInsufficientSamplesIntoTopPriorityForExp
 	ability = model.Ability{}
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 63, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, int64(1), *ability.Priority)
-	assert.Equal(t, uint(1000), ability.Weight)
+	assert.Equal(t, priorityLow, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
 	state = model.ChannelSmartScheduleRouteState{}
 	require.NoError(t, db.Where(
 		"channel_id = ? AND group_name = ? AND model_name = ?", 63, "vip", "model-a",
@@ -2153,6 +2313,95 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 	assert.Empty(t, state.TemporaryTrafficKind)
 	assert.Zero(t, state.TemporaryTrafficSince)
 	assert.NotNil(t, state.LastScheduleScore)
+}
+
+func TestRunChannelSmartScheduleUsesPressureBudgetToSampleUnknownBackup(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleOff
+	policy.SampleMode = &sampleMode
+	prioritySamplingEnabled := false
+	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption: "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+			policy,
+		),
+	})
+
+	primaryPriority := int64(100)
+	backupPriority := int64(20)
+	weight := uint(100)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 66, Name: "degrading-primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &primaryPriority, Weight: &weight},
+		{Id: 67, Name: "unknown-backup", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &backupPriority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 66, Group: "vip", Model: "model-a", Enabled: true, Priority: &primaryPriority, Weight: weight},
+		{ChannelId: 67, Group: "vip", Model: "model-a", Enabled: true, Priority: &backupPriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 66, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 67, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	completedMinute := time.Now().Unix()
+	completedMinute = completedMinute - completedMinute%60 - 60
+	logs := make([]model.Log, 5)
+	for index := range logs {
+		logs[index] = model.Log{
+			ChannelId: 66, Group: "vip", ModelName: "model-a",
+			CreatedAt: completedMinute + int64(index+1), Type: model.LogTypeConsume,
+			IsStream: true, Other: `{"frt":10000}`,
+		}
+	}
+	require.NoError(t, db.Create(&logs).Error)
+	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
+
+	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+
+	var primaryAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 66, Group: "vip", Model: "model-a",
+	}).First(&primaryAbility).Error)
+	require.NotNil(t, primaryAbility.Priority)
+	assert.Equal(t, primaryPriority, *primaryAbility.Priority)
+	assert.Equal(t, uint(7000), primaryAbility.Weight)
+
+	var backupAbility model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 67, Group: "vip", Model: "model-a",
+	}).First(&backupAbility).Error)
+	require.NotNil(t, backupAbility.Priority)
+	assert.Equal(t, primaryPriority, *backupAbility.Priority)
+	assert.Equal(t, uint(3000), backupAbility.Weight)
+
+	var primaryState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 66, "vip", "model-a",
+	).First(&primaryState).Error)
+	assert.Equal(t, channelSmartScheduleHealthHighRisk, primaryState.AdaptiveHealthState)
+	assert.InDelta(t, 1, primaryState.AdaptiveHealthPressure, 1e-9)
+
+	var backupState model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 67, "vip", "model-a",
+	).First(&backupState).Error)
+	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficAdaptive, backupState.TemporaryTrafficKind)
+	assert.InDelta(t, 30, backupState.TemporaryTrafficTargetPercent, 1e-9)
+	assert.Contains(t, backupState.LastScheduleError, "主渠道健康应急采样")
 }
 
 func TestRunChannelSmartSchedulePrioritySamplingUsesRankDecayAndFairRotation(t *testing.T) {

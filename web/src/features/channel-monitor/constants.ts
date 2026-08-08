@@ -44,7 +44,6 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   jitterTolerancePercent: 5,
   jitterSlowThresholdSeconds: 10,
   minSamples: 5,
-  degradeStabilityScore: 90,
   recoveryStabilityScore: 95,
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
@@ -65,6 +64,20 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   prioritySamplingBasePercent: 3,
   prioritySamplingDecayPercent: 70,
   prioritySamplingMinPercent: 0.5,
+  adaptiveSamplingEnabled: true,
+  adaptiveSamplingBasePercent: 3,
+  adaptiveSamplingMaxPercent: 30,
+  adaptiveSamplingPrimaryMinPercent: 70,
+  adaptiveSamplingErrorWarningPercent: 5,
+  adaptiveSamplingErrorCriticalPercent: 15,
+  adaptiveSamplingFirstTokenWarningSeconds: 5,
+  adaptiveSamplingFirstTokenCriticalSeconds: 10,
+  adaptiveSamplingWindowSeconds: 600,
+  adaptiveSamplingEnterRequestPercent: 10,
+  adaptiveSamplingRecoverRequestPercent: 95,
+  adaptiveSamplingExplorationLeaseMinutes: 10,
+  adaptiveSamplingSwitchConfirmRequestPercent: 95,
+  adaptiveSamplingMinComparableChannels: 2,
 } as const
 
 export const CHANNEL_MONITOR_STATUS_LABELS: Partial<Record<number, string>> = {

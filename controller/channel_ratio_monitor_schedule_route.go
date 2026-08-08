@@ -64,6 +64,7 @@ func channelSmartScheduleSetPerformanceMetric(
 		[]model.ChannelMonitorDurationBucket(nil), metric.FirstTokenDurationBuckets...,
 	)
 	performance.AverageTPS = metric.AverageTPS
+	performance.LastUsedTime = metric.LastUsedTime
 	return performance
 }
 
@@ -130,6 +131,20 @@ func channelSmartScheduleSetStabilityMetric(
 		[]model.ChannelMonitorFailureDurationBucket(nil), metric.RetryFailureDurationBuckets...,
 	)
 	return performance
+}
+
+func channelSmartScheduleMergeAdaptiveHealthMetric(
+	production model.ChannelSmartScheduleAdaptiveHealthMetric,
+	samples model.ChannelSmartScheduleAdaptiveHealthMetric,
+) model.ChannelSmartScheduleAdaptiveHealthMetric {
+	production.RequestCount += samples.RequestCount
+	production.FailureCount += samples.FailureCount
+	production.SlowRequestCount += samples.SlowRequestCount
+	production.HealthyRequestCount += samples.HealthyRequestCount
+	production.FirstTokenCount += samples.FirstTokenCount
+	production.LatencyPressure += samples.LatencyPressure
+	production.LastUsedTime = max(production.LastUsedTime, samples.LastUsedTime)
+	return production
 }
 
 func channelSmartScheduleClonePerformance(
@@ -286,7 +301,10 @@ func runChannelSmartScheduleByRouteOnce(
 		needsPerformance = needsPerformance || policy.needsPerformance()
 		needsJitterPerformance = needsJitterPerformance ||
 			(policy.StabilityEnabled && policy.JitterEnabled)
-		needsStability = needsStability || policy.StabilityEnabled
+		// Adaptive sampling uses the same rolling stability aggregates to
+		// measure non-rate-limit error pressure, even when hard stability
+		// protection is disabled for this policy.
+		needsStability = needsStability || policy.StabilityEnabled || policy.AdaptiveSamplingEnabled
 	}
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
@@ -346,6 +364,39 @@ func runChannelSmartScheduleByRouteOnce(
 	if err != nil {
 		return result, err
 	}
+	adaptiveHealthByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleAdaptiveHealthMetric)
+	if logStabilityAvailable {
+		adaptiveWindows := make([]model.ChannelSmartScheduleAdaptiveHealthMetricWindow, 0)
+		adaptiveWindowRoutes := make([]channelSmartScheduleRouteKey, 0)
+		for _, route := range selectedRoutes {
+			policy := policyByGroup[route.Group]
+			if !policy.AdaptiveSamplingEnabled {
+				continue
+			}
+			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+			adaptiveWindows = append(adaptiveWindows, model.ChannelSmartScheduleAdaptiveHealthMetricWindow{
+				ChannelId:        route.ChannelId,
+				ModelName:        route.Model,
+				StartTimestamp:   now - int64(policy.AdaptiveSamplingWindowSeconds),
+				ObservationSince: route.SharedSamples.ObservationSince,
+				WarningSeconds:   policy.AdaptiveSamplingFirstTokenWarningSeconds,
+				CriticalSeconds:  policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			})
+			adaptiveWindowRoutes = append(adaptiveWindowRoutes, key)
+		}
+		adaptiveMetrics, metricErr := model.GetChannelSmartScheduleAdaptiveHealthMetrics(
+			ctx, adaptiveWindows, now+1,
+		)
+		if metricErr != nil {
+			return result, metricErr
+		}
+		for index, metric := range adaptiveMetrics {
+			if index >= len(adaptiveWindowRoutes) {
+				break
+			}
+			adaptiveHealthByRoute[adaptiveWindowRoutes[index]] = metric.Metric
+		}
+	}
 
 	poolCandidates := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	poolRoutes := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRoute)
@@ -354,6 +405,7 @@ func runChannelSmartScheduleByRouteOnce(
 	statusUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(selectedRoutes))
 	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
 	scoreDetailsByRoute := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleScoreDetails, len(selectedRoutes))
+	healthByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleHealthUpdate, len(selectedRoutes))
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
 	economicsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleEconomics, len(selectedRoutes))
 	breakEvenPool := make(map[channelSmartScheduleRoutePoolKey]bool)
@@ -607,10 +659,30 @@ func runChannelSmartScheduleByRouteOnce(
 			)
 			channelSmartScheduleApplyJitterMeasurement(performance, policy)
 		}
+		adaptiveHealthMetric := adaptiveHealthByRoute[key]
+		adaptiveHealthMetric = channelSmartScheduleMergeAdaptiveHealthMetric(
+			adaptiveHealthMetric,
+			sampleMetricCache.adaptiveHealthMetrics(
+				modelKey,
+				now-int64(policy.AdaptiveSamplingWindowSeconds),
+				policy.AdaptiveSamplingFirstTokenWarningSeconds,
+				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			),
+		)
+		health := channelSmartScheduleEvaluateHealth(route.State, adaptiveHealthMetric, policy)
+		healthByRoute[key] = health
 		candidate := channelSmartScheduleCandidate{
 			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
 			StabilityAvailable: routeStabilityAvailable, ManualPrimary: manualPrimary,
-			Ratio: economics.CostRatio, CostRatio: economics.CostRatio,
+			HealthState: health.State, HealthPressure: health.Pressure,
+			HealthErrorPressure: health.ErrorPressure, HealthLatencyPressure: health.LatencyPressure,
+			HealthEvidence:              health.Evidence,
+			HealthSampleCount:           health.SampleCount,
+			HealthRiskRequestPercent:    health.RiskRequestPercent,
+			HealthHealthyRequestPercent: health.HealthyRequestPercent,
+			HealthWindowSeconds:         health.WindowSeconds,
+			MinComparableChannels:       policy.AdaptiveSamplingMinComparableChannels,
+			Ratio:                       economics.CostRatio, CostRatio: economics.CostRatio,
 			GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,
 			EconomicRole: economics.EconomicRole,
 		}
@@ -626,6 +698,9 @@ func runChannelSmartScheduleByRouteOnce(
 			candidate.Stability = performance.Stability
 			candidate.StabilitySampleCount = performance.StabilitySampleCount
 		}
+		candidate.SampleDebt = channelSmartScheduleCandidateSampleDebt(
+			candidate, policy.Strategy, policy.StabilityEnabled, policy.Scoring, policy.MinSamples,
+		)
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
 			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
 			policy.MinSamples, forceReset, policy.Scoring,
@@ -830,6 +905,9 @@ func runChannelSmartScheduleByRouteOnce(
 			candidates, policy.Strategy, policy.StabilityEnabled,
 			policy.ApplyMode, policy.MinSamples, forceReset, policy.Scoring,
 		)
+		if policy.AdaptiveSamplingEnabled {
+			channelSmartScheduleApplySwitchConfirmation(&plan, candidates, policy, forceReset)
+		}
 		result.Planned += len(plan.Items)
 		candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(candidates))
 		for _, candidate := range candidates {
@@ -846,6 +924,7 @@ func runChannelSmartScheduleByRouteOnce(
 				key, model.ChannelSmartScheduleStatusSkipped, reason, nil,
 				candidate.CurrentPriority, candidate.CurrentWeight, now, stabilityUpdates[key],
 			)
+			channelSmartScheduleAttachHealthUpdate(&update, healthByRoute[key])
 			statusUpdates = append(statusUpdates, update)
 		}
 
@@ -868,7 +947,69 @@ func runChannelSmartScheduleByRouteOnce(
 					explorationIndexes = append(explorationIndexes, index)
 				}
 			}
-			if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic && len(explorationIndexes) > 0 {
+			primaryCandidate := candidateByChannel[plan.ActualPrimaryId]
+			adaptiveBudget := channelSmartScheduleAdaptiveSamplingBudget(
+				primaryCandidate, candidates, policy,
+			)
+			primaryHasSoftHealthPressure := primaryCandidate.HealthState != channelSmartScheduleHealthHealthy &&
+				primaryCandidate.HealthState != channelSmartScheduleHealthUnknown &&
+				primaryCandidate.HealthState != ""
+			if adaptiveBudget > 0 && len(explorationIndexes) > 0 &&
+				policy.AdaptiveSamplingEnabled && primaryHasSoftHealthPressure {
+				adaptiveIndexes := append([]int(nil), explorationIndexes...)
+				sort.SliceStable(adaptiveIndexes, func(i int, j int) bool {
+					left := plan.Items[adaptiveIndexes[i]]
+					right := plan.Items[adaptiveIndexes[j]]
+					leftCandidate := candidateByChannel[left.ChannelId]
+					rightCandidate := candidateByChannel[right.ChannelId]
+					leftState := routeByKey[routeKeyByPoolChannel[poolKey][left.ChannelId]].State
+					rightState := routeByKey[routeKeyByPoolChannel[poolKey][right.ChannelId]].State
+					leaseRank := func(state model.ChannelSmartScheduleRouteState) int {
+						if state.TemporaryTrafficKind != model.ChannelSmartScheduleTemporaryTrafficAdaptive {
+							return 1
+						}
+						leaseSeconds := int64(max(policy.AdaptiveSamplingExplorationLeaseMinutes, 1) * 60)
+						if state.TemporaryTrafficSince <= 0 || now-state.TemporaryTrafficSince >= leaseSeconds {
+							return 0
+						}
+						return 2
+					}
+					if leftLeaseRank, rightLeaseRank := leaseRank(leftState), leaseRank(rightState); leftLeaseRank != rightLeaseRank {
+						return leftLeaseRank > rightLeaseRank
+					}
+					if leftRank, rightRank := channelSmartScheduleAdaptiveCandidateRank(leftCandidate), channelSmartScheduleAdaptiveCandidateRank(rightCandidate); leftRank != rightRank {
+						return leftRank < rightRank
+					}
+					if leftCandidate.SampleDebt != rightCandidate.SampleDebt {
+						return leftCandidate.SampleDebt > rightCandidate.SampleDebt
+					}
+					if leftState.LastPrioritySampleTime != rightState.LastPrioritySampleTime {
+						return leftState.LastPrioritySampleTime < rightState.LastPrioritySampleTime
+					}
+					if left.BaseRank != right.BaseRank {
+						return left.BaseRank < right.BaseRank
+					}
+					return left.ChannelId < right.ChannelId
+				})
+				temporaryChannelId = plan.Items[adaptiveIndexes[0]].ChannelId
+				temporaryKind = model.ChannelSmartScheduleTemporaryTrafficAdaptive
+				temporaryPercent = adaptiveBudget
+				selectedCandidate := candidateByChannel[temporaryChannelId]
+				if selectedCandidate.HealthEvidence &&
+					selectedCandidate.HealthState != channelSmartScheduleHealthHealthy {
+					// Unknown backups need the pressure budget to collect evidence.
+					// A backup already showing pressure is limited to a probe-sized share.
+					basePercent := max(policy.AdaptiveSamplingBasePercent, 0)
+					if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic {
+						basePercent = min(basePercent, max(policy.ExplorationTrafficPercent, 0))
+					}
+					temporaryPercent = min(temporaryPercent, basePercent)
+				}
+				if temporaryPercent <= channelMonitorRatioEpsilon {
+					temporaryChannelId = 0
+					temporaryKind = ""
+				}
+			} else if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic && len(explorationIndexes) > 0 {
 				sort.SliceStable(explorationIndexes, func(i int, j int) bool {
 					left := plan.Items[explorationIndexes[i]]
 					right := plan.Items[explorationIndexes[j]]
@@ -1069,6 +1210,7 @@ func runChannelSmartScheduleByRouteOnce(
 				key, model.ChannelSmartScheduleStatusSucceeded, message, score,
 				item.TargetPriority, item.TargetWeight, now, stabilityUpdates[key],
 			)
+			channelSmartScheduleAttachHealthUpdate(&update, healthByRoute[key])
 			if policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight {
 				state := routeByKey[key].State
 				temporaryKind := item.ScoreDetails.Decision.TemporaryTrafficKind
@@ -1079,13 +1221,16 @@ func runChannelSmartScheduleByRouteOnce(
 					if state.TemporaryTrafficKind != temporaryKind || temporarySince <= 0 {
 						temporarySince = now
 					}
-					if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling &&
+					if (temporaryKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling ||
+						temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive) &&
 						state.TemporaryTrafficKind != temporaryKind {
 						lastPrioritySampleTime = now
 					}
 					temporaryDescription := "样本不足探索"
 					if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling {
 						temporaryDescription = "低优先级轮转"
+					} else if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
+						temporaryDescription = "主渠道健康应急采样"
 					}
 					message = fmt.Sprintf("%s，临时提升到最高优先级并分配 %.2f%% 目标流量",
 						temporaryDescription, item.ScoreDetails.Decision.TemporaryTrafficTargetPercent)
@@ -1100,7 +1245,8 @@ func runChannelSmartScheduleByRouteOnce(
 					StabilityReleaseMaxPromptTokens: 0,
 					LastPrioritySampleTime:          lastPrioritySampleTime,
 				}
-				if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficExploration {
+				if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
+					temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
 					update.RoutingSnapshot.ExplorationMaxPromptTokens = policy.ExplorationMaxPromptTokens
 				}
 			}
@@ -1343,6 +1489,13 @@ func channelSmartScheduleRouteResultChangesTrafficState(
 			snapshot.StabilityReleaseMaxPromptTokens != state.StabilityReleaseMaxPromptTokens) {
 		return true
 	}
+	if update.AdaptiveHealthSet &&
+		(update.AdaptiveHealthState != state.AdaptiveHealthState ||
+			math.Abs(update.AdaptiveHealthPressure-state.AdaptiveHealthPressure) > channelMonitorRatioEpsilon ||
+			update.AdaptiveHealthSampleCount != state.AdaptiveHealthSampleCount ||
+			update.AdaptiveHealthLastSampleAt != state.AdaptiveHealthLastSampleAt) {
+		return true
+	}
 	return false
 }
 
@@ -1378,6 +1531,20 @@ func channelSmartScheduleRouteStatusUpdate(
 		Status: status, Error: message, Score: score, Priority: priority,
 		Weight: weight, Time: updatedTime, Stability: stability,
 	}
+}
+
+func channelSmartScheduleAttachHealthUpdate(
+	update *model.ChannelSmartScheduleRouteResultUpdate,
+	health channelSmartScheduleHealthUpdate,
+) {
+	if update == nil {
+		return
+	}
+	update.AdaptiveHealthSet = true
+	update.AdaptiveHealthState = health.State
+	update.AdaptiveHealthPressure = health.Pressure
+	update.AdaptiveHealthSampleCount = health.SampleCount
+	update.AdaptiveHealthLastSampleAt = health.LastSampleAt
 }
 
 func channelSmartScheduleRouteRestoreTarget(state model.ChannelSmartScheduleRouteState) (int64, uint) {

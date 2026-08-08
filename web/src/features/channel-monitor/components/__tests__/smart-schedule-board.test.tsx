@@ -34,6 +34,23 @@ import { ChannelMonitorSmartScheduleBoard } from '../channel-monitor-smart-sched
 
 const noop = () => {}
 
+const ADAPTIVE_SAMPLING_POLICY = {
+  adaptive_sampling_enabled: true,
+  adaptive_sampling_base_percent: 3,
+  adaptive_sampling_max_percent: 30,
+  adaptive_sampling_primary_min_percent: 70,
+  adaptive_sampling_error_warning_percent: 5,
+  adaptive_sampling_error_critical_percent: 15,
+  adaptive_sampling_first_token_warning_seconds: 5,
+  adaptive_sampling_first_token_critical_seconds: 10,
+  adaptive_sampling_window_seconds: 600,
+  adaptive_sampling_enter_request_percent: 10,
+  adaptive_sampling_recover_request_percent: 95,
+  adaptive_sampling_exploration_lease_minutes: 10,
+  adaptive_sampling_switch_confirm_request_percent: 95,
+  adaptive_sampling_min_comparable_channels: 2,
+} as const
+
 function createChannel(
   id: number,
   name: string,
@@ -356,6 +373,7 @@ function renderBoard(
         groupPolicies={
           options.groupPolicies ?? [
             {
+              ...ADAPTIVE_SAMPLING_POLICY,
               group: 'vip',
               strategy: 'smart',
               stability_enabled: true,
@@ -381,7 +399,6 @@ function renderBoard(
               models: [],
               model_order: [],
               min_samples: 5,
-              degrade_stability_score: 90,
               recovery_stability_score: 95,
               fast_failure_penalty_percent: 40,
               fast_failure_seconds: 1,
@@ -398,6 +415,7 @@ function renderBoard(
               priority_sampling_min_percent: 0.5,
             },
             {
+              ...ADAPTIVE_SAMPLING_POLICY,
               group: 'default',
               strategy: 'ratio',
               stability_enabled: false,
@@ -420,10 +438,10 @@ function renderBoard(
                 },
               },
               apply_mode: 'weight',
+              adaptive_sampling_enabled: false,
               models: ['model-standard'],
               model_order: [],
               min_samples: 5,
-              degrade_stability_score: 90,
               recovery_stability_score: 95,
               fast_failure_penalty_percent: 40,
               fast_failure_seconds: 1,
@@ -638,6 +656,7 @@ describe('channel monitor smart schedule board', () => {
       createRoute(14, { channel_name: 'Zeta 渠道', model: 'model-zeta' }),
     ]
     const groupPolicy = {
+      ...ADAPTIVE_SAMPLING_POLICY,
       group: 'vip',
       strategy: 'smart',
       stability_enabled: true,
@@ -663,7 +682,6 @@ describe('channel monitor smart schedule board', () => {
       models: [],
       model_order: ['model-zeta', 'model-beta'],
       min_samples: 5,
-      degrade_stability_score: 90,
       recovery_stability_score: 95,
       fast_failure_penalty_percent: 40,
       fast_failure_seconds: 1,

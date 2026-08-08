@@ -51,6 +51,7 @@ type channelSmartSchedulePerformance struct {
 	FirstTokenP95Ms                      *float64
 	FirstTokenDurationBuckets            []model.ChannelMonitorDurationBucket
 	AverageTPS                           *float64
+	LastUsedTime                         int64
 	StabilitySampleCount                 int64
 	Stability                            *float64
 	StabilitySuccessCount                int64
@@ -68,25 +69,36 @@ type channelSmartSchedulePerformance struct {
 }
 
 type channelSmartScheduleCandidate struct {
-	ChannelId             int
-	SampleGroupCount      int
-	CurrentPriority       int64
-	CurrentWeight         uint
-	Ratio                 *float64
-	CostRatio             *float64
-	GroupRatio            *float64
-	GrossMargin           *float64
-	EconomicRole          string
-	FirstTokenMs          *float64
-	TPS                   *float64
-	FirstTokenSampleCount int
-	TPSSampleCount        int
-	StabilitySampleCount  int64
-	Stability             *float64
-	StabilityAvailable    bool
-	ManualPrimary         bool
-	PreviousBaseRank      int
-	ManualTargetPriority  int64
+	ChannelId                   int
+	SampleGroupCount            int
+	CurrentPriority             int64
+	CurrentWeight               uint
+	Ratio                       *float64
+	CostRatio                   *float64
+	GroupRatio                  *float64
+	GrossMargin                 *float64
+	EconomicRole                string
+	FirstTokenMs                *float64
+	TPS                         *float64
+	FirstTokenSampleCount       int
+	TPSSampleCount              int
+	StabilitySampleCount        int64
+	Stability                   *float64
+	StabilityAvailable          bool
+	ManualPrimary               bool
+	PreviousBaseRank            int
+	ManualTargetPriority        int64
+	HealthState                 string
+	HealthPressure              float64
+	HealthErrorPressure         float64
+	HealthLatencyPressure       float64
+	HealthEvidence              bool
+	HealthSampleCount           int64
+	SampleDebt                  int
+	MinComparableChannels       int
+	HealthRiskRequestPercent    float64
+	HealthHealthyRequestPercent float64
+	HealthWindowSeconds         int
 }
 
 type channelSmartSchedulePlanItem struct {
@@ -485,50 +497,31 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 	}
 
 	for _, scheduleCohort := range cohorts {
-		if len(scheduleCohort.Candidates) < 2 &&
-			(len(scheduleCohort.Candidates) == 0 || !scheduleCohort.Candidates[0].ManualPrimary) {
-			reason := "可调渠道不足 2 个"
-			if applyMode == channelMonitorSmartScheduleApplyWeight {
-				reason = "同优先级可调渠道不足 2 个"
+		minimumComparable := channelSmartScheduleMinimumComparableChannels(scheduleCohort.Candidates)
+		cohortHasManualPrimary := false
+		for _, candidate := range scheduleCohort.Candidates {
+			if candidate.ManualPrimary {
+				cohortHasManualPrimary = true
+				break
 			}
-			for _, candidate := range scheduleCohort.Candidates {
-				targetPriority := targetPriorityByChannel[candidate.ChannelId]
-				if targetPriority != candidate.CurrentPriority {
-					details := plan.Details[candidate.ChannelId]
-					channelSmartScheduleSetAdjustmentReason(
-						details,
-						reason+"；为保留 P1 保本兜底层，已统一抬升正常路由优先级",
-					)
-					details.Decision.AppliedPriority = targetPriority
-					details.Decision.AppliedWeight = candidate.CurrentWeight
-					plan.Items = append(plan.Items, channelSmartSchedulePlanItem{
-						ChannelId: candidate.ChannelId, ScoreDetails: details,
-						CurrentPriority: candidate.CurrentPriority, CurrentWeight: candidate.CurrentWeight,
-						TargetPriority: targetPriority, TargetWeight: candidate.CurrentWeight,
-						SkipReason: reason,
-					})
-					continue
-				}
-				plan.Skipped[candidate.ChannelId] = reason
-				channelSmartScheduleSetAdjustmentReason(plan.Details[candidate.ChannelId], reason)
-			}
-			continue
 		}
 		normalization := channelSmartScheduleBuildNormalization(scheduleCohort.Candidates, minSamples)
 
 		items := make([]channelSmartSchedulePlanItem, 0, len(scheduleCohort.Candidates))
+		invalidCandidates := make([]channelSmartScheduleCandidate, 0)
 		for _, candidate := range scheduleCohort.Candidates {
 			score, details, valid := channelSmartScheduleScoreCandidate(
 				candidate, strategy, stabilityEnabled, applyMode, minSamples, forceReset, scoring, normalization,
 			)
-			if !valid {
-				continue
-			}
 			if applyMode == channelMonitorSmartScheduleApplyWeight {
 				priority := scheduleCohort.TargetPriority
 				details.Cohort.Priority = &priority
 			}
 			plan.Details[candidate.ChannelId] = details
+			if !valid {
+				invalidCandidates = append(invalidCandidates, candidate)
+				continue
+			}
 			targetPriority := targetPriorityByChannel[candidate.ChannelId]
 			if candidate.ManualPrimary && applyMode == channelMonitorSmartScheduleApplyWeight {
 				targetPriority = manualPrimaryPriority
@@ -541,7 +534,38 @@ func planChannelSmartScheduleWithScoring(candidates []channelSmartScheduleCandid
 				CurrentPriority: candidate.CurrentPriority,
 				CurrentWeight:   candidate.CurrentWeight,
 				TargetPriority:  targetPriority,
+				TargetWeight:    candidate.CurrentWeight,
 			})
+		}
+		if !cohortHasManualPrimary && len(items) < minimumComparable {
+			reason := fmt.Sprintf(
+				"可比渠道不足（%d/%d），暂不产生相对评分",
+				len(scheduleCohort.Candidates), minimumComparable,
+			)
+			for _, candidate := range scheduleCohort.Candidates {
+				details := plan.Details[candidate.ChannelId]
+				details.ComparisonState = model.ChannelSmartScheduleComparisonInsufficient
+				details.BusinessScore = nil
+				details.FinalScore = nil
+				channelSmartScheduleSetAdjustmentReason(details, reason)
+				targetPriority := targetPriorityByChannel[candidate.ChannelId]
+				if targetPriority == candidate.CurrentPriority {
+					plan.Skipped[candidate.ChannelId] = reason
+					continue
+				}
+				plan.Items = append(plan.Items, channelSmartSchedulePlanItem{
+					ChannelId: candidate.ChannelId, ScoreDetails: details,
+					CurrentPriority: candidate.CurrentPriority, CurrentWeight: candidate.CurrentWeight,
+					TargetPriority: targetPriority, TargetWeight: candidate.CurrentWeight,
+					SkipReason: reason,
+				})
+			}
+			continue
+		}
+		for _, candidate := range invalidCandidates {
+			reason := "评分计算结果不可用"
+			plan.Skipped[candidate.ChannelId] = reason
+			channelSmartScheduleSetAdjustmentReason(plan.Details[candidate.ChannelId], reason)
 		}
 
 		currentPrimaryId := channelSmartScheduleCurrentPrimaryId(items)
@@ -721,6 +745,7 @@ type channelSmartScheduleRankedLayer struct {
 	CurrentPrimaryId  int
 	RawWinnerId       int
 	SelectedPrimaryId int
+	Comparable        bool
 }
 
 func channelSmartScheduleRankCandidateLayer(
@@ -736,6 +761,7 @@ func channelSmartScheduleRankCandidateLayer(
 	scoredItems := make([]channelSmartSchedulePlanItem, 0, len(candidates))
 	pendingItems := make([]channelSmartSchedulePlanItem, 0, len(candidates))
 	manualPrimaryId := 0
+	eligibleCount := 0
 	for _, candidate := range candidates {
 		if candidate.ManualPrimary {
 			manualPrimaryId = candidate.ChannelId
@@ -752,6 +778,7 @@ func channelSmartScheduleRankCandidateLayer(
 			SkipReason:       reason,
 		}
 		if reason == "" {
+			eligibleCount++
 			score, details, valid := channelSmartScheduleScoreCandidate(
 				candidate, strategy, stabilityEnabled, channelMonitorSmartScheduleApplyPriorityWeight,
 				minSamples, forceReset, scoring, normalization,
@@ -764,17 +791,51 @@ func channelSmartScheduleRankCandidateLayer(
 				detailsByChannel[candidate.ChannelId] = details
 				continue
 			}
+			item.ScoreDetails = details
 			reason = "评分计算结果不可用"
 			item.SkipReason = reason
 		}
-		details := channelSmartScheduleNewScoreDetails(
-			candidate, strategy, stabilityEnabled, channelMonitorSmartScheduleApplyPriorityWeight,
-			minSamples, forceReset, scoring,
-		)
+		details := item.ScoreDetails
+		if details == nil {
+			details = channelSmartScheduleNewScoreDetails(
+				candidate, strategy, stabilityEnabled, channelMonitorSmartScheduleApplyPriorityWeight,
+				minSamples, forceReset, scoring,
+			)
+		}
 		channelSmartScheduleSetAdjustmentReason(details, reason)
 		item.ScoreDetails = details
 		pendingItems = append(pendingItems, item)
 		detailsByChannel[candidate.ChannelId] = details
+	}
+	minimumComparable := channelSmartScheduleMinimumComparableChannels(candidates)
+	comparable := eligibleCount >= minimumComparable && len(scoredItems) >= minimumComparable
+	if manualPrimaryId == 0 && !comparable {
+		comparableCount := eligibleCount
+		if comparableCount >= minimumComparable {
+			comparableCount = len(scoredItems)
+		}
+		reason := fmt.Sprintf("可比渠道不足（%d/%d），暂不产生相对评分", comparableCount, minimumComparable)
+		for index := range pendingItems {
+			if pendingItems[index].SkipReason != "" {
+				pendingItems[index].SkipReason = reason + "；" + pendingItems[index].SkipReason
+			} else {
+				pendingItems[index].SkipReason = reason
+			}
+			pendingItems[index].ScoreDetails.ComparisonState = model.ChannelSmartScheduleComparisonInsufficient
+			channelSmartScheduleSetAdjustmentReason(pendingItems[index].ScoreDetails, pendingItems[index].SkipReason)
+			detailsByChannel[pendingItems[index].ChannelId] = pendingItems[index].ScoreDetails
+		}
+		for _, item := range scoredItems {
+			item.Scored = false
+			item.SkipReason = reason
+			item.ScoreDetails.ComparisonState = model.ChannelSmartScheduleComparisonInsufficient
+			item.ScoreDetails.BusinessScore = nil
+			item.ScoreDetails.FinalScore = nil
+			channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, reason)
+			pendingItems = append(pendingItems, item)
+			detailsByChannel[item.ChannelId] = item.ScoreDetails
+		}
+		scoredItems = nil
 	}
 
 	allCurrentItems := append(append([]channelSmartSchedulePlanItem(nil), scoredItems...), pendingItems...)
@@ -798,8 +859,10 @@ func channelSmartScheduleRankCandidateLayer(
 		currentPrimaryId = channelSmartScheduleCurrentPrimaryId(currentItems)
 	}
 	rawWinnerId := 0
-	if ranked := channelSmartScheduleRankedItemIndexes(scoredItems, currentPrimaryId); len(ranked) > 0 {
-		rawWinnerId = scoredItems[ranked[0]].ChannelId
+	if comparable {
+		if ranked := channelSmartScheduleRankedItemIndexes(scoredItems, currentPrimaryId); len(ranked) > 0 {
+			rawWinnerId = scoredItems[ranked[0]].ChannelId
+		}
 	}
 	selectedPrimaryId := 0
 	if len(scoredItems) > 0 {
@@ -858,6 +921,7 @@ func channelSmartScheduleRankCandidateLayer(
 		CurrentPrimaryId:  currentPrimaryId,
 		RawWinnerId:       rawWinnerId,
 		SelectedPrimaryId: selectedPrimaryId,
+		Comparable:        comparable,
 	}
 }
 
@@ -933,14 +997,36 @@ func planChannelSmartSchedulePriorityWeight(
 	}
 
 	plan.Items = make([]channelSmartSchedulePlanItem, 0, len(candidates))
-	normalPriorityOffset := 0
+	normalPriorityOffset := int64(0)
 	if len(fallbackLayer.RankedItems) > 0 {
-		normalPriorityOffset = 1
+		if normalLayer.Comparable {
+			normalPriorityOffset = 1
+		} else if len(normalLayer.RankedItems) > 0 {
+			minimumPriority := normalLayer.RankedItems[0].CurrentPriority
+			for _, item := range normalLayer.RankedItems[1:] {
+				minimumPriority = min(minimumPriority, item.CurrentPriority)
+			}
+			if minimumPriority < 2 {
+				normalPriorityOffset = 2 - minimumPriority
+			}
+		}
 	}
 	for index, item := range normalLayer.RankedItems {
 		item.BaseRank = index + 1
-		item.BasePriority = int64(len(normalLayer.RankedItems) - index + normalPriorityOffset)
-		item.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
+		if normalLayer.Comparable {
+			item.BasePriority = int64(len(normalLayer.RankedItems)-index) + normalPriorityOffset
+			item.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
+		} else {
+			item.BasePriority = item.CurrentPriority
+			if normalPriorityOffset > 0 {
+				if item.BasePriority > math.MaxInt64-normalPriorityOffset {
+					item.BasePriority = math.MaxInt64
+				} else {
+					item.BasePriority += normalPriorityOffset
+				}
+			}
+			item.BaseWeight = item.CurrentWeight
+		}
 		item.TargetPriority = item.BasePriority
 		item.TargetWeight = item.BaseWeight
 		plan.Items = append(plan.Items, item)
@@ -950,19 +1036,22 @@ func planChannelSmartSchedulePriorityWeight(
 		item.BaseRank = len(normalLayer.RankedItems) + index + 1
 		item.BasePriority = 1
 		item.TargetPriority = 1
-		item.TargetWeight = 0
+		item.BaseWeight = item.CurrentWeight
+		item.TargetWeight = item.CurrentWeight
 		priority := int64(1)
 		item.ScoreDetails.Cohort.Priority = &priority
 		fallbackIndexes = append(fallbackIndexes, len(plan.Items))
 		plan.Items = append(plan.Items, item)
 	}
-	channelSmartScheduleAssignProportionalWeights(
-		plan.Items,
-		fallbackIndexes,
-		channelMonitorSmartScheduleAllocationWeightTotal,
-	)
-	for _, index := range fallbackIndexes {
-		plan.Items[index].BaseWeight = plan.Items[index].TargetWeight
+	if fallbackLayer.Comparable {
+		channelSmartScheduleAssignProportionalWeights(
+			plan.Items,
+			fallbackIndexes,
+			channelMonitorSmartScheduleAllocationWeightTotal,
+		)
+		for _, index := range fallbackIndexes {
+			plan.Items[index].BaseWeight = plan.Items[index].TargetWeight
+		}
 	}
 
 	manualPrimaryFloor := int64(1)
@@ -1004,9 +1093,13 @@ func planChannelSmartSchedulePriorityWeight(
 			}
 			channelSmartScheduleSetAdjustmentReason(details, reason)
 		} else if item.SkipReason != "" {
+			reason := item.SkipReason + "，保持上一轮基础优先级和权重"
+			if normalPriorityOffset > 0 {
+				reason = item.SkipReason + "；为保留 P1 保本兜底层，仅抬升基础优先级并保持原权重"
+			}
 			channelSmartScheduleSetAdjustmentReason(
 				details,
-				item.SkipReason+"，已排在有效评分渠道之后并保留独立基础优先级",
+				reason,
 			)
 		} else {
 			channelSmartScheduleSetAdjustmentReason(details, details.Decision.AdjustmentReason)
@@ -1288,6 +1381,155 @@ func channelSmartScheduleCandidateNeedsExplorationWithScoring(candidate channelS
 		}
 	}
 	return false
+}
+
+func channelSmartScheduleCandidateSampleDebt(
+	candidate channelSmartScheduleCandidate,
+	strategy string,
+	stabilityEnabled bool,
+	scoring channelSmartScheduleScoring,
+	minSamples int,
+) int {
+	if minSamples <= 0 {
+		minSamples = channelMonitorSmartScheduleFallbackMinSamples
+	}
+	debt := 0
+	usesBusinessScore := channelSmartScheduleUsesBusinessScore(stabilityEnabled, scoring)
+	needsFirstToken := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyFirstToken ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.FirstTokenPercent > 0) ||
+		(strategy == channelMonitorSmartScheduleStrategyRatio && scoring.Ratio.FirstTokenPercent > 0))
+	if needsFirstToken {
+		debt += max(minSamples-candidate.FirstTokenSampleCount, 0)
+	}
+	needsTPS := usesBusinessScore && (strategy == channelMonitorSmartScheduleStrategyTPS ||
+		(strategy == channelMonitorSmartScheduleStrategySmart && scoring.Smart.TPSPercent > 0) ||
+		(strategy == channelMonitorSmartScheduleStrategyRatio && scoring.Ratio.TPSPercent > 0))
+	if needsTPS {
+		debt += max(minSamples-candidate.TPSSampleCount, 0)
+	}
+	if stabilityEnabled {
+		debt += max(minSamples-int(candidate.StabilitySampleCount), 0)
+	}
+	return debt
+}
+
+func channelSmartScheduleAdaptiveSamplingBudget(
+	primary channelSmartScheduleCandidate,
+	candidates []channelSmartScheduleCandidate,
+	policy channelSmartSchedulePolicy,
+) float64 {
+	if !policy.AdaptiveSamplingEnabled || primary.ChannelId <= 0 {
+		return 0
+	}
+	maxDebt := 0
+	for _, candidate := range candidates {
+		if candidate.ChannelId == primary.ChannelId || candidate.SampleDebt <= 0 {
+			continue
+		}
+		maxDebt = max(maxDebt, candidate.SampleDebt)
+	}
+	if maxDebt <= 0 {
+		return 0
+	}
+	demand := min(max(float64(maxDebt)/float64(max(policy.MinSamples, 1)), 0), 1)
+	basePercent := policy.AdaptiveSamplingBasePercent
+	if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic {
+		basePercent = min(basePercent, policy.ExplorationTrafficPercent)
+	} else if primary.HealthState == channelSmartScheduleHealthHealthy ||
+		primary.HealthState == channelSmartScheduleHealthUnknown || primary.HealthState == "" {
+		return 0
+	}
+	if basePercent < 0 {
+		basePercent = 0
+	}
+	maxPercent := max(policy.AdaptiveSamplingMaxPercent, basePercent)
+	pressure := min(max(primary.HealthPressure, 0), 1)
+	budget := demand * (basePercent + pressure*(maxPercent-basePercent))
+	maxByPrimaryFloor := channelMonitorScorePercentageTotal - policy.AdaptiveSamplingPrimaryMinPercent
+	if maxByPrimaryFloor < 0 {
+		return 0
+	}
+	return min(max(budget, 0), min(maxPercent, maxByPrimaryFloor))
+}
+
+func channelSmartScheduleAdaptiveCandidateRank(candidate channelSmartScheduleCandidate) int {
+	switch candidate.HealthState {
+	case channelSmartScheduleHealthHealthy:
+		return 0
+	case channelSmartScheduleHealthUnknown, "":
+		return 1
+	default:
+		if severity := channelSmartScheduleHealthSeverity(candidate.HealthState); severity > 0 {
+			return severity + 1
+		}
+		return 5
+	}
+}
+
+// channelSmartScheduleApplySwitchConfirmation keeps the current primary in
+// place until a newly winning backup has enough healthy requests in the
+// configured adaptive window. Hard stability protection is handled before
+// scoring and is therefore the only path that bypasses this confirmation.
+func channelSmartScheduleApplySwitchConfirmation(
+	plan *channelSmartSchedulePlan,
+	candidates []channelSmartScheduleCandidate,
+	policy channelSmartSchedulePolicy,
+	forceReset bool,
+) {
+	if plan == nil || len(candidates) == 0 || forceReset {
+		return
+	}
+	currentPrimaryId := 0
+	manualPrimary := false
+	for _, item := range plan.Items {
+		if item.ScoreDetails != nil {
+			if item.ScoreDetails.Decision.CurrentPrimaryChannelId > 0 {
+				currentPrimaryId = item.ScoreDetails.Decision.CurrentPrimaryChannelId
+			}
+			manualPrimary = manualPrimary || item.ScoreDetails.Decision.ManualPrimaryChannelId > 0
+		}
+	}
+	if manualPrimary || plan.RawWinnerId <= 0 || plan.RawWinnerId == currentPrimaryId || currentPrimaryId <= 0 {
+		return
+	}
+	var rawWinner *channelSmartScheduleCandidate
+	for index := range candidates {
+		switch candidates[index].ChannelId {
+		case plan.RawWinnerId:
+			rawWinner = &candidates[index]
+		}
+	}
+	if rawWinner == nil {
+		return
+	}
+	// An unverified or already deteriorating backup is only eligible for
+	// sampling; it cannot become the primary on a relative score alone.
+	if !rawWinner.HealthEvidence || rawWinner.HealthState != channelSmartScheduleHealthHealthy ||
+		rawWinner.HealthHealthyRequestPercent+channelMonitorRatioEpsilon < policy.AdaptiveSamplingSwitchConfirmRequestPercent {
+		plan.ActualPrimaryId = currentPrimaryId
+		channelSmartScheduleAssignPriorityWeightTargets(plan.Items, currentPrimaryId)
+		for index := range plan.Items {
+			item := &plan.Items[index]
+			if item.ScoreDetails == nil {
+				continue
+			}
+			item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
+			item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
+			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
+			if !rawWinner.HealthEvidence || rawWinner.HealthState != channelSmartScheduleHealthHealthy {
+				item.ScoreDetails.Decision.SelectionReason =
+					"备用渠道样本不足或健康状态未确认，仅允许自适应采样，继续保留当前主渠道"
+			} else {
+				item.ScoreDetails.Decision.SelectionReason = fmt.Sprintf(
+					"备用渠道窗口内健康请求占比 %.1f%%，低于切换确认要求 %.1f%%，继续保留当前主渠道",
+					rawWinner.HealthHealthyRequestPercent,
+					policy.AdaptiveSamplingSwitchConfirmRequestPercent,
+				)
+			}
+			channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, item.ScoreDetails.Decision.SelectionReason)
+		}
+		return
+	}
 }
 
 func channelSmartScheduleLowerIsBetterScore(value float64, minimum float64, maximum float64) float64 {

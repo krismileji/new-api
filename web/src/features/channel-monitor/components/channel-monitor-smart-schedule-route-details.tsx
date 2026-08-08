@@ -110,7 +110,8 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   }
   if (
     props.route.state.stability_state !== '' ||
-    props.route.state.temporary_traffic_kind === 'insufficient_samples'
+    props.route.state.temporary_traffic_kind === 'insufficient_samples' ||
+    props.route.state.temporary_traffic_kind === 'adaptive_sampling'
   ) {
     return (
       <ChannelMonitorSmartScheduleRouteState
@@ -128,6 +129,9 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   }
   if (status === 'priority_sampling') {
     return <Badge variant='warning'>低优先级轮转</Badge>
+  }
+  if (status === 'adaptive_sampling') {
+    return <Badge variant='warning'>健康应急采样</Badge>
   }
   if (
     channelMonitorSmartScheduleRouteIsBreakEvenFallback(props.route) &&

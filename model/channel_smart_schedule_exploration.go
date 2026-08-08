@@ -24,9 +24,10 @@ func loadChannelSmartScheduleRequestLimitStates(
 			"exploration_max_prompt_tokens", "stability_release_max_prompt_tokens",
 		).
 		Where(
-			"group_name = ? AND model_name = ? AND channel_id IN ? AND participation_set = ? AND excluded = ? AND (temporary_traffic_kind = ? OR stability_state = ?)",
+			"group_name = ? AND model_name = ? AND channel_id IN ? AND participation_set = ? AND excluded = ? AND (temporary_traffic_kind = ? OR temporary_traffic_kind = ? OR stability_state = ?)",
 			group, modelName, channelIDs, true, false,
-			ChannelSmartScheduleTemporaryTrafficExploration, ChannelSmartScheduleStabilityProbing,
+			ChannelSmartScheduleTemporaryTrafficExploration, ChannelSmartScheduleTemporaryTrafficAdaptive,
+			ChannelSmartScheduleStabilityProbing,
 		).
 		Find(&states).Error
 	if err != nil {
@@ -45,7 +46,8 @@ func shouldAvoidChannelSmartScheduleRoute(
 	stabilityReleaseMaxPromptTokens int,
 	options ChannelSelectionOptions,
 ) bool {
-	if temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficExploration {
+	if temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficExploration ||
+		temporaryTrafficKind == ChannelSmartScheduleTemporaryTrafficAdaptive {
 		return options.ShouldAvoidSmartScheduleRoute(explorationMaxPromptTokens)
 	}
 	if stabilityState == ChannelSmartScheduleStabilityProbing {

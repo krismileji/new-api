@@ -98,16 +98,12 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     stabilityEnabled: policy.stability_enabled,
     jitterEnabled: policy.jitter_enabled,
     jitterTolerancePercent: policy.jitter_tolerance_percent,
-    jitterSlowThresholdSeconds:
-      policy.jitter_slow_threshold_seconds ??
-      policy.jitter_absolute_tolerance_seconds ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.jitterSlowThresholdSeconds,
+    jitterSlowThresholdSeconds: policy.jitter_slow_threshold_seconds,
     scoring: channelMonitorSmartScheduleScoringToForm(policy.scoring),
     applyMode: policy.apply_mode,
     models: [...policy.models],
     modelOrder: [...(policy.model_order ?? [])],
     minSamples: policy.min_samples,
-    degradeStabilityScore: policy.degrade_stability_score,
     recoveryStabilityScore: policy.recovery_stability_score,
     fastFailurePenaltyPercent: policy.fast_failure_penalty_percent,
     fastFailureSeconds: policy.fast_failure_seconds,
@@ -146,6 +142,30 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     prioritySamplingBasePercent: policy.priority_sampling_base_percent,
     prioritySamplingDecayPercent: policy.priority_sampling_decay_percent,
     prioritySamplingMinPercent: policy.priority_sampling_min_percent,
+    adaptiveSamplingEnabled: policy.adaptive_sampling_enabled,
+    adaptiveSamplingBasePercent: policy.adaptive_sampling_base_percent,
+    adaptiveSamplingMaxPercent: policy.adaptive_sampling_max_percent,
+    adaptiveSamplingPrimaryMinPercent:
+      policy.adaptive_sampling_primary_min_percent,
+    adaptiveSamplingErrorWarningPercent:
+      policy.adaptive_sampling_error_warning_percent,
+    adaptiveSamplingErrorCriticalPercent:
+      policy.adaptive_sampling_error_critical_percent,
+    adaptiveSamplingFirstTokenWarningSeconds:
+      policy.adaptive_sampling_first_token_warning_seconds,
+    adaptiveSamplingFirstTokenCriticalSeconds:
+      policy.adaptive_sampling_first_token_critical_seconds,
+    adaptiveSamplingWindowSeconds: policy.adaptive_sampling_window_seconds,
+    adaptiveSamplingEnterRequestPercent:
+      policy.adaptive_sampling_enter_request_percent,
+    adaptiveSamplingRecoverRequestPercent:
+      policy.adaptive_sampling_recover_request_percent,
+    adaptiveSamplingExplorationLeaseMinutes:
+      policy.adaptive_sampling_exploration_lease_minutes,
+    adaptiveSamplingSwitchConfirmRequestPercent:
+      policy.adaptive_sampling_switch_confirm_request_percent,
+    adaptiveSamplingMinComparableChannels:
+      policy.adaptive_sampling_min_comparable_channels,
   }))
 }
 
@@ -159,13 +179,11 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     jitter_enabled: policy.jitterEnabled,
     jitter_tolerance_percent: policy.jitterTolerancePercent,
     jitter_slow_threshold_seconds: policy.jitterSlowThresholdSeconds,
-    jitter_absolute_tolerance_seconds: policy.jitterSlowThresholdSeconds,
     scoring: channelMonitorSmartScheduleScoringToApi(policy.scoring),
     apply_mode: policy.applyMode,
     models: policy.models,
     model_order: policy.modelOrder,
     min_samples: policy.minSamples,
-    degrade_stability_score: policy.degradeStabilityScore,
     recovery_stability_score: policy.recoveryStabilityScore,
     fast_failure_penalty_percent: policy.fastFailurePenaltyPercent,
     fast_failure_seconds: policy.fastFailureSeconds,
@@ -190,6 +208,30 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     priority_sampling_base_percent: policy.prioritySamplingBasePercent,
     priority_sampling_decay_percent: policy.prioritySamplingDecayPercent,
     priority_sampling_min_percent: policy.prioritySamplingMinPercent,
+    adaptive_sampling_enabled: policy.adaptiveSamplingEnabled,
+    adaptive_sampling_base_percent: policy.adaptiveSamplingBasePercent,
+    adaptive_sampling_max_percent: policy.adaptiveSamplingMaxPercent,
+    adaptive_sampling_primary_min_percent:
+      policy.adaptiveSamplingPrimaryMinPercent,
+    adaptive_sampling_error_warning_percent:
+      policy.adaptiveSamplingErrorWarningPercent,
+    adaptive_sampling_error_critical_percent:
+      policy.adaptiveSamplingErrorCriticalPercent,
+    adaptive_sampling_first_token_warning_seconds:
+      policy.adaptiveSamplingFirstTokenWarningSeconds,
+    adaptive_sampling_first_token_critical_seconds:
+      policy.adaptiveSamplingFirstTokenCriticalSeconds,
+    adaptive_sampling_window_seconds: policy.adaptiveSamplingWindowSeconds,
+    adaptive_sampling_enter_request_percent:
+      policy.adaptiveSamplingEnterRequestPercent,
+    adaptive_sampling_recover_request_percent:
+      policy.adaptiveSamplingRecoverRequestPercent,
+    adaptive_sampling_exploration_lease_minutes:
+      policy.adaptiveSamplingExplorationLeaseMinutes,
+    adaptive_sampling_switch_confirm_request_percent:
+      policy.adaptiveSamplingSwitchConfirmRequestPercent,
+    adaptive_sampling_min_comparable_channels:
+      policy.adaptiveSamplingMinComparableChannels,
   }))
 }
 
@@ -209,7 +251,6 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     models: [...policy.models],
     modelOrder: [...policy.modelOrder],
     minSamples: policy.minSamples,
-    degradeStabilityScore: policy.degradeStabilityScore,
     recoveryStabilityScore: policy.recoveryStabilityScore,
     fastFailurePenaltyPercent: policy.fastFailurePenaltyPercent,
     fastFailureSeconds: policy.fastFailureSeconds,
@@ -233,6 +274,29 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     prioritySamplingBasePercent: policy.prioritySamplingBasePercent,
     prioritySamplingDecayPercent: policy.prioritySamplingDecayPercent,
     prioritySamplingMinPercent: policy.prioritySamplingMinPercent,
+    adaptiveSamplingEnabled: policy.adaptiveSamplingEnabled,
+    adaptiveSamplingBasePercent: policy.adaptiveSamplingBasePercent,
+    adaptiveSamplingMaxPercent: policy.adaptiveSamplingMaxPercent,
+    adaptiveSamplingPrimaryMinPercent: policy.adaptiveSamplingPrimaryMinPercent,
+    adaptiveSamplingErrorWarningPercent:
+      policy.adaptiveSamplingErrorWarningPercent,
+    adaptiveSamplingErrorCriticalPercent:
+      policy.adaptiveSamplingErrorCriticalPercent,
+    adaptiveSamplingFirstTokenWarningSeconds:
+      policy.adaptiveSamplingFirstTokenWarningSeconds,
+    adaptiveSamplingFirstTokenCriticalSeconds:
+      policy.adaptiveSamplingFirstTokenCriticalSeconds,
+    adaptiveSamplingWindowSeconds: policy.adaptiveSamplingWindowSeconds,
+    adaptiveSamplingEnterRequestPercent:
+      policy.adaptiveSamplingEnterRequestPercent,
+    adaptiveSamplingRecoverRequestPercent:
+      policy.adaptiveSamplingRecoverRequestPercent,
+    adaptiveSamplingExplorationLeaseMinutes:
+      policy.adaptiveSamplingExplorationLeaseMinutes,
+    adaptiveSamplingSwitchConfirmRequestPercent:
+      policy.adaptiveSamplingSwitchConfirmRequestPercent,
+    adaptiveSamplingMinComparableChannels:
+      policy.adaptiveSamplingMinComparableChannels,
   }
 }
 

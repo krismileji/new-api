@@ -135,6 +135,7 @@ export type ChannelMonitorSmartScheduleRouteDisplayStatus =
   | 'probing'
   | 'insufficient_samples'
   | 'priority_sampling'
+  | 'adaptive_sampling'
   | 'failed'
   | ChannelMonitorSmartScheduleRouteRole
 
@@ -161,12 +162,13 @@ const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
   probing: 2,
   insufficient_samples: 3,
   priority_sampling: 4,
-  failed: 5,
-  primary: 6,
-  candidate: 7,
-  backup: 8,
-  unavailable: 9,
-  excluded: 10,
+  adaptive_sampling: 5,
+  failed: 6,
+  primary: 7,
+  candidate: 8,
+  backup: 9,
+  unavailable: 10,
+  excluded: 11,
 }
 
 const EMPTY_GROUP_RATIOS: Readonly<Record<string, number>> = {}
@@ -285,7 +287,8 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     }
     if (
       available &&
-      route.state.temporary_traffic_kind === 'insufficient_samples'
+      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+        route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       insufficientSampleCount += 1
     }
@@ -321,7 +324,8 @@ export function summarizeChannelMonitorSmartScheduleChannel(
           available && route.state.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
           available &&
-          route.state.temporary_traffic_kind === 'insufficient_samples'
+          (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+            route.state.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
         prioritySamplingCount:
@@ -348,7 +352,8 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     }
     if (
       available &&
-      route.state.temporary_traffic_kind === 'insufficient_samples'
+      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+        route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       existing.insufficientSampleCount += 1
     }
@@ -582,6 +587,9 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   if (route.state.temporary_traffic_kind === 'priority_sampling') {
     return 'priority_sampling'
   }
+  if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+    return 'adaptive_sampling'
+  }
   if (route.state.last_schedule_status === 'failed') return 'failed'
   return placement?.role ?? 'unavailable'
 }
@@ -694,7 +702,8 @@ export function summarizeChannelMonitorSmartSchedulePools(
           available && route.state.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
           available &&
-          route.state.temporary_traffic_kind === 'insufficient_samples'
+          (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+            route.state.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
         prioritySamplingCount:
@@ -737,7 +746,8 @@ export function summarizeChannelMonitorSmartSchedulePools(
     }
     if (
       available &&
-      route.state.temporary_traffic_kind === 'insufficient_samples'
+      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+        route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       existing.insufficientSampleCount += 1
     }
@@ -895,7 +905,8 @@ export function summarizeChannelMonitorSmartScheduleOverview(
     }
     if (
       available &&
-      route.state.temporary_traffic_kind === 'insufficient_samples'
+      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
+        route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       insufficientSampleCount += 1
     }

@@ -16,6 +16,14 @@ const (
 	channelMonitorDefaultSwitchThreshold = 3.0
 )
 
+const (
+	channelSmartScheduleHealthUnknown  = "unknown"
+	channelSmartScheduleHealthHealthy  = "healthy"
+	channelSmartScheduleHealthObserve  = "observation"
+	channelSmartScheduleHealthPressure = "pressure"
+	channelSmartScheduleHealthHighRisk = "high_risk"
+)
+
 type channelSmartScheduleMetricPercentages struct {
 	CostRatioPercent  float64 `json:"cost_ratio_percent"`
 	FirstTokenPercent float64 `json:"first_token_percent"`
@@ -122,6 +130,117 @@ func channelSmartScheduleWeightedScore(parts ...channelSmartScheduleScorePart) f
 		return 0
 	}
 	return weightedScore / totalPercent
+}
+
+type channelSmartScheduleHealthUpdate struct {
+	State                 string
+	Pressure              float64
+	ErrorPressure         float64
+	LatencyPressure       float64
+	Evidence              bool
+	SampleCount           int64
+	LastSampleAt          int64
+	RiskRequestPercent    float64
+	HealthyRequestPercent float64
+	WindowSeconds         int
+}
+
+func channelSmartScheduleLinearPressure(value, warning, critical float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || math.IsNaN(warning) || math.IsInf(warning, 0) ||
+		math.IsNaN(critical) || math.IsInf(critical, 0) || critical <= warning || value <= warning {
+		return 0
+	}
+	if value >= critical {
+		return 1
+	}
+	return min(max((value-warning)/(critical-warning), 0), 1)
+}
+
+func channelSmartScheduleHealthSeverity(state string) int {
+	switch state {
+	case channelSmartScheduleHealthObserve:
+		return 1
+	case channelSmartScheduleHealthPressure:
+		return 2
+	case channelSmartScheduleHealthHighRisk:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func channelSmartScheduleEvaluateHealth(
+	previous model.ChannelSmartScheduleRouteState,
+	metric model.ChannelSmartScheduleAdaptiveHealthMetric,
+	policy channelSmartSchedulePolicy,
+) channelSmartScheduleHealthUpdate {
+	update := channelSmartScheduleHealthUpdate{WindowSeconds: policy.AdaptiveSamplingWindowSeconds}
+	if !policy.AdaptiveSamplingEnabled {
+		update.State = ""
+		return update
+	}
+	update.SampleCount = metric.RequestCount
+	update.LastSampleAt = metric.LastUsedTime
+	if metric.RequestCount <= 0 {
+		update.State = channelSmartScheduleHealthUnknown
+		return update
+	}
+	riskRequestCount := min(
+		max(metric.FailureCount, int64(0))+max(metric.SlowRequestCount, int64(0)),
+		metric.RequestCount,
+	)
+	healthyRequestCount := min(max(metric.HealthyRequestCount, int64(0)), metric.RequestCount)
+	update.RiskRequestPercent = float64(riskRequestCount) / float64(metric.RequestCount) * 100
+	update.HealthyRequestPercent = float64(healthyRequestCount) / float64(metric.RequestCount) * 100
+	if metric.RequestCount >= int64(policy.MinSamples) {
+		failureRate := float64(max(metric.FailureCount, int64(0))) /
+			float64(metric.RequestCount) * 100
+		update.ErrorPressure = channelSmartScheduleLinearPressure(
+			failureRate,
+			policy.AdaptiveSamplingErrorWarningPercent,
+			policy.AdaptiveSamplingErrorCriticalPercent,
+		)
+	}
+	if metric.FirstTokenCount > 0 && metric.RequestCount >= int64(policy.MinSamples) {
+		update.LatencyPressure = min(
+			max(metric.LatencyPressure/float64(metric.RequestCount), 0),
+			1,
+		)
+	}
+	update.Evidence = metric.RequestCount >= int64(policy.MinSamples)
+	if !update.Evidence {
+		update.State = channelSmartScheduleHealthUnknown
+		return update
+	}
+	update.Pressure = max(update.ErrorPressure, update.LatencyPressure)
+	switch {
+	case update.Pressure <= channelMonitorRatioEpsilon:
+		update.State = channelSmartScheduleHealthHealthy
+	case update.Pressure < 0.5:
+		update.State = channelSmartScheduleHealthObserve
+	case update.Pressure < 0.8:
+		update.State = channelSmartScheduleHealthPressure
+	default:
+		update.State = channelSmartScheduleHealthHighRisk
+	}
+
+	previousState := previous.AdaptiveHealthState
+	if previousState == "" || previousState == channelSmartScheduleHealthUnknown {
+		previousState = channelSmartScheduleHealthHealthy
+	}
+	if previousState != channelSmartScheduleHealthHealthy &&
+		update.HealthyRequestPercent >= policy.AdaptiveSamplingRecoverRequestPercent {
+		update.State = channelSmartScheduleHealthHealthy
+		return update
+	}
+	if update.RiskRequestPercent < policy.AdaptiveSamplingEnterRequestPercent {
+		update.State = previousState
+		return update
+	}
+	if update.State == channelSmartScheduleHealthHealthy {
+		update.State = channelSmartScheduleHealthObserve
+	}
+	return update
 }
 
 func channelSmartScheduleUsesBusinessScore(stabilityEnabled bool, scoring channelSmartScheduleScoring) bool {

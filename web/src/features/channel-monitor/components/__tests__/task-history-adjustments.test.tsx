@@ -35,10 +35,28 @@ import {
 
 const noop = () => {}
 
+const ADAPTIVE_SAMPLING_POLICY = {
+  adaptive_sampling_enabled: true,
+  adaptive_sampling_base_percent: 3,
+  adaptive_sampling_max_percent: 30,
+  adaptive_sampling_primary_min_percent: 70,
+  adaptive_sampling_error_warning_percent: 5,
+  adaptive_sampling_error_critical_percent: 15,
+  adaptive_sampling_first_token_warning_seconds: 5,
+  adaptive_sampling_first_token_critical_seconds: 10,
+  adaptive_sampling_window_seconds: 600,
+  adaptive_sampling_enter_request_percent: 10,
+  adaptive_sampling_recover_request_percent: 95,
+  adaptive_sampling_exploration_lease_minutes: 10,
+  adaptive_sampling_switch_confirm_request_percent: 95,
+  adaptive_sampling_min_comparable_channels: 2,
+} as const
+
 function createGroupPolicy(
   group: string
 ): ChannelMonitorSmartScheduleGroupPolicy {
   return {
+    ...ADAPTIVE_SAMPLING_POLICY,
     group,
     strategy: 'smart',
     stability_enabled: true,
@@ -63,7 +81,6 @@ function createGroupPolicy(
     apply_mode: 'priority_weight',
     models: ['gpt-5'],
     min_samples: 20,
-    degrade_stability_score: 90,
     recovery_stability_score: 95,
     fast_failure_penalty_percent: 40,
     fast_failure_seconds: 1,

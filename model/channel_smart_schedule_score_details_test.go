@@ -34,11 +34,13 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	}).Error)
 
 	details := &ChannelSmartScheduleScoreDetails{
-		Version:          ChannelSmartScheduleScoreDetailsVersion,
-		Strategy:         "smart",
-		MinSamples:       20,
-		SampleScope:      ChannelSmartScheduleSampleScopeChannelModel,
-		SampleGroupCount: 2,
+		Version:               ChannelSmartScheduleScoreDetailsVersion,
+		Strategy:              "smart",
+		MinSamples:            20,
+		MinComparableChannels: 2,
+		ComparisonState:       ChannelSmartScheduleComparisonComparable,
+		SampleScope:           ChannelSmartScheduleSampleScopeChannelModel,
+		SampleGroupCount:      2,
 		Inputs: ChannelSmartScheduleScoreInputs{
 			CostRatio:    ChannelSmartScheduleScoreInput{Value: &ratio, SampleCount: 1},
 			FirstTokenMs: ChannelSmartScheduleScoreInput{Value: &firstToken, SampleCount: 24},
@@ -88,7 +90,21 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	raw, err := common.Marshal(routes[0])
 	require.NoError(t, err)
 	serialized := string(raw)
-	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":4`)
+	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":7`)
+	assert.Contains(t, serialized, `"minimum_comparable_channels":2`)
+	assert.Contains(t, serialized, `"comparison_state":"comparable"`)
 	assert.Contains(t, serialized, `"sample_scope":"channel_model"`)
 	assert.False(t, strings.Contains(serialized, `"last_schedule_score_details":"{`))
+}
+
+func TestChannelSmartScheduleScoreDetailsDoesNotBackfillOlderSnapshots(t *testing.T) {
+	raw := ChannelSmartScheduleScoreDetailsJSON(`{"version":5,"strategy":"smart"}`)
+
+	decoded, err := raw.Decode()
+	require.NoError(t, err)
+	assert.Nil(t, decoded)
+
+	serialized, err := raw.MarshalJSON()
+	require.NoError(t, err)
+	assert.JSONEq(t, "null", string(serialized))
 }

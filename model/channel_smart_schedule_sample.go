@@ -85,6 +85,19 @@ type ChannelSmartScheduleSampleMetrics struct {
 	AverageTPS                    *float64
 }
 
+// ChannelSmartScheduleAdaptiveHealthMetric contains request-level signals for
+// the adaptive sampling window. Production request logs and scheduled/manual
+// samples use the same counters so their ratios are directly comparable.
+type ChannelSmartScheduleAdaptiveHealthMetric struct {
+	RequestCount        int64
+	FailureCount        int64
+	SlowRequestCount    int64
+	HealthyRequestCount int64
+	FirstTokenCount     int64
+	LatencyPressure     float64
+	LastUsedTime        int64
+}
+
 // ChannelSmartScheduleSampleSeries is one parsed channel/model rolling sample
 // buffer. Callers can reuse it across the performance, stability, and probing
 // windows without repeatedly decoding SamplesJSON.
@@ -154,6 +167,58 @@ func (series ChannelSmartScheduleSampleSeries) MetricsSince(windowStart int64) C
 		windowStart = series.observationSince
 	}
 	return channelSmartScheduleCalculateSampleMetrics(series.samples, windowStart)
+}
+
+func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
+	windowStart int64,
+	warningSeconds float64,
+	criticalSeconds float64,
+) ChannelSmartScheduleAdaptiveHealthMetric {
+	if series.observationSince > windowStart {
+		windowStart = series.observationSince
+	}
+	metric := ChannelSmartScheduleAdaptiveHealthMetric{}
+	for _, sample := range series.samples {
+		if sample.Time < windowStart {
+			continue
+		}
+		metric.RequestCount++
+		metric.LastUsedTime = max(metric.LastUsedTime, sample.Time)
+		if !sample.Success {
+			metric.FailureCount++
+			continue
+		}
+		metric.HealthyRequestCount++
+		if sample.FirstTokenMs == nil || *sample.FirstTokenMs <= 0 ||
+			math.IsNaN(*sample.FirstTokenMs) || math.IsInf(*sample.FirstTokenMs, 0) {
+			continue
+		}
+		metric.FirstTokenCount++
+		latencyPressure := channelSmartScheduleAdaptiveLatencyPressure(
+			*sample.FirstTokenMs, warningSeconds, criticalSeconds,
+		)
+		metric.LatencyPressure += latencyPressure
+		if *sample.FirstTokenMs >= warningSeconds*1000 {
+			metric.SlowRequestCount++
+			metric.HealthyRequestCount--
+		}
+	}
+	return metric
+}
+
+func channelSmartScheduleAdaptiveLatencyPressure(valueMs, warningSeconds, criticalSeconds float64) float64 {
+	warningMs := warningSeconds * 1000
+	criticalMs := criticalSeconds * 1000
+	if math.IsNaN(valueMs) || math.IsInf(valueMs, 0) ||
+		math.IsNaN(warningMs) || math.IsInf(warningMs, 0) ||
+		math.IsNaN(criticalMs) || math.IsInf(criticalMs, 0) ||
+		criticalMs <= warningMs || valueMs <= warningMs {
+		return 0
+	}
+	if valueMs >= criticalMs {
+		return 1
+	}
+	return (valueMs - warningMs) / (criticalMs - warningMs)
 }
 
 func (series ChannelSmartScheduleSampleSeries) ManualTestMetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {

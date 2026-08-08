@@ -485,15 +485,12 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   stability_enabled: boolean
   jitter_enabled: boolean
   jitter_tolerance_percent: number
-  jitter_slow_threshold_seconds?: number
-  jitter_absolute_tolerance_seconds?: number
-  jitter_baseline_minutes?: number
+  jitter_slow_threshold_seconds: number
   scoring: ChannelMonitorSmartScheduleScoring
   apply_mode: ChannelMonitorSmartScheduleApplyMode
   models: string[]
   model_order?: string[]
   min_samples: number
-  degrade_stability_score: number
   recovery_stability_score: number
   fast_failure_penalty_percent: number
   fast_failure_seconds: number
@@ -516,6 +513,20 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   priority_sampling_base_percent: number
   priority_sampling_decay_percent: number
   priority_sampling_min_percent: number
+  adaptive_sampling_enabled: boolean
+  adaptive_sampling_base_percent: number
+  adaptive_sampling_max_percent: number
+  adaptive_sampling_primary_min_percent: number
+  adaptive_sampling_error_warning_percent: number
+  adaptive_sampling_error_critical_percent: number
+  adaptive_sampling_first_token_warning_seconds: number
+  adaptive_sampling_first_token_critical_seconds: number
+  adaptive_sampling_window_seconds: number
+  adaptive_sampling_enter_request_percent: number
+  adaptive_sampling_recover_request_percent: number
+  adaptive_sampling_exploration_lease_minutes: number
+  adaptive_sampling_switch_confirm_request_percent: number
+  adaptive_sampling_min_comparable_channels: number
 }
 
 export type ChannelMonitorSettings = {
@@ -598,6 +609,7 @@ export type ChannelMonitorSmartScheduleScoreCohort = {
 
 export type ChannelMonitorSmartScheduleScoreComponent = {
   available: boolean
+  comparison_state: 'none' | 'insufficient' | 'comparable'
   raw_value: number | null
   normalized_score: number | null
   configured_weight_percent: number
@@ -608,6 +620,8 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
   version: number
   strategy: ChannelMonitorSmartScheduleStrategy
   minimum_samples: number
+  minimum_comparable_channels: number
+  comparison_state: 'none' | 'insufficient' | 'comparable'
   sample_scope: 'channel_model'
   sample_group_count: number
   economics?: {
@@ -644,6 +658,17 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     business_contribution: number
     contribution: number
   }
+  health: {
+    state: '' | 'unknown' | 'healthy' | 'observation' | 'pressure' | 'high_risk'
+    evidence: boolean
+    pressure: number
+    error_pressure: number
+    latency_pressure: number
+    sample_count: number
+    window_seconds: number
+    risk_request_percent: number
+    healthy_request_percent: number
+  }
   final_score: number | null
   decision: {
     apply_mode: ChannelMonitorSmartScheduleApplyMode
@@ -660,7 +685,11 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     applied_weight: number
     actual_highest_priority: number
     actual_top_layer_channel_ids: number[] | null
-    temporary_traffic_kind: '' | 'insufficient_samples' | 'priority_sampling'
+    temporary_traffic_kind:
+      | ''
+      | 'insufficient_samples'
+      | 'priority_sampling'
+      | 'adaptive_sampling'
     temporary_traffic_target_percent: number
     switch_threshold_percent: number
     primary_traffic_percent: number
@@ -681,7 +710,11 @@ export type ChannelMonitorSmartScheduleStabilityClearResult = {
 
 export type ChannelMonitorSmartScheduleExplorationClearResult = {
   cleared: boolean
-  previous_kind: '' | 'insufficient_samples' | 'priority_sampling'
+  previous_kind:
+    | ''
+    | 'insufficient_samples'
+    | 'priority_sampling'
+    | 'adaptive_sampling'
   priority: number
   weight: number
 }
@@ -709,7 +742,11 @@ export type ChannelMonitorSmartScheduleRouteState = {
   base_rank: number
   base_priority: number
   base_weight: number
-  temporary_traffic_kind: '' | 'insufficient_samples' | 'priority_sampling'
+  temporary_traffic_kind:
+    | ''
+    | 'insufficient_samples'
+    | 'priority_sampling'
+    | 'adaptive_sampling'
   temporary_traffic_since: number
   temporary_traffic_target_percent: number
   exploration_max_prompt_tokens?: number
@@ -717,6 +754,16 @@ export type ChannelMonitorSmartScheduleRouteState = {
   last_priority_sample_time: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean
+  adaptive_health_state?:
+    | ''
+    | 'unknown'
+    | 'healthy'
+    | 'observation'
+    | 'pressure'
+    | 'high_risk'
+  adaptive_health_pressure?: number
+  adaptive_health_sample_count?: number
+  adaptive_health_last_sample_at?: number
 }
 
 export type ChannelMonitorSmartScheduleSharedSamples = {
@@ -782,6 +829,9 @@ export type ChannelMonitorSmartScheduleRoutePerformance = {
   first_token_p95_ms: number | null
   winsorized_average_first_token_ms: number | null
   average_tps: number | null
+  cache_hit_count?: number
+  cache_sample_count?: number
+  cache_hit_rate?: number
   last_used_time: number
 }
 

@@ -42,6 +42,8 @@ export function ChannelMonitorSmartScheduleRouteState(
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`
   } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+  } else if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`
   }
   if (
     route.channel_status === CHANNEL_STATUS.ENABLED &&
@@ -111,6 +113,19 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
+  if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+    return (
+      <Badge
+        render={<button type='button' />}
+        variant='warning'
+        className='cursor-pointer'
+        onClick={props.onProtectedStatusClick}
+        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`}
+      >
+        健康应急采样
+      </Badge>
+    )
+  }
   if (route.state.temporary_traffic_kind === 'priority_sampling') {
     return <Badge variant='warning'>低优先级轮转</Badge>
   }
@@ -119,6 +134,21 @@ export function ChannelMonitorSmartScheduleRouteState(
   }
   if (route.state.last_schedule_status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>
+  }
+  if (
+    route.state.adaptive_health_state === 'high_risk' ||
+    route.state.adaptive_health_state === 'pressure'
+  ) {
+    return (
+      <Badge variant='warning'>
+        {route.state.adaptive_health_state === 'high_risk'
+          ? '主渠道高风险'
+          : '主渠道降压'}
+      </Badge>
+    )
+  }
+  if (route.state.adaptive_health_state === 'observation') {
+    return <Badge variant='outline'>主渠道观察</Badge>
   }
   return <Badge variant='secondary'>参与调度</Badge>
 }

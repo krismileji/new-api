@@ -50,6 +50,7 @@ describe('smart schedule policy schema', () => {
       jitterEnabled: false,
       applyMode: 'weight',
       sampleMode: 'off',
+      adaptiveSamplingEnabled: false,
       scoring: {
         ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring,
         stabilityPercent: '',
@@ -57,7 +58,6 @@ describe('smart schedule policy schema', () => {
       jitterTolerancePercent: '',
       jitterSlowThresholdSeconds: '',
       minSamples: '',
-      degradeStabilityScore: '',
       recoveryStabilityScore: '',
       fastFailurePenaltyPercent: '',
       fastFailureSeconds: '',
@@ -84,16 +84,13 @@ describe('smart schedule policy schema', () => {
     assert.equal(result.data.scoring.stabilityPercent, 50)
   })
 
-  test('defaults newly added controls for legacy policies', () => {
-    const legacyPolicy: Record<string, unknown> = {
+  test('rejects policies that omit current adaptive controls', () => {
+    const incompletePolicy: Record<string, unknown> = {
       ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
     }
-    delete legacyPolicy.degradedProbeEnabled
-    delete legacyPolicy.fastFailureSameChannelRetryDelayMs
+    delete incompletePolicy.adaptiveSamplingMaxPercent
 
-    const parsed = schema.parse(legacyPolicy)
-    assert.equal(parsed.degradedProbeEnabled, false)
-    assert.equal(parsed.fastFailureSameChannelRetryDelayMs, 1_000)
+    assert.equal(schema.safeParse(incompletePolicy).success, false)
   })
 
   test('continues to reject empty controls in active branches', () => {
@@ -109,11 +106,52 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, fastFailureSameChannelRetryCount: '' },
       { ...basePolicy, fastFailureSameChannelRetryDelayMs: '' },
       { ...basePolicy, jitterSlowThresholdSeconds: '' },
+      { ...basePolicy, adaptiveSamplingBasePercent: '' },
+      { ...basePolicy, adaptiveSamplingWindowSeconds: '' },
+      { ...basePolicy, adaptiveSamplingMinComparableChannels: '' },
     ]
 
     for (const policy of activeCases) {
       assert.equal(schema.safeParse(policy).success, false)
     }
+  })
+
+  test('validates the adaptive window and request percentage hysteresis', () => {
+    const basePolicy = CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
+    assert.equal(
+      schema.safeParse({
+        ...basePolicy,
+        adaptiveSamplingWindowSeconds: 60,
+        adaptiveSamplingEnterRequestPercent: 10,
+        adaptiveSamplingRecoverRequestPercent: 95,
+        adaptiveSamplingSwitchConfirmRequestPercent: 95,
+      }).success,
+      true
+    )
+    for (const value of [59, 3_601, 60.5]) {
+      assert.equal(
+        schema.safeParse({
+          ...basePolicy,
+          adaptiveSamplingWindowSeconds: value,
+        }).success,
+        false
+      )
+    }
+    assert.equal(
+      schema.safeParse({
+        ...basePolicy,
+        adaptiveSamplingEnterRequestPercent: 20,
+        adaptiveSamplingRecoverRequestPercent: 80,
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...basePolicy,
+        adaptiveSamplingSwitchConfirmRequestPercent: 90,
+      }).success,
+      false
+    )
   })
 })
 
@@ -528,7 +566,6 @@ describe('channel monitor settings schema', () => {
       applyMode: 'priority_weight' as const,
       models: [],
       minSamples: 5,
-      degradeStabilityScore: 90,
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
@@ -550,6 +587,20 @@ describe('channel monitor settings schema', () => {
       prioritySamplingBasePercent: 3,
       prioritySamplingDecayPercent: 70,
       prioritySamplingMinPercent: 0.5,
+      adaptiveSamplingEnabled: true,
+      adaptiveSamplingBasePercent: 3,
+      adaptiveSamplingMaxPercent: 30,
+      adaptiveSamplingPrimaryMinPercent: 70,
+      adaptiveSamplingErrorWarningPercent: 5,
+      adaptiveSamplingErrorCriticalPercent: 15,
+      adaptiveSamplingFirstTokenWarningSeconds: 5,
+      adaptiveSamplingFirstTokenCriticalSeconds: 10,
+      adaptiveSamplingWindowSeconds: 600,
+      adaptiveSamplingEnterRequestPercent: 10,
+      adaptiveSamplingRecoverRequestPercent: 95,
+      adaptiveSamplingExplorationLeaseMinutes: 10,
+      adaptiveSamplingSwitchConfirmRequestPercent: 95,
+      adaptiveSamplingMinComparableChannels: 2,
     }
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
@@ -780,7 +831,12 @@ describe('channel monitor settings schema', () => {
       schema.safeParse({
         ...baseSettings,
         smartScheduleGroupPolicies: [
-          { ...groupPolicy, applyMode: 'weight', sampleMode: 'traffic' },
+          {
+            ...groupPolicy,
+            applyMode: 'weight',
+            sampleMode: 'traffic',
+            adaptiveSamplingEnabled: false,
+          },
         ],
       }).success,
       false
@@ -794,6 +850,7 @@ describe('channel monitor settings schema', () => {
             applyMode: 'weight',
             sampleMode: 'probe',
             probeIntervalMinutes: 15,
+            adaptiveSamplingEnabled: false,
           },
         ],
       }).success,

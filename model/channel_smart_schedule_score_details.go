@@ -6,7 +6,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ChannelSmartScheduleScoreDetailsVersion = 4
+const ChannelSmartScheduleScoreDetailsVersion = 7
+
+const (
+	ChannelSmartScheduleComparisonNone         = "none"
+	ChannelSmartScheduleComparisonInsufficient = "insufficient"
+	ChannelSmartScheduleComparisonComparable   = "comparable"
+)
 
 type ChannelSmartScheduleEconomicsDetails struct {
 	CostRatio    *float64 `json:"cost_ratio,omitempty"`
@@ -42,6 +48,7 @@ type ChannelSmartScheduleScoreCohort struct {
 
 type ChannelSmartScheduleScoreComponent struct {
 	Available               bool     `json:"available"`
+	ComparisonState         string   `json:"comparison_state"`
 	RawValue                *float64 `json:"raw_value"`
 	NormalizedScore         *float64 `json:"normalized_score"`
 	ConfiguredWeightPercent float64  `json:"configured_weight_percent"`
@@ -63,6 +70,18 @@ type ChannelSmartScheduleStabilityScoreDetails struct {
 	EffectiveWeightPercent  float64  `json:"effective_weight_percent"`
 	BusinessContribution    float64  `json:"business_contribution"`
 	Contribution            float64  `json:"contribution"`
+}
+
+type ChannelSmartScheduleHealthDetails struct {
+	State                 string  `json:"state"`
+	Evidence              bool    `json:"evidence"`
+	Pressure              float64 `json:"pressure"`
+	ErrorPressure         float64 `json:"error_pressure"`
+	LatencyPressure       float64 `json:"latency_pressure"`
+	SampleCount           int64   `json:"sample_count"`
+	WindowSeconds         int     `json:"window_seconds"`
+	RiskRequestPercent    float64 `json:"risk_request_percent"`
+	HealthyRequestPercent float64 `json:"healthy_request_percent"`
 }
 
 type ChannelSmartScheduleScoreDecision struct {
@@ -92,19 +111,22 @@ type ChannelSmartScheduleScoreDecision struct {
 }
 
 type ChannelSmartScheduleScoreDetails struct {
-	Version          int                                       `json:"version"`
-	Strategy         string                                    `json:"strategy"`
-	MinSamples       int                                       `json:"minimum_samples"`
-	SampleScope      string                                    `json:"sample_scope"`
-	SampleGroupCount int                                       `json:"sample_group_count"`
-	Economics        *ChannelSmartScheduleEconomicsDetails     `json:"economics,omitempty"`
-	Inputs           ChannelSmartScheduleScoreInputs           `json:"inputs"`
-	Cohort           ChannelSmartScheduleScoreCohort           `json:"cohort"`
-	Components       ChannelSmartScheduleScoreComponents       `json:"components"`
-	BusinessScore    *float64                                  `json:"business_score"`
-	Stability        ChannelSmartScheduleStabilityScoreDetails `json:"stability"`
-	FinalScore       *float64                                  `json:"final_score"`
-	Decision         ChannelSmartScheduleScoreDecision         `json:"decision"`
+	Version               int                                       `json:"version"`
+	Strategy              string                                    `json:"strategy"`
+	MinSamples            int                                       `json:"minimum_samples"`
+	MinComparableChannels int                                       `json:"minimum_comparable_channels"`
+	ComparisonState       string                                    `json:"comparison_state"`
+	SampleScope           string                                    `json:"sample_scope"`
+	SampleGroupCount      int                                       `json:"sample_group_count"`
+	Economics             *ChannelSmartScheduleEconomicsDetails     `json:"economics,omitempty"`
+	Inputs                ChannelSmartScheduleScoreInputs           `json:"inputs"`
+	Cohort                ChannelSmartScheduleScoreCohort           `json:"cohort"`
+	Components            ChannelSmartScheduleScoreComponents       `json:"components"`
+	BusinessScore         *float64                                  `json:"business_score"`
+	Stability             ChannelSmartScheduleStabilityScoreDetails `json:"stability"`
+	Health                ChannelSmartScheduleHealthDetails         `json:"health"`
+	FinalScore            *float64                                  `json:"final_score"`
+	Decision              ChannelSmartScheduleScoreDecision         `json:"decision"`
 }
 
 // ChannelSmartScheduleScoreDetailsJSON is persisted as portable TEXT while
@@ -131,6 +153,9 @@ func (raw ChannelSmartScheduleScoreDetailsJSON) Decode() (*ChannelSmartScheduleS
 	details := &ChannelSmartScheduleScoreDetails{}
 	if err := common.UnmarshalJsonStr(string(raw), details); err != nil {
 		return nil, err
+	}
+	if details.Version != ChannelSmartScheduleScoreDetailsVersion {
+		return nil, nil
 	}
 	return details, nil
 }

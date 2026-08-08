@@ -26,9 +26,11 @@ import { ChannelMonitorSmartScheduleScoreDetails as ScoreDetails } from '../chan
 
 function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
   return {
-    version: 3,
+    version: 6,
     strategy: 'smart',
     minimum_samples: 5,
+    minimum_comparable_channels: 2,
+    comparison_state: 'comparable',
     sample_scope: 'channel_model',
     sample_group_count: 3,
     inputs: {
@@ -46,6 +48,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
     components: {
       cost_ratio: {
         available: true,
+        comparison_state: 'comparable' as const,
         raw_value: 0.84,
         normalized_score: 0.9,
         configured_weight_percent: 40,
@@ -53,6 +56,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       },
       first_token_ms: {
         available: true,
+        comparison_state: 'comparable' as const,
         raw_value: 500,
         normalized_score: 0.8,
         configured_weight_percent: 40,
@@ -60,6 +64,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       },
       tps: {
         available: true,
+        comparison_state: 'comparable' as const,
         raw_value: 40,
         normalized_score: 0.5,
         configured_weight_percent: 20,
@@ -76,6 +81,17 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       effective_weight_percent: 50,
       business_contribution: 0.39,
       contribution: 0.48,
+    },
+    health: {
+      state: 'healthy',
+      evidence: true,
+      pressure: 0,
+      error_pressure: 0,
+      latency_pressure: 0,
+      sample_count: 30,
+      window_seconds: 600,
+      risk_request_percent: 0,
+      healthy_request_percent: 100,
     },
     final_score: 0.87,
     decision: {
@@ -192,9 +208,28 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('未计入：样本 2/5'))
   })
 
-  test('shows the break-even economic snapshot while keeping old snapshots optional', () => {
+  test('shows an explicit incomparable state below the channel threshold', () => {
     const details = createScoreDetails()
-    details.version = 4
+    details.comparison_state = 'insufficient'
+    details.business_score = null
+    details.final_score = null
+    details.cohort.first_token_ms.available_count = 1
+    details.components.first_token_ms.available = false
+    details.components.first_token_ms.comparison_state = 'insufficient'
+    details.components.first_token_ms.normalized_score = null
+    details.components.first_token_ms.effective_weight_percent = 0
+
+    const markup = renderToStaticMarkup(
+      <ScoreDetails details={details} defaultOpen />
+    )
+
+    assert.ok(markup.includes('评分状态：不可比较'))
+    assert.ok(markup.includes('不可比较'))
+    assert.ok(markup.includes('可比渠道不足（1/2），暂不比较'))
+  })
+
+  test('shows the break-even economic snapshot', () => {
+    const details = createScoreDetails()
     details.economics = {
       cost_ratio: 1,
       group_ratio: 1,
@@ -212,10 +247,10 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('0.000000'))
     assert.ok(markup.includes('管理员手动固定时仍按固定结果执行'))
 
-    const legacy = createScoreDetails()
+    const withoutEconomics = createScoreDetails()
     assert.equal(
       renderToStaticMarkup(
-        <ScoreDetails details={legacy} defaultOpen />
+        <ScoreDetails details={withoutEconomics} defaultOpen />
       ).includes('经济身份'),
       false
     )

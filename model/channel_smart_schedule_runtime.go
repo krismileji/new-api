@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -29,6 +30,154 @@ type ChannelSmartScheduleRuntimeRoute struct {
 	SampleSince          int64
 	StabilityState       string
 	TemporaryTrafficKind string
+}
+
+// ChannelSmartScheduleAdaptiveHealthMetricWindow describes one exact-second
+// adaptive health window. The threshold values are part of the window because
+// different group policies may use different first-token boundaries for the
+// same channel and model.
+type ChannelSmartScheduleAdaptiveHealthMetricWindow struct {
+	ChannelId        int
+	ModelName        string
+	StartTimestamp   int64
+	ObservationSince int64
+	WarningSeconds   float64
+	CriticalSeconds  float64
+}
+
+type ChannelSmartScheduleAdaptiveHealthMetricResult struct {
+	Window ChannelSmartScheduleAdaptiveHealthMetricWindow
+	Metric ChannelSmartScheduleAdaptiveHealthMetric
+}
+
+type channelSmartScheduleAdaptiveHealthLog struct {
+	ChannelId int
+	ModelName string
+	Type      int
+	IsStream  bool
+	Other     string
+	CreatedAt int64
+}
+
+func channelSmartScheduleAdaptiveModelMatches(logModelName, requestedModelName string) bool {
+	logModelName = channelSmartScheduleModelName(logModelName)
+	requestedModelName = channelSmartScheduleModelName(requestedModelName)
+	if logModelName == requestedModelName {
+		return true
+	}
+	if strings.HasSuffix(requestedModelName, "*") {
+		return strings.HasPrefix(logModelName, strings.TrimSuffix(requestedModelName, "*"))
+	}
+	return false
+}
+
+// GetChannelSmartScheduleAdaptiveHealthMetrics reads only the requested
+// channel/model pairs and classifies production requests at request precision.
+// Minute aggregates cannot answer arbitrary first-token thresholds, so this
+// path intentionally reads the bounded adaptive window from the log database.
+func GetChannelSmartScheduleAdaptiveHealthMetrics(
+	ctx context.Context,
+	windows []ChannelSmartScheduleAdaptiveHealthMetricWindow,
+	endTimestamp int64,
+) ([]ChannelSmartScheduleAdaptiveHealthMetricResult, error) {
+	if len(windows) == 0 {
+		return []ChannelSmartScheduleAdaptiveHealthMetricResult{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if endTimestamp <= 0 {
+		endTimestamp = common.GetTimestamp()
+	}
+	results := make([]ChannelSmartScheduleAdaptiveHealthMetricResult, len(windows))
+	minimumStart := endTimestamp
+	channelIds := make(map[int]struct{}, len(windows))
+	for index, window := range windows {
+		window.ModelName = channelSmartScheduleModelName(window.ModelName)
+		if window.ObservationSince > window.StartTimestamp {
+			window.StartTimestamp = window.ObservationSince
+		}
+		results[index].Window = window
+		if window.ChannelId <= 0 || window.ModelName == "" || window.StartTimestamp >= endTimestamp {
+			continue
+		}
+		channelIds[window.ChannelId] = struct{}{}
+		if window.StartTimestamp < minimumStart {
+			minimumStart = window.StartTimestamp
+		}
+	}
+	if LOG_DB == nil || len(channelIds) == 0 || minimumStart >= endTimestamp {
+		return results, nil
+	}
+	channelIdList := make([]int, 0, len(channelIds))
+	for channelId := range channelIds {
+		channelIdList = append(channelIdList, channelId)
+	}
+	query := LOG_DB.WithContext(ctx).
+		Model(&Log{}).
+		Select("channel_id, model_name, type, is_stream, other, created_at").
+		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
+		Where("channel_id IN ?", channelIdList).
+		Where("created_at >= ? AND created_at < ?", minimumStart, endTimestamp)
+	rows, err := query.Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var log channelSmartScheduleAdaptiveHealthLog
+		if err := rows.Scan(
+			&log.ChannelId, &log.ModelName, &log.Type, &log.IsStream, &log.Other, &log.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if log.CreatedAt >= endTimestamp {
+			continue
+		}
+		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
+		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
+			continue
+		}
+		for index, window := range results {
+			if window.Window.ChannelId != log.ChannelId ||
+				log.CreatedAt < window.Window.StartTimestamp ||
+				!channelSmartScheduleAdaptiveModelMatches(log.ModelName, window.Window.ModelName) {
+				continue
+			}
+			metric := &results[index].Metric
+			if log.Type == LogTypeError {
+				if parsed && (parsedOther.FinalRetrySummary || channelMonitorMinuteRateLimited(parsedOther.StatusCode)) {
+					continue
+				}
+				metric.RequestCount++
+				metric.FailureCount++
+				metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
+				continue
+			}
+			metric.RequestCount++
+			metric.HealthyRequestCount++
+			metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
+			if !log.IsStream || !parsed || parsedOther.FirstResponseTime == nil ||
+				*parsedOther.FirstResponseTime <= 0 ||
+				math.IsNaN(*parsedOther.FirstResponseTime) ||
+				math.IsInf(*parsedOther.FirstResponseTime, 0) {
+				continue
+			}
+			firstTokenMs := *parsedOther.FirstResponseTime
+			metric.FirstTokenCount++
+			metric.LatencyPressure += channelSmartScheduleAdaptiveLatencyPressure(
+				firstTokenMs, window.Window.WarningSeconds, window.Window.CriticalSeconds,
+			)
+			if firstTokenMs >= window.Window.WarningSeconds*1000 {
+				metric.SlowRequestCount++
+				metric.HealthyRequestCount--
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func getChannelSmartScheduleRuntimeAbilityRoutes(channelId int, modelName string) (map[string]string, []string, error) {

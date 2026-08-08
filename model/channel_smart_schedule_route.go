@@ -48,6 +48,11 @@ type ChannelSmartScheduleRouteState struct {
 	StabilityReleaseMaxPromptTokens int     `json:"stability_release_max_prompt_tokens"`
 	LastPrioritySampleTime          int64   `json:"last_priority_sample_time" gorm:"bigint;index"`
 
+	AdaptiveHealthState        string  `json:"adaptive_health_state" gorm:"type:varchar(16);index"`
+	AdaptiveHealthPressure     float64 `json:"adaptive_health_pressure"`
+	AdaptiveHealthSampleCount  int64   `json:"adaptive_health_sample_count"`
+	AdaptiveHealthLastSampleAt int64   `json:"adaptive_health_last_sample_at" gorm:"bigint"`
+
 	// ManualPrimaryUntil keeps an administrator-selected primary route in
 	// force until the unix timestamp. The saved routing values are internal
 	// restore markers and are intentionally not exposed to API consumers.
@@ -88,6 +93,8 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 		state.TemporaryTrafficSince != 0 || state.TemporaryTrafficTargetPercent != 0 ||
 		state.ExplorationMaxPromptTokens != 0 || state.StabilityReleaseMaxPromptTokens != 0 ||
 		state.LastPrioritySampleTime != 0 ||
+		state.AdaptiveHealthState != "" || state.AdaptiveHealthPressure != 0 ||
+		state.AdaptiveHealthSampleCount != 0 || state.AdaptiveHealthLastSampleAt != 0 ||
 		state.ManualPrimaryUntil != 0 || state.ManualPrimaryAllowStabilityDegrade ||
 		state.ManualPrimarySaved || state.ManualPrimarySavedPriority != 0 ||
 		state.ManualPrimarySavedWeight != 0
@@ -103,6 +110,10 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 	state.ExplorationMaxPromptTokens = 0
 	state.StabilityReleaseMaxPromptTokens = 0
 	state.LastPrioritySampleTime = 0
+	state.AdaptiveHealthState = ""
+	state.AdaptiveHealthPressure = 0
+	state.AdaptiveHealthSampleCount = 0
+	state.AdaptiveHealthLastSampleAt = 0
 	state.ManualPrimaryUntil = 0
 	state.ManualPrimaryAllowStabilityDegrade = false
 	state.ManualPrimarySaved = false
@@ -142,32 +153,37 @@ type ChannelSmartScheduleRoute struct {
 }
 
 type ChannelSmartScheduleRouteResultUpdate struct {
-	ChannelId                int
-	Group                    string
-	Model                    string
-	Status                   string
-	Error                    string
-	Score                    *float64
-	ScoreDetails             *ChannelSmartScheduleScoreDetails
-	Priority                 int64
-	Weight                   uint
-	Time                     int64
-	Stability                *ChannelSmartScheduleStabilityUpdate
-	RuntimeProtectionUntil   *int64
-	RoutingSnapshot          *ChannelSmartScheduleRoutingSnapshotUpdate
-	GuardCurrent             bool
-	PoolGuard                bool
-	ObservationOnly          bool
-	ExpectedRevision         int64
-	ExpectedControlRevision  string
-	ExpectedEconomicRevision string
-	ExpectedParticipationSet bool
-	ExpectedExcluded         bool
-	ExpectedAbilityEnabled   bool
-	ExpectedChannelStatus    int
-	ExpectedPriority         int64
-	ExpectedWeight           uint
-	ApplyPriorityWeight      bool
+	ChannelId                  int
+	Group                      string
+	Model                      string
+	Status                     string
+	Error                      string
+	Score                      *float64
+	ScoreDetails               *ChannelSmartScheduleScoreDetails
+	Priority                   int64
+	Weight                     uint
+	Time                       int64
+	Stability                  *ChannelSmartScheduleStabilityUpdate
+	RuntimeProtectionUntil     *int64
+	RoutingSnapshot            *ChannelSmartScheduleRoutingSnapshotUpdate
+	GuardCurrent               bool
+	PoolGuard                  bool
+	ObservationOnly            bool
+	ExpectedRevision           int64
+	ExpectedControlRevision    string
+	ExpectedEconomicRevision   string
+	ExpectedParticipationSet   bool
+	ExpectedExcluded           bool
+	ExpectedAbilityEnabled     bool
+	ExpectedChannelStatus      int
+	ExpectedPriority           int64
+	ExpectedWeight             uint
+	ApplyPriorityWeight        bool
+	AdaptiveHealthSet          bool
+	AdaptiveHealthState        string
+	AdaptiveHealthPressure     float64
+	AdaptiveHealthSampleCount  int64
+	AdaptiveHealthLastSampleAt int64
 }
 
 type ChannelSmartScheduleRouteApplyOutcome struct {
@@ -213,11 +229,17 @@ type ChannelSmartScheduleRoutingSnapshotUpdate struct {
 	ExplorationMaxPromptTokens      int
 	StabilityReleaseMaxPromptTokens int
 	LastPrioritySampleTime          int64
+	AdaptiveHealthSet               bool
+	AdaptiveHealthState             string
+	AdaptiveHealthPressure          float64
+	AdaptiveHealthSampleCount       int64
+	AdaptiveHealthLastSampleAt      int64
 }
 
 const (
 	ChannelSmartScheduleTemporaryTrafficExploration      = "insufficient_samples"
 	ChannelSmartScheduleTemporaryTrafficPrioritySampling = "priority_sampling"
+	ChannelSmartScheduleTemporaryTrafficAdaptive         = "adaptive_sampling"
 )
 
 type ChannelSmartScheduleChannelConfigResult struct {
@@ -1802,6 +1824,12 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			if result.RuntimeProtectionUntil != nil {
 				state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
 			}
+			if result.AdaptiveHealthSet {
+				state.AdaptiveHealthState = result.AdaptiveHealthState
+				state.AdaptiveHealthPressure = result.AdaptiveHealthPressure
+				state.AdaptiveHealthSampleCount = result.AdaptiveHealthSampleCount
+				state.AdaptiveHealthLastSampleAt = result.AdaptiveHealthLastSampleAt
+			}
 			if result.RoutingSnapshot != nil {
 				state.BaseRank = result.RoutingSnapshot.BaseRank
 				state.BasePriority = result.RoutingSnapshot.BasePriority
@@ -1983,7 +2011,8 @@ func ClearChannelSmartScheduleRouteExploration(channelId int, group string, mode
 		result.PreviousKind = state.TemporaryTrafficKind
 		result.Priority = abilityPriority(ability)
 		result.Weight = ability.Weight
-		if result.PreviousKind != ChannelSmartScheduleTemporaryTrafficExploration {
+		if result.PreviousKind != ChannelSmartScheduleTemporaryTrafficExploration &&
+			result.PreviousKind != ChannelSmartScheduleTemporaryTrafficAdaptive {
 			return nil
 		}
 		if state.Revision == math.MaxInt64 {

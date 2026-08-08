@@ -59,15 +59,18 @@ function renderAdjustment(
 function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
   const component = {
     available: true,
+    comparison_state: 'comparable' as const,
     raw_value: 1,
     normalized_score: 1,
     configured_weight_percent: 100,
     effective_weight_percent: 100,
   }
   return {
-    version: 3,
+    version: 6,
     strategy: 'ratio',
     minimum_samples: 5,
+    minimum_comparable_channels: 2,
+    comparison_state: 'comparable',
     sample_scope: 'channel_model',
     sample_group_count: 2,
     inputs: {
@@ -85,6 +88,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       cost_ratio: component,
       first_token_ms: {
         ...component,
+        comparison_state: 'none',
         available: false,
         raw_value: null,
         normalized_score: null,
@@ -93,6 +97,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       },
       tps: {
         ...component,
+        comparison_state: 'none',
         available: false,
         raw_value: null,
         normalized_score: null,
@@ -110,6 +115,17 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       effective_weight_percent: 0,
       business_contribution: 1,
       contribution: 0,
+    },
+    health: {
+      state: 'unknown',
+      evidence: false,
+      pressure: 0,
+      error_pressure: 0,
+      latency_pressure: 0,
+      sample_count: 0,
+      window_seconds: 600,
+      risk_request_percent: 0,
+      healthy_request_percent: 0,
     },
     final_score: 1,
     decision: {

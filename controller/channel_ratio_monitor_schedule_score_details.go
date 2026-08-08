@@ -19,6 +19,16 @@ type channelSmartScheduleNormalization struct {
 	tpsCount        int
 }
 
+func channelSmartScheduleMinimumComparableChannels(candidates []channelSmartScheduleCandidate) int {
+	minimum := 2
+	for _, candidate := range candidates {
+		if candidate.MinComparableChannels > minimum {
+			minimum = candidate.MinComparableChannels
+		}
+	}
+	return minimum
+}
+
 func channelSmartScheduleBuildNormalization(
 	candidates []channelSmartScheduleCandidate,
 	minSamples int,
@@ -51,6 +61,16 @@ func channelSmartScheduleBuildNormalization(
 	return normalization
 }
 
+func channelSmartScheduleComparisonState(count, minimum int) string {
+	if count <= 0 {
+		return model.ChannelSmartScheduleComparisonNone
+	}
+	if count < max(minimum, 2) {
+		return model.ChannelSmartScheduleComparisonInsufficient
+	}
+	return model.ChannelSmartScheduleComparisonComparable
+}
+
 func channelSmartScheduleNewScoreDetails(
 	candidate channelSmartScheduleCandidate,
 	strategy string,
@@ -76,11 +96,13 @@ func channelSmartScheduleNewScoreDetails(
 		costSamples = 1
 	}
 	details := &model.ChannelSmartScheduleScoreDetails{
-		Version:          model.ChannelSmartScheduleScoreDetailsVersion,
-		Strategy:         strategy,
-		MinSamples:       minSamples,
-		SampleScope:      model.ChannelSmartScheduleSampleScopeChannelModel,
-		SampleGroupCount: candidate.SampleGroupCount,
+		Version:               model.ChannelSmartScheduleScoreDetailsVersion,
+		Strategy:              strategy,
+		MinSamples:            minSamples,
+		MinComparableChannels: max(candidate.MinComparableChannels, 2),
+		ComparisonState:       model.ChannelSmartScheduleComparisonNone,
+		SampleScope:           model.ChannelSmartScheduleSampleScopeChannelModel,
+		SampleGroupCount:      candidate.SampleGroupCount,
 		Economics: &model.ChannelSmartScheduleEconomicsDetails{
 			CostRatio:    economics.CostRatio,
 			GroupRatio:   economics.GroupRatio,
@@ -105,14 +127,17 @@ func channelSmartScheduleNewScoreDetails(
 		Components: model.ChannelSmartScheduleScoreComponents{
 			CostRatio: model.ChannelSmartScheduleScoreComponent{
 				RawValue:                channelSmartScheduleCopyFloat(costRatio),
+				ComparisonState:         model.ChannelSmartScheduleComparisonNone,
 				ConfiguredWeightPercent: costRatioPercent,
 			},
 			FirstTokenMs: model.ChannelSmartScheduleScoreComponent{
 				RawValue:                channelSmartScheduleCopyFloat(candidate.FirstTokenMs),
+				ComparisonState:         model.ChannelSmartScheduleComparisonNone,
 				ConfiguredWeightPercent: firstTokenPercent,
 			},
 			TPS: model.ChannelSmartScheduleScoreComponent{
 				RawValue:                channelSmartScheduleCopyFloat(candidate.TPS),
+				ComparisonState:         model.ChannelSmartScheduleComparisonNone,
 				ConfiguredWeightPercent: tpsPercent,
 			},
 		},
@@ -121,6 +146,17 @@ func channelSmartScheduleNewScoreDetails(
 			Available:               candidate.Stability != nil && candidate.StabilitySampleCount >= int64(minSamples),
 			RawScore:                channelSmartScheduleCopyFloat(candidate.Stability),
 			ConfiguredWeightPercent: scoring.StabilityPercent,
+		},
+		Health: model.ChannelSmartScheduleHealthDetails{
+			State:                 candidate.HealthState,
+			Evidence:              candidate.HealthEvidence,
+			Pressure:              candidate.HealthPressure,
+			ErrorPressure:         candidate.HealthErrorPressure,
+			LatencyPressure:       candidate.HealthLatencyPressure,
+			SampleCount:           candidate.HealthSampleCount,
+			WindowSeconds:         candidate.HealthWindowSeconds,
+			RiskRequestPercent:    candidate.HealthRiskRequestPercent,
+			HealthyRequestPercent: candidate.HealthHealthyRequestPercent,
 		},
 		Decision: model.ChannelSmartScheduleScoreDecision{
 			ApplyMode:                     applyMode,
@@ -159,17 +195,17 @@ func channelSmartScheduleScoreCandidate(
 		normalization.tpsMin, normalization.tpsMax, normalization.tpsCount,
 	)
 
-	costAvailable := candidate.Ratio != nil && normalization.ratioCount > 0
+	minimumComparable := max(candidate.MinComparableChannels, 2)
+	costAvailable := candidate.Ratio != nil && normalization.ratioCount >= minimumComparable
 	firstTokenAvailable := candidate.FirstTokenMs != nil &&
-		candidate.FirstTokenSampleCount >= minSamples && normalization.firstTokenCount > 0
+		candidate.FirstTokenSampleCount >= minSamples && normalization.firstTokenCount >= minimumComparable
 	tpsAvailable := candidate.TPS != nil &&
-		candidate.TPSSampleCount >= minSamples && normalization.tpsCount > 0
-	if strategy == channelMonitorSmartScheduleStrategyRatio {
-		firstTokenAvailable = firstTokenAvailable && normalization.firstTokenCount >= 2
-		tpsAvailable = tpsAvailable && normalization.tpsCount >= 2
-	}
+		candidate.TPSSampleCount >= minSamples && normalization.tpsCount >= minimumComparable
 
 	details.Components.CostRatio.Available = costAvailable
+	details.Components.CostRatio.ComparisonState = channelSmartScheduleComparisonState(
+		normalization.ratioCount, minimumComparable,
+	)
 	if costAvailable {
 		score := channelSmartScheduleLowerIsBetterScore(
 			*candidate.Ratio, normalization.ratioMin, normalization.ratioMax,
@@ -177,6 +213,9 @@ func channelSmartScheduleScoreCandidate(
 		details.Components.CostRatio.NormalizedScore = &score
 	}
 	details.Components.FirstTokenMs.Available = firstTokenAvailable
+	details.Components.FirstTokenMs.ComparisonState = channelSmartScheduleComparisonState(
+		normalization.firstTokenCount, minimumComparable,
+	)
 	if firstTokenAvailable {
 		score := channelSmartScheduleLowerIsBetterScore(
 			*candidate.FirstTokenMs, normalization.firstTokenMin, normalization.firstTokenMax,
@@ -184,6 +223,9 @@ func channelSmartScheduleScoreCandidate(
 		details.Components.FirstTokenMs.NormalizedScore = &score
 	}
 	details.Components.TPS.Available = tpsAvailable
+	details.Components.TPS.ComparisonState = channelSmartScheduleComparisonState(
+		normalization.tpsCount, minimumComparable,
+	)
 	if tpsAvailable {
 		score := channelSmartScheduleHigherIsBetterScore(
 			*candidate.TPS, normalization.tpsMin, normalization.tpsMax,
@@ -200,6 +242,33 @@ func channelSmartScheduleScoreCandidate(
 		return 0, details, false
 	}
 	channelSmartScheduleSetEffectiveWeights(&details.Components)
+	usesBusinessScore := channelSmartScheduleUsesBusinessScore(stabilityEnabled, scoring)
+	hasConfiguredBusinessMetric := details.Components.CostRatio.Available &&
+		details.Components.CostRatio.ConfiguredWeightPercent > channelMonitorRatioEpsilon
+	hasConfiguredBusinessMetric = hasConfiguredBusinessMetric ||
+		(details.Components.FirstTokenMs.Available &&
+			details.Components.FirstTokenMs.ConfiguredWeightPercent > channelMonitorRatioEpsilon)
+	hasConfiguredBusinessMetric = hasConfiguredBusinessMetric ||
+		(details.Components.TPS.Available &&
+			details.Components.TPS.ConfiguredWeightPercent > channelMonitorRatioEpsilon)
+	// A manually fixed primary still needs a score record for the execution
+	// detail and traffic allocation path. It is an explicit administrator
+	// override, so the zero business contribution is not used to compare it
+	// with other channels. Ordinary candidates remain unscored until at least
+	// one configured business metric is available.
+	if usesBusinessScore && !hasConfiguredBusinessMetric && !candidate.ManualPrimary {
+		for _, component := range []model.ChannelSmartScheduleScoreComponent{
+			details.Components.CostRatio,
+			details.Components.FirstTokenMs,
+			details.Components.TPS,
+		} {
+			if component.ComparisonState == model.ChannelSmartScheduleComparisonInsufficient {
+				details.ComparisonState = model.ChannelSmartScheduleComparisonInsufficient
+				break
+			}
+		}
+		return 0, details, false
+	}
 	businessScore := channelSmartScheduleWeightedScore(
 		channelSmartScheduleScorePart{
 			Score:     channelSmartScheduleScoreValue(details.Components.CostRatio.NormalizedScore),
@@ -231,6 +300,9 @@ func channelSmartScheduleScoreCandidate(
 	}
 	score = min(max(score, 0), 1)
 	details.FinalScore = channelSmartScheduleCopyFloat(&score)
+	if hasConfiguredBusinessMetric || details.Stability.Applied {
+		details.ComparisonState = model.ChannelSmartScheduleComparisonComparable
+	}
 	return score, details, true
 }
 

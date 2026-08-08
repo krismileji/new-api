@@ -103,6 +103,299 @@ func TestPlanChannelSmartScheduleRecordsEffectiveWeightAfterUnavailableMetrics(t
 	assert.Zero(t, details.Components.TPS.EffectiveWeightPercent)
 }
 
+func TestPlanChannelSmartScheduleDoesNotScoreSingleFirstTokenSample(t *testing.T) {
+	firstToken := 120.0
+	ratio := 1.0
+	scoring := defaultChannelSmartScheduleScoring()
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 100, CurrentWeight: 1000,
+				Ratio:        &ratio,
+				FirstTokenMs: &firstToken, FirstTokenSampleCount: 5,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 90, CurrentWeight: 1000,
+			},
+		},
+		channelMonitorSmartScheduleStrategyFirstToken,
+		false,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+		scoring,
+	)
+
+	assert.Zero(t, plan.RawWinnerId)
+	assert.Equal(t, 1, plan.ActualPrimaryId)
+	details := plan.Details[1]
+	require.NotNil(t, details)
+	assert.False(t, details.Components.FirstTokenMs.Available)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.Components.CostRatio.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.Components.FirstTokenMs.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonNone, details.Components.TPS.ComparisonState)
+	assert.Nil(t, details.Components.FirstTokenMs.NormalizedScore)
+	assert.Nil(t, details.FinalScore)
+
+	skippedDetails := plan.Details[2]
+	require.NotNil(t, skippedDetails)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, skippedDetails.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonNone, skippedDetails.Components.CostRatio.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonNone, skippedDetails.Components.FirstTokenMs.ComparisonState)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonNone, skippedDetails.Components.TPS.ComparisonState)
+}
+
+func TestPlanChannelSmartScheduleComparesFirstTokenAfterTwoSamples(t *testing.T) {
+	fast := 120.0
+	slow := 240.0
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 100, CurrentWeight: 1000,
+				FirstTokenMs: &fast, FirstTokenSampleCount: 5,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 90, CurrentWeight: 1000,
+				FirstTokenMs: &slow, FirstTokenSampleCount: 5,
+			},
+		},
+		channelMonitorSmartScheduleStrategyFirstToken,
+		false,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+		defaultChannelSmartScheduleScoring(),
+	)
+
+	assert.Equal(t, 1, plan.RawWinnerId)
+	for _, channelID := range []int{1, 2} {
+		details := plan.Details[channelID]
+		require.NotNil(t, details)
+		assert.True(t, details.Components.FirstTokenMs.Available)
+		require.NotNil(t, details.Components.FirstTokenMs.NormalizedScore)
+	}
+}
+
+func TestPlanChannelSmartSchedulePriorityWeightPreservesRoutingBelowComparableThreshold(t *testing.T) {
+	cheap := 1.0
+	expensive := 2.0
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 100, CurrentWeight: 900,
+				Ratio: &cheap, MinComparableChannels: 3,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 80, CurrentWeight: 100,
+				Ratio: &expensive, MinComparableChannels: 3,
+			},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		false,
+		channelMonitorSmartScheduleApplyPriorityWeight,
+		5,
+		false,
+		defaultChannelSmartScheduleScoring(),
+	)
+
+	require.Len(t, plan.Items, 2)
+	assert.Zero(t, plan.RawWinnerId)
+	assert.Equal(t, 1, plan.ActualPrimaryId)
+	items := make(map[int]channelSmartSchedulePlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.ChannelId] = item
+		assert.False(t, item.Scored)
+		assert.Contains(t, item.SkipReason, "可比渠道不足（2/3）")
+	}
+	assert.Equal(t, int64(100), items[1].TargetPriority)
+	assert.Equal(t, uint(900), items[1].TargetWeight)
+	assert.Equal(t, int64(80), items[2].TargetPriority)
+	assert.Equal(t, uint(100), items[2].TargetWeight)
+
+	details := plan.Details[1]
+	require.NotNil(t, details)
+	assert.Equal(t, 3, details.MinComparableChannels)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.ComparisonState)
+	assert.Equal(t, 2, details.Cohort.CostRatio.AvailableCount)
+	assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.Components.CostRatio.ComparisonState)
+	assert.Nil(t, details.BusinessScore)
+	assert.Nil(t, details.FinalScore)
+}
+
+func TestPlanChannelSmartScheduleWeightPreservesRoutingBelowComparableThreshold(t *testing.T) {
+	cheap := 1.0
+	expensive := 2.0
+	plan := planChannelSmartScheduleWithScoring(
+		[]channelSmartScheduleCandidate{
+			{
+				ChannelId: 1, CurrentPriority: 100, CurrentWeight: 900,
+				Ratio: &cheap, MinComparableChannels: 3,
+			},
+			{
+				ChannelId: 2, CurrentPriority: 100, CurrentWeight: 100,
+				Ratio: &expensive, MinComparableChannels: 3,
+			},
+		},
+		channelMonitorSmartScheduleStrategyRatio,
+		false,
+		channelMonitorSmartScheduleApplyWeight,
+		5,
+		false,
+		defaultChannelSmartScheduleScoring(),
+	)
+
+	assert.Empty(t, plan.Items)
+	assert.Equal(t, "可比渠道不足（2/3），暂不产生相对评分", plan.Skipped[1])
+	assert.Equal(t, "可比渠道不足（2/3），暂不产生相对评分", plan.Skipped[2])
+	for _, channelID := range []int{1, 2} {
+		details := plan.Details[channelID]
+		require.NotNil(t, details)
+		assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, details.ComparisonState)
+		assert.Equal(t, 2, details.Cohort.CostRatio.AvailableCount)
+		assert.Nil(t, details.FinalScore)
+	}
+}
+
+func TestChannelSmartScheduleHealthUsesWindowRequestPercentages(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		AdaptiveSamplingEnabled:                   true,
+		MinSamples:                                5,
+		AdaptiveSamplingErrorWarningPercent:       5,
+		AdaptiveSamplingErrorCriticalPercent:      15,
+		AdaptiveSamplingFirstTokenWarningSeconds:  5,
+		AdaptiveSamplingFirstTokenCriticalSeconds: 10,
+		AdaptiveSamplingWindowSeconds:             600,
+		AdaptiveSamplingEnterRequestPercent:       10,
+		AdaptiveSamplingRecoverRequestPercent:     95,
+	}
+	risky := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 10, FailureCount: 2, HealthyRequestCount: 8, LastUsedTime: 100,
+	}
+
+	first := channelSmartScheduleEvaluateHealth(model.ChannelSmartScheduleRouteState{}, risky, policy)
+	assert.Equal(t, channelSmartScheduleHealthHighRisk, first.State)
+	assert.InDelta(t, 20, first.RiskRequestPercent, 1e-9)
+	assert.InDelta(t, 80, first.HealthyRequestPercent, 1e-9)
+	assert.Equal(t, 600, first.WindowSeconds)
+
+	previous := model.ChannelSmartScheduleRouteState{
+		AdaptiveHealthState: first.State,
+	}
+	mostlyHealthy := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 100, SlowRequestCount: 6, HealthyRequestCount: 94,
+		FirstTokenCount: 6, LastUsedTime: 101,
+	}
+	second := channelSmartScheduleEvaluateHealth(previous, mostlyHealthy, policy)
+	assert.Equal(t, channelSmartScheduleHealthHighRisk, second.State)
+	assert.InDelta(t, 94, second.HealthyRequestPercent, 1e-9)
+
+	recovering := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 20, SlowRequestCount: 1, HealthyRequestCount: 19,
+		FirstTokenCount: 1, LatencyPressure: 1, LastUsedTime: 102,
+	}
+	third := channelSmartScheduleEvaluateHealth(previous, recovering, policy)
+	assert.Equal(t, channelSmartScheduleHealthHealthy, third.State)
+	assert.InDelta(t, 95, third.HealthyRequestPercent, 1e-9)
+
+	enterPolicy := policy
+	enterPolicy.AdaptiveSamplingErrorWarningPercent = 20
+	enterPolicy.AdaptiveSamplingErrorCriticalPercent = 30
+	atBoundary := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 10, FailureCount: 1, HealthyRequestCount: 9, LastUsedTime: 103,
+	}
+	fourth := channelSmartScheduleEvaluateHealth(model.ChannelSmartScheduleRouteState{}, atBoundary, enterPolicy)
+	assert.Equal(t, channelSmartScheduleHealthObserve, fourth.State)
+	assert.InDelta(t, 10, fourth.RiskRequestPercent, 1e-9)
+}
+
+func TestChannelSmartScheduleAdaptiveSamplingBudgetUsesConfiguredPressure(t *testing.T) {
+	policy := channelSmartSchedulePolicy{
+		AdaptiveSamplingEnabled:           true,
+		AdaptiveSamplingBasePercent:       3,
+		AdaptiveSamplingMaxPercent:        30,
+		AdaptiveSamplingPrimaryMinPercent: 70,
+		ExplorationTrafficPercent:         8,
+		MinSamples:                        5,
+		SampleMode:                        channelMonitorSmartScheduleSampleTraffic,
+	}
+	backup := channelSmartScheduleCandidate{ChannelId: 2, SampleDebt: 5}
+
+	basePrimary := channelSmartScheduleCandidate{
+		ChannelId:   1,
+		HealthState: channelSmartScheduleHealthObserve,
+	}
+	assert.InDelta(t, 3, channelSmartScheduleAdaptiveSamplingBudget(
+		basePrimary, []channelSmartScheduleCandidate{basePrimary, backup}, policy,
+	), 1e-9)
+
+	pressuredPrimary := basePrimary
+	pressuredPrimary.HealthState = channelSmartScheduleHealthHighRisk
+	pressuredPrimary.HealthPressure = 1
+	assert.InDelta(t, 30, channelSmartScheduleAdaptiveSamplingBudget(
+		pressuredPrimary, []channelSmartScheduleCandidate{pressuredPrimary, backup}, policy,
+	), 1e-9)
+}
+
+func TestChannelSmartScheduleSwitchConfirmationKeepsUnverifiedPrimary(t *testing.T) {
+	currentDetails := &model.ChannelSmartScheduleScoreDetails{}
+	winnerDetails := &model.ChannelSmartScheduleScoreDetails{}
+	plan := channelSmartSchedulePlan{
+		Items: []channelSmartSchedulePlanItem{
+			{ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails},
+			{ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails},
+		},
+		RawWinnerId: 2,
+	}
+	currentDetails.Decision.CurrentPrimaryChannelId = 1
+	winnerDetails.Decision.CurrentPrimaryChannelId = 1
+	candidates := []channelSmartScheduleCandidate{
+		{ChannelId: 1, HealthState: channelSmartScheduleHealthHealthy, HealthEvidence: true},
+		{ChannelId: 2, HealthState: channelSmartScheduleHealthUnknown, HealthEvidence: false},
+	}
+	policy := channelSmartSchedulePolicy{AdaptiveSamplingSwitchConfirmRequestPercent: 95}
+
+	channelSmartScheduleApplySwitchConfirmation(&plan, candidates, policy, false)
+
+	assert.Equal(t, 1, plan.ActualPrimaryId)
+	assert.Equal(t, int64(2), plan.Items[0].TargetPriority)
+	assert.Equal(t, int64(1), plan.Items[1].TargetPriority)
+	assert.Contains(t, winnerDetails.Decision.SelectionReason, "仅允许自适应采样")
+}
+
+func TestChannelSmartScheduleSwitchConfirmationUsesHealthyRequestPercent(t *testing.T) {
+	newPlan := func() channelSmartSchedulePlan {
+		currentDetails := &model.ChannelSmartScheduleScoreDetails{}
+		winnerDetails := &model.ChannelSmartScheduleScoreDetails{}
+		currentDetails.Decision.CurrentPrimaryChannelId = 1
+		winnerDetails.Decision.CurrentPrimaryChannelId = 1
+		return channelSmartSchedulePlan{
+			Items: []channelSmartSchedulePlanItem{
+				{ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails},
+				{ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails},
+			},
+			RawWinnerId:     2,
+			ActualPrimaryId: 2,
+		}
+	}
+	candidates := []channelSmartScheduleCandidate{
+		{ChannelId: 1, HealthState: channelSmartScheduleHealthObserve, HealthEvidence: true},
+		{ChannelId: 2, HealthState: channelSmartScheduleHealthHealthy, HealthEvidence: true, HealthHealthyRequestPercent: 90},
+	}
+	policy := channelSmartSchedulePolicy{AdaptiveSamplingSwitchConfirmRequestPercent: 95}
+
+	firstPlan := newPlan()
+	channelSmartScheduleApplySwitchConfirmation(&firstPlan, candidates, policy, false)
+
+	assert.Equal(t, 1, firstPlan.ActualPrimaryId)
+
+	candidates[1].HealthHealthyRequestPercent = 95
+	secondPlan := newPlan()
+	channelSmartScheduleApplySwitchConfirmation(&secondPlan, candidates, policy, false)
+
+	assert.Equal(t, 2, secondPlan.ActualPrimaryId)
+}
+
 func TestRunChannelSmartSchedulePersistsExecutionTimeScoreDetails(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)

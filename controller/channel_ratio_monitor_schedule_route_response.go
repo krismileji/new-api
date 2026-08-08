@@ -110,6 +110,19 @@ func (cache *channelSmartScheduleSampleMetricCache) metrics(
 	return metrics
 }
 
+func (cache *channelSmartScheduleSampleMetricCache) adaptiveHealthMetrics(
+	key channelSmartScheduleModelKey,
+	windowStart int64,
+	warningSeconds float64,
+	criticalSeconds float64,
+) model.ChannelSmartScheduleAdaptiveHealthMetric {
+	series, exists := cache.seriesByModel[key]
+	if !exists {
+		return model.ChannelSmartScheduleAdaptiveHealthMetric{}
+	}
+	return series.AdaptiveHealthMetricsSince(windowStart, warningSeconds, criticalSeconds)
+}
+
 func (cache *channelSmartScheduleSampleMetricCache) items(
 	performanceStart int64,
 	stabilityStart int64,

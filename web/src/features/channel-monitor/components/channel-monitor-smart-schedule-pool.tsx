@@ -150,6 +150,7 @@ const ATTENTION_STATUSES =
     'probing',
     'insufficient_samples',
     'priority_sampling',
+    'adaptive_sampling',
     'failed',
     'paused',
     'unavailable',

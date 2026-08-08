@@ -128,7 +128,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		needsPerformance = needsPerformance || policy.needsPerformance()
 		needsJitterPerformance = needsJitterPerformance ||
 			(policy.StabilityEnabled && policy.JitterEnabled)
-		needsStability = needsStability || policy.StabilityEnabled
+		needsStability = needsStability || policy.StabilityEnabled || policy.AdaptiveSamplingEnabled
 		probeMetricsAvailable = probeMetricsAvailable ||
 			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
 			(policy.StabilityEnabled && policy.DegradedProbeEnabled)

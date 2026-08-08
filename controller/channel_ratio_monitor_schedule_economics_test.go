@@ -81,7 +81,7 @@ func TestPlanChannelSmartSchedulePriorityWeightKeepsBreakEvenFallbackAtP1(t *tes
 	assert.Equal(t, int64(1), items[3].TargetPriority)
 	assert.Equal(t, uint(500), items[2].TargetWeight)
 	assert.Equal(t, uint(500), items[3].TargetWeight)
-	assert.Equal(t, 1, plan.RawWinnerId)
+	assert.Zero(t, plan.RawWinnerId)
 	assert.Equal(t, 1, plan.ActualPrimaryId)
 	assert.Equal(
 		t,
@@ -209,7 +209,7 @@ func TestRunChannelSmartScheduleWritesBreakEvenFallbackLayer(t *testing.T) {
 	require.Len(t, abilities, 2)
 	require.NotNil(t, abilities[0].Priority)
 	require.NotNil(t, abilities[1].Priority)
-	assert.Equal(t, int64(2), *abilities[0].Priority)
+	assert.Equal(t, priority, *abilities[0].Priority)
 	assert.Equal(t, int64(1), *abilities[1].Priority)
 
 	var fallbackState model.ChannelSmartScheduleRouteState

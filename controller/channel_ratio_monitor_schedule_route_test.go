@@ -382,7 +382,8 @@ func TestRunChannelSmartScheduleKeepsSuccessfulPoolWhenLaterPoolFails(t *testing
 	require.NoError(t, db.Order("channel_id ASC").Find(&abilities).Error)
 	require.Len(t, abilities, 2)
 	require.NotNil(t, abilities[0].Priority)
-	assert.True(t, *abilities[0].Priority != priority || abilities[0].Weight != weight)
+	assert.Equal(t, priority, *abilities[0].Priority)
+	assert.Equal(t, weight, abilities[0].Weight)
 	require.NotNil(t, abilities[1].Priority)
 	assert.Equal(t, priority, *abilities[1].Priority)
 	assert.Equal(t, weight, abilities[1].Weight)
@@ -554,8 +555,8 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	}
 	goldFast := abilityByRoute[routeKey{channelId: 1301, model: "model-b"}]
 	goldSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-b"}]
-	assert.Equal(t, int64(2), *goldFast.Priority)
-	assert.Equal(t, int64(1), *goldSlow.Priority)
+	assert.Equal(t, priority, *goldFast.Priority)
+	assert.Equal(t, priority, *goldSlow.Priority)
 	assert.Equal(t, goldFast.Weight, goldSlow.Weight)
 	unconfiguredFast := abilityByRoute[routeKey{channelId: 1301, model: "model-a"}]
 	unconfiguredSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-a"}]

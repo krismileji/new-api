@@ -103,12 +103,17 @@ function getUnavailableReason(
   key: ScoreMetricKey,
   input: ChannelMonitorSmartScheduleScoreMetricInput,
   component: ChannelMonitorSmartScheduleScoreComponent,
-  minimumSamples: number
+  minimumSamples: number,
+  comparableCount: number,
+  minimumComparableChannels: number
 ) {
   if (component.configured_weight_percent <= 0) return '配置权重为 0%'
   if (input.value == null) return '没有可用数据'
   if (key !== 'cost_ratio' && input.sample_count < minimumSamples) {
     return `样本 ${input.sample_count}/${minimumSamples}`
+  }
+  if (component.comparison_state === 'insufficient') {
+    return `可比渠道不足（${comparableCount}/${minimumComparableChannels}），暂不比较`
   }
   return '本轮未计入'
 }
@@ -124,11 +129,19 @@ function ScoreMetricRow(props: {
   const contribution = component.available
     ? (component.normalized_score ?? 0) * component.effective_weight_percent
     : null
+  let componentStatus = '未计入'
+  if (component.available) {
+    componentStatus = '已计入'
+  } else if (component.comparison_state === 'insufficient') {
+    componentStatus = '不可比较'
+  }
   let calculation = `未计入：${getUnavailableReason(
     props.metricKey,
     input,
     component,
-    props.details.minimum_samples
+    props.details.minimum_samples,
+    cohort.available_count,
+    props.details.minimum_comparable_channels
   )}`
   if (
     component.available &&
@@ -169,7 +182,7 @@ function ScoreMetricRow(props: {
           variant={component.available ? 'secondary' : 'outline'}
           className='shrink-0'
         >
-          {component.available ? '已计入' : '未计入'}
+          {componentStatus}
         </Badge>
       </div>
       <div role='cell' className='min-w-0 tabular-nums'>
@@ -240,6 +253,8 @@ export function ChannelMonitorSmartScheduleScoreDetails(
     temporaryTrafficLabel = '样本不足补量'
   } else if (details.decision.temporary_traffic_kind === 'priority_sampling') {
     temporaryTrafficLabel = '低优先级轮转'
+  } else if (details.decision.temporary_traffic_kind === 'adaptive_sampling') {
+    temporaryTrafficLabel = '健康应急采样'
   }
   let stabilityState = '未启用'
   if (details.stability.enabled) stabilityState = '未达到可用条件'
@@ -260,6 +275,27 @@ export function ChannelMonitorSmartScheduleScoreDetails(
   if (details.stability.applied) {
     const stabilityWeight = details.stability.effective_weight_percent
     finalCalculation = `业务得分 ${formatScore(details.business_score)} x ${formatPercent(100 - stabilityWeight)} + 稳定性 ${formatScore(details.stability.raw_score)} x ${formatPercent(stabilityWeight)} = ${formatScore(details.final_score)}`
+  }
+  let comparisonStateLabel = ''
+  let comparisonStateVariant: 'outline' | 'warning' = 'outline'
+  if (details.comparison_state === 'insufficient') {
+    comparisonStateLabel = '评分状态：不可比较'
+    comparisonStateVariant = 'warning'
+  } else if (details.comparison_state === 'comparable') {
+    comparisonStateLabel = '评分状态：可比较'
+  }
+  let healthStateLabel = '未知'
+  let healthStateVariant: 'outline' | 'warning' = 'outline'
+  if (details.health?.state === 'high_risk') {
+    healthStateLabel = '高风险'
+    healthStateVariant = 'warning'
+  } else if (details.health?.state === 'pressure') {
+    healthStateLabel = '降压'
+    healthStateVariant = 'warning'
+  } else if (details.health?.state === 'observation') {
+    healthStateLabel = '观察'
+  } else if (details.health?.state === 'healthy') {
+    healthStateLabel = '健康'
   }
 
   return (
@@ -301,6 +337,14 @@ export function ChannelMonitorSmartScheduleScoreDetails(
               性能与稳定性指标最低 {details.minimum_samples} 个样本
             </span>
             <span className='text-muted-foreground'>
+              最少 {details.minimum_comparable_channels} 个可比渠道
+            </span>
+            {comparisonStateLabel ? (
+              <Badge variant={comparisonStateVariant}>
+                {comparisonStateLabel}
+              </Badge>
+            ) : null}
+            <span className='text-muted-foreground'>
               {details.decision.apply_mode === 'priority_weight'
                 ? '优先级 + 权重'
                 : '仅权重'}
@@ -313,6 +357,11 @@ export function ChannelMonitorSmartScheduleScoreDetails(
             {details.decision.force_reset ? (
               <Badge variant='warning'>强制重算</Badge>
             ) : null}
+            {details.health ? (
+              <Badge variant={healthStateVariant}>
+                健康状态：{healthStateLabel}
+              </Badge>
+            ) : null}
           </div>
           <p className='text-muted-foreground border-t px-3 py-2 text-xs'>
             成本倍率和首字越低越好，TPS
@@ -321,7 +370,7 @@ export function ChannelMonitorSmartScheduleScoreDetails(
           </p>
 
           {details.economics ? (
-            <div className='grid gap-2 border-t px-3 py-2 text-xs sm:grid-cols-4'>
+            <div className='grid gap-2 border-t px-3 py-2 text-xs sm:grid-cols-3'>
               <div>
                 <span className='text-muted-foreground block'>成本倍率</span>
                 <strong className='font-mono tabular-nums'>
@@ -359,6 +408,53 @@ export function ChannelMonitorSmartScheduleScoreDetails(
                   保本兜底层；管理员手动固定时仍按固定结果执行。
                 </p>
               ) : null}
+            </div>
+          ) : null}
+
+          {details.health ? (
+            <div className='grid gap-2 border-t px-3 py-2 text-xs sm:grid-cols-3'>
+              <div>
+                <span className='text-muted-foreground block'>健康压力</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.pressure * 100)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>错误压力</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.error_pressure * 100)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>首字压力</span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.latency_pressure * 100)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
+                  窗口内风险请求
+                </span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.risk_request_percent)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
+                  窗口内健康请求
+                </span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.healthy_request_percent)}
+                </strong>
+              </div>
+              <p className='text-muted-foreground sm:col-span-3'>
+                最近 {details.health.window_seconds} 秒统计了{' '}
+                {details.health.sample_count}{' '}
+                个等价样本（业务请求、手动测试和定时探测）；风险包含非 429
+                错误和达到首字告警阈值的成功请求，
+                无首字数据的成功请求按健康处理。首字和 TPS
+                只有达到最少可比渠道数后才参与相对比较。
+              </p>
             </div>
           ) : null}
 

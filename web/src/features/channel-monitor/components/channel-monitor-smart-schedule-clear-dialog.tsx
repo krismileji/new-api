@@ -92,7 +92,8 @@ export function ChannelMonitorSmartScheduleClearDialog(
 
   const clearingExploration =
     props.route?.state.stability_state === '' &&
-    props.route.state.temporary_traffic_kind === 'insufficient_samples'
+    (props.route.state.temporary_traffic_kind === 'insufficient_samples' ||
+      props.route.state.temporary_traffic_kind === 'adaptive_sampling')
   let title = '确认解除智能调度保护？'
   let stateLabel = '稳定性试放'
   if (props.route?.state.stability_state === 'degraded') {

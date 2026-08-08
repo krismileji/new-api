@@ -62,12 +62,19 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '到期后对支持的文本模型发送 /v1/responses 流式请求。实际执行的成功和失败结果都会计入稳定性样本；探测会写消费日志并计入渠道成本。',
   degradedProbe:
     '稳定性降级后按探测间隔主动请求渠道。达到配置的恢复探测成功次数后，可以不等待降级时长结束而提前恢复原优先级和权重。',
+  prioritySampling:
+    '按基础排名轮转低优先级渠道的少量真实流量，只验证健康备援，不改变基础排名。',
+  prioritySamplingInterval:
+    '低优先级轮转每次保持当前采样渠道的时间，到期后按排名和最近采样时间选择下一条。',
+  prioritySamplingBasePercent:
+    '基础排名第 2 名渠道在轮转采样时的目标流量比例。',
+  prioritySamplingDecayPercent:
+    '排名每降低一名时，上一名目标采样比例保留的百分比。',
+  prioritySamplingMinPercent: '低排名渠道轮转采样时仍保留的最低目标流量比例。',
   stability:
-    '最终失败、重试失败耗时和成功延迟抖动会合成稳定性软评分；连续失败或保护失败窗口累计失败达到阈值时，当前“分组 + 模型”路由才进入硬保护。',
+    '稳定性保护包含软降级和硬保护：错误率或首字持续恶化时先增加备援采样；连续失败或保护失败窗口累计失败达到阈值时，当前“分组 + 模型”路由才进入硬保护。',
   stabilityPercent:
     '稳定性得分在最终得分中的占比，剩余比例来自当前调度方式的业务指标。值越高，路由越偏向稳定渠道。',
-  degradeStabilityScore:
-    '兼容旧配置的保留字段，不再用于触发正常路由的硬保护。',
   recoveryStabilityScore:
     '降级期结束后会先小流量试放，新样本得分达到此值时可恢复原优先级和权重；试放中的有效失败会立即重新降级。',
   minSamples:
@@ -108,6 +115,34 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '仅在“只调整权重”下生效。系统保留现有优先级，让每个优先级中最终得分最高的渠道承接该目标比例，其余流量按最终得分分配给同层备用渠道。',
   primarySwitchThreshold:
     '新渠道的最终得分必须至少高于当前主渠道这些百分点才会替换主渠道。主渠道被禁用、不可用或触发稳定性降级时会立即切换，不等待达到分差。',
+  adaptiveSampling:
+    '稳定性保护中的软降级机制。健康主渠道继续承接大部分流量；错误率或首字延迟持续恶化时按压力逐步增加备用渠道采样。它不摘除渠道，硬不可用仍按原有保护立即切换。',
+  adaptiveSamplingBasePercent:
+    '主渠道进入软压力后，备用渠道用于补充样本的起始预算上限；健康主渠道不会因为该值降低正常流量。',
+  adaptiveSamplingMaxPercent:
+    '主渠道进入较高压力时，备用渠道可获得的池级最高采样比例；实际比例还会受样本欠账、主渠道最低流量和备用渠道健康状态限制。',
+  adaptiveSamplingPrimaryMinPercent:
+    '软压力期间主渠道仍保留的最低流量比例，用来避免备用采样过度分流；主渠道硬不可用时不受此限制。',
+  adaptiveSamplingErrorWarningPercent:
+    '主渠道非 429 请求错误率达到此阈值后进入观察/压力计算，备用采样预算开始随错误压力增加。',
+  adaptiveSamplingErrorCriticalPercent:
+    '主渠道非 429 请求错误率达到此阈值时视为高风险，备用采样可达到最大预算；硬保护仍按原有错误规则执行。',
+  adaptiveSamplingFirstTokenWarningSeconds:
+    '主渠道首字延迟达到此阈值后计入延迟压力，和错误压力共同决定备用采样强度。',
+  adaptiveSamplingFirstTokenCriticalSeconds:
+    '主渠道首字延迟达到此阈值时视为高风险，备用采样按更高压力计算；这不等同于上游响应超时。',
+  adaptiveSamplingWindowSeconds:
+    '独立于性能和稳定性分钟窗口，自适应采样只统计最近这段秒级窗口内的请求；窗口越短响应越快但波动越大，窗口越长越平滑但恢复更慢。',
+  adaptiveSamplingEnterRequestPercent:
+    '窗口内风险请求（非 429 错误或首字达到告警阈值的成功请求）达到此占比后进入压力状态。',
+  adaptiveSamplingRecoverRequestPercent:
+    '压力状态下，窗口内健康请求（成功且首字未达到告警阈值）达到此占比后恢复健康；与进入阈值形成滞回。',
+  adaptiveSamplingExplorationLeaseMinutes:
+    '同一分组和模型的备用采样租约持续时间，租约内固定补同一候选；达到最少样本或租约到期后轮换。',
+  adaptiveSamplingSwitchConfirmRequestPercent:
+    '备用渠道作为评分胜者时，窗口内健康请求达到此占比且健康证据足够后才替换主渠道；硬不可用或硬保护路径不等待此确认。',
+  adaptiveSamplingMinComparableChannels:
+    '首字、TPS 等相对指标至少需要多少个有足够样本的渠道才比较；不足时不产生单渠道满分，保留当前主渠道并继续补样。',
 } as const
 
 export type ChannelMonitorSettingHelpKey =

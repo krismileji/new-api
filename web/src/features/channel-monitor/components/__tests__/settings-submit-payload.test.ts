@@ -75,7 +75,6 @@ const formValues = {
       applyMode: 'priority_weight',
       models: ['gpt-5'],
       minSamples: 20,
-      degradeStabilityScore: 90,
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
@@ -98,6 +97,20 @@ const formValues = {
       prioritySamplingBasePercent: 3,
       prioritySamplingDecayPercent: 70,
       prioritySamplingMinPercent: 0.5,
+      adaptiveSamplingEnabled: true,
+      adaptiveSamplingBasePercent: 3,
+      adaptiveSamplingMaxPercent: 30,
+      adaptiveSamplingPrimaryMinPercent: 70,
+      adaptiveSamplingErrorWarningPercent: 5,
+      adaptiveSamplingErrorCriticalPercent: 15,
+      adaptiveSamplingFirstTokenWarningSeconds: 5,
+      adaptiveSamplingFirstTokenCriticalSeconds: 10,
+      adaptiveSamplingWindowSeconds: 600,
+      adaptiveSamplingEnterRequestPercent: 10,
+      adaptiveSamplingRecoverRequestPercent: 95,
+      adaptiveSamplingExplorationLeaseMinutes: 10,
+      adaptiveSamplingSwitchConfirmRequestPercent: 95,
+      adaptiveSamplingMinComparableChannels: 2,
     },
   ],
   smartScheduleIntervalMinutes: 10,
@@ -177,8 +190,11 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(payload.smart_schedule_stability_window_minutes, 120)
     assert.equal(payload.smart_schedule_rate_limit_cooldown_seconds, 30)
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.degrade_stability_score,
-      90
+      Object.hasOwn(
+        payload.smart_schedule_group_policies?.[0] ?? {},
+        'degrade_stability_score'
+      ),
+      false
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.recovery_stability_score,
@@ -242,14 +258,9 @@ describe('channel monitor settings submit payload', () => {
       10
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]
-        ?.jitter_absolute_tolerance_seconds,
-      10
-    )
-    assert.equal(
       Object.hasOwn(
         payload.smart_schedule_group_policies?.[0] ?? {},
-        'jitter_baseline_minutes'
+        'jitter_absolute_tolerance_seconds'
       ),
       false
     )

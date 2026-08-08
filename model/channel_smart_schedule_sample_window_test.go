@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -84,4 +85,33 @@ func TestChannelSmartScheduleSampleSeriesManualMetricsRespectObservationBoundary
 	assert.Equal(t, int64(1), metrics.SuccessCount)
 	assert.Zero(t, metrics.FailureCount)
 	assert.Equal(t, int64(160), metrics.WindowStart)
+}
+
+func TestChannelSmartScheduleSampleSeriesAdaptiveHealthUsesWindowRequestClasses(t *testing.T) {
+	fastFirstTokenMs := 4_000.0
+	warningFirstTokenMs := 5_000.0
+	criticalFirstTokenMs := 10_000.0
+	invalidFirstTokenMs := math.NaN()
+	series := ChannelSmartScheduleSampleSeries{
+		observationSince: 150,
+		samples: []channelSmartScheduleSample{
+			{Time: 140, Success: false},
+			{Time: 170, Success: false},
+			{Time: 180, Success: true},
+			{Time: 190, Success: true, FirstTokenMs: &fastFirstTokenMs},
+			{Time: 200, Success: true, FirstTokenMs: &warningFirstTokenMs},
+			{Time: 210, Success: true, FirstTokenMs: &criticalFirstTokenMs},
+			{Time: 220, Success: true, FirstTokenMs: &invalidFirstTokenMs},
+		},
+	}
+
+	metric := series.AdaptiveHealthMetricsSince(160, 5, 10)
+
+	assert.Equal(t, int64(6), metric.RequestCount)
+	assert.Equal(t, int64(1), metric.FailureCount)
+	assert.Equal(t, int64(2), metric.SlowRequestCount)
+	assert.Equal(t, int64(3), metric.HealthyRequestCount)
+	assert.Equal(t, int64(3), metric.FirstTokenCount)
+	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
+	assert.Equal(t, int64(220), metric.LastUsedTime)
 }

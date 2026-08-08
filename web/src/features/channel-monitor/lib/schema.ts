@@ -89,6 +89,14 @@ export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 1
 export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 100
 export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 0.01
 export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 5
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT = 10
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT = 49
+export const MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 51
+export const MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 99
+export const MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 60
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 3_600
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES = 1_440
+export const MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS = 10
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
 export const MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 99
@@ -378,6 +386,80 @@ const smartSchedulePrioritySamplingMinPercentSchema = z.coerce
     '最低采样比例不能超过 5%'
   )
 
+const smartScheduleAdaptiveSamplingPercentSchema = (
+  min: number,
+  max: number,
+  label: string
+) =>
+  z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .finite(`${label}必须是有效数字`)
+      .min(min, `${label}不能小于 ${min}%`)
+      .max(max, `${label}不能超过 ${max}%`)
+  )
+
+const smartScheduleAdaptiveSamplingSecondsSchema = (label: string) =>
+  z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .finite(`${label}必须是有效数字`)
+      .min(0, `${label}不能小于 0 秒`)
+      .max(60, `${label}不能超过 60 秒`)
+  )
+
+const smartScheduleAdaptiveSamplingWindowSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .finite('自适应采样统计窗口必须是有效数字')
+    .int('自适应采样统计窗口必须是整数')
+    .min(
+      MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
+      '自适应采样统计窗口不能小于 60 秒'
+    )
+    .max(
+      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
+      '自适应采样统计窗口不能超过 3600 秒'
+    )
+)
+
+const smartScheduleAdaptiveSamplingRequestPercentSchema = (label: string) =>
+  z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .finite(`${label}必须是有效数字`)
+      .gt(0, `${label}必须大于 0%`)
+      .max(100, `${label}不能超过 100%`)
+  )
+
+const smartScheduleAdaptiveSamplingLeaseSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .int('探索租约必须是整数')
+    .min(1, '探索租约不能小于 1 分钟')
+    .max(
+      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES,
+      '探索租约不能超过 1440 分钟'
+    )
+)
+
+const smartScheduleAdaptiveSamplingComparableChannelsSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .int('最少可比渠道数必须是整数')
+    .min(2, '最少可比渠道数不能小于 2')
+    .max(
+      MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS,
+      '最少可比渠道数不能超过 10'
+    )
+)
+
 const smartSchedulePolicyShape = {
   strategy: z.enum(channelMonitorSmartScheduleStrategies),
   stabilityEnabled: z.boolean(),
@@ -389,7 +471,6 @@ const smartSchedulePolicyShape = {
   models: smartScheduleModelsSchema,
   modelOrder: smartScheduleModelsSchema.default([]),
   minSamples: smartScheduleMinSamplesSchema,
-  degradeStabilityScore: smartScheduleStabilityScoreSchema,
   recoveryStabilityScore: smartScheduleStabilityScoreSchema,
   fastFailurePenaltyPercent: smartScheduleFastFailurePenaltySchema,
   fastFailureSeconds: smartScheduleFastFailureSecondsSchema,
@@ -419,6 +500,41 @@ const smartSchedulePolicyShape = {
   prioritySamplingBasePercent: smartSchedulePrioritySamplingBasePercentSchema,
   prioritySamplingDecayPercent: smartSchedulePrioritySamplingDecayPercentSchema,
   prioritySamplingMinPercent: smartSchedulePrioritySamplingMinPercentSchema,
+  adaptiveSamplingEnabled: z.boolean(),
+  adaptiveSamplingBasePercent: smartScheduleAdaptiveSamplingPercentSchema(
+    0,
+    MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT,
+    '自适应采样基础预算'
+  ),
+  adaptiveSamplingMaxPercent: smartScheduleAdaptiveSamplingPercentSchema(
+    1,
+    MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
+    '自适应采样最大预算'
+  ),
+  adaptiveSamplingPrimaryMinPercent: smartScheduleAdaptiveSamplingPercentSchema(
+    MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
+    MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
+    '主渠道最低流量'
+  ),
+  adaptiveSamplingErrorWarningPercent:
+    smartScheduleAdaptiveSamplingPercentSchema(0, 100, '错误告警阈值'),
+  adaptiveSamplingErrorCriticalPercent:
+    smartScheduleAdaptiveSamplingPercentSchema(0, 100, '错误高风险阈值'),
+  adaptiveSamplingFirstTokenWarningSeconds:
+    smartScheduleAdaptiveSamplingSecondsSchema('首字告警阈值'),
+  adaptiveSamplingFirstTokenCriticalSeconds:
+    smartScheduleAdaptiveSamplingSecondsSchema('首字高风险阈值'),
+  adaptiveSamplingWindowSeconds: smartScheduleAdaptiveSamplingWindowSchema,
+  adaptiveSamplingEnterRequestPercent:
+    smartScheduleAdaptiveSamplingRequestPercentSchema('进入压力请求占比'),
+  adaptiveSamplingRecoverRequestPercent:
+    smartScheduleAdaptiveSamplingRequestPercentSchema('恢复健康请求占比'),
+  adaptiveSamplingExplorationLeaseMinutes:
+    smartScheduleAdaptiveSamplingLeaseSchema,
+  adaptiveSamplingSwitchConfirmRequestPercent:
+    smartScheduleAdaptiveSamplingRequestPercentSchema('切换确认请求占比'),
+  adaptiveSamplingMinComparableChannels:
+    smartScheduleAdaptiveSamplingComparableChannelsSchema,
 }
 
 function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
@@ -459,7 +575,6 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
 
   if (policy.stabilityEnabled !== true) {
     normalized.minSamples = defaults.minSamples
-    normalized.degradeStabilityScore = defaults.degradeStabilityScore
     normalized.recoveryStabilityScore = defaults.recoveryStabilityScore
     normalized.fastFailurePenaltyPercent = defaults.fastFailurePenaltyPercent
     normalized.fastFailureSeconds = defaults.fastFailureSeconds
@@ -504,6 +619,17 @@ function validateSmartSchedulePolicy(
     sampleMode: ChannelMonitorSmartScheduleSampleMode
     fastFailureSeconds: number
     slowFailureSeconds: number
+    adaptiveSamplingEnabled: boolean
+    adaptiveSamplingBasePercent: number
+    adaptiveSamplingMaxPercent: number
+    adaptiveSamplingPrimaryMinPercent: number
+    adaptiveSamplingErrorWarningPercent: number
+    adaptiveSamplingErrorCriticalPercent: number
+    adaptiveSamplingFirstTokenWarningSeconds: number
+    adaptiveSamplingFirstTokenCriticalSeconds: number
+    adaptiveSamplingEnterRequestPercent: number
+    adaptiveSamplingRecoverRequestPercent: number
+    adaptiveSamplingSwitchConfirmRequestPercent: number
   },
   context: z.RefinementCtx
 ) {
@@ -520,6 +646,75 @@ function validateSmartSchedulePolicy(
       path: ['slowFailureSeconds'],
       message: '慢失败界限必须大于快速失败界限',
     })
+  }
+  if (values.adaptiveSamplingEnabled === true) {
+    if (values.applyMode !== 'priority_weight') {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingEnabled'],
+        message: '自适应采样只适用于优先级分层 + 权重',
+      })
+    }
+    if (
+      values.adaptiveSamplingBasePercent > values.adaptiveSamplingMaxPercent
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingBasePercent'],
+        message: '自适应采样基础预算不能大于最大预算',
+      })
+    }
+    if (
+      values.adaptiveSamplingMaxPercent >
+      100 - values.adaptiveSamplingPrimaryMinPercent
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingMaxPercent'],
+        message: '自适应采样最大预算与主渠道最低流量冲突',
+      })
+    }
+    if (
+      values.adaptiveSamplingErrorCriticalPercent <=
+      values.adaptiveSamplingErrorWarningPercent
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingErrorCriticalPercent'],
+        message: '错误高风险阈值必须大于告警阈值',
+      })
+    }
+    if (
+      values.adaptiveSamplingFirstTokenCriticalSeconds <=
+      values.adaptiveSamplingFirstTokenWarningSeconds
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingFirstTokenCriticalSeconds'],
+        message: '首字高风险阈值必须大于告警阈值',
+      })
+    }
+    if (
+      values.adaptiveSamplingEnterRequestPercent +
+        values.adaptiveSamplingRecoverRequestPercent <=
+      100
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingRecoverRequestPercent'],
+        message: '进入压力和恢复健康请求占比必须保留滞回区间',
+      })
+    }
+    if (
+      values.adaptiveSamplingSwitchConfirmRequestPercent <
+      values.adaptiveSamplingRecoverRequestPercent
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['adaptiveSamplingSwitchConfirmRequestPercent'],
+        message: '切换确认请求占比不能低于恢复健康请求占比',
+      })
+    }
   }
 }
 
@@ -829,10 +1024,7 @@ export function createChannelMonitorSettingsSchema() {
       smartScheduleStabilityWindowMinutes: z.coerce
         .number()
         .int('稳定性评分窗口必须是整数')
-        .min(
-          MIN_SMART_SCHEDULE_WINDOW_MINUTES,
-          '稳定性评分窗口不能小于 1 分钟'
-        )
+        .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性评分窗口不能小于 1 分钟')
         .max(
           MAX_SMART_SCHEDULE_WINDOW_MINUTES,
           '稳定性评分窗口不能超过 43200 分钟'

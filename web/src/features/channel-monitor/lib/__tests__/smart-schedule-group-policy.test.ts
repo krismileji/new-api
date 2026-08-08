@@ -52,7 +52,6 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   models: ['model-a'],
   modelOrder: ['model-c', 'model-a'],
   minSamples: 5,
-  degradeStabilityScore: 90,
   recoveryStabilityScore: 95,
   fastFailurePenaltyPercent: 40,
   fastFailureSeconds: 1,
@@ -75,6 +74,20 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   prioritySamplingBasePercent: 3,
   prioritySamplingDecayPercent: 70,
   prioritySamplingMinPercent: 0.5,
+  adaptiveSamplingEnabled: false,
+  adaptiveSamplingBasePercent: 3,
+  adaptiveSamplingMaxPercent: 30,
+  adaptiveSamplingPrimaryMinPercent: 70,
+  adaptiveSamplingErrorWarningPercent: 5,
+  adaptiveSamplingErrorCriticalPercent: 15,
+  adaptiveSamplingFirstTokenWarningSeconds: 5,
+  adaptiveSamplingFirstTokenCriticalSeconds: 10,
+  adaptiveSamplingWindowSeconds: 600,
+  adaptiveSamplingEnterRequestPercent: 10,
+  adaptiveSamplingRecoverRequestPercent: 95,
+  adaptiveSamplingExplorationLeaseMinutes: 10,
+  adaptiveSamplingSwitchConfirmRequestPercent: 95,
+  adaptiveSamplingMinComparableChannels: 2,
 }
 
 describe('smart schedule group policy', () => {
@@ -112,9 +125,7 @@ describe('smart schedule group policy', () => {
         stability_enabled: false,
         jitter_enabled: defaultPolicy.jitterEnabled,
         jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
-        jitter_absolute_tolerance_seconds:
-          defaultPolicy.jitterSlowThresholdSeconds,
-        jitter_baseline_minutes: 60,
+        jitter_slow_threshold_seconds: defaultPolicy.jitterSlowThresholdSeconds,
         scoring: {
           stability_percent: defaultPolicy.scoring.stabilityPercent,
           primary_traffic_percent: defaultPolicy.scoring.primaryTrafficPercent,
@@ -135,7 +146,6 @@ describe('smart schedule group policy', () => {
         models: [],
         model_order: ['model-c', 'model-a'],
         min_samples: defaultPolicy.minSamples,
-        degrade_stability_score: defaultPolicy.degradeStabilityScore,
         recovery_stability_score: defaultPolicy.recoveryStabilityScore,
         fast_failure_penalty_percent: defaultPolicy.fastFailurePenaltyPercent,
         fast_failure_seconds: defaultPolicy.fastFailureSeconds,
@@ -157,6 +167,32 @@ describe('smart schedule group policy', () => {
         priority_sampling_decay_percent:
           defaultPolicy.prioritySamplingDecayPercent,
         priority_sampling_min_percent: defaultPolicy.prioritySamplingMinPercent,
+        adaptive_sampling_enabled: defaultPolicy.adaptiveSamplingEnabled,
+        adaptive_sampling_base_percent:
+          defaultPolicy.adaptiveSamplingBasePercent,
+        adaptive_sampling_max_percent: defaultPolicy.adaptiveSamplingMaxPercent,
+        adaptive_sampling_primary_min_percent:
+          defaultPolicy.adaptiveSamplingPrimaryMinPercent,
+        adaptive_sampling_error_warning_percent:
+          defaultPolicy.adaptiveSamplingErrorWarningPercent,
+        adaptive_sampling_error_critical_percent:
+          defaultPolicy.adaptiveSamplingErrorCriticalPercent,
+        adaptive_sampling_first_token_warning_seconds:
+          defaultPolicy.adaptiveSamplingFirstTokenWarningSeconds,
+        adaptive_sampling_first_token_critical_seconds:
+          defaultPolicy.adaptiveSamplingFirstTokenCriticalSeconds,
+        adaptive_sampling_window_seconds:
+          defaultPolicy.adaptiveSamplingWindowSeconds,
+        adaptive_sampling_enter_request_percent:
+          defaultPolicy.adaptiveSamplingEnterRequestPercent,
+        adaptive_sampling_recover_request_percent:
+          defaultPolicy.adaptiveSamplingRecoverRequestPercent,
+        adaptive_sampling_exploration_lease_minutes:
+          defaultPolicy.adaptiveSamplingExplorationLeaseMinutes,
+        adaptive_sampling_switch_confirm_request_percent:
+          defaultPolicy.adaptiveSamplingSwitchConfirmRequestPercent,
+        adaptive_sampling_min_comparable_channels:
+          defaultPolicy.adaptiveSamplingMinComparableChannels,
       },
     ])
     const apiPolicies =
@@ -180,16 +216,14 @@ describe('smart schedule group policy', () => {
       false
     )
     assert.equal(apiPolicies[0]?.jitter_slow_threshold_seconds, 10)
-    assert.equal(apiPolicies[0]?.jitter_absolute_tolerance_seconds, 10)
     assert.equal(
-      Object.hasOwn(apiPolicies[0] ?? {}, 'jitter_baseline_minutes'),
+      Object.hasOwn(apiPolicies[0] ?? {}, 'jitter_absolute_tolerance_seconds'),
       false
     )
     assert.equal(apiPolicies[0]?.scoring.primary_traffic_percent, 90)
     assert.equal(apiPolicies[0]?.scoring.primary_switch_threshold_percent, 3)
     assert.deepEqual(apiPolicies[0]?.models, [])
     assert.equal(apiPolicies[0]?.min_samples, 5)
-    assert.equal(apiPolicies[0]?.degrade_stability_score, 90)
     assert.equal(apiPolicies[0]?.recovery_stability_score, 95)
     assert.equal(apiPolicies[0]?.fast_failure_penalty_percent, 40)
     assert.equal(apiPolicies[0]?.fast_failure_seconds, 1)
@@ -228,10 +262,6 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.sampleMode,
       'off'
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.degradeStabilityScore,
-      90
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.recoveryStabilityScore,

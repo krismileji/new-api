@@ -104,6 +104,8 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`
   } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+  } else if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+    unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`
   }
   const stabilityRemaining = formatRemainingTime(
     Math.max(route.state.stability_until, route.state.runtime_protection_until),
@@ -175,6 +177,16 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       key: 'priority-sampling',
       label: `优先级采样 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
       variant: 'warning',
+    })
+  } else if (
+    available &&
+    route.state.temporary_traffic_kind === 'adaptive_sampling'
+  ) {
+    statuses.push({
+      key: 'adaptive-sampling',
+      label: `健康应急采样 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
+      variant: 'warning',
+      clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`,
     })
   }
 
@@ -256,7 +268,8 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   if (route.state.temporary_traffic_since > 0) {
     details.push({
       label:
-        route.state.temporary_traffic_kind === 'priority_sampling'
+        route.state.temporary_traffic_kind === 'priority_sampling' ||
+        route.state.temporary_traffic_kind === 'adaptive_sampling'
           ? '采样开始'
           : '探索开始',
       value: formatTimestampToDate(route.state.temporary_traffic_since),

@@ -24,6 +24,7 @@ import { useForm } from 'react-hook-form'
 
 import { Form } from '@/components/ui/form'
 
+import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS } from '../../constants'
 import type {
   ChannelMonitorSettingsFormValues,
   ChannelMonitorSmartSchedulePolicyFormValues,
@@ -130,6 +131,7 @@ function SmartScheduleGroupPoliciesFixture(props: {
       smartScheduleGroupPolicies: props.configured
         ? [
             {
+              ...DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS,
               group: 'vip',
               strategy: 'ratio',
               stabilityEnabled: false,
@@ -154,7 +156,6 @@ function SmartScheduleGroupPoliciesFixture(props: {
               applyMode: 'priority_weight',
               models: [],
               minSamples: 5,
-              degradeStabilityScore: 90,
               recoveryStabilityScore: 95,
               fastFailurePenaltyPercent: 40,
               fastFailureSeconds: 1,
@@ -203,6 +204,7 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
 }) {
   const form = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     defaultValues: {
+      ...DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS,
       strategy: 'smart',
       stabilityEnabled: true,
       jitterEnabled: props.jitterEnabled ?? true,
@@ -227,7 +229,6 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       models: [],
       modelOrder: [],
       minSamples: 5,
-      degradeStabilityScore: 90,
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
       fastFailureSeconds: 1,
@@ -426,6 +427,11 @@ describe('channel monitor settings dialog', () => {
       '参与模型',
       '模型卡片顺序',
       '样本补充方式',
+      '低优先级轮转采样',
+      '轮转间隔',
+      '基础采样比例',
+      '排名递减比例',
+      '最低采样比例',
       '稳定性保护',
       '降级期间定时探测',
       '稳定性占比',
@@ -449,9 +455,31 @@ describe('channel monitor settings dialog', () => {
       '首字时间',
       'TPS',
       '主渠道切换分差',
+      '自适应备援采样',
+      '基础备援预算',
+      '最大备援预算',
+      '主渠道最低流量',
+      '错误告警阈值',
+      '错误高风险阈值',
+      '首字告警阈值',
+      '首字高风险阈值',
+      '请求比例窗口',
+      '进入压力请求占比',
+      '恢复健康请求占比',
+      '探索租约',
+      '切换确认请求占比',
+      '最少可比渠道数',
     ]) {
       assert.ok(trafficPolicyMarkup.includes(`aria-label="查看“${label}”说明"`))
     }
+    const stabilityHelpIndex = trafficPolicyMarkup.indexOf(
+      'aria-label="查看“稳定性保护”说明"'
+    )
+    const softDegradeSectionIndex = trafficPolicyMarkup.indexOf(
+      '软降级与自适应备援采样'
+    )
+    assert.ok(stabilityHelpIndex >= 0)
+    assert.ok(softDegradeSectionIndex > stabilityHelpIndex)
     assert.equal(trafficPolicyMarkup.includes('降级稳定性得分'), false)
     assert.match(
       trafficPolicyMarkup,

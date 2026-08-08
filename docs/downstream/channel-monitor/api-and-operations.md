@@ -85,11 +85,11 @@
 
 `error_message_mapping` 对全部渠道统一生效。系统优先匹配上游错误码，再匹配最终 HTTP 状态码；匹配后的文案用于用户使用日志，并只在请求响应尚未开始时替换返回给用户的错误信息。未配置或未匹配时保持原有行为，用户使用日志只展示状态码。
 
-`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
+`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少独立秒级窗口或请求占比字段会校验失败，旧的轮数字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
 `GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本；相同渠道模型的多条分组路由返回相同的 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或分钟级稳定性评分限制。成功只清零连续失败，窗口内失败继续保留；`degrade_stability_score` 仅作为兼容字段保存和回显。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚。请求失败上限由 `relay_response_header_timeout_seconds` 控制。旧字段 `jitter_absolute_tolerance_seconds` 仍可作为兼容输入，在新字段缺失时自动映射；`jitter_baseline_minutes` 不再使用。完整策略示例：
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或分钟级稳定性评分限制。成功只清零连续失败，窗口内失败继续保留。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚。请求失败上限由 `relay_response_header_timeout_seconds` 控制。当前版本不接受已删除的旧字段；完整策略示例：
 
 ```json
 [
@@ -100,7 +100,6 @@
     "models": ["gpt-4.1"],
     "stability_enabled": true,
     "min_samples": 20,
-    "degrade_stability_score": 90,
     "recovery_stability_score": 95,
     "fast_failure_penalty_percent": 40,
     "fast_failure_seconds": 1,
@@ -115,9 +114,31 @@
     "jitter_tolerance_percent": 5,
     "jitter_slow_threshold_seconds": 10,
     "cooldown_minutes": 30,
+    "degraded_probe_enabled": false,
     "sample_mode": "probe",
     "exploration_traffic_percent": 3,
+    "exploration_max_prompt_tokens": 16384,
+    "stability_release_max_prompt_tokens": 0,
     "probe_interval_minutes": 10,
+    "priority_sampling_enabled": true,
+    "priority_sampling_interval_minutes": 60,
+    "priority_sampling_base_percent": 3,
+    "priority_sampling_decay_percent": 70,
+    "priority_sampling_min_percent": 0.5,
+    "adaptive_sampling_enabled": true,
+    "adaptive_sampling_base_percent": 3,
+    "adaptive_sampling_max_percent": 30,
+    "adaptive_sampling_primary_min_percent": 70,
+    "adaptive_sampling_error_warning_percent": 5,
+    "adaptive_sampling_error_critical_percent": 15,
+    "adaptive_sampling_first_token_warning_seconds": 5,
+    "adaptive_sampling_first_token_critical_seconds": 10,
+    "adaptive_sampling_window_seconds": 600,
+    "adaptive_sampling_enter_request_percent": 10,
+    "adaptive_sampling_recover_request_percent": 95,
+    "adaptive_sampling_exploration_lease_minutes": 10,
+    "adaptive_sampling_switch_confirm_request_percent": 95,
+    "adaptive_sampling_min_comparable_channels": 2,
     "scoring": {
       "stability_percent": 50,
       "primary_traffic_percent": 90,
