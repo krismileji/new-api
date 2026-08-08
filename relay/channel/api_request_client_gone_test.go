@@ -13,6 +13,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,6 +178,55 @@ func TestDoRequestTreatsStreamFirstResponseTimeoutAsRetryable(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
 	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
 	assert.False(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestDoRequestDoesNotStartKeepaliveForUpstreamErrorResponse(t *testing.T) {
+	settings := operation_setting.GetGeneralSetting()
+	originalEnabled := settings.PingIntervalEnabled
+	originalInterval := settings.PingIntervalSeconds
+	settings.PingIntervalEnabled = true
+	settings.PingIntervalSeconds = 1
+	t.Cleanup(func() {
+		settings.PingIntervalEnabled = originalEnabled
+		settings.PingIntervalSeconds = originalInterval
+	})
+
+	responseReady := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.WriteHeader(http.StatusBadGateway)
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(responseReady)
+		<-releaseResponse
+	}))
+	t.Cleanup(func() {
+		close(releaseResponse)
+		server.Close()
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(nil))
+	require.NoError(t, err)
+
+	resp, requestErr := DoRequest(c, upstreamRequest, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{},
+		IsStream:    true,
+	})
+	require.NoError(t, requestErr)
+	require.NotNil(t, resp)
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	<-responseReady
+
+	// A slow upstream error body must not be able to commit a downstream ping.
+	time.Sleep(1200 * time.Millisecond)
+	assert.Empty(t, recorder.Body.String())
+
+	require.NoError(t, resp.Body.Close())
 }
 
 func TestDoRequestRejectsInvalidUpstreamURL(t *testing.T) {

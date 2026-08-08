@@ -652,7 +652,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 	if err == nil && info.IsStream && resp != nil {
 		err = service.WaitForRelayStreamFirstResponse(resp)
-		if err == nil {
+		// A non-2xx response is still handled by the relay error path. Starting
+		// SSE keepalive before that body is consumed can commit a downstream
+		// response and suppress an otherwise retryable upstream failure.
+		if err == nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			attachPingKeepAlive(c, resp, info)
 		}
 	}
