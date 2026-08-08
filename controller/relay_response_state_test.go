@@ -18,6 +18,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func useGlobalErrorMessageMapping(t *testing.T, mapping string) {
+	t.Helper()
+	common.OptionMapRWMutex.Lock()
+	wasNil := common.OptionMap == nil
+	if wasNil {
+		common.OptionMap = make(map[string]string)
+	}
+	original, existed := common.OptionMap[service.ErrorMessageMappingOptionKey]
+	common.OptionMap[service.ErrorMessageMappingOptionKey] = mapping
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		if wasNil {
+			common.OptionMap = nil
+		} else if existed {
+			common.OptionMap[service.ErrorMessageMappingOptionKey] = original
+		} else {
+			delete(common.OptionMap, service.ErrorMessageMappingOptionKey)
+		}
+	})
+}
+
 func TestWriteRelayErrorResponseDoesNotAppendAfterResponseStarted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -43,6 +66,20 @@ func TestWriteRelayErrorResponseWritesBeforeResponseStarts(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadGateway, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "upstream failed")
+}
+
+func TestWriteRelayErrorResponseUsesGlobalMessageMappingBeforeResponseStarts(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	useGlobalErrorMessageMapping(t, `{"bad_response":"上游暂时不可用"}`)
+	apiErr := types.NewOpenAIError(errors.New("upstream failed"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+
+	writeRelayErrorResponse(c, nil, types.RelayFormatOpenAI, apiErr)
+
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "上游暂时不可用")
+	assert.NotContains(t, recorder.Body.String(), "upstream failed")
 }
 
 func TestWriteRelayErrorResponseReplacesPendingEventStreamHeaders(t *testing.T) {
@@ -86,6 +123,23 @@ func TestRespondTaskErrorDoesNotAppendAfterResponseStarted(t *testing.T) {
 	respondTaskError(c, &taskdto.TaskError{StatusCode: http.StatusInternalServerError, Message: "late error"})
 
 	assert.Equal(t, `{"id":"task_public"}`, recorder.Body.String())
+}
+
+func TestRespondTaskErrorUsesGlobalMessageMappingBeforeResponseStarts(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	useGlobalErrorMessageMapping(t, `{"fail_to_fetch_task":"任务暂时无法提交"}`)
+
+	respondTaskError(c, &taskdto.TaskError{
+		Code:       "fail_to_fetch_task",
+		Message:    "upstream failed",
+		StatusCode: http.StatusBadGateway,
+	})
+
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "任务暂时无法提交")
+	assert.NotContains(t, recorder.Body.String(), "upstream failed")
 }
 
 func TestMarkAcceptedUpstreamResponseErrorDisablesRetry(t *testing.T) {

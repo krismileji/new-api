@@ -37,6 +37,7 @@ const formValues = {
   emailNotificationEnabled: true,
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
+  errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
   probeResponseEnabled: true,
   probeResponseMatchInput: 'health check',
   probeResponseText: 'healthy',
@@ -275,6 +276,7 @@ describe('channel monitor settings submit payload', () => {
       'cost_retention_days',
       'email_notification_enabled',
       'email_notification_types',
+      'error_message_mapping',
       'execution_detail_retention_days',
       'notification_email',
       'probe_response_cache_write_tokens',
@@ -298,6 +300,10 @@ describe('channel monitor settings submit payload', () => {
       'balance_warning',
       'task_failed',
     ])
+    assert.equal(
+      payload.error_message_mapping,
+      '{"429":"请求过于频繁，请稍后再试"}'
+    )
     assert.equal(payload.probe_response_match_input, 'health check')
     assert.equal(payload.probe_response_text, 'healthy')
     assert.equal(payload.probe_response_min_delay_ms, 125)

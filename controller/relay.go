@@ -546,6 +546,14 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		other["channel_id"] = channelId
 		other["channel_name"] = channelError.ChannelName
 		other["channel_type"] = channelError.ChannelType
+		userVisibleMessage, hasUserVisibleMessage := service.ResolveUserErrorMessage(
+			service.GetConfiguredErrorMessageMapping(),
+			string(err.GetErrorCode()),
+			err.StatusCode,
+		)
+		if hasUserVisibleMessage {
+			other["user_visible_error_message"] = userVisibleMessage
+		}
 		if isChannelTestContext(c) {
 			other[model.ChannelMonitorChannelTestLogKey] = true
 		}
@@ -623,13 +631,22 @@ func RelayMidjourney(c *gin.Context) {
 			mjErr.Result = "当前分组负载已饱和，请稍后再试，或升级账户以提升服务质量。"
 			statusCode = http.StatusTooManyRequests
 		}
+		originalDescription := fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)
+		description := originalDescription
+		if message, ok := service.ResolveUserErrorMessage(
+			service.GetConfiguredErrorMessageMapping(),
+			fmt.Sprintf("%d", mjErr.Code),
+			statusCode,
+		); ok {
+			description = message
+		}
 		c.JSON(statusCode, gin.H{
-			"description": fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result),
+			"description": description,
 			"type":        "upstream_error",
 			"code":        mjErr.Code,
 		})
 		channelId := c.GetInt("channel_id")
-		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)))
+		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, originalDescription))
 	}
 }
 
@@ -660,7 +677,7 @@ func RelayNotFound(c *gin.Context) {
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &taskdto.TaskError{
+		respondTaskError(c, &taskdto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -675,7 +692,7 @@ func RelayTaskFetch(c *gin.Context) {
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &taskdto.TaskError{
+		respondTaskError(c, &taskdto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -828,9 +845,7 @@ func RelayTask(c *gin.Context) {
 
 		if !taskErr.LocalError {
 			channelError := newRelayChannelError(c, channel)
-			processChannelErrorWithTiming(c, *channelError,
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
-				shouldRetry, &attemptDuration, false)
+			processChannelErrorWithTiming(c, *channelError, taskErrorForChannelLog(taskErr), shouldRetry, &attemptDuration, false)
 			finalRetryLogPending = shouldRetry
 			if shouldRetry {
 				finalRetryAttemptDuration = attemptDuration
@@ -853,12 +868,8 @@ func RelayTask(c *gin.Context) {
 		attemptIndex++
 	}
 	if taskErr != nil && finalRetryLogPending && finalRetryChannelError != nil {
-		finalTaskError := taskErr.Error
-		if finalTaskError == nil {
-			finalTaskError = errors.New(taskErr.Message)
-		}
 		processChannelErrorWithTiming(c, *finalRetryChannelError,
-			types.NewOpenAIError(finalTaskError, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+			taskErrorForChannelLog(taskErr),
 			false, &finalRetryAttemptDuration, true)
 	}
 
@@ -903,6 +914,21 @@ func RelayTask(c *gin.Context) {
 	}
 }
 
+func taskErrorForChannelLog(taskErr *taskdto.TaskError) *types.NewAPIError {
+	if taskErr == nil {
+		return nil
+	}
+	err := taskErr.Error
+	if err == nil {
+		err = errors.New(taskErr.Message)
+	}
+	errorCode := types.ErrorCode(taskErr.Code)
+	if errorCode == "" {
+		errorCode = types.ErrorCodeBadResponseStatusCode
+	}
+	return types.NewOpenAIError(err, errorCode, taskErr.StatusCode)
+}
+
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
 func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	if taskErr == nil || relayResponseStarted(c) {
@@ -910,6 +936,13 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+	}
+	if message, ok := service.ResolveUserErrorMessage(
+		service.GetConfiguredErrorMessageMapping(),
+		taskErr.Code,
+		taskErr.StatusCode,
+	); ok {
+		taskErr.Message = message
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
 }

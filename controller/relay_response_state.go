@@ -52,6 +52,33 @@ func markAcceptedUpstreamResponseError(c *gin.Context, apiErr *types.NewAPIError
 	return apiErr
 }
 
+func relayUserVisibleErrorMessage(c *gin.Context, apiErr *types.NewAPIError) (string, bool) {
+	if c == nil || apiErr == nil {
+		return "", false
+	}
+	return service.ResolveUserErrorMessage(
+		service.GetConfiguredErrorMessageMapping(),
+		string(apiErr.GetErrorCode()),
+		apiErr.StatusCode,
+	)
+}
+
+func relayOpenAIErrorForUser(c *gin.Context, apiErr *types.NewAPIError) types.OpenAIError {
+	openAIError := apiErr.ToOpenAIError()
+	if message, ok := relayUserVisibleErrorMessage(c, apiErr); ok {
+		openAIError.Message = message
+	}
+	return openAIError
+}
+
+func relayClaudeErrorForUser(c *gin.Context, apiErr *types.NewAPIError) types.ClaudeError {
+	claudeError := apiErr.ToClaudeError()
+	if message, ok := relayUserVisibleErrorMessage(c, apiErr); ok {
+		claudeError.Message = message
+	}
+	return claudeError
+}
+
 func writeRelayErrorResponse(c *gin.Context, ws *websocket.Conn, relayFormat types.RelayFormat, apiErr *types.NewAPIError) {
 	if c == nil || apiErr == nil {
 		return
@@ -73,15 +100,17 @@ func writeRelayErrorResponse(c *gin.Context, ws *websocket.Conn, relayFormat typ
 
 	switch relayFormat {
 	case types.RelayFormatOpenAIRealtime:
+		// A realtime WebSocket is already established before relay errors reach
+		// this path, so it is outside the pre-response replacement boundary.
 		helper.WssError(c, ws, apiErr.ToOpenAIError())
 	case types.RelayFormatClaude:
 		c.JSON(apiErr.StatusCode, gin.H{
 			"type":  "error",
-			"error": apiErr.ToClaudeError(),
+			"error": relayClaudeErrorForUser(c, apiErr),
 		})
 	default:
 		c.JSON(apiErr.StatusCode, gin.H{
-			"error": apiErr.ToOpenAIError(),
+			"error": relayOpenAIErrorForUser(c, apiErr),
 		})
 	}
 }

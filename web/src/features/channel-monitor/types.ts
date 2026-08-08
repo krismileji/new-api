@@ -533,6 +533,7 @@ export type ChannelMonitorSettings = {
   email_notification_enabled: boolean
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
+  error_message_mapping: string
   probe_response_enabled: boolean
   probe_response_match_input?: string
   probe_response_text?: string

@@ -21,6 +21,14 @@ func TestFormatUserLogsShowsOnlyStatusCodeForRelayErrors(t *testing.T) {
 			Other:   "{}",
 		},
 		{
+			Type:    LogTypeError,
+			Content: "status_code=429, upstream rate limit",
+			Other: common.MapToJsonStr(map[string]interface{}{
+				"status_code":                429,
+				"user_visible_error_message": "请求过于频繁，请稍后再试",
+			}),
+		},
+		{
 			Type:    LogTypeConsume,
 			Content: "正常消费日志",
 			Other:   "{}",
@@ -31,7 +39,8 @@ func TestFormatUserLogsShowsOnlyStatusCodeForRelayErrors(t *testing.T) {
 
 	require.Equal(t, "status_code=503", logs[0].Content)
 	require.Equal(t, "status_code=524", logs[1].Content)
-	require.Equal(t, "正常消费日志", logs[2].Content)
+	require.Equal(t, "请求过于频繁，请稍后再试", logs[2].Content)
+	require.Equal(t, "正常消费日志", logs[3].Content)
 }
 
 // TestFormatUserLogsStripsQuotaSaturation verifies the admin-only quota

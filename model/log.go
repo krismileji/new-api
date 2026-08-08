@@ -121,6 +121,14 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if logs[i].Type == LogTypeError {
+			userVisibleMessage := ""
+			if otherMap != nil {
+				if value, ok := otherMap["user_visible_error_message"].(string); ok {
+					if strings.TrimSpace(value) != "" {
+						userVisibleMessage = value
+					}
+				}
+			}
 			statusCode := 0
 			if otherMap != nil {
 				switch value := otherMap["status_code"].(type) {
@@ -141,7 +149,9 @@ func formatUserLogs(logs []*Log, startIdx int) {
 				}
 				statusCode, _ = strconv.Atoi(value)
 			}
-			if statusCode >= 100 && statusCode <= 599 {
+			if userVisibleMessage != "" {
+				logs[i].Content = userVisibleMessage
+			} else if statusCode >= 100 && statusCode <= 599 {
 				logs[i].Content = fmt.Sprintf("status_code=%d", statusCode)
 			}
 		}

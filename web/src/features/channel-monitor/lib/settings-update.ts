@@ -66,6 +66,7 @@ export function createChannelMonitorSettingsUpdatePayload(
     email_notification_enabled: values.emailNotificationEnabled,
     notification_email: values.notificationEmail,
     email_notification_types: values.emailNotificationTypes,
+    error_message_mapping: values.errorMessageMapping,
     probe_response_enabled: values.probeResponseEnabled,
     probe_response_match_input: values.probeResponseMatchInput,
     probe_response_text: values.probeResponseText,

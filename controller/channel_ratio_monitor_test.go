@@ -408,6 +408,34 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 	}
 }
 
+func TestUpdateChannelMonitorErrorMessageMappingValidatesAndPersists(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_mapping": `{"429":429}`,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	mapping := `{"429":"请求过于频繁，请稍后再试","insufficient_quota":"额度不足，请联系管理员"}`
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_mapping": mapping,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, mapping, response.Data.ErrorMessageMapping)
+	assert.Equal(t, mapping, service.GetConfiguredErrorMessageMapping())
+
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorErrorMessageMappingOption).First(&option).Error)
+	assert.Equal(t, mapping, option.Value)
+}
+
 func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmpty(t *testing.T) {
 	for _, raw := range []string{"", "null", "{\"invalid\":true}"} {
 		t.Run(raw, func(t *testing.T) {

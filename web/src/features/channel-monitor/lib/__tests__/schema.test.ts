@@ -158,6 +158,7 @@ describe('channel monitor settings schema', () => {
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
+      errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
       probeResponseEnabled: true,
       probeResponseMatchInput: ' health check ',
       probeResponseText: ' healthy ',
@@ -185,6 +186,10 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.executionDetailRetentionDays, 14)
     assert.equal(settings.taskRetentionDays, 90)
     assert.equal(settings.ratioHistoryRetentionDays, 365)
+    assert.equal(
+      settings.errorMessageMapping,
+      '{"429":"请求过于频繁，请稍后再试"}'
+    )
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(settings.probeResponseMatchInput, 'health check')
     assert.equal(settings.probeResponseText, 'healthy')
@@ -260,6 +265,7 @@ describe('channel monitor settings schema', () => {
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
+      errorMessageMapping: '',
       probeResponseEnabled: false,
       probeResponseMatchInput: 'hi',
       probeResponseText: 'Hi. What are you working on?',
@@ -287,6 +293,8 @@ describe('channel monitor settings schema', () => {
       { probeResponseMinDelayMs: 2001, probeResponseMaxDelayMs: 2000 },
       { probeResponseInputTokens: -1 },
       { probeResponseOutputTokens: MAX_PROBE_RESPONSE_TOKEN_COUNT + 1 },
+      { errorMessageMapping: '{"429":429}' },
+      { errorMessageMapping: '[]' },
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, ...patch }).success,

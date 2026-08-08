@@ -29,6 +29,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { JsonEditor } from '@/components/json-editor'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -383,6 +384,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
+      errorMessageMapping: props.settings.error_message_mapping ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       probeResponseMatchInput:
         props.settings.probe_response_match_input ??
@@ -563,7 +565,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         <DialogHeader>
           <DialogTitle>渠道监控设置</DialogTitle>
           <DialogDescription>
-            设置上游倍率更新、通知和探针响应规则
+            设置上游倍率更新、通知、错误信息和探针响应规则
           </DialogDescription>
         </DialogHeader>
 
@@ -575,7 +577,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
             >
               <TabsList className='grid h-auto w-full shrink-0 grid-cols-2'>
                 <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
-                  倍率更新与通知
+                  倍率、通知与错误
                 </TabsTrigger>
                 <TabsTrigger value='probe'>探针响应</TabsTrigger>
               </TabsList>
@@ -729,6 +731,40 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 <ChannelMonitorRetentionFields form={form} />
 
                 <ChannelMonitorEmailNotificationFields form={form} />
+
+                <FormField
+                  control={form.control}
+                  name='errorMessageMapping'
+                  render={({ field }) => (
+                    <FormItem className='space-y-3 border-t pt-4'>
+                      <div className='space-y-1'>
+                        <FormLabel>错误信息映射</FormLabel>
+                        <FormDescription>
+                          统一应用于所有渠道的用户请求和使用日志；按上游错误码优先、最终
+                          HTTP 状态码其次匹配，用户请求仅在响应尚未开始时替换
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <JsonEditor
+                          value={field.value || ''}
+                          onChange={field.onChange}
+                          disabled={mutation.isPending}
+                          keyPlaceholder='429 或 insufficient_quota'
+                          valuePlaceholder='请求过于频繁，请稍后再试'
+                          keyLabel='错误码 / 状态码'
+                          valueLabel='用户可见信息'
+                          emptyMessage='未配置错误信息映射。'
+                          template={{
+                            '429': '请求过于频繁，请稍后再试',
+                            insufficient_quota: '额度不足，请联系管理员',
+                          }}
+                          valueType='string'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </TabsContent>
 
               <TabsContent

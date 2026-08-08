@@ -56,6 +56,9 @@ export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 14
 export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
+export const MAX_ERROR_MESSAGE_MAPPING_ENTRIES = 100
+export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
+export const MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH = 4096
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
 export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
 export const DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS = 500
@@ -576,6 +579,68 @@ export function createChannelConcurrencyLimitSchema() {
   })
 }
 
+const errorMessageMappingSchema = z
+  .string()
+  .default('')
+  .superRefine((value, context) => {
+    const raw = value.trim()
+    if (!raw || raw === 'null') return
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        message: '错误信息映射必须是有效的 JSON 对象',
+      })
+      return
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: '错误信息映射必须是 JSON 对象',
+      })
+      return
+    }
+
+    const entries = Object.entries(parsed as Record<string, unknown>)
+    if (entries.length > MAX_ERROR_MESSAGE_MAPPING_ENTRIES) {
+      context.addIssue({
+        code: 'custom',
+        message: `错误信息映射最多支持 ${MAX_ERROR_MESSAGE_MAPPING_ENTRIES} 条规则`,
+      })
+      return
+    }
+    for (const [code, message] of entries) {
+      if (!code.trim() || code.length > MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH) {
+        context.addIssue({
+          code: 'custom',
+          message: `错误码不能为空且不能超过 ${MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH} 个字符`,
+        })
+        return
+      }
+      if (typeof message !== 'string' || !message.trim()) {
+        context.addIssue({
+          code: 'custom',
+          message: '错误信息必须是非空字符串',
+        })
+        return
+      }
+      if (message.length > MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH) {
+        context.addIssue({
+          code: 'custom',
+          message: `错误信息不能超过 ${MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH} 个字符`,
+        })
+        return
+      }
+    }
+  })
+
 export function createChannelMonitorSettingsSchema() {
   return z
     .object({
@@ -681,6 +746,7 @@ export function createChannelMonitorSettingsSchema() {
             value === '' || z.string().email().safeParse(value).success,
           '请输入有效的通知邮箱'
         ),
+      errorMessageMapping: errorMessageMappingSchema,
       probeResponseEnabled: z.boolean(),
       probeResponseMatchInput: z
         .string()

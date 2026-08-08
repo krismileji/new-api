@@ -80,6 +80,7 @@ test(
 
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
+    assert.match(result.generalTitle, /错误信息映射/)
     assert.equal(result.generalHasSchedule, false)
     assert.equal(result.generalUsesContentSizedViewport, true)
     assert.equal(result.legacyRetentionDefaultsApplied, true)

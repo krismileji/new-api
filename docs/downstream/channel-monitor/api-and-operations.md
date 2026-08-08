@@ -60,6 +60,7 @@
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
 | `email_notification_types` | `ChannelMonitorEmailNotificationTypes` | 六类全选 | `ratio_change`、`balance_warning`、`channel_disabled`、`group_membership_removed`、`upstream_sync_failed`、`task_failed`；开启邮件通知时至少选择一类 |
+| `error_message_mapping` | `ChannelMonitorErrorMessageMapping` | 空 | JSON 对象，最多 100 条；键为上游错误码或 HTTP 状态码，值为用户可见错误信息 |
 | `probe_response_enabled` | `ChannelMonitorProbeResponseEnabled` | `false` | 布尔值；规则见[本地探针响应](probe-response.md) |
 | `probe_response_match_input` | `ChannelMonitorProbeResponseMatchInput` | `hi` | 去首尾空白后不能为空，最长 4096 个字符 |
 | `probe_response_text` | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 去首尾空白后不能为空，最长 16384 个字符 |
@@ -81,6 +82,8 @@
 `upstream_request_timeout_seconds` 同时用于自动更新、手动刷新和上游配置测试。一次倍率刷新中包含的登录、倍率和余额子请求共享同一个总超时预算；自动更新若超时，会按 `auto_update_retry_count` 为下一次尝试重新分配完整预算。该设置与中继请求的 `relay_response_header_timeout_seconds` 相互独立。
 
 `email_notification_types` 控制通知邮件中的分类和主题统计；未勾选的事件仍会写入任务执行记录，但不会触发或进入邮件。`POST /settings/email-preview` 使用同一套邮件构建逻辑生成示例，响应的 `data.subject` 和 `data.html` 就是当前选择对应的最终主题与 HTML 内容。
+
+`error_message_mapping` 对全部渠道统一生效。系统优先匹配上游错误码，再匹配最终 HTTP 状态码；匹配后的文案用于用户使用日志，并只在请求响应尚未开始时替换返回给用户的错误信息。未配置或未匹配时保持原有行为，用户使用日志只展示状态码。
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略，每项都必须包含完整字段；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
