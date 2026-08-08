@@ -147,6 +147,40 @@ func TestChannelRatioMonitorBalanceKeepsLastValueWhenRefreshFails(t *testing.T) 
 	assert.Zero(t, monitor.BalanceConsecutiveFailures)
 }
 
+func TestChannelRatioMonitorBalancePersistsAndClearsEstimateState(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{ChannelId: 10, UpstreamRevision: 2}).Error)
+
+	balance := 12.75
+	estimateState := ChannelRatioMonitorBalanceEstimateState{
+		CostBaseline:       ChannelDailyCostBaseline{Timestamp: 123, CostNanoCNY: 456},
+		PendingConsumption: 1.25,
+	}
+	applied, err := RecordChannelRatioMonitorBalanceWithEstimateIfRevision(10, 2, &balance, "", &estimateState)
+	require.NoError(t, err)
+	require.True(t, applied)
+	monitor, err := GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(123), monitor.LastBalanceTime)
+	require.NotNil(t, monitor.LastBalanceCostNanoCNY)
+	assert.Equal(t, int64(456), *monitor.LastBalanceCostNanoCNY)
+	assert.Equal(t, 1.25, monitor.BalancePendingConsumption)
+
+	require.NoError(t, RecordChannelRatioMonitorBalance(10, nil, "upstream timeout"))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	require.NotNil(t, monitor.LastBalanceCostNanoCNY)
+	assert.Equal(t, int64(456), *monitor.LastBalanceCostNanoCNY)
+	assert.Equal(t, 1.25, monitor.BalancePendingConsumption)
+
+	recoveredBalance := 20.0
+	require.NoError(t, RecordChannelRatioMonitorBalance(10, &recoveredBalance, ""))
+	monitor, err = GetChannelRatioMonitor(10)
+	require.NoError(t, err)
+	assert.Nil(t, monitor.LastBalanceCostNanoCNY)
+	assert.Zero(t, monitor.BalancePendingConsumption)
+}
+
 func TestChannelRatioMonitorFailureAlertsMarkOnceAndResetOnRecovery(t *testing.T) {
 	resetChannelRatioMonitorTables(t)
 	seedChannelRatioMonitorTestChannels(t, 10)
@@ -610,6 +644,41 @@ func TestChannelRatioUpstreamConfigStoresCustomConfig(t *testing.T) {
 	serialized, err := common.Marshal(monitor)
 	require.NoError(t, err)
 	assert.NotContains(t, string(serialized), "custom_upstream_config")
+}
+
+func TestChannelRatioUpstreamConfigChangeResetsIncompatibleBalanceEstimate(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 13)
+	baselineCost := int64(100)
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId:                 13,
+		UpstreamType:              "new_api",
+		UpstreamBaseURL:           "https://upstream.example",
+		UpstreamGroup:             "vip",
+		UpstreamAuthType:          "public",
+		LastBalanceTime:           100,
+		LastBalanceCostNanoCNY:    &baselineCost,
+		BalancePendingConsumption: 2,
+		CostConversion:            `{"mode":"none"}`,
+	}).Error)
+
+	monitor, err := SaveChannelRatioUpstreamConfig(
+		13,
+		"new_api",
+		"https://upstream.example",
+		"vip",
+		"public",
+		0,
+		"",
+		ChannelRatioUpstreamOptions{
+			RatioSyncEnabled:   true,
+			BalanceSyncEnabled: true,
+			CostConversion:     `{"mode":"recharge","paid_cny":100,"credited_usd":200}`,
+		},
+	)
+	require.NoError(t, err)
+	assert.Nil(t, monitor.LastBalanceCostNanoCNY)
+	assert.Zero(t, monitor.BalancePendingConsumption)
 }
 
 func TestChannelRatioUpstreamTokenIsNotSerialized(t *testing.T) {

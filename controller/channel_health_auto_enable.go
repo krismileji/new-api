@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -57,8 +58,20 @@ func channelMonitorAllowsHealthCheckAutoEnable(channelId int) (bool, error) {
 	if balanceSyncEnabled && monitor.BalanceAutoDisableThreshold != nil {
 		threshold := *monitor.BalanceAutoDisableThreshold
 		if !balanceAvailable || math.IsNaN(threshold) || math.IsInf(threshold, 0) ||
-			threshold < 0 || threshold > maxChannelMonitorBalanceThreshold ||
-			*monitor.UpstreamBalance < threshold {
+			threshold < 0 || threshold > maxChannelMonitorBalanceThreshold {
+			return false, nil
+		}
+		effectiveBalance := *monitor.UpstreamBalance
+		if monitor.BalanceWarningThreshold != nil && effectiveBalance < *monitor.BalanceWarningThreshold {
+			evaluation, estimateErr := evaluateChannelMonitorBalance(
+				context.Background(), monitor, effectiveBalance,
+			)
+			if estimateErr != nil {
+				return false, fmt.Errorf("计算余额消费估算失败: %w", estimateErr)
+			}
+			effectiveBalance = evaluation.EffectiveBalance
+		}
+		if effectiveBalance < threshold {
 			return false, nil
 		}
 	}

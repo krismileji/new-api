@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -864,9 +865,13 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			}
 		}
 		if config.CustomConfig.Balance.Source == service.ChannelMonitorCustomSourceFixed {
-			applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
-				channelId,
-				monitor.UpstreamRevision,
+			baselineMonitor := monitor
+			baselineMonitor.LastBalanceTime = 0
+			baselineMonitor.LastBalanceCostNanoCNY = nil
+			baselineMonitor.BalancePendingConsumption = 0
+			balanceEvaluation, applied, recordErr := recordChannelMonitorBalanceUpdate(
+				c.Request.Context(),
+				baselineMonitor,
 				config.CustomConfig.Balance.FixedValue,
 				"",
 			)
@@ -883,7 +888,19 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			balanceAutoDisabled, err = autoDisableChannelMonitorForLowBalance(monitor, channel, *config.CustomConfig.Balance.FixedValue)
+			effectiveBalance := *config.CustomConfig.Balance.FixedValue
+			estimatedConsumption := 0.0
+			if balanceEvaluation != nil {
+				effectiveBalance = balanceEvaluation.EffectiveBalance
+				estimatedConsumption = balanceEvaluation.EstimatedConsumption
+			}
+			balanceAutoDisabled, err = autoDisableChannelMonitorAtEffectiveBalance(
+				monitor,
+				channel,
+				*config.CustomConfig.Balance.FixedValue,
+				effectiveBalance,
+				estimatedConsumption,
+			)
 			if err != nil {
 				common.ApiError(c, fmt.Errorf("自定义上游配置已保存，但余额自动禁用失败: %w", err))
 				return
@@ -999,11 +1016,139 @@ func TestChannelMonitorUpstreamConfig(c *gin.Context) {
 }
 
 type channelMonitorFetchOutcome struct {
-	Result          service.NewAPIGroupRatioResult
-	Monitor         model.ChannelRatioMonitor
-	Created         bool
-	Changed         bool
-	BalanceRecorded bool
+	Result            service.NewAPIGroupRatioResult
+	Monitor           model.ChannelRatioMonitor
+	Created           bool
+	Changed           bool
+	BalanceRecorded   bool
+	BalanceEvaluation *channelMonitorBalanceEvaluation
+}
+
+type channelMonitorBalanceEvaluation struct {
+	EffectiveBalance     float64
+	EstimatedConsumption float64
+	EstimateState        *model.ChannelRatioMonitorBalanceEstimateState
+}
+
+func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRatioMonitor, balance float64) (channelMonitorBalanceEvaluation, error) {
+	evaluation := channelMonitorBalanceEvaluation{EffectiveBalance: balance}
+	if math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return evaluation, errors.New("上游余额不是有效数字")
+	}
+	if monitor.BalanceWarningThreshold == nil || monitor.BalanceAutoDisableThreshold == nil {
+		return evaluation, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := service.FlushChannelDailyCostEvents(); err != nil {
+		return evaluation, fmt.Errorf("刷新渠道消费记录失败: %w", err)
+	}
+
+	capturedAt := common.GetTimestamp()
+	var previousBaseline *model.ChannelDailyCostBaseline
+	if monitor.LastBalanceTime > 0 && monitor.LastBalanceCostNanoCNY != nil {
+		previousBaseline = &model.ChannelDailyCostBaseline{
+			Timestamp:   monitor.LastBalanceTime,
+			CostNanoCNY: *monitor.LastBalanceCostNanoCNY,
+		}
+	}
+	currentBaseline, deltaNanoCNY, err := model.GetChannelDailyCostDelta(
+		ctx,
+		monitor.ChannelId,
+		capturedAt,
+		previousBaseline,
+	)
+	if currentBaseline.Timestamp > 0 {
+		evaluation.EstimateState = &model.ChannelRatioMonitorBalanceEstimateState{
+			CostBaseline: currentBaseline,
+		}
+	}
+	if err != nil {
+		return evaluation, err
+	}
+	if previousBaseline == nil {
+		return evaluation, nil
+	}
+
+	// Carry local cost forward while the provider keeps returning a stale
+	// balance; a downward provider update settles the portion it has reflected.
+	pendingConsumption := monitor.BalancePendingConsumption
+	if math.IsNaN(pendingConsumption) || math.IsInf(pendingConsumption, 0) || pendingConsumption < 0 {
+		return evaluation, errors.New("已保存的余额消费估算无效")
+	}
+	if deltaNanoCNY > 0 {
+		conversion, parseErr := service.ParseChannelMonitorCostConversion(monitor.CostConversion)
+		if parseErr != nil {
+			return evaluation, parseErr
+		}
+		factor, factorErr := service.ChannelMonitorCostConversionFactor(conversion)
+		if factorErr != nil {
+			return evaluation, factorErr
+		}
+		deltaCNY := float64(deltaNanoCNY) / float64(model.ChannelDailyCostNanoPerCNY)
+		deltaConsumption := deltaCNY / factor
+		if math.IsNaN(deltaConsumption) || math.IsInf(deltaConsumption, 0) || deltaConsumption <= 0 {
+			return evaluation, errors.New("本地消费增量估算结果无效")
+		}
+		pendingConsumption += deltaConsumption
+		if math.IsNaN(pendingConsumption) || math.IsInf(pendingConsumption, 0) {
+			return evaluation, errors.New("累计余额消费估算结果无效")
+		}
+	}
+	if monitor.UpstreamBalance != nil && !math.IsNaN(*monitor.UpstreamBalance) && !math.IsInf(*monitor.UpstreamBalance, 0) && balance < *monitor.UpstreamBalance {
+		pendingConsumption -= *monitor.UpstreamBalance - balance
+		if pendingConsumption < 0 {
+			pendingConsumption = 0
+		}
+	}
+	evaluation.EstimateState.PendingConsumption = pendingConsumption
+	if balance >= *monitor.BalanceWarningThreshold || pendingConsumption <= 0 {
+		return evaluation, nil
+	}
+	evaluation.EstimatedConsumption = pendingConsumption
+	evaluation.EffectiveBalance = balance - pendingConsumption
+	if math.IsNaN(evaluation.EffectiveBalance) || math.IsInf(evaluation.EffectiveBalance, 0) {
+		return channelMonitorBalanceEvaluation{
+			EffectiveBalance: balance,
+			EstimateState:    evaluation.EstimateState,
+		}, errors.New("本地消费估算余额无效")
+	}
+	return evaluation, nil
+}
+
+func recordChannelMonitorBalanceUpdate(
+	ctx context.Context,
+	monitor model.ChannelRatioMonitor,
+	balance *float64,
+	fetchError string,
+) (*channelMonitorBalanceEvaluation, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var evaluation *channelMonitorBalanceEvaluation
+	var estimateState *model.ChannelRatioMonitorBalanceEstimateState
+	if balance != nil && !math.IsNaN(*balance) && !math.IsInf(*balance, 0) {
+		value, estimateErr := evaluateChannelMonitorBalance(ctx, monitor, *balance)
+		evaluation = &value
+		if estimateErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf(
+				"channel ratio monitor: channel_id=%d local balance consumption estimate failed: %v",
+				monitor.ChannelId,
+				estimateErr,
+			))
+		} else {
+			estimateState = value.EstimateState
+		}
+	}
+	applied, err := model.RecordChannelRatioMonitorBalanceWithEstimateIfRevision(
+		monitor.ChannelId,
+		monitor.UpstreamRevision,
+		balance,
+		fetchError,
+		estimateState,
+	)
+	return evaluation, applied, err
 }
 
 func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration, includeSeparateBalance bool, operatorId int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
@@ -1080,9 +1225,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	})
 	outcome.Result = result
 	if result.Balance.Amount != nil || strings.TrimSpace(result.Balance.Error) != "" {
-		applied, balanceErr := model.RecordChannelRatioMonitorBalanceIfRevision(
-			monitor.ChannelId,
-			monitor.UpstreamRevision,
+		balanceEvaluation, applied, balanceErr := recordChannelMonitorBalanceUpdate(
+			ctx,
+			monitor,
 			result.Balance.Amount,
 			result.Balance.Error,
 		)
@@ -1093,6 +1238,7 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 			return outcome, model.ErrChannelRatioMonitorConfigChanged
 		}
 		outcome.BalanceRecorded = result.Balance.Amount != nil
+		outcome.BalanceEvaluation = balanceEvaluation
 	}
 	if fetchErr != nil {
 		return outcome, fetchErr
@@ -1135,19 +1281,19 @@ func channelMonitorSharesRatioBalanceRequest(monitor model.ChannelRatioMonitor) 
 	return config.BalanceReuseRatioRequest, nil
 }
 
-func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration) (result service.ChannelMonitorUpstreamBalanceResult, err error) {
+func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration) (result service.ChannelMonitorUpstreamBalanceResult, evaluation *channelMonitorBalanceEvaluation, err error) {
 	if monitor.UpstreamType != service.NewAPIUpstreamType && monitor.UpstreamType != service.Sub2APIUpstreamType && monitor.UpstreamType != service.CustomUpstreamType {
-		return result, errors.New("请先保存上游配置")
+		return result, nil, errors.New("请先保存上游配置")
 	}
 	if monitor.UpstreamBalanceSyncDisabled {
-		return result, errors.New("该渠道已关闭上游余额同步")
+		return result, nil, errors.New("该渠道已关闭上游余额同步")
 	}
 
 	customConfig := service.ChannelMonitorCustomUpstreamConfig{}
 	if monitor.UpstreamType == service.CustomUpstreamType {
 		customConfig, err = service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 		if err != nil {
-			return result, err
+			return result, nil, err
 		}
 	}
 	result, fetchErr := service.FetchChannelMonitorUpstreamBalance(
@@ -1170,9 +1316,9 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 		fetchErr = errors.New("上游未返回余额")
 	}
 	if fetchErr != nil {
-		applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
-			monitor.ChannelId,
-			monitor.UpstreamRevision,
+		_, applied, recordErr := recordChannelMonitorBalanceUpdate(
+			ctx,
+			monitor,
 			nil,
 			fetchErr.Error(),
 		)
@@ -1181,33 +1327,74 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 		} else if !applied {
 			fetchErr = model.ErrChannelRatioMonitorConfigChanged
 		}
-		return result, fetchErr
+		return result, nil, fetchErr
 	}
-	applied, recordErr := model.RecordChannelRatioMonitorBalanceIfRevision(
-		monitor.ChannelId,
-		monitor.UpstreamRevision,
+	evaluation, applied, recordErr := recordChannelMonitorBalanceUpdate(
+		ctx,
+		monitor,
 		result.Amount,
 		"",
 	)
 	if recordErr != nil {
-		return result, recordErr
+		return result, evaluation, recordErr
 	}
 	if !applied {
-		return result, model.ErrChannelRatioMonitorConfigChanged
+		return result, evaluation, model.ErrChannelRatioMonitorConfigChanged
 	}
-	return result, nil
+	return result, evaluation, nil
 }
 
 func autoDisableChannelMonitorForLowBalance(monitor model.ChannelRatioMonitor, channel *model.Channel, balance float64) (bool, error) {
+	return autoDisableChannelMonitorForLowBalanceWithContext(context.Background(), monitor, channel, balance)
+}
+
+func autoDisableChannelMonitorForLowBalanceWithContext(ctx context.Context, monitor model.ChannelRatioMonitor, channel *model.Channel, balance float64) (bool, error) {
 	if monitor.BalanceAutoDisableThreshold == nil || channel == nil ||
-		channel.Id != monitor.ChannelId || channel.Status != common.ChannelStatusEnabled ||
-		balance >= *monitor.BalanceAutoDisableThreshold {
+		channel.Id != monitor.ChannelId || channel.Status != common.ChannelStatusEnabled {
 		return false, nil
 	}
+	evaluation, estimateErr := evaluateChannelMonitorBalance(ctx, monitor, balance)
+	if estimateErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d local balance consumption estimate failed: %v", monitor.ChannelId, estimateErr))
+	}
+	return autoDisableChannelMonitorAtEffectiveBalance(
+		monitor,
+		channel,
+		balance,
+		evaluation.EffectiveBalance,
+		evaluation.EstimatedConsumption,
+	)
+}
+
+func autoDisableChannelMonitorAtEffectiveBalance(
+	monitor model.ChannelRatioMonitor,
+	channel *model.Channel,
+	balance float64,
+	effectiveBalance float64,
+	estimatedConsumption float64,
+) (bool, error) {
+	if monitor.BalanceAutoDisableThreshold == nil || channel == nil ||
+		channel.Id != monitor.ChannelId || channel.Status != common.ChannelStatusEnabled {
+		return false, nil
+	}
+	threshold := *monitor.BalanceAutoDisableThreshold
+	if math.IsNaN(balance) || math.IsInf(balance, 0) ||
+		math.IsNaN(effectiveBalance) || math.IsInf(effectiveBalance, 0) ||
+		math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 ||
+		threshold > maxChannelMonitorBalanceThreshold ||
+		effectiveBalance >= threshold {
+		return false, nil
+	}
+
 	reason := channelMonitorBalancePolicyDisableReasonPrefix +
-		strconv.FormatFloat(balance, 'f', -1, 64) +
+		strconv.FormatFloat(balance, 'f', -1, 64)
+	if estimatedConsumption > 0 {
+		reason += "（本地消费估算 " + strconv.FormatFloat(estimatedConsumption, 'f', -1, 64) +
+			"，估算余额 " + strconv.FormatFloat(effectiveBalance, 'f', -1, 64) + "）"
+	}
+	reason +=
 		channelMonitorBalancePolicyDisableThresholdMarker +
-		strconv.FormatFloat(*monitor.BalanceAutoDisableThreshold, 'f', -1, 64)
+			strconv.FormatFloat(threshold, 'f', -1, 64)
 	changed, revisionCurrent, _, updateErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
 		channel.Id,
 		monitor.UpstreamRevision,
@@ -1268,7 +1455,19 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 	}
 	balanceAutoDisabled := false
 	if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
-		balanceAutoDisabled, err = autoDisableChannelMonitorForLowBalance(monitor, channel, *outcome.Result.Balance.Amount)
+		effectiveBalance := *outcome.Result.Balance.Amount
+		estimatedConsumption := 0.0
+		if outcome.BalanceEvaluation != nil {
+			effectiveBalance = outcome.BalanceEvaluation.EffectiveBalance
+			estimatedConsumption = outcome.BalanceEvaluation.EstimatedConsumption
+		}
+		balanceAutoDisabled, err = autoDisableChannelMonitorAtEffectiveBalance(
+			monitor,
+			channel,
+			*outcome.Result.Balance.Amount,
+			effectiveBalance,
+			estimatedConsumption,
+		)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -1330,6 +1529,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 	}
 	requestTimeout := getChannelMonitorSettings().upstreamRequestTimeout()
 	result := service.ChannelMonitorUpstreamBalanceResult{}
+	var balanceEvaluation *channelMonitorBalanceEvaluation
 	ratioRefreshed := sharedRequest && !monitor.UpstreamRatioSyncDisabled
 	if ratioRefreshed {
 		operatorId, operatorUsername := getChannelMonitorOperator(c)
@@ -1348,14 +1548,31 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 			return
 		}
 		result = outcome.Result.Balance
+		balanceEvaluation = outcome.BalanceEvaluation
 	} else {
-		result, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
+		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
-	balanceAutoDisabled, err := autoDisableChannelMonitorForLowBalance(monitor, channel, *result.Amount)
+	if result.Amount == nil {
+		common.ApiErrorMsg(c, "上游未返回余额")
+		return
+	}
+	effectiveBalance := *result.Amount
+	estimatedConsumption := 0.0
+	if balanceEvaluation != nil {
+		effectiveBalance = balanceEvaluation.EffectiveBalance
+		estimatedConsumption = balanceEvaluation.EstimatedConsumption
+	}
+	balanceAutoDisabled, err := autoDisableChannelMonitorAtEffectiveBalance(
+		monitor,
+		channel,
+		*result.Amount,
+		effectiveBalance,
+		estimatedConsumption,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return

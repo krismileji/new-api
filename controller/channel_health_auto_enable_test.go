@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,41 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelMonitorAllowsHealthCheckAutoEnableUsesEstimatedBalance(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	channel := model.Channel{
+		Id: 20, Name: "余额估算恢复", Group: "vip", Status: common.ChannelStatusAutoDisabled,
+	}
+	channel.SetOtherInfo(map[string]interface{}{"status_reason": channelMonitorBalancePolicyDisableReasonPrefix + "5" + channelMonitorBalancePolicyDisableThresholdMarker + "4"})
+	require.NoError(t, db.Create(&channel).Error)
+	warningThreshold := 10.0
+	balanceThreshold := 4.0
+	costConversion, err := service.MarshalChannelMonitorCostConversion(service.ChannelMonitorCostConversion{
+		Mode:        service.ChannelMonitorCostConversionRecharge,
+		PaidCNY:     2,
+		CreditedUSD: 1,
+	})
+	require.NoError(t, err)
+	now := common.GetTimestamp()
+	currentBalance := 5.0
+	lastBalanceCostNanoCNY := int64(0)
+	require.NoError(t, model.AddChannelDailyCost(context.Background(), channel.Id, now-1, 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:                   channel.Id,
+		UpstreamBalance:             &currentBalance,
+		LastBalanceTime:             now - 60,
+		LastBalanceCostNanoCNY:      &lastBalanceCostNanoCNY,
+		BalanceWarningThreshold:     &warningThreshold,
+		BalanceAutoDisableThreshold: &balanceThreshold,
+		CostConversion:              costConversion,
+		UpstreamType:                service.CustomUpstreamType,
+	}).Error)
+
+	allowed, err := channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
+	require.NoError(t, err)
+	assert.False(t, allowed)
+}
 
 func TestChannelMonitorAllowsHealthCheckAutoEnable(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)

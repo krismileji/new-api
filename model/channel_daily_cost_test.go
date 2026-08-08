@@ -87,3 +87,58 @@ func TestGetChannelDailyCostDayTotalsAggregatesOnlyRequestedRange(t *testing.T) 
 	require.Len(t, pageTotals, 1)
 	assert.Equal(t, dayOne, pageTotals[0].DayStart)
 }
+
+func TestGetChannelDailyCostDeltaSubtractsSameDayBaseline(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-baseline.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayStart := time.Date(2026, 7, 20, 16, 0, 0, 0, time.UTC).Unix()
+	baselineTime := dayStart + 12*60*60
+	capturedAt := baselineTime + 60
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, baselineTime-60, 100, 1, 0))
+	previous := ChannelDailyCostBaseline{Timestamp: baselineTime, CostNanoCNY: 100}
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, capturedAt, 4, 1, 0))
+
+	current, delta, err := GetChannelDailyCostDelta(context.Background(), 1, capturedAt, &previous)
+	require.NoError(t, err)
+	assert.Equal(t, capturedAt, current.Timestamp)
+	assert.Equal(t, int64(104), current.CostNanoCNY)
+	assert.Equal(t, int64(4), delta)
+}
+
+func TestGetChannelDailyCostDeltaIncludesLaterDays(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-baseline-days.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayOne := time.Date(2026, 7, 20, 16, 0, 0, 0, time.UTC).Unix()
+	dayTwo := dayOne + channelDailyCostDaySeconds
+	baselineTime := dayOne + 12*60*60
+	capturedAt := dayTwo + 60
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, baselineTime-60, 100, 1, 0))
+	previous := ChannelDailyCostBaseline{Timestamp: baselineTime, CostNanoCNY: 100}
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, baselineTime+60, 4, 1, 0))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, capturedAt, 6, 1, 0))
+
+	current, delta, err := GetChannelDailyCostDelta(context.Background(), 1, capturedAt, &previous)
+	require.NoError(t, err)
+	assert.Equal(t, int64(6), current.CostNanoCNY)
+	assert.Equal(t, int64(10), delta)
+}

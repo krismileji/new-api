@@ -474,6 +474,8 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 
 		var outcome channelMonitorFetchOutcome
 		var recordedBalance *float64
+		var balanceEvaluation *channelMonitorBalanceEvaluation
+		var effectiveBalanceForRecovery *float64
 		balanceBelowAutoDisableThreshold := false
 		ratioUpdated := false
 		syncSkipped := false
@@ -526,13 +528,16 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
 					balance := *outcome.Result.Balance.Amount
 					recordedBalance = &balance
+					balanceEvaluation = outcome.BalanceEvaluation
 				}
 			} else {
 				var balanceResult service.ChannelMonitorUpstreamBalanceResult
-				balanceResult, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
+				var fetchedEvaluation *channelMonitorBalanceEvaluation
+				balanceResult, fetchedEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 				if balanceResult.Amount != nil {
 					balance := *balanceResult.Amount
 					recordedBalance = &balance
+					balanceEvaluation = fetchedEvaluation
 				}
 			}
 			if err == nil ||
@@ -560,10 +565,23 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		upstreamSyncFailed := err != nil
 		if recordedBalance != nil {
 			balance := *recordedBalance
+			effectiveBalance := balance
+			estimatedConsumption := 0.0
+			if balanceEvaluation != nil {
+				effectiveBalance = balanceEvaluation.EffectiveBalance
+				estimatedConsumption = balanceEvaluation.EstimatedConsumption
+			}
+			effectiveBalanceForRecovery = &effectiveBalance
 			balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
-				balance < *monitor.BalanceAutoDisableThreshold
+				effectiveBalance < *monitor.BalanceAutoDisableThreshold
 			summary.BalanceUpdated++
-			balanceAutoDisabled, disableErr := autoDisableChannelMonitorForLowBalance(monitor, channel, balance)
+			balanceAutoDisabled, disableErr := autoDisableChannelMonitorAtEffectiveBalance(
+				monitor,
+				channel,
+				balance,
+				effectiveBalance,
+				estimatedConsumption,
+			)
 			if disableErr != nil {
 				if err == nil {
 					err = disableErr
@@ -645,11 +663,11 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			}
 			syncRecovered := (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
 				(monitor.UpstreamBalanceSyncDisabled || recordedBalance != nil)
-			if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, recordedBalance) {
+			if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
 				recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
 				if recoveryErr != nil {
 					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
-				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, recordedBalance) {
+				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, effectiveBalanceForRecovery) {
 					enabled, revisionCurrent, _, enableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
 						channel.Id,
 						monitor.UpstreamRevision,

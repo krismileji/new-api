@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"math"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -38,10 +39,100 @@ type ChannelDailyCostDayTotal struct {
 	UnresolvedCount int64 `gorm:"column:unresolved_count"`
 }
 
+// ChannelDailyCostBaseline is the cumulative channel cost captured at one
+// balance observation. The timestamp identifies the Beijing calendar day to
+// which CostNanoCNY belongs.
+type ChannelDailyCostBaseline struct {
+	Timestamp   int64
+	CostNanoCNY int64
+}
+
 // ChannelDailyCostDayStart returns the UTC timestamp at which the containing
 // Beijing calendar day starts.
 func ChannelDailyCostDayStart(timestamp int64) int64 {
 	return ((timestamp+channelDailyCostUTC8Offset)/channelDailyCostDaySeconds)*channelDailyCostDaySeconds - channelDailyCostUTC8Offset
+}
+
+// GetChannelDailyCostDelta returns a new cumulative baseline and the exact
+// cost added after the previous baseline. Daily rows before the baseline are
+// excluded even when the previous observation occurred partway through a day.
+func GetChannelDailyCostDelta(ctx context.Context, channelId int, capturedAt int64, previous *ChannelDailyCostBaseline) (ChannelDailyCostBaseline, int64, error) {
+	if channelId <= 0 {
+		return ChannelDailyCostBaseline{}, 0, errors.New("channel id must be positive")
+	}
+	if capturedAt <= 0 {
+		return ChannelDailyCostBaseline{}, 0, errors.New("cost baseline timestamp must be positive")
+	}
+
+	currentDayStart := ChannelDailyCostDayStart(capturedAt)
+	startTimestamp := currentDayStart
+	if previous != nil {
+		if previous.Timestamp <= 0 || previous.CostNanoCNY < 0 {
+			return ChannelDailyCostBaseline{}, 0, errors.New("previous cost baseline is invalid")
+		}
+		if previous.Timestamp > capturedAt {
+			previous = nil
+		}
+	}
+	if previous != nil {
+		previousDayStart := ChannelDailyCostDayStart(previous.Timestamp)
+		if previousDayStart > currentDayStart {
+			previous = nil
+		} else {
+			startTimestamp = previousDayStart
+		}
+	}
+
+	endTimestamp := capturedAt
+	if endTimestamp < math.MaxInt64 {
+		endTimestamp++
+	}
+	costs, err := GetChannelDailyCostsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	if err != nil {
+		return ChannelDailyCostBaseline{}, 0, err
+	}
+
+	currentCostNanoCNY := int64(0)
+	for _, cost := range costs {
+		if cost.CostNanoCNY < 0 {
+			return ChannelDailyCostBaseline{}, 0, errors.New("channel daily cost must not be negative")
+		}
+		if cost.DayStart == currentDayStart {
+			currentCostNanoCNY = cost.CostNanoCNY
+		}
+	}
+	current := ChannelDailyCostBaseline{
+		Timestamp:   capturedAt,
+		CostNanoCNY: currentCostNanoCNY,
+	}
+	if previous == nil {
+		return current, 0, nil
+	}
+
+	previousDayStart := ChannelDailyCostDayStart(previous.Timestamp)
+	previousDayFound := false
+	deltaNanoCNY := int64(0)
+	for _, cost := range costs {
+		if cost.DayStart < previousDayStart || cost.DayStart > currentDayStart {
+			continue
+		}
+		increment := cost.CostNanoCNY
+		if cost.DayStart == previousDayStart {
+			previousDayFound = true
+			if cost.CostNanoCNY < previous.CostNanoCNY {
+				return current, 0, errors.New("channel daily cost is lower than its saved baseline")
+			}
+			increment -= previous.CostNanoCNY
+		}
+		if increment > math.MaxInt64-deltaNanoCNY {
+			return current, 0, errors.New("channel daily cost delta exceeds int64")
+		}
+		deltaNanoCNY += increment
+	}
+	if !previousDayFound && previous.CostNanoCNY > 0 {
+		return current, 0, errors.New("saved channel daily cost baseline no longer exists")
+	}
+	return current, deltaNanoCNY, nil
 }
 
 // AddChannelDailyCost atomically adds one settled or unresolved event to the

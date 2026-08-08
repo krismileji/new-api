@@ -44,6 +44,8 @@ type ChannelRatioMonitor struct {
 	FetchFailureAlertNotified   bool     `json:"-"`
 	UpstreamBalance             *float64 `json:"upstream_balance"`
 	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
+	LastBalanceCostNanoCNY      *int64   `json:"-" gorm:"bigint"`
+	BalancePendingConsumption   float64  `json:"-"`
 	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
 	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
 	BalanceFailureAlertNotified bool     `json:"-"`
@@ -85,6 +87,13 @@ type ChannelRatioUpstreamOptions struct {
 	CustomUpstreamConfig        string
 	UpstreamAccount             string
 	UpstreamPassword            string
+}
+
+// ChannelRatioMonitorBalanceEstimateState is the persisted state needed to
+// carry local consumption forward until the upstream balance reflects it.
+type ChannelRatioMonitorBalanceEstimateState struct {
+	CostBaseline       ChannelDailyCostBaseline
+	PendingConsumption float64
 }
 
 type ChannelRatioHistory struct {
@@ -196,6 +205,10 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			(monitor.BalanceWarningThreshold == nil) != (options.BalanceWarningThreshold == nil) ||
 				(monitor.BalanceWarningThreshold != nil && options.BalanceWarningThreshold != nil &&
 					*monitor.BalanceWarningThreshold != *options.BalanceWarningThreshold)
+		balanceAutoDisableThresholdChanged :=
+			(monitor.BalanceAutoDisableThreshold == nil) != (options.BalanceAutoDisableThreshold == nil) ||
+				(monitor.BalanceAutoDisableThreshold != nil && options.BalanceAutoDisableThreshold != nil &&
+					*monitor.BalanceAutoDisableThreshold != *options.BalanceAutoDisableThreshold)
 		ratioSyncChanged := monitor.UpstreamRatioSyncDisabled != !options.RatioSyncEnabled
 		balanceSyncChanged := monitor.UpstreamBalanceSyncDisabled != !options.BalanceSyncEnabled
 		costConversionChanged := monitor.CostConversion != options.CostConversion
@@ -253,6 +266,11 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		if upstreamAccountChanged {
 			monitor.UpstreamBalance = nil
 			monitor.LastBalanceTime = 0
+		}
+		if upstreamAccountChanged || costConversionChanged || balanceSyncChanged ||
+			balanceWarningThresholdChanged || balanceAutoDisableThresholdChanged {
+			monitor.LastBalanceCostNanoCNY = nil
+			monitor.BalancePendingConsumption = 0
 		}
 		if ratioRequestChanged {
 			monitor.ConsecutiveFailures = 0
@@ -350,21 +368,48 @@ func recordChannelRatioMonitorFetchFailure(channelId int, fetchError string, exp
 }
 
 func RecordChannelRatioMonitorBalance(channelId int, balance *float64, fetchError string) error {
-	_, err := recordChannelRatioMonitorBalance(channelId, balance, fetchError, nil)
+	_, err := recordChannelRatioMonitorBalance(channelId, balance, fetchError, nil, nil)
 	return err
 }
 
 // RecordChannelRatioMonitorBalanceIfRevision records a balance only when it
 // belongs to the currently saved upstream configuration.
 func RecordChannelRatioMonitorBalanceIfRevision(channelId int, expectedRevision int64, balance *float64, fetchError string) (bool, error) {
-	return recordChannelRatioMonitorBalance(channelId, balance, fetchError, &expectedRevision)
+	return recordChannelRatioMonitorBalance(channelId, balance, fetchError, &expectedRevision, nil)
 }
 
-func recordChannelRatioMonitorBalance(channelId int, balance *float64, fetchError string, expectedRevision *int64) (applied bool, err error) {
+// RecordChannelRatioMonitorBalanceWithEstimateIfRevision records an upstream
+// balance together with the cost baseline used to evaluate delayed spending.
+// The revision guard prevents a response for an old upstream configuration
+// from changing the current monitor state.
+func RecordChannelRatioMonitorBalanceWithEstimateIfRevision(
+	channelId int,
+	expectedRevision int64,
+	balance *float64,
+	fetchError string,
+	estimateState *ChannelRatioMonitorBalanceEstimateState,
+) (bool, error) {
+	return recordChannelRatioMonitorBalance(channelId, balance, fetchError, &expectedRevision, estimateState)
+}
+
+func recordChannelRatioMonitorBalance(
+	channelId int,
+	balance *float64,
+	fetchError string,
+	expectedRevision *int64,
+	estimateState *ChannelRatioMonitorBalanceEstimateState,
+) (applied bool, err error) {
 	message := strings.TrimSpace(fetchError)
 	if balance != nil && (math.IsNaN(*balance) || math.IsInf(*balance, 0)) {
 		balance = nil
 		message = "上游余额不是有效数字"
+	}
+	if balance != nil && estimateState != nil {
+		if estimateState.CostBaseline.Timestamp <= 0 || estimateState.CostBaseline.CostNanoCNY < 0 ||
+			math.IsNaN(estimateState.PendingConsumption) || math.IsInf(estimateState.PendingConsumption, 0) ||
+			estimateState.PendingConsumption < 0 {
+			return false, errors.New("余额消费估算状态无效")
+		}
 	}
 	messageRunes := []rune(message)
 	if len(messageRunes) > 255 {
@@ -396,6 +441,14 @@ func recordChannelRatioMonitorBalance(channelId int, balance *float64, fetchErro
 			value := *balance
 			monitor.UpstreamBalance = &value
 			monitor.LastBalanceTime = common.GetTimestamp()
+			monitor.LastBalanceCostNanoCNY = nil
+			monitor.BalancePendingConsumption = 0
+			if estimateState != nil {
+				baselineCost := estimateState.CostBaseline.CostNanoCNY
+				monitor.LastBalanceTime = estimateState.CostBaseline.Timestamp
+				monitor.LastBalanceCostNanoCNY = &baselineCost
+				monitor.BalancePendingConsumption = estimateState.PendingConsumption
+			}
 			monitor.LastBalanceError = ""
 			monitor.BalanceConsecutiveFailures = 0
 			monitor.BalanceFailureAlertNotified = false
