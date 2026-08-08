@@ -18,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -88,22 +89,6 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "task_channel_disable", http.StatusBadRequest)
 	}
 	info.LockedChannel = ch
-
-	if originTask.ChannelId != info.ChannelId {
-		key, _, newAPIError := ch.GetNextEnabledKey()
-		if newAPIError != nil {
-			return service.TaskErrorWrapper(newAPIError, "channel_no_available_key", newAPIError.StatusCode)
-		}
-		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-		common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
-		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
-		common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
-
-		info.ChannelBaseUrl = ch.GetBaseURL()
-		info.ChannelId = originTask.ChannelId
-		info.ChannelType = ch.Type
-		info.ApiKey = key
-	}
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
 	if info.Action == constant.TaskActionRemix {
@@ -181,13 +166,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	info.OriginModelName = modelName
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
 	}
+	originTaskRatios := info.PriceData.OtherRatios()
 	info.PriceData = priceData
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
+	for k, v := range originTaskRatios {
+		info.PriceData.AddOtherRatio(k, v)
+	}
 	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
 		for k, v := range estimatedRatios {
 			info.PriceData.AddOtherRatio(k, v)
@@ -202,27 +191,54 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		noteTaskQuotaClamp(info, clamp)
 	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && !info.PriceData.FreeModel {
-		info.ForcePreConsume = true
-		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
-			return nil, service.TaskErrorFromAPIError(apiErr)
-		}
+	// 7. 每次发送前确保已按本次渠道价格预扣足额。
+	if taskErr := prepareTaskBilling(c, info); taskErr != nil {
+		return nil, taskErr
 	}
 
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+		return nil, service.TaskErrorWrapperLocal(err, "build_request_failed", http.StatusInternalServerError)
 	}
 
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
+		var apiErr *types.NewAPIError
+		if errors.As(err, &apiErr) {
+			statusCode := apiErr.StatusCode
+			if statusCode < http.StatusContinue || statusCode > 599 {
+				statusCode = http.StatusInternalServerError
+			}
+			return nil, service.TaskErrorWrapper(err, string(apiErr.GetErrorCode()), statusCode)
+		}
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
-		responseBody, _ := io.ReadAll(resp.Body)
+	if resp == nil {
+		return nil, service.TaskErrorWrapper(errors.New("upstream response is nil"), "invalid_response", http.StatusInternalServerError)
+	}
+	if resp.Body == nil {
+		statusCode := resp.StatusCode
+		if statusCode < http.StatusContinue || statusCode > 599 {
+			statusCode = http.StatusBadGateway
+		}
+		responseErr := types.NewErrorWithStatusCode(
+			errors.New("upstream response body is nil"),
+			types.ErrorCodeBadResponseBody,
+			statusCode,
+		)
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			types.ErrOptionWithSkipRetry()(responseErr)
+		}
+		return nil, service.TaskErrorWrapper(responseErr, "invalid_response", statusCode)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, service.TaskErrorWrapper(readErr, "read_response_body_failed", resp.StatusCode)
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
@@ -237,6 +253,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
+		responseErr := taskErr.Error
+		if responseErr == nil {
+			responseErr = errors.New(taskErr.Message)
+		}
+		// A successful task submission may already have created a billable
+		// upstream task. Parsing failures are therefore not safe to retry.
+		taskErr.Error = types.NewErrorWithStatusCode(
+			responseErr,
+			types.ErrorCodeBadResponseBody,
+			taskErr.StatusCode,
+			types.ErrOptionWithSkipRetry(),
+		)
 		return nil, taskErr
 	}
 
@@ -436,9 +464,9 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		return nil
 	}
 
-	baseURL := constant.ChannelBaseURLs[channelModel.Type]
-	if channelModel.GetBaseURL() != "" {
-		baseURL = channelModel.GetBaseURL()
+	baseURL, err := service.ResolveTaskPollingBaseURL(channelModel)
+	if err != nil {
+		return nil
 	}
 	proxy := channelModel.GetSetting().Proxy
 	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
@@ -450,10 +478,13 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
 	}, proxy)
-	if err != nil || resp == nil {
+	if err != nil || resp == nil || resp.Body == nil {
 		return nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil

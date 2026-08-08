@@ -3,6 +3,7 @@ package controller
 import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -11,7 +12,7 @@ type relayRetryRouting struct {
 	excluded      map[int]struct{}
 	excludedOrder []int
 	exhausted     bool
-	sameChannel   *model.Channel
+	sameChannelID int // Reload before retry because the first-attempt channel may be a sparse context stub.
 	sameGroup     string
 }
 
@@ -25,8 +26,8 @@ func (routing *relayRetryRouting) exclude(channelID int) {
 	if routing == nil || channelID <= 0 {
 		return
 	}
-	if routing.sameChannel != nil && routing.sameChannel.Id == channelID {
-		routing.sameChannel = nil
+	if routing.sameChannelID == channelID {
+		routing.sameChannelID = 0
 		routing.sameGroup = ""
 	}
 	if _, exists := routing.excluded[channelID]; exists {
@@ -41,7 +42,7 @@ func (routing *relayRetryRouting) retrySameChannel(channel *model.Channel, group
 	if routing == nil || channel == nil || channel.Id <= 0 {
 		return
 	}
-	routing.sameChannel = channel
+	routing.sameChannelID = channel.Id
 	routing.sameGroup = group
 	routing.exhausted = false
 }
@@ -62,7 +63,7 @@ func (routing *relayRetryRouting) restartRound(retryParam *service.RetryParam) {
 	routing.excluded = make(map[int]struct{})
 	routing.excludedOrder = nil
 	routing.exhausted = false
-	routing.sameChannel = nil
+	routing.sameChannelID = 0
 	routing.sameGroup = ""
 	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
 		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, 0)
@@ -75,17 +76,68 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		return service.CacheGetRandomSatisfiedChannel(retryParam)
 	}
 	routing.exhausted = false
-	if routing.sameChannel != nil {
-		channel := routing.sameChannel
+	if routing.sameChannelID > 0 {
+		channelID := routing.sameChannelID
 		group := routing.sameGroup
-		routing.sameChannel = nil
+		routing.sameChannelID = 0
 		routing.sameGroup = ""
-		return channel, group, nil
+		channel, err := model.CacheGetChannel(channelID)
+		groupEligible := group != "" && model.IsChannelEnabledForGroupModel(group, retryParam.ModelName, channelID)
+		if retryParam.TokenGroup == "auto" {
+			groupAllowed := false
+			if retryParam.Ctx != nil {
+				userGroup := common.GetContextKeyString(retryParam.Ctx, constant.ContextKeyUserGroup)
+				for _, autoGroup := range service.GetRequestAutoGroups(retryParam.Ctx, userGroup) {
+					if autoGroup == group {
+						groupAllowed = true
+						break
+					}
+				}
+			}
+			groupEligible = groupAllowed && model.IsChannelEnabledForGroupModel(group, retryParam.ModelName, channelID)
+		}
+		if err == nil && channel != nil && channel.Status == common.ChannelStatusEnabled &&
+			groupEligible &&
+			middleware.ChannelSupportsRequestPath(channel, retryParam.RequestPath, retryParam.ModelName) {
+			return channel, group, nil
+		}
+		// A fast same-channel retry is opportunistic. If that channel was
+		// removed or disabled after the failed attempt, continue with normal
+		// routing instead of terminating the request.
+		routing.exclude(channelID)
 	}
+	return routing.selectChannelCandidates(retryParam, true)
+}
+
+// selectChannelCurrentRound chooses another candidate without starting a new
+// routing round. It is used when a channel is saturated: retrying the same
+// round is useful, but restarting it would immediately select the saturated
+// channel again when it is the only candidate.
+func (routing *relayRetryRouting) selectChannelCurrentRound(retryParam *service.RetryParam) (*model.Channel, string, error) {
+	if routing == nil {
+		return service.CacheGetRandomSatisfiedChannel(retryParam)
+	}
+	routing.exhausted = false
+	return routing.selectChannelCandidates(retryParam, false)
+}
+
+func (routing *relayRetryRouting) selectChannelCandidates(retryParam *service.RetryParam, allowRestart bool) (*model.Channel, string, error) {
 
 	selectionOptions, hasExcludedChannels := routing.selectionOptions()
 	if !hasExcludedChannels {
 		return service.CacheGetRandomSatisfiedChannel(retryParam)
+	}
+	originalRetry := retryParam.GetRetry()
+	var originalAutoGroup any
+	var originalAutoGroupExists bool
+	var originalAutoGroupIndexValue any
+	var originalAutoGroupIndexExists bool
+	var originalAutoGroupRetryIndex any
+	var originalAutoGroupRetryIndexExists bool
+	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
+		originalAutoGroup, originalAutoGroupExists = common.GetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroup)
+		originalAutoGroupIndexValue, originalAutoGroupIndexExists = common.GetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex)
+		originalAutoGroupRetryIndex, originalAutoGroupRetryIndexExists = common.GetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex)
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam, selectionOptions)
 	if err != nil || channel != nil {
@@ -95,11 +147,55 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 	// Request-size limits are a soft preference. Once the normal candidates
 	// have been exhausted, give deferred exploration/stability-release routes
 	// a chance before declaring the round exhausted or restarting it.
-	fallbackRetryParam := *retryParam
-	fallbackRetryParam.SelectionOptions.IgnoreSmartScheduleRequestLimits = true
-	channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&fallbackRetryParam, selectionOptions)
+	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
+		// The first selection may advance auto-group state while it searches. The
+		// relaxed-limit probe must start from the same state, but it must not mutate
+		// the caller's retry counter or selection options.
+		if originalAutoGroupExists {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroup, originalAutoGroup)
+		} else {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroup, nil)
+		}
+		if originalAutoGroupIndexExists {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, originalAutoGroupIndexValue)
+		} else {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, nil)
+		}
+		if originalAutoGroupRetryIndexExists {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex, originalAutoGroupRetryIndex)
+		} else {
+			common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex, nil)
+		}
+	}
+	fallbackRetry := originalRetry
+	fallbackParam := *retryParam
+	fallbackParam.Retry = &fallbackRetry
+	fallbackParam.SelectionOptions = retryParam.SelectionOptions
+	fallbackParam.SelectionOptions.IgnoreSmartScheduleRequestLimits = true
+	channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&fallbackParam, selectionOptions)
 	if err != nil || channel != nil {
 		return channel, selectGroup, err
+	}
+	if retryParam.TokenGroup == "auto" &&
+		common.GetContextKeyBool(retryParam.Ctx, constant.ContextKeyTokenCrossGroupRetry) {
+		userGroup := common.GetContextKeyString(retryParam.Ctx, constant.ContextKeyUserGroup)
+		autoGroups := service.GetRequestAutoGroups(retryParam.Ctx, userGroup)
+		if common.GetContextKeyInt(retryParam.Ctx, constant.ContextKeyAutoGroupIndex) >= len(autoGroups) {
+			routing.exhausted = true
+			return nil, selectGroup, nil
+		}
+	}
+	// A token without cross-group retry permission must stay in the group
+	// selected for this request. Restarting here would clear the exclusions and
+	// select the already-failed channel again, defeating the retry boundary.
+	if retryParam.TokenGroup == "auto" && retryParam.IsRetry && retryParam.Ctx != nil &&
+		!common.GetContextKeyBool(retryParam.Ctx, constant.ContextKeyTokenCrossGroupRetry) {
+		routing.exhausted = true
+		return nil, selectGroup, nil
+	}
+	if !allowRestart {
+		routing.exhausted = true
+		return nil, selectGroup, nil
 	}
 
 	routing.restartRound(retryParam)

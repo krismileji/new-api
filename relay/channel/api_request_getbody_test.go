@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -249,6 +251,93 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 		require.NoError(t, rc.Close())
 		assert.Equal(t, payload, replay, "replay %d must equal the original payload", i+1)
 	}
+}
+
+func TestDoTaskApiRequestRejectsInvalidUpstreamURLBeforeDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+	service.BeginChannelDailyCostAttempt(ctx, 901)
+
+	_, err := DoTaskApiRequest(&stubTaskAdaptor{}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewReader([]byte(`{}`)))
+	require.Error(t, err)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, types.ErrorCodeChannelInvalidBaseURL, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	assert.False(t, service.WasChannelDailyCostRequestDispatched(ctx))
+}
+
+func TestDoTaskApiRequestKeepsPreResponseTransportErrorRetryable(t *testing.T) {
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+	service.BeginChannelDailyCostAttempt(ctx, 902)
+
+	_, err := DoTaskApiRequest(&stubTaskAdaptor{baseURL: serverURL}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewReader([]byte(`{}`)))
+	require.Error(t, err)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
+	assert.False(t, types.IsSkipRetryError(apiErr))
+	assert.True(t, service.WasChannelDailyCostRequestDispatched(ctx))
+}
+
+func TestDoTaskApiRequestDoesNotRetryAfterRequestWasWritten(t *testing.T) {
+	service.InitHttpClient()
+	payload := []byte(`{"model":"test-model","prompt":"create once"}`)
+
+	type serverResult struct {
+		body []byte
+		err  error
+	}
+	resultCh := make(chan serverResult, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			resultCh <- serverResult{err: readErr}
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			resultCh <- serverResult{err: errors.New("response writer does not support hijacking")}
+			return
+		}
+		conn, _, hijackErr := hijacker.Hijack()
+		if hijackErr != nil {
+			resultCh <- serverResult{err: hijackErr}
+			return
+		}
+		resultCh <- serverResult{body: body}
+		_ = conn.Close()
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(payload))
+
+	_, err := DoTaskApiRequest(
+		&stubTaskAdaptor{baseURL: server.URL},
+		ctx,
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}},
+		bytes.NewReader(payload),
+	)
+	require.Error(t, err)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.True(t, common.GetContextKeyBool(ctx, service.UpstreamRequestWrittenContextKey))
+
+	result := <-resultCh
+	require.NoError(t, result.err)
+	assert.Equal(t, payload, result.body)
 }
 
 type h2ServerResult struct {

@@ -1,15 +1,15 @@
 package volcengine
 
 import (
-	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -144,22 +144,46 @@ func getContentTypeByEncoding(encoding string) string {
 }
 
 func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, encoding string) (usage any, err *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewError(errors.New("volcengine returned an empty response"), types.ErrorCodeBadResponse)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
+		options := []types.NewAPIErrorOptions(nil)
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			options = append(options, types.ErrOptionWithSkipRetry())
+		}
+		statusCode := resp.StatusCode
+		if statusCode < http.StatusContinue || statusCode > 599 {
+			statusCode = http.StatusInternalServerError
+		}
 		return nil, types.NewErrorWithStatusCode(
 			errors.New("failed to read volcengine response"),
 			types.ErrorCodeReadResponseBodyFailed,
-			http.StatusInternalServerError,
+			statusCode,
+			options...,
 		)
 	}
-	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("bad response status code %d", resp.StatusCode),
+			types.ErrorCodeBadResponseStatusCode,
+			resp.StatusCode,
+		)
+	}
 
 	var volcResp VolcengineTTSResponse
-	if unmarshalErr := json.Unmarshal(body, &volcResp); unmarshalErr != nil {
+	if unmarshalErr := common.Unmarshal(body, &volcResp); unmarshalErr != nil {
+		options := []types.NewAPIErrorOptions(nil)
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			options = append(options, types.ErrOptionWithSkipRetry())
+		}
 		return nil, types.NewErrorWithStatusCode(
 			errors.New("failed to parse volcengine response"),
 			types.ErrorCodeBadResponseBody,
 			http.StatusInternalServerError,
+			options...,
 		)
 	}
 
@@ -177,6 +201,7 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 			errors.New("failed to decode audio data"),
 			types.ErrorCodeBadResponseBody,
 			http.StatusInternalServerError,
+			types.ErrOptionWithSkipRetry(),
 		)
 	}
 
@@ -210,15 +235,31 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 	header := http.Header{}
 	header.Set("Authorization", fmt.Sprintf("Bearer;%s", token))
 
-	service.MarkChannelDailyCostRequestDispatched(c)
-	conn, resp, dialErr := websocket.DefaultDialer.DialContext(context.Background(), requestURL, header)
+	requestContext := c.Request.Context()
+	if urlErr := channel.ValidateUpstreamURL(requestURL, true); urlErr != nil {
+		return nil, urlErr
+	}
+	conn, resp, dialErr := websocket.DefaultDialer.DialContext(requestContext, requestURL, header)
 	if dialErr != nil {
 		if resp != nil {
+			statusCode := http.StatusBadGateway
+			if resp.StatusCode >= http.StatusContinue && resp.StatusCode <= 599 {
+				statusCode = resp.StatusCode
+			}
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			if clientGoneErr := types.NewClientGoneErrorFromContext(requestContext, dialErr); clientGoneErr != nil {
+				return nil, clientGoneErr
+			}
 			return nil, types.NewErrorWithStatusCode(
 				fmt.Errorf("failed to connect to websocket: %w, status: %d", dialErr, resp.StatusCode),
 				types.ErrorCodeBadResponseStatusCode,
-				http.StatusBadGateway,
+				statusCode,
 			)
+		}
+		if clientGoneErr := types.NewClientGoneErrorFromContext(requestContext, dialErr); clientGoneErr != nil {
+			return nil, clientGoneErr
 		}
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to connect to websocket: %w", dialErr),
@@ -226,24 +267,42 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 			http.StatusBadGateway,
 		)
 	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	defer conn.Close()
+	connectionDone := make(chan struct{})
+	defer close(connectionDone)
+	go func() {
+		select {
+		case <-requestContext.Done():
+			_ = conn.Close()
+		case <-connectionDone:
+		}
+	}()
 
-	payload, marshalErr := json.Marshal(volcRequest)
+	payload, marshalErr := common.Marshal(volcRequest)
 	if marshalErr != nil {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to marshal request: %w", marshalErr),
 			types.ErrorCodeBadRequestBody,
 			http.StatusInternalServerError,
+			types.ErrOptionWithSkipRetry(),
 		)
 	}
 
 	if sendErr := FullClientRequest(conn, payload); sendErr != nil {
+		// The websocket handshake succeeded and the request may have been
+		// partially written, so this boundary is intentionally before the send.
+		service.MarkChannelDailyCostRequestDispatched(c)
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to send request: %w", sendErr),
 			types.ErrorCodeBadRequestBody,
 			http.StatusInternalServerError,
+			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	service.MarkChannelDailyCostRequestDispatched(c)
 
 	contentType := getContentTypeByEncoding(encoding)
 	c.Header("Content-Type", contentType)
@@ -252,6 +311,9 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 	for {
 		msg, recvErr := ReceiveMessage(conn)
 		if recvErr != nil {
+			if requestContext.Err() != nil {
+				return nil, types.NewClientGoneError(requestContext.Err())
+			}
 			if websocket.IsCloseError(recvErr, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				break
 			}
@@ -259,6 +321,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 				fmt.Errorf("failed to receive message: %w", recvErr),
 				types.ErrorCodeBadResponse,
 				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
 			)
 		}
 
@@ -268,6 +331,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 				fmt.Errorf("received error from server: code=%d, %s", msg.ErrorCode, string(msg.Payload)),
 				types.ErrorCodeBadResponse,
 				http.StatusBadRequest,
+				types.ErrOptionWithSkipRetry(),
 			)
 		case MsgTypeFrontEndResultServer:
 			continue
@@ -278,6 +342,7 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 						fmt.Errorf("failed to write audio data: %w", writeErr),
 						types.ErrorCodeBadResponse,
 						http.StatusInternalServerError,
+						types.ErrOptionWithSkipRetry(),
 					)
 				}
 				c.Writer.Flush()
@@ -297,11 +362,10 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 		}
 	}
 
-	c.Status(http.StatusOK)
-	usage = &dto.Usage{
-		PromptTokens:     info.GetEstimatePromptTokens(),
-		CompletionTokens: 0,
-		TotalTokens:      info.GetEstimatePromptTokens(),
-	}
-	return usage, nil
+	return nil, types.NewErrorWithStatusCode(
+		errors.New("volcengine websocket closed before terminal audio sequence"),
+		types.ErrorCodeBadResponseBody,
+		http.StatusBadGateway,
+		types.ErrOptionWithSkipRetry(),
+	)
 }

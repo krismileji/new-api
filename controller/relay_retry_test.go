@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -60,6 +63,57 @@ func TestShouldRetryHonorsSkipRetryAndSpecificChannel(t *testing.T) {
 	ctx.Set("specific_channel_id", "2")
 	apiErr = types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
 	require.False(t, shouldRetry(ctx, apiErr, 1))
+
+	channelErr := types.NewError(
+		errors.New("invalid channel mapping"),
+		types.ErrorCodeChannelModelMappedError,
+		types.ErrOptionWithSkipRetry(),
+	)
+	require.False(t, shouldRetry(ctx, channelErr, 1))
+
+	channelErr = types.NewError(errors.New("channel key failed"), types.ErrorCodeChannelInvalidKey)
+	require.False(t, shouldRetry(ctx, channelErr, 1))
+}
+
+func TestShouldRetryChannelErrorHonorsRetryBudget(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	channelErr := types.NewError(errors.New("channel key failed"), types.ErrorCodeChannelInvalidKey)
+
+	require.True(t, shouldRetry(ctx, channelErr, 1))
+	require.False(t, shouldRetry(ctx, channelErr, 0))
+}
+
+func TestNewRelayChannelErrorUsesAttemptMultiKeyState(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "active-key")
+	channel := &model.Channel{Id: 7, Type: constant.ChannelTypeOpenAI, Name: "sparse-channel"}
+
+	channelErr := newRelayChannelError(ctx, channel)
+
+	assert.True(t, channelErr.IsMultiKey)
+	assert.Equal(t, "active-key", channelErr.UsingKey)
+}
+
+func TestShouldRetryTaskRelayRejectsLocalAndSkipRetryErrorsBeforeStatusRules(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	localErr := &dto.TaskError{
+		StatusCode: http.StatusServiceUnavailable,
+		LocalError: true,
+		Error:      errors.New("local setup failed"),
+	}
+	require.False(t, shouldRetryTaskRelay(ctx, 1, localErr, 1))
+
+	skipErr := types.NewErrorWithStatusCode(
+		errors.New("billing failed"),
+		types.ErrorCodeUpdateDataError,
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithSkipRetry(),
+	)
+	require.False(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
+		StatusCode: http.StatusServiceUnavailable,
+		Error:      skipErr,
+	}, 1))
 }
 
 func TestRetryStopsOnlyForClassifiedClientGone(t *testing.T) {
@@ -79,6 +133,7 @@ func TestRetryStopsOnlyForClassifiedClientGone(t *testing.T) {
 	upstreamErr := types.NewOpenAIError(errors.New("upstream unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
 	assert.True(t, shouldRetry(ctx, upstreamErr, 1))
 	assert.False(t, shouldRetry(ctx, types.NewClientGoneError(context.Canceled), 1))
+	assert.False(t, shouldRetry(ctx, types.NewError(context.Canceled, types.ErrorCodeClientGone), 1))
 
 	assert.True(t, shouldRetryTaskRelay(ctx, 1, &dto.TaskError{
 		StatusCode: http.StatusServiceUnavailable,

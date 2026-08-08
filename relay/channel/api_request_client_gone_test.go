@@ -1,7 +1,9 @@
 package channel
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -110,6 +112,36 @@ func TestDoRequestKeepsTransportFailureRetryable(t *testing.T) {
 	assert.NotEmpty(t, diagnostic.Host)
 }
 
+func TestDoRequestDisablesRetryAfterWrittenRequestWithoutResponse(t *testing.T) {
+	service.InitHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		hijacker, ok := writer.(http.Hijacker)
+		if !ok {
+			return
+		}
+		connection, _, err := hijacker.Hijack()
+		if err == nil {
+			_ = connection.Close()
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/tasks", nil)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader([]byte("create-task")))
+	require.NoError(t, err)
+
+	_, requestErr := DoRequest(c, upstreamRequest, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}})
+	require.Error(t, requestErr)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, requestErr, &apiErr)
+	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+}
+
 func TestDoRequestTreatsStreamFirstResponseTimeoutAsRetryable(t *testing.T) {
 	originalTimeout := common2.GetRelayResponseHeaderTimeoutSeconds()
 	common2.SetRelayResponseHeaderTimeoutSeconds(1)
@@ -144,5 +176,20 @@ func TestDoRequestTreatsStreamFirstResponseTimeoutAsRetryable(t *testing.T) {
 	require.ErrorAs(t, requestErr, &apiErr)
 	assert.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
 	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+	assert.False(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestDoRequestRejectsInvalidUpstreamURL(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, "/v1/responses", nil)
+	require.NoError(t, err)
+
+	_, requestErr := DoRequest(c, upstreamRequest, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}})
+	require.Error(t, requestErr)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, requestErr, &apiErr)
+	assert.Equal(t, types.ErrorCodeChannelInvalidBaseURL, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
 	assert.False(t, types.IsSkipRetryError(apiErr))
 }

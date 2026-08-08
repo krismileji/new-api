@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
@@ -18,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
@@ -310,10 +312,56 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 	}
 }
 
+func validateUpstreamURL(rawURL string, websocketURL bool) *types.NewAPIError {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return types.NewErrorWithStatusCode(
+			errors.New("渠道上游地址为空"),
+			types.ErrorCodeChannelInvalidBaseURL,
+			http.StatusBadGateway,
+		)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return types.NewErrorWithStatusCode(
+			errors.New("渠道上游地址无效"),
+			types.ErrorCodeChannelInvalidBaseURL,
+			http.StatusBadGateway,
+		)
+	}
+	if websocketURL {
+		if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+			return types.NewErrorWithStatusCode(
+				errors.New("渠道上游地址协议不支持 WebSocket"),
+				types.ErrorCodeChannelInvalidBaseURL,
+				http.StatusBadGateway,
+			)
+		}
+	} else if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return types.NewErrorWithStatusCode(
+			errors.New("渠道上游地址协议不支持 HTTP"),
+			types.ErrorCodeChannelInvalidBaseURL,
+			http.StatusBadGateway,
+		)
+	}
+	return nil
+}
+
+// ValidateUpstreamURL exposes the shared URL guard to provider adaptors that
+// issue a small follow-up request outside DoApiRequest (for example file
+// uploads or task polling). Those requests must reject an empty BaseURL before
+// net/http reports the less actionable "unsupported protocol scheme" error.
+func ValidateUpstreamURL(rawURL string, websocketURL bool) *types.NewAPIError {
+	return validateUpstreamURL(rawURL, websocketURL)
+}
+
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
+	}
+	if urlErr := validateUpstreamURL(fullRequestURL, false); urlErr != nil {
+		return nil, urlErr
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
@@ -344,6 +392,9 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
+	}
+	if urlErr := validateUpstreamURL(fullRequestURL, false); urlErr != nil {
+		return nil, urlErr
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
@@ -377,6 +428,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
+	if urlErr := validateUpstreamURL(fullRequestURL, true); urlErr != nil {
+		return nil, urlErr
+	}
 	targetHeader := http.Header{}
 	err = a.SetupRequestHeader(c, &targetHeader, info)
 	if err != nil {
@@ -392,11 +446,32 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	service.MarkChannelDailyCostRequestDispatched(c)
-	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
+	// The handshake is the transport boundary for WebSocket requests. Keep the
+	// client context attached so a disconnected downstream request cannot leave
+	// a dial blocked until the dialer's own timeout, and only mark dispatch after
+	// the handshake succeeds.
+	targetConn, handshakeResp, err := websocket.DefaultDialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
 	if err != nil {
-		return nil, fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err)
+		statusCode := http.StatusBadGateway
+		if handshakeResp != nil {
+			if handshakeResp.StatusCode >= http.StatusContinue && handshakeResp.StatusCode <= 599 {
+				statusCode = handshakeResp.StatusCode
+			}
+			common2.SetContextKey(c, service.UpstreamResponseStatusContextKey, statusCode)
+		}
+		if handshakeResp != nil && handshakeResp.Body != nil {
+			_ = handshakeResp.Body.Close()
+		}
+		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
+			return nil, clientGoneErr
+		}
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err),
+			types.ErrorCodeBadResponseStatusCode,
+			statusCode,
+		)
 	}
+	service.MarkChannelDailyCostRequestDispatched(c)
 	// send request body
 	//all, err := io.ReadAll(requestBody)
 	//err = service.WssString(c, targetConn, string(all))
@@ -479,6 +554,16 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 }
 
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	if req == nil || req.URL == nil {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("渠道上游地址无效"),
+			types.ErrorCodeChannelInvalidBaseURL,
+			http.StatusBadGateway,
+		)
+	}
+	if urlErr := validateUpstreamURL(req.URL.String(), false); urlErr != nil {
+		return nil, urlErr
+	}
 	return doRequest(c, req, info)
 }
 
@@ -490,6 +575,8 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
+	common2.SetContextKey(c, service.UpstreamResponseStatusContextKey, 0)
+	common2.SetContextKey(c, service.UpstreamRequestWrittenContextKey, false)
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
 		diagnostic := service.DiagnoseUpstreamRequestError(req, err, info.ChannelSetting.Proxy != "")
@@ -518,45 +605,84 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		))
 	}
 
-	var stopPinger context.CancelFunc
-	var pingerDone <-chan struct{}
 	if info.IsStream {
+		// Do not write keepalive bytes before an upstream event arrives. Doing so
+		// commits a downstream 200 and prevents a later 502/network retry.
 		helper.SetEventStreamHeaders(c)
-		// 处理流式请求的 ping 保活
-		generalSettings := operation_setting.GetGeneralSetting()
-		if generalSettings.PingIntervalEnabled && !info.DisablePing {
-			pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
-			stopPinger, pingerDone = startPingKeepAlive(c, pingInterval)
-			// 使用defer确保在任何情况下都能停止ping goroutine
-			defer func() {
-				if stopPinger != nil {
-					stopPinger()
-					<-pingerDone
-					logger.LogDebug(c, "SSE ping goroutine stopped by defer")
-				}
-			}()
-		}
 	}
 
 	req = req.WithContext(c.Request.Context())
 	if info.IsStream {
 		req = service.WithRelayStreamFirstResponseTimeout(req)
 	}
+	var requestWritten atomic.Bool
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				requestWritten.Store(true)
+			}
+		},
+	}))
 	// Mark the exact upstream transport boundary for channel cost accounting
 	// and channel-test probes. Setup failures return before this point.
 	service.MarkChannelDailyCostRequestDispatched(c)
 	resp, err := relayClient.Do(req)
+	common2.SetContextKey(c, service.UpstreamRequestWrittenContextKey, requestWritten.Load())
+	if resp != nil {
+		// Record the status as soon as headers arrive. Streaming first-response
+		// timeouts and response-parser failures can happen after this point, and
+		// replaying a request that the upstream accepted may duplicate work.
+		common2.SetContextKey(c, service.UpstreamResponseStatusContextKey, resp.StatusCode)
+	}
+	if err == nil && resp != nil && resp.Body == nil {
+		statusCode := resp.StatusCode
+		if statusCode < http.StatusContinue || statusCode > 599 {
+			statusCode = http.StatusBadGateway
+		}
+		options := []types.NewAPIErrorOptions(nil)
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			options = append(options, types.ErrOptionWithSkipRetry())
+		}
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("上游响应体为空"),
+			types.ErrorCodeBadResponseBody,
+			statusCode,
+			options...,
+		)
+	}
 	if err == nil && info.IsStream && resp != nil {
 		err = service.WaitForRelayStreamFirstResponse(resp)
+		if err == nil {
+			attachPingKeepAlive(c, resp, info)
+		}
 	}
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
 			return nil, clientGoneErr
 		}
 		diagnostic := service.DiagnoseUpstreamRequestError(req, err, info.ChannelSetting.Proxy != "")
 		logger.LogError(c, "do request failed: "+diagnostic.Detail)
 		common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, diagnostic)
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		options := []types.NewAPIErrorOptions{
+			types.ErrOptionWithHideErrMsg("upstream error: do request failed"),
+		}
+		statusCode := common2.GetContextKeyInt(c, service.UpstreamResponseStatusContextKey)
+		requestWritten := common2.GetContextKeyBool(c, service.UpstreamRequestWrittenContextKey)
+		// Once a non-stream request has been fully written, a connection
+		// failure before any response may mean the upstream accepted a POST.
+		// Do not replay it blindly. A stream first-response timeout is the
+		// deliberate exception: headers were accepted but no model event was
+		// observed, so the controller may still retry that transport failure.
+		streamFirstResponseTimeout := info.IsStream &&
+			statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices &&
+			diagnostic.Category == service.UpstreamErrorCategoryResponseTimeout
+		if requestWritten && !streamFirstResponseTimeout {
+			options = append(options, types.ErrOptionWithSkipRetry())
+		}
+		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, options...)
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
@@ -587,6 +713,9 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, err
 	}
+	if urlErr := validateUpstreamURL(fullRequestURL, false); urlErr != nil {
+		return nil, urlErr
+	}
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
@@ -607,6 +736,15 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
+		var apiErr *types.NewAPIError
+		if errors.As(err, &apiErr) && types.IsClientGoneError(apiErr) {
+			return nil, err
+		}
+		statusCode := common2.GetContextKeyInt(c, service.UpstreamResponseStatusContextKey)
+		requestWritten := common2.GetContextKeyBool(c, service.UpstreamRequestWrittenContextKey)
+		if requestWritten || (statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices) {
+			return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil

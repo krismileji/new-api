@@ -81,7 +81,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	return requestOpenAI2Dify(c, info, *request), nil
+	return requestOpenAI2Dify(c, info, *request)
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -104,10 +104,14 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	if info.IsStream {
-		return difyStreamHandler(c, info, resp)
+		usage, err = difyStreamHandler(c, info, resp)
 	} else {
-		return difyHandler(c, info, resp)
+		usage, err = difyHandler(c, info, resp)
 	}
+	if err != nil && resp != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		types.ErrOptionWithSkipRetry()(err)
+	}
+	return usage, err
 }
 
 func (a *Adaptor) GetModelList() []string {

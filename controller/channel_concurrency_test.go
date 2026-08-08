@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -163,4 +164,66 @@ func TestAcquireRelayChannelConcurrencyReturns429WhenAllChannelsAreSaturated(t *
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
 	assert.Zero(t, retryParam.GetRetry())
+}
+
+func TestAcquireRelayChannelConcurrencySkipsAlternativeWithoutEnabledKeys(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	priority300 := int64(300)
+	priority200 := int64(200)
+	priority100 := int64(100)
+	weight := uint(10)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 106, Name: "limited", Key: "key-1", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority300, Weight: &weight},
+		{
+			Id: 107, Name: "no-enabled-keys", Key: "disabled-key", Group: "vip", Models: "model-a",
+			Status: common.ChannelStatusEnabled, Priority: &priority200, Weight: &weight,
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:         true,
+				MultiKeyStatusList: map[int]int{0: common.ChannelStatusAutoDisabled},
+			},
+		},
+		{Id: 108, Name: "available", Key: "key-3", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority100, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "vip", Model: "model-a", ChannelId: 106, Enabled: true, Priority: &priority300, Weight: weight},
+		{Group: "vip", Model: "model-a", ChannelId: 107, Enabled: true, Priority: &priority200, Weight: weight},
+		{Group: "vip", Model: "model-a", ChannelId: 108, Enabled: true, Priority: &priority100, Weight: weight},
+	}).Error)
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+	_, err := service.SaveChannelConcurrencyLimit(t.Context(), 106, 1)
+	require.NoError(t, err)
+	heldLease, acquired, _, err := service.AcquireChannelConcurrency(t.Context(), 106)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	t.Cleanup(heldLease.Release)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	retryParam := &service.RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "vip",
+		ModelName:   "model-a",
+		RequestPath: ctx.Request.URL.Path,
+		Retry:       common.GetPointer(0),
+	}
+	info := &relaycommon.RelayInfo{OriginModelName: "model-a", TokenGroup: "vip", UsingGroup: "vip"}
+	limited, err := model.GetChannelById(106, true)
+	require.NoError(t, err)
+
+	selected, lease, apiErr := acquireRelayChannelConcurrency(
+		ctx,
+		info,
+		retryParam,
+		newRelayRetryRouting(),
+		limited,
+		true,
+	)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, lease)
+	defer lease.Release()
+	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, 108, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
 }

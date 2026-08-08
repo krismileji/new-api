@@ -105,6 +105,27 @@ func MarkChannelDailyCostRequestDispatched(ctx *gin.Context) {
 	}
 }
 
+// WasChannelDailyCostRequestDispatched reports whether the current channel
+// attempt crossed the upstream transport boundary. Task submission uses this
+// to distinguish a safe setup failure from an uncertain transport failure:
+// once dispatched, retrying may create a duplicate asynchronous task.
+func WasChannelDailyCostRequestDispatched(ctx *gin.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return false
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.Dispatched
+}
+
 // FinalizeChannelDailyCostAttempt records one unresolved event when an
 // upstream attempt was dispatched but no settlement event classified it.
 func FinalizeChannelDailyCostAttempt(ctx *gin.Context, channelId int, requestDispatched bool) {

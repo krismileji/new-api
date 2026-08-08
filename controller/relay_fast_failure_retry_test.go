@@ -2,12 +2,15 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
@@ -118,4 +121,18 @@ func TestWaitForRelayFastFailureRetryHonorsCancellationAndZeroDelay(t *testing.T
 
 	assert.False(t, waitForRelayFastFailureRetry(ctx, time.Hour))
 	assert.True(t, waitForRelayFastFailureRetry(ctx, 0))
+}
+
+func TestFastFailureSameChannelRetrySkipsDeterministicChannelConfigurationErrors(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	for _, errorCode := range []types.ErrorCode{
+		types.ErrorCodeChannelInvalidBaseURL,
+		types.ErrorCodeChannelParamOverrideInvalid,
+		types.ErrorCodeChannelHeaderOverrideInvalid,
+		types.ErrorCodeChannelModelMappedError,
+	} {
+		apiErr := types.NewErrorWithStatusCode(errors.New("invalid channel configuration"), errorCode, http.StatusBadGateway)
+		assert.False(t, isFastFailureSameChannelRetryable(ctx, apiErr), string(errorCode))
+	}
 }

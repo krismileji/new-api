@@ -22,6 +22,8 @@ const (
 
 var batchUpdateStores []map[int]int
 var batchUpdateLocks []sync.Mutex
+var userQuotaBatchMutationLock sync.Mutex
+var tokenQuotaBatchMutationLock sync.Mutex
 
 func init() {
 	for i := 0; i < BatchUpdateTypeCount; i++ {
@@ -40,6 +42,14 @@ func InitBatchUpdater() {
 }
 
 func addNewRecord(type_ int, id int, value int) {
+	switch type_ {
+	case BatchUpdateTypeUserQuota:
+		userQuotaBatchMutationLock.Lock()
+		defer userQuotaBatchMutationLock.Unlock()
+	case BatchUpdateTypeTokenQuota:
+		tokenQuotaBatchMutationLock.Lock()
+		defer tokenQuotaBatchMutationLock.Unlock()
+	}
 	batchUpdateLocks[type_].Lock()
 	defer batchUpdateLocks[type_].Unlock()
 	if _, ok := batchUpdateStores[type_][id]; !ok {
@@ -50,6 +60,9 @@ func addNewRecord(type_ int, id int, value int) {
 }
 
 func batchUpdate() {
+	userQuotaBatchMutationLock.Lock()
+	tokenQuotaBatchMutationLock.Lock()
+
 	// check if there's any data to update
 	hasData := false
 	for i := 0; i < BatchUpdateTypeCount; i++ {
@@ -63,6 +76,8 @@ func batchUpdate() {
 	}
 
 	if !hasData {
+		tokenQuotaBatchMutationLock.Unlock()
+		userQuotaBatchMutationLock.Unlock()
 		return
 	}
 
@@ -73,23 +88,6 @@ func batchUpdate() {
 		stores[i] = batchUpdateStores[i]
 		batchUpdateStores[i] = make(map[int]int)
 		batchUpdateLocks[i].Unlock()
-	}
-
-	for i, store := range stores {
-		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
-			continue
-		}
-		for key, value := range store {
-			switch i {
-			case BatchUpdateTypeTokenQuota:
-				err := increaseTokenQuota(key, value)
-				if err != nil {
-					common.SysLog("failed to batch update token quota: " + err.Error())
-				}
-			case BatchUpdateTypeChannelUsedQuota:
-				updateChannelUsedQuota(key, value)
-			}
-		}
 	}
 
 	userQuotaStore := stores[BatchUpdateTypeUserQuota]
@@ -109,6 +107,25 @@ func batchUpdate() {
 	for key := range userIDs {
 		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
 	}
+	userQuotaBatchMutationLock.Unlock()
+
+	for i, store := range stores {
+		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
+			continue
+		}
+		for key, value := range store {
+			switch i {
+			case BatchUpdateTypeTokenQuota:
+				err := increaseTokenQuota(key, value)
+				if err != nil {
+					common.SysLog("failed to batch update token quota: " + err.Error())
+				}
+			case BatchUpdateTypeChannelUsedQuota:
+				updateChannelUsedQuota(key, value)
+			}
+		}
+	}
+	tokenQuotaBatchMutationLock.Unlock()
 	common.SysLog("batch update finished")
 }
 

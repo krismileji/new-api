@@ -1,6 +1,7 @@
 package ali
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -137,10 +139,12 @@ func getImageBase64sFromForm(c *gin.Context, fieldName string) ([]string, error)
 		if err != nil {
 			return nil, errors.New("failed to open image file")
 		}
-
-		// 读取文件内容
-		imageData, err := io.ReadAll(image)
-		if err != nil {
+		// 读取文件内容并及时关闭文件，避免多图请求累积打开句柄。
+		imageData, readErr := func() ([]byte, error) {
+			defer image.Close()
+			return io.ReadAll(image)
+		}()
+		if readErr != nil {
 			return nil, errors.New("failed to read image file")
 		}
 
@@ -153,7 +157,6 @@ func getImageBase64sFromForm(c *gin.Context, fieldName string) ([]string, error)
 		// 构造data URL格式
 		dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Data)
 		imageBase64s = append(imageBase64s, dataURL)
-		image.Close()
 	}
 	return imageBase64s, nil
 }
@@ -192,27 +195,49 @@ func oaiFormEdit2AliImageEdit(c *gin.Context, info *relaycommon.RelayInfo, reque
 	return &imageRequest, nil
 }
 
-func updateTask(info *relaycommon.RelayInfo, taskID string) (*AliResponse, error, []byte) {
+func updateTask(ctx context.Context, info *relaycommon.RelayInfo, taskID string) (*AliResponse, error, []byte) {
+	if info == nil || info.ChannelMeta == nil {
+		return &AliResponse{}, channel.ValidateUpstreamURL("", false), nil
+	}
 	url := fmt.Sprintf("%s/api/v1/tasks/%s", info.ChannelBaseUrl, taskID)
+	if urlErr := channel.ValidateUpstreamURL(url, false); urlErr != nil {
+		return &AliResponse{}, urlErr, nil
+	}
 
 	var aliResponse AliResponse
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return &aliResponse, err, nil
 	}
 
 	req.Header.Set("Authorization", "Bearer "+info.ApiKey)
 
-	client := &http.Client{}
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		return &aliResponse, err, nil
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		common.SysLog("updateTask client.Do err: " + err.Error())
 		return &aliResponse, err, nil
 	}
+	if resp == nil || resp.Body == nil {
+		return &aliResponse, errors.New("updateTask returned an empty response"), nil
+	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &aliResponse, err, responseBody
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return &aliResponse, types.NewErrorWithStatusCode(
+			fmt.Errorf("bad response status code %d", resp.StatusCode),
+			types.ErrorCodeBadResponseStatusCode,
+			resp.StatusCode,
+		), responseBody
+	}
 
 	var response AliResponse
 	err = common.Unmarshal(responseBody, &response)
@@ -232,16 +257,33 @@ func asyncTaskWait(c *gin.Context, info *relaycommon.RelayInfo, taskID string) (
 	var taskResponse AliResponse
 	var responseBody []byte
 
-	time.Sleep(time.Duration(5) * time.Second)
+	wait := func(seconds int) error {
+		timer := time.NewTimer(time.Duration(seconds) * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-c.Request.Context().Done():
+			return c.Request.Context().Err()
+		}
+	}
+	if err := wait(5); err != nil {
+		return nil, nil, err
+	}
 
 	for {
 		logger.LogDebug(c, "asyncTaskWait step %d/%d, wait %d seconds", step, maxStep, waitSeconds)
 		step++
-		rsp, err, body := updateTask(info, taskID)
+		rsp, err, body := updateTask(c.Request.Context(), info, taskID)
 		responseBody = body
 		if err != nil {
 			logger.LogWarn(c, "asyncTaskWait UpdateTask err: "+err.Error())
-			time.Sleep(time.Duration(waitSeconds) * time.Second)
+			if step >= maxStep {
+				return nil, responseBody, fmt.Errorf("aliAsyncTaskWait failed after %d attempts: %w", step, err)
+			}
+			if waitErr := wait(waitSeconds); waitErr != nil {
+				return nil, responseBody, waitErr
+			}
 			continue
 		}
 
@@ -262,7 +304,9 @@ func asyncTaskWait(c *gin.Context, info *relaycommon.RelayInfo, taskID string) (
 		if step >= maxStep {
 			break
 		}
-		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		if err := wait(waitSeconds); err != nil {
+			return nil, responseBody, err
+		}
 	}
 
 	return nil, nil, fmt.Errorf("aliAsyncTaskWait timeout")
@@ -285,15 +329,32 @@ func responseAli2OpenAIImage(c *gin.Context, response *AliResponse, originBody [
 
 func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.Usage) {
 	responseFormat := c.GetString("response_format")
+	if resp == nil || resp.Body == nil {
+		return types.NewError(errors.New("ali returned an empty response"), types.ErrorCodeBadResponse), nil
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+	upstreamAccepted := resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
 
 	var aliTaskResponse AliResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if upstreamAccepted {
+			return types.NewError(err, types.ErrorCodeReadResponseBodyFailed, types.ErrOptionWithSkipRetry()), nil
+		}
 		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), nil
 	}
-	service.CloseResponseBodyGracefully(resp)
+	if !upstreamAccepted {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("bad response status code %d", resp.StatusCode),
+			types.ErrorCodeBadResponseStatusCode,
+			resp.StatusCode,
+		), nil
+	}
 	err = common.Unmarshal(responseBody, &aliTaskResponse)
 	if err != nil {
+		if upstreamAccepted {
+			return types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+		}
 		return types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
 	}
 
@@ -311,10 +372,13 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 		aliResponse = &aliTaskResponse
 		originRespBody = responseBody
 	} else {
+		if aliTaskResponse.Output.TaskId == "" {
+			return types.NewError(errors.New("ali async response is missing task id"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+		}
 		// 异步图片模型需要轮询任务结果
 		aliResponse, originRespBody, err = asyncTaskWait(c, info, aliTaskResponse.Output.TaskId)
 		if err != nil {
-			return types.NewError(err, types.ErrorCodeBadResponse), nil
+			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry()), nil
 		}
 		if aliResponse.Output.TaskStatus != "SUCCEEDED" {
 			return types.WithOpenAIError(types.OpenAIError{
@@ -322,7 +386,7 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 				Type:    "ali_error",
 				Param:   "",
 				Code:    aliResponse.Output.Code,
-			}, resp.StatusCode), nil
+			}, resp.StatusCode, types.ErrOptionWithSkipRetry()), nil
 		}
 	}
 
@@ -340,7 +404,7 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 	}
 	jsonResponse, err := common.Marshal(imageResponses)
 	if err != nil {
-		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
+		return types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
 	}
 	service.IOCopyBytesGracefully(c, resp, jsonResponse)
 

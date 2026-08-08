@@ -122,6 +122,15 @@ func isFastFailureSameChannelRetryable(c *gin.Context, err *types.NewAPIError) b
 	if err == nil || types.IsSkipRetryError(err) || types.IsClientGoneError(err) {
 		return false
 	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeChannelInvalidBaseURL,
+		types.ErrorCodeChannelParamOverrideInvalid,
+		types.ErrorCodeChannelHeaderOverrideInvalid,
+		types.ErrorCodeChannelModelMappedError:
+		// These failures are deterministic for the selected channel. Retrying the
+		// same channel only delays the ordinary retry that can select another one.
+		return false
+	}
 	if _, specificChannel := c.Get("specific_channel_id"); specificChannel {
 		return false
 	}

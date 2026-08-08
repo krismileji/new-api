@@ -17,6 +17,7 @@ type RetryParam struct {
 	RequestPath      string
 	Retry            *int
 	SelectionOptions model.ChannelSelectionOptions
+	IsRetry          bool
 	resetNextTry     bool
 }
 
@@ -82,13 +83,21 @@ func (p *RetryParam) ResetRetryNextTry() {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelSelectionOptions) (*model.Channel, string, error) {
+	if param == nil {
+		return nil, "", errors.New("retry param is nil")
+	}
+	if param.Ctx == nil {
+		return nil, param.TokenGroup, errors.New("retry context is nil")
+	}
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 	selectionOptions := model.ChannelSelectionOptions{}
+	isRetrySelection := false
 	if param != nil {
 		selectionOptions = param.SelectionOptions
+		isRetrySelection = param.IsRetry
 	}
 	if len(options) > 0 {
 		providedOptions := options[len(options)-1]
@@ -104,7 +113,6 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 		}
 	}
 	selectionOptions = applyChannelRateLimitCooldowns(param.ModelName, selectionOptions)
-	hasExcludedChannels := selectionOptions.HasExcludedChannels()
 
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
@@ -116,10 +124,25 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 		// startGroupIndex: 开始搜索的分组索引
 		startGroupIndex := 0
 		crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
+		retryWithinSelectedGroup := isRetrySelection && !crossGroupRetry
 
 		if lastGroupIndex, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex); exists {
 			if idx, ok := lastGroupIndex.(int); ok {
 				startGroupIndex = idx
+			}
+		}
+		if retryWithinSelectedGroup {
+			selectedGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyAutoGroup)
+			selectedGroupFound := false
+			for i, autoGroup := range autoGroups {
+				if autoGroup == selectedGroup {
+					startGroupIndex = i
+					selectedGroupFound = true
+					break
+				}
+			}
+			if !selectedGroupFound {
+				return nil, selectedGroup, nil
 			}
 		}
 
@@ -137,15 +160,23 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 
 			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath, selectionOptions)
 			if channel == nil {
+				// Initial auto-group selection may fall through groups to find any
+				// usable channel. Once channels have failed in this request, crossing
+				// into another group is allowed only by the token's explicit setting.
+				if retryWithinSelectedGroup {
+					common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i)
+					selectGroup = autoGroup
+					break
+				}
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
 				logger.LogDebug(param.Ctx, "No available channel in group %s for model %s at priorityRetry %d, trying next group", autoGroup, param.ModelName, priorityRetry)
 				// 重置状态以尝试下一个分组
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupRetryIndex, 0)
-				if !hasExcludedChannels {
-					// Reset retry counter so outer loop can continue for next group.
-					// 重置重试计数器，以便外层循环可以为下一个分组继续。
+				if !param.IsRetry && !selectionOptions.HasExcludedChannels() {
+					// Initial auto-group discovery may restart the budget for the
+					// next group. A real retry keeps its global budget intact.
 					param.SetRetry(0)
 				}
 				continue
@@ -163,9 +194,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 				// 本次请求仍使用当前分组，但下次重试将使用下一个分组
 				logger.LogDebug(param.Ctx, "Current group %s retries exhausted (priorityRetry=%d >= RetryTimes=%d), preparing switch to next group for next retry", autoGroup, priorityRetry, common.RetryTimes)
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
-				if !hasExcludedChannels {
-					// Reset retry counter so outer loop can continue for next group.
-					// 重置重试计数器，以便外层循环可以为下一个分组继续。
+				if !param.IsRetry && !selectionOptions.HasExcludedChannels() {
+					// Initial auto-group discovery may restart the budget for the
+					// next group. A real retry keeps its global budget intact.
 					param.SetRetry(0)
 					param.ResetRetryNextTry()
 				}

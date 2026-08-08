@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -237,6 +236,9 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
 	}
+	if awsResp == nil || awsResp.Body == nil {
+		return types.NewError(errors.New("AWS returned an empty response"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+	}
 
 	claudeInfo := &claude.ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
@@ -253,6 +255,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 
 	handlerErr := claude.HandleClaudeResponseData(c, info, claudeInfo, nil, awsResp.Body)
 	if handlerErr != nil {
+		types.ErrOptionWithSkipRetry()(handlerErr)
 		return handlerErr, nil
 	}
 	return nil, claudeInfo.Usage
@@ -268,7 +271,13 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
 	}
+	if awsResp == nil {
+		return types.NewError(errors.New("AWS returned an empty response"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+	}
 	stream := awsResp.GetStream()
+	if stream == nil {
+		return types.NewError(errors.New("AWS returned an empty response stream"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+	}
 	defer stream.Close()
 
 	claudeInfo := &claude.ClaudeResponseInfo{
@@ -280,37 +289,71 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	}
 
 	events := stream.Events()
+	receivedChunk := false
+	streamCompleted := false
 streamLoop:
 	for {
 		select {
 		case <-ctx.Done():
+			if requestContext.Err() != nil {
+				if receivedChunk {
+					break streamLoop
+				}
+				return types.NewClientGoneError(requestContext.Err()), nil
+			}
+			if !receivedChunk {
+				apiErr := newAwsInvokeError(requestContext, ctx.Err(), "InvokeModelWithResponseStream")
+				// The SDK returned a live response stream before its own timeout.
+				// The invocation may already be running even when no chunk was
+				// decoded, so replaying it can create a duplicate generation.
+				types.ErrOptionWithSkipRetry()(apiErr)
+				return apiErr, nil
+			}
 			break streamLoop
 		case event, ok := <-events:
 			if !ok {
+				streamCompleted = receivedChunk
 				break streamLoop
 			}
 			if ctx.Err() != nil {
+				if !receivedChunk && requestContext.Err() != nil {
+					return types.NewClientGoneError(requestContext.Err()), nil
+				}
 				break streamLoop
 			}
 
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
+				if v == nil {
+					return types.NewError(errors.New("AWS returned an empty stream chunk"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+				}
+				receivedChunk = true
 				info.SetFirstResponseTime()
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
+					types.ErrOptionWithSkipRetry()(respErr)
 					return respErr, nil
 				}
 			case *bedrockruntimeTypes.UnknownUnionMember:
 				fmt.Println("unknown tag:", v.Tag)
-				return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry()), nil
 			default:
 				fmt.Println("union is nil or unknown type")
-				return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry()), nil
 			}
 		}
 	}
 
 	_ = stream.Close()
+	if !streamCompleted {
+		// The client may have gone away, or the SDK context may have timed out
+		// after partial output. The response is already committed in that case;
+		// return the partial usage without emitting a synthetic final frame.
+		if receivedChunk {
+			return nil, claudeInfo.Usage
+		}
+		return types.NewError(errors.New("AWS response stream ended without any chunks"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+	}
 	claude.HandleStreamFinalResponse(c, info, claudeInfo)
 	return nil, claudeInfo.Usage
 }
@@ -326,6 +369,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
+	}
+	if awsResp == nil || awsResp.Body == nil {
+		return types.NewError(errors.New("AWS returned an empty response"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
 	}
 
 	// 解析Nova响应
@@ -344,8 +390,11 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(awsResp.Body, &novaResp); err != nil {
-		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
+	if err := common.Unmarshal(awsResp.Body, &novaResp); err != nil {
+		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
+	}
+	if len(novaResp.Output.Message.Content) == 0 {
+		return types.NewError(errors.New("AWS returned an empty Nova message"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()), nil
 	}
 
 	// 构造OpenAI格式响应

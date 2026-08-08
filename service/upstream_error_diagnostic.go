@@ -17,6 +17,15 @@ import (
 
 const (
 	UpstreamErrorDiagnosticContextKey constant.ContextKey = "upstream_error_diagnostic"
+	// UpstreamResponseStatusContextKey stores the status of the most recent
+	// upstream response for the current relay attempt. The retry controller uses
+	// it to distinguish a response parsing failure after an accepted request
+	// from a transport failure that is safe to retry.
+	UpstreamResponseStatusContextKey constant.ContextKey = "upstream_response_status"
+	// UpstreamRequestWrittenContextKey records whether net/http finished writing
+	// the current request. Task creation retries use it to avoid replaying a POST
+	// that may already have created an upstream task before the connection died.
+	UpstreamRequestWrittenContextKey constant.ContextKey = "upstream_request_written"
 
 	UpstreamErrorCategoryDNS               = "dns_error"
 	UpstreamErrorCategoryConnectionRefused = "connection_refused"

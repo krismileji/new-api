@@ -1,17 +1,18 @@
 package coze
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	rootcommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -73,29 +74,62 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *common.RelayInfo, requestBody 
 	if err != nil {
 		return nil, err
 	}
+	if resp == nil {
+		return nil, errors.New("coze create chat returned an empty response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		statusCode := resp.StatusCode
+		service.CloseResponseBodyGracefully(resp)
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("bad response status code %d", statusCode),
+			types.ErrorCodeBadResponseStatusCode,
+			statusCode,
+		)
+	}
 	// 解析 resp
 	var cozeResponse CozeChatResponse
 	respBody, err := io.ReadAll(resp.Body)
+	service.CloseResponseBodyGracefully(resp)
 	if err != nil {
-		return nil, err
+		return nil, types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 	}
-	err = json.Unmarshal(respBody, &cozeResponse)
+	err = rootcommon.Unmarshal(respBody, &cozeResponse)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
+	}
 	if cozeResponse.Code != 0 {
 		return nil, errors.New(cozeResponse.Msg)
+	}
+	if cozeResponse.Data.ConversationId == "" || cozeResponse.Data.Id == "" {
+		return nil, types.NewError(errors.New("coze create chat response is missing conversation or chat id"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 	}
 	c.Set("coze_conversation_id", cozeResponse.Data.ConversationId)
 	c.Set("coze_chat_id", cozeResponse.Data.Id)
 	// 轮询检查消息是否完成
+	pollCount := 0
 	for {
+		pollCount++
+		if pollCount > 300 {
+			return nil, types.NewError(errors.New("coze chat polling timeout"), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+		}
 		err, isComplete := checkIfChatComplete(a, c, info)
 		if err != nil {
-			return nil, err
+			return nil, types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		} else {
 			if isComplete {
 				break
 			}
 		}
-		time.Sleep(time.Second * 1)
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-c.Request.Context().Done():
+			timer.Stop()
+			if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), c.Request.Context().Err()); clientGoneErr != nil {
+				return nil, clientGoneErr
+			}
+			return nil, types.NewError(c.Request.Context().Err(), types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 	}
 	// 发送获取消息请求
 	return getChatDetail(a, c, info)
