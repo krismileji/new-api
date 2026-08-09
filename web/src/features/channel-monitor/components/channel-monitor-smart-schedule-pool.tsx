@@ -507,10 +507,10 @@ function RouteActions(props: {
         onClick={() => props.onOpenDetails(props.route)}
         aria-label={
           trafficPaused
-            ? `恢复 ${props.route.channel_name} 在 ${props.route.group} 分组的流量`
-            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组的流量`
+            ? `恢复 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的流量`
+            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的流量`
         }
-        title={trafficPaused ? '恢复分组流量' : '暂停分组流量'}
+        title={trafficPaused ? '恢复路由流量' : '暂停路由流量'}
       >
         <HugeiconsIcon
           icon={trafficPaused ? PlayIcon : PauseIcon}
@@ -1131,7 +1131,7 @@ export function ChannelMonitorSmartSchedulePool(
         groupPausePending={
           detailRoute != null &&
           props.groupPauseKey ===
-            `${detailRoute.channel_id}\u0000${detailRoute.group}`
+            channelMonitorSmartScheduleRouteKey(detailRoute)
         }
         updateDisabled={props.updateDisabled}
         onOpenChange={(open) => {

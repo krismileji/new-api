@@ -65,8 +65,8 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 	var pauses []ChannelSmartScheduleGroupPause
 	if len(channelIds) > 0 {
 		if err := DB.Where(
-			"group_name = ? AND channel_id IN ? AND paused_until > ?",
-			group, channelIds, common.GetTimestamp(),
+			"group_name = ? AND model_name = ? AND channel_id IN ? AND paused_until > ?",
+			group, modelName, channelIds, common.GetTimestamp(),
 		).Find(&pauses).Error; err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 	}
 	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(DB, common.GetTimestamp())
 	if err != nil {
-		common.SysError("load smart schedule group pauses failed: " + err.Error())
+		common.SysError("load smart schedule route pauses failed: " + err.Error())
 	}
 	return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states, groupPauses)
 }
@@ -158,9 +158,9 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 	managedPools map[channelSmartScheduleRoutePool]struct{},
 	statesByPool map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState,
 	managedLookupFailed bool,
-	pausedUntilByKey ...map[channelSmartScheduleGroupKey]int64,
+	pausedUntilByKey ...map[ChannelSmartScheduleRouteKey]int64,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
-	groupPauseUntilByKey := map[channelSmartScheduleGroupKey]int64{}
+	groupPauseUntilByKey := map[ChannelSmartScheduleRouteKey]int64{}
 	if len(pausedUntilByKey) > 0 && pausedUntilByKey[0] != nil {
 		groupPauseUntilByKey = pausedUntilByKey[0]
 	}
@@ -187,10 +187,9 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 			priority:  priority,
 			weight:    weight,
 			managed:   managedLookupFailed || managed,
-			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleGroupKey{
-				channelId: ability.ChannelId,
-				group:     ability.Group,
-			}],
+			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleRouteKey(
+				ability.ChannelId, ability.Group, ability.Model,
+			)],
 			temporaryTrafficKind:            state.TemporaryTrafficKind,
 			stabilityState:                  state.StabilityState,
 			explorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,

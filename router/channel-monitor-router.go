@@ -27,7 +27,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.PUT("/channel/:id", controller.UpdateChannelMonitorRatio)
 		monitorRoute.PUT("/channel/:id/schedule/routes", controller.UpdateChannelMonitorSmartScheduleChannelConfig)
 		monitorRoute.PUT("/channel/:id/schedule/route", controller.UpdateChannelMonitorSmartScheduleRouteConfig)
-		monitorRoute.PUT("/channel/:id/schedule/group/pause", controller.UpdateChannelMonitorSmartScheduleGroupPause)
+		monitorRoute.PUT("/channel/:id/schedule/route/pause", controller.UpdateChannelMonitorSmartScheduleGroupPause)
 		monitorRoute.PUT("/channel/:id/schedule/route/routing", controller.UpdateChannelMonitorSmartScheduleManualRouting)
 		monitorRoute.PUT("/channel/:id/schedule/route/primary", controller.UpdateChannelMonitorSmartScheduleRoutePrimary)
 		monitorRoute.POST("/channel/:id/schedule/route/stability/clear", controller.ClearChannelMonitorSmartScheduleRouteStability)

@@ -452,7 +452,10 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 	pausedUntilByChannel := make(map[int]int64)
 	var pauses []ChannelSmartScheduleGroupPause
 	if err := DB.Select("channel_id", "paused_until").
-		Where("group_name = ? AND channel_id IN ? AND paused_until > ?", group, channelIds, common.GetTimestamp()).
+		Where(
+			"group_name = ? AND model_name = ? AND channel_id IN ? AND paused_until > ?",
+			group, modelName, channelIds, common.GetTimestamp(),
+		).
 		Find(&pauses).Error; err != nil {
 		return nil, err
 	}
@@ -573,10 +576,9 @@ func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartSch
 			Enabled:         ability.Enabled,
 			Priority:        priority,
 			Weight:          weight,
-			TrafficPausedUntil: pausedUntilByKey[channelSmartScheduleGroupKey{
-				channelId: ability.ChannelId,
-				group:     ability.Group,
-			}],
+			TrafficPausedUntil: pausedUntilByKey[channelSmartScheduleRouteKey(
+				ability.ChannelId, ability.Group, ability.Model,
+			)],
 			State:         state,
 			SharedSamples: sharedSamples,
 		})

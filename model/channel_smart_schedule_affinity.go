@@ -53,7 +53,7 @@ func ChannelSmartScheduleAffinityEligibility(
 				channelIds = append(channelIds, ability.ChannelId)
 			}
 			pausedChannelIds, err := loadActiveChannelSmartSchedulePausedChannelIds(
-				DB, group, channelIds, common.GetTimestamp(),
+				DB, group, candidateModel, channelIds, common.GetTimestamp(),
 			)
 			if err != nil {
 				return ChannelSmartScheduleAffinityTemporarilyUnavailable

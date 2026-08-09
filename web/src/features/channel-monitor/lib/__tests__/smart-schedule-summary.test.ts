@@ -182,7 +182,7 @@ describe('smart schedule pool status', () => {
     )
   })
 
-  test('reports full and partial group traffic pauses before stale route states', () => {
+  test('reports full and partial route traffic pauses before stale route states', () => {
     assert.equal(
       getChannelMonitorSmartSchedulePoolStatus({
         ...normalPool,

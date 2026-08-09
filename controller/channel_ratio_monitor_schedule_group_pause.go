@@ -2,8 +2,6 @@ package controller
 
 import (
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,6 +11,7 @@ import (
 
 type channelSmartScheduleGroupPauseRequest struct {
 	Group           string `json:"group"`
+	Model           string `json:"model"`
 	DurationMinutes *int   `json:"duration_minutes"`
 }
 
@@ -26,16 +25,15 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
 		return
 	}
-	group := strings.TrimSpace(request.Group)
-	if group == "" || utf8.RuneCountInString(group) > maxChannelMonitorSmartScheduleGroupLength {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "分组名称无效"})
+	group, modelName, ok := normalizeChannelSmartScheduleRouteRequest(c, request.Group, request.Model)
+	if !ok {
 		return
 	}
 	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
 		*request.DurationMinutes > model.ChannelSmartScheduleGroupPauseMaxMinutes {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "分组流量暂停时间必须在 0 到 525600 分钟之间",
+			"message": "路由流量暂停时间必须在 0 到 525600 分钟之间",
 		})
 		return
 	}
@@ -46,6 +44,7 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 	result, err := model.SaveChannelSmartScheduleGroupPause(
 		channelId,
 		group,
+		modelName,
 		*request.DurationMinutes,
 	)
 	if err != nil {
@@ -57,7 +56,7 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.monitor_smart_schedule_group_pause_update", map[string]interface{}{
-		"id": channelId, "group": group,
+		"id": channelId, "group": group, "model": modelName,
 		"duration_minutes": *request.DurationMinutes,
 		"paused_until":     result.PausedUntil,
 		"affected_routes":  result.AffectedRoutes,
@@ -66,6 +65,7 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"channel_id":       channelId,
 		"group":            group,
+		"model":            modelName,
 		"duration_minutes": *request.DurationMinutes,
 		"paused_until":     result.PausedUntil,
 		"affected_routes":  result.AffectedRoutes,

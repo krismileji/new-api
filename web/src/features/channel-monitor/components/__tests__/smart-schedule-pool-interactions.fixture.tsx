@@ -458,16 +458,16 @@ const groupPause = await renderPool({
     groupPauseActions.push({ route, durationMinutes }),
 })
 const pauseButtons = groupPause.container.querySelectorAll<HTMLButtonElement>(
-  '[aria-label="暂停 上海主渠道 在 production 分组的流量"]'
+  '[aria-label="暂停 上海主渠道 在 production 分组使用 cache-model 模型的流量"]'
 )
 assert.equal(pauseButtons.length, 2)
 await act(async () => pauseButtons[0]?.click())
 const pauseForm = document.querySelector<HTMLFormElement>(
-  '[aria-label="上海主渠道 production 分组流量暂停设置"]'
+  '[aria-label="上海主渠道 production cache-model 路由流量暂停设置"]'
 )
 assert.ok(pauseForm)
 const pauseDuration = pauseForm.querySelector<HTMLInputElement>(
-  '#group-pause-duration-1'
+  '#route-pause-duration-1'
 )
 const pauseSubmit = pauseForm.querySelector<HTMLButtonElement>(
   'button[type="submit"]'
@@ -492,7 +492,7 @@ const groupResume = await renderPool({
 })
 const resumeDetailButtons =
   groupResume.container.querySelectorAll<HTMLButtonElement>(
-    '[aria-label="恢复 广州暂停渠道 在 production 分组的流量"]'
+    '[aria-label="恢复 广州暂停渠道 在 production 分组使用 cache-model 模型的流量"]'
   )
 assert.equal(resumeDetailButtons.length, 2)
 await act(async () => resumeDetailButtons[0]?.click())

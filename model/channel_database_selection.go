@@ -55,7 +55,7 @@ func getChannelFromDatabasePool(
 		channelIds[index] = abilities[index].ChannelId
 	}
 	pausedChannelIds, err := loadActiveChannelSmartSchedulePausedChannelIds(
-		DB, group, channelIds, common.GetTimestamp(),
+		DB, group, poolModelName, channelIds, common.GetTimestamp(),
 	)
 	if err != nil {
 		return nil, err

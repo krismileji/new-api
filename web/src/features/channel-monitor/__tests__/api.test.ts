@@ -209,7 +209,7 @@ test('updates priority and weight for one non-participating route', async () => 
   })
 })
 
-test('sets one channel group traffic pause duration', async () => {
+test('sets one channel group-model route traffic pause duration', async () => {
   const originalAdapter = api.defaults.adapter
   let requestConfig: AxiosRequestConfig | undefined
   const adapter: AxiosAdapter = async (config) => {
@@ -221,9 +221,10 @@ test('sets one channel group traffic pause duration', async () => {
         data: {
           channel_id: 7,
           group: 'vip',
+          model: 'gpt-4o-mini',
           duration_minutes: 90,
           paused_until: 4_102_444_800,
-          affected_routes: 3,
+          affected_routes: 1,
           changed: true,
         },
       },
@@ -239,20 +240,22 @@ test('sets one channel group traffic pause duration', async () => {
     const response = await updateChannelMonitorSmartScheduleGroupPause({
       channelId: 7,
       group: 'vip',
+      model: 'gpt-4o-mini',
       durationMinutes: 90,
     })
-    assert.equal(response.data.affected_routes, 3)
+    assert.equal(response.data.affected_routes, 1)
   } finally {
     api.defaults.adapter = originalAdapter
   }
 
   assert.equal(
     requestConfig?.url,
-    '/api/channel_monitor/channel/7/schedule/group/pause'
+    '/api/channel_monitor/channel/7/schedule/route/pause'
   )
   assert.equal(requestConfig?.method, 'put')
   assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
     group: 'vip',
+    model: 'gpt-4o-mini',
     duration_minutes: 90,
   })
 })

@@ -34,7 +34,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { channelMonitorSmartScheduleRouteIsTrafficPaused } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
-const MAX_GROUP_PAUSE_MINUTES = 525_600
+const MAX_ROUTE_PAUSE_MINUTES = 525_600
 
 type ChannelMonitorSmartScheduleGroupPauseProps = {
   route: ChannelMonitorSmartScheduleRoute
@@ -50,19 +50,19 @@ export function ChannelMonitorSmartScheduleGroupPause(
   props: ChannelMonitorSmartScheduleGroupPauseProps
 ) {
   const paused = channelMonitorSmartScheduleRouteIsTrafficPaused(props.route)
-  const inputId = `group-pause-duration-${props.route.channel_id}`
+  const inputId = `route-pause-duration-${props.route.channel_id}`
   const descriptionId = `${inputId}-description`
 
   return (
-    <section className='border-t px-4 py-4' aria-label='分组流量暂停'>
+    <section className='border-t px-4 py-4' aria-label='路由流量暂停'>
       <div className='flex flex-wrap items-start justify-between gap-3'>
         <div className='min-w-0 flex-1'>
           <div className='flex flex-wrap items-center gap-2'>
-            <h3 className='text-sm font-medium'>分组流量暂停</h3>
+            <h3 className='text-sm font-medium'>路由流量暂停</h3>
             {paused ? <Badge variant='warning'>流量已暂停</Badge> : null}
           </div>
           <p className='text-muted-foreground mt-1 text-xs leading-5'>
-            {`暂停后，该渠道在“${props.route.group}”分组下的全部模型都不会承接流量。当前优先级和权重保持不变，到期后自动恢复。`}
+            {`暂停后，该渠道在“${props.route.group}”分组使用“${props.route.model}”模型的路由不会承接流量。当前优先级和权重保持不变，到期后自动恢复。`}
           </p>
           {paused ? (
             <p className='text-warning mt-1 text-xs font-medium tabular-nums'>
@@ -90,9 +90,9 @@ export function ChannelMonitorSmartScheduleGroupPause(
       </div>
 
       <form
-        key={`${props.route.channel_id}\u0000${props.route.group}`}
+        key={`${props.route.channel_id}\u0000${props.route.group}\u0000${props.route.model}`}
         className='mt-4 flex flex-col gap-3 sm:flex-row sm:items-end'
-        aria-label={`${props.route.channel_name} ${props.route.group} 分组流量暂停设置`}
+        aria-label={`${props.route.channel_name} ${props.route.group} ${props.route.model} 路由流量暂停设置`}
         onSubmit={(event) => {
           event.preventDefault()
           const formData = new FormData(event.currentTarget)
@@ -100,7 +100,7 @@ export function ChannelMonitorSmartScheduleGroupPause(
           if (
             !Number.isInteger(durationMinutes) ||
             durationMinutes < 1 ||
-            durationMinutes > MAX_GROUP_PAUSE_MINUTES
+            durationMinutes > MAX_ROUTE_PAUSE_MINUTES
           ) {
             return
           }
@@ -115,7 +115,7 @@ export function ChannelMonitorSmartScheduleGroupPause(
               name='duration_minutes'
               type='number'
               min={1}
-              max={MAX_GROUP_PAUSE_MINUTES}
+              max={MAX_ROUTE_PAUSE_MINUTES}
               step={1}
               defaultValue={60}
               disabled={props.disabled}
@@ -133,7 +133,7 @@ export function ChannelMonitorSmartScheduleGroupPause(
           ) : (
             <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
           )}
-          {paused ? '更新暂停时间' : '暂停分组流量'}
+          {paused ? '更新暂停时间' : '暂停路由流量'}
         </Button>
       </form>
     </section>

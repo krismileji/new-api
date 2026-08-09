@@ -131,7 +131,7 @@ describe('channel monitor smart schedule cell status', () => {
     }
   })
 
-  test('shows a group traffic pause instead of stale scheduling protection', () => {
+  test('shows a route traffic pause instead of stale scheduling protection', () => {
     const markup = renderCell([
       createRoute({
         traffic_paused_until: 4_102_444_800,

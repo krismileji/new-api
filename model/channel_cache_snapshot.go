@@ -33,7 +33,7 @@ func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
 		if tx.Migrator().HasTable(&ChannelSmartScheduleGroupPause{}) {
 			if err := tx.
 				Where("paused_until > ?", common.GetTimestamp()).
-				Order("channel_id ASC, group_name ASC").
+				Order("channel_id ASC, group_name ASC, model_name ASC").
 				Find(&snapshot.smartScheduleGroupPauses).Error; err != nil {
 				return err
 			}

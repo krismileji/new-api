@@ -316,14 +316,16 @@ export async function updateChannelMonitorSmartScheduleManualRouting(request: {
 export async function updateChannelMonitorSmartScheduleGroupPause(request: {
   channelId: number
   group: string
+  model: string
   durationMinutes: number
 }) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleGroupPauseResult>
   >(
-    `/api/channel_monitor/channel/${request.channelId}/schedule/group/pause`,
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/pause`,
     {
       group: request.group,
+      model: request.model,
       duration_minutes: request.durationMinutes,
     },
     channelMonitorRequestConfig()

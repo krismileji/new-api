@@ -36,8 +36,8 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseAndResume(t *testing.T) {
 	pauseContext, pauseRecorder := newChannelMonitorControllerContext(
 		t,
 		http.MethodPut,
-		"/api/channel_monitor/channel/2701/schedule/group/pause",
-		map[string]any{"group": " vip ", "duration_minutes": 45},
+		"/api/channel_monitor/channel/2701/schedule/route/pause",
+		map[string]any{"group": " vip ", "model": " model-a ", "duration_minutes": 45},
 	)
 	pauseContext.AddParam("id", "2701")
 	UpdateChannelMonitorSmartScheduleGroupPause(pauseContext)
@@ -48,6 +48,7 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseAndResume(t *testing.T) {
 		Data    struct {
 			ChannelId       int    `json:"channel_id"`
 			Group           string `json:"group"`
+			Model           string `json:"model"`
 			DurationMinutes int    `json:"duration_minutes"`
 			PausedUntil     int64  `json:"paused_until"`
 			AffectedRoutes  int    `json:"affected_routes"`
@@ -58,20 +59,23 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseAndResume(t *testing.T) {
 	assert.True(t, pauseResponse.Success)
 	assert.Equal(t, 2701, pauseResponse.Data.ChannelId)
 	assert.Equal(t, "vip", pauseResponse.Data.Group)
+	assert.Equal(t, "model-a", pauseResponse.Data.Model)
 	assert.Equal(t, 45, pauseResponse.Data.DurationMinutes)
-	assert.Equal(t, 2, pauseResponse.Data.AffectedRoutes)
+	assert.Equal(t, 1, pauseResponse.Data.AffectedRoutes)
 	assert.True(t, pauseResponse.Data.Changed)
 	assert.Greater(t, pauseResponse.Data.PausedUntil, common.GetTimestamp())
 
 	var stored model.ChannelSmartScheduleGroupPause
-	require.NoError(t, db.Where("channel_id = ? AND group_name = ?", 2701, "vip").First(&stored).Error)
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 2701, "vip", "model-a",
+	).First(&stored).Error)
 	assert.Equal(t, pauseResponse.Data.PausedUntil, stored.PausedUntil)
 
 	resumeContext, resumeRecorder := newChannelMonitorControllerContext(
 		t,
 		http.MethodPut,
-		"/api/channel_monitor/channel/2701/schedule/group/pause",
-		map[string]any{"group": "vip", "duration_minutes": 0},
+		"/api/channel_monitor/channel/2701/schedule/route/pause",
+		map[string]any{"group": "vip", "model": "model-a", "duration_minutes": 0},
 	)
 	resumeContext.AddParam("id", "2701")
 	UpdateChannelMonitorSmartScheduleGroupPause(resumeContext)
@@ -79,7 +83,7 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseAndResume(t *testing.T) {
 
 	var remaining int64
 	require.NoError(t, db.Model(&model.ChannelSmartScheduleGroupPause{}).
-		Where("channel_id = ? AND group_name = ?", 2701, "vip").
+		Where("channel_id = ? AND group_name = ? AND model_name = ?", 2701, "vip", "model-a").
 		Count(&remaining).Error)
 	assert.Zero(t, remaining)
 }
@@ -90,11 +94,26 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseRejectsInvalidDuration(t *te
 		context, recorder := newChannelMonitorControllerContext(
 			t,
 			http.MethodPut,
-			"/api/channel_monitor/channel/2702/schedule/group/pause",
-			map[string]any{"group": "vip", "duration_minutes": durationMinutes},
+			"/api/channel_monitor/channel/2702/schedule/route/pause",
+			map[string]any{"group": "vip", "model": "model-a", "duration_minutes": durationMinutes},
 		)
 		context.AddParam("id", "2702")
 		UpdateChannelMonitorSmartScheduleGroupPause(context)
 		assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	}
+}
+
+func TestUpdateChannelMonitorSmartScheduleGroupPauseRequiresModel(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	context, recorder := newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/2703/schedule/route/pause",
+		map[string]any{"group": "vip", "duration_minutes": 30},
+	)
+	context.AddParam("id", "2703")
+
+	UpdateChannelMonitorSmartScheduleGroupPause(context)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }

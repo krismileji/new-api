@@ -909,6 +909,7 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
 export type ChannelMonitorSmartScheduleGroupPauseResult = {
   channel_id: number
   group: string
+  model: string
   duration_minutes: number
   paused_until: number
   affected_routes: number

@@ -26,7 +26,7 @@ func seedChannelDeleteCleanupData(t *testing.T, db *gorm.DB, channelId int, stat
 		ChannelId: channelId, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
 	}).Error)
 	require.NoError(t, db.Create(&ChannelSmartScheduleGroupPause{
-		ChannelId: channelId, GroupName: "vip", PausedUntil: 3600,
+		ChannelId: channelId, GroupName: "vip", ModelName: "model-a", PausedUntil: 3600,
 	}).Error)
 	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
 		ChannelId: channelId, ModelName: "model-a",

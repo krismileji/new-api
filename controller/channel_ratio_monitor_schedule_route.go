@@ -464,7 +464,7 @@ func runChannelSmartScheduleByRouteOnce(
 			} else if !route.Enabled {
 				reason = "该分组和模型路由已禁用，未参与本次调度"
 			} else if route.TrafficPaused(now) {
-				reason = "该渠道在此分组的流量暂停中，未参与本次调度"
+				reason = "该渠道在此分组和模型的路由流量暂停中，未参与本次调度"
 			}
 			result.Skipped++
 			channelSmartScheduleSetAdjustmentReason(scoreDetailsByRoute[key], reason)

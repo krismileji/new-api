@@ -407,8 +407,8 @@ export function ChannelMonitorSmartScheduleBoard(
     onSuccess: (response) => {
       toast.success(
         response.data.duration_minutes > 0
-          ? `已暂停“${response.data.group}”分组流量 ${response.data.duration_minutes} 分钟`
-          : `已恢复“${response.data.group}”分组流量`
+          ? `已暂停“${response.data.group} / ${response.data.model}”路由流量 ${response.data.duration_minutes} 分钟`
+          : `已恢复“${response.data.group} / ${response.data.model}”路由流量`
       )
     },
     onSettled: () => {
@@ -479,7 +479,11 @@ export function ChannelMonitorSmartScheduleBoard(
       : null
   const groupPauseKey =
     groupPauseMutation.isPending && groupPauseMutation.variables
-      ? `${groupPauseMutation.variables.channelId}\u0000${groupPauseMutation.variables.group}`
+      ? channelMonitorSmartScheduleRouteKey({
+          channel_id: groupPauseMutation.variables.channelId,
+          group: groupPauseMutation.variables.group,
+          model: groupPauseMutation.variables.model,
+        })
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
     props.result?.generated_at ?? 0,
@@ -960,6 +964,7 @@ export function ChannelMonitorSmartScheduleBoard(
                   groupPauseMutation.mutate({
                     channelId: route.channel_id,
                     group: route.group,
+                    model: route.model,
                     durationMinutes,
                   })
                 }
