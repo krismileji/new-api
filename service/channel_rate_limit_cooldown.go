@@ -111,9 +111,10 @@ var channelRateLimitCooldowns = struct {
 	untilByRoute: make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry),
 }
 
-// StartChannelRateLimitCooldown temporarily removes one upstream channel/model
-// route from new selections. Repeated 429 responses may extend, but never
-// shorten, an active cooldown.
+// StartChannelRateLimitCooldown temporarily defers one upstream channel/model
+// route while another candidate is available. It remains a final routing
+// fallback. Repeated 429 responses may extend, but never shorten, an active
+// cooldown.
 func StartChannelRateLimitCooldown(channelId int, modelName string, durationSeconds int) {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" || durationSeconds <= 0 {
@@ -495,4 +496,40 @@ func applyChannelRateLimitCooldowns(
 	}
 	sort.Ints(options.ExcludedChannelIds)
 	return options
+}
+
+// getRandomSatisfiedChannelWithRateLimitFallback keeps active cooldowns as a
+// routing preference. Request-scoped exclusions remain enforced when the
+// cooled route is selected as the final candidate.
+func getRandomSatisfiedChannelWithRateLimitFallback(
+	group string,
+	modelName string,
+	retry int,
+	requestPath string,
+	options model.ChannelSelectionOptions,
+) (*model.Channel, error) {
+	optionsWithoutRateLimitCooldown := options
+	options = applyChannelRateLimitCooldowns(modelName, options)
+	hardExcluded := make(map[int]struct{}, len(optionsWithoutRateLimitCooldown.ExcludedChannelIds))
+	for _, channelId := range optionsWithoutRateLimitCooldown.ExcludedChannelIds {
+		hardExcluded[channelId] = struct{}{}
+	}
+	hasFallbackCandidate := false
+	for _, channelId := range options.ExcludedChannelIds {
+		if _, alreadyExcluded := hardExcluded[channelId]; !alreadyExcluded {
+			hasFallbackCandidate = true
+			break
+		}
+	}
+	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, requestPath, options)
+	if err != nil || channel != nil || !hasFallbackCandidate {
+		return channel, err
+	}
+	return model.GetRandomSatisfiedChannel(
+		group,
+		modelName,
+		retry,
+		requestPath,
+		optionsWithoutRateLimitCooldown,
+	)
 }

@@ -112,8 +112,6 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			selectionOptions.RequestBodyBytes = providedOptions.RequestBodyBytes
 		}
 	}
-	selectionOptions = applyChannelRateLimitCooldowns(param.ModelName, selectionOptions)
-
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
 		if len(autoGroups) == 0 {
@@ -158,7 +156,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath, selectionOptions)
+			channel, _ = getRandomSatisfiedChannelWithRateLimitFallback(autoGroup, param.ModelName, priorityRetry, param.RequestPath, selectionOptions)
 			if channel == nil {
 				// Initial auto-group selection may fall through groups to find any
 				// usable channel. Once channels have failed in this request, crossing
@@ -208,7 +206,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, selectionOptions)
+		channel, err = getRandomSatisfiedChannelWithRateLimitFallback(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, selectionOptions)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

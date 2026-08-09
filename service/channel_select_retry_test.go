@@ -190,3 +190,64 @@ func TestAutoGroupRetryAdvancesAfterLastPriorityWithoutResettingBudget(t *testin
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, 1, param.GetRetry())
 }
+
+func TestChannelRateLimitCooldownUsesOnlyChannelAsFallback(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "rate-limit-only-channel-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2241, "vip", modelName)
+	model.InitChannelCache()
+	ClearChannelRateLimitCooldowns()
+	t.Cleanup(ClearChannelRateLimitCooldowns)
+	StartChannelRateLimitCooldown(2241, modelName, 60)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	selected, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "vip",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 2241, selected.Id)
+	assert.Equal(t, "vip", selectedGroup)
+}
+
+func TestChannelRateLimitCooldownUsesCooledChannelAfterAlternativesAreExcluded(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "rate-limit-fallback-after-alternative-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2251, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2252, "vip", modelName)
+	model.InitChannelCache()
+	ClearChannelRateLimitCooldowns()
+	t.Cleanup(ClearChannelRateLimitCooldowns)
+	StartChannelRateLimitCooldown(2251, modelName, 60)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "vip",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       common.GetPointer(0),
+	}
+
+	selected, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 2252, selected.Id)
+	assert.Equal(t, "vip", selectedGroup)
+
+	selected, selectedGroup, err = CacheGetRandomSatisfiedChannel(
+		param,
+		model.ChannelSelectionOptions{ExcludedChannelIds: []int{2252}},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 2251, selected.Id)
+	assert.Equal(t, "vip", selectedGroup)
+}

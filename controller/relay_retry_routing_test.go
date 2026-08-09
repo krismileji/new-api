@@ -589,6 +589,53 @@ func TestRelayRetryRoutingRepeatsTheOnlyAvailableChannel(t *testing.T) {
 	assert.Equal(t, []int{27, 27, 27, 27}, attempted)
 }
 
+func TestRelayRetryRoutingRepeatsCooledOnlyChannelAfterRoundExhaustion(t *testing.T) {
+	t.Cleanup(model.InitChannelCache)
+	db := setupChannelMonitorControllerTestDB(t)
+	priority := int64(100)
+	weight := uint(10)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 69, Name: "only-cooled-channel", Key: "key", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "vip", Model: "model-a", ChannelId: 69, Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	service.StartChannelRateLimitCooldown(69, "model-a", 60)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	retryParam := &service.RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "vip",
+		ModelName:   "model-a",
+		RequestPath: ctx.Request.URL.Path,
+		Retry:       common.GetPointer(0),
+	}
+	routing := newRelayRetryRouting()
+
+	selected, group, err := routing.selectChannel(retryParam)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 69, selected.Id)
+	assert.Equal(t, "vip", group)
+
+	routing.exclude(selected.Id)
+	retryParam.IncreaseRetry()
+	selected, group, err = routing.selectChannel(retryParam)
+
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 69, selected.Id)
+	assert.Equal(t, "vip", group)
+	assert.False(t, routing.candidatesExhausted())
+}
+
 func TestRelayRetryRoutingCurrentRoundDoesNotRestartOnlyChannel(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
