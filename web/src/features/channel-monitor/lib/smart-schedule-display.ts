@@ -21,15 +21,13 @@ import type { ChannelMonitorSmartScheduleRoutePlacement } from './smart-schedule
 export type ChannelMonitorSmartScheduleTemporaryTrafficKind =
   | ''
   | 'insufficient_samples'
-  | 'priority_sampling'
   | 'adaptive_sampling'
 
 export function getChannelMonitorSmartScheduleTemporaryTrafficLabel(
   kind: ChannelMonitorSmartScheduleTemporaryTrafficKind
 ) {
-  if (kind === 'insufficient_samples') return '样本不足补量'
-  if (kind === 'priority_sampling') return '低优先级轮转'
-  if (kind === 'adaptive_sampling') return '健康应急采样'
+  if (kind === 'insufficient_samples') return '统一探索采样'
+  if (kind === 'adaptive_sampling') return '自适应备援采样'
   return '无临时流量'
 }
 

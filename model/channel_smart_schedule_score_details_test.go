@@ -49,6 +49,12 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 		},
 		BusinessScore: &businessScore,
 		FinalScore:    &finalScore,
+		Health: ChannelSmartScheduleHealthDetails{
+			ErrorRequestPercent:             6,
+			RiskRequestPercent:              10,
+			FirstTokenWarningRequestPercent: 4,
+			HealthyRequestPercent:           90,
+		},
 		Decision: ChannelSmartScheduleScoreDecision{
 			SelectedPrimaryChannelId: 3201,
 			SelectedPrimary:          true,
@@ -90,7 +96,9 @@ func TestApplyChannelSmartScheduleRouteResultPersistsStructuredScoreSnapshot(t *
 	raw, err := common.Marshal(routes[0])
 	require.NoError(t, err)
 	serialized := string(raw)
-	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":7`)
+	assert.Contains(t, serialized, `"last_schedule_score_details":{"version":8`)
+	assert.Contains(t, serialized, `"error_request_percent":6`)
+	assert.Contains(t, serialized, `"first_token_warning_request_percent":4`)
 	assert.Contains(t, serialized, `"minimum_comparable_channels":2`)
 	assert.Contains(t, serialized, `"comparison_state":"comparable"`)
 	assert.Contains(t, serialized, `"sample_scope":"channel_model"`)

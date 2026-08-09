@@ -47,23 +47,13 @@ return scores
 type channelSmartScheduleRuntimeHealthSnapshot struct {
 	ConsecutiveFailures int
 	FailureTimes        []int64
-	RecoverySuccesses   int
 }
 
 type channelSmartScheduleRuntimeHealthState struct {
 	Revision            string
 	FailureTimes        []int64
 	ConsecutiveFailures int
-	RecoverySuccesses   int
 }
-
-type channelSmartScheduleRuntimeSuccessMode uint8
-
-const (
-	channelSmartScheduleRuntimeRequestSuccess channelSmartScheduleRuntimeSuccessMode = iota
-	channelSmartScheduleRuntimeRecoveryProbeSuccess
-	channelSmartScheduleRuntimeRegularProbeSuccess
-)
 
 var channelSmartScheduleRuntimeHealth = struct {
 	sync.Mutex
@@ -76,6 +66,7 @@ var channelSmartScheduleRuntimeHealth = struct {
 type channelSmartScheduleAdaptiveRefreshEvent struct {
 	database  any
 	channelId int
+	group     string
 	modelName string
 }
 
@@ -85,6 +76,14 @@ var channelSmartScheduleAdaptiveRefreshQueue = struct {
 	running bool
 }{
 	pending: make(map[channelSmartScheduleAdaptiveRefreshEvent]struct{}),
+}
+
+func init() {
+	service.RegisterChannelRateLimitCooldownExpiredHandler(
+		func(channelId int, modelName string) {
+			enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
+		},
+	)
 }
 
 func channelSmartScheduleRuntimeHealthKey(channelId int, modelName string) string {
@@ -175,7 +174,6 @@ func observeChannelSmartScheduleRuntimeRequestSuccess(channelId int, modelName s
 		modelName,
 		common.GetTimestamp(),
 		settings.SmartScheduleControlRevision,
-		channelSmartScheduleRuntimeRequestSuccess,
 	)
 	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
 }
@@ -185,35 +183,101 @@ func observeChannelSmartScheduleRuntimeProbeSuccess(channelId int, modelName str
 	if !settings.SmartScheduleEnabled {
 		return
 	}
-	runtimeRoutes, err := model.GetChannelSmartScheduleRuntimeRoutes(channelId, modelName)
-	if err != nil {
-		common.SysError("智能调度恢复探针状态读取失败: " + err.Error())
-		return
-	}
-	successMode := channelSmartScheduleRuntimeRegularProbeSuccess
-	for _, configured := range settings.SmartScheduleGroupPolicies {
-		route, exists := runtimeRoutes[configured.Group]
-		if !exists {
-			continue
-		}
-		policy := configured.policy()
-		if len(policy.Models) > 0 && !slices.Contains(policy.Models, route.ModelName) {
-			continue
-		}
-		if route.StabilityState == model.ChannelSmartScheduleStabilityProbing ||
-			(route.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
-				policy.StabilityEnabled && policy.DegradedProbeEnabled) {
-			successMode = channelSmartScheduleRuntimeRecoveryProbeSuccess
-			break
-		}
-	}
 	observeChannelSmartScheduleRuntimeSuccess(
 		channelId,
 		modelName,
 		common.GetTimestamp(),
 		settings.SmartScheduleControlRevision,
-		successMode,
 	)
+	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
+}
+
+func channelSmartScheduleProbeRecoveryRequest(
+	channelId int,
+	modelName string,
+	resultTime int64,
+	scheduled bool,
+	failureReason string,
+) (*model.ChannelSmartScheduleProbeRecoveryRequest, error) {
+	settings := getChannelMonitorSettings()
+	if !settings.SmartScheduleEnabled || channelId <= 0 || strings.TrimSpace(modelName) == "" {
+		return nil, nil
+	}
+	runtimeRoutes, err := model.GetChannelSmartScheduleRuntimeRoutes(channelId, modelName)
+	if err != nil {
+		return nil, err
+	}
+	request := &model.ChannelSmartScheduleProbeRecoveryRequest{
+		ExpectedControlRevision: settings.SmartScheduleControlRevision,
+		FailureReason:           failureReason,
+	}
+	for _, configured := range settings.SmartScheduleGroupPolicies {
+		route, exists := runtimeRoutes[configured.Group]
+		if !exists || (route.StabilityState != model.ChannelSmartScheduleStabilityDegraded &&
+			route.StabilityState != model.ChannelSmartScheduleStabilityProbing) {
+			continue
+		}
+		policy := configured.policy()
+		if !policy.StabilityEnabled ||
+			(len(policy.Models) > 0 && !slices.Contains(policy.Models, route.ModelName)) ||
+			(scheduled && route.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
+				!policy.DegradedProbeEnabled) {
+			continue
+		}
+		cooldownMinutes := max(policy.CooldownMinutes, 1)
+		request.Routes = append(request.Routes, model.ChannelSmartScheduleProbeRecoveryRoute{
+			Group:                    configured.Group,
+			Model:                    route.ModelName,
+			RecoverySuccessThreshold: max(policy.RecoverySuccessThreshold, 1),
+			CooldownUntil:            resultTime + int64(cooldownMinutes)*60,
+		})
+	}
+	if len(request.Routes) == 0 {
+		return nil, nil
+	}
+	failureReason = strings.TrimSpace(failureReason)
+	if failureReason != "" {
+		prefix := "手动测试失败，已清零恢复成功次数并续满稳定性保护"
+		if scheduled {
+			prefix = "降级期间定时探测失败，已延长稳定性保护"
+		}
+		request.FailureReason = prefix + "：" + failureReason
+	}
+	return request, nil
+}
+
+func applyChannelSmartScheduleProbeRecoveryResult(
+	channelId int,
+	modelName string,
+	request *model.ChannelSmartScheduleProbeRecoveryRequest,
+) {
+	if request == nil {
+		enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
+		return
+	}
+	result := request.Result
+	if result.ObservationSince > 0 {
+		clearChannelSmartScheduleRuntimeHealth(channelId, modelName, result.ObservationSince)
+	}
+	if result.RoutingChanged {
+		refreshed := true
+		seen := make(map[channelSmartScheduleRoutePoolKey]struct{}, len(result.Recovered)+len(result.Renewed))
+		keys := append(append([]model.ChannelSmartScheduleRouteKey(nil), result.Recovered...), result.Renewed...)
+		for _, key := range keys {
+			pool := channelSmartScheduleRoutePoolKey{group: key.Group, model: key.Model}
+			if _, exists := seen[pool]; exists {
+				continue
+			}
+			seen[pool] = struct{}{}
+			if err := model.RefreshChannelSmartScheduleRoutePoolCache(key.Group, key.Model); err != nil {
+				common.SysError("刷新探测恢复路由缓存失败: " + err.Error())
+				refreshed = false
+			}
+		}
+		if !refreshed {
+			model.InitChannelCache()
+		}
+	}
 	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
 }
 
@@ -248,7 +312,6 @@ func clearChannelSmartScheduleRuntimeHealth(channelId int, modelName string, rec
 		}
 	}
 	state.FailureTimes = retained
-	state.RecoverySuccesses = 0
 	if len(state.FailureTimes) == 0 {
 		delete(channelSmartScheduleRuntimeHealth.states, key)
 		return
@@ -320,7 +383,6 @@ func observeChannelSmartScheduleRuntimeFailure(
 	}
 	state.FailureTimes = append(state.FailureTimes, now)
 	state.ConsecutiveFailures++
-	state.RecoverySuccesses = 0
 	channelSmartScheduleRuntimeHealth.states[key] = state
 	snapshot := channelSmartScheduleRuntimeHealthSnapshot{
 		ConsecutiveFailures: state.ConsecutiveFailures,
@@ -346,7 +408,6 @@ func observeChannelSmartScheduleRuntimeSuccess(
 	modelName string,
 	now int64,
 	revision string,
-	successMode channelSmartScheduleRuntimeSuccessMode,
 ) channelSmartScheduleRuntimeHealthSnapshot {
 	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
 	if channelId <= 0 || modelName == "" {
@@ -360,7 +421,7 @@ func observeChannelSmartScheduleRuntimeSuccess(
 	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked()
 	key := channelSmartScheduleRuntimeHealthKey(channelId, modelName)
 	state, exists := channelSmartScheduleRuntimeHealth.states[key]
-	if !exists && successMode != channelSmartScheduleRuntimeRecoveryProbeSuccess {
+	if !exists {
 		return channelSmartScheduleRuntimeHealthSnapshot{}
 	}
 	if state.Revision != revision {
@@ -370,30 +431,15 @@ func observeChannelSmartScheduleRuntimeSuccess(
 		state.FailureTimes,
 		now-int64(maxChannelMonitorSmartScheduleBurstFailureWindowSeconds),
 	)
-	if successMode == channelSmartScheduleRuntimeRegularProbeSuccess {
-		state.RecoverySuccesses = 0
-	}
-	if successMode == channelSmartScheduleRuntimeRecoveryProbeSuccess {
-		state.RecoverySuccesses++
-	}
-	if successMode != channelSmartScheduleRuntimeRecoveryProbeSuccess && len(state.FailureTimes) == 0 {
-		if state.RecoverySuccesses == 0 {
-			delete(channelSmartScheduleRuntimeHealth.states, key)
-			return channelSmartScheduleRuntimeHealthSnapshot{}
-		}
-		channelSmartScheduleRuntimeHealth.states[key] = state
-		return channelSmartScheduleRuntimeHealthSnapshot{
-			ConsecutiveFailures: state.ConsecutiveFailures,
-			FailureTimes:        append([]int64(nil), state.FailureTimes...),
-			RecoverySuccesses:   state.RecoverySuccesses,
-		}
+	if len(state.FailureTimes) == 0 {
+		delete(channelSmartScheduleRuntimeHealth.states, key)
+		return channelSmartScheduleRuntimeHealthSnapshot{}
 	}
 	state.ConsecutiveFailures = 0
 	channelSmartScheduleRuntimeHealth.states[key] = state
 	return channelSmartScheduleRuntimeHealthSnapshot{
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		FailureTimes:        append([]int64(nil), state.FailureTimes...),
-		RecoverySuccesses:   state.RecoverySuccesses,
 	}
 }
 
@@ -424,7 +470,7 @@ func getChannelSmartScheduleRuntimeHealth(
 	state.FailureTimes = pruneChannelSmartScheduleRuntimeFailureTimes(
 		state.FailureTimes, now-int64(maxChannelMonitorSmartScheduleBurstFailureWindowSeconds),
 	)
-	if len(state.FailureTimes) == 0 && state.RecoverySuccesses == 0 {
+	if len(state.FailureTimes) == 0 {
 		delete(channelSmartScheduleRuntimeHealth.states, key)
 		return channelSmartScheduleRuntimeHealthSnapshot{}
 	}
@@ -432,7 +478,6 @@ func getChannelSmartScheduleRuntimeHealth(
 	return channelSmartScheduleRuntimeHealthSnapshot{
 		ConsecutiveFailures: state.ConsecutiveFailures,
 		FailureTimes:        append([]int64(nil), state.FailureTimes...),
-		RecoverySuccesses:   state.RecoverySuccesses,
 	}
 }
 
@@ -462,7 +507,7 @@ func protectChannelSmartScheduleRuntimeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false)
 }
 
 func protectChannelSmartScheduleScheduledProbeFailure(
@@ -470,7 +515,23 @@ func protectChannelSmartScheduleScheduledProbeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, false)
+}
+
+func protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
+	channelId int,
+	modelName string,
+	err *types.NewAPIError,
+) {
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, true)
+}
+
+func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
+	channelId int,
+	modelName string,
+	err *types.NewAPIError,
+) {
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, true)
 }
 
 // protectChannelSmartScheduleRuntimeFailureWithSource protects every
@@ -483,6 +544,7 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 	modelName string,
 	err *types.NewAPIError,
 	scheduledProbe bool,
+	probeRecoveryHandled bool,
 ) {
 	if err == nil || types.IsSkipRetryError(err) {
 		return
@@ -610,6 +672,10 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 		degradedProbe := scheduledProbe &&
 			matched.route.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
 			policy.StabilityEnabled && policy.DegradedProbeEnabled
+		if probeRecoveryHandled &&
+			(probing || matched.route.StabilityState == model.ChannelSmartScheduleStabilityDegraded) {
+			continue
+		}
 		if !probing && !degradedProbe && !thresholdReached {
 			continue
 		}
@@ -696,9 +762,23 @@ func enqueueChannelSmartScheduleAdaptiveRefresh(channelId int, modelName string)
 	if channelId <= 0 || modelName == "" {
 		return
 	}
-	event := channelSmartScheduleAdaptiveRefreshEvent{
+	enqueueChannelSmartScheduleAdaptiveRefreshEvent(channelSmartScheduleAdaptiveRefreshEvent{
 		database: model.DB, channelId: channelId, modelName: modelName,
+	})
+}
+
+func enqueueChannelSmartScheduleAdaptivePoolRefresh(group string, modelName string) {
+	group = strings.TrimSpace(group)
+	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
+	if group == "" || modelName == "" {
+		return
 	}
+	enqueueChannelSmartScheduleAdaptiveRefreshEvent(channelSmartScheduleAdaptiveRefreshEvent{
+		database: model.DB, group: group, modelName: modelName,
+	})
+}
+
+func enqueueChannelSmartScheduleAdaptiveRefreshEvent(event channelSmartScheduleAdaptiveRefreshEvent) {
 	channelSmartScheduleAdaptiveRefreshQueue.Lock()
 	channelSmartScheduleAdaptiveRefreshQueue.pending[event] = struct{}{}
 	if channelSmartScheduleAdaptiveRefreshQueue.running {
@@ -762,7 +842,7 @@ func processChannelSmartScheduleAdaptiveRefreshEvents(events []channelSmartSched
 	} else if fullScheduleRunning {
 		for _, event := range events {
 			if event.database == model.DB {
-				enqueueChannelSmartScheduleAdaptiveRefresh(event.channelId, event.modelName)
+				enqueueChannelSmartScheduleAdaptiveRefreshEvent(event)
 			}
 		}
 		return
@@ -772,14 +852,32 @@ func processChannelSmartScheduleAdaptiveRefreshEvents(events []channelSmartSched
 		policyByGroup[configured.Group] = configured.policy()
 	}
 	sort.Slice(events, func(i int, j int) bool {
-		if events[i].channelId != events[j].channelId {
-			return events[i].channelId < events[j].channelId
+		if events[i].group != events[j].group {
+			return events[i].group < events[j].group
 		}
-		return events[i].modelName < events[j].modelName
+		if events[i].modelName != events[j].modelName {
+			return events[i].modelName < events[j].modelName
+		}
+		return events[i].channelId < events[j].channelId
 	})
 	eventsByPool := make(map[channelSmartScheduleRoutePoolKey]map[channelSmartScheduleAdaptiveRefreshEvent]struct{})
 	for _, event := range events {
 		if event.database != model.DB {
+			continue
+		}
+		if event.group != "" {
+			policy, configured := policyByGroup[event.group]
+			softRoutingEnabled := policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight &&
+				(policy.AdaptiveSamplingEnabled || policy.SampleMode == channelMonitorSmartScheduleSampleTraffic)
+			if !configured || (!softRoutingEnabled && !policy.StabilityEnabled) ||
+				(len(policy.Models) > 0 && !slices.Contains(policy.Models, event.modelName)) {
+				continue
+			}
+			poolKey := channelSmartScheduleRoutePoolKey{group: event.group, model: event.modelName}
+			if eventsByPool[poolKey] == nil {
+				eventsByPool[poolKey] = make(map[channelSmartScheduleAdaptiveRefreshEvent]struct{})
+			}
+			eventsByPool[poolKey][event] = struct{}{}
 			continue
 		}
 		runtimeRoutes, err := model.GetChannelSmartScheduleRuntimeParticipatingRoutes(
@@ -791,8 +889,9 @@ func processChannelSmartScheduleAdaptiveRefreshEvents(events []channelSmartSched
 		}
 		for group, routeModelName := range runtimeRoutes {
 			policy, configured := policyByGroup[group]
-			if !configured || !policy.AdaptiveSamplingEnabled ||
-				policy.ApplyMode != channelMonitorSmartScheduleApplyPriorityWeight ||
+			softRoutingEnabled := policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight &&
+				(policy.AdaptiveSamplingEnabled || policy.SampleMode == channelMonitorSmartScheduleSampleTraffic)
+			if !configured || (!softRoutingEnabled && !policy.StabilityEnabled) ||
 				(len(policy.Models) > 0 && !slices.Contains(policy.Models, routeModelName)) {
 				continue
 			}
@@ -819,14 +918,14 @@ func processChannelSmartScheduleAdaptiveRefreshEvents(events []channelSmartSched
 			context.Background(), poolKey, policy, settings.SmartScheduleControlRevision, model.DB,
 		)
 		if err != nil {
-			common.SysError("自适应备援刷新失败: " + err.Error())
+			common.SysError("智能调度池级软刷新失败: " + err.Error())
 			continue
 		}
 		if !conflict {
 			continue
 		}
 		for event := range eventsByPool[poolKey] {
-			enqueueChannelSmartScheduleAdaptiveRefresh(event.channelId, event.modelName)
+			enqueueChannelSmartScheduleAdaptiveRefreshEvent(event)
 		}
 	}
 }
@@ -848,8 +947,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 	expectedControlRevision string,
 	expectedDatabase any,
 ) (bool, error) {
-	if expectedDatabase != model.DB || !policy.AdaptiveSamplingEnabled ||
-		policy.ApplyMode != channelMonitorSmartScheduleApplyPriorityWeight {
+	softRoutingEnabled := policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight &&
+		(policy.AdaptiveSamplingEnabled || policy.SampleMode == channelMonitorSmartScheduleSampleTraffic)
+	if expectedDatabase != model.DB || (!softRoutingEnabled && !policy.StabilityEnabled) {
 		return false, nil
 	}
 	routes, err := model.GetChannelSmartScheduleRoutePool(poolKey.group, poolKey.model)
@@ -861,37 +961,94 @@ func refreshChannelSmartScheduleAdaptivePool(
 			return false, nil
 		}
 	}
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
+	if err != nil {
+		return false, err
+	}
+	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(economicSnapshot.Monitors))
+	for _, monitor := range economicSnapshot.Monitors {
+		monitorByChannel[monitor.ChannelId] = monitor
+	}
+	groupRatio, groupRatioAvailable := economicSnapshot.GroupRatios[poolKey.group]
+	for index := range routes {
+		monitor, monitorAvailable := monitorByChannel[routes[index].ChannelId]
+		economics := channelSmartScheduleClassifyEconomics(
+			monitor,
+			monitorAvailable,
+			groupRatio,
+			groupRatioAvailable,
+		)
+		routes[index].CostRatio = economics.CostRatio
+		routes[index].GroupRatio = economics.GroupRatio
+		routes[index].GrossMargin = economics.GrossMargin
+		routes[index].EconomicRole = economics.EconomicRole
+	}
 	now := common.GetTimestamp()
-	windowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
-	windows := make([]model.ChannelSmartScheduleAdaptiveHealthMetricWindow, 0, len(routes))
-	windowChannelIds := make([]int, 0, len(routes))
+	settings := getChannelMonitorSettings()
+	adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
+	performanceWindowStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
+	stabilityWindowStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
+	type metricWindowTarget struct {
+		channelId int
+		kind      uint8
+	}
+	const (
+		adaptiveMetricWindow uint8 = iota
+		performanceMetricWindow
+		stabilityMetricWindow
+	)
+	windows := make([]model.ChannelSmartScheduleAdaptiveHealthMetricWindow, 0, len(routes)*3)
+	windowTargets := make([]metricWindowTarget, 0, len(routes)*3)
 	for _, route := range routes {
 		if !route.State.Participates() {
 			continue
 		}
-		windows = append(windows, model.ChannelSmartScheduleAdaptiveHealthMetricWindow{
-			ChannelId: route.ChannelId, ModelName: route.Model,
-			StartTimestamp: windowStart, ObservationSince: route.SharedSamples.ObservationSince,
-			WarningSeconds:  policy.AdaptiveSamplingFirstTokenWarningSeconds,
-			CriticalSeconds: policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-		})
-		windowChannelIds = append(windowChannelIds, route.ChannelId)
+		routeStabilityWindowStart := stabilityWindowStart
+		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > routeStabilityWindowStart {
+			routeStabilityWindowStart = route.State.StabilitySince
+		}
+		for kind, start := range []int64{
+			adaptiveWindowStart, performanceWindowStart, routeStabilityWindowStart,
+		} {
+			windows = append(windows, model.ChannelSmartScheduleAdaptiveHealthMetricWindow{
+				ChannelId: route.ChannelId, ModelName: route.Model,
+				StartTimestamp: start, ObservationSince: route.SharedSamples.ObservationSince,
+				WarningSeconds:  policy.AdaptiveSamplingFirstTokenWarningSeconds,
+				CriticalSeconds: policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			})
+			windowTargets = append(windowTargets, metricWindowTarget{
+				channelId: route.ChannelId, kind: uint8(kind),
+			})
+		}
 	}
-	productionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(windows))
-	if common.LogConsumeEnabled && constant.ErrorLogEnabled {
+	adaptiveProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
+	performanceProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
+	stabilityProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
+	if common.LogConsumeEnabled || constant.ErrorLogEnabled {
 		results, metricErr := model.GetChannelSmartScheduleAdaptiveHealthMetrics(ctx, windows, now+1)
 		if metricErr != nil {
 			return false, metricErr
 		}
 		for index, result := range results {
-			if index >= len(windowChannelIds) {
+			if index >= len(windowTargets) {
 				break
 			}
-			productionMetrics[windowChannelIds[index]] = result.Metric
+			target := windowTargets[index]
+			switch target.kind {
+			case adaptiveMetricWindow:
+				adaptiveProductionMetrics[target.channelId] = result.Metric
+			case performanceMetricWindow:
+				performanceProductionMetrics[target.channelId] = result.Metric
+			case stabilityMetricWindow:
+				stabilityProductionMetrics[target.channelId] = result.Metric
+			}
 		}
 	}
 	healthByChannel := make(map[int]channelSmartScheduleHealthUpdate, len(routes))
 	metricByChannel := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
+	rollingStabilityByChannel := make(map[int]*channelSmartSchedulePerformance, len(routes))
+	stabilityAvailableByChannel := make(map[int]bool, len(routes))
 	stateByChannel := make(map[int]model.ChannelSmartScheduleRouteState, len(routes))
 	for _, route := range routes {
 		stateByChannel[route.ChannelId] = route.State
@@ -903,135 +1060,386 @@ func refreshChannelSmartScheduleAdaptivePool(
 			return false, seriesErr
 		}
 		metric := channelSmartScheduleMergeAdaptiveHealthMetric(
-			productionMetrics[route.ChannelId],
+			adaptiveProductionMetrics[route.ChannelId],
 			series.AdaptiveHealthMetricsSince(
-				windowStart,
+				adaptiveWindowStart,
 				policy.AdaptiveSamplingFirstTokenWarningSeconds,
 				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 			),
 		)
-		metricByChannel[route.ChannelId] = metric
+		performanceMetric := channelSmartScheduleMergeAdaptiveHealthMetric(
+			performanceProductionMetrics[route.ChannelId],
+			series.AdaptiveHealthMetricsSince(
+				performanceWindowStart,
+				policy.AdaptiveSamplingFirstTokenWarningSeconds,
+				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			),
+		)
+		routeStabilityWindowStart := stabilityWindowStart
+		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > routeStabilityWindowStart {
+			routeStabilityWindowStart = route.State.StabilitySince
+		}
+		sharedStabilityMetric := series.AdaptiveHealthMetricsSince(
+			routeStabilityWindowStart,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		stabilityMetric := channelSmartScheduleMergeAdaptiveHealthMetric(
+			stabilityProductionMetrics[route.ChannelId],
+			sharedStabilityMetric,
+		)
+		stabilityAvailableByChannel[route.ChannelId] =
+			(common.LogConsumeEnabled && constant.ErrorLogEnabled) || sharedStabilityMetric.RequestCount > 0
+		performanceMetric.RequestCount = stabilityMetric.RequestCount
+		performanceMetric.LastUsedTime = max(performanceMetric.LastUsedTime, stabilityMetric.LastUsedTime)
+		metricByChannel[route.ChannelId] = performanceMetric
 		healthByChannel[route.ChannelId] = channelSmartScheduleEvaluateHealth(route.State, metric, policy)
+		rolling := &channelSmartSchedulePerformance{
+			StabilitySuccessCount:                stabilityMetric.StabilitySuccessCount,
+			StabilityFailureCount:                stabilityMetric.StabilityFailureCount,
+			StabilityFinalFailureCount:           stabilityMetric.StabilityFinalFailureCount,
+			StabilityRetryFailureCount:           stabilityMetric.StabilityRetryFailureCount,
+			StabilityRetryFailureDurationTotalMs: stabilityMetric.RetryFailureDurationTotalMs,
+			StabilityFailureDurationBuckets: append(
+				[]model.ChannelMonitorFailureDurationBucket(nil),
+				stabilityMetric.RetryFailureDurationBuckets...,
+			),
+			FirstTokenDurationBuckets: append(
+				[]model.ChannelMonitorDurationBucket(nil),
+				stabilityMetric.FirstTokenDurationBuckets...,
+			),
+		}
+		for _, bucket := range rolling.FirstTokenDurationBuckets {
+			rolling.FirstTokenDurationSampleCount += bucket.Count
+		}
+		rolling.Stability, rolling.StabilitySampleCount = channelSmartScheduleStabilityScore(
+			rolling.StabilitySuccessCount,
+			rolling.StabilityFailureCount,
+			rolling.StabilityFinalFailureCount,
+			rolling.StabilityFailureDurationBuckets,
+			policy,
+		)
+		channelSmartScheduleApplyJitterMeasurement(rolling, policy)
+		rollingStabilityByChannel[route.ChannelId] = rolling
 	}
 
 	primaryIndex := -1
+	manualPrimaryActive := false
 	for index, route := range routes {
 		if route.State.ManualPrimaryUntil > now && channelSmartScheduleAdaptiveRouteAvailable(route, now) {
 			primaryIndex = index
+			manualPrimaryActive = true
 			break
 		}
 	}
 	if primaryIndex < 0 {
 		for index, route := range routes {
-			if route.State.BaseRank == 1 && channelSmartScheduleAdaptiveRouteAvailable(route, now) {
+			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 {
+				continue
+			}
+			if primaryIndex < 0 || route.Priority > routes[primaryIndex].Priority ||
+				(route.Priority == routes[primaryIndex].Priority && route.Weight > routes[primaryIndex].Weight) ||
+				(route.Priority == routes[primaryIndex].Priority && route.Weight == routes[primaryIndex].Weight &&
+					(route.State.BaseRank < routes[primaryIndex].State.BaseRank ||
+						(route.State.BaseRank == routes[primaryIndex].State.BaseRank &&
+							route.ChannelId < routes[primaryIndex].ChannelId))) {
 				primaryIndex = index
-				break
 			}
 		}
 	}
-	existingAdaptive := false
-	for _, route := range routes {
-		existingAdaptive = existingAdaptive ||
-			route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
-	}
 	selectedChannelId := 0
-	adaptivePercent := 0.0
+	selectedKind := ""
+	selectedPercent := 0.0
+	debtByChannel := make(map[int]int, len(routes))
 	backupCandidates := make([]channelSmartScheduleCandidate, 0, len(routes)-1)
+	scoringCandidates := make([]channelSmartScheduleCandidate, 0, len(routes))
+	candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(routes))
 	if primaryIndex >= 0 {
 		primaryRoute := routes[primaryIndex]
 		primaryHealth := healthByChannel[primaryRoute.ChannelId]
-		primaryHasPressure := primaryHealth.State != "" &&
-			primaryHealth.State != channelSmartScheduleHealthUnknown &&
-			primaryHealth.State != channelSmartScheduleHealthHealthy
-		if primaryHasPressure {
-			for index, route := range routes {
-				if index == primaryIndex ||
-					!channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 {
-					continue
-				}
-				details, decodeErr := route.State.LastScheduleScoreDetails.Decode()
-				if decodeErr != nil || (details != nil && details.Economics != nil &&
-					details.Economics.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback) {
-					continue
-				}
-				metric := metricByChannel[route.ChannelId]
-				health := healthByChannel[route.ChannelId]
-				candidate := channelSmartScheduleCandidate{
-					ChannelId: route.ChannelId, PreviousBaseRank: route.State.BaseRank,
-					FirstTokenSampleCount: int(metric.FirstTokenCount),
-					TPSSampleCount:        int(metric.TPSSampleCount),
-					StabilitySampleCount:  metric.RequestCount,
-					HealthState:           health.State, HealthPressure: health.Pressure,
-					HealthErrorPressure:   health.ErrorPressure,
-					HealthLatencyPressure: health.LatencyPressure,
-					HealthEvidence:        health.Evidence, HealthSampleCount: health.SampleCount,
-					HealthLastSampleAt:          health.LastSampleAt,
-					HealthRiskRequestPercent:    health.RiskRequestPercent,
-					HealthHealthyRequestPercent: health.HealthyRequestPercent,
-					HealthWindowSeconds:         health.WindowSeconds,
-				}
-				candidate.SampleDebt = channelSmartScheduleCandidateSampleDebt(
-					candidate, policy.Strategy, policy.StabilityEnabled, policy.Scoring, policy.MinSamples,
-				)
-				if candidate.SampleDebt > 0 {
-					backupCandidates = append(backupCandidates, candidate)
+		for _, route := range routes {
+			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) ||
+				route.State.BaseRank <= 0 {
+				continue
+			}
+			if route.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+				continue
+			}
+			metric := metricByChannel[route.ChannelId]
+			health := healthByChannel[route.ChannelId]
+			rolling := rollingStabilityByChannel[route.ChannelId]
+			candidate := channelSmartScheduleCandidate{
+				ChannelId: route.ChannelId, PreviousBaseRank: route.State.BaseRank,
+				Ratio: route.CostRatio, CostRatio: route.CostRatio,
+				GroupRatio: route.GroupRatio, GrossMargin: route.GrossMargin,
+				EconomicRole:    route.EconomicRole,
+				CurrentPriority: route.State.BasePriority, CurrentWeight: route.State.BaseWeight,
+				FirstTokenSampleCount: int(metric.FirstTokenCount),
+				TPSSampleCount:        int(metric.TPSSampleCount),
+				StabilityAvailable:    stabilityAvailableByChannel[route.ChannelId],
+				HealthState:           health.State, HealthPressure: health.Pressure,
+				HealthErrorPressure:   health.ErrorPressure,
+				HealthLatencyPressure: health.LatencyPressure,
+				HealthEvidence:        health.Evidence, HealthSampleCount: health.SampleCount,
+				HealthLastSampleAt:                    metric.LastUsedTime,
+				MinComparableChannels:                 policy.AdaptiveSamplingMinComparableChannels,
+				HealthErrorRequestPercent:             health.ErrorRequestPercent,
+				HealthRiskRequestPercent:              health.RiskRequestPercent,
+				HealthFirstTokenWarningRequestPercent: health.FirstTokenWarningRequestPercent,
+				HealthHealthyRequestPercent:           health.HealthyRequestPercent,
+				HealthWindowSeconds:                   health.WindowSeconds,
+			}
+			if metric.FirstTokenCount > 0 {
+				value := metric.FirstTokenTotalMs / float64(metric.FirstTokenCount)
+				candidate.FirstTokenMs = &value
+				if policy.JitterEnabled {
+					_, _, _, winsorized := model.SummarizeChannelMonitorDurationBuckets(
+						metric.FirstTokenDurationBuckets,
+					)
+					if winsorized != nil {
+						candidate.FirstTokenMs = winsorized
+					}
 				}
 			}
-			primaryCandidate := channelSmartScheduleCandidate{
-				ChannelId: primaryRoute.ChannelId, HealthState: primaryHealth.State,
-				HealthPressure: primaryHealth.Pressure,
+			if metric.TPSSampleCount > 0 {
+				value := metric.TPSTotal / float64(metric.TPSSampleCount)
+				candidate.TPS = &value
 			}
-			budgetCandidates := append([]channelSmartScheduleCandidate{primaryCandidate}, backupCandidates...)
-			adaptivePercent = channelSmartScheduleAdaptiveSamplingBudget(
-				primaryCandidate, budgetCandidates, policy,
+			if rolling != nil {
+				candidate.Stability = rolling.Stability
+				candidate.StabilitySampleCount = rolling.StabilitySampleCount
+			}
+			candidate.SampleDebt = channelSmartScheduleCandidateSampleDebt(
+				candidate, policy.Strategy, policy.StabilityEnabled, policy.Scoring, policy.MinSamples,
 			)
-			if adaptivePercent > channelMonitorRatioEpsilon && len(backupCandidates) > 0 {
-				sort.SliceStable(backupCandidates, func(i int, j int) bool {
-					left := backupCandidates[i]
-					right := backupCandidates[j]
-					if leftRank, rightRank := channelSmartScheduleAdaptiveCandidateRank(left), channelSmartScheduleAdaptiveCandidateRank(right); leftRank != rightRank {
-						return leftRank < rightRank
+			debtByChannel[route.ChannelId] = candidate.SampleDebt
+			candidateByChannel[route.ChannelId] = candidate
+			scoringCandidates = append(scoringCandidates, candidate)
+			if route.ChannelId != primaryRoute.ChannelId && candidate.SampleDebt > 0 {
+				backupCandidates = append(backupCandidates, candidate)
+			}
+		}
+		if len(backupCandidates) > 0 {
+			sort.SliceStable(backupCandidates, func(i int, j int) bool {
+				left := backupCandidates[i]
+				right := backupCandidates[j]
+				if policy.SamplingOrder == channelMonitorSmartScheduleSamplingOrderRatio {
+					if (left.CostRatio == nil) != (right.CostRatio == nil) {
+						return left.CostRatio != nil
 					}
-					if left.SampleDebt != right.SampleDebt {
-						return left.SampleDebt > right.SampleDebt
+					if left.CostRatio != nil && right.CostRatio != nil &&
+						math.Abs(*left.CostRatio-*right.CostRatio) > channelMonitorRatioEpsilon {
+						return *left.CostRatio < *right.CostRatio
 					}
-					leftState := stateByChannel[left.ChannelId]
-					rightState := stateByChannel[right.ChannelId]
-					leftActive := leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
-					rightActive := rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
-					if leftActive != rightActive {
-						return leftActive
+				} else {
+					if left.CurrentPriority != right.CurrentPriority {
+						return left.CurrentPriority > right.CurrentPriority
 					}
-					if left.HealthLastSampleAt != right.HealthLastSampleAt {
-						return left.HealthLastSampleAt < right.HealthLastSampleAt
+					if left.CurrentWeight != right.CurrentWeight {
+						return left.CurrentWeight > right.CurrentWeight
 					}
-					if left.PreviousBaseRank != right.PreviousBaseRank {
-						return left.PreviousBaseRank < right.PreviousBaseRank
-					}
-					return left.ChannelId < right.ChannelId
-				})
-				selected := backupCandidates[0]
-				selectedChannelId = selected.ChannelId
+				}
+				leftState := stateByChannel[left.ChannelId]
+				rightState := stateByChannel[right.ChannelId]
+				leftActive := leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
+					leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
+				rightActive := rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
+					rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
+				if leftActive != rightActive {
+					return leftActive
+				}
+				if left.HealthLastSampleAt != right.HealthLastSampleAt {
+					return left.HealthLastSampleAt < right.HealthLastSampleAt
+				}
+				if leftState.LastSamplingAt != rightState.LastSamplingAt {
+					return leftState.LastSamplingAt < rightState.LastSamplingAt
+				}
+				return left.ChannelId < right.ChannelId
+			})
+			selected := backupCandidates[0]
+			primaryHasPressure := primaryHealth.State != "" &&
+				primaryHealth.State != channelSmartScheduleHealthUnknown &&
+				primaryHealth.State != channelSmartScheduleHealthHealthy
+			if primaryHasPressure && policy.AdaptiveSamplingEnabled {
+				primaryCandidate := channelSmartScheduleCandidate{
+					ChannelId:   primaryRoute.ChannelId,
+					HealthState: primaryHealth.State, HealthPressure: primaryHealth.Pressure,
+				}
+				budgetCandidates := append([]channelSmartScheduleCandidate{primaryCandidate}, backupCandidates...)
+				selectedPercent = channelSmartScheduleAdaptiveSamplingBudget(
+					primaryCandidate, budgetCandidates, policy,
+				)
 				if selected.HealthEvidence && selected.HealthState != channelSmartScheduleHealthHealthy {
 					basePercent := max(policy.AdaptiveSamplingBasePercent, 0)
 					if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic {
 						basePercent = min(basePercent, max(policy.ExplorationTrafficPercent, 0))
 					}
-					adaptivePercent = min(adaptivePercent, basePercent)
+					selectedPercent = min(selectedPercent, basePercent)
 				}
-				if adaptivePercent <= channelMonitorRatioEpsilon {
-					selectedChannelId = 0
+				if selectedPercent > channelMonitorRatioEpsilon {
+					selectedChannelId = selected.ChannelId
+					selectedKind = model.ChannelSmartScheduleTemporaryTrafficAdaptive
+				}
+			}
+			if selectedChannelId == 0 && policy.SampleMode == channelMonitorSmartScheduleSampleTraffic {
+				selectedChannelId = selected.ChannelId
+				selectedKind = model.ChannelSmartScheduleTemporaryTrafficExploration
+				selectedPercent = policy.ExplorationTrafficPercent
+			}
+		}
+
+		normalPrimaryChannelId := primaryRoute.ChannelId
+		if !manualPrimaryActive {
+			normalization := channelSmartScheduleBuildNormalization(scoringCandidates, policy.MinSamples)
+			scoredItems := make([]channelSmartSchedulePlanItem, 0, len(scoringCandidates))
+			currentPrimaryScored := false
+			for _, candidate := range scoringCandidates {
+				if candidate.SampleDebt > 0 || channelSmartScheduleCandidateSkipReasonWithScoring(
+					candidate,
+					policy.Strategy,
+					policy.StabilityEnabled,
+					policy.MinSamples,
+					policy.Scoring,
+				) != "" {
+					continue
+				}
+				score, _, valid := channelSmartScheduleScoreCandidate(
+					candidate,
+					policy.Strategy,
+					policy.StabilityEnabled,
+					policy.ApplyMode,
+					policy.MinSamples,
+					false,
+					policy.Scoring,
+					normalization,
+				)
+				if !valid {
+					continue
+				}
+				scoredItems = append(scoredItems, channelSmartSchedulePlanItem{
+					ChannelId: candidate.ChannelId, Score: score,
+					PreviousBaseRank: candidate.PreviousBaseRank,
+				})
+				currentPrimaryScored = currentPrimaryScored || candidate.ChannelId == primaryRoute.ChannelId
+			}
+			minimumComparable := max(policy.AdaptiveSamplingMinComparableChannels, 2)
+			if currentPrimaryScored && len(scoredItems) >= minimumComparable {
+				ranked := channelSmartScheduleRankedItemIndexes(scoredItems, primaryRoute.ChannelId)
+				if len(ranked) > 0 {
+					rawWinnerId := scoredItems[ranked[0]].ChannelId
+					effectivePrimaryId := channelSmartScheduleEffectivePrimaryId(
+						scoredItems,
+						primaryRoute.ChannelId,
+						policy.Scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
+						false,
+					)
+					winner := candidateByChannel[rawWinnerId]
+					if rawWinnerId != primaryRoute.ChannelId && effectivePrimaryId == rawWinnerId &&
+						winner.SampleDebt == 0 && winner.HealthEvidence &&
+						winner.HealthState == channelSmartScheduleHealthHealthy &&
+						winner.HealthHealthyRequestPercent+channelMonitorRatioEpsilon >=
+							policy.AdaptiveSamplingSwitchConfirmRequestPercent {
+						normalPrimaryChannelId = rawWinnerId
+					}
 				}
 			}
 		}
+		if normalPrimaryChannelId != primaryRoute.ChannelId &&
+			selectedKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
+			if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic && selectedChannelId > 0 {
+				selectedKind = model.ChannelSmartScheduleTemporaryTrafficExploration
+				selectedPercent = policy.ExplorationTrafficPercent
+			} else {
+				selectedChannelId = 0
+				selectedKind = ""
+				selectedPercent = 0
+			}
+		}
+		primaryIndex = slices.IndexFunc(routes, func(route model.ChannelSmartScheduleRoute) bool {
+			return route.ChannelId == normalPrimaryChannelId
+		})
 	}
-
 	desiredPriority := make(map[int]int64, len(routes))
 	desiredWeight := make(map[int]uint, len(routes))
 	snapshots := make(map[int]*model.ChannelSmartScheduleRoutingSnapshotUpdate)
+	runtimeRecoveryByChannel := make(map[int]bool, len(routes))
+	if policy.StabilityEnabled {
+		recoveryThreshold := policy.RecoveryStabilityScore / channelMonitorScorePercentageTotal
+		for _, route := range routes {
+			rolling := rollingStabilityByChannel[route.ChannelId]
+			if route.State.StabilityState != model.ChannelSmartScheduleStabilityProbing ||
+				!route.State.Participates() || route.ChannelStatus != common.ChannelStatusEnabled ||
+				!route.Enabled || rolling == nil || rolling.Stability == nil ||
+				rolling.StabilitySampleCount < int64(policy.MinSamples) ||
+				*rolling.Stability+channelMonitorRatioEpsilon < recoveryThreshold {
+				continue
+			}
+			runtimeRecoveryByChannel[route.ChannelId] = true
+		}
+	}
+	poolHasTemporaryTraffic := false
+	for _, route := range routes {
+		poolHasTemporaryTraffic = poolHasTemporaryTraffic ||
+			route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
+			route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
+	}
 	for _, route := range routes {
 		desiredPriority[route.ChannelId] = route.Priority
 		desiredWeight[route.ChannelId] = route.Weight
+		if runtimeRecoveryByChannel[route.ChannelId] {
+			restorePriority := route.State.StabilitySavedPriority
+			if restorePriority <= channelMonitorSmartScheduleDegradedPriority {
+				restorePriority = route.State.BasePriority
+			}
+			restoreWeight := route.State.StabilitySavedWeight
+			if restoreWeight == 0 {
+				restoreWeight = route.State.BaseWeight
+			}
+			restorePriority, restoreWeight = channelSmartScheduleSavedTarget(restorePriority, restoreWeight)
+			desiredPriority[route.ChannelId] = restorePriority
+			desiredWeight[route.ChannelId] = restoreWeight
+			snapshots[route.ChannelId] = &model.ChannelSmartScheduleRoutingSnapshotUpdate{}
+			continue
+		}
+		if !route.State.Participates() || route.State.BaseRank <= 0 ||
+			route.State.StabilityState != "" || route.State.RuntimeProtectionUntil > now {
+			continue
+		}
+		if poolHasTemporaryTraffic {
+			desiredPriority[route.ChannelId] = route.State.BasePriority
+			desiredWeight[route.ChannelId] = route.State.BaseWeight
+		}
+		if route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
+			route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
+			snapshots[route.ChannelId] = &model.ChannelSmartScheduleRoutingSnapshotUpdate{}
+		}
+		if route.State.ManualPrimaryUntil > now {
+			desiredPriority[route.ChannelId] = route.Priority
+			desiredWeight[route.ChannelId] = 1000
+		}
+	}
+	if primaryIndex >= 0 && !manualPrimaryActive {
+		basePrimaryIndex := -1
+		for index, route := range routes {
+			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 ||
+				route.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+				continue
+			}
+			if basePrimaryIndex < 0 || route.State.BaseRank < routes[basePrimaryIndex].State.BaseRank ||
+				(route.State.BaseRank == routes[basePrimaryIndex].State.BaseRank &&
+					route.ChannelId < routes[basePrimaryIndex].ChannelId) {
+				basePrimaryIndex = index
+			}
+		}
+		if basePrimaryIndex >= 0 && basePrimaryIndex != primaryIndex {
+			basePrimary := routes[basePrimaryIndex]
+			runtimePrimary := routes[primaryIndex]
+			desiredPriority[runtimePrimary.ChannelId] = basePrimary.State.BasePriority
+			desiredWeight[runtimePrimary.ChannelId] = basePrimary.State.BaseWeight
+			desiredPriority[basePrimary.ChannelId] = runtimePrimary.State.BasePriority
+			desiredWeight[basePrimary.ChannelId] = runtimePrimary.State.BaseWeight
+		}
 	}
 	if selectedChannelId > 0 && primaryIndex >= 0 {
 		primaryRoute := routes[primaryIndex]
@@ -1039,16 +1447,13 @@ func refreshChannelSmartScheduleAdaptivePool(
 		topLayerChannelIds := make([]int, 0, len(routes))
 		topLayerWeight := uint64(0)
 		for _, route := range routes {
-			if route.ChannelId == selectedChannelId ||
-				!channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 {
+			if route.ChannelId == selectedChannelId || route.ChannelStatus != common.ChannelStatusEnabled ||
+				!route.Enabled || route.TrafficPaused(now) ||
+				service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model) > 0 {
 				continue
 			}
-			priority := route.State.BasePriority
-			weight := route.State.BaseWeight
-			if route.ChannelId == primaryRoute.ChannelId && route.State.ManualPrimaryUntil > now {
-				priority = route.Priority
-				weight = 1000
-			}
+			priority := desiredPriority[route.ChannelId]
+			weight := desiredWeight[route.ChannelId]
 			if priority > highestPriority {
 				highestPriority = priority
 				topLayerChannelIds = topLayerChannelIds[:0]
@@ -1065,22 +1470,23 @@ func refreshChannelSmartScheduleAdaptivePool(
 		}
 		if highestPriority == int64(math.MinInt64) || topLayerWeight == 0 {
 			selectedChannelId = 0
-			adaptivePercent = 0
+			selectedKind = ""
+			selectedPercent = 0
 		} else {
 			temporaryWeight := uint(0)
 			uniquePrimary := len(topLayerChannelIds) == 1 &&
-				topLayerChannelIds[0] == primaryRoute.ChannelId
+				topLayerChannelIds[0] == primaryRoute.ChannelId && primaryRoute.State.Participates()
 			if uniquePrimary {
 				temporaryWeight = uint(math.Round(
-					float64(channelMonitorSmartScheduleTemporaryWeightTotal) * adaptivePercent /
+					float64(channelMonitorSmartScheduleTemporaryWeightTotal) * selectedPercent /
 						channelMonitorScorePercentageTotal,
 				))
 				temporaryWeight = min(
 					max(temporaryWeight, 1), uint(channelMonitorSmartScheduleTemporaryWeightTotal-1),
 				)
 			} else {
-				exactWeight := float64(topLayerWeight) * adaptivePercent /
-					(channelMonitorScorePercentageTotal - adaptivePercent)
+				exactWeight := float64(topLayerWeight) * selectedPercent /
+					(channelMonitorScorePercentageTotal - selectedPercent)
 				if !math.IsNaN(exactWeight) && !math.IsInf(exactWeight, 0) && exactWeight >= 1 &&
 					exactWeight <= float64(^uint(0)) {
 					temporaryWeight = uint(math.Round(exactWeight))
@@ -1088,25 +1494,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 			}
 			if temporaryWeight == 0 {
 				selectedChannelId = 0
-				adaptivePercent = 0
+				selectedKind = ""
+				selectedPercent = 0
 			} else {
-				for _, route := range routes {
-					if route.State.BaseRank <= 0 || route.State.StabilityState != "" ||
-						route.State.RuntimeProtectionUntil > now {
-						continue
-					}
-					desiredPriority[route.ChannelId] = route.State.BasePriority
-					desiredWeight[route.ChannelId] = route.State.BaseWeight
-					if route.State.TemporaryTrafficKind != "" {
-						snapshots[route.ChannelId] = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-							LastPrioritySampleTime: route.State.LastPrioritySampleTime,
-						}
-					}
-				}
-				if primaryRoute.State.ManualPrimaryUntil > now {
-					desiredPriority[primaryRoute.ChannelId] = primaryRoute.Priority
-					desiredWeight[primaryRoute.ChannelId] = 1000
-				}
 				if uniquePrimary {
 					desiredWeight[primaryRoute.ChannelId] =
 						uint(channelMonitorSmartScheduleTemporaryWeightTotal) - temporaryWeight
@@ -1118,38 +1508,17 @@ func refreshChannelSmartScheduleAdaptivePool(
 						continue
 					}
 					temporarySince := route.State.TemporaryTrafficSince
-					lastPrioritySampleTime := route.State.LastPrioritySampleTime
-					if route.State.TemporaryTrafficKind != model.ChannelSmartScheduleTemporaryTrafficAdaptive ||
+					if route.State.TemporaryTrafficKind != selectedKind ||
 						temporarySince <= 0 {
 						temporarySince = now
-						lastPrioritySampleTime = now
 					}
 					snapshots[selectedChannelId] = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-						TemporaryTrafficKind:          model.ChannelSmartScheduleTemporaryTrafficAdaptive,
+						TemporaryTrafficKind:          selectedKind,
 						TemporaryTrafficSince:         temporarySince,
-						TemporaryTrafficTargetPercent: adaptivePercent,
+						TemporaryTrafficTargetPercent: selectedPercent,
 						ExplorationMaxPromptTokens:    policy.ExplorationMaxPromptTokens,
-						LastPrioritySampleTime:        lastPrioritySampleTime,
 					}
 					break
-				}
-			}
-		}
-	}
-	if selectedChannelId == 0 && existingAdaptive {
-		for _, route := range routes {
-			if route.State.BaseRank > 0 && route.State.StabilityState == "" &&
-				route.State.RuntimeProtectionUntil <= now {
-				desiredPriority[route.ChannelId] = route.State.BasePriority
-				desiredWeight[route.ChannelId] = route.State.BaseWeight
-				if route.State.ManualPrimaryUntil > now {
-					desiredPriority[route.ChannelId] = route.Priority
-					desiredWeight[route.ChannelId] = 1000
-				}
-			}
-			if route.State.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
-				snapshots[route.ChannelId] = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-					LastPrioritySampleTime: route.State.LastPrioritySampleTime,
 				}
 			}
 		}
@@ -1162,37 +1531,92 @@ func refreshChannelSmartScheduleAdaptivePool(
 		health, healthSet := healthByChannel[route.ChannelId]
 		healthChanged := healthSet &&
 			(health.State != route.State.AdaptiveHealthState ||
-				math.Abs(health.Pressure-route.State.AdaptiveHealthPressure) > channelMonitorRatioEpsilon)
+				math.Abs(health.Pressure-route.State.AdaptiveHealthPressure) > channelMonitorRatioEpsilon ||
+				math.Abs(health.FirstTokenWarningRequestPercent-route.State.AdaptiveHealthFirstTokenWarningRequestPercent) > channelMonitorRatioEpsilon ||
+				health.SampleCount != route.State.AdaptiveHealthSampleCount ||
+				health.LastSampleAt != route.State.AdaptiveHealthLastSampleAt)
+		rolling := rollingStabilityByChannel[route.ChannelId]
+		var rollingScore *float64
+		rollingSampleCount := int64(0)
+		rollingSlowCount := int64(0)
+		rollingAllowedSlowCount := int64(0)
+		if rolling != nil {
+			rollingScore = rolling.Stability
+			rollingSampleCount = rolling.StabilitySampleCount
+			rollingSlowCount = rolling.JitterSlowCount
+			rollingAllowedSlowCount = rolling.JitterAllowedCount
+		}
+		rollingScoreChanged := (rollingScore == nil) != (route.State.RollingStabilityScore == nil)
+		if rollingScore != nil && route.State.RollingStabilityScore != nil {
+			rollingScoreChanged = math.Abs(*rollingScore-*route.State.RollingStabilityScore) > channelMonitorRatioEpsilon
+		}
+		rollingChanged := rollingScoreChanged ||
+			rollingSampleCount != route.State.RollingStabilitySampleCount ||
+			rollingSlowCount != route.State.RollingStabilitySlowCount ||
+			rollingAllowedSlowCount != route.State.RollingStabilityAllowedSlowCount ||
+			route.State.RollingStabilityUpdatedAt != now
+		lastSamplingAt := route.State.LastSamplingAt
+		isSamplingCandidate := route.ChannelId == selectedChannelId
+		if isSamplingCandidate && !route.State.SamplingCandidate {
+			lastSamplingAt = now
+		}
+		samplingChanged := route.State.SamplingDebt != debtByChannel[route.ChannelId] ||
+			route.State.SamplingCandidate != isSamplingCandidate ||
+			route.State.SamplingOrder != policy.SamplingOrder ||
+			route.State.LastSamplingAt != lastSamplingAt
 		snapshot := snapshots[route.ChannelId]
 		snapshotChanged := snapshot != nil &&
 			(snapshot.TemporaryTrafficKind != route.State.TemporaryTrafficKind ||
 				snapshot.TemporaryTrafficSince != route.State.TemporaryTrafficSince ||
 				math.Abs(snapshot.TemporaryTrafficTargetPercent-route.State.TemporaryTrafficTargetPercent) > channelMonitorRatioEpsilon ||
-				snapshot.ExplorationMaxPromptTokens != route.State.ExplorationMaxPromptTokens ||
-				snapshot.LastPrioritySampleTime != route.State.LastPrioritySampleTime)
+				snapshot.ExplorationMaxPromptTokens != route.State.ExplorationMaxPromptTokens)
+		runtimeRecovery := runtimeRecoveryByChannel[route.ChannelId]
 		applyPriorityWeight := route.State.Participates() && route.Enabled &&
-			route.ChannelStatus == common.ChannelStatusEnabled && route.State.StabilityState == "" &&
+			route.ChannelStatus == common.ChannelStatusEnabled &&
+			(route.State.StabilityState == "" || runtimeRecovery) &&
 			route.State.RuntimeProtectionUntil <= now &&
 			(desiredPriority[route.ChannelId] != route.Priority || desiredWeight[route.ChannelId] != route.Weight)
-		changed := healthChanged || snapshotChanged || applyPriorityWeight
+		changed := healthChanged || rollingChanged || samplingChanged || snapshotChanged ||
+			applyPriorityWeight || runtimeRecovery
 		hasChanges = hasChanges || changed
-		trafficStateChanged = trafficStateChanged || snapshotChanged
+		trafficStateChanged = trafficStateChanged || snapshotChanged || runtimeRecovery
 		update := model.ChannelSmartScheduleRouteResultUpdate{
 			ChannelId: route.ChannelId, Group: route.Group, Model: route.Model,
 			Priority: desiredPriority[route.ChannelId], Weight: desiredWeight[route.ChannelId],
 			PoolGuard: true, ObservationOnly: !changed, AdaptiveOverlayOnly: true,
 			ExpectedRevision:         route.State.Revision,
 			ExpectedControlRevision:  expectedControlRevision,
+			ExpectedEconomicRevision: economicSnapshot.Revision,
 			ExpectedParticipationSet: route.State.ParticipationSet,
 			ExpectedExcluded:         route.State.Excluded,
 			ExpectedAbilityEnabled:   route.Enabled,
 			ExpectedChannelStatus:    route.ChannelStatus,
 			ExpectedPriority:         route.Priority, ExpectedWeight: route.Weight,
-			ApplyPriorityWeight: applyPriorityWeight,
-			RoutingSnapshot:     snapshot,
+			ApplyPriorityWeight:              applyPriorityWeight,
+			RoutingSnapshot:                  snapshot,
+			RollingStabilitySet:              true,
+			RollingStabilityScore:            rollingScore,
+			RollingStabilitySampleCount:      rollingSampleCount,
+			RollingStabilitySlowCount:        rollingSlowCount,
+			RollingStabilityAllowedSlowCount: rollingAllowedSlowCount,
+			RollingStabilityUpdatedAt:        now,
+			SamplingStateSet:                 true,
+			SamplingDebt:                     debtByChannel[route.ChannelId],
+			SamplingCandidate:                isSamplingCandidate,
+			SamplingOrder:                    policy.SamplingOrder,
+			LastSamplingAt:                   lastSamplingAt,
 		}
 		if healthSet {
 			channelSmartScheduleAttachHealthUpdate(&update, health)
+		}
+		if runtimeRecovery {
+			protectionUntil := int64(0)
+			update.RuntimeStabilityRecovery = true
+			update.Status = model.ChannelSmartScheduleStatusSucceeded
+			update.Error = "滚动稳定性得分达到恢复阈值，已立即解除稳定性试放"
+			update.Time = now
+			update.Stability = &model.ChannelSmartScheduleStabilityUpdate{}
+			update.RuntimeProtectionUntil = &protectionUntil
 		}
 		updates = append(updates, update)
 	}
@@ -1206,15 +1630,25 @@ func refreshChannelSmartScheduleAdaptivePool(
 	}
 	conflict := len(outcomes) != len(updates)
 	routingChanged := false
+	runtimeRecovered := false
 	for _, outcome := range outcomes {
 		conflict = conflict || !outcome.Applied
 		routingChanged = routingChanged || outcome.RoutingChanged
+		if outcome.Applied && outcome.ObservationSince > 0 {
+			runtimeRecovered = true
+			clearChannelSmartScheduleRuntimeHealth(
+				outcome.Key.ChannelId, outcome.Key.Model, outcome.ObservationSince,
+			)
+		}
 	}
 	if !conflict && (routingChanged || trafficStateChanged) {
 		if cacheErr := model.RefreshChannelSmartScheduleRoutePoolCache(poolKey.group, poolKey.model); cacheErr != nil {
 			common.SysError("刷新自适应备援路由缓存失败: " + cacheErr.Error())
 			model.InitChannelCache()
 		}
+	}
+	if !conflict && runtimeRecovered {
+		enqueueChannelSmartScheduleAdaptivePoolRefresh(poolKey.group, poolKey.model)
 	}
 	return conflict, nil
 }

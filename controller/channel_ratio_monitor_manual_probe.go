@@ -124,18 +124,33 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		value := durationMs
 		sampleDurationMs = &value
 	}
+	recoveryRequest, recoveryErr := channelSmartScheduleProbeRecoveryRequest(
+		channel.Id,
+		routeModelName,
+		probeTime,
+		false,
+		message,
+	)
+	if recoveryErr != nil {
+		common.SysError(fmt.Sprintf(
+			"保存手动渠道测试恢复状态前读取路由失败: channel_id=%d model=%s err=%s",
+			channel.Id, modelName, recoveryErr.Error(),
+		))
+		return false, "恢复状态读取失败，请查看服务端日志"
+	}
 	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
-		ChannelId:    channel.Id,
-		Model:        routeModelName,
-		Source:       model.ChannelSmartScheduleSampleSourceManualTest,
-		SampleId:     sampleId,
-		WindowStart:  windowStart,
-		Time:         probeTime,
-		Success:      succeeded,
-		Error:        message,
-		DurationMs:   sampleDurationMs,
-		FirstTokenMs: result.firstResponseMilliseconds,
-		TPS:          result.tokensPerSecond,
+		ChannelId:     channel.Id,
+		Model:         routeModelName,
+		Source:        model.ChannelSmartScheduleSampleSourceManualTest,
+		SampleId:      sampleId,
+		WindowStart:   windowStart,
+		Time:          probeTime,
+		Success:       succeeded,
+		Error:         message,
+		DurationMs:    sampleDurationMs,
+		FirstTokenMs:  result.firstResponseMilliseconds,
+		TPS:           result.tokensPerSecond,
+		ProbeRecovery: recoveryRequest,
 	})
 	if err != nil {
 		common.SysError(fmt.Sprintf(
@@ -144,8 +159,11 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		))
 		return false, "样本保存失败，请查看服务端日志"
 	}
+	applyChannelSmartScheduleProbeRecoveryResult(channel.Id, routeModelName, recoveryRequest)
 	if !succeeded && result.newAPIError != nil {
-		protectChannelSmartScheduleRuntimeFailure(channel.Id, modelName, result.newAPIError)
+		protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
+			channel.Id, modelName, result.newAPIError,
+		)
 	}
 	if succeeded {
 		observeChannelSmartScheduleRuntimeProbeSuccess(channel.Id, routeModelName)

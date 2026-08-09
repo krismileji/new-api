@@ -113,7 +113,9 @@ func TestChannelSmartScheduleSampleSeriesAdaptiveHealthUsesWindowRequestClasses(
 	assert.Equal(t, int64(2), metric.SlowRequestCount)
 	assert.Equal(t, int64(3), metric.HealthyRequestCount)
 	assert.Equal(t, int64(3), metric.FirstTokenCount)
+	assert.InDelta(t, 19_000, metric.FirstTokenTotalMs, 1e-9)
 	assert.Equal(t, int64(1), metric.TPSSampleCount)
+	assert.InDelta(t, 20, metric.TPSTotal, 1e-9)
 	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
 	assert.Equal(t, int64(220), metric.LastUsedTime)
 }

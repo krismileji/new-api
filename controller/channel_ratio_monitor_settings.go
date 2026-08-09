@@ -65,6 +65,8 @@ const (
 	channelMonitorSmartScheduleSampleOff                       = "off"
 	channelMonitorSmartScheduleSampleTraffic                   = "traffic"
 	channelMonitorSmartScheduleSampleProbe                     = "probe"
+	channelMonitorSmartScheduleSamplingOrderPriorityWeight     = "priority_weight"
+	channelMonitorSmartScheduleSamplingOrderRatio              = "ratio"
 	maxChannelMonitorAutoUpdateIntervalMinutes                 = 525600
 	maxChannelMonitorAutoUpdateRetryCount                      = 10
 	minChannelMonitorUpstreamRequestTimeoutSeconds             = 1

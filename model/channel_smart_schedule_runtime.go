@@ -57,6 +57,7 @@ type channelSmartScheduleAdaptiveHealthLog struct {
 	IsStream         bool
 	CompletionTokens int
 	UseTime          int
+	IsRetryAttempt   bool
 	Other            string
 	CreatedAt        int64
 }
@@ -119,7 +120,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	}
 	query := LOG_DB.WithContext(ctx).
 		Model(&Log{}).
-		Select("channel_id, model_name, type, is_stream, completion_tokens, use_time, other, created_at").
+		Select("channel_id, model_name, type, is_stream, completion_tokens, use_time, is_retry_attempt, other, created_at").
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
 		Where("channel_id IN ?", channelIdList).
 		Where("created_at >= ? AND created_at < ?", minimumStart, endTimestamp)
@@ -128,11 +129,16 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 		return nil, err
 	}
 	defer rows.Close()
+	firstTokenBuckets := make([]map[int]ChannelMonitorDurationBucket, len(results))
+	retryFailureBuckets := make([][6]int64, len(results))
+	actualFailureCounts := make([]int64, len(results))
+	configuredFinalFailureCounts := make([]int64, len(results))
+	retryFailureCounts := make([]int64, len(results))
 	for rows.Next() {
 		var log channelSmartScheduleAdaptiveHealthLog
 		if err := rows.Scan(
 			&log.ChannelId, &log.ModelName, &log.Type, &log.IsStream, &log.CompletionTokens,
-			&log.UseTime, &log.Other, &log.CreatedAt,
+			&log.UseTime, &log.IsRetryAttempt, &log.Other, &log.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -151,19 +157,60 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 			}
 			metric := &results[index].Metric
 			if log.Type == LogTypeError {
-				if parsed && (parsedOther.FinalRetrySummary || channelMonitorMinuteRateLimited(parsedOther.StatusCode)) {
+				if parsed && channelMonitorMinuteRateLimited(parsedOther.StatusCode) {
+					continue
+				}
+				if parsed && parsedOther.FinalRetrySummary {
+					configuredFinalFailureCounts[index]++
 					continue
 				}
 				metric.RequestCount++
 				metric.FailureCount++
 				metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
+				actualFailureCounts[index]++
+				if !log.IsRetryAttempt {
+					configuredFinalFailureCounts[index]++
+					continue
+				}
+				retryFailureCounts[index]++
+				durationMs := int64(log.UseTime)
+				if durationMs < 0 {
+					durationMs = 0
+				} else if durationMs > math.MaxInt64/1000 {
+					durationMs = math.MaxInt64
+				} else {
+					durationMs *= 1000
+				}
+				if parsed && parsedOther.AttemptDurationMs != nil && *parsedOther.AttemptDurationMs >= 0 {
+					durationMs = *parsedOther.AttemptDurationMs
+				}
+				metric.RetryFailureDurationTotalMs += float64(durationMs)
+				switch {
+				case durationMs < 1000:
+					retryFailureBuckets[index][0]++
+				case durationMs < 3000:
+					retryFailureBuckets[index][1]++
+				case durationMs < 10000:
+					retryFailureBuckets[index][2]++
+				case durationMs < 30000:
+					retryFailureBuckets[index][3]++
+				case durationMs < 60000:
+					retryFailureBuckets[index][4]++
+				default:
+					retryFailureBuckets[index][5]++
+				}
 				continue
 			}
 			metric.RequestCount++
+			metric.StabilitySuccessCount++
 			metric.HealthyRequestCount++
 			metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
 			if log.CompletionTokens > 0 && log.UseTime > 0 {
-				metric.TPSSampleCount++
+				tps := float64(log.CompletionTokens) / float64(log.UseTime)
+				if !math.IsNaN(tps) && !math.IsInf(tps, 0) {
+					metric.TPSSampleCount++
+					metric.TPSTotal += tps
+				}
 			}
 			if !log.IsStream || !parsed || parsedOther.FirstResponseTime == nil ||
 				*parsedOther.FirstResponseTime <= 0 ||
@@ -173,6 +220,15 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 			}
 			firstTokenMs := *parsedOther.FirstResponseTime
 			metric.FirstTokenCount++
+			metric.FirstTokenTotalMs += firstTokenMs
+			if firstTokenBuckets[index] == nil {
+				firstTokenBuckets[index] = make(map[int]ChannelMonitorDurationBucket)
+			}
+			bucketIndex := channelMonitorDurationBucketIndex(firstTokenMs)
+			bucket := firstTokenBuckets[index][bucketIndex]
+			bucket.Count++
+			bucket.TotalMs += firstTokenMs
+			firstTokenBuckets[index][bucketIndex] = bucket
 			metric.LatencyPressure += channelSmartScheduleAdaptiveLatencyPressure(
 				firstTokenMs, window.Window.WarningSeconds, window.Window.CriticalSeconds,
 			)
@@ -184,6 +240,24 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	for index := range results {
+		metric := &results[index].Metric
+		failureCount := max(actualFailureCounts[index], configuredFinalFailureCounts[index])
+		finalFailureCount := min(configuredFinalFailureCounts[index], failureCount)
+		retryFailureCount := min(max(retryFailureCounts[index], int64(0)), failureCount-finalFailureCount)
+		metric.StabilityFailureCount = failureCount
+		metric.StabilityFinalFailureCount = finalFailureCount
+		metric.StabilityRetryFailureCount = retryFailureCount
+		metric.RetryFailureDurationBuckets = []ChannelMonitorFailureDurationBucket{
+			{LowerBoundMs: 0, UpperBoundMs: 1000, Count: retryFailureBuckets[index][0]},
+			{LowerBoundMs: 1000, UpperBoundMs: 3000, Count: retryFailureBuckets[index][1]},
+			{LowerBoundMs: 3000, UpperBoundMs: 10000, Count: retryFailureBuckets[index][2]},
+			{LowerBoundMs: 10000, UpperBoundMs: 30000, Count: retryFailureBuckets[index][3]},
+			{LowerBoundMs: 30000, UpperBoundMs: 60000, Count: retryFailureBuckets[index][4]},
+			{LowerBoundMs: 60000, UpperBoundMs: 0, Count: retryFailureBuckets[index][5]},
+		}
+		metric.FirstTokenDurationBuckets = channelMonitorDurationBucketsFromAggregates(firstTokenBuckets[index])
 	}
 	return results, nil
 }

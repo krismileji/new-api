@@ -177,7 +177,7 @@ func TestPlanChannelSmartScheduleComparesFirstTokenAfterTwoSamples(t *testing.T)
 	}
 }
 
-func TestPlanChannelSmartSchedulePriorityWeightPreservesRoutingBelowComparableThreshold(t *testing.T) {
+func TestPlanChannelSmartSchedulePriorityWeightAssignsUniqueRoutingBelowComparableThreshold(t *testing.T) {
 	cheap := 1.0
 	expensive := 2.0
 	plan := planChannelSmartScheduleWithScoring(
@@ -208,10 +208,10 @@ func TestPlanChannelSmartSchedulePriorityWeightPreservesRoutingBelowComparableTh
 		assert.False(t, item.Scored)
 		assert.Contains(t, item.SkipReason, "可比渠道不足（2/3）")
 	}
-	assert.Equal(t, int64(100), items[1].TargetPriority)
-	assert.Equal(t, uint(900), items[1].TargetWeight)
-	assert.Equal(t, int64(80), items[2].TargetPriority)
-	assert.Equal(t, uint(100), items[2].TargetWeight)
+	assert.Equal(t, int64(2), items[1].TargetPriority)
+	assert.Equal(t, uint(1000), items[1].TargetWeight)
+	assert.Equal(t, int64(1), items[2].TargetPriority)
+	assert.Equal(t, uint(1000), items[2].TargetWeight)
 
 	details := plan.Details[1]
 	require.NotNil(t, details)
@@ -259,54 +259,81 @@ func TestPlanChannelSmartScheduleWeightPreservesRoutingBelowComparableThreshold(
 
 func TestChannelSmartScheduleHealthUsesWindowRequestPercentages(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		AdaptiveSamplingEnabled:                   true,
-		MinSamples:                                5,
-		AdaptiveSamplingErrorWarningPercent:       5,
-		AdaptiveSamplingErrorCriticalPercent:      15,
-		AdaptiveSamplingFirstTokenWarningSeconds:  5,
-		AdaptiveSamplingFirstTokenCriticalSeconds: 10,
-		AdaptiveSamplingWindowSeconds:             600,
-		AdaptiveSamplingEnterRequestPercent:       10,
-		AdaptiveSamplingRecoverRequestPercent:     95,
+		AdaptiveSamplingEnabled:                         true,
+		MinSamples:                                      5,
+		AdaptiveSamplingErrorWarningPercent:             5,
+		AdaptiveSamplingErrorCriticalPercent:            15,
+		AdaptiveSamplingFirstTokenWarningSeconds:        5,
+		AdaptiveSamplingFirstTokenCriticalSeconds:       10,
+		AdaptiveSamplingWindowSeconds:                   600,
+		AdaptiveSamplingFirstTokenWarningRequestPercent: 10,
+		AdaptiveSamplingRecoverRequestPercent:           95,
 	}
-	risky := model.ChannelSmartScheduleAdaptiveHealthMetric{
-		RequestCount: 10, FailureCount: 2, HealthyRequestCount: 8, LastUsedTime: 100,
+	errorOnly := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 100, FailureCount: 6, HealthyRequestCount: 94, LastUsedTime: 100,
 	}
 
-	first := channelSmartScheduleEvaluateHealth(model.ChannelSmartScheduleRouteState{}, risky, policy)
-	assert.Equal(t, channelSmartScheduleHealthHighRisk, first.State)
-	assert.InDelta(t, 20, first.RiskRequestPercent, 1e-9)
-	assert.InDelta(t, 80, first.HealthyRequestPercent, 1e-9)
-	assert.Equal(t, 600, first.WindowSeconds)
+	errorUpdate := channelSmartScheduleEvaluateHealth(model.ChannelSmartScheduleRouteState{}, errorOnly, policy)
+	assert.Equal(t, channelSmartScheduleHealthObserve, errorUpdate.State)
+	assert.Greater(t, errorUpdate.ErrorPressure, 0.0)
+	assert.InDelta(t, 6, errorUpdate.ErrorRequestPercent, 1e-9)
+	assert.InDelta(t, 6, errorUpdate.RiskRequestPercent, 1e-9)
+	assert.Zero(t, errorUpdate.FirstTokenWarningRequestPercent)
+	assert.Equal(t, 600, errorUpdate.WindowSeconds)
+
+	combinedBelowBothGates := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 100, FailureCount: 5, SlowRequestCount: 9, HealthyRequestCount: 86,
+		FirstTokenCount: 9, LatencyPressure: 9, LastUsedTime: 101,
+	}
+	combinedUpdate := channelSmartScheduleEvaluateHealth(
+		model.ChannelSmartScheduleRouteState{}, combinedBelowBothGates, policy,
+	)
+	assert.Equal(t, channelSmartScheduleHealthHealthy, combinedUpdate.State)
+	assert.Zero(t, combinedUpdate.ErrorPressure)
+	assert.InDelta(t, 14, combinedUpdate.RiskRequestPercent, 1e-9)
+	assert.InDelta(t, 9, combinedUpdate.FirstTokenWarningRequestPercent, 1e-9)
+
+	latencyAtBoundary := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 100, SlowRequestCount: 10, HealthyRequestCount: 90,
+		FirstTokenCount: 10, LastUsedTime: 102,
+	}
+	latencyUpdate := channelSmartScheduleEvaluateHealth(
+		model.ChannelSmartScheduleRouteState{}, latencyAtBoundary, policy,
+	)
+	assert.Equal(t, channelSmartScheduleHealthObserve, latencyUpdate.State)
+	assert.Zero(t, latencyUpdate.LatencyPressure)
+	assert.InDelta(t, 10, latencyUpdate.FirstTokenWarningRequestPercent, 1e-9)
 
 	previous := model.ChannelSmartScheduleRouteState{
-		AdaptiveHealthState: first.State,
+		AdaptiveHealthState: channelSmartScheduleHealthHighRisk,
 	}
 	mostlyHealthy := model.ChannelSmartScheduleAdaptiveHealthMetric{
 		RequestCount: 100, SlowRequestCount: 6, HealthyRequestCount: 94,
-		FirstTokenCount: 6, LastUsedTime: 101,
+		FirstTokenCount: 6, LastUsedTime: 103,
 	}
-	second := channelSmartScheduleEvaluateHealth(previous, mostlyHealthy, policy)
-	assert.Equal(t, channelSmartScheduleHealthHighRisk, second.State)
-	assert.InDelta(t, 94, second.HealthyRequestPercent, 1e-9)
+	notRecovered := channelSmartScheduleEvaluateHealth(previous, mostlyHealthy, policy)
+	assert.Equal(t, channelSmartScheduleHealthHighRisk, notRecovered.State)
+	assert.InDelta(t, 94, notRecovered.HealthyRequestPercent, 1e-9)
 
 	recovering := model.ChannelSmartScheduleAdaptiveHealthMetric{
 		RequestCount: 20, SlowRequestCount: 1, HealthyRequestCount: 19,
-		FirstTokenCount: 1, LatencyPressure: 1, LastUsedTime: 102,
+		FirstTokenCount: 1, LatencyPressure: 1, LastUsedTime: 104,
 	}
-	third := channelSmartScheduleEvaluateHealth(previous, recovering, policy)
-	assert.Equal(t, channelSmartScheduleHealthHealthy, third.State)
-	assert.InDelta(t, 95, third.HealthyRequestPercent, 1e-9)
+	recovered := channelSmartScheduleEvaluateHealth(previous, recovering, policy)
+	assert.Equal(t, channelSmartScheduleHealthHealthy, recovered.State)
+	assert.InDelta(t, 95, recovered.HealthyRequestPercent, 1e-9)
 
-	enterPolicy := policy
-	enterPolicy.AdaptiveSamplingErrorWarningPercent = 20
-	enterPolicy.AdaptiveSamplingErrorCriticalPercent = 30
-	atBoundary := model.ChannelSmartScheduleAdaptiveHealthMetric{
-		RequestCount: 10, FailureCount: 1, HealthyRequestCount: 9, LastUsedTime: 103,
+	overlappingRecoveryPolicy := policy
+	overlappingRecoveryPolicy.AdaptiveSamplingErrorWarningPercent = 1
+	overlappingRecoveryPolicy.AdaptiveSamplingErrorCriticalPercent = 11
+	activeError := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		RequestCount: 100, FailureCount: 2, HealthyRequestCount: 98, LastUsedTime: 105,
 	}
-	fourth := channelSmartScheduleEvaluateHealth(model.ChannelSmartScheduleRouteState{}, atBoundary, enterPolicy)
-	assert.Equal(t, channelSmartScheduleHealthObserve, fourth.State)
-	assert.InDelta(t, 10, fourth.RiskRequestPercent, 1e-9)
+	stillUnderPressure := channelSmartScheduleEvaluateHealth(
+		previous, activeError, overlappingRecoveryPolicy,
+	)
+	assert.Equal(t, channelSmartScheduleHealthObserve, stillUnderPressure.State)
+	assert.InDelta(t, 2, stillUnderPressure.ErrorRequestPercent, 1e-9)
 }
 
 func TestChannelSmartScheduleAdaptiveSamplingBudgetUsesConfiguredPressure(t *testing.T) {

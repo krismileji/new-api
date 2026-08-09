@@ -41,9 +41,9 @@ export function ChannelMonitorSmartScheduleRouteState(
   } else if (route.state.stability_state === 'probing') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`
   } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
-    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`
   } else if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
-    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`
+    clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`
   }
   if (
     route.channel_status === CHANNEL_STATUS.ENABLED &&
@@ -107,9 +107,9 @@ export function ChannelMonitorSmartScheduleRouteState(
         variant='warning'
         className='cursor-pointer'
         onClick={props.onProtectedStatusClick}
-        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的探索流量`}
+        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`}
       >
-        样本不足补量
+        统一探索采样
       </Badge>
     )
   }
@@ -120,14 +120,11 @@ export function ChannelMonitorSmartScheduleRouteState(
         variant='warning'
         className='cursor-pointer'
         onClick={props.onProtectedStatusClick}
-        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的健康应急采样`}
+        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`}
       >
-        健康应急采样
+        自适应备援采样
       </Badge>
     )
-  }
-  if (route.state.temporary_traffic_kind === 'priority_sampling') {
-    return <Badge variant='warning'>低优先级轮转</Badge>
   }
   if (!channelMonitorSmartScheduleRouteParticipates(route)) {
     return <Badge variant='outline'>未参与</Badge>

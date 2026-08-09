@@ -74,6 +74,7 @@ const formValues = {
       },
       applyMode: 'priority_weight',
       models: ['gpt-5'],
+      modelOrder: [],
       minSamples: 20,
       recoveryStabilityScore: 95,
       fastFailurePenaltyPercent: 40,
@@ -87,16 +88,12 @@ const formValues = {
       recoverySuccessThreshold: 4,
       cooldownMinutes: 30,
       sampleMode: 'probe',
+      samplingOrder: 'ratio',
       explorationTrafficPercent: 3,
-      explorationMaxPromptTokens: 16_384,
-      stabilityReleaseMaxPromptTokens: 0,
+      explorationMaxPromptKTokens: 50,
+      stabilityReleaseMaxPromptKTokens: 0,
       probeIntervalMinutes: 15,
       degradedProbeEnabled: false,
-      prioritySamplingEnabled: true,
-      prioritySamplingIntervalMinutes: 10,
-      prioritySamplingBasePercent: 3,
-      prioritySamplingDecayPercent: 70,
-      prioritySamplingMinPercent: 0.5,
       adaptiveSamplingEnabled: true,
       adaptiveSamplingBasePercent: 3,
       adaptiveSamplingMaxPercent: 30,
@@ -106,7 +103,7 @@ const formValues = {
       adaptiveSamplingFirstTokenWarningSeconds: 5,
       adaptiveSamplingFirstTokenCriticalSeconds: 10,
       adaptiveSamplingWindowSeconds: 600,
-      adaptiveSamplingEnterRequestPercent: 10,
+      adaptiveSamplingFirstTokenWarningRequestPercent: 10,
       adaptiveSamplingRecoverRequestPercent: 95,
       adaptiveSamplingSwitchConfirmRequestPercent: 95,
       adaptiveSamplingMinComparableChannels: 2,
@@ -155,6 +152,10 @@ describe('channel monitor settings submit payload', () => {
       'probe'
     )
     assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.sampling_order,
+      'ratio'
+    )
+    assert.equal(
       payload.smart_schedule_group_policies?.[0]?.probe_interval_minutes,
       15
     )
@@ -164,26 +165,33 @@ describe('channel monitor settings submit payload', () => {
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.exploration_max_prompt_tokens,
-      16_384
+      50_000
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]
         ?.stability_release_max_prompt_tokens,
       0
     )
-    assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.priority_sampling_enabled,
-      true
-    )
+    for (const removedField of [
+      'priority_sampling_enabled',
+      'priority_sampling_interval_minutes',
+      'priority_sampling_base_percent',
+      'priority_sampling_decay_percent',
+      'priority_sampling_min_percent',
+      'adaptive_sampling_enter_request_percent',
+    ]) {
+      assert.equal(
+        Object.hasOwn(
+          payload.smart_schedule_group_policies?.[0] ?? {},
+          removedField
+        ),
+        false
+      )
+    }
     assert.equal(
       payload.smart_schedule_group_policies?.[0]
-        ?.priority_sampling_interval_minutes,
+        ?.adaptive_sampling_first_token_warning_request_percent,
       10
-    )
-    assert.equal(
-      payload.smart_schedule_group_policies?.[0]
-        ?.priority_sampling_decay_percent,
-      70
     )
     assert.equal(payload.smart_schedule_performance_window_minutes, 60)
     assert.equal(payload.smart_schedule_stability_window_minutes, 120)

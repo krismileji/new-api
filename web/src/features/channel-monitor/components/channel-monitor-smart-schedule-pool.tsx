@@ -55,6 +55,12 @@ import {
   formatChannelMonitorSmartScheduleTemporaryTraffic,
   getChannelMonitorSmartScheduleTemporaryTrafficLabel,
 } from '../lib/smart-schedule-display'
+import { getChannelMonitorSmartScheduleSamplingOrderLabel } from '../lib/smart-schedule-options'
+import {
+  channelMonitorSmartScheduleKTokensToTokens,
+  channelMonitorSmartScheduleTokensToKTokens,
+  formatChannelMonitorSmartScheduleKTokens,
+} from '../lib/smart-schedule-prompt-tokens'
 import {
   channelMonitorSmartScheduleRouteKey,
   channelMonitorSmartScheduleRouteIsTrafficPaused,
@@ -149,7 +155,6 @@ const ATTENTION_STATUSES =
     'degraded',
     'probing',
     'insufficient_samples',
-    'priority_sampling',
     'adaptive_sampling',
     'failed',
     'paused',
@@ -160,8 +165,7 @@ function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
   if (status === '稳定性降级' || status === '最近失败') return 'destructive'
   if (
     status === '稳定性试放' ||
-    status === '样本不足补量' ||
-    status === '低优先级轮转' ||
+    status === '统一采样' ||
     status === '保本兜底接管' ||
     status === '流量已暂停' ||
     status === '部分流量暂停' ||
@@ -180,12 +184,26 @@ function formatSampleMode(
   if (policy.sample_mode === 'traffic') {
     const maxPromptTokens =
       policy.exploration_max_prompt_tokens ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptTokens
+      channelMonitorSmartScheduleKTokensToTokens(
+        DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptKTokens
+      )
     return maxPromptTokens === 0
       ? `探索流量 ${policy.exploration_traffic_percent}% · 无限制`
-      : `探索流量 ${policy.exploration_traffic_percent}% · ≤ ${maxPromptTokens} Token`
+      : `探索流量 ${policy.exploration_traffic_percent}% · ≤ ${formatChannelMonitorSmartScheduleKTokens(
+          channelMonitorSmartScheduleTokensToKTokens(maxPromptTokens)
+        )}`
   }
   return `每 ${policy.probe_interval_minutes} 分钟文本探测`
+}
+
+function formatSamplingOrder(
+  policy: ChannelMonitorSmartScheduleGroupPolicy | undefined
+) {
+  if (!policy) return '采样顺序 -'
+  return `采样顺序 ${getChannelMonitorSmartScheduleSamplingOrderLabel(
+    policy.sampling_order,
+    true
+  )}`
 }
 
 function routeMatchesFilter(
@@ -241,7 +259,14 @@ function RouteSamples(props: {
     performanceSharedSampleCount === 0 &&
     stabilitySharedSampleCount === 0
   ) {
-    return <span className='text-muted-foreground text-xs'>窗口内暂无样本</span>
+    return (
+      <div className='flex flex-col gap-0.5 text-xs'>
+        <span className='text-muted-foreground'>窗口内暂无样本</span>
+        <span className='font-medium'>
+          样本欠账 {props.route.state.sampling_debt}
+        </span>
+      </div>
+    )
   }
 
   let stabilityLabel = '稳定性 -'
@@ -259,7 +284,11 @@ function RouteSamples(props: {
     props.performance?.average_tps == null
       ? 'TPS -'
       : `TPS ${props.performance.average_tps.toFixed(2)}`
-  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，其中测试/探测 ${stabilitySharedSampleCount} 次，${stabilityLabel}；性能窗口有效 ${performanceSampleCount} 次，其中业务 ${businessPerformanceSampleCount} 次、测试/探测 ${performanceSharedSampleCount} 次，${firstTokenLabel}，${tpsLabel}`
+  const rollingStabilityLabel =
+    props.route.state.rolling_stability_score == null
+      ? '滚动稳定性 -'
+      : `滚动稳定性 ${(props.route.state.rolling_stability_score * 100).toFixed(1)} 分 · 慢成功 ${props.route.state.rolling_stability_slow_count}/${props.route.state.rolling_stability_allowed_slow_count}`
+  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，其中测试/探测 ${stabilitySharedSampleCount} 次，${stabilityLabel}；性能窗口有效 ${performanceSampleCount} 次，其中业务 ${businessPerformanceSampleCount} 次、测试/探测 ${performanceSharedSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${rollingStabilityLabel}；样本欠账 ${props.route.state.sampling_debt}`
 
   return (
     <div className='min-w-0 text-xs tabular-nums' title={detail}>
@@ -270,7 +299,41 @@ function RouteSamples(props: {
         性能 {performanceSampleCount} 次（业务 {businessPerformanceSampleCount}{' '}
         + 测试 {performanceSharedSampleCount}）· {firstTokenLabel} · {tpsLabel}
       </div>
+      <div className='mt-0.5 truncate font-medium'>
+        样本欠账 {props.route.state.sampling_debt} · {rollingStabilityLabel}
+      </div>
     </div>
+  )
+}
+
+function RouteAdaptiveHealthSummary(props: {
+  route: ChannelMonitorSmartScheduleRoute
+  placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
+}) {
+  if (!props.placement?.isActualPrimary) return null
+  const details =
+    props.route.current_window_score_details ??
+    props.route.state.last_schedule_score_details
+  const state = props.route.state.adaptive_health_state || details?.health.state
+  const stateLabels: Record<string, string> = {
+    unknown: '未知',
+    healthy: '健康',
+    observation: '观察',
+    pressure: '压力',
+    high_risk: '高风险',
+  }
+  const stateLabel = state ? stateLabels[state] : undefined
+  if (!stateLabel && !details?.health.evidence) return null
+  return (
+    <span
+      className='text-muted-foreground mt-1 block text-[11px] leading-4'
+      title='主渠道自适应备援秒级窗口状态'
+    >
+      软健康 {stateLabel ?? '-'}
+      {details?.health.evidence
+        ? ` · 错误 ${details.health.error_request_percent.toFixed(1)}% · 首字告警 ${details.health.first_token_warning_request_percent.toFixed(1)}% · 风险 ${details.health.risk_request_percent.toFixed(1)}% · 健康 ${details.health.healthy_request_percent.toFixed(1)}%`
+        : ''}
+    </span>
   )
 }
 
@@ -310,10 +373,23 @@ function PoolDecisionSummary(props: {
       formatPoolChannelReference(props.pool.routes, channelId)
     )
     .join('、')
+  const decision = props.pool.routes
+    .map(
+      (route) =>
+        route.current_window_score_details?.decision ??
+        route.state.last_schedule_score_details?.decision
+    )
+    .find((item) => item != null)
+  const nonSwitchReason =
+    summary.scoringWinnerChannelId > 0 &&
+    summary.actualPrimaryChannelId > 0 &&
+    summary.scoringWinnerChannelId !== summary.actualPrimaryChannelId
+      ? decision?.selection_reason || decision?.reason || '未记录未切换原因'
+      : '当前无需切换'
 
   return (
     <div
-      className='bg-muted/10 grid gap-x-5 gap-y-3 border-b px-4 py-3 sm:grid-cols-3'
+      className='bg-muted/10 grid gap-x-5 gap-y-3 border-b px-4 py-3 sm:grid-cols-2 lg:grid-cols-4'
       aria-label='调度池决策结果'
     >
       <div className='min-w-0'>
@@ -340,6 +416,12 @@ function PoolDecisionSummary(props: {
           {summary.actualHighestPriority == null
             ? '-'
             : `P${summary.actualHighestPriority} · ${topLayer || '未记录渠道'}`}
+        </div>
+      </div>
+      <div className='min-w-0'>
+        <div className='text-muted-foreground text-[11px]'>未切换原因</div>
+        <div className='mt-0.5 text-xs font-medium break-words'>
+          {nonSwitchReason}
         </div>
       </div>
     </div>
@@ -371,18 +453,36 @@ function RouteDecisionBadges(props: {
 function RouteTemporaryTraffic(props: {
   route: ChannelMonitorSmartScheduleRoute
 }) {
+  const samplingOrderLabel = props.route.state.sampling_order
+    ? getChannelMonitorSmartScheduleSamplingOrderLabel(
+        props.route.state.sampling_order,
+        true
+      )
+    : '-'
   if (!props.route.state.temporary_traffic_kind) {
-    return <span className='text-muted-foreground'>-</span>
+    return (
+      <div className='flex flex-col gap-0.5'>
+        <span className='text-muted-foreground'>当前未采样</span>
+        {props.route.state.sampling_candidate ? (
+          <span className='text-muted-foreground text-[11px]'>
+            候选 · 欠账 {props.route.state.sampling_debt} · 顺序{' '}
+            {samplingOrderLabel}
+          </span>
+        ) : null}
+      </div>
+    )
   }
   return (
     <div className='flex flex-col gap-0.5'>
-      <span className='font-medium'>
+      <span className='font-medium'>当前采样渠道</span>
+      <span>
         {getChannelMonitorSmartScheduleTemporaryTrafficLabel(
           props.route.state.temporary_traffic_kind
         )}
       </span>
       <span className='text-muted-foreground font-mono'>
-        目标 {props.route.state.temporary_traffic_target_percent.toFixed(1)}%
+        目标 {props.route.state.temporary_traffic_target_percent.toFixed(1)}% ·
+        欠账 {props.route.state.sampling_debt} · 顺序 {samplingOrderLabel}
       </span>
     </div>
   )
@@ -685,6 +785,7 @@ export function ChannelMonitorSmartSchedulePool(
               <span>流量暂停 {props.pool.summary.pausedCount} 条</span>
             ) : null}
             <span>{formatSampleMode(props.policy)}</span>
+            <span>{formatSamplingOrder(props.policy)}</span>
           </p>
         </div>
       </header>
@@ -811,7 +912,7 @@ export function ChannelMonitorSmartSchedulePool(
                   <th className='w-[9%] px-2 py-2 font-medium'>基础 P / W</th>
                   <th className='w-[9%] px-2 py-2 font-medium'>当前 P / W</th>
                   <th className='w-[14%] px-2 py-2 font-medium'>决策结果</th>
-                  <th className='w-[11%] px-2 py-2 font-medium'>临时流量</th>
+                  <th className='w-[11%] px-2 py-2 font-medium'>当前采样</th>
                   <th className='w-[8%] px-2 py-2 font-medium'>预计流量</th>
                   <th className='w-[15%] px-2 py-2 font-medium'>
                     窗口数据 / 测试样本
@@ -858,13 +959,19 @@ export function ChannelMonitorSmartSchedulePool(
                         </button>
                       </td>
                       <td className='px-2 py-2 align-middle'>
-                        <ChannelMonitorSmartScheduleRouteStatus
-                          route={route}
-                          placement={placement}
-                          onClearProtection={() =>
-                            props.onClearProtection(route)
-                          }
-                        />
+                        <div>
+                          <ChannelMonitorSmartScheduleRouteStatus
+                            route={route}
+                            placement={placement}
+                            onClearProtection={() =>
+                              props.onClearProtection(route)
+                            }
+                          />
+                          <RouteAdaptiveHealthSummary
+                            route={route}
+                            placement={placement}
+                          />
+                        </div>
                       </td>
                       <td className='px-2 py-2 align-middle font-mono'>
                         <span className='block'>
@@ -985,11 +1092,17 @@ export function ChannelMonitorSmartSchedulePool(
                         ID {route.channel_id} · {remark || '暂无备注'}
                       </span>
                     </button>
-                    <ChannelMonitorSmartScheduleRouteStatus
-                      route={route}
-                      placement={placement}
-                      onClearProtection={() => props.onClearProtection(route)}
-                    />
+                    <div className='text-right'>
+                      <ChannelMonitorSmartScheduleRouteStatus
+                        route={route}
+                        placement={placement}
+                        onClearProtection={() => props.onClearProtection(route)}
+                      />
+                      <RouteAdaptiveHealthSummary
+                        route={route}
+                        placement={placement}
+                      />
+                    </div>
                   </div>
 
                   <div className='mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-y py-2 text-xs'>
@@ -1041,7 +1154,7 @@ export function ChannelMonitorSmartSchedulePool(
                     </div>
                     <div>
                       <span className='text-muted-foreground block'>
-                        临时流量
+                        当前采样
                       </span>
                       <span className='font-medium'>
                         {formatChannelMonitorSmartScheduleTemporaryTraffic(

@@ -503,16 +503,14 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   recovery_success_threshold?: number
   cooldown_minutes: number
   sample_mode: ChannelMonitorSmartScheduleSampleMode
+  sampling_order: ChannelMonitorSmartScheduleSamplingOrder
   exploration_traffic_percent: number
+  /** API and persistence use the actual Token count, not K Token. */
   exploration_max_prompt_tokens?: number
+  /** API and persistence use the actual Token count, not K Token. */
   stability_release_max_prompt_tokens?: number
   probe_interval_minutes: number
   degraded_probe_enabled?: boolean
-  priority_sampling_enabled: boolean
-  priority_sampling_interval_minutes: number
-  priority_sampling_base_percent: number
-  priority_sampling_decay_percent: number
-  priority_sampling_min_percent: number
   adaptive_sampling_enabled: boolean
   adaptive_sampling_base_percent: number
   adaptive_sampling_max_percent: number
@@ -522,7 +520,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   adaptive_sampling_first_token_warning_seconds: number
   adaptive_sampling_first_token_critical_seconds: number
   adaptive_sampling_window_seconds: number
-  adaptive_sampling_enter_request_percent: number
+  adaptive_sampling_first_token_warning_request_percent: number
   adaptive_sampling_recover_request_percent: number
   adaptive_sampling_switch_confirm_request_percent: number
   adaptive_sampling_min_comparable_channels: number
@@ -595,6 +593,10 @@ export type ChannelMonitorSmartScheduleEconomicRole =
 
 export type ChannelMonitorSmartScheduleSampleMode = 'off' | 'traffic' | 'probe'
 
+export type ChannelMonitorSmartScheduleSamplingOrder =
+  | 'priority_weight'
+  | 'ratio'
+
 export type ChannelMonitorSmartScheduleScoreMetricInput = {
   value: number | null
   sample_count: number
@@ -665,7 +667,9 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     latency_pressure: number
     sample_count: number
     window_seconds: number
+    error_request_percent: number
     risk_request_percent: number
+    first_token_warning_request_percent: number
     healthy_request_percent: number
   }
   final_score: number | null
@@ -684,11 +688,7 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     applied_weight: number
     actual_highest_priority: number
     actual_top_layer_channel_ids: number[] | null
-    temporary_traffic_kind:
-      | ''
-      | 'insufficient_samples'
-      | 'priority_sampling'
-      | 'adaptive_sampling'
+    temporary_traffic_kind: '' | 'insufficient_samples' | 'adaptive_sampling'
     temporary_traffic_target_percent: number
     switch_threshold_percent: number
     primary_traffic_percent: number
@@ -709,11 +709,7 @@ export type ChannelMonitorSmartScheduleStabilityClearResult = {
 
 export type ChannelMonitorSmartScheduleExplorationClearResult = {
   cleared: boolean
-  previous_kind:
-    | ''
-    | 'insufficient_samples'
-    | 'priority_sampling'
-    | 'adaptive_sampling'
+  previous_kind: '' | 'insufficient_samples' | 'adaptive_sampling'
   priority: number
   weight: number
 }
@@ -741,16 +737,13 @@ export type ChannelMonitorSmartScheduleRouteState = {
   base_rank: number
   base_priority: number
   base_weight: number
-  temporary_traffic_kind:
-    | ''
-    | 'insufficient_samples'
-    | 'priority_sampling'
-    | 'adaptive_sampling'
+  temporary_traffic_kind: '' | 'insufficient_samples' | 'adaptive_sampling'
   temporary_traffic_since: number
   temporary_traffic_target_percent: number
+  /** Runtime API value in actual Tokens, not K Token. */
   exploration_max_prompt_tokens?: number
+  /** Runtime API value in actual Tokens, not K Token. */
   stability_release_max_prompt_tokens?: number
-  last_priority_sample_time: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean
   adaptive_health_state?:
@@ -761,8 +754,18 @@ export type ChannelMonitorSmartScheduleRouteState = {
     | 'pressure'
     | 'high_risk'
   adaptive_health_pressure?: number
+  adaptive_health_first_token_warning_request_percent?: number
   adaptive_health_sample_count?: number
   adaptive_health_last_sample_at?: number
+  rolling_stability_score: number | null
+  rolling_stability_sample_count: number
+  rolling_stability_slow_count: number
+  rolling_stability_allowed_slow_count: number
+  rolling_stability_updated_at: number
+  sampling_debt: number
+  sampling_candidate: boolean
+  sampling_order: '' | ChannelMonitorSmartScheduleSamplingOrder
+  last_sampling_at: number
 }
 
 export type ChannelMonitorSmartScheduleSharedSamples = {
@@ -771,6 +774,8 @@ export type ChannelMonitorSmartScheduleSharedSamples = {
   model: string
   window_start: number
   observation_since: number
+  recovery_success_count: number
+  recovery_success_at: number
   last_time: number
   last_success: boolean
   last_error: string

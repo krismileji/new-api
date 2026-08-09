@@ -133,16 +133,18 @@ func channelSmartScheduleWeightedScore(parts ...channelSmartScheduleScorePart) f
 }
 
 type channelSmartScheduleHealthUpdate struct {
-	State                 string
-	Pressure              float64
-	ErrorPressure         float64
-	LatencyPressure       float64
-	Evidence              bool
-	SampleCount           int64
-	LastSampleAt          int64
-	RiskRequestPercent    float64
-	HealthyRequestPercent float64
-	WindowSeconds         int
+	State                           string
+	Pressure                        float64
+	ErrorPressure                   float64
+	LatencyPressure                 float64
+	Evidence                        bool
+	SampleCount                     int64
+	LastSampleAt                    int64
+	ErrorRequestPercent             float64
+	RiskRequestPercent              float64
+	FirstTokenWarningRequestPercent float64
+	HealthyRequestPercent           float64
+	WindowSeconds                   int
 }
 
 func channelSmartScheduleLinearPressure(value, warning, critical float64) float64 {
@@ -175,28 +177,24 @@ func channelSmartScheduleEvaluateHealth(
 	policy channelSmartSchedulePolicy,
 ) channelSmartScheduleHealthUpdate {
 	update := channelSmartScheduleHealthUpdate{WindowSeconds: policy.AdaptiveSamplingWindowSeconds}
-	if !policy.AdaptiveSamplingEnabled {
-		update.State = ""
-		return update
-	}
 	update.SampleCount = metric.RequestCount
 	update.LastSampleAt = metric.LastUsedTime
 	if metric.RequestCount <= 0 {
 		update.State = channelSmartScheduleHealthUnknown
 		return update
 	}
-	riskRequestCount := min(
-		max(metric.FailureCount, int64(0))+max(metric.SlowRequestCount, int64(0)),
-		metric.RequestCount,
-	)
+	failureRequestCount := min(max(metric.FailureCount, int64(0)), metric.RequestCount)
+	slowFirstTokenRequestCount := min(max(metric.SlowRequestCount, int64(0)), metric.RequestCount)
+	riskRequestCount := min(failureRequestCount+slowFirstTokenRequestCount, metric.RequestCount)
 	healthyRequestCount := min(max(metric.HealthyRequestCount, int64(0)), metric.RequestCount)
+	update.ErrorRequestPercent = float64(failureRequestCount) / float64(metric.RequestCount) * 100
 	update.RiskRequestPercent = float64(riskRequestCount) / float64(metric.RequestCount) * 100
+	update.FirstTokenWarningRequestPercent = float64(slowFirstTokenRequestCount) /
+		float64(metric.RequestCount) * 100
 	update.HealthyRequestPercent = float64(healthyRequestCount) / float64(metric.RequestCount) * 100
 	if metric.RequestCount >= int64(policy.MinSamples) {
-		failureRate := float64(max(metric.FailureCount, int64(0))) /
-			float64(metric.RequestCount) * 100
 		update.ErrorPressure = channelSmartScheduleLinearPressure(
-			failureRate,
+			update.ErrorRequestPercent,
 			policy.AdaptiveSamplingErrorWarningPercent,
 			policy.AdaptiveSamplingErrorCriticalPercent,
 		)
@@ -228,18 +226,21 @@ func channelSmartScheduleEvaluateHealth(
 	if previousState == "" || previousState == channelSmartScheduleHealthUnknown {
 		previousState = channelSmartScheduleHealthHealthy
 	}
+	errorEntry := update.ErrorPressure > channelMonitorRatioEpsilon
+	firstTokenEntry := slowFirstTokenRequestCount > 0 &&
+		update.FirstTokenWarningRequestPercent >= policy.AdaptiveSamplingFirstTokenWarningRequestPercent
+	if errorEntry || firstTokenEntry {
+		if update.State == channelSmartScheduleHealthHealthy {
+			update.State = channelSmartScheduleHealthObserve
+		}
+		return update
+	}
 	if previousState != channelSmartScheduleHealthHealthy &&
 		update.HealthyRequestPercent >= policy.AdaptiveSamplingRecoverRequestPercent {
 		update.State = channelSmartScheduleHealthHealthy
 		return update
 	}
-	if update.RiskRequestPercent < policy.AdaptiveSamplingEnterRequestPercent {
-		update.State = previousState
-		return update
-	}
-	if update.State == channelSmartScheduleHealthHealthy {
-		update.State = channelSmartScheduleHealthObserve
-	}
+	update.State = previousState
 	return update
 }
 

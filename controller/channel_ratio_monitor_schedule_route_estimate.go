@@ -74,6 +74,14 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			ManualPrimary:        route.State.ManualPrimaryUntil > now,
 			PreviousBaseRank:     route.State.BaseRank,
 			ManualTargetPriority: currentPriority,
+			HealthState:          route.State.AdaptiveHealthState,
+			HealthPressure:       route.State.AdaptiveHealthPressure,
+			HealthEvidence: policy.MinSamples > 0 &&
+				route.State.AdaptiveHealthSampleCount >= int64(policy.MinSamples),
+			HealthSampleCount:                     route.State.AdaptiveHealthSampleCount,
+			HealthLastSampleAt:                    route.State.AdaptiveHealthLastSampleAt,
+			HealthFirstTokenWarningRequestPercent: route.State.AdaptiveHealthFirstTokenWarningRequestPercent,
+			HealthWindowSeconds:                   policy.AdaptiveSamplingWindowSeconds,
 			StabilityAvailable: logStabilityAvailable ||
 				policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
 				sampleMetricCache.metrics(modelKey, stabilityStart).SampleCount > 0,

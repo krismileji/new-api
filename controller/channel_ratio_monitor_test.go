@@ -585,6 +585,46 @@ func TestNormalizeChannelSmartScheduleGroupPolicyRequiresCurrentJitterThreshold(
 	assert.Contains(t, err.Error(), "必须完整配置")
 }
 
+func TestUpdateChannelMonitorSettingsRejectsDeletedSmartSchedulePolicyFields(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	serializedPolicy, err := common.Marshal(policy)
+	require.NoError(t, err)
+	deletedFields := []string{
+		"priority_sampling_enabled",
+		"priority_sampling_interval_minutes",
+		"priority_sampling_base_percent",
+		"priority_sampling_decay_percent",
+		"priority_sampling_min_percent",
+		"adaptive_sampling_enter_rounds",
+		"adaptive_sampling_recover_rounds",
+		"adaptive_sampling_switch_confirm_rounds",
+		"adaptive_sampling_exploration_lease_minutes",
+		"adaptive_sampling_enter_request_percent",
+	}
+
+	for _, deletedField := range deletedFields {
+		t.Run(deletedField, func(t *testing.T) {
+			var policyFields map[string]any
+			require.NoError(t, common.Unmarshal(serializedPolicy, &policyFields))
+			policyFields[deletedField] = 1
+
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+				"smart_schedule_group_policies": []map[string]any{policyFields},
+			})
+			UpdateChannelMonitorSettings(ctx)
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), "无效的参数")
+			serializedLegacyPolicy, marshalErr := common.Marshal([]map[string]any{policyFields})
+			require.NoError(t, marshalErr)
+			assert.Empty(t, parseChannelSmartScheduleGroupPolicies(string(serializedLegacyPolicy)))
+		})
+	}
+}
+
 func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
@@ -691,12 +731,42 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	)
 	invalidExplorationPercent := 21.0
 	invalidExplorationTraffic.ExplorationTrafficPercent = &invalidExplorationPercent
+	invalidExplorationPromptLimit := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	nonKExplorationPromptLimit := 16_384
+	invalidExplorationPromptLimit.ExplorationMaxPromptTokens = &nonKExplorationPromptLimit
+	invalidStabilityReleasePromptLimit := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	nonKStabilityReleasePromptLimit := 1_500
+	invalidStabilityReleasePromptLimit.StabilityReleaseMaxPromptTokens = &nonKStabilityReleasePromptLimit
 	invalidSampleMode := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
 	unsupportedSampleMode := "invalid"
 	invalidSampleMode.SampleMode = &unsupportedSampleMode
+	invalidSamplingOrder := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	unsupportedSamplingOrder := "invalid"
+	invalidSamplingOrder.SamplingOrder = &unsupportedSamplingOrder
+	invalidFirstTokenWarningRequestPercent := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	zeroFirstTokenWarningRequestPercent := 0.0
+	invalidFirstTokenWarningRequestPercent.AdaptiveSamplingFirstTokenWarningRequestPercent =
+		&zeroFirstTokenWarningRequestPercent
+	missingSamplingOrder := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+	)
+	missingSamplingOrder.SamplingOrder = nil
 	invalidProbeInterval := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
@@ -763,7 +833,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidRecoverySuccessThreshold}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidCooldown}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidExplorationTraffic}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidExplorationPromptLimit}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidStabilityReleasePromptLimit}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSampleMode}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidSamplingOrder}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidFirstTokenWarningRequestPercent}},
+		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{missingSamplingOrder}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidProbeInterval}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{invalidTrafficApplyMode}},
 		{"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
@@ -819,15 +894,13 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"jitter_slow_threshold_seconds": 12,
 				"cooldown_minutes":              45,
 				"sample_mode":                   channelMonitorSmartScheduleSampleOff,
+				"sampling_order":                " ratio ",
 				"exploration_traffic_percent":   3, "probe_interval_minutes": 10,
-				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
-				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
-				"priority_sampling_min_percent": 0.5,
-				"adaptive_sampling_enabled":     false, "adaptive_sampling_base_percent": 3,
+				"adaptive_sampling_enabled": false, "adaptive_sampling_base_percent": 3,
 				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
 				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
 				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
-				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_enter_request_percent": 10,
+				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_first_token_warning_request_percent": 10,
 				"adaptive_sampling_recover_request_percent":        95,
 				"adaptive_sampling_switch_confirm_request_percent": 95,
 				"adaptive_sampling_min_comparable_channels":        2,
@@ -848,15 +921,13 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"jitter_slow_threshold_seconds": 10,
 				"cooldown_minutes":              45,
 				"sample_mode":                   channelMonitorSmartScheduleSampleTraffic,
+				"sampling_order":                channelMonitorSmartScheduleSamplingOrderPriorityWeight,
 				"exploration_traffic_percent":   5, "probe_interval_minutes": 5,
-				"priority_sampling_enabled": true, "priority_sampling_interval_minutes": 10,
-				"priority_sampling_base_percent": 3, "priority_sampling_decay_percent": 70,
-				"priority_sampling_min_percent": 0.5,
-				"adaptive_sampling_enabled":     true, "adaptive_sampling_base_percent": 3,
+				"adaptive_sampling_enabled": true, "adaptive_sampling_base_percent": 3,
 				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
 				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
 				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
-				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_enter_request_percent": 10,
+				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_first_token_warning_request_percent": 10,
 				"adaptive_sampling_recover_request_percent":        95,
 				"adaptive_sampling_switch_confirm_request_percent": 95,
 				"adaptive_sampling_min_comparable_channels":        2,
@@ -897,6 +968,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, channelMonitorSmartScheduleStrategySmart, *defaultGroupPolicy.Strategy)
 	require.NotNil(t, defaultGroupPolicy.SampleMode)
 	assert.Equal(t, channelMonitorSmartScheduleSampleTraffic, *defaultGroupPolicy.SampleMode)
+	require.NotNil(t, defaultGroupPolicy.SamplingOrder)
+	assert.Equal(t, channelMonitorSmartScheduleSamplingOrderPriorityWeight, *defaultGroupPolicy.SamplingOrder)
 	require.NotNil(t, defaultGroupPolicy.ExplorationTrafficPercent)
 	assert.Equal(t, 5.0, *defaultGroupPolicy.ExplorationTrafficPercent)
 	require.NotNil(t, defaultGroupPolicy.ProbeIntervalMinutes)
@@ -940,11 +1013,19 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 10.0, *defaultGroupPolicy.JitterSlowThresholdSeconds)
 	require.NotNil(t, defaultGroupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *defaultGroupPolicy.CooldownMinutes)
+	require.NotNil(t, defaultGroupPolicy.ExplorationMaxPromptTokens)
+	assert.Equal(t, 50_000, *defaultGroupPolicy.ExplorationMaxPromptTokens)
+	require.NotNil(t, defaultGroupPolicy.StabilityReleaseMaxPromptTokens)
+	assert.Zero(t, *defaultGroupPolicy.StabilityReleaseMaxPromptTokens)
+	require.NotNil(t, defaultGroupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
+	assert.Equal(t, 10.0, *defaultGroupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 
 	groupPolicy := response.Data.SmartScheduleGroupPolicies[1]
 	assert.Equal(t, "vip", groupPolicy.Group)
 	require.NotNil(t, groupPolicy.Strategy)
 	assert.Equal(t, channelMonitorSmartScheduleStrategyRatio, *groupPolicy.Strategy)
+	require.NotNil(t, groupPolicy.SamplingOrder)
+	assert.Equal(t, channelMonitorSmartScheduleSamplingOrderRatio, *groupPolicy.SamplingOrder)
 	require.NotNil(t, groupPolicy.StabilityEnabled)
 	assert.False(t, *groupPolicy.StabilityEnabled)
 	require.NotNil(t, groupPolicy.Scoring)
@@ -973,6 +1054,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 12.0, *groupPolicy.JitterSlowThresholdSeconds)
 	require.NotNil(t, groupPolicy.CooldownMinutes)
 	assert.Equal(t, 45, *groupPolicy.CooldownMinutes)
+	require.NotNil(t, groupPolicy.ExplorationMaxPromptTokens)
+	assert.Equal(t, 50_000, *groupPolicy.ExplorationMaxPromptTokens)
+	require.NotNil(t, groupPolicy.StabilityReleaseMaxPromptTokens)
+	assert.Zero(t, *groupPolicy.StabilityReleaseMaxPromptTokens)
+	require.NotNil(t, groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
+	assert.Equal(t, 10.0, *groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)
@@ -1018,9 +1105,27 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, response.Data.SmartScheduleGroupPolicies, storedGroupPolicies)
 	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":10`)
 	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":12`)
+	assert.Contains(t, option.Value, `"exploration_max_prompt_tokens":50000`)
+	assert.Contains(t, option.Value, `"stability_release_max_prompt_tokens":0`)
+	assert.Contains(t, option.Value, `"adaptive_sampling_first_token_warning_request_percent":10`)
 	assert.NotContains(t, option.Value, "jitter_absolute_tolerance_seconds")
 	assert.NotContains(t, option.Value, "jitter_baseline_minutes")
 	assert.NotContains(t, option.Value, "degrade_stability_score")
+	for _, deletedField := range []string{
+		"priority_sampling_enabled",
+		"priority_sampling_interval_minutes",
+		"priority_sampling_base_percent",
+		"priority_sampling_decay_percent",
+		"priority_sampling_min_percent",
+		"adaptive_sampling_enter_rounds",
+		"adaptive_sampling_recover_rounds",
+		"adaptive_sampling_switch_confirm_rounds",
+		"adaptive_sampling_exploration_lease_minutes",
+		"adaptive_sampling_enter_request_percent",
+	} {
+		assert.NotContains(t, recorder.Body.String(), deletedField)
+		assert.NotContains(t, option.Value, deletedField)
+	}
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
 	assert.Equal(t, "10", option.Value)
@@ -1240,7 +1345,7 @@ func TestUpdateChannelMonitorSettingsWindowChangeStopsTemporaryTraffic(t *testin
 	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
 		ChannelId: 1902, GroupName: "vip", ModelName: "model-a",
 		ParticipationSet: true, Revision: 1, BasePriority: 80, BaseWeight: 40,
-		TemporaryTrafficKind: model.ChannelSmartScheduleTemporaryTrafficPrioritySampling,
+		TemporaryTrafficKind: model.ChannelSmartScheduleTemporaryTrafficExploration,
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{

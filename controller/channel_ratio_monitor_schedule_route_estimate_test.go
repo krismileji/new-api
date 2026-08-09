@@ -22,6 +22,11 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 			Enabled: true, Priority: 80, Weight: 50,
 			State: model.ChannelSmartScheduleRouteState{
 				ParticipationSet: true, LastScheduleScore: &historicalScore, ManualPrimaryUntil: now + 60,
+				AdaptiveHealthState:                           channelSmartScheduleHealthPressure,
+				AdaptiveHealthPressure:                        0.5,
+				AdaptiveHealthFirstTokenWarningRequestPercent: 12.5,
+				AdaptiveHealthSampleCount:                     8,
+				AdaptiveHealthLastSampleAt:                    now - 1,
 			},
 		},
 		{
@@ -88,6 +93,9 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 	assert.InDelta(t, 1, *fast.CurrentWindowScore, 1e-9)
 	require.NotNil(t, fast.CurrentWindowScoreDetails)
 	assert.Equal(t, 1, fast.CurrentWindowScoreDetails.Decision.ManualPrimaryChannelId)
+	assert.Equal(t, channelSmartScheduleHealthPressure, fast.CurrentWindowScoreDetails.Health.State)
+	assert.True(t, fast.CurrentWindowScoreDetails.Health.Evidence)
+	assert.InDelta(t, 12.5, fast.CurrentWindowScoreDetails.Health.FirstTokenWarningRequestPercent, 1e-9)
 	require.NotNil(t, fast.State.LastScheduleScore)
 	assert.InDelta(t, historicalScore, *fast.State.LastScheduleScore, 1e-9)
 	assert.InDelta(t, historicalScore, *routes[0].State.LastScheduleScore, 1e-9)

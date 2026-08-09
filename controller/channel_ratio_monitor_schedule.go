@@ -69,43 +69,46 @@ type channelSmartSchedulePerformance struct {
 }
 
 type channelSmartScheduleCandidate struct {
-	ChannelId                   int
-	SampleGroupCount            int
-	CurrentPriority             int64
-	CurrentWeight               uint
-	Ratio                       *float64
-	CostRatio                   *float64
-	GroupRatio                  *float64
-	GrossMargin                 *float64
-	EconomicRole                string
-	FirstTokenMs                *float64
-	TPS                         *float64
-	FirstTokenSampleCount       int
-	TPSSampleCount              int
-	StabilitySampleCount        int64
-	Stability                   *float64
-	StabilityAvailable          bool
-	ManualPrimary               bool
-	PreviousBaseRank            int
-	ManualTargetPriority        int64
-	HealthState                 string
-	HealthPressure              float64
-	HealthErrorPressure         float64
-	HealthLatencyPressure       float64
-	HealthEvidence              bool
-	HealthSampleCount           int64
-	HealthLastSampleAt          int64
-	SampleDebt                  int
-	MinComparableChannels       int
-	HealthRiskRequestPercent    float64
-	HealthHealthyRequestPercent float64
-	HealthWindowSeconds         int
+	ChannelId                             int
+	SampleGroupCount                      int
+	CurrentPriority                       int64
+	CurrentWeight                         uint
+	Ratio                                 *float64
+	CostRatio                             *float64
+	GroupRatio                            *float64
+	GrossMargin                           *float64
+	EconomicRole                          string
+	FirstTokenMs                          *float64
+	TPS                                   *float64
+	FirstTokenSampleCount                 int
+	TPSSampleCount                        int
+	StabilitySampleCount                  int64
+	Stability                             *float64
+	StabilityAvailable                    bool
+	ManualPrimary                         bool
+	PreviousBaseRank                      int
+	ManualTargetPriority                  int64
+	HealthState                           string
+	HealthPressure                        float64
+	HealthErrorPressure                   float64
+	HealthLatencyPressure                 float64
+	HealthEvidence                        bool
+	HealthSampleCount                     int64
+	HealthLastSampleAt                    int64
+	SampleDebt                            int
+	MinComparableChannels                 int
+	HealthErrorRequestPercent             float64
+	HealthRiskRequestPercent              float64
+	HealthFirstTokenWarningRequestPercent float64
+	HealthHealthyRequestPercent           float64
+	HealthWindowSeconds                   int
 }
 
 type channelSmartSchedulePlanItem struct {
 	ChannelId        int
 	Score            float64
 	ScoreDetails     *model.ChannelSmartScheduleScoreDetails
+	ScoringEligible  bool
 	CurrentPriority  int64
 	CurrentWeight    uint
 	TargetPriority   int64
@@ -231,6 +234,11 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 		errorMessage,
 		detailInputs,
 	); err == nil {
+		if runErr == nil {
+			for _, adjustment := range summary.Adjustments {
+				enqueueChannelSmartScheduleAdaptiveRefresh(adjustment.ChannelId, adjustment.Model)
+			}
+		}
 		return
 	} else if errors.Is(err, model.ErrSystemTaskLockLost) {
 		common.SysLog(fmt.Sprintf("system task %s failed to persist result: %v", task.TaskID, err))
@@ -779,6 +787,7 @@ func channelSmartScheduleRankCandidateLayer(
 			SkipReason:       reason,
 		}
 		if reason == "" {
+			item.ScoringEligible = true
 			eligibleCount++
 			score, details, valid := channelSmartScheduleScoreCandidate(
 				candidate, strategy, stabilityEnabled, channelMonitorSmartScheduleApplyPriorityWeight,
@@ -893,6 +902,9 @@ func channelSmartScheduleRankCandidateLayer(
 		}
 	}
 	sort.SliceStable(pendingItems, func(i int, j int) bool {
+		if pendingItems[i].ScoringEligible != pendingItems[j].ScoringEligible {
+			return pendingItems[i].ScoringEligible
+		}
 		leftRank := pendingItems[i].PreviousBaseRank
 		rightRank := pendingItems[j].PreviousBaseRank
 		if leftRank > 0 || rightRank > 0 {
@@ -1000,34 +1012,12 @@ func planChannelSmartSchedulePriorityWeight(
 	plan.Items = make([]channelSmartSchedulePlanItem, 0, len(candidates))
 	normalPriorityOffset := int64(0)
 	if len(fallbackLayer.RankedItems) > 0 {
-		if normalLayer.Comparable {
-			normalPriorityOffset = 1
-		} else if len(normalLayer.RankedItems) > 0 {
-			minimumPriority := normalLayer.RankedItems[0].CurrentPriority
-			for _, item := range normalLayer.RankedItems[1:] {
-				minimumPriority = min(minimumPriority, item.CurrentPriority)
-			}
-			if minimumPriority < 2 {
-				normalPriorityOffset = 2 - minimumPriority
-			}
-		}
+		normalPriorityOffset = 1
 	}
 	for index, item := range normalLayer.RankedItems {
 		item.BaseRank = index + 1
-		if normalLayer.Comparable {
-			item.BasePriority = int64(len(normalLayer.RankedItems)-index) + normalPriorityOffset
-			item.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
-		} else {
-			item.BasePriority = item.CurrentPriority
-			if normalPriorityOffset > 0 {
-				if item.BasePriority > math.MaxInt64-normalPriorityOffset {
-					item.BasePriority = math.MaxInt64
-				} else {
-					item.BasePriority += normalPriorityOffset
-				}
-			}
-			item.BaseWeight = item.CurrentWeight
-		}
+		item.BasePriority = int64(len(normalLayer.RankedItems)-index) + normalPriorityOffset
+		item.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
 		item.TargetPriority = item.BasePriority
 		item.TargetWeight = item.BaseWeight
 		plan.Items = append(plan.Items, item)
@@ -1094,9 +1084,9 @@ func planChannelSmartSchedulePriorityWeight(
 			}
 			channelSmartScheduleSetAdjustmentReason(details, reason)
 		} else if item.SkipReason != "" {
-			reason := item.SkipReason + "，保持上一轮基础优先级和权重"
+			reason := item.SkipReason + "，按当前主渠道、样本有效性和上一轮顺序生成唯一基础优先级"
 			if normalPriorityOffset > 0 {
-				reason = item.SkipReason + "；为保留 P1 保本兜底层，仅抬升基础优先级并保持原权重"
+				reason += "；为保留 P1 保本兜底层，正常路由从 P2 开始编号"
 			}
 			channelSmartScheduleSetAdjustmentReason(
 				details,

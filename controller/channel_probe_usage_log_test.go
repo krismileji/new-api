@@ -184,3 +184,27 @@ func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {
 	assert.Zero(t, cost.SettledCount)
 	assert.Equal(t, int64(1), cost.UnresolvedCount)
 }
+
+func TestChannelTestSkipsActive429CooldownBeforeDispatch(t *testing.T) {
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requestCount++
+	}))
+	t.Cleanup(upstream.Close)
+
+	channel := &model.Channel{
+		Id: 44, Type: constant.ChannelTypeOpenAI, Key: "sk-rate-limited-test",
+		Name: "rate limited channel test", Status: common.ChannelStatusEnabled,
+		BaseURL: common.GetPointer(upstream.URL), Models: "gpt-3.5-turbo", Group: "default",
+	}
+	service.StartChannelRateLimitCooldown(channel.Id, "gpt-3.5-turbo", 60)
+
+	result := testChannel(context.Background(), channel, 0, "gpt-3.5-turbo", "", false)
+
+	require.Error(t, result.localErr)
+	assert.Contains(t, result.localErr.Error(), "429 冷却")
+	assert.False(t, result.requestDispatched)
+	assert.Zero(t, requestCount)
+}

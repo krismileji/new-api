@@ -44,6 +44,7 @@ import {
   formatChannelMonitorSmartScheduleEstimatedShare,
   formatChannelMonitorSmartScheduleTemporaryTraffic,
 } from '../lib/smart-schedule-display'
+import { getChannelMonitorSmartScheduleSamplingOrderLabel } from '../lib/smart-schedule-options'
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteParticipates,
@@ -125,13 +126,10 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
     return <Badge variant='destructive'>调度失败</Badge>
   }
   if (status === 'insufficient_samples') {
-    return <Badge variant='warning'>样本不足补量</Badge>
-  }
-  if (status === 'priority_sampling') {
-    return <Badge variant='warning'>低优先级轮转</Badge>
+    return <Badge variant='warning'>统一探索采样</Badge>
   }
   if (status === 'adaptive_sampling') {
-    return <Badge variant='warning'>健康应急采样</Badge>
+    return <Badge variant='warning'>自适应备援采样</Badge>
   }
   if (
     channelMonitorSmartScheduleRouteIsBreakEvenFallback(props.route) &&
@@ -181,6 +179,17 @@ function formatPoolChannelReference(
     : `渠道 ID ${channelId}`
 }
 
+function formatAdaptiveHealthState(state: string | undefined) {
+  const labels: Record<string, string> = {
+    unknown: '未知',
+    healthy: '健康',
+    observation: '观察',
+    pressure: '压力',
+    high_risk: '高风险',
+  }
+  return labels[state ?? ''] ?? '-'
+}
+
 export function ChannelMonitorSmartScheduleRouteDetails(
   props: ChannelMonitorSmartScheduleRouteDetailsProps
 ) {
@@ -197,7 +206,11 @@ export function ChannelMonitorSmartScheduleRouteDetails(
       ? '-'
       : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`
   const participates = channelMonitorSmartScheduleRouteParticipates(route)
-  const decision = route.state.last_schedule_score_details?.decision
+  const currentScoreDetails =
+    route.current_window_score_details ??
+    route.state.last_schedule_score_details ??
+    null
+  const decision = currentScoreDetails?.decision
   const baseRank = route.state.base_rank || decision?.base_rank || 0
   const basePriority = route.state.base_priority || decision?.base_priority || 0
   const baseWeight = route.state.base_weight || decision?.base_weight || 0
@@ -219,6 +232,31 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     []
   const pending =
     props.updatePending || props.manualRoutingPending || props.groupPausePending
+  const samplingOrder = route.state.sampling_order
+    ? getChannelMonitorSmartScheduleSamplingOrderLabel(
+        route.state.sampling_order
+      )
+    : '-'
+  const rollingStability =
+    route.state.rolling_stability_score == null
+      ? '-'
+      : `${(route.state.rolling_stability_score * 100).toFixed(1)} 分 · ${route.state.rolling_stability_sample_count} 个样本`
+  const adaptiveHealthState = formatAdaptiveHealthState(
+    route.state.adaptive_health_state || currentScoreDetails?.health.state
+  )
+  const hasAdaptiveHealthEvidence =
+    (route.state.adaptive_health_sample_count ?? 0) > 0 ||
+    currentScoreDetails?.health.evidence === true
+  const adaptiveHealthPressure = hasAdaptiveHealthEvidence
+    ? `${(Number(route.state.adaptive_health_pressure ?? 0) * 100).toFixed(1)}%`
+    : '-'
+  const adaptiveRequestRatios = currentScoreDetails?.health.evidence
+    ? `错误 ${currentScoreDetails.health.error_request_percent.toFixed(1)}% / 首字告警 ${currentScoreDetails.health.first_token_warning_request_percent.toFixed(1)}% / 风险 ${currentScoreDetails.health.risk_request_percent.toFixed(1)}% / 健康 ${currentScoreDetails.health.healthy_request_percent.toFixed(1)}%`
+    : '-'
+  const rollingSlowSuccess =
+    route.state.rolling_stability_sample_count > 0
+      ? `${route.state.rolling_stability_slow_count} / ${route.state.rolling_stability_allowed_slow_count}`
+      : '-'
   const channelNameById = new Map(
     props.poolRoutes.map((poolRoute) => [
       poolRoute.channel_id,
@@ -337,6 +375,14 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                 label='当前 P / W'
                 value={`P${route.priority} / W${route.weight}`}
               />
+              <DetailMetric
+                label='软健康状态'
+                value={`${adaptiveHealthState} / 压力 ${adaptiveHealthPressure}`}
+              />
+              <DetailMetric
+                label='错误 / 首字告警 / 风险 / 健康请求'
+                value={adaptiveRequestRatios}
+              />
             </div>
           </section>
 
@@ -357,7 +403,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                 value={baseRank > 0 ? `P${basePriority} / W${baseWeight}` : '-'}
               />
               <DetailMetric
-                label='临时流量类型与目标'
+                label='当前采样渠道与类型'
                 value={formatChannelMonitorSmartScheduleTemporaryTraffic(
                   route.state.temporary_traffic_kind,
                   route.state.temporary_traffic_target_percent
@@ -371,6 +417,34 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                     : '-'
                 }
               />
+              <DetailMetric
+                label='样本欠账 / 候选'
+                value={`${route.state.sampling_debt} / ${route.state.sampling_candidate ? '是' : '否'}`}
+              />
+              <DetailMetric label='采样顺序' value={samplingOrder} />
+              <DetailMetric
+                label='最近采样'
+                value={
+                  route.state.last_sampling_at > 0
+                    ? formatTimestampToDate(route.state.last_sampling_at)
+                    : '-'
+                }
+              />
+              <DetailMetric label='滚动稳定性' value={rollingStability} />
+              <DetailMetric
+                label='滚动慢成功 / 允许'
+                value={rollingSlowSuccess}
+              />
+              <DetailMetric
+                label='滚动稳定性刷新'
+                value={
+                  route.state.rolling_stability_updated_at > 0
+                    ? formatTimestampToDate(
+                        route.state.rolling_stability_updated_at
+                      )
+                    : '-'
+                }
+              />
             </div>
           </section>
 
@@ -381,7 +455,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                 当前渠道在本分组和模型中的实际路由位置
               </p>
             </div>
-            <div className='grid gap-x-5 gap-y-3 sm:grid-cols-3'>
+            <div className='grid gap-x-5 gap-y-3 sm:grid-cols-2 lg:grid-cols-4'>
               <DetailMetric
                 label='评分第一'
                 value={formatPoolChannelReference(
@@ -411,6 +485,18 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                           )
                           .join('、') || '渠道 -'
                       }`
+                }
+              />
+              <DetailMetric
+                label='未切换原因'
+                value={
+                  scoringWinnerChannelId > 0 &&
+                  actualPrimaryChannelId > 0 &&
+                  scoringWinnerChannelId !== actualPrimaryChannelId
+                    ? decision?.selection_reason ||
+                      decision?.reason ||
+                      '未记录未切换原因'
+                    : '当前无需切换'
                 }
               />
             </div>

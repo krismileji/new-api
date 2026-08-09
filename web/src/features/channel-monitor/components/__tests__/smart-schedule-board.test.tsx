@@ -44,7 +44,7 @@ const ADAPTIVE_SAMPLING_POLICY = {
   adaptive_sampling_first_token_warning_seconds: 5,
   adaptive_sampling_first_token_critical_seconds: 10,
   adaptive_sampling_window_seconds: 600,
-  adaptive_sampling_enter_request_percent: 10,
+  adaptive_sampling_first_token_warning_request_percent: 10,
   adaptive_sampling_recover_request_percent: 95,
   adaptive_sampling_switch_confirm_request_percent: 95,
   adaptive_sampling_min_comparable_channels: 2,
@@ -119,6 +119,8 @@ function createRoute(
       model,
       window_start: 0,
       observation_since: 0,
+      recovery_success_count: 0,
+      recovery_success_at: 0,
       last_time: 0,
       last_success: false,
       last_error: '',
@@ -157,7 +159,15 @@ function createRoute(
       temporary_traffic_kind: '',
       temporary_traffic_since: 0,
       temporary_traffic_target_percent: 0,
-      last_priority_sample_time: 0,
+      rolling_stability_score: null,
+      rolling_stability_sample_count: 0,
+      rolling_stability_slow_count: 0,
+      rolling_stability_allowed_slow_count: 0,
+      rolling_stability_updated_at: 0,
+      sampling_debt: 0,
+      sampling_candidate: false,
+      sampling_order: '',
+      last_sampling_at: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: false,
       ...overrides.state,
@@ -194,6 +204,8 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
           model: 'model-fast',
           window_start: 1_752_700_000,
           observation_since: 0,
+          recovery_success_count: 0,
+          recovery_success_at: 0,
           last_time: 1_752_777_845,
           last_success: true,
           last_error: '',
@@ -247,6 +259,8 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
           model: 'model-fast',
           window_start: 1_752_700_000,
           observation_since: 0,
+          recovery_success_count: 0,
+          recovery_success_at: 0,
           last_time: 1_752_777_845,
           last_success: true,
           last_error: '',
@@ -265,6 +279,8 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
           model: 'model-fast',
           window_start: 1_752_750_000,
           observation_since: 0,
+          recovery_success_count: 0,
+          recovery_success_at: 0,
           last_time: 1_752_777_845,
           last_success: true,
           last_error: '',
@@ -404,14 +420,10 @@ function renderBoard(
               slow_failure_seconds: 10,
               cooldown_minutes: 30,
               sample_mode: 'traffic',
+              sampling_order: 'priority_weight',
               exploration_traffic_percent: 3,
-              exploration_max_prompt_tokens: 16_384,
+              exploration_max_prompt_tokens: 50_000,
               probe_interval_minutes: 10,
-              priority_sampling_enabled: true,
-              priority_sampling_interval_minutes: 10,
-              priority_sampling_base_percent: 3,
-              priority_sampling_decay_percent: 70,
-              priority_sampling_min_percent: 0.5,
             },
             {
               ...ADAPTIVE_SAMPLING_POLICY,
@@ -447,14 +459,10 @@ function renderBoard(
               slow_failure_seconds: 10,
               cooldown_minutes: 30,
               sample_mode: 'probe',
+              sampling_order: 'ratio',
               exploration_traffic_percent: 3,
-              exploration_max_prompt_tokens: 16_384,
+              exploration_max_prompt_tokens: 50_000,
               probe_interval_minutes: 15,
-              priority_sampling_enabled: false,
-              priority_sampling_interval_minutes: 10,
-              priority_sampling_base_percent: 3,
-              priority_sampling_decay_percent: 70,
-              priority_sampling_min_percent: 0.5,
             },
           ]
         }
@@ -510,10 +518,13 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('基础排名'))
     assert.ok(markup.includes('基础 P / W'))
     assert.ok(markup.includes('当前 P / W'))
-    assert.ok(markup.includes('临时流量'))
+    assert.ok(markup.includes('当前采样'))
+    assert.ok(markup.includes('采样顺序 基础 P/W'))
+    assert.ok(markup.includes('未切换原因'))
     assert.ok(markup.includes('主线路'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('探索流量 3%'))
+    assert.ok(markup.includes('≤ 50K Token'))
     assert.ok(markup.includes('预计流量'))
     assert.ok(markup.includes('title="当前 75.0 · 最近 90.0"'))
     assert.ok(markup.includes('75.0%'))
@@ -687,14 +698,10 @@ describe('channel monitor smart schedule board', () => {
       slow_failure_seconds: 10,
       cooldown_minutes: 30,
       sample_mode: 'traffic',
+      sampling_order: 'priority_weight',
       exploration_traffic_percent: 3,
-      exploration_max_prompt_tokens: 16_384,
+      exploration_max_prompt_tokens: 50_000,
       probe_interval_minutes: 10,
-      priority_sampling_enabled: true,
-      priority_sampling_interval_minutes: 10,
-      priority_sampling_base_percent: 3,
-      priority_sampling_decay_percent: 70,
-      priority_sampling_min_percent: 0.5,
     } satisfies ChannelMonitorSmartScheduleGroupPolicy
 
     const markup = renderBoard({ result, groupPolicies: [groupPolicy] })

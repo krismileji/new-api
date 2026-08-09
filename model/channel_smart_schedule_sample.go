@@ -37,6 +37,8 @@ type ChannelSmartScheduleModelSampleState struct {
 
 	WindowStart                int64                           `json:"window_start" gorm:"bigint"`
 	ObservationSince           int64                           `json:"observation_since" gorm:"bigint;index"`
+	RecoverySuccessCount       int                             `json:"recovery_success_count"`
+	RecoverySuccessAt          int64                           `json:"recovery_success_at" gorm:"bigint;index"`
 	LastTime                   int64                           `json:"last_time" gorm:"bigint;index"`
 	LastSuccess                bool                            `json:"last_success"`
 	LastError                  string                          `json:"last_error" gorm:"type:varchar(255)"`
@@ -52,17 +54,18 @@ type ChannelSmartScheduleModelSampleState struct {
 }
 
 type ChannelSmartScheduleModelSampleResult struct {
-	ChannelId    int
-	Model        string
-	Source       string
-	SampleId     string
-	WindowStart  int64
-	Time         int64
-	Success      bool
-	Error        string
-	DurationMs   *float64
-	FirstTokenMs *float64
-	TPS          *float64
+	ChannelId     int
+	Model         string
+	Source        string
+	SampleId      string
+	WindowStart   int64
+	Time          int64
+	Success       bool
+	Error         string
+	DurationMs    *float64
+	FirstTokenMs  *float64
+	TPS           *float64
+	ProbeRecovery *ChannelSmartScheduleProbeRecoveryRequest
 }
 
 type ChannelSmartScheduleSampleMetrics struct {
@@ -89,14 +92,23 @@ type ChannelSmartScheduleSampleMetrics struct {
 // the adaptive sampling window. Production request logs and scheduled/manual
 // samples use the same counters so their ratios are directly comparable.
 type ChannelSmartScheduleAdaptiveHealthMetric struct {
-	RequestCount        int64
-	FailureCount        int64
-	SlowRequestCount    int64
-	HealthyRequestCount int64
-	FirstTokenCount     int64
-	TPSSampleCount      int64
-	LatencyPressure     float64
-	LastUsedTime        int64
+	RequestCount                int64
+	FailureCount                int64
+	SlowRequestCount            int64
+	HealthyRequestCount         int64
+	FirstTokenCount             int64
+	FirstTokenTotalMs           float64
+	TPSSampleCount              int64
+	TPSTotal                    float64
+	LatencyPressure             float64
+	LastUsedTime                int64
+	StabilitySuccessCount       int64
+	StabilityFailureCount       int64
+	StabilityFinalFailureCount  int64
+	StabilityRetryFailureCount  int64
+	RetryFailureDurationTotalMs float64
+	RetryFailureDurationBuckets []ChannelMonitorFailureDurationBucket
+	FirstTokenDurationBuckets   []ChannelMonitorDurationBucket
 }
 
 // ChannelSmartScheduleSampleSeries is one parsed channel/model rolling sample
@@ -179,6 +191,8 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
 		windowStart = series.observationSince
 	}
 	metric := ChannelSmartScheduleAdaptiveHealthMetric{}
+	firstTokenBuckets := make(map[int]ChannelMonitorDurationBucket)
+	failureBucketCounts := [6]int64{}
 	for _, sample := range series.samples {
 		if sample.Time < windowStart {
 			continue
@@ -187,18 +201,46 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
 		metric.LastUsedTime = max(metric.LastUsedTime, sample.Time)
 		if !sample.Success {
 			metric.FailureCount++
+			metric.StabilityFailureCount++
+			metric.StabilityRetryFailureCount++
+			if sample.FailureDurationMs != nil && *sample.FailureDurationMs >= 0 &&
+				!math.IsNaN(*sample.FailureDurationMs) && !math.IsInf(*sample.FailureDurationMs, 0) {
+				metric.RetryFailureDurationTotalMs += *sample.FailureDurationMs
+				switch {
+				case *sample.FailureDurationMs < 1000:
+					failureBucketCounts[0]++
+				case *sample.FailureDurationMs < 3000:
+					failureBucketCounts[1]++
+				case *sample.FailureDurationMs < 10000:
+					failureBucketCounts[2]++
+				case *sample.FailureDurationMs < 30000:
+					failureBucketCounts[3]++
+				case *sample.FailureDurationMs < 60000:
+					failureBucketCounts[4]++
+				default:
+					failureBucketCounts[5]++
+				}
+			}
 			continue
 		}
+		metric.StabilitySuccessCount++
 		metric.HealthyRequestCount++
 		if sample.TPS != nil && *sample.TPS > 0 &&
 			!math.IsNaN(*sample.TPS) && !math.IsInf(*sample.TPS, 0) {
 			metric.TPSSampleCount++
+			metric.TPSTotal += *sample.TPS
 		}
 		if sample.FirstTokenMs == nil || *sample.FirstTokenMs <= 0 ||
 			math.IsNaN(*sample.FirstTokenMs) || math.IsInf(*sample.FirstTokenMs, 0) {
 			continue
 		}
 		metric.FirstTokenCount++
+		metric.FirstTokenTotalMs += *sample.FirstTokenMs
+		bucketIndex := channelMonitorDurationBucketIndex(*sample.FirstTokenMs)
+		bucket := firstTokenBuckets[bucketIndex]
+		bucket.Count++
+		bucket.TotalMs += *sample.FirstTokenMs
+		firstTokenBuckets[bucketIndex] = bucket
 		latencyPressure := channelSmartScheduleAdaptiveLatencyPressure(
 			*sample.FirstTokenMs, warningSeconds, criticalSeconds,
 		)
@@ -208,6 +250,15 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
 			metric.HealthyRequestCount--
 		}
 	}
+	metric.RetryFailureDurationBuckets = []ChannelMonitorFailureDurationBucket{
+		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: failureBucketCounts[0]},
+		{LowerBoundMs: 1000, UpperBoundMs: 3000, Count: failureBucketCounts[1]},
+		{LowerBoundMs: 3000, UpperBoundMs: 10000, Count: failureBucketCounts[2]},
+		{LowerBoundMs: 10000, UpperBoundMs: 30000, Count: failureBucketCounts[3]},
+		{LowerBoundMs: 30000, UpperBoundMs: 60000, Count: failureBucketCounts[4]},
+		{LowerBoundMs: 60000, UpperBoundMs: 0, Count: failureBucketCounts[5]},
+	}
+	metric.FirstTokenDurationBuckets = channelMonitorDurationBucketsFromAggregates(firstTokenBuckets)
 	return metric
 }
 
@@ -397,6 +448,8 @@ func advanceChannelSmartScheduleObservationSinceTx(
 		return state, false, err
 	}
 	state.ObservationSince = observationSince
+	state.RecoverySuccessCount = 0
+	state.RecoverySuccessAt = 0
 	state.WindowStart = 0
 	state.LastTime = 0
 	state.LastSuccess = false
@@ -426,8 +479,20 @@ func SaveChannelSmartScheduleModelSample(
 	defer channelStatusLock.Unlock()
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockChannelForDependentWriteTx(tx, result.ChannelId); err != nil {
-			return err
+		var recoveryTx *channelSmartScheduleProbeRecoveryTx
+		if result.ProbeRecovery != nil {
+			var prepareErr error
+			recoveryTx, prepareErr = prepareChannelSmartScheduleProbeRecoveryTx(
+				tx, result.ChannelId, *result.ProbeRecovery,
+			)
+			if prepareErr != nil {
+				return prepareErr
+			}
+		}
+		if recoveryTx == nil || !recoveryTx.revisionMatched {
+			if err := lockChannelForDependentWriteTx(tx, result.ChannelId); err != nil {
+				return err
+			}
 		}
 		state, err = lockChannelSmartScheduleModelSampleStateTx(tx, result.ChannelId, result.Model)
 		if err != nil {
@@ -540,7 +605,27 @@ func SaveChannelSmartScheduleModelSample(
 		state.TPSSampleCount = metrics.TPSSampleCount
 		state.AverageTPS = metrics.AverageTPS
 		state.SamplesJSON = ChannelSmartScheduleSamplesJSON(rawSamples)
-		return tx.Save(&state).Error
+		if err := tx.Save(&state).Error; err != nil {
+			return err
+		}
+		if result.ProbeRecovery == nil {
+			return nil
+		}
+		recoveryResult, recoveryErr := applyChannelSmartScheduleProbeRecoveryTx(
+			tx,
+			&state,
+			result.Success,
+			sampleTime,
+			recoveryTx,
+		)
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		result.ProbeRecovery.Result = recoveryResult
+		return tx.Where(&ChannelSmartScheduleModelSampleState{Id: state.Id}).First(&state).Error
 	})
+	if err == nil && result.ProbeRecovery != nil && result.ProbeRecovery.Result.ObservationSince > 0 {
+		InvalidateChannelMonitorAggregateCaches()
+	}
 	return state, err
 }

@@ -48,7 +48,20 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS = [
   {
     value: 'priority_weight',
     label: '优先级分层 + 权重',
-    description: '正常参与渠道按评分形成独立优先级，低优先级渠道可轮转采样',
+    description: '正常参与渠道按评分形成独立优先级，探索和自适应备援可统一采样',
+  },
+] as const
+
+export const CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS = [
+  {
+    value: 'priority_weight',
+    label: '按基础优先级和权重',
+    shortLabel: '基础 P/W',
+  },
+  {
+    value: 'ratio',
+    label: '按成本倍率',
+    shortLabel: '成本倍率',
   },
 ] as const
 
@@ -70,4 +83,15 @@ export function getChannelMonitorSmartScheduleApplyModeLabel(
       (option) => option.value === value
     )?.label ?? value
   )
+}
+
+export function getChannelMonitorSmartScheduleSamplingOrderLabel(
+  value: string,
+  compact = false
+): string {
+  const option = CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS.find(
+    (item) => item.value === value
+  )
+  if (!option) return value
+  return compact ? option.shortLabel : option.label
 }

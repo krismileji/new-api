@@ -113,14 +113,14 @@ describe('channel monitor smart schedule cell status', () => {
           temporary_traffic_kind: 'insufficient_samples',
           temporary_traffic_target_percent: 3,
         },
-        expected: '探索流量 3%',
+        expected: '统一探索采样 3%',
       },
       {
         state: {
-          temporary_traffic_kind: 'priority_sampling',
+          temporary_traffic_kind: 'adaptive_sampling',
           temporary_traffic_target_percent: 1.5,
         },
-        expected: '优先级采样 1.5%',
+        expected: '自适应备援采样 1.5%',
       },
     ]
 
@@ -270,7 +270,7 @@ describe('channel monitor smart schedule cell status', () => {
         enabled: false,
         state: {
           stability_state: 'probing',
-          temporary_traffic_kind: 'priority_sampling',
+          temporary_traffic_kind: 'adaptive_sampling',
           temporary_traffic_target_percent: 1.5,
         },
       }),
@@ -281,7 +281,7 @@ describe('channel monitor smart schedule cell status', () => {
       markup.includes('aria-label="解除 测试渠道 default model-a 的稳定性释放"')
     )
     assert.equal(markup.includes('>稳定性释放</'), false)
-    assert.equal(markup.includes('优先级采样 1.5%'), false)
+    assert.equal(markup.includes('自适应备援采样 1.5%'), false)
   })
 
   test('shows placeholders when the selected group-model is absent', () => {

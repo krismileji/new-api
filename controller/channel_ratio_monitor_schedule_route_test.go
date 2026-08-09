@@ -93,8 +93,6 @@ func TestRunChannelSmartScheduleRecordsUnchangedWhenOnlyBaseSnapshotRefreshes(t 
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 5, 80, 30,
 	)
-	prioritySamplingEnabled := false
-	policy.PrioritySamplingEnabled = &prioritySamplingEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
@@ -154,7 +152,7 @@ func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 		SavedPriority: 8, SavedWeight: 900,
 	}
 	matchingSnapshot := &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-		BaseRank: 1, BasePriority: 6, BaseWeight: 700,
+		BaseRank: 2, BasePriority: 7, BaseWeight: 800,
 		TemporaryTrafficKind:  model.ChannelSmartScheduleTemporaryTrafficExploration,
 		TemporaryTrafficSince: 150, TemporaryTrafficTargetPercent: 3,
 		StabilityReleaseMaxPromptTokens: 1234,
@@ -177,37 +175,13 @@ func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 	}))
 	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
 		RoutingSnapshot: &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-			BaseRank: 2, BasePriority: 7, BaseWeight: 800,
-			StabilityReleaseMaxPromptTokens: 4321,
+			BaseRank: 1, BasePriority: 6, BaseWeight: 700,
 		},
 	}))
 	runtimeProtectionUntil := int64(0)
 	assert.True(t, channelSmartScheduleRouteResultChangesTrafficState(state, model.ChannelSmartScheduleRouteResultUpdate{
 		RuntimeProtectionUntil: &runtimeProtectionUntil,
 	}))
-}
-
-func TestChannelSmartScheduleTemporaryTrafficSnapshotKeepsReleaseLimitWhileProbing(t *testing.T) {
-	probing := model.ChannelSmartScheduleRouteState{
-		StabilityState:                  model.ChannelSmartScheduleStabilityProbing,
-		StabilityReleaseMaxPromptTokens: 1234,
-		BaseRank:                        2,
-		BasePriority:                    80,
-		BaseWeight:                      40,
-	}
-	snapshot := channelSmartScheduleClearTemporaryTraffic(probing)
-	require.NotNil(t, snapshot)
-	assert.Equal(t, 1234, snapshot.StabilityReleaseMaxPromptTokens)
-
-	degraded := probing
-	degraded.StabilityState = model.ChannelSmartScheduleStabilityDegraded
-	snapshot = channelSmartScheduleClearTemporaryTraffic(degraded)
-	require.NotNil(t, snapshot)
-	assert.Zero(t, snapshot.StabilityReleaseMaxPromptTokens)
-
-	snapshot = channelSmartScheduleClearTemporaryTrafficAndRelease(probing)
-	require.NotNil(t, snapshot)
-	assert.Zero(t, snapshot.StabilityReleaseMaxPromptTokens)
 }
 
 func TestRunChannelSmartScheduleRecordsActiveRuntimeProtection(t *testing.T) {
@@ -382,8 +356,8 @@ func TestRunChannelSmartScheduleKeepsSuccessfulPoolWhenLaterPoolFails(t *testing
 	require.NoError(t, db.Order("channel_id ASC").Find(&abilities).Error)
 	require.Len(t, abilities, 2)
 	require.NotNil(t, abilities[0].Priority)
-	assert.Equal(t, priority, *abilities[0].Priority)
-	assert.Equal(t, weight, abilities[0].Weight)
+	assert.Equal(t, int64(1), *abilities[0].Priority)
+	assert.Equal(t, uint(1000), abilities[0].Weight)
 	require.NotNil(t, abilities[1].Priority)
 	assert.Equal(t, priority, *abilities[1].Priority)
 	assert.Equal(t, weight, abilities[1].Weight)
@@ -491,8 +465,6 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 		"gold", channelMonitorSmartScheduleStrategyTPS, false,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-b"}, 1, 80, 30,
 	)
-	prioritySamplingEnabled := false
-	goldPolicy.PrioritySamplingEnabled = &prioritySamplingEnabled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, goldPolicy),
@@ -555,8 +527,8 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	}
 	goldFast := abilityByRoute[routeKey{channelId: 1301, model: "model-b"}]
 	goldSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-b"}]
-	assert.Equal(t, priority, *goldFast.Priority)
-	assert.Equal(t, priority, *goldSlow.Priority)
+	assert.Equal(t, int64(2), *goldFast.Priority)
+	assert.Equal(t, int64(1), *goldSlow.Priority)
 	assert.Equal(t, goldFast.Weight, goldSlow.Weight)
 	unconfiguredFast := abilityByRoute[routeKey{channelId: 1301, model: "model-a"}]
 	unconfiguredSlow := abilityByRoute[routeKey{channelId: 1302, model: "model-a"}]

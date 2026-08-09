@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -36,6 +37,32 @@ func TestChannelSmartScheduleRuntimeSampleCountSharesParameterizedLiveLogs(t *te
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), sampleCount)
+}
+
+func TestChannelSmartScheduleAdaptiveHealthMetricsSaturatesRetryDurationConversion(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&Log{
+		CreatedAt: now, Type: LogTypeError, ChannelId: 2405,
+		ModelName: "model-a", UseTime: int(^uint(0) >> 1), IsRetryAttempt: true,
+		Other: `{"status_code":503}`,
+	}).Error)
+
+	results, err := GetChannelSmartScheduleAdaptiveHealthMetrics(
+		context.Background(),
+		[]ChannelSmartScheduleAdaptiveHealthMetricWindow{{
+			ChannelId: 2405, ModelName: "model-a", StartTimestamp: now - 1,
+			WarningSeconds: 5, CriticalSeconds: 10,
+		}},
+		now+1,
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	metric := results[0].Metric
+	assert.Equal(t, int64(1), metric.StabilityRetryFailureCount)
+	assert.Equal(t, float64(math.MaxInt64), metric.RetryFailureDurationTotalMs)
+	require.Len(t, metric.RetryFailureDurationBuckets, 6)
+	assert.Equal(t, int64(1), metric.RetryFailureDurationBuckets[5].Count)
 }
 
 func TestChannelSmartScheduleRuntimeSampleCountExcludesPartialMinuteHistory(t *testing.T) {
@@ -142,7 +169,9 @@ func TestChannelSmartScheduleAdaptiveHealthMetricsCountsIndependentTPSAndRequest
 	assert.Equal(t, int64(1), metric.SlowRequestCount)
 	assert.Equal(t, int64(1), metric.HealthyRequestCount)
 	assert.Equal(t, int64(1), metric.FirstTokenCount)
+	assert.InDelta(t, 10_000, metric.FirstTokenTotalMs, 1e-9)
 	assert.Equal(t, int64(2), metric.TPSSampleCount)
+	assert.InDelta(t, 20, metric.TPSTotal, 1e-9)
 	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
 	assert.Equal(t, now-2, metric.LastUsedTime)
 }

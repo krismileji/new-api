@@ -27,120 +27,463 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
+type SmartScheduleSettingHelpOptions = {
+  meaning: string
+  unit: string
+  range: string
+  defaultValue: string
+  activation?: string
+  scheduleRelation?: string
+  constraints?: string
+}
+
+function smartScheduleSettingHelp({
+  meaning,
+  unit,
+  range,
+  defaultValue,
+  activation = '保存成功后生效',
+  scheduleRelation = '常规评分在下次完整调度使用',
+  constraints = '无额外组合约束',
+}: SmartScheduleSettingHelpOptions): string {
+  return `${meaning} 单位：${unit}；范围：${range}；默认值：${defaultValue}；生效时机：${activation}；与调度间隔的关系：${scheduleRelation}；组合约束：${constraints}。`
+}
+
+const EVENT_REFRESH = '不等待完整调度间隔，下一次 1 秒池事件刷新使用'
+const NEXT_REQUEST = '不等待完整调度间隔，下一次相关请求使用'
+const NEXT_OBSERVATION = '不等待完整调度间隔，下一条有效观测或 1 秒池刷新使用'
+
 const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
-  enabled:
-    '智能调度总开关。开启后，系统按调度间隔处理已配置策略的分组；没有策略的分组以及手动取消参与的渠道不会被调整。',
-  interval:
-    '智能调度任务的运行频率。每次使用最新统计窗口重新评分，并按主渠道切换分差决定是否更换承接最多请求的渠道。',
-  performanceRange:
-    '评分使用最近这段时间内的消费与性能日志。窗口越短响应越快但波动更大，窗口越长越平滑但恢复更慢。',
-  responseHeaderTimeout:
-    '流式请求等待首个有效模型事件的最长时间，响应头、空行和心跳不算首字；非流式请求仍限制响应头等待时间。0 表示不限制，超时后按现有规则切换渠道重试。',
-  rateLimitCooldown:
-    '上游 429 通常表示并发暂时达到限制。冷却只临时阻止同一渠道和模型承接新请求，到期自动恢复；不会改变优先级、权重或稳定性状态，0 秒表示关闭。',
-  forceReset:
-    '仅在本次保存后执行一次：忽略渐进调整幅度，按当前统计窗口重新计算所有已配置路由的优先级和权重，不影响未配置分组。',
-  group:
-    '策略只作用于这个分组，每个分组只能配置一条策略。保存后该分组才参与智能调度，删除策略后立即退出。',
-  strategy:
-    '决定业务得分主要比较什么：综合指标、成本倍率、首字时间或 TPS。开启稳定性保护后，稳定性得分还会按配置占比合入最终得分。',
-  applyMode:
-    '“只调整权重”保留现有优先级，只在同一优先级层按得分分配权重；“优先级分层 + 权重”为每条正常路由生成唯一顺位，N 条路由对应 PN 至 P1。',
-  models:
-    '限定策略覆盖的模型。留空表示此分组内全部模型；实际评分与调整仍按“分组 + 模型”分别进行。',
-  modelOrder:
-    '控制当前分组在智能调度看板中的模型卡片顺序，只影响展示，不会改变参与模型、调度优先级、权重或流量分配。未配置的新增模型会按名称追加在末尾。',
-  sampleMode:
-    '样本不足时的自动补充方式：关闭会保持当前路由；探索流量使用少量真实业务请求补样本；定时探测会主动请求上游。参与调度路由的手动渠道测试始终会计入样本。',
-  explorationTraffic:
-    '每个“分组 + 模型”池同一时间只探索一个缺少样本的渠道。该值是目标流量占比，实际比例会因整数权重略有偏差。',
-  explorationMaxPromptTokens:
-    '探索流量优先承接小请求。提示词估算或请求体大小超过该上限时，会暂时后移探索渠道；没有其他候选时仍会回退探索渠道。0 表示无限制。',
-  stabilityReleaseMaxPromptTokens:
-    '稳定性释放处于小流量试放阶段时，提示词估算或请求体大小超过该上限会暂时后移该渠道；没有其他候选时仍会允许它兜底。0 表示无限制。',
-  probeInterval:
-    '到期后对支持的文本模型发送 /v1/responses 流式请求。实际执行的成功和失败结果都会计入稳定性样本；探测会写消费日志并计入渠道成本。',
-  degradedProbe:
-    '稳定性降级后按探测间隔主动请求渠道。达到配置的恢复探测成功次数后，可以不等待降级时长结束而提前恢复原优先级和权重。',
-  prioritySampling:
-    '按基础排名轮转低优先级渠道的少量真实流量，只验证健康备援，不改变基础排名。',
-  prioritySamplingInterval:
-    '低优先级轮转每次保持当前采样渠道的时间，到期后按排名和最近采样时间选择下一条。',
-  prioritySamplingBasePercent:
-    '基础排名第 2 名渠道在轮转采样时的目标流量比例。',
-  prioritySamplingDecayPercent:
-    '排名每降低一名时，上一名目标采样比例保留的百分比。',
-  prioritySamplingMinPercent: '低排名渠道轮转采样时仍保留的最低目标流量比例。',
-  stability:
-    '稳定性保护包含软降级和硬保护：错误率或首字持续恶化时先增加备援采样；连续失败或保护失败窗口累计失败达到阈值时，当前“分组 + 模型”路由才进入硬保护。',
-  stabilityPercent:
-    '稳定性得分在最终得分中的占比，剩余比例来自当前调度方式的业务指标。值越高，路由越偏向稳定渠道。',
-  recoveryStabilityScore:
-    '降级期结束后会先小流量试放，新样本得分达到此值时可恢复原优先级和权重；试放中的有效失败会立即重新降级。',
-  minSamples:
-    '首字时间、TPS 和稳定性等指标至少需要这些有效样本才参与评分。硬保护不受最少样本限制；样本不足时按所选样本补充方式处理。',
-  fastFailurePenalty:
-    '上游快速报错但后续重试成功时，每次失败按该比例计入惩罚；最终仍失败的请求始终按一次完整失败计。',
-  fastFailureThreshold:
-    '重试失败耗时不超过此值时按“快速失败惩罚”计算；超过后，惩罚会随耗时线性增加。',
-  fastFailureSameChannelRetry:
-    '错误符合原有重试规则且耗时不超过快速失败界限时，优先在当前渠道额外重试这些次。每次重试前按快速重试间隔等待；该额度不消耗系统普通重试次数，用尽后才进入普通重试并切换渠道；0 表示关闭。',
-  fastFailureSameChannelRetryDelay:
-    '每次同渠道快速重试前等待的固定时间，只影响快速失败的额外重试，不延迟普通跨渠道重试。请求被取消时会立即停止等待；0 表示不等待。',
-  slowFailureThreshold:
-    '重试失败耗时达到此值后按一次完整失败计算；快速失败界限与慢失败界限之间按耗时线性增加惩罚。',
-  burstFailureWindow:
-    '硬保护使用的短期滚动失败窗口。窗口只保留最近的突发故障信号，不依赖分钟级稳定性评分或最少样本。',
-  consecutiveFailureThreshold:
-    '同一渠道和模型连续出现这些次上游失败时，立即进入稳定性降级。一次成功会清零连续失败计数。',
-  burstFailureThreshold:
-    '短期窗口内累计失败达到这些次时，立即进入稳定性降级，用于并发故障快速摘除渠道。',
-  recoverySuccessThreshold:
-    '稳定性试放或降级探测连续成功达到这些次时可以恢复正常流量；任一有效失败会立即重新降级。',
-  cooldown:
-    '进入稳定性释放后保持优先级 0、权重 0 的最短时间。到期后进入小流量试放，不代表立即完全恢复。',
-  jitter:
-    '允许将偶发慢成功视为正常波动。超过允许数量的慢成功才会扣减稳定性得分，同时首字评分会使用去极值后的均值。',
-  jitterTolerance:
-    '统计窗口内允许免罚的慢成功比例。设为 0% 时不免罚；大于 0% 时向下取整且至少允许 1 次，超过的部分按其样本占比扣减稳定性得分。',
-  jitterSlowThreshold:
-    '直接按首字耗时判断慢成功，不再叠加历史基线。达到该阈值仍是成功请求，只参与抖动处罚；请求失败上限由“上游响应等待时间”控制。',
-  costRatioPercent:
-    '成本倍率越低得分越高。该百分比是它在业务得分中的占比；成本倍率、首字时间和 TPS 三项合计必须为 100%。',
-  firstTokenPercent:
-    '首字时间越短得分越高。该百分比是它在业务得分中的占比；有效样本不足时会跳过此指标，并按其他可用指标重新归一。',
-  tpsPercent:
-    'TPS 越高得分越高。该百分比是它在业务得分中的占比；有效样本不足时会跳过此指标，并按其他可用指标重新归一。',
-  primaryTraffic:
-    '仅在“只调整权重”下生效。系统保留现有优先级，让每个优先级中最终得分最高的渠道承接该目标比例，其余流量按最终得分分配给同层备用渠道。',
-  primarySwitchThreshold:
-    '新渠道的最终得分必须至少高于当前主渠道这些百分点才会替换主渠道。主渠道被禁用、不可用或触发稳定性降级时会立即切换，不等待达到分差。',
-  adaptiveSampling:
-    '稳定性保护中的软降级机制。健康主渠道继续承接大部分流量；错误率或首字延迟持续恶化时按压力逐步增加备用渠道采样。它不摘除渠道，硬不可用仍按原有保护立即切换。',
-  adaptiveSamplingBasePercent:
-    '主渠道进入软压力后，备用渠道用于补充样本的起始预算上限；健康主渠道不会因为该值降低正常流量。',
-  adaptiveSamplingMaxPercent:
-    '主渠道进入较高压力时，备用渠道可获得的池级最高采样比例；实际比例还会受样本欠账、主渠道最低流量和备用渠道健康状态限制。',
-  adaptiveSamplingPrimaryMinPercent:
-    '软压力期间主渠道仍保留的最低流量比例，用来避免备用采样过度分流；主渠道硬不可用时不受此限制。',
-  adaptiveSamplingErrorWarningPercent:
-    '主渠道非 429 请求错误率达到此阈值后进入观察/压力计算，备用采样预算开始随错误压力增加。',
-  adaptiveSamplingErrorCriticalPercent:
-    '主渠道非 429 请求错误率达到此阈值时视为高风险，备用采样可达到最大预算；硬保护仍按原有错误规则执行。',
-  adaptiveSamplingFirstTokenWarningSeconds:
-    '主渠道首字延迟达到此阈值后计入延迟压力，和错误压力共同决定备用采样强度。',
-  adaptiveSamplingFirstTokenCriticalSeconds:
-    '主渠道首字延迟达到此阈值时视为高风险，备用采样按更高压力计算；这不等同于上游响应超时。',
-  adaptiveSamplingWindowSeconds:
-    '独立于性能和稳定性分钟窗口，自适应采样只统计最近这段秒级窗口内的请求；窗口越短响应越快但波动越大，窗口越长越平滑但恢复更慢。',
-  adaptiveSamplingEnterRequestPercent:
-    '窗口内风险请求（非 429 错误或首字达到告警阈值的成功请求）达到此占比后进入压力状态。',
-  adaptiveSamplingRecoverRequestPercent:
-    '压力状态下，窗口内健康请求（成功且首字未达到告警阈值）达到此占比后恢复健康；与进入阈值形成滞回。',
-  adaptiveSamplingSwitchConfirmRequestPercent:
-    '备用渠道作为评分胜者时，窗口内健康请求达到此占比且健康证据足够后才替换主渠道；硬不可用或硬保护路径不等待此确认。',
-  adaptiveSamplingMinComparableChannels:
-    '首字、TPS 等相对指标至少需要多少个有足够样本的渠道才比较；不足时不产生单渠道满分，保留当前主渠道并继续补样。',
+  enabled: smartScheduleSettingHelp({
+    meaning: '控制已配置策略的分组是否参与智能调度。',
+    unit: '开关',
+    range: '开启或关闭',
+    defaultValue: '关闭',
+    constraints: '只作用于已配置分组，手动取消参与的渠道不调整',
+  }),
+  interval: smartScheduleSettingHelp({
+    meaning: '定义完整评分、基础排名和基础 P/W 重算频率。',
+    unit: '分钟',
+    range: '1–525600',
+    defaultValue: '10',
+    activation: '保存后从下一个任务周期生效',
+    scheduleRelation: '它本身定义完整调度间隔；运行时软事件仍可在 1 秒刷新',
+  }),
+  performanceRange: smartScheduleSettingHelp({
+    meaning: '设定成本、首字和 TPS 业务评分的历史窗口。',
+    unit: '分钟',
+    range: '1–43200 的整数',
+    defaultValue: '60',
+    constraints: '与稳定性评分窗口独立',
+  }),
+  stabilityRange: smartScheduleSettingHelp({
+    meaning: '设定成功率、失败耗时和首字抖动软评分窗口。',
+    unit: '分钟',
+    range: '1–43200 的整数',
+    defaultValue: '5',
+    constraints: '与性能窗口独立，不替代秒级保护失败窗口',
+  }),
+  responseHeaderTimeout: smartScheduleSettingHelp({
+    meaning: '限制流式首个有效模型事件或非流式响应头的等待时间。',
+    unit: '秒',
+    range: '0–600',
+    defaultValue: '0（不限制）',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '响应头、空行和心跳不计为流式首字，超时按现有规则重试',
+  }),
+  rateLimitCooldown: smartScheduleSettingHelp({
+    meaning: '上游返回 429 后，暂停该渠道模型进入新请求、亲和、探测和采样。',
+    unit: '秒',
+    range: '0–300',
+    defaultValue: '30',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '0 表示关闭；不改变稳定性状态，到期自动放行',
+  }),
+  forceReset: smartScheduleSettingHelp({
+    meaning: '本次保存时忽略渐进调整幅度，重算已配置路由。',
+    unit: '一次性复选框',
+    range: '选中或不选中',
+    defaultValue: '不选中',
+    activation: '仅在本次保存后执行一次',
+    scheduleRelation: '保存后立即创建重算任务，不等待下一个完整调度间隔',
+    constraints: '不影响未配置分组',
+  }),
+  group: smartScheduleSettingHelp({
+    meaning: '指定策略作用的渠道分组。',
+    unit: '分组名称',
+    range: '1–64 个字符',
+    defaultValue: '无，新增时必选',
+    constraints: '每个分组只能有一条策略',
+  }),
+  strategy: smartScheduleSettingHelp({
+    meaning: '选择综合、成本倍率、首字或 TPS 作为业务得分主维度。',
+    unit: '枚举',
+    range: '智能调度、成本倍率、首字、TPS',
+    defaultValue: '智能调度',
+    constraints: '稳定性开启时还会合入稳定性得分',
+  }),
+  applyMode: smartScheduleSettingHelp({
+    meaning: '决定仅调整同层权重，或同时生成唯一优先级和权重。',
+    unit: '枚举',
+    range: '只调整权重、优先级分层 + 权重',
+    defaultValue: '优先级分层 + 权重',
+    constraints: '探索流量和自适应备援必须使用优先级分层 + 权重',
+  }),
+  models: smartScheduleSettingHelp({
+    meaning: '限定策略覆盖的模型，评分仍按分组 + 模型独立执行。',
+    unit: '模型列表',
+    range: '0–100 个唯一模型',
+    defaultValue: '空（分组内全部模型）',
+    constraints: '只能选择当前分组可用模型',
+  }),
+  modelOrder: smartScheduleSettingHelp({
+    meaning: '控制智能调度看板中模型卡片的展示顺序。',
+    unit: '模型列表',
+    range: '当前策略模型的任意排列',
+    defaultValue: '空（按名称排序）',
+    activation: '保存后下次打开或刷新看板生效',
+    scheduleRelation: '纯展示配置，不等待也不触发完整调度',
+    constraints: '不改变参与范围、P/W 或流量',
+  }),
+  sampleMode: smartScheduleSettingHelp({
+    meaning: '选择样本欠账时不补样、分配真实探索流量或主动探测。',
+    unit: '枚举',
+    range: '关闭、探索流量、定时探测',
+    defaultValue: '关闭',
+    scheduleRelation: EVENT_REFRESH,
+    constraints: '探索流量需优先级分层 + 权重；主动探测仅支持文本模型',
+  }),
+  samplingOrder: smartScheduleSettingHelp({
+    meaning: '设定探索流量选择样本欠账候选的排序方式，自适应备援沿用同一顺序。',
+    unit: '枚举',
+    range: '按基础优先级和权重、按成本倍率',
+    defaultValue: '按基础优先级和权重',
+    scheduleRelation: EVENT_REFRESH,
+    constraints:
+      '仅在探索流量配置中展示；关闭常规探索后仍保留并供自适应备援使用，不存在独立轮转顺序',
+  }),
+  explorationTraffic: smartScheduleSettingHelp({
+    meaning: '设定当前唯一样本欠账渠道的目标真实流量。',
+    unit: '%',
+    range: '>0–20',
+    defaultValue: '3',
+    scheduleRelation: EVENT_REFRESH,
+    constraints:
+      '仅 sample_mode=探索流量且应用方式为优先级分层 + 权重时生效；整数权重会造成小幅偏差',
+  }),
+  explorationMaxPromptKTokens: smartScheduleSettingHelp({
+    meaning:
+      '以 K Token 设置探索请求上限，对估算超限的请求后移探索路由，不阻断请求；1K 等于 1000 Token。',
+    unit: 'K Token',
+    range: '0–1000 的整数',
+    defaultValue: '50',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '仅探索流量生效；0 表示无限制，无其他候选时仍可兜底',
+  }),
+  stabilityReleaseMaxPromptKTokens: smartScheduleSettingHelp({
+    meaning:
+      '以 K Token 设置稳定性试放请求上限，对估算超限的请求后移试放路由，不阻断请求；1K 等于 1000 Token。',
+    unit: 'K Token',
+    range: '0–1000 的整数',
+    defaultValue: '0（无限制）',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '仅稳定性试放生效，无其他候选时仍可兜底',
+  }),
+  probeInterval: smartScheduleSettingHelp({
+    meaning: '设定常规探测和降级恢复探测的最短间隔。',
+    unit: '分钟',
+    range: '1–525600 的整数',
+    defaultValue: '10',
+    activation: '保存后下一次探测资格检查生效',
+    scheduleRelation: '不等待完整调度间隔，到期即可探测',
+    constraints: 'sample_mode=定时探测或开启降级探测时生效；429 冷却期不发请求',
+  }),
+  degradedProbe: smartScheduleSettingHelp({
+    meaning: '允许 P0/W0 硬降级路由主动探测，成功达标后立即恢复。',
+    unit: '开关',
+    range: '开启或关闭',
+    defaultValue: '关闭',
+    activation: '保存后下一次探测资格检查生效',
+    scheduleRelation: '不等待完整调度间隔，连续成功达标即恢复',
+    constraints: '需开启稳定性保护，复用探测间隔，429 冷却期禁止探测',
+  }),
+  stability: smartScheduleSettingHelp({
+    meaning: '启用软健康采样、运行时硬保护和恢复试放。',
+    unit: '开关',
+    range: '开启或关闭',
+    defaultValue: '开启',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '关闭时稳定性评分权重及所有保护子配置不生效',
+  }),
+  stabilityPercent: smartScheduleSettingHelp({
+    meaning: '设定稳定性得分在最终得分中的占比。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '50',
+    constraints: '仅稳定性保护开启时生效，剩余比例由业务得分承担',
+  }),
+  recoveryStabilityScore: smartScheduleSettingHelp({
+    meaning: '设定试放新样本恢复基础 P/W 需达到的稳定性得分。',
+    unit: '分',
+    range: '0–100',
+    defaultValue: '95',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '仅稳定性保护开启时生效；试放有效失败会立即重新降级',
+  }),
+  minSamples: smartScheduleSettingHelp({
+    meaning: '定义动态性能指标可评分、渠道清偿样本欠账的最少样本数。',
+    unit: '次',
+    range: '1–100000 的整数',
+    defaultValue: '5',
+    scheduleRelation: '常规评分下次完整调度使用；样本欠账清算在 1 秒刷新使用',
+    constraints: '硬保护不受此阈值限制',
+  }),
+  fastFailurePenalty: smartScheduleSettingHelp({
+    meaning: '设定最终重试成功时，快速失败按完整失败计入的比例。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '40',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '最终仍失败的请求始终按一次完整失败计',
+  }),
+  fastFailureThreshold: smartScheduleSettingHelp({
+    meaning: '定义使用快速失败惩罚的耗时上界。',
+    unit: '秒',
+    range: '>0 且 <60',
+    defaultValue: '1',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须小于慢失败界限',
+  }),
+  fastFailureSameChannelRetry: smartScheduleSettingHelp({
+    meaning: '设定可重试快速失败在当前渠道的额外重试次数。',
+    unit: '次',
+    range: '0–10 的整数',
+    defaultValue: '0（关闭）',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '不消耗普通重试次数，用尽后才进入跨渠道重试',
+  }),
+  fastFailureSameChannelRetryDelay: smartScheduleSettingHelp({
+    meaning: '设定每次同渠道快速重试前的固定等待。',
+    unit: '毫秒',
+    range: '0–60000 的整数',
+    defaultValue: '1000',
+    scheduleRelation: NEXT_REQUEST,
+    constraints: '仅额外快速重试生效；0 表示不等待，请求取消会立即中断',
+  }),
+  slowFailureThreshold: smartScheduleSettingHelp({
+    meaning: '定义按一次完整失败计算的耗时下界。',
+    unit: '秒',
+    range: '>0–60',
+    defaultValue: '10',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须大于快速失败界限，两者之间线性增加惩罚',
+  }),
+  burstFailureWindow: smartScheduleSettingHelp({
+    meaning: '设定硬保护累计近期失败的滚动窗口。',
+    unit: '秒',
+    range: '1–300 的整数',
+    defaultValue: '30',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '不依赖分钟级稳定性评分或最少样本',
+  }),
+  consecutiveFailureThreshold: smartScheduleSettingHelp({
+    meaning: '同一渠道模型连续失败达标时立即进入硬保护。',
+    unit: '次',
+    range: '1–100 的整数',
+    defaultValue: '2',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '成功会清零连续失败计数，429 不计入',
+  }),
+  burstFailureThreshold: smartScheduleSettingHelp({
+    meaning: '保护失败窗口内累计失败达标时立即进入硬保护。',
+    unit: '次',
+    range: '1–100 的整数',
+    defaultValue: '3',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '窗口内成功不删除已累计失败，429 不计入',
+  }),
+  recoverySuccessThreshold: smartScheduleSettingHelp({
+    meaning: '设定试放或降级探测恢复正常流量所需的连续成功次数。',
+    unit: '次',
+    range: '1–100 的整数',
+    defaultValue: '2',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '任一有效失败立即清零并重新降级',
+  }),
+  cooldown: smartScheduleSettingHelp({
+    meaning: '设定硬降级保持 P0/W0 的最短时间。',
+    unit: '分钟',
+    range: '1–525600 的整数',
+    defaultValue: '30',
+    activation: '保存后新的降级或失败续期使用',
+    scheduleRelation: '不等待完整调度间隔，到期后由 1 秒刷新进入试放',
+    constraints: '到期只进入小流量试放，不代表立即完全恢复',
+  }),
+  jitter: smartScheduleSettingHelp({
+    meaning: '允许一定比例的慢成功免罚，并在首字评分时去除允许的极值。',
+    unit: '开关',
+    range: '开启或关闭',
+    defaultValue: '开启',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '需开启稳定性保护',
+  }),
+  jitterTolerance: smartScheduleSettingHelp({
+    meaning: '设定稳定性窗口内允许免罚的慢成功比例。',
+    unit: '%',
+    range: '0–50',
+    defaultValue: '5',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '需开启稳定性与抖动容忍；大于 0 时向下取整且至少免罚 1 次',
+  }),
+  jitterSlowThreshold: smartScheduleSettingHelp({
+    meaning: '设定将成功请求视为慢成功的首字耗时阈值。',
+    unit: '秒',
+    range: '0–60',
+    defaultValue: '10',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '需开启稳定性与抖动容忍；慢成功仍是协议成功，不直接触发硬保护',
+  }),
+  costRatioPercent: smartScheduleSettingHelp({
+    meaning: '设定成本倍率在业务得分中的权重，倍率越低得分越高。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '综合策略 40，成本策略 70',
+    constraints: '同一策略的成本、首字、TPS 三项必须合计 100',
+  }),
+  firstTokenPercent: smartScheduleSettingHelp({
+    meaning: '设定首字时间在业务得分中的权重，首字越短得分越高。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '综合策略 40，成本策略 20',
+    constraints: '三项必须合计 100；可比渠道不足时不生成单渠道满分',
+  }),
+  tpsPercent: smartScheduleSettingHelp({
+    meaning: '设定 TPS 在业务得分中的权重，TPS 越高得分越高。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '综合策略 20，成本策略 10',
+    constraints: '三项必须合计 100；可比渠道不足时不生成单渠道满分',
+  }),
+  primaryTraffic: smartScheduleSettingHelp({
+    meaning: '设定只调整权重时，同层最高分渠道的目标流量。',
+    unit: '%',
+    range: '51–99',
+    defaultValue: '90',
+    constraints: '仅只调整权重模式生效，余下流量按得分分配给同层渠道',
+  }),
+  primarySwitchThreshold: smartScheduleSettingHelp({
+    meaning: '设定新胜者替换当前主渠道所需的最小得分差。',
+    unit: '百分点',
+    range: '0–100',
+    defaultValue: '3',
+    constraints: '主渠道不可用或硬保护时立即切换，不等待分差',
+  }),
+  adaptiveSampling: smartScheduleSettingHelp({
+    meaning:
+      '根据主渠道秒级错误与首字压力，动态增加有样本欠账备援的小流量采样。',
+    unit: '开关',
+    range: '开启或关闭',
+    defaultValue: '开启',
+    scheduleRelation: EVENT_REFRESH,
+    constraints: '需开启稳定性且使用优先级分层 + 权重；生效时暂停常规探索',
+  }),
+  adaptiveSamplingBasePercent: smartScheduleSettingHelp({
+    meaning: '设定主渠道初入压力时备援采样的起始预算。',
+    unit: '%',
+    range: '0–10',
+    defaultValue: '3',
+    scheduleRelation: EVENT_REFRESH,
+    constraints: '不得大于最大备援预算，仅自适应备援开启时生效',
+  }),
+  adaptiveSamplingMaxPercent: smartScheduleSettingHelp({
+    meaning: '设定高压力时整个池可分给备援采样的最高预算。',
+    unit: '%',
+    range: '1–49',
+    defaultValue: '30',
+    scheduleRelation: EVENT_REFRESH,
+    constraints: '必须不小于基础预算，且不得超过 100% - 主渠道最低流量',
+  }),
+  adaptiveSamplingPrimaryMinPercent: smartScheduleSettingHelp({
+    meaning: '设定软压力期间健康主渠道保留的最低流量。',
+    unit: '%',
+    range: '51–99',
+    defaultValue: '70',
+    scheduleRelation: EVENT_REFRESH,
+    constraints: '最大备援预算不得超过 100% - 本值；硬不可用时不受此限制',
+  }),
+  adaptiveSamplingErrorWarningPercent: smartScheduleSettingHelp({
+    meaning: '设定主渠道非 429 错误进入软压力计算的告警阈值。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '5',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须小于错误高风险阈值，429 不计入',
+  }),
+  adaptiveSamplingErrorCriticalPercent: smartScheduleSettingHelp({
+    meaning: '设定主渠道非 429 错误达到高风险的阈值。',
+    unit: '%',
+    range: '0–100',
+    defaultValue: '15',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须大于错误告警阈值，硬保护仍按独立失败规则执行',
+  }),
+  adaptiveSamplingFirstTokenWarningSeconds: smartScheduleSettingHelp({
+    meaning: '设定主渠道成功请求首字进入延迟压力计算的告警阈值。',
+    unit: '秒',
+    range: '0–60',
+    defaultValue: '5',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须小于首字高风险阈值，不等同于上游响应超时',
+  }),
+  adaptiveSamplingFirstTokenCriticalSeconds: smartScheduleSettingHelp({
+    meaning: '设定主渠道成功请求首字达到高风险的阈值。',
+    unit: '秒',
+    range: '0–60',
+    defaultValue: '10',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '必须大于首字告警阈值，不等同于上游响应超时',
+  }),
+  adaptiveSamplingWindowSeconds: smartScheduleSettingHelp({
+    meaning:
+      '设定自适应备援计算错误率、首字告警、风险和健康请求占比的独立秒级窗口。',
+    unit: '秒',
+    range: '60–3600 的整数',
+    defaultValue: '600',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '与性能、稳定性分钟窗口独立，不使用调度轮数替代',
+  }),
+  adaptiveSamplingFirstTokenWarningRequestPercent: smartScheduleSettingHelp({
+    meaning: '设定窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值。',
+    unit: '%',
+    range: '>0–100',
+    defaultValue: '10',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints:
+      '与恢复健康请求占比之和必须大于 100；失败请求由错误阈值独立判断',
+  }),
+  adaptiveSamplingRecoverRequestPercent: smartScheduleSettingHelp({
+    meaning: '设定错误和首字进入信号都解除后，窗口内健康请求占比的恢复阈值。',
+    unit: '%',
+    range: '>0–100',
+    defaultValue: '95',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '与首字告警请求占比之和必须大于 100，且不得高于切换确认占比',
+  }),
+  adaptiveSamplingSwitchConfirmRequestPercent: smartScheduleSettingHelp({
+    meaning: '设定备援评分胜出后替换主渠道所需的健康请求占比。',
+    unit: '%',
+    range: '>0–100',
+    defaultValue: '95',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '不得低于恢复健康占比；硬不可用或硬保护切换不等待此确认',
+  }),
+  adaptiveSamplingMinComparableChannels: smartScheduleSettingHelp({
+    meaning: '设定首字、TPS 等相对指标可比较所需的最少成熟渠道数。',
+    unit: '条',
+    range: '2–10 的整数',
+    defaultValue: '2',
+    constraints: '不足时不生成单渠道满分，保留当前主渠道并继续补样',
+  }),
 } as const
 
 export type ChannelMonitorSettingHelpKey =

@@ -46,12 +46,21 @@ type ChannelSmartScheduleRouteState struct {
 	TemporaryTrafficTargetPercent   float64 `json:"temporary_traffic_target_percent"`
 	ExplorationMaxPromptTokens      int     `json:"exploration_max_prompt_tokens"`
 	StabilityReleaseMaxPromptTokens int     `json:"stability_release_max_prompt_tokens"`
-	LastPrioritySampleTime          int64   `json:"last_priority_sample_time" gorm:"bigint;index"`
 
-	AdaptiveHealthState        string  `json:"adaptive_health_state" gorm:"type:varchar(16);index"`
-	AdaptiveHealthPressure     float64 `json:"adaptive_health_pressure"`
-	AdaptiveHealthSampleCount  int64   `json:"adaptive_health_sample_count"`
-	AdaptiveHealthLastSampleAt int64   `json:"adaptive_health_last_sample_at" gorm:"bigint"`
+	AdaptiveHealthState                           string   `json:"adaptive_health_state" gorm:"type:varchar(16);index"`
+	AdaptiveHealthPressure                        float64  `json:"adaptive_health_pressure"`
+	AdaptiveHealthFirstTokenWarningRequestPercent float64  `json:"adaptive_health_first_token_warning_request_percent"`
+	AdaptiveHealthSampleCount                     int64    `json:"adaptive_health_sample_count"`
+	AdaptiveHealthLastSampleAt                    int64    `json:"adaptive_health_last_sample_at" gorm:"bigint"`
+	RollingStabilityScore                         *float64 `json:"rolling_stability_score"`
+	RollingStabilitySampleCount                   int64    `json:"rolling_stability_sample_count" gorm:"bigint"`
+	RollingStabilitySlowCount                     int64    `json:"rolling_stability_slow_count" gorm:"bigint"`
+	RollingStabilityAllowedSlowCount              int64    `json:"rolling_stability_allowed_slow_count" gorm:"bigint"`
+	RollingStabilityUpdatedAt                     int64    `json:"rolling_stability_updated_at" gorm:"bigint;index"`
+	SamplingDebt                                  int      `json:"sampling_debt"`
+	SamplingCandidate                             bool     `json:"sampling_candidate"`
+	SamplingOrder                                 string   `json:"sampling_order" gorm:"type:varchar(32)"`
+	LastSamplingAt                                int64    `json:"last_sampling_at" gorm:"bigint;index"`
 
 	// ManualPrimaryUntil keeps an administrator-selected primary route in
 	// force until the unix timestamp. The saved routing values are internal
@@ -92,9 +101,13 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 		state.RuntimeProtectionUntil != 0 || state.TemporaryTrafficKind != "" ||
 		state.TemporaryTrafficSince != 0 || state.TemporaryTrafficTargetPercent != 0 ||
 		state.ExplorationMaxPromptTokens != 0 || state.StabilityReleaseMaxPromptTokens != 0 ||
-		state.LastPrioritySampleTime != 0 ||
 		state.AdaptiveHealthState != "" || state.AdaptiveHealthPressure != 0 ||
+		state.AdaptiveHealthFirstTokenWarningRequestPercent != 0 ||
 		state.AdaptiveHealthSampleCount != 0 || state.AdaptiveHealthLastSampleAt != 0 ||
+		state.RollingStabilityScore != nil || state.RollingStabilitySampleCount != 0 ||
+		state.RollingStabilitySlowCount != 0 || state.RollingStabilityAllowedSlowCount != 0 ||
+		state.RollingStabilityUpdatedAt != 0 || state.SamplingDebt != 0 ||
+		state.SamplingCandidate || state.SamplingOrder != "" || state.LastSamplingAt != 0 ||
 		state.ManualPrimaryUntil != 0 || state.ManualPrimaryAllowStabilityDegrade ||
 		state.ManualPrimarySaved || state.ManualPrimarySavedPriority != 0 ||
 		state.ManualPrimarySavedWeight != 0
@@ -109,11 +122,20 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 	state.TemporaryTrafficTargetPercent = 0
 	state.ExplorationMaxPromptTokens = 0
 	state.StabilityReleaseMaxPromptTokens = 0
-	state.LastPrioritySampleTime = 0
 	state.AdaptiveHealthState = ""
 	state.AdaptiveHealthPressure = 0
+	state.AdaptiveHealthFirstTokenWarningRequestPercent = 0
 	state.AdaptiveHealthSampleCount = 0
 	state.AdaptiveHealthLastSampleAt = 0
+	state.RollingStabilityScore = nil
+	state.RollingStabilitySampleCount = 0
+	state.RollingStabilitySlowCount = 0
+	state.RollingStabilityAllowedSlowCount = 0
+	state.RollingStabilityUpdatedAt = 0
+	state.SamplingDebt = 0
+	state.SamplingCandidate = false
+	state.SamplingOrder = ""
+	state.LastSamplingAt = 0
 	state.ManualPrimaryUntil = 0
 	state.ManualPrimaryAllowStabilityDegrade = false
 	state.ManualPrimarySaved = false
@@ -153,38 +175,51 @@ type ChannelSmartScheduleRoute struct {
 }
 
 type ChannelSmartScheduleRouteResultUpdate struct {
-	ChannelId                  int
-	Group                      string
-	Model                      string
-	Status                     string
-	Error                      string
-	Score                      *float64
-	ScoreDetails               *ChannelSmartScheduleScoreDetails
-	Priority                   int64
-	Weight                     uint
-	Time                       int64
-	Stability                  *ChannelSmartScheduleStabilityUpdate
-	RuntimeProtectionUntil     *int64
-	RoutingSnapshot            *ChannelSmartScheduleRoutingSnapshotUpdate
-	GuardCurrent               bool
-	PoolGuard                  bool
-	ObservationOnly            bool
-	AdaptiveOverlayOnly        bool
-	ExpectedRevision           int64
-	ExpectedControlRevision    string
-	ExpectedEconomicRevision   string
-	ExpectedParticipationSet   bool
-	ExpectedExcluded           bool
-	ExpectedAbilityEnabled     bool
-	ExpectedChannelStatus      int
-	ExpectedPriority           int64
-	ExpectedWeight             uint
-	ApplyPriorityWeight        bool
-	AdaptiveHealthSet          bool
-	AdaptiveHealthState        string
-	AdaptiveHealthPressure     float64
-	AdaptiveHealthSampleCount  int64
-	AdaptiveHealthLastSampleAt int64
+	ChannelId                                     int
+	Group                                         string
+	Model                                         string
+	Status                                        string
+	Error                                         string
+	Score                                         *float64
+	ScoreDetails                                  *ChannelSmartScheduleScoreDetails
+	Priority                                      int64
+	Weight                                        uint
+	Time                                          int64
+	Stability                                     *ChannelSmartScheduleStabilityUpdate
+	RuntimeProtectionUntil                        *int64
+	RoutingSnapshot                               *ChannelSmartScheduleRoutingSnapshotUpdate
+	GuardCurrent                                  bool
+	PoolGuard                                     bool
+	ObservationOnly                               bool
+	AdaptiveOverlayOnly                           bool
+	RuntimeStabilityRecovery                      bool
+	ExpectedRevision                              int64
+	ExpectedControlRevision                       string
+	ExpectedEconomicRevision                      string
+	ExpectedParticipationSet                      bool
+	ExpectedExcluded                              bool
+	ExpectedAbilityEnabled                        bool
+	ExpectedChannelStatus                         int
+	ExpectedPriority                              int64
+	ExpectedWeight                                uint
+	ApplyPriorityWeight                           bool
+	AdaptiveHealthSet                             bool
+	AdaptiveHealthState                           string
+	AdaptiveHealthPressure                        float64
+	AdaptiveHealthFirstTokenWarningRequestPercent float64
+	AdaptiveHealthSampleCount                     int64
+	AdaptiveHealthLastSampleAt                    int64
+	RollingStabilitySet                           bool
+	RollingStabilityScore                         *float64
+	RollingStabilitySampleCount                   int64
+	RollingStabilitySlowCount                     int64
+	RollingStabilityAllowedSlowCount              int64
+	RollingStabilityUpdatedAt                     int64
+	SamplingStateSet                              bool
+	SamplingDebt                                  int
+	SamplingCandidate                             bool
+	SamplingOrder                                 string
+	LastSamplingAt                                int64
 }
 
 type ChannelSmartScheduleRouteApplyOutcome struct {
@@ -229,7 +264,6 @@ type ChannelSmartScheduleRoutingSnapshotUpdate struct {
 	TemporaryTrafficTargetPercent   float64
 	ExplorationMaxPromptTokens      int
 	StabilityReleaseMaxPromptTokens int
-	LastPrioritySampleTime          int64
 	AdaptiveHealthSet               bool
 	AdaptiveHealthState             string
 	AdaptiveHealthPressure          float64
@@ -238,9 +272,8 @@ type ChannelSmartScheduleRoutingSnapshotUpdate struct {
 }
 
 const (
-	ChannelSmartScheduleTemporaryTrafficExploration      = "insufficient_samples"
-	ChannelSmartScheduleTemporaryTrafficPrioritySampling = "priority_sampling"
-	ChannelSmartScheduleTemporaryTrafficAdaptive         = "adaptive_sampling"
+	ChannelSmartScheduleTemporaryTrafficExploration = "insufficient_samples"
+	ChannelSmartScheduleTemporaryTrafficAdaptive    = "adaptive_sampling"
 )
 
 type ChannelSmartScheduleChannelConfigResult struct {
@@ -1744,10 +1777,16 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		if result.AdaptiveOverlayOnly != adaptiveOverlayOnly {
 			return nil, errors.New("智能调度整池结果不能混用运行时覆盖和完整调度写入")
 		}
-		if result.AdaptiveOverlayOnly && !result.ObservationOnly &&
+		if result.AdaptiveOverlayOnly && !result.ObservationOnly && !result.RuntimeStabilityRecovery &&
 			(result.Status != "" || result.Error != "" || result.Score != nil || result.ScoreDetails != nil ||
 				result.Stability != nil || result.RuntimeProtectionUntil != nil) {
 			return nil, errors.New("自适应运行时覆盖不能修改完整调度或稳定性保护状态")
+		}
+		if result.RuntimeStabilityRecovery &&
+			(!result.AdaptiveOverlayOnly || result.ObservationOnly || result.Stability == nil ||
+				result.Stability.State != "" || result.RuntimeProtectionUntil == nil ||
+				*result.RuntimeProtectionUntil != 0) {
+			return nil, errors.New("运行时稳定性恢复必须原子清除试放保护")
 		}
 		outcomes[index].Key = channelSmartScheduleRouteKey(result.ChannelId, result.Group, result.Model)
 		outcomes[index].ObservationOnly = result.ObservationOnly
@@ -1768,11 +1807,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		controlRevision := ""
 		economicRevision := ""
 		var err error
-		if adaptiveOverlayOnly {
-			controlRevision, err = lockChannelSmartScheduleControlRevisionTx(tx)
-		} else {
-			controlRevision, economicRevision, err = lockChannelSmartScheduleRevisionsTx(tx)
-		}
+		controlRevision, economicRevision, err = lockChannelSmartScheduleRevisionsTx(tx)
 		if err != nil {
 			return err
 		}
@@ -1851,7 +1886,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			currentPriority, currentWeight := channelSmartScheduleAbilityRouting(ability, &channel)
 			if result.PoolGuard {
 				if !channelExists || controlRevision != result.ExpectedControlRevision ||
-					(!adaptiveOverlayOnly && economicRevision != result.ExpectedEconomicRevision) ||
+					economicRevision != result.ExpectedEconomicRevision ||
 					state.Revision != result.ExpectedRevision ||
 					state.ParticipationSet != result.ExpectedParticipationSet ||
 					state.Excluded != result.ExpectedExcluded ||
@@ -1863,7 +1898,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				}
 			} else if result.GuardCurrent {
 				if controlRevision != result.ExpectedControlRevision ||
-					(!adaptiveOverlayOnly && economicRevision != result.ExpectedEconomicRevision) ||
+					economicRevision != result.ExpectedEconomicRevision ||
 					state.Revision != result.ExpectedRevision ||
 					!state.Participates() || !ability.Enabled || currentPriority != result.ExpectedPriority ||
 					currentWeight != result.ExpectedWeight ||
@@ -1883,6 +1918,9 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			key := outcomes[index].Key
 			state := states[index]
 			ability := abilities[index]
+			if result.RuntimeStabilityRecovery && state.StabilityState != ChannelSmartScheduleStabilityProbing {
+				return nil
+			}
 			previousStabilityState := state.StabilityState
 			applyPriorityWeight := result.ApplyPriorityWeight && state.Participates()
 			message := strings.TrimSpace(result.Error)
@@ -1890,7 +1928,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			if len(messageRunes) > 255 {
 				message = string(messageRunes[:255])
 			}
-			if !adaptiveOverlayOnly {
+			if !adaptiveOverlayOnly || result.RuntimeStabilityRecovery {
 				updatedTime := result.Time
 				if updatedTime <= 0 {
 					updatedTime = common.GetTimestamp()
@@ -1928,14 +1966,40 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 					state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
 				}
 			}
+			if result.RuntimeStabilityRecovery {
+				state.StabilityReleaseMaxPromptTokens = 0
+			}
 			if result.AdaptiveHealthSet {
 				state.AdaptiveHealthState = result.AdaptiveHealthState
 				state.AdaptiveHealthPressure = result.AdaptiveHealthPressure
+				state.AdaptiveHealthFirstTokenWarningRequestPercent = result.AdaptiveHealthFirstTokenWarningRequestPercent
 				state.AdaptiveHealthSampleCount = result.AdaptiveHealthSampleCount
 				state.AdaptiveHealthLastSampleAt = result.AdaptiveHealthLastSampleAt
 			}
+			if result.RollingStabilitySet {
+				state.RollingStabilityScore = nil
+				if result.RollingStabilityScore != nil {
+					value := *result.RollingStabilityScore
+					state.RollingStabilityScore = &value
+				}
+				state.RollingStabilitySampleCount = result.RollingStabilitySampleCount
+				state.RollingStabilitySlowCount = result.RollingStabilitySlowCount
+				state.RollingStabilityAllowedSlowCount = result.RollingStabilityAllowedSlowCount
+				state.RollingStabilityUpdatedAt = result.RollingStabilityUpdatedAt
+			}
+			if result.SamplingStateSet {
+				state.SamplingDebt = result.SamplingDebt
+				state.SamplingCandidate = result.SamplingCandidate
+				state.SamplingOrder = result.SamplingOrder
+				state.LastSamplingAt = result.LastSamplingAt
+			}
 			if result.RoutingSnapshot != nil {
-				if !adaptiveOverlayOnly {
+				if adaptiveOverlayOnly {
+					state.TemporaryTrafficKind = result.RoutingSnapshot.TemporaryTrafficKind
+					state.TemporaryTrafficSince = result.RoutingSnapshot.TemporaryTrafficSince
+					state.TemporaryTrafficTargetPercent = result.RoutingSnapshot.TemporaryTrafficTargetPercent
+					state.ExplorationMaxPromptTokens = result.RoutingSnapshot.ExplorationMaxPromptTokens
+				} else {
 					state.BaseRank = result.RoutingSnapshot.BaseRank
 					state.BasePriority = result.RoutingSnapshot.BasePriority
 					state.BaseWeight = result.RoutingSnapshot.BaseWeight
@@ -1944,17 +2008,6 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 						state.ManualPrimarySavedWeight = result.RoutingSnapshot.BaseWeight
 					}
 				}
-				state.TemporaryTrafficKind = result.RoutingSnapshot.TemporaryTrafficKind
-				state.TemporaryTrafficSince = result.RoutingSnapshot.TemporaryTrafficSince
-				state.TemporaryTrafficTargetPercent = result.RoutingSnapshot.TemporaryTrafficTargetPercent
-				state.ExplorationMaxPromptTokens = result.RoutingSnapshot.ExplorationMaxPromptTokens
-				if !adaptiveOverlayOnly {
-					state.StabilityReleaseMaxPromptTokens = result.RoutingSnapshot.StabilityReleaseMaxPromptTokens
-				}
-				state.LastPrioritySampleTime = result.RoutingSnapshot.LastPrioritySampleTime
-			}
-			if !adaptiveOverlayOnly && state.StabilityState != ChannelSmartScheduleStabilityProbing {
-				state.StabilityReleaseMaxPromptTokens = 0
 			}
 			if state.Revision == math.MaxInt64 {
 				return errors.New("智能调度路由修订号已达上限")

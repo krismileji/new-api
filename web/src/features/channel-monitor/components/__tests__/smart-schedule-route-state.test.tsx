@@ -45,6 +45,8 @@ function createProtectedRoute(
       model: 'model-a',
       window_start: 0,
       observation_since: 0,
+      recovery_success_count: 0,
+      recovery_success_at: 0,
       last_time: 0,
       last_success: false,
       last_error: '',
@@ -82,7 +84,15 @@ function createProtectedRoute(
       temporary_traffic_kind: '',
       temporary_traffic_since: 0,
       temporary_traffic_target_percent: 0,
-      last_priority_sample_time: 0,
+      rolling_stability_score: null,
+      rolling_stability_sample_count: 0,
+      rolling_stability_slow_count: 0,
+      rolling_stability_allowed_slow_count: 0,
+      rolling_stability_updated_at: 0,
+      sampling_debt: 0,
+      sampling_candidate: false,
+      sampling_order: '',
+      last_sampling_at: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: false,
     },
@@ -172,9 +182,9 @@ describe('smart schedule route protection state', () => {
     )
 
     assert.ok(markup.includes('渠道禁用'))
-    assert.equal(markup.includes('样本不足补量'), false)
+    assert.equal(markup.includes('>统一探索采样<'), false)
     assert.ok(
-      markup.includes('aria-label="解除 测试渠道 vip model-a 的探索流量"')
+      markup.includes('aria-label="解除 测试渠道 vip model-a 的统一探索采样"')
     )
   })
 
@@ -192,11 +202,11 @@ describe('smart schedule route protection state', () => {
       />
     )
 
-    assert.ok(markup.includes('样本不足补量'))
-    assert.ok(markup.includes('解除 测试渠道 vip model-a 的探索流量'))
+    assert.ok(markup.includes('统一探索采样'))
+    assert.ok(markup.includes('解除 测试渠道 vip model-a 的统一探索采样'))
     assert.match(
       markup,
-      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的探索流量"[^>]*>/
+      /<button[^>]*data-slot="badge"[^>]*aria-label="解除 测试渠道 vip model-a 的统一探索采样"[^>]*>/
     )
     assert.equal(markup.includes('路由禁用'), false)
   })

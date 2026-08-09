@@ -38,7 +38,6 @@ export type ChannelMonitorSmartScheduleGroupSummary = {
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
-  prioritySamplingCount: number
 }
 
 export type ChannelMonitorSmartScheduleChannelSummary = {
@@ -51,7 +50,6 @@ export type ChannelMonitorSmartScheduleChannelSummary = {
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
-  prioritySamplingCount: number
   failedCount: number
   lastScheduleTime: number
   groups: ChannelMonitorSmartScheduleGroupSummary[]
@@ -71,7 +69,6 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
-  prioritySamplingCount: number
   failedCount: number
   breakEvenFallbackCount: number
   breakEvenFallbackFixedCount: number
@@ -94,8 +91,7 @@ export type ChannelMonitorSmartScheduleDisplayOption = {
 export type ChannelMonitorSmartSchedulePoolStatus =
   | '稳定性降级'
   | '稳定性试放'
-  | '样本不足补量'
-  | '低优先级轮转'
+  | '统一采样'
   | '保本兜底接管'
   | '最近失败'
   | '未参与调度'
@@ -118,7 +114,6 @@ export type ChannelMonitorSmartScheduleOverviewSummary = {
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
-  prioritySamplingCount: number
   failedCount: number
 }
 
@@ -134,7 +129,6 @@ export type ChannelMonitorSmartScheduleRouteDisplayStatus =
   | 'degraded'
   | 'probing'
   | 'insufficient_samples'
-  | 'priority_sampling'
   | 'adaptive_sampling'
   | 'failed'
   | ChannelMonitorSmartScheduleRouteRole
@@ -161,14 +155,13 @@ const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
   degraded: 1,
   probing: 2,
   insufficient_samples: 3,
-  priority_sampling: 4,
-  adaptive_sampling: 5,
-  failed: 6,
-  primary: 7,
-  candidate: 8,
-  backup: 9,
-  unavailable: 10,
-  excluded: 11,
+  adaptive_sampling: 4,
+  failed: 5,
+  primary: 6,
+  candidate: 7,
+  backup: 8,
+  unavailable: 9,
+  excluded: 10,
 }
 
 const EMPTY_GROUP_RATIOS: Readonly<Record<string, number>> = {}
@@ -264,7 +257,6 @@ export function summarizeChannelMonitorSmartScheduleChannel(
   let degradedCount = 0
   let probingCount = 0
   let insufficientSampleCount = 0
-  let prioritySamplingCount = 0
   let failedCount = 0
   let lastScheduleTime = 0
 
@@ -291,12 +283,6 @@ export function summarizeChannelMonitorSmartScheduleChannel(
         route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       insufficientSampleCount += 1
-    }
-    if (
-      available &&
-      route.state.temporary_traffic_kind === 'priority_sampling'
-    ) {
-      prioritySamplingCount += 1
     }
     if (available && route.state.last_schedule_status === 'failed') {
       failedCount += 1
@@ -328,11 +314,6 @@ export function summarizeChannelMonitorSmartScheduleChannel(
             route.state.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
-        prioritySamplingCount:
-          available &&
-          route.state.temporary_traffic_kind === 'priority_sampling'
-            ? 1
-            : 0,
       })
       continue
     }
@@ -357,12 +338,6 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     ) {
       existing.insufficientSampleCount += 1
     }
-    if (
-      available &&
-      route.state.temporary_traffic_kind === 'priority_sampling'
-    ) {
-      existing.prioritySamplingCount += 1
-    }
   }
 
   return {
@@ -375,7 +350,6 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     degradedCount,
     probingCount,
     insufficientSampleCount,
-    prioritySamplingCount,
     failedCount,
     lastScheduleTime,
     groups: [...groupMap.values()].sort((first, second) =>
@@ -584,9 +558,6 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   if (route.state.temporary_traffic_kind === 'insufficient_samples') {
     return 'insufficient_samples'
   }
-  if (route.state.temporary_traffic_kind === 'priority_sampling') {
-    return 'priority_sampling'
-  }
   if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
     return 'adaptive_sampling'
   }
@@ -706,11 +677,6 @@ export function summarizeChannelMonitorSmartSchedulePools(
             route.state.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
-        prioritySamplingCount:
-          available &&
-          route.state.temporary_traffic_kind === 'priority_sampling'
-            ? 1
-            : 0,
         failedCount:
           available && route.state.last_schedule_status === 'failed' ? 1 : 0,
         breakEvenFallbackCount:
@@ -750,12 +716,6 @@ export function summarizeChannelMonitorSmartSchedulePools(
         route.state.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       existing.insufficientSampleCount += 1
-    }
-    if (
-      available &&
-      route.state.temporary_traffic_kind === 'priority_sampling'
-    ) {
-      existing.prioritySamplingCount += 1
     }
     if (available && route.state.last_schedule_status === 'failed') {
       existing.failedCount += 1
@@ -843,7 +803,6 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
-  prioritySamplingCount: number
   failedCount?: number
   breakEvenFallbackTakingOver?: boolean
 }): ChannelMonitorSmartSchedulePoolStatus {
@@ -858,8 +817,7 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   }
   if (pool.degradedCount > 0) return '稳定性降级'
   if (pool.probingCount > 0) return '稳定性试放'
-  if (pool.insufficientSampleCount > 0) return '样本不足补量'
-  if (pool.prioritySamplingCount > 0) return '低优先级轮转'
+  if (pool.insufficientSampleCount > 0) return '统一采样'
   if ((pool.failedCount ?? 0) > 0) return '最近失败'
   if (pool.breakEvenFallbackTakingOver) return '保本兜底接管'
   if (pool.participatingCount === 0) return '未参与调度'
@@ -880,7 +838,6 @@ export function summarizeChannelMonitorSmartScheduleOverview(
   let degradedCount = 0
   let probingCount = 0
   let insufficientSampleCount = 0
-  let prioritySamplingCount = 0
   let failedCount = 0
   for (const route of routes) {
     channels.add(route.channel_id)
@@ -910,12 +867,6 @@ export function summarizeChannelMonitorSmartScheduleOverview(
     ) {
       insufficientSampleCount += 1
     }
-    if (
-      available &&
-      route.state.temporary_traffic_kind === 'priority_sampling'
-    ) {
-      prioritySamplingCount += 1
-    }
     if (available && route.state.last_schedule_status === 'failed') {
       failedCount += 1
     }
@@ -936,14 +887,12 @@ export function summarizeChannelMonitorSmartScheduleOverview(
         pool.degradedCount === 0 &&
         pool.probingCount === 0 &&
         pool.insufficientSampleCount === 0 &&
-        pool.prioritySamplingCount === 0 &&
         pool.failedCount === 0 &&
         !pool.breakEvenFallbackTakingOver
     ).length,
     degradedCount,
     probingCount,
     insufficientSampleCount,
-    prioritySamplingCount,
     failedCount,
   }
 }

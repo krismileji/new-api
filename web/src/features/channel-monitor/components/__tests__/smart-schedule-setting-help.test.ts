@@ -23,15 +23,16 @@ import { fileURLToPath } from 'node:url'
 
 type SettingHelpResult = {
   focusShowsExplanation: boolean
+  coversRequiredMetadata: boolean
   triggerAriaLabel: string | null
   triggerType: string
 }
 
-test('shows smart schedule setting help when its icon receives keyboard focus', () => {
+function runSettingHelpFixture(scenario: string): SettingHelpResult {
   const fixturePath = fileURLToPath(
     new URL('./smart-schedule-setting-help.fixture.tsx', import.meta.url)
   )
-  const execution = spawnSync(process.execPath, [fixturePath], {
+  const execution = spawnSync(process.execPath, [fixturePath, scenario], {
     cwd: process.cwd(),
     encoding: 'utf8',
   })
@@ -43,9 +44,32 @@ test('shows smart schedule setting help when its icon receives keyboard focus', 
   )
   const output = execution.stdout.trim().split(/\r?\n/).at(-1)
   assert.ok(output)
-  const result = JSON.parse(output) as SettingHelpResult
+  return JSON.parse(output) as SettingHelpResult
+}
+
+test('shows first-token warning request help when its icon receives keyboard focus', () => {
+  const result = runSettingHelpFixture('first-token-warning')
 
   assert.equal(result.triggerType, 'button')
-  assert.equal(result.triggerAriaLabel, '查看“主渠道切换分差”说明')
+  assert.equal(result.triggerAriaLabel, '查看“首字告警请求占比”说明')
   assert.equal(result.focusShowsExplanation, true)
+  assert.equal(result.coversRequiredMetadata, true)
+})
+
+test('explains the exploration-owned shared sampling order on keyboard focus', () => {
+  const result = runSettingHelpFixture('sampling-order')
+
+  assert.equal(result.triggerType, 'button')
+  assert.equal(result.triggerAriaLabel, '查看“统一采样顺序”说明')
+  assert.equal(result.focusShowsExplanation, true)
+  assert.equal(result.coversRequiredMetadata, true)
+})
+
+test('explains K Token conversion and bounds for exploration requests', () => {
+  const result = runSettingHelpFixture('exploration-prompt-k-tokens')
+
+  assert.equal(result.triggerType, 'button')
+  assert.equal(result.triggerAriaLabel, '查看“探索请求上限”说明')
+  assert.equal(result.focusShowsExplanation, true)
+  assert.equal(result.coversRequiredMetadata, true)
 })

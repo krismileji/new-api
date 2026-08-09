@@ -27,6 +27,11 @@ var channelRateLimitCooldownSnapshotValue atomic.Pointer[channelRateLimitCooldow
 var channelRateLimitCooldownGeneration atomic.Uint64
 var channelRateLimitCooldownRedisLastErrorLog atomic.Int64
 
+var channelRateLimitCooldownExpiredHandler = struct {
+	sync.RWMutex
+	handler func(channelId int, modelName string)
+}{}
+
 var channelRateLimitCooldownRedisSync = struct {
 	sync.Mutex
 	client  atomic.Pointer[redis.Client]
@@ -99,16 +104,42 @@ func pruneExpiredChannelRateLimitCooldowns() {
 	revision := channelRateLimitCooldownControlRevision()
 	channelRateLimitCooldowns.Lock()
 	changed := false
+	expired := make([]channelRateLimitCooldownKey, 0)
 	for key, entry := range channelRateLimitCooldowns.untilByRoute {
 		if entry.until <= now || entry.revision != revision {
 			delete(channelRateLimitCooldowns.untilByRoute, key)
 			changed = true
+			if entry.until <= now && entry.revision == revision {
+				expired = append(expired, key)
+			}
 		}
 	}
 	if changed {
 		publishChannelRateLimitCooldownSnapshotLocked()
 	}
 	channelRateLimitCooldowns.Unlock()
+	for _, key := range expired {
+		notifyChannelRateLimitCooldownExpired(key.channelId, key.modelName)
+	}
+}
+
+// RegisterChannelRateLimitCooldownExpiredHandler installs the process-local
+// callback used to recompute smart-scheduling overlays when a current-revision
+// 429 gate expires naturally. Revision invalidation intentionally does not
+// emit expiry events because configuration cleanup schedules its own replay.
+func RegisterChannelRateLimitCooldownExpiredHandler(handler func(channelId int, modelName string)) {
+	channelRateLimitCooldownExpiredHandler.Lock()
+	channelRateLimitCooldownExpiredHandler.handler = handler
+	channelRateLimitCooldownExpiredHandler.Unlock()
+}
+
+func notifyChannelRateLimitCooldownExpired(channelId int, modelName string) {
+	channelRateLimitCooldownExpiredHandler.RLock()
+	handler := channelRateLimitCooldownExpiredHandler.handler
+	channelRateLimitCooldownExpiredHandler.RUnlock()
+	if handler != nil {
+		handler(channelId, modelName)
+	}
 }
 
 func syncChannelRateLimitCooldownsFromRedis(parent context.Context, client *redis.Client) {

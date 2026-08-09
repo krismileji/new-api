@@ -78,8 +78,10 @@ import {
 } from '../lib/smart-schedule-group-policy'
 import {
   getChannelMonitorSmartScheduleApplyModeLabel,
+  getChannelMonitorSmartScheduleSamplingOrderLabel,
   getChannelMonitorSmartScheduleStrategyLabel,
 } from '../lib/smart-schedule-options'
+import { formatChannelMonitorSmartScheduleKTokens } from '../lib/smart-schedule-prompt-tokens'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorSettingLabel } from './channel-monitor-setting-label'
 import { ChannelMonitorSmartScheduleGroupPolicyFields } from './channel-monitor-smart-schedule-group-policy-fields'
@@ -107,9 +109,11 @@ function GroupPolicySampleModeBadge(props: {
     return (
       <Badge variant='warning'>
         探索流量 {props.policy.explorationTrafficPercent}% · ≤{' '}
-        {props.policy.explorationMaxPromptTokens === 0
+        {props.policy.explorationMaxPromptKTokens === 0
           ? '无限制'
-          : `${props.policy.explorationMaxPromptTokens} Token`}
+          : formatChannelMonitorSmartScheduleKTokens(
+              props.policy.explorationMaxPromptKTokens
+            )}
       </Badge>
     )
   }
@@ -123,19 +127,14 @@ function GroupPolicySampleModeBadge(props: {
   return <Badge variant='outline'>关闭</Badge>
 }
 
-function GroupPolicyPrioritySamplingBadge(props: {
+function GroupPolicySamplingOrderBadge(props: {
   policy: ChannelMonitorSmartScheduleGroupPolicyFormValues
 }) {
-  if (props.policy.applyMode !== 'priority_weight') {
-    return <Badge variant='outline'>不适用</Badge>
-  }
-  if (!props.policy.prioritySamplingEnabled) {
-    return <Badge variant='outline'>关闭</Badge>
-  }
   return (
     <Badge variant='secondary'>
-      每 {props.policy.prioritySamplingIntervalMinutes} 分钟 ·{' '}
-      {props.policy.prioritySamplingBasePercent}% 起
+      {getChannelMonitorSmartScheduleSamplingOrderLabel(
+        props.policy.samplingOrder
+      )}
     </Badge>
   )
 }
@@ -347,9 +346,11 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   </dd>
                 </div>
                 <div className='min-w-0'>
-                  <dt className='text-muted-foreground text-xs'>轮转采样</dt>
+                  <dt className='text-muted-foreground text-xs'>
+                    统一采样顺序
+                  </dt>
                   <dd className='mt-1 flex min-w-0'>
-                    <GroupPolicyPrioritySamplingBadge policy={policy} />
+                    <GroupPolicySamplingOrderBadge policy={policy} />
                   </dd>
                 </div>
                 <div className='min-w-0'>

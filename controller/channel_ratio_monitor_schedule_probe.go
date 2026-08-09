@@ -289,6 +289,10 @@ func runChannelSmartScheduleProbeOnce(
 			result.Skipped++
 			continue
 		}
+		if service.ChannelRateLimitCooldownUntilMatching(key.channelId, probe.requestModel) > 0 {
+			result.Skipped++
+			continue
+		}
 		eligibleRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(probe.routes))
 		minimumIntervalMinutes := 0
 		for _, route := range probe.routes {
@@ -377,7 +381,9 @@ func runChannelSmartScheduleProbeOnce(
 			}
 		}
 		for _, candidateRoute := range candidateRoutes {
-			currentRoute, currentChannel, _, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(candidateRoute)
+			currentRoute, currentChannel, _, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(
+				candidateRoute, item.requestModel,
+			)
 			if eligibilityErr != nil {
 				return result, eligibilityErr
 			}
@@ -441,19 +447,31 @@ func runChannelSmartScheduleProbeOnce(
 				route.ChannelId, item.requestModel, probeResult.newAPIError,
 			)
 		} else {
+			recoveryRequest, recoveryErr := channelSmartScheduleProbeRecoveryRequest(
+				route.ChannelId,
+				item.requestModel,
+				probeTime,
+				true,
+				message,
+			)
+			if recoveryErr != nil {
+				return result, recoveryErr
+			}
 			_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
 				ChannelId: route.ChannelId, Model: item.requestModel,
 				Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
 				WindowStart: retentionStart, Time: probeTime, Success: succeeded, Error: message,
-				DurationMs:   &probeDurationMs,
-				FirstTokenMs: probeResult.firstResponseMilliseconds,
-				TPS:          probeResult.tokensPerSecond,
+				DurationMs:    &probeDurationMs,
+				FirstTokenMs:  probeResult.firstResponseMilliseconds,
+				TPS:           probeResult.tokensPerSecond,
+				ProbeRecovery: recoveryRequest,
 			})
 			if saveErr != nil {
 				return result, saveErr
 			}
+			applyChannelSmartScheduleProbeRecoveryResult(route.ChannelId, item.requestModel, recoveryRequest)
 			if !succeeded && probeResult.newAPIError != nil {
-				protectChannelSmartScheduleScheduledProbeFailure(
+				protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
 					route.ChannelId,
 					item.requestModel,
 					probeResult.newAPIError,
@@ -549,7 +567,7 @@ func recordChannelSmartScheduleProbeError(
 	)
 }
 
-func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute) (
+func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute, requestModel string) (
 	model.ChannelSmartScheduleRoute,
 	*model.Channel,
 	channelSmartSchedulePolicy,
@@ -586,6 +604,9 @@ func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute)
 	}
 	if !found || current.ChannelStatus != common.ChannelStatusEnabled || !current.Enabled || !current.State.Participates() ||
 		!channelSmartScheduleProbeRouteEnabled(current.State.StabilityState, policy) {
+		return model.ChannelSmartScheduleRoute{}, nil, channelSmartSchedulePolicy{}, false, nil
+	}
+	if service.ChannelRateLimitCooldownUntilMatching(current.ChannelId, requestModel) > 0 {
 		return model.ChannelSmartScheduleRoute{}, nil, channelSmartSchedulePolicy{}, false, nil
 	}
 	return current, channel, policy, true, nil

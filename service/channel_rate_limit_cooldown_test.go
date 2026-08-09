@@ -131,7 +131,15 @@ func TestChannelRateLimitCooldownExpiresAndCannotBeShortened(t *testing.T) {
 func TestPruneExpiredChannelRateLimitCooldownsPublishesBoundedSnapshot(t *testing.T) {
 	stopChannelRateLimitCooldownRedisSync()
 	setChannelRateLimitCooldownControlRevision(t, "revision-prune")
+	expiredEvents := make([]channelRateLimitCooldownKey, 0)
+	RegisterChannelRateLimitCooldownExpiredHandler(func(channelId int, modelName string) {
+		expiredEvents = append(expiredEvents, channelRateLimitCooldownKey{
+			channelId: channelId,
+			modelName: modelName,
+		})
+	})
 	t.Cleanup(func() {
+		RegisterChannelRateLimitCooldownExpiredHandler(nil)
 		stopChannelRateLimitCooldownRedisSync()
 		resetChannelRateLimitCooldownLocalState()
 	})
@@ -155,6 +163,7 @@ func TestPruneExpiredChannelRateLimitCooldownsPublishesBoundedSnapshot(t *testin
 	assert.NotContains(t, snapshot.untilByRoute, expiredKey)
 	assert.NotContains(t, snapshot.untilByRoute, staleKey)
 	assert.Contains(t, snapshot.untilByRoute, activeKey)
+	assert.Equal(t, []channelRateLimitCooldownKey{expiredKey}, expiredEvents)
 }
 
 func TestChannelRateLimitCooldownRejectsRedisSnapshotOlderThanLocalWrite(t *testing.T) {

@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -33,17 +31,13 @@ type channelSmartScheduleModelKey struct {
 }
 
 type channelSmartScheduleRouteDirectAction struct {
-	key                    channelSmartScheduleRouteKey
-	currentPriority        int64
-	currentWeight          uint
-	targetPriority         int64
-	targetWeight           uint
-	status                 string
-	message                string
-	stability              *model.ChannelSmartScheduleStabilityUpdate
-	runtimeProtectionClear bool
-	routingSnapshot        *model.ChannelSmartScheduleRoutingSnapshotUpdate
-	reapplyManualPrimary   bool
+	key             channelSmartScheduleRouteKey
+	currentPriority int64
+	currentWeight   uint
+	targetPriority  int64
+	targetWeight    uint
+	status          string
+	message         string
 }
 
 func channelSmartScheduleSetPerformanceMetric(
@@ -143,9 +137,24 @@ func channelSmartScheduleMergeAdaptiveHealthMetric(
 	production.SlowRequestCount += samples.SlowRequestCount
 	production.HealthyRequestCount += samples.HealthyRequestCount
 	production.FirstTokenCount += samples.FirstTokenCount
+	production.FirstTokenTotalMs += samples.FirstTokenTotalMs
 	production.TPSSampleCount += samples.TPSSampleCount
+	production.TPSTotal += samples.TPSTotal
 	production.LatencyPressure += samples.LatencyPressure
 	production.LastUsedTime = max(production.LastUsedTime, samples.LastUsedTime)
+	production.StabilitySuccessCount += samples.StabilitySuccessCount
+	production.StabilityFailureCount += samples.StabilityFailureCount
+	production.StabilityFinalFailureCount += samples.StabilityFinalFailureCount
+	production.StabilityRetryFailureCount += samples.StabilityRetryFailureCount
+	production.RetryFailureDurationTotalMs += samples.RetryFailureDurationTotalMs
+	production.RetryFailureDurationBuckets = append(
+		production.RetryFailureDurationBuckets,
+		samples.RetryFailureDurationBuckets...,
+	)
+	production.FirstTokenDurationBuckets = append(
+		production.FirstTokenDurationBuckets,
+		samples.FirstTokenDurationBuckets...,
+	)
 	return production
 }
 
@@ -405,18 +414,13 @@ func runChannelSmartScheduleByRouteOnce(
 	routeKeyByPoolChannel := make(map[channelSmartScheduleRoutePoolKey]map[int]channelSmartScheduleRouteKey)
 	directActions := make([]channelSmartScheduleRouteDirectAction, 0)
 	statusUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(selectedRoutes))
-	stabilityUpdates := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleStabilityUpdate)
 	scoreDetailsByRoute := make(map[channelSmartScheduleRouteKey]*model.ChannelSmartScheduleScoreDetails, len(selectedRoutes))
-	healthByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleHealthUpdate, len(selectedRoutes))
 	routeByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(selectedRoutes))
-	economicsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleEconomics, len(selectedRoutes))
-	breakEvenPool := make(map[channelSmartScheduleRoutePoolKey]bool)
 	for _, route := range selectedRoutes {
 		policy := policyByGroup[route.Group]
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
 		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
 		manualPrimary := route.State.ManualPrimaryUntil > now
-		recoveryStabilityScore := policy.RecoveryStabilityScore / 100
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		modelKey := channelSmartScheduleModelKey{
 			channelId: route.ChannelId,
@@ -430,7 +434,6 @@ func runChannelSmartScheduleByRouteOnce(
 			groupRatio,
 			groupRatioAvailable,
 		)
-		economicsByRoute[key] = economics
 		routeByKey[key] = route
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
 			channelSmartScheduleCandidate{
@@ -482,43 +485,7 @@ func runChannelSmartScheduleByRouteOnce(
 			})
 			continue
 		}
-		if economics.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
-			breakEvenPool[poolKey] = true
-		}
 		runtimeProtectionActive := route.State.RuntimeProtectionUntil > now
-		runtimeProtectionExpired := route.State.RuntimeProtectionUntil > 0 &&
-			route.State.RuntimeProtectionUntil <= now
-		degradedProbeRecoverySuccesses := 0
-		degradedProbeRecoveryReady := false
-		if route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
-			policy.StabilityEnabled && policy.DegradedProbeEnabled {
-			runtimeHealth := getChannelSmartScheduleRuntimeHealth(
-				route.ChannelId,
-				route.Model,
-				now,
-				policy.BurstFailureWindowSeconds,
-				settings.SmartScheduleControlRevision,
-			)
-			degradedProbeRecoverySuccesses = runtimeHealth.RecoverySuccesses
-			degradedProbeRecoveryReady = degradedProbeRecoverySuccesses >= policy.RecoverySuccessThreshold
-		}
-		if degradedProbeRecoveryReady {
-			targetPriority, targetWeight := channelSmartScheduleRouteRestoreTarget(route.State)
-			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-				targetPriority: targetPriority, targetWeight: targetWeight,
-				status: model.ChannelSmartScheduleStatusSucceeded,
-				message: fmt.Sprintf(
-					"降级期间定时探测已连续成功 %d 次，达到恢复要求，提前恢复原优先级和权重",
-					degradedProbeRecoverySuccesses,
-				),
-				stability:              &model.ChannelSmartScheduleStabilityUpdate{},
-				runtimeProtectionClear: true,
-				routingSnapshot:        channelSmartScheduleClearTemporaryTraffic(route.State),
-				reapplyManualPrimary:   manualPrimary,
-			})
-			continue
-		}
 		if runtimeProtectionActive {
 			reason := fmt.Sprintf(
 				"运行时稳定性保护中，保留上一轮优先级和权重，保护至 %s",
@@ -540,69 +507,29 @@ func runChannelSmartScheduleByRouteOnce(
 			})
 			continue
 		}
-		if runtimeProtectionExpired &&
-			route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded &&
-			!policy.StabilityEnabled {
-			targetPriority, targetWeight := channelSmartScheduleRouteRestoreTarget(route.State)
-			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-				targetPriority: targetPriority, targetWeight: targetWeight,
-				status:  model.ChannelSmartScheduleStatusSucceeded,
-				message: "运行时保护已结束，已恢复基础路由",
-				stability: &model.ChannelSmartScheduleStabilityUpdate{
-					Since: now,
-				},
-				runtimeProtectionClear: true,
-				routingSnapshot:        channelSmartScheduleClearTemporaryTraffic(route.State),
-				reapplyManualPrimary:   manualPrimary,
-			})
-			continue
-		}
-		if route.State.StabilityState != "" && (!policy.StabilityEnabled || !routeStabilityAvailable) &&
-			!(runtimeProtectionExpired && route.State.StabilityState == model.ChannelSmartScheduleStabilityDegraded) {
+		if route.State.StabilityState != "" && (!policy.StabilityEnabled || !routeStabilityAvailable) {
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 				targetPriority: currentPriority, targetWeight: currentWeight,
-				status:          model.ChannelSmartScheduleStatusSkipped,
-				message:         "稳定性保护未启用或统计不可用，保持当前安全状态",
-				routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
+				status:  model.ChannelSmartScheduleStatusSkipped,
+				message: "稳定性保护未启用或统计不可用，保持当前安全状态",
 			})
 			continue
 		}
 
 		switch route.State.StabilityState {
 		case model.ChannelSmartScheduleStabilityDegraded:
+			message := "稳定性降级中，等待独立计时器进入试放"
 			if route.State.StabilityUntil > now {
-				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-					targetPriority: channelMonitorSmartScheduleDegradedPriority,
-					targetWeight:   channelMonitorSmartScheduleDegradedWeight,
-					status:         model.ChannelSmartScheduleStatusSkipped,
-					message: fmt.Sprintf("稳定性降级中，将于 %s 后试放",
-						time.Unix(route.State.StabilityUntil, 0).Format("2006-01-02 15:04:05")),
-					routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
-				})
-				continue
+				message = fmt.Sprintf("稳定性降级中，将于 %s 后试放",
+					time.Unix(route.State.StabilityUntil, 0).Format("2006-01-02 15:04:05"))
 			}
-			targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-				targetPriority: targetPriority, targetWeight: targetWeight,
-				status:  model.ChannelSmartScheduleStatusSucceeded,
-				message: "降级时间已结束，已按小流量权重开始稳定性试放",
-				stability: &model.ChannelSmartScheduleStabilityUpdate{
-					State: model.ChannelSmartScheduleStabilityProbing, Since: now,
-					SavedPriority: route.State.StabilitySavedPriority,
-					SavedWeight:   route.State.StabilitySavedWeight,
-				},
-				runtimeProtectionClear: true,
-				routingSnapshot: &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-					BaseRank:                        route.State.BaseRank,
-					BasePriority:                    route.State.BasePriority,
-					BaseWeight:                      route.State.BaseWeight,
-					StabilityReleaseMaxPromptTokens: policy.StabilityReleaseMaxPromptTokens,
-					LastPrioritySampleTime:          route.State.LastPrioritySampleTime,
-				},
+				targetPriority: currentPriority,
+				targetWeight:   currentWeight,
+				status:         model.ChannelSmartScheduleStatusSkipped,
+				message:        message,
 			})
 			continue
 		case model.ChannelSmartScheduleStabilityProbing, "":
@@ -610,9 +537,8 @@ func runChannelSmartScheduleByRouteOnce(
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
 				targetPriority: currentPriority, targetWeight: currentWeight,
-				status:          model.ChannelSmartScheduleStatusSkipped,
-				message:         "稳定性调度状态无效，保持当前安全状态",
-				routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
+				status:  model.ChannelSmartScheduleStatusSkipped,
+				message: "稳定性调度状态无效，保持当前安全状态",
 			})
 			continue
 		}
@@ -672,20 +598,21 @@ func runChannelSmartScheduleByRouteOnce(
 			),
 		)
 		health := channelSmartScheduleEvaluateHealth(route.State, adaptiveHealthMetric, policy)
-		healthByRoute[key] = health
 		candidate := channelSmartScheduleCandidate{
 			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
 			StabilityAvailable: routeStabilityAvailable, ManualPrimary: manualPrimary,
 			HealthState: health.State, HealthPressure: health.Pressure,
 			HealthErrorPressure: health.ErrorPressure, HealthLatencyPressure: health.LatencyPressure,
-			HealthEvidence:              health.Evidence,
-			HealthSampleCount:           health.SampleCount,
-			HealthLastSampleAt:          health.LastSampleAt,
-			HealthRiskRequestPercent:    health.RiskRequestPercent,
-			HealthHealthyRequestPercent: health.HealthyRequestPercent,
-			HealthWindowSeconds:         health.WindowSeconds,
-			MinComparableChannels:       policy.AdaptiveSamplingMinComparableChannels,
-			Ratio:                       economics.CostRatio, CostRatio: economics.CostRatio,
+			HealthEvidence:                        health.Evidence,
+			HealthSampleCount:                     health.SampleCount,
+			HealthLastSampleAt:                    health.LastSampleAt,
+			HealthErrorRequestPercent:             health.ErrorRequestPercent,
+			HealthRiskRequestPercent:              health.RiskRequestPercent,
+			HealthFirstTokenWarningRequestPercent: health.FirstTokenWarningRequestPercent,
+			HealthHealthyRequestPercent:           health.HealthyRequestPercent,
+			HealthWindowSeconds:                   health.WindowSeconds,
+			MinComparableChannels:                 policy.AdaptiveSamplingMinComparableChannels,
+			Ratio:                                 economics.CostRatio, CostRatio: economics.CostRatio,
 			GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,
 			EconomicRole: economics.EconomicRole,
 		}
@@ -710,68 +637,13 @@ func runChannelSmartScheduleByRouteOnce(
 		)
 
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
-			runtimeHealth := getChannelSmartScheduleRuntimeHealth(
-				route.ChannelId,
-				route.Model,
-				now,
-				policy.BurstFailureWindowSeconds,
-				settings.SmartScheduleControlRevision,
-			)
-			runtimeRecoveryReady := runtimeHealth.RecoverySuccesses >= policy.RecoverySuccessThreshold
-			legacyRecoveryReady := performance != nil && performance.Stability != nil &&
-				performance.StabilitySampleCount >= int64(policy.MinSamples) &&
-				*performance.Stability >= recoveryStabilityScore
-			if !runtimeRecoveryReady && (performance == nil || performance.Stability == nil ||
-				performance.StabilitySampleCount < int64(policy.MinSamples)) {
-				targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
-				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-					targetPriority: targetPriority, targetWeight: targetWeight,
-					status: model.ChannelSmartScheduleStatusSkipped,
-					message: fmt.Sprintf(
-						"稳定性试放成功次数不足（%d/%d）",
-						runtimeHealth.RecoverySuccesses,
-						policy.RecoverySuccessThreshold,
-					),
-					routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
-				})
-				continue
-			}
-			stabilityDescription := channelSmartScheduleStabilityDescription(performance)
-			if !runtimeRecoveryReady && !legacyRecoveryReady {
-				targetPriority, targetWeight := channelSmartScheduleRouteProbeTarget(route.State)
-				directActions = append(directActions, channelSmartScheduleRouteDirectAction{
-					key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-					targetPriority: targetPriority, targetWeight: targetWeight,
-					status: model.ChannelSmartScheduleStatusSkipped,
-					message: fmt.Sprintf("%s，尚未达到恢复阈值 %.1f%%，继续小流量试放",
-						stabilityDescription, policy.RecoveryStabilityScore),
-					routingSnapshot: channelSmartScheduleClearTemporaryTraffic(route.State),
-				})
-				continue
-			}
-			targetPriority, targetWeight := channelSmartScheduleRouteRestoreTarget(route.State)
-			recoveryMessage := fmt.Sprintf("%s，已达到恢复阈值 %.1f%%，解除保护并恢复原优先级和权重",
-				stabilityDescription, policy.RecoveryStabilityScore)
-			if runtimeRecoveryReady {
-				recoveryMessage = fmt.Sprintf(
-					"稳定性试放已连续成功 %d 次，达到恢复要求，解除保护并恢复原优先级和权重",
-					runtimeHealth.RecoverySuccesses,
-				)
-			}
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
 				key: key, currentPriority: currentPriority, currentWeight: currentWeight,
-				targetPriority: targetPriority, targetWeight: targetWeight,
-				status:               model.ChannelSmartScheduleStatusSucceeded,
-				message:              recoveryMessage,
-				stability:            &model.ChannelSmartScheduleStabilityUpdate{},
-				routingSnapshot:      channelSmartScheduleClearTemporaryTrafficAndRelease(route.State),
-				reapplyManualPrimary: manualPrimary,
+				targetPriority: currentPriority, targetWeight: currentWeight,
+				status:  model.ChannelSmartScheduleStatusSkipped,
+				message: "稳定性试放中，恢复仅由实际请求、手动测试或定时探测结果触发",
 			})
 			continue
-		} else if route.State.StabilityState == "" && route.State.StabilitySince > 0 &&
-			route.State.StabilitySince <= stabilityStart {
-			stabilityUpdates[key] = &model.ChannelSmartScheduleStabilityUpdate{}
 		}
 
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
@@ -823,52 +695,6 @@ func runChannelSmartScheduleByRouteOnce(
 		fixedChannelByPool[poolKey] = fixedChannelId
 		fixedPriorityByPool[poolKey] = fixedTargetPriority
 	}
-	for index := range directActions {
-		action := &directActions[index]
-		if action.stability == nil || action.stability.State != "" {
-			continue
-		}
-		poolKey := channelSmartScheduleRoutePoolKey{group: action.key.group, model: action.key.model}
-		economics := economicsByRoute[action.key]
-		if economics.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
-			action.targetPriority = 1
-			action.targetWeight = channelMonitorSmartScheduleAllocationWeightTotal
-			state := routeByKey[action.key].State
-			if action.routingSnapshot == nil {
-				action.routingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-					TemporaryTrafficKind:            state.TemporaryTrafficKind,
-					TemporaryTrafficSince:           state.TemporaryTrafficSince,
-					TemporaryTrafficTargetPercent:   state.TemporaryTrafficTargetPercent,
-					ExplorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,
-					StabilityReleaseMaxPromptTokens: state.StabilityReleaseMaxPromptTokens,
-					LastPrioritySampleTime:          state.LastPrioritySampleTime,
-				}
-			}
-			action.routingSnapshot.BaseRank = max(1, state.BaseRank)
-			action.routingSnapshot.BasePriority = 1
-			action.routingSnapshot.BaseWeight = channelMonitorSmartScheduleAllocationWeightTotal
-			continue
-		}
-		if breakEvenPool[poolKey] && action.targetPriority < 2 {
-			action.targetPriority = 2
-		}
-	}
-	for index := range directActions {
-		action := &directActions[index]
-		if !action.reapplyManualPrimary {
-			continue
-		}
-		poolKey := channelSmartScheduleRoutePoolKey{group: action.key.group, model: action.key.model}
-		if fixedChannelByPool[poolKey] != action.key.channelId {
-			continue
-		}
-		if fixedPriorityBlockedByPool[poolKey] {
-			return result, errors.New("池内存在最大优先级路由，无法把恢复后的固定主渠道提升到更高优先级")
-		}
-		action.targetPriority = fixedPriorityByPool[poolKey]
-		action.targetWeight = 1000
-	}
-
 	for poolKey, candidates := range poolCandidates {
 		policy := policyByGroup[poolKey.group]
 		fixedChannelId := fixedChannelByPool[poolKey]
@@ -912,10 +738,6 @@ func runChannelSmartScheduleByRouteOnce(
 			channelSmartScheduleApplySwitchConfirmation(&plan, candidates, policy, forceReset)
 		}
 		result.Planned += len(plan.Items)
-		candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(candidates))
-		for _, candidate := range candidates {
-			candidateByChannel[candidate.ChannelId] = candidate
-		}
 		for _, candidate := range candidates {
 			reason, skipped := plan.Skipped[candidate.ChannelId]
 			if !skipped {
@@ -925,274 +747,9 @@ func runChannelSmartScheduleByRouteOnce(
 			scoreDetailsByRoute[key] = plan.Details[candidate.ChannelId]
 			update := channelSmartScheduleRouteStatusUpdate(
 				key, model.ChannelSmartScheduleStatusSkipped, reason, nil,
-				candidate.CurrentPriority, candidate.CurrentWeight, now, stabilityUpdates[key],
+				candidate.CurrentPriority, candidate.CurrentWeight, now, nil,
 			)
-			channelSmartScheduleAttachHealthUpdate(&update, healthByRoute[key])
 			statusUpdates = append(statusUpdates, update)
-		}
-
-		if policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight {
-			temporaryChannelId := 0
-			temporaryKind := ""
-			temporaryPercent := 0.0
-			explorationIndexes := make([]int, 0)
-			for index, item := range plan.Items {
-				if item.ChannelId == plan.ActualPrimaryId || item.SkipReason == "" {
-					continue
-				}
-				candidate := candidateByChannel[item.ChannelId]
-				if candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
-					continue
-				}
-				if service.ChannelRateLimitCooldownUntilMatching(item.ChannelId, poolKey.model) > 0 {
-					continue
-				}
-				if channelSmartScheduleCandidateNeedsExplorationWithScoring(
-					candidate, policy.Strategy, policy.StabilityEnabled, policy.MinSamples, policy.Scoring,
-				) {
-					explorationIndexes = append(explorationIndexes, index)
-				}
-			}
-			primaryCandidate := candidateByChannel[plan.ActualPrimaryId]
-			adaptiveBudget := channelSmartScheduleAdaptiveSamplingBudget(
-				primaryCandidate, candidates, policy,
-			)
-			primaryHasSoftHealthPressure := primaryCandidate.HealthState != channelSmartScheduleHealthHealthy &&
-				primaryCandidate.HealthState != channelSmartScheduleHealthUnknown &&
-				primaryCandidate.HealthState != ""
-			if adaptiveBudget > 0 && len(explorationIndexes) > 0 &&
-				policy.AdaptiveSamplingEnabled && primaryHasSoftHealthPressure {
-				adaptiveIndexes := append([]int(nil), explorationIndexes...)
-				sort.SliceStable(adaptiveIndexes, func(i int, j int) bool {
-					left := plan.Items[adaptiveIndexes[i]]
-					right := plan.Items[adaptiveIndexes[j]]
-					leftCandidate := candidateByChannel[left.ChannelId]
-					rightCandidate := candidateByChannel[right.ChannelId]
-					leftState := routeByKey[routeKeyByPoolChannel[poolKey][left.ChannelId]].State
-					rightState := routeByKey[routeKeyByPoolChannel[poolKey][right.ChannelId]].State
-					if leftRank, rightRank := channelSmartScheduleAdaptiveCandidateRank(leftCandidate), channelSmartScheduleAdaptiveCandidateRank(rightCandidate); leftRank != rightRank {
-						return leftRank < rightRank
-					}
-					if leftCandidate.SampleDebt != rightCandidate.SampleDebt {
-						return leftCandidate.SampleDebt > rightCandidate.SampleDebt
-					}
-					leftActive := leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
-					rightActive := rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
-					if leftActive != rightActive {
-						return leftActive
-					}
-					if leftCandidate.HealthLastSampleAt != rightCandidate.HealthLastSampleAt {
-						return leftCandidate.HealthLastSampleAt < rightCandidate.HealthLastSampleAt
-					}
-					if left.BaseRank != right.BaseRank {
-						return left.BaseRank < right.BaseRank
-					}
-					return left.ChannelId < right.ChannelId
-				})
-				temporaryChannelId = plan.Items[adaptiveIndexes[0]].ChannelId
-				temporaryKind = model.ChannelSmartScheduleTemporaryTrafficAdaptive
-				temporaryPercent = adaptiveBudget
-				selectedCandidate := candidateByChannel[temporaryChannelId]
-				if selectedCandidate.HealthEvidence &&
-					selectedCandidate.HealthState != channelSmartScheduleHealthHealthy {
-					// Unknown backups need the pressure budget to collect evidence.
-					// A backup already showing pressure is limited to a probe-sized share.
-					basePercent := max(policy.AdaptiveSamplingBasePercent, 0)
-					if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic {
-						basePercent = min(basePercent, max(policy.ExplorationTrafficPercent, 0))
-					}
-					temporaryPercent = min(temporaryPercent, basePercent)
-				}
-				if temporaryPercent <= channelMonitorRatioEpsilon {
-					temporaryChannelId = 0
-					temporaryKind = ""
-				}
-			} else if policy.SampleMode == channelMonitorSmartScheduleSampleTraffic && len(explorationIndexes) > 0 {
-				sort.SliceStable(explorationIndexes, func(i int, j int) bool {
-					left := plan.Items[explorationIndexes[i]]
-					right := plan.Items[explorationIndexes[j]]
-					leftState := routeByKey[routeKeyByPoolChannel[poolKey][left.ChannelId]].State
-					rightState := routeByKey[routeKeyByPoolChannel[poolKey][right.ChannelId]].State
-					leftActive := leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration
-					rightActive := rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficExploration
-					if leftActive != rightActive {
-						return leftActive
-					}
-					if leftActive && leftState.TemporaryTrafficSince != rightState.TemporaryTrafficSince {
-						return leftState.TemporaryTrafficSince < rightState.TemporaryTrafficSince
-					}
-					if left.BaseRank != right.BaseRank {
-						return left.BaseRank < right.BaseRank
-					}
-					return left.ChannelId < right.ChannelId
-				})
-				temporaryChannelId = plan.Items[explorationIndexes[0]].ChannelId
-				temporaryKind = model.ChannelSmartScheduleTemporaryTrafficExploration
-				temporaryPercent = policy.ExplorationTrafficPercent
-			} else if policy.PrioritySamplingEnabled {
-				samplingIndexes := make([]int, 0, len(plan.Items)-1)
-				activeIndex := -1
-				for index, item := range plan.Items {
-					if !item.Scored || item.BaseRank <= 1 || item.ChannelId == plan.ActualPrimaryId ||
-						item.ChannelId == fixedChannelId {
-						continue
-					}
-					if candidateByChannel[item.ChannelId].EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
-						continue
-					}
-					if service.ChannelRateLimitCooldownUntilMatching(item.ChannelId, poolKey.model) > 0 {
-						continue
-					}
-					samplingIndexes = append(samplingIndexes, index)
-					state := routeByKey[routeKeyByPoolChannel[poolKey][item.ChannelId]].State
-					if state.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling &&
-						now-state.TemporaryTrafficSince < int64(policy.PrioritySamplingIntervalMinutes*60) {
-						activeIndex = index
-					}
-				}
-				if activeIndex >= 0 {
-					temporaryChannelId = plan.Items[activeIndex].ChannelId
-				} else if len(samplingIndexes) > 0 {
-					sort.SliceStable(samplingIndexes, func(i int, j int) bool {
-						left := plan.Items[samplingIndexes[i]]
-						right := plan.Items[samplingIndexes[j]]
-						leftState := routeByKey[routeKeyByPoolChannel[poolKey][left.ChannelId]].State
-						rightState := routeByKey[routeKeyByPoolChannel[poolKey][right.ChannelId]].State
-						if leftState.LastPrioritySampleTime != rightState.LastPrioritySampleTime {
-							return leftState.LastPrioritySampleTime < rightState.LastPrioritySampleTime
-						}
-						if left.BaseRank != right.BaseRank {
-							return left.BaseRank < right.BaseRank
-						}
-						return left.ChannelId < right.ChannelId
-					})
-					temporaryChannelId = plan.Items[samplingIndexes[0]].ChannelId
-				}
-				if temporaryChannelId > 0 {
-					temporaryKind = model.ChannelSmartScheduleTemporaryTrafficPrioritySampling
-					for _, item := range plan.Items {
-						if item.ChannelId == temporaryChannelId {
-							temporaryPercent = max(
-								policy.PrioritySamplingMinPercent,
-								policy.PrioritySamplingBasePercent*math.Pow(
-									policy.PrioritySamplingDecayPercent/100,
-									float64(item.BaseRank-2),
-								),
-							)
-							break
-						}
-					}
-				}
-			}
-
-			type poolRouting struct {
-				priority int64
-				weight   uint
-				managed  bool
-			}
-			routingByChannel := make(map[int]poolRouting, len(poolRoutes[poolKey]))
-			for _, route := range poolRoutes[poolKey] {
-				if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || route.TrafficPaused(now) {
-					continue
-				}
-				routingByChannel[route.ChannelId] = poolRouting{priority: route.Priority, weight: route.Weight}
-			}
-			for _, item := range plan.Items {
-				routingByChannel[item.ChannelId] = poolRouting{
-					priority: item.TargetPriority, weight: item.TargetWeight, managed: true,
-				}
-			}
-			for _, action := range directActions {
-				if action.key.group == poolKey.group && action.key.model == poolKey.model {
-					routingByChannel[action.key.channelId] = poolRouting{
-						priority: action.targetPriority, weight: action.targetWeight, managed: true,
-					}
-				}
-			}
-			highestPriority := int64(math.MinInt64)
-			topLayerChannelIds := make([]int, 0)
-			var topLayerWeight uint64
-			for channelId, routing := range routingByChannel {
-				if channelId == temporaryChannelId {
-					continue
-				}
-				if routing.priority > highestPriority {
-					highestPriority = routing.priority
-					topLayerChannelIds = topLayerChannelIds[:0]
-					topLayerWeight = 0
-				}
-				if routing.priority == highestPriority {
-					topLayerChannelIds = append(topLayerChannelIds, channelId)
-					if math.MaxUint64-topLayerWeight >= uint64(routing.weight) {
-						topLayerWeight += uint64(routing.weight)
-					}
-				}
-			}
-			sort.Ints(topLayerChannelIds)
-
-			if temporaryChannelId > 0 && highestPriority != int64(math.MinInt64) && topLayerWeight > 0 {
-				temporaryWeight := uint(0)
-				managedPrimaryOnly := len(topLayerChannelIds) == 1 &&
-					topLayerChannelIds[0] == plan.ActualPrimaryId &&
-					routingByChannel[plan.ActualPrimaryId].managed
-				if managedPrimaryOnly {
-					temporaryWeight = uint(math.Round(
-						channelMonitorSmartScheduleTemporaryWeightTotal * temporaryPercent /
-							channelMonitorScorePercentageTotal,
-					))
-					temporaryWeight = min(max(temporaryWeight, 1), uint(channelMonitorSmartScheduleTemporaryWeightTotal-1))
-					for index := range plan.Items {
-						if plan.Items[index].ChannelId == plan.ActualPrimaryId {
-							plan.Items[index].TargetWeight = uint(channelMonitorSmartScheduleTemporaryWeightTotal) - temporaryWeight
-							routing := routingByChannel[plan.ActualPrimaryId]
-							routing.weight = plan.Items[index].TargetWeight
-							routingByChannel[plan.ActualPrimaryId] = routing
-							break
-						}
-					}
-				} else {
-					exactWeight := float64(topLayerWeight) * temporaryPercent /
-						(channelMonitorScorePercentageTotal - temporaryPercent)
-					if !math.IsNaN(exactWeight) && !math.IsInf(exactWeight, 0) && exactWeight >= 1 &&
-						exactWeight <= float64(^uint(0)) {
-						temporaryWeight = uint(math.Round(exactWeight))
-					}
-				}
-				if temporaryWeight > 0 {
-					for index := range plan.Items {
-						if plan.Items[index].ChannelId == temporaryChannelId {
-							plan.Items[index].TargetPriority = highestPriority
-							plan.Items[index].TargetWeight = temporaryWeight
-							break
-						}
-					}
-				} else {
-					temporaryChannelId = 0
-					temporaryKind = ""
-					temporaryPercent = 0
-				}
-			}
-
-			if temporaryChannelId > 0 {
-				topLayerChannelIds = append(topLayerChannelIds, temporaryChannelId)
-				sort.Ints(topLayerChannelIds)
-			}
-			for index := range plan.Items {
-				item := &plan.Items[index]
-				itemTemporaryKind := ""
-				itemTemporaryPercent := 0.0
-				if item.ChannelId == temporaryChannelId {
-					itemTemporaryKind = temporaryKind
-					itemTemporaryPercent = temporaryPercent
-				}
-				item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
-				item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
-				item.ScoreDetails.Decision.ActualHighestPriority = highestPriority
-				item.ScoreDetails.Decision.ActualTopLayerChannelIds = append([]int(nil), topLayerChannelIds...)
-				item.ScoreDetails.Decision.TemporaryTrafficKind = itemTemporaryKind
-				item.ScoreDetails.Decision.TemporaryTrafficTargetPercent = itemTemporaryPercent
-				item.ScoreDetails.Decision.ActualPrimaryChannelId = plan.ActualPrimaryId
-			}
 		}
 		for _, item := range plan.Items {
 			key := routeKeyByPoolChannel[poolKey][item.ChannelId]
@@ -1209,63 +766,12 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 			update := channelSmartScheduleRouteStatusUpdate(
 				key, model.ChannelSmartScheduleStatusSucceeded, message, score,
-				item.TargetPriority, item.TargetWeight, now, stabilityUpdates[key],
+				item.TargetPriority, item.TargetWeight, now, nil,
 			)
-			channelSmartScheduleAttachHealthUpdate(&update, healthByRoute[key])
 			if policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight {
-				state := routeByKey[key].State
-				temporaryKind := item.ScoreDetails.Decision.TemporaryTrafficKind
-				temporarySince := int64(0)
-				lastPrioritySampleTime := state.LastPrioritySampleTime
-				if temporaryKind != "" {
-					temporarySince = state.TemporaryTrafficSince
-					if state.TemporaryTrafficKind != temporaryKind || temporarySince <= 0 {
-						temporarySince = now
-					}
-					if (temporaryKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling ||
-						temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive) &&
-						state.TemporaryTrafficKind != temporaryKind {
-						lastPrioritySampleTime = now
-					}
-					temporaryDescription := "样本不足探索"
-					if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficPrioritySampling {
-						temporaryDescription = "低优先级轮转"
-					} else if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
-						temporaryDescription = "主渠道健康应急采样"
-					}
-					message = fmt.Sprintf("%s，临时提升到最高优先级并分配 %.2f%% 目标流量",
-						temporaryDescription, item.ScoreDetails.Decision.TemporaryTrafficTargetPercent)
-					update.Error = message
-				}
 				update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
 					BaseRank: item.BaseRank, BasePriority: item.BasePriority, BaseWeight: item.BaseWeight,
-					TemporaryTrafficKind:            temporaryKind,
-					TemporaryTrafficSince:           temporarySince,
-					TemporaryTrafficTargetPercent:   item.ScoreDetails.Decision.TemporaryTrafficTargetPercent,
-					ExplorationMaxPromptTokens:      0,
-					StabilityReleaseMaxPromptTokens: 0,
-					LastPrioritySampleTime:          lastPrioritySampleTime,
 				}
-				if temporaryKind == model.ChannelSmartScheduleTemporaryTrafficExploration ||
-					temporaryKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive {
-					update.RoutingSnapshot.ExplorationMaxPromptTokens = policy.ExplorationMaxPromptTokens
-				}
-			}
-			if routeByKey[key].State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
-				if update.RoutingSnapshot == nil {
-					state := routeByKey[key].State
-					update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-						BaseRank:                      state.BaseRank,
-						BasePriority:                  state.BasePriority,
-						BaseWeight:                    state.BaseWeight,
-						TemporaryTrafficKind:          state.TemporaryTrafficKind,
-						TemporaryTrafficSince:         state.TemporaryTrafficSince,
-						TemporaryTrafficTargetPercent: state.TemporaryTrafficTargetPercent,
-						ExplorationMaxPromptTokens:    state.ExplorationMaxPromptTokens,
-						LastPrioritySampleTime:        state.LastPrioritySampleTime,
-					}
-				}
-				update.RoutingSnapshot.StabilityReleaseMaxPromptTokens = policy.StabilityReleaseMaxPromptTokens
 			}
 			statusUpdates = append(statusUpdates, update)
 		}
@@ -1273,35 +779,8 @@ func runChannelSmartScheduleByRouteOnce(
 	for _, action := range directActions {
 		update := channelSmartScheduleRouteStatusUpdate(
 			action.key, action.status, action.message, nil, action.targetPriority,
-			action.targetWeight, now, action.stability,
+			action.targetWeight, now, nil,
 		)
-		update.RoutingSnapshot = action.routingSnapshot
-		route := routeByKey[action.key]
-		resultingStabilityState := route.State.StabilityState
-		if action.stability != nil {
-			resultingStabilityState = action.stability.State
-		}
-		if resultingStabilityState == model.ChannelSmartScheduleStabilityProbing {
-			if update.RoutingSnapshot == nil {
-				state := route.State
-				update.RoutingSnapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-					BaseRank:                      state.BaseRank,
-					BasePriority:                  state.BasePriority,
-					BaseWeight:                    state.BaseWeight,
-					TemporaryTrafficKind:          state.TemporaryTrafficKind,
-					TemporaryTrafficSince:         state.TemporaryTrafficSince,
-					TemporaryTrafficTargetPercent: state.TemporaryTrafficTargetPercent,
-					ExplorationMaxPromptTokens:    state.ExplorationMaxPromptTokens,
-					LastPrioritySampleTime:        state.LastPrioritySampleTime,
-				}
-			}
-			update.RoutingSnapshot.StabilityReleaseMaxPromptTokens =
-				policyByGroup[action.key.group].StabilityReleaseMaxPromptTokens
-		}
-		if action.runtimeProtectionClear {
-			protectionUntil := int64(0)
-			update.RuntimeProtectionUntil = &protectionUntil
-		}
 		statusUpdates = append(statusUpdates, update)
 	}
 	for index := range statusUpdates {
@@ -1332,11 +811,24 @@ func runChannelSmartScheduleByRouteOnce(
 		update.ExpectedChannelStatus = route.ChannelStatus
 		update.ExpectedPriority = route.Priority
 		update.ExpectedWeight = route.Weight
-		update.ApplyPriorityWeight = update.Priority != route.Priority || update.Weight != route.Weight
+		runtimeOverlayActive := route.State.TemporaryTrafficKind != "" ||
+			route.State.StabilityState != "" || route.State.RuntimeProtectionUntil > now ||
+			route.State.ManualPrimaryUntil > now ||
+			(route.State.BaseRank > 0 &&
+				(route.Priority != route.State.BasePriority || route.Weight != route.State.BaseWeight))
+		update.ApplyPriorityWeight = !runtimeOverlayActive &&
+			(update.Priority != route.Priority || update.Weight != route.Weight)
 		if update.ScoreDetails != nil && update.ScoreDetails.Decision.AdjustmentReason == "" {
-			channelSmartScheduleSetAdjustmentReason(update.ScoreDetails, channelSmartScheduleScoredAdjustmentReason(
-				update.Score, update.Priority != route.Priority, update.Weight != route.Weight,
-			))
+			if runtimeOverlayActive && update.RoutingSnapshot != nil {
+				channelSmartScheduleSetAdjustmentReason(
+					update.ScoreDetails,
+					"已更新基础优先级和权重，保留当前运行时覆盖并等待池级软刷新重放",
+				)
+			} else {
+				channelSmartScheduleSetAdjustmentReason(update.ScoreDetails, channelSmartScheduleScoredAdjustmentReason(
+					update.Score, update.Priority != route.Priority, update.Weight != route.Weight,
+				))
+			}
 		}
 		poolKey := channelSmartScheduleRoutePoolKey{group: update.Group, model: update.Model}
 		updatesByPool[poolKey] = append(updatesByPool[poolKey], update)
@@ -1390,6 +882,9 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 		}
 		rescheduleRequired = rescheduleRequired || poolConflict
+		if applyErr == nil && !poolConflict {
+			enqueueChannelSmartScheduleAdaptivePoolRefresh(poolKey.group, poolKey.model)
+		}
 		for index, update := range updates {
 			if update.ObservationOnly {
 				continue
@@ -1423,14 +918,6 @@ func runChannelSmartScheduleByRouteOnce(
 					fmt.Errorf("调度执行期间渠道或配置已变化，整池保留上一轮结果"),
 				)
 			} else {
-				if outcomes[index].Applied && update.Stability != nil && update.Stability.State == "" &&
-					route.State.StabilityState != "" {
-					recoveryAt := outcomes[index].ObservationSince
-					if recoveryAt <= 0 {
-						recoveryAt = update.Time
-					}
-					clearChannelSmartScheduleRuntimeHealth(update.ChannelId, update.Model, recoveryAt)
-				}
 				if outcomes[index].RoutingChanged ||
 					channelSmartScheduleRouteResultChangesTrafficState(route.State, update) {
 					result.Updated++
@@ -1482,17 +969,24 @@ func channelSmartScheduleRouteResultChangesTrafficState(
 		*update.RuntimeProtectionUntil != state.RuntimeProtectionUntil {
 		return true
 	}
-	if snapshot := update.RoutingSnapshot; snapshot != nil &&
-		(snapshot.TemporaryTrafficKind != state.TemporaryTrafficKind ||
-			snapshot.TemporaryTrafficSince != state.TemporaryTrafficSince ||
-			snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent ||
-			snapshot.ExplorationMaxPromptTokens != state.ExplorationMaxPromptTokens ||
-			snapshot.StabilityReleaseMaxPromptTokens != state.StabilityReleaseMaxPromptTokens) {
-		return true
+	if snapshot := update.RoutingSnapshot; snapshot != nil {
+		if !update.AdaptiveOverlayOnly &&
+			(snapshot.BaseRank != state.BaseRank || snapshot.BasePriority != state.BasePriority ||
+				snapshot.BaseWeight != state.BaseWeight) {
+			return true
+		}
+		if update.AdaptiveOverlayOnly &&
+			(snapshot.TemporaryTrafficKind != state.TemporaryTrafficKind ||
+				snapshot.TemporaryTrafficSince != state.TemporaryTrafficSince ||
+				snapshot.TemporaryTrafficTargetPercent != state.TemporaryTrafficTargetPercent ||
+				snapshot.ExplorationMaxPromptTokens != state.ExplorationMaxPromptTokens) {
+			return true
+		}
 	}
 	if update.AdaptiveHealthSet &&
 		(update.AdaptiveHealthState != state.AdaptiveHealthState ||
 			math.Abs(update.AdaptiveHealthPressure-state.AdaptiveHealthPressure) > channelMonitorRatioEpsilon ||
+			math.Abs(update.AdaptiveHealthFirstTokenWarningRequestPercent-state.AdaptiveHealthFirstTokenWarningRequestPercent) > channelMonitorRatioEpsilon ||
 			update.AdaptiveHealthSampleCount != state.AdaptiveHealthSampleCount ||
 			update.AdaptiveHealthLastSampleAt != state.AdaptiveHealthLastSampleAt) {
 		return true
@@ -1544,55 +1038,7 @@ func channelSmartScheduleAttachHealthUpdate(
 	update.AdaptiveHealthSet = true
 	update.AdaptiveHealthState = health.State
 	update.AdaptiveHealthPressure = health.Pressure
+	update.AdaptiveHealthFirstTokenWarningRequestPercent = health.FirstTokenWarningRequestPercent
 	update.AdaptiveHealthSampleCount = health.SampleCount
 	update.AdaptiveHealthLastSampleAt = health.LastSampleAt
-}
-
-func channelSmartScheduleRouteRestoreTarget(state model.ChannelSmartScheduleRouteState) (int64, uint) {
-	return channelSmartScheduleSavedTarget(state.StabilitySavedPriority, state.StabilitySavedWeight)
-}
-
-func channelSmartScheduleRouteProbeTarget(state model.ChannelSmartScheduleRouteState) (int64, uint) {
-	return channelMonitorSmartScheduleDegradedPriority, channelMonitorSmartScheduleMinWeight
-}
-
-func channelSmartScheduleClearTemporaryTraffic(
-	state model.ChannelSmartScheduleRouteState,
-) *model.ChannelSmartScheduleRoutingSnapshotUpdate {
-	preserveReleaseLimit := state.StabilityState == model.ChannelSmartScheduleStabilityProbing
-	if state.TemporaryTrafficKind == "" && state.ExplorationMaxPromptTokens == 0 &&
-		state.StabilityReleaseMaxPromptTokens == 0 {
-		return nil
-	}
-	releaseLimit := 0
-	if preserveReleaseLimit {
-		releaseLimit = state.StabilityReleaseMaxPromptTokens
-	}
-	return &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-		BaseRank:                        state.BaseRank,
-		BasePriority:                    state.BasePriority,
-		BaseWeight:                      state.BaseWeight,
-		StabilityReleaseMaxPromptTokens: releaseLimit,
-		LastPrioritySampleTime:          state.LastPrioritySampleTime,
-	}
-}
-
-func channelSmartScheduleClearTemporaryTrafficAndRelease(
-	state model.ChannelSmartScheduleRouteState,
-) *model.ChannelSmartScheduleRoutingSnapshotUpdate {
-	snapshot := channelSmartScheduleClearTemporaryTraffic(state)
-	if snapshot == nil {
-		if state.StabilityState != model.ChannelSmartScheduleStabilityProbing ||
-			state.StabilityReleaseMaxPromptTokens == 0 {
-			return nil
-		}
-		snapshot = &model.ChannelSmartScheduleRoutingSnapshotUpdate{
-			BaseRank:               state.BaseRank,
-			BasePriority:           state.BasePriority,
-			BaseWeight:             state.BaseWeight,
-			LastPrioritySampleTime: state.LastPrioritySampleTime,
-		}
-	}
-	snapshot.StabilityReleaseMaxPromptTokens = 0
-	return snapshot
 }

@@ -45,7 +45,7 @@ const ADAPTIVE_SAMPLING_POLICY = {
   adaptive_sampling_first_token_warning_seconds: 5,
   adaptive_sampling_first_token_critical_seconds: 10,
   adaptive_sampling_window_seconds: 600,
-  adaptive_sampling_enter_request_percent: 10,
+  adaptive_sampling_first_token_warning_request_percent: 10,
   adaptive_sampling_recover_request_percent: 95,
   adaptive_sampling_switch_confirm_request_percent: 95,
   adaptive_sampling_min_comparable_channels: 2,
@@ -86,14 +86,10 @@ function createGroupPolicy(
     slow_failure_seconds: 10,
     cooldown_minutes: 30,
     sample_mode: 'traffic',
+    sampling_order: 'priority_weight',
     exploration_traffic_percent: 3,
-    exploration_max_prompt_tokens: 16_384,
+    exploration_max_prompt_tokens: 50_000,
     probe_interval_minutes: 10,
-    priority_sampling_enabled: true,
-    priority_sampling_interval_minutes: 10,
-    priority_sampling_base_percent: 3,
-    priority_sampling_decay_percent: 70,
-    priority_sampling_min_percent: 0.5,
   }
 }
 

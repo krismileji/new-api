@@ -27,6 +27,7 @@ import type {
   ChannelMonitorPolicyAction,
   ChannelMonitorSmartScheduleApplyMode,
   ChannelMonitorSmartScheduleSampleMode,
+  ChannelMonitorSmartScheduleSamplingOrder,
   ChannelMonitorSmartScheduleStrategy,
   ChannelMonitorUpstreamAuthType,
   ChannelMonitorUpstreamType,
@@ -76,19 +77,12 @@ export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
 export const MAX_SMART_SCHEDULE_COOLDOWN_MINUTES = 525_600
 export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
-export const MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS = 1_000_000
+export const MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS = 1_000
 export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
 export const MIN_SMART_SCHEDULE_WINDOW_MINUTES = 1
 export const MAX_SMART_SCHEDULE_WINDOW_MINUTES = 43_200
 export const DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 30
 export const MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 300
-export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES = 1_440
-export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT = 0.1
-export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT = 20
-export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 1
-export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT = 100
-export const MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 0.01
-export const MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT = 5
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT = 10
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT = 49
 export const MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 51
@@ -121,6 +115,11 @@ const channelMonitorSmartScheduleSampleModes = [
   'traffic',
   'probe',
 ] as const satisfies readonly ChannelMonitorSmartScheduleSampleMode[]
+
+const channelMonitorSmartScheduleSamplingOrders = [
+  'priority_weight',
+  'ratio',
+] as const satisfies readonly ChannelMonitorSmartScheduleSamplingOrder[]
 
 const channelMonitorPolicyActions = [
   'none',
@@ -307,27 +306,29 @@ const smartScheduleExplorationTrafficSchema = z.coerce
   .gt(0, '探索流量必须大于 0%')
   .max(MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT, '探索流量不能超过 20%')
 
-const smartScheduleExplorationPromptTokensSchema = z.preprocess(
+const smartScheduleExplorationPromptKTokensSchema = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.coerce
     .number()
-    .int('探索请求上限必须是整数')
-    .min(0, '探索请求上限不能小于 0 Token')
+    .finite('探索请求上限必须是有效数字')
+    .int('探索请求上限必须是整数 K Token')
+    .min(0, '探索请求上限不能小于 0K Token')
     .max(
-      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
-      '探索请求上限不能超过 1000000 Token'
+      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS,
+      '探索请求上限不能超过 1000K Token'
     )
 )
 
-const smartScheduleStabilityReleasePromptTokensSchema = z.preprocess(
+const smartScheduleStabilityReleasePromptKTokensSchema = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.coerce
     .number()
-    .int('稳定性释放请求上限必须是整数')
-    .min(0, '稳定性释放请求上限不能小于 0 Token')
+    .finite('稳定性释放请求上限必须是有效数字')
+    .int('稳定性释放请求上限必须是整数 K Token')
+    .min(0, '稳定性释放请求上限不能小于 0K Token')
     .max(
-      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
-      '稳定性释放请求上限不能超过 1000000 Token'
+      MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS,
+      '稳定性释放请求上限不能超过 1000K Token'
     )
 )
 
@@ -338,51 +339,6 @@ const smartScheduleProbeIntervalSchema = z.coerce
   .max(
     MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
     '探测间隔不能超过 525600 分钟'
-  )
-
-const smartSchedulePrioritySamplingIntervalSchema = z.coerce
-  .number()
-  .int('轮转间隔必须是整数')
-  .min(1, '轮转间隔不能小于 1 分钟')
-  .max(
-    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES,
-    '轮转间隔不能超过 1440 分钟'
-  )
-
-const smartSchedulePrioritySamplingBasePercentSchema = z.coerce
-  .number()
-  .finite('基础采样比例必须是有效数字')
-  .min(
-    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
-    '基础采样比例不能小于 0.1%'
-  )
-  .max(
-    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
-    '基础采样比例不能超过 20%'
-  )
-
-const smartSchedulePrioritySamplingDecayPercentSchema = z.coerce
-  .number()
-  .finite('排名递减比例必须是有效数字')
-  .min(
-    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
-    '排名递减比例不能小于 1%'
-  )
-  .max(
-    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
-    '排名递减比例不能超过 100%'
-  )
-
-const smartSchedulePrioritySamplingMinPercentSchema = z.coerce
-  .number()
-  .finite('最低采样比例必须是有效数字')
-  .min(
-    MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
-    '最低采样比例不能小于 0.01%'
-  )
-  .max(
-    MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
-    '最低采样比例不能超过 5%'
   )
 
 const smartScheduleAdaptiveSamplingPercentSchema = (
@@ -476,17 +432,13 @@ const smartSchedulePolicyShape = {
     smartScheduleRuntimeFailureThresholdSchema.default(2),
   cooldownMinutes: smartScheduleCooldownSchema,
   sampleMode: z.enum(channelMonitorSmartScheduleSampleModes),
+  samplingOrder: z.enum(channelMonitorSmartScheduleSamplingOrders),
   explorationTrafficPercent: smartScheduleExplorationTrafficSchema,
-  explorationMaxPromptTokens: smartScheduleExplorationPromptTokensSchema,
-  stabilityReleaseMaxPromptTokens:
-    smartScheduleStabilityReleasePromptTokensSchema,
+  explorationMaxPromptKTokens: smartScheduleExplorationPromptKTokensSchema,
+  stabilityReleaseMaxPromptKTokens:
+    smartScheduleStabilityReleasePromptKTokensSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
   degradedProbeEnabled: z.boolean().default(false),
-  prioritySamplingEnabled: z.boolean(),
-  prioritySamplingIntervalMinutes: smartSchedulePrioritySamplingIntervalSchema,
-  prioritySamplingBasePercent: smartSchedulePrioritySamplingBasePercentSchema,
-  prioritySamplingDecayPercent: smartSchedulePrioritySamplingDecayPercentSchema,
-  prioritySamplingMinPercent: smartSchedulePrioritySamplingMinPercentSchema,
   adaptiveSamplingEnabled: z.boolean(),
   adaptiveSamplingBasePercent: smartScheduleAdaptiveSamplingPercentSchema(
     0,
@@ -512,8 +464,8 @@ const smartSchedulePolicyShape = {
   adaptiveSamplingFirstTokenCriticalSeconds:
     smartScheduleAdaptiveSamplingSecondsSchema('首字高风险阈值'),
   adaptiveSamplingWindowSeconds: smartScheduleAdaptiveSamplingWindowSchema,
-  adaptiveSamplingEnterRequestPercent:
-    smartScheduleAdaptiveSamplingRequestPercentSchema('进入压力请求占比'),
+  adaptiveSamplingFirstTokenWarningRequestPercent:
+    smartScheduleAdaptiveSamplingRequestPercentSchema('首字告警请求占比'),
   adaptiveSamplingRecoverRequestPercent:
     smartScheduleAdaptiveSamplingRequestPercentSchema('恢复健康请求占比'),
   adaptiveSamplingSwitchConfirmRequestPercent:
@@ -533,29 +485,14 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
 
   if (policy.sampleMode !== 'traffic') {
     normalized.explorationTrafficPercent = defaults.explorationTrafficPercent
-    normalized.explorationMaxPromptTokens = defaults.explorationMaxPromptTokens
+    normalized.explorationMaxPromptKTokens =
+      defaults.explorationMaxPromptKTokens
   }
   if (
     policy.sampleMode !== 'probe' &&
     !(policy.stabilityEnabled === true && policy.degradedProbeEnabled === true)
   ) {
     normalized.probeIntervalMinutes = defaults.probeIntervalMinutes
-  }
-
-  if (
-    policy.applyMode !== 'priority_weight' ||
-    policy.prioritySamplingEnabled !== true
-  ) {
-    normalized.prioritySamplingIntervalMinutes =
-      defaults.prioritySamplingIntervalMinutes
-    normalized.prioritySamplingBasePercent =
-      defaults.prioritySamplingBasePercent
-    normalized.prioritySamplingDecayPercent =
-      defaults.prioritySamplingDecayPercent
-    normalized.prioritySamplingMinPercent = defaults.prioritySamplingMinPercent
-  }
-  if (policy.applyMode !== 'priority_weight') {
-    normalized.prioritySamplingEnabled = false
   }
 
   if (policy.stabilityEnabled !== true) {
@@ -574,8 +511,8 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.burstFailureThreshold = defaults.burstFailureThreshold
     normalized.recoverySuccessThreshold = defaults.recoverySuccessThreshold
     normalized.cooldownMinutes = defaults.cooldownMinutes
-    normalized.stabilityReleaseMaxPromptTokens =
-      defaults.stabilityReleaseMaxPromptTokens
+    normalized.stabilityReleaseMaxPromptKTokens =
+      defaults.stabilityReleaseMaxPromptKTokens
     normalized.degradedProbeEnabled = defaults.degradedProbeEnabled
     if (
       typeof policy.scoring === 'object' &&
@@ -612,7 +549,7 @@ function validateSmartSchedulePolicy(
     adaptiveSamplingErrorCriticalPercent: number
     adaptiveSamplingFirstTokenWarningSeconds: number
     adaptiveSamplingFirstTokenCriticalSeconds: number
-    adaptiveSamplingEnterRequestPercent: number
+    adaptiveSamplingFirstTokenWarningRequestPercent: number
     adaptiveSamplingRecoverRequestPercent: number
     adaptiveSamplingSwitchConfirmRequestPercent: number
   },
@@ -680,14 +617,14 @@ function validateSmartSchedulePolicy(
       })
     }
     if (
-      values.adaptiveSamplingEnterRequestPercent +
+      values.adaptiveSamplingFirstTokenWarningRequestPercent +
         values.adaptiveSamplingRecoverRequestPercent <=
       100
     ) {
       context.addIssue({
         code: 'custom',
         path: ['adaptiveSamplingRecoverRequestPercent'],
-        message: '进入压力和恢复健康请求占比必须保留滞回区间',
+        message: '首字告警和恢复健康请求占比必须保留滞回区间',
       })
     }
     if (

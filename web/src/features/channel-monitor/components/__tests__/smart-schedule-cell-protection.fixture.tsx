@@ -118,7 +118,7 @@ try {
   })
 
   const explorationButton = container.querySelector<HTMLButtonElement>(
-    'button[aria-label="解除 测试渠道 default model-a 的探索流量"]'
+    'button[aria-label="解除 测试渠道 default model-a 的统一探索采样"]'
   )
   assert.ok(explorationButton)
   await act(async () => {
@@ -127,12 +127,6 @@ try {
   assert.ok(document.body.textContent?.includes('确认解除探索流量？'))
   assert.ok(document.body.textContent?.includes('探索流量状态'))
   await cancelDialog()
-
-  await renderClearableState({
-    temporary_traffic_kind: 'priority_sampling',
-    temporary_traffic_target_percent: 2,
-  })
-  assert.equal(container.querySelector('button[aria-label^="解除 "]'), null)
 } finally {
   await act(async () => root.unmount())
   queryClient.clear()

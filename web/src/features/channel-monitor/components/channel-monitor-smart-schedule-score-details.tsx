@@ -250,11 +250,9 @@ export function ChannelMonitorSmartScheduleScoreDetails(
     .join('、')
   let temporaryTrafficLabel = ''
   if (details.decision.temporary_traffic_kind === 'insufficient_samples') {
-    temporaryTrafficLabel = '样本不足补量'
-  } else if (details.decision.temporary_traffic_kind === 'priority_sampling') {
-    temporaryTrafficLabel = '低优先级轮转'
+    temporaryTrafficLabel = '统一探索采样'
   } else if (details.decision.temporary_traffic_kind === 'adaptive_sampling') {
-    temporaryTrafficLabel = '健康应急采样'
+    temporaryTrafficLabel = '自适应备援采样'
   }
   let stabilityState = '未启用'
   if (details.stability.enabled) stabilityState = '未达到可用条件'
@@ -433,6 +431,24 @@ export function ChannelMonitorSmartScheduleScoreDetails(
               </div>
               <div>
                 <span className='text-muted-foreground block'>
+                  窗口内错误请求
+                </span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(details.health.error_request_percent)}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
+                  窗口内首字告警请求
+                </span>
+                <strong className='font-mono tabular-nums'>
+                  {formatPercent(
+                    details.health.first_token_warning_request_percent
+                  )}
+                </strong>
+              </div>
+              <div>
+                <span className='text-muted-foreground block'>
                   窗口内风险请求
                 </span>
                 <strong className='font-mono tabular-nums'>
@@ -450,8 +466,8 @@ export function ChannelMonitorSmartScheduleScoreDetails(
               <p className='text-muted-foreground sm:col-span-3'>
                 最近 {details.health.window_seconds} 秒统计了{' '}
                 {details.health.sample_count}{' '}
-                个等价样本（业务请求、手动测试和定时探测）；风险包含非 429
-                错误和达到首字告警阈值的成功请求，
+                个等价样本（业务请求、手动测试和定时探测）；错误率和首字告警请求占比按
+                OR 独立进入压力，风险比例仅用于解释两类请求的并集，
                 无首字数据的成功请求按健康处理。首字和 TPS
                 只有达到最少可比渠道数后才参与相对比较。
               </p>

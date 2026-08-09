@@ -26,114 +26,129 @@ const (
 	defaultChannelMonitorSmartScheduleRecoverySuccessThreshold         = 2
 	defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount = 0
 	defaultChannelMonitorSmartScheduleFastRetryDelayMs                 = 1_000
-	maxChannelMonitorSmartScheduleSamplingInterval                     = 1440
-	minChannelMonitorSmartScheduleSamplingBasePercent                  = 0.1
-	maxChannelMonitorSmartScheduleSamplingBasePercent                  = 20.0
-	minChannelMonitorSmartScheduleSamplingDecayPercent                 = 1.0
-	maxChannelMonitorSmartScheduleSamplingDecayPercent                 = 100.0
-	minChannelMonitorSmartScheduleSamplingFloorPercent                 = 0.01
-	maxChannelMonitorSmartScheduleSamplingFloorPercent                 = 5.0
 	minChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 60
 	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 3600
 	maxChannelMonitorSmartScheduleAdaptiveSamplingMinComparable        = 10
 )
 
 type channelSmartScheduleGroupPolicy struct {
-	Group                                       string                       `json:"group"`
-	Strategy                                    *string                      `json:"strategy,omitempty"`
-	StabilityEnabled                            *bool                        `json:"stability_enabled,omitempty"`
-	Scoring                                     *channelSmartScheduleScoring `json:"scoring,omitempty"`
-	ApplyMode                                   *string                      `json:"apply_mode,omitempty"`
-	Models                                      *[]string                    `json:"models,omitempty"`
-	ModelOrder                                  []string                     `json:"model_order,omitempty"`
-	MinSamples                                  *int                         `json:"min_samples,omitempty"`
-	RecoveryStabilityScore                      *float64                     `json:"recovery_stability_score,omitempty"`
-	FastFailurePenaltyPercent                   *float64                     `json:"fast_failure_penalty_percent,omitempty"`
-	FastFailureSeconds                          *float64                     `json:"fast_failure_seconds,omitempty"`
-	FastFailureSameChannelRetryCount            *int                         `json:"fast_failure_same_channel_retry_count,omitempty"`
-	FastFailureRetryDelayMs                     *int                         `json:"fast_failure_same_channel_retry_delay_ms,omitempty"`
-	SlowFailureSeconds                          *float64                     `json:"slow_failure_seconds,omitempty"`
-	BurstFailureWindowSeconds                   *int                         `json:"burst_failure_window_seconds,omitempty"`
-	ConsecutiveFailureThreshold                 *int                         `json:"consecutive_failure_threshold,omitempty"`
-	BurstFailureThreshold                       *int                         `json:"burst_failure_threshold,omitempty"`
-	RecoverySuccessThreshold                    *int                         `json:"recovery_success_threshold,omitempty"`
-	JitterEnabled                               *bool                        `json:"jitter_enabled,omitempty"`
-	JitterTolerancePercent                      *float64                     `json:"jitter_tolerance_percent,omitempty"`
-	JitterSlowThresholdSeconds                  *float64                     `json:"jitter_slow_threshold_seconds,omitempty"`
-	CooldownMinutes                             *int                         `json:"cooldown_minutes,omitempty"`
-	SampleMode                                  *string                      `json:"sample_mode,omitempty"`
-	ExplorationTrafficPercent                   *float64                     `json:"exploration_traffic_percent,omitempty"`
-	ExplorationMaxPromptTokens                  *int                         `json:"exploration_max_prompt_tokens,omitempty"`
-	StabilityReleaseMaxPromptTokens             *int                         `json:"stability_release_max_prompt_tokens,omitempty"`
-	ProbeIntervalMinutes                        *int                         `json:"probe_interval_minutes,omitempty"`
-	DegradedProbeEnabled                        *bool                        `json:"degraded_probe_enabled,omitempty"`
-	PrioritySamplingEnabled                     *bool                        `json:"priority_sampling_enabled,omitempty"`
-	PrioritySamplingIntervalMinutes             *int                         `json:"priority_sampling_interval_minutes,omitempty"`
-	PrioritySamplingBasePercent                 *float64                     `json:"priority_sampling_base_percent,omitempty"`
-	PrioritySamplingDecayPercent                *float64                     `json:"priority_sampling_decay_percent,omitempty"`
-	PrioritySamplingMinPercent                  *float64                     `json:"priority_sampling_min_percent,omitempty"`
-	AdaptiveSamplingEnabled                     *bool                        `json:"adaptive_sampling_enabled,omitempty"`
-	AdaptiveSamplingBasePercent                 *float64                     `json:"adaptive_sampling_base_percent,omitempty"`
-	AdaptiveSamplingMaxPercent                  *float64                     `json:"adaptive_sampling_max_percent,omitempty"`
-	AdaptiveSamplingPrimaryMinPercent           *float64                     `json:"adaptive_sampling_primary_min_percent,omitempty"`
-	AdaptiveSamplingErrorWarningPercent         *float64                     `json:"adaptive_sampling_error_warning_percent,omitempty"`
-	AdaptiveSamplingErrorCriticalPercent        *float64                     `json:"adaptive_sampling_error_critical_percent,omitempty"`
-	AdaptiveSamplingFirstTokenWarningSeconds    *float64                     `json:"adaptive_sampling_first_token_warning_seconds,omitempty"`
-	AdaptiveSamplingFirstTokenCriticalSeconds   *float64                     `json:"adaptive_sampling_first_token_critical_seconds,omitempty"`
-	AdaptiveSamplingWindowSeconds               *int                         `json:"adaptive_sampling_window_seconds,omitempty"`
-	AdaptiveSamplingEnterRequestPercent         *float64                     `json:"adaptive_sampling_enter_request_percent,omitempty"`
-	AdaptiveSamplingRecoverRequestPercent       *float64                     `json:"adaptive_sampling_recover_request_percent,omitempty"`
-	AdaptiveSamplingSwitchConfirmRequestPercent *float64                     `json:"adaptive_sampling_switch_confirm_request_percent,omitempty"`
-	AdaptiveSamplingMinComparableChannels       *int                         `json:"adaptive_sampling_min_comparable_channels,omitempty"`
+	Group                                           string                       `json:"group"`
+	Strategy                                        *string                      `json:"strategy,omitempty"`
+	StabilityEnabled                                *bool                        `json:"stability_enabled,omitempty"`
+	Scoring                                         *channelSmartScheduleScoring `json:"scoring,omitempty"`
+	ApplyMode                                       *string                      `json:"apply_mode,omitempty"`
+	Models                                          *[]string                    `json:"models,omitempty"`
+	ModelOrder                                      []string                     `json:"model_order,omitempty"`
+	MinSamples                                      *int                         `json:"min_samples,omitempty"`
+	RecoveryStabilityScore                          *float64                     `json:"recovery_stability_score,omitempty"`
+	FastFailurePenaltyPercent                       *float64                     `json:"fast_failure_penalty_percent,omitempty"`
+	FastFailureSeconds                              *float64                     `json:"fast_failure_seconds,omitempty"`
+	FastFailureSameChannelRetryCount                *int                         `json:"fast_failure_same_channel_retry_count,omitempty"`
+	FastFailureRetryDelayMs                         *int                         `json:"fast_failure_same_channel_retry_delay_ms,omitempty"`
+	SlowFailureSeconds                              *float64                     `json:"slow_failure_seconds,omitempty"`
+	BurstFailureWindowSeconds                       *int                         `json:"burst_failure_window_seconds,omitempty"`
+	ConsecutiveFailureThreshold                     *int                         `json:"consecutive_failure_threshold,omitempty"`
+	BurstFailureThreshold                           *int                         `json:"burst_failure_threshold,omitempty"`
+	RecoverySuccessThreshold                        *int                         `json:"recovery_success_threshold,omitempty"`
+	JitterEnabled                                   *bool                        `json:"jitter_enabled,omitempty"`
+	JitterTolerancePercent                          *float64                     `json:"jitter_tolerance_percent,omitempty"`
+	JitterSlowThresholdSeconds                      *float64                     `json:"jitter_slow_threshold_seconds,omitempty"`
+	CooldownMinutes                                 *int                         `json:"cooldown_minutes,omitempty"`
+	SampleMode                                      *string                      `json:"sample_mode,omitempty"`
+	SamplingOrder                                   *string                      `json:"sampling_order,omitempty"`
+	ExplorationTrafficPercent                       *float64                     `json:"exploration_traffic_percent,omitempty"`
+	ExplorationMaxPromptTokens                      *int                         `json:"exploration_max_prompt_tokens,omitempty"`
+	StabilityReleaseMaxPromptTokens                 *int                         `json:"stability_release_max_prompt_tokens,omitempty"`
+	ProbeIntervalMinutes                            *int                         `json:"probe_interval_minutes,omitempty"`
+	DegradedProbeEnabled                            *bool                        `json:"degraded_probe_enabled,omitempty"`
+	AdaptiveSamplingEnabled                         *bool                        `json:"adaptive_sampling_enabled,omitempty"`
+	AdaptiveSamplingBasePercent                     *float64                     `json:"adaptive_sampling_base_percent,omitempty"`
+	AdaptiveSamplingMaxPercent                      *float64                     `json:"adaptive_sampling_max_percent,omitempty"`
+	AdaptiveSamplingPrimaryMinPercent               *float64                     `json:"adaptive_sampling_primary_min_percent,omitempty"`
+	AdaptiveSamplingErrorWarningPercent             *float64                     `json:"adaptive_sampling_error_warning_percent,omitempty"`
+	AdaptiveSamplingErrorCriticalPercent            *float64                     `json:"adaptive_sampling_error_critical_percent,omitempty"`
+	AdaptiveSamplingFirstTokenWarningSeconds        *float64                     `json:"adaptive_sampling_first_token_warning_seconds,omitempty"`
+	AdaptiveSamplingFirstTokenCriticalSeconds       *float64                     `json:"adaptive_sampling_first_token_critical_seconds,omitempty"`
+	AdaptiveSamplingWindowSeconds                   *int                         `json:"adaptive_sampling_window_seconds,omitempty"`
+	AdaptiveSamplingFirstTokenWarningRequestPercent *float64                     `json:"adaptive_sampling_first_token_warning_request_percent,omitempty"`
+	AdaptiveSamplingRecoverRequestPercent           *float64                     `json:"adaptive_sampling_recover_request_percent,omitempty"`
+	AdaptiveSamplingSwitchConfirmRequestPercent     *float64                     `json:"adaptive_sampling_switch_confirm_request_percent,omitempty"`
+	AdaptiveSamplingMinComparableChannels           *int                         `json:"adaptive_sampling_min_comparable_channels,omitempty"`
+}
+
+func (policy *channelSmartScheduleGroupPolicy) UnmarshalJSON(data []byte) error {
+	type policyAlias channelSmartScheduleGroupPolicy
+	var fields map[string]any
+	if err := common.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for field := range fields {
+		switch field {
+		case "priority_sampling_enabled",
+			"priority_sampling_interval_minutes",
+			"priority_sampling_base_percent",
+			"priority_sampling_decay_percent",
+			"priority_sampling_min_percent",
+			"adaptive_sampling_enter_rounds",
+			"adaptive_sampling_recover_rounds",
+			"adaptive_sampling_switch_confirm_rounds",
+			"adaptive_sampling_exploration_lease_minutes":
+			return errors.New("分组调度策略包含已删除的轮转、轮次或探索租约字段")
+		case "adaptive_sampling_enter_request_percent":
+			return errors.New("分组调度策略包含已删除的自适应采样统一进入请求比例字段")
+		}
+	}
+	var decoded policyAlias
+	if err := common.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*policy = channelSmartScheduleGroupPolicy(decoded)
+	return nil
 }
 
 type smartScheduleGroupPolicies []channelSmartScheduleGroupPolicy
 
 type channelSmartSchedulePolicy struct {
-	Strategy                                    string
-	StabilityEnabled                            bool
-	Scoring                                     channelSmartScheduleScoring
-	ApplyMode                                   string
-	Models                                      []string
-	MinSamples                                  int
-	RecoveryStabilityScore                      float64
-	FastFailurePenaltyPercent                   float64
-	FastFailureSeconds                          float64
-	FastFailureSameChannelRetryCount            int
-	FastFailureRetryDelayMs                     int
-	SlowFailureSeconds                          float64
-	BurstFailureWindowSeconds                   int
-	ConsecutiveFailureThreshold                 int
-	BurstFailureThreshold                       int
-	RecoverySuccessThreshold                    int
-	JitterEnabled                               bool
-	JitterTolerancePercent                      float64
-	JitterSlowThresholdSeconds                  float64
-	CooldownMinutes                             int
-	SampleMode                                  string
-	ExplorationTrafficPercent                   float64
-	ExplorationMaxPromptTokens                  int
-	StabilityReleaseMaxPromptTokens             int
-	ProbeIntervalMinutes                        int
-	DegradedProbeEnabled                        bool
-	PrioritySamplingEnabled                     bool
-	PrioritySamplingIntervalMinutes             int
-	PrioritySamplingBasePercent                 float64
-	PrioritySamplingDecayPercent                float64
-	PrioritySamplingMinPercent                  float64
-	AdaptiveSamplingEnabled                     bool
-	AdaptiveSamplingBasePercent                 float64
-	AdaptiveSamplingMaxPercent                  float64
-	AdaptiveSamplingPrimaryMinPercent           float64
-	AdaptiveSamplingErrorWarningPercent         float64
-	AdaptiveSamplingErrorCriticalPercent        float64
-	AdaptiveSamplingFirstTokenWarningSeconds    float64
-	AdaptiveSamplingFirstTokenCriticalSeconds   float64
-	AdaptiveSamplingWindowSeconds               int
-	AdaptiveSamplingEnterRequestPercent         float64
-	AdaptiveSamplingRecoverRequestPercent       float64
-	AdaptiveSamplingSwitchConfirmRequestPercent float64
-	AdaptiveSamplingMinComparableChannels       int
+	Strategy                                        string
+	StabilityEnabled                                bool
+	Scoring                                         channelSmartScheduleScoring
+	ApplyMode                                       string
+	Models                                          []string
+	MinSamples                                      int
+	RecoveryStabilityScore                          float64
+	FastFailurePenaltyPercent                       float64
+	FastFailureSeconds                              float64
+	FastFailureSameChannelRetryCount                int
+	FastFailureRetryDelayMs                         int
+	SlowFailureSeconds                              float64
+	BurstFailureWindowSeconds                       int
+	ConsecutiveFailureThreshold                     int
+	BurstFailureThreshold                           int
+	RecoverySuccessThreshold                        int
+	JitterEnabled                                   bool
+	JitterTolerancePercent                          float64
+	JitterSlowThresholdSeconds                      float64
+	CooldownMinutes                                 int
+	SampleMode                                      string
+	SamplingOrder                                   string
+	ExplorationTrafficPercent                       float64
+	ExplorationMaxPromptTokens                      int
+	StabilityReleaseMaxPromptTokens                 int
+	ProbeIntervalMinutes                            int
+	DegradedProbeEnabled                            bool
+	AdaptiveSamplingEnabled                         bool
+	AdaptiveSamplingBasePercent                     float64
+	AdaptiveSamplingMaxPercent                      float64
+	AdaptiveSamplingPrimaryMinPercent               float64
+	AdaptiveSamplingErrorWarningPercent             float64
+	AdaptiveSamplingErrorCriticalPercent            float64
+	AdaptiveSamplingFirstTokenWarningSeconds        float64
+	AdaptiveSamplingFirstTokenCriticalSeconds       float64
+	AdaptiveSamplingWindowSeconds                   int
+	AdaptiveSamplingFirstTokenWarningRequestPercent float64
+	AdaptiveSamplingRecoverRequestPercent           float64
+	AdaptiveSamplingSwitchConfirmRequestPercent     float64
+	AdaptiveSamplingMinComparableChannels           int
 }
 
 func parseChannelSmartScheduleGroupPolicies(raw string) []channelSmartScheduleGroupPolicy {
@@ -212,20 +227,17 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.SlowFailureSeconds == nil || policy.JitterEnabled == nil ||
 			policy.JitterTolerancePercent == nil || policy.JitterSlowThresholdSeconds == nil ||
 			policy.CooldownMinutes == nil ||
-			policy.SampleMode == nil || policy.ExplorationTrafficPercent == nil ||
+			policy.SampleMode == nil || policy.SamplingOrder == nil || policy.ExplorationTrafficPercent == nil ||
 			policy.ExplorationMaxPromptTokens == nil || policy.StabilityReleaseMaxPromptTokens == nil ||
 			policy.ProbeIntervalMinutes == nil || policy.DegradedProbeEnabled == nil ||
-			policy.PrioritySamplingEnabled == nil ||
-			policy.PrioritySamplingIntervalMinutes == nil || policy.PrioritySamplingBasePercent == nil ||
-			policy.PrioritySamplingDecayPercent == nil || policy.PrioritySamplingMinPercent == nil ||
 			policy.AdaptiveSamplingEnabled == nil || policy.AdaptiveSamplingBasePercent == nil ||
 			policy.AdaptiveSamplingMaxPercent == nil || policy.AdaptiveSamplingPrimaryMinPercent == nil ||
 			policy.AdaptiveSamplingErrorWarningPercent == nil || policy.AdaptiveSamplingErrorCriticalPercent == nil ||
 			policy.AdaptiveSamplingFirstTokenWarningSeconds == nil || policy.AdaptiveSamplingFirstTokenCriticalSeconds == nil ||
-			policy.AdaptiveSamplingWindowSeconds == nil || policy.AdaptiveSamplingEnterRequestPercent == nil ||
+			policy.AdaptiveSamplingWindowSeconds == nil || policy.AdaptiveSamplingFirstTokenWarningRequestPercent == nil ||
 			policy.AdaptiveSamplingRecoverRequestPercent == nil ||
 			policy.AdaptiveSamplingSwitchConfirmRequestPercent == nil || policy.AdaptiveSamplingMinComparableChannels == nil {
-			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、样本补充、低优先级轮转和自适应采样")
+			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、统一样本补充和自适应采样")
 		}
 
 		strategy := strings.TrimSpace(*policy.Strategy)
@@ -324,44 +336,29 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("自适应采样仅支持按优先级和权重调整")
 		}
 		policy.SampleMode = &sampleMode
+		samplingOrder := strings.TrimSpace(*policy.SamplingOrder)
+		if !isChannelMonitorSmartScheduleSamplingOrderSupported(samplingOrder) {
+			return nil, errors.New("分组调度采样顺序无效")
+		}
+		policy.SamplingOrder = &samplingOrder
 		if math.IsNaN(*policy.ExplorationTrafficPercent) || math.IsInf(*policy.ExplorationTrafficPercent, 0) ||
 			*policy.ExplorationTrafficPercent <= 0 ||
 			*policy.ExplorationTrafficPercent > maxChannelMonitorSmartScheduleExplorationPercent {
 			return nil, errors.New("分组调度探索流量必须大于 0% 且不超过 20%")
 		}
 		if *policy.ExplorationMaxPromptTokens < 0 ||
-			*policy.ExplorationMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens {
-			return nil, errors.New("分组调度探索请求上限必须在 0 到 1000000 Token 之间")
+			*policy.ExplorationMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens ||
+			*policy.ExplorationMaxPromptTokens%model.ChannelSmartSchedulePromptTokensPerK != 0 {
+			return nil, errors.New("分组调度探索请求上限必须为 0 或 1000 的整数倍，且不能超过 1000000 Token")
 		}
 		if *policy.StabilityReleaseMaxPromptTokens < 0 ||
-			*policy.StabilityReleaseMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens {
-			return nil, errors.New("分组调度稳定性释放请求上限必须在 0 到 1000000 Token 之间")
+			*policy.StabilityReleaseMaxPromptTokens > model.MaxChannelSmartScheduleExplorationPromptTokens ||
+			*policy.StabilityReleaseMaxPromptTokens%model.ChannelSmartSchedulePromptTokensPerK != 0 {
+			return nil, errors.New("分组调度稳定性释放请求上限必须为 0 或 1000 的整数倍，且不能超过 1000000 Token")
 		}
 		if *policy.ProbeIntervalMinutes <= 0 ||
 			*policy.ProbeIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes {
 			return nil, errors.New("分组调度探测间隔必须在 1 到 525600 分钟之间")
-		}
-		if *policy.PrioritySamplingIntervalMinutes <= 0 ||
-			*policy.PrioritySamplingIntervalMinutes > maxChannelMonitorSmartScheduleSamplingInterval {
-			return nil, errors.New("低优先级轮转间隔必须在 1 到 1440 分钟之间")
-		}
-		if math.IsNaN(*policy.PrioritySamplingBasePercent) || math.IsInf(*policy.PrioritySamplingBasePercent, 0) ||
-			*policy.PrioritySamplingBasePercent < minChannelMonitorSmartScheduleSamplingBasePercent ||
-			*policy.PrioritySamplingBasePercent > maxChannelMonitorSmartScheduleSamplingBasePercent {
-			return nil, errors.New("低优先级轮转基础流量必须在 0.1% 到 20% 之间")
-		}
-		if math.IsNaN(*policy.PrioritySamplingDecayPercent) || math.IsInf(*policy.PrioritySamplingDecayPercent, 0) ||
-			*policy.PrioritySamplingDecayPercent < minChannelMonitorSmartScheduleSamplingDecayPercent ||
-			*policy.PrioritySamplingDecayPercent > maxChannelMonitorSmartScheduleSamplingDecayPercent {
-			return nil, errors.New("低优先级轮转递减比例必须在 1% 到 100% 之间")
-		}
-		if math.IsNaN(*policy.PrioritySamplingMinPercent) || math.IsInf(*policy.PrioritySamplingMinPercent, 0) ||
-			*policy.PrioritySamplingMinPercent < minChannelMonitorSmartScheduleSamplingFloorPercent ||
-			*policy.PrioritySamplingMinPercent > maxChannelMonitorSmartScheduleSamplingFloorPercent {
-			return nil, errors.New("低优先级轮转最小流量必须在 0.01% 到 5% 之间")
-		}
-		if *policy.PrioritySamplingMinPercent > *policy.PrioritySamplingBasePercent {
-			return nil, errors.New("低优先级轮转最小流量不能大于基础流量")
 		}
 		if math.IsNaN(*policy.AdaptiveSamplingBasePercent) || math.IsInf(*policy.AdaptiveSamplingBasePercent, 0) ||
 			*policy.AdaptiveSamplingBasePercent < 0 || *policy.AdaptiveSamplingBasePercent > 10 {
@@ -408,7 +405,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("自适应采样统计窗口必须在 60 到 3600 秒之间")
 		}
 		for _, threshold := range []*float64{
-			policy.AdaptiveSamplingEnterRequestPercent,
+			policy.AdaptiveSamplingFirstTokenWarningRequestPercent,
 			policy.AdaptiveSamplingRecoverRequestPercent,
 			policy.AdaptiveSamplingSwitchConfirmRequestPercent,
 		} {
@@ -416,8 +413,9 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 				return nil, errors.New("自适应采样请求占比阈值必须大于 0% 且不超过 100%")
 			}
 		}
-		if *policy.AdaptiveSamplingEnterRequestPercent+*policy.AdaptiveSamplingRecoverRequestPercent <= 100 {
-			return nil, errors.New("自适应采样进入和恢复请求占比必须保留滞回区间")
+		if *policy.AdaptiveSamplingFirstTokenWarningRequestPercent+
+			*policy.AdaptiveSamplingRecoverRequestPercent <= 100 {
+			return nil, errors.New("自适应采样首字告警和恢复健康请求占比必须保留滞回区间")
 		}
 		if *policy.AdaptiveSamplingSwitchConfirmRequestPercent < *policy.AdaptiveSamplingRecoverRequestPercent {
 			return nil, errors.New("自适应采样切换确认请求占比不能低于恢复请求占比")
@@ -464,50 +462,46 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		degradedProbeEnabled = *configured.DegradedProbeEnabled
 	}
 	return channelSmartSchedulePolicy{
-		Strategy:                                    *configured.Strategy,
-		StabilityEnabled:                            *configured.StabilityEnabled,
-		Scoring:                                     *configured.Scoring,
-		ApplyMode:                                   *configured.ApplyMode,
-		Models:                                      *configured.Models,
-		MinSamples:                                  *configured.MinSamples,
-		RecoveryStabilityScore:                      *configured.RecoveryStabilityScore,
-		FastFailurePenaltyPercent:                   *configured.FastFailurePenaltyPercent,
-		FastFailureSeconds:                          *configured.FastFailureSeconds,
-		FastFailureSameChannelRetryCount:            fastFailureSameChannelRetryCount,
-		FastFailureRetryDelayMs:                     fastFailureRetryDelayMs,
-		SlowFailureSeconds:                          *configured.SlowFailureSeconds,
-		BurstFailureWindowSeconds:                   burstFailureWindowSeconds,
-		ConsecutiveFailureThreshold:                 consecutiveFailureThreshold,
-		BurstFailureThreshold:                       burstFailureThreshold,
-		RecoverySuccessThreshold:                    recoverySuccessThreshold,
-		JitterEnabled:                               *configured.JitterEnabled,
-		JitterTolerancePercent:                      *configured.JitterTolerancePercent,
-		JitterSlowThresholdSeconds:                  *configured.JitterSlowThresholdSeconds,
-		CooldownMinutes:                             *configured.CooldownMinutes,
-		SampleMode:                                  *configured.SampleMode,
-		ExplorationTrafficPercent:                   *configured.ExplorationTrafficPercent,
-		ExplorationMaxPromptTokens:                  *configured.ExplorationMaxPromptTokens,
-		StabilityReleaseMaxPromptTokens:             *configured.StabilityReleaseMaxPromptTokens,
-		ProbeIntervalMinutes:                        *configured.ProbeIntervalMinutes,
-		DegradedProbeEnabled:                        degradedProbeEnabled,
-		PrioritySamplingEnabled:                     *configured.PrioritySamplingEnabled,
-		PrioritySamplingIntervalMinutes:             *configured.PrioritySamplingIntervalMinutes,
-		PrioritySamplingBasePercent:                 *configured.PrioritySamplingBasePercent,
-		PrioritySamplingDecayPercent:                *configured.PrioritySamplingDecayPercent,
-		PrioritySamplingMinPercent:                  *configured.PrioritySamplingMinPercent,
-		AdaptiveSamplingEnabled:                     *configured.AdaptiveSamplingEnabled,
-		AdaptiveSamplingBasePercent:                 *configured.AdaptiveSamplingBasePercent,
-		AdaptiveSamplingMaxPercent:                  *configured.AdaptiveSamplingMaxPercent,
-		AdaptiveSamplingPrimaryMinPercent:           *configured.AdaptiveSamplingPrimaryMinPercent,
-		AdaptiveSamplingErrorWarningPercent:         *configured.AdaptiveSamplingErrorWarningPercent,
-		AdaptiveSamplingErrorCriticalPercent:        *configured.AdaptiveSamplingErrorCriticalPercent,
-		AdaptiveSamplingFirstTokenWarningSeconds:    *configured.AdaptiveSamplingFirstTokenWarningSeconds,
-		AdaptiveSamplingFirstTokenCriticalSeconds:   *configured.AdaptiveSamplingFirstTokenCriticalSeconds,
-		AdaptiveSamplingWindowSeconds:               *configured.AdaptiveSamplingWindowSeconds,
-		AdaptiveSamplingEnterRequestPercent:         *configured.AdaptiveSamplingEnterRequestPercent,
-		AdaptiveSamplingRecoverRequestPercent:       *configured.AdaptiveSamplingRecoverRequestPercent,
-		AdaptiveSamplingSwitchConfirmRequestPercent: *configured.AdaptiveSamplingSwitchConfirmRequestPercent,
-		AdaptiveSamplingMinComparableChannels:       *configured.AdaptiveSamplingMinComparableChannels,
+		Strategy:                                        *configured.Strategy,
+		StabilityEnabled:                                *configured.StabilityEnabled,
+		Scoring:                                         *configured.Scoring,
+		ApplyMode:                                       *configured.ApplyMode,
+		Models:                                          *configured.Models,
+		MinSamples:                                      *configured.MinSamples,
+		RecoveryStabilityScore:                          *configured.RecoveryStabilityScore,
+		FastFailurePenaltyPercent:                       *configured.FastFailurePenaltyPercent,
+		FastFailureSeconds:                              *configured.FastFailureSeconds,
+		FastFailureSameChannelRetryCount:                fastFailureSameChannelRetryCount,
+		FastFailureRetryDelayMs:                         fastFailureRetryDelayMs,
+		SlowFailureSeconds:                              *configured.SlowFailureSeconds,
+		BurstFailureWindowSeconds:                       burstFailureWindowSeconds,
+		ConsecutiveFailureThreshold:                     consecutiveFailureThreshold,
+		BurstFailureThreshold:                           burstFailureThreshold,
+		RecoverySuccessThreshold:                        recoverySuccessThreshold,
+		JitterEnabled:                                   *configured.JitterEnabled,
+		JitterTolerancePercent:                          *configured.JitterTolerancePercent,
+		JitterSlowThresholdSeconds:                      *configured.JitterSlowThresholdSeconds,
+		CooldownMinutes:                                 *configured.CooldownMinutes,
+		SampleMode:                                      *configured.SampleMode,
+		SamplingOrder:                                   *configured.SamplingOrder,
+		ExplorationTrafficPercent:                       *configured.ExplorationTrafficPercent,
+		ExplorationMaxPromptTokens:                      *configured.ExplorationMaxPromptTokens,
+		StabilityReleaseMaxPromptTokens:                 *configured.StabilityReleaseMaxPromptTokens,
+		ProbeIntervalMinutes:                            *configured.ProbeIntervalMinutes,
+		DegradedProbeEnabled:                            degradedProbeEnabled,
+		AdaptiveSamplingEnabled:                         *configured.AdaptiveSamplingEnabled,
+		AdaptiveSamplingBasePercent:                     *configured.AdaptiveSamplingBasePercent,
+		AdaptiveSamplingMaxPercent:                      *configured.AdaptiveSamplingMaxPercent,
+		AdaptiveSamplingPrimaryMinPercent:               *configured.AdaptiveSamplingPrimaryMinPercent,
+		AdaptiveSamplingErrorWarningPercent:             *configured.AdaptiveSamplingErrorWarningPercent,
+		AdaptiveSamplingErrorCriticalPercent:            *configured.AdaptiveSamplingErrorCriticalPercent,
+		AdaptiveSamplingFirstTokenWarningSeconds:        *configured.AdaptiveSamplingFirstTokenWarningSeconds,
+		AdaptiveSamplingFirstTokenCriticalSeconds:       *configured.AdaptiveSamplingFirstTokenCriticalSeconds,
+		AdaptiveSamplingWindowSeconds:                   *configured.AdaptiveSamplingWindowSeconds,
+		AdaptiveSamplingFirstTokenWarningRequestPercent: *configured.AdaptiveSamplingFirstTokenWarningRequestPercent,
+		AdaptiveSamplingRecoverRequestPercent:           *configured.AdaptiveSamplingRecoverRequestPercent,
+		AdaptiveSamplingSwitchConfirmRequestPercent:     *configured.AdaptiveSamplingSwitchConfirmRequestPercent,
+		AdaptiveSamplingMinComparableChannels:           *configured.AdaptiveSamplingMinComparableChannels,
 	}
 }
 
@@ -516,6 +510,16 @@ func isChannelMonitorSmartScheduleSampleModeSupported(mode string) bool {
 	case channelMonitorSmartScheduleSampleOff,
 		channelMonitorSmartScheduleSampleTraffic,
 		channelMonitorSmartScheduleSampleProbe:
+		return true
+	default:
+		return false
+	}
+}
+
+func isChannelMonitorSmartScheduleSamplingOrderSupported(order string) bool {
+	switch order {
+	case channelMonitorSmartScheduleSamplingOrderPriorityWeight,
+		channelMonitorSmartScheduleSamplingOrderRatio:
 		return true
 	default:
 		return false

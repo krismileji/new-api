@@ -66,20 +66,14 @@ describe('smart schedule policy schema', () => {
       slowFailureSeconds: '',
       cooldownMinutes: '',
       explorationTrafficPercent: '',
-      explorationMaxPromptTokens: '',
-      stabilityReleaseMaxPromptTokens: '',
+      explorationMaxPromptKTokens: '',
+      stabilityReleaseMaxPromptKTokens: '',
       probeIntervalMinutes: '',
       degradedProbeEnabled: true,
-      prioritySamplingEnabled: true,
-      prioritySamplingIntervalMinutes: '',
-      prioritySamplingBasePercent: '',
-      prioritySamplingDecayPercent: '',
-      prioritySamplingMinPercent: '',
     })
 
     assert.equal(result.success, true)
     if (!result.success) return
-    assert.equal(result.data.prioritySamplingEnabled, false)
     assert.equal(result.data.degradedProbeEnabled, false)
     assert.equal(result.data.scoring.stabilityPercent, 50)
   })
@@ -93,21 +87,31 @@ describe('smart schedule policy schema', () => {
     assert.equal(schema.safeParse(incompletePolicy).success, false)
   })
 
+  test('does not accept the legacy adaptive entry threshold', () => {
+    const legacyPolicy: Record<string, unknown> = {
+      ...CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE,
+      adaptiveSamplingEnterRequestPercent: 10,
+    }
+    delete legacyPolicy.adaptiveSamplingFirstTokenWarningRequestPercent
+
+    assert.equal(schema.safeParse(legacyPolicy).success, false)
+  })
+
   test('continues to reject empty controls in active branches', () => {
     const basePolicy = CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
     const activeCases = [
       { ...basePolicy, explorationTrafficPercent: '', sampleMode: 'traffic' },
-      { ...basePolicy, explorationMaxPromptTokens: '', sampleMode: 'traffic' },
-      { ...basePolicy, stabilityReleaseMaxPromptTokens: '' },
+      { ...basePolicy, explorationMaxPromptKTokens: '', sampleMode: 'traffic' },
+      { ...basePolicy, stabilityReleaseMaxPromptKTokens: '' },
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
       { ...basePolicy, degradedProbeEnabled: true, probeIntervalMinutes: '' },
-      { ...basePolicy, prioritySamplingBasePercent: '' },
       { ...basePolicy, minSamples: '' },
       { ...basePolicy, fastFailureSameChannelRetryCount: '' },
       { ...basePolicy, fastFailureSameChannelRetryDelayMs: '' },
       { ...basePolicy, jitterSlowThresholdSeconds: '' },
       { ...basePolicy, adaptiveSamplingBasePercent: '' },
       { ...basePolicy, adaptiveSamplingWindowSeconds: '' },
+      { ...basePolicy, adaptiveSamplingFirstTokenWarningRequestPercent: '' },
       { ...basePolicy, adaptiveSamplingMinComparableChannels: '' },
     ]
 
@@ -122,7 +126,7 @@ describe('smart schedule policy schema', () => {
       schema.safeParse({
         ...basePolicy,
         adaptiveSamplingWindowSeconds: 60,
-        adaptiveSamplingEnterRequestPercent: 10,
+        adaptiveSamplingFirstTokenWarningRequestPercent: 10,
         adaptiveSamplingRecoverRequestPercent: 95,
         adaptiveSamplingSwitchConfirmRequestPercent: 95,
       }).success,
@@ -140,7 +144,7 @@ describe('smart schedule policy schema', () => {
     assert.equal(
       schema.safeParse({
         ...basePolicy,
-        adaptiveSamplingEnterRequestPercent: 20,
+        adaptiveSamplingFirstTokenWarningRequestPercent: 20,
         adaptiveSamplingRecoverRequestPercent: 80,
       }).success,
       false
@@ -578,15 +582,11 @@ describe('channel monitor settings schema', () => {
       recoverySuccessThreshold: 2,
       cooldownMinutes: 30,
       sampleMode: 'traffic' as const,
+      samplingOrder: 'priority_weight' as const,
       explorationTrafficPercent: 3,
-      explorationMaxPromptTokens: 16_384,
-      stabilityReleaseMaxPromptTokens: 0,
+      explorationMaxPromptKTokens: 50,
+      stabilityReleaseMaxPromptKTokens: 0,
       probeIntervalMinutes: 10,
-      prioritySamplingEnabled: true,
-      prioritySamplingIntervalMinutes: 10,
-      prioritySamplingBasePercent: 3,
-      prioritySamplingDecayPercent: 70,
-      prioritySamplingMinPercent: 0.5,
       adaptiveSamplingEnabled: true,
       adaptiveSamplingBasePercent: 3,
       adaptiveSamplingMaxPercent: 30,
@@ -596,7 +596,7 @@ describe('channel monitor settings schema', () => {
       adaptiveSamplingFirstTokenWarningSeconds: 5,
       adaptiveSamplingFirstTokenCriticalSeconds: 10,
       adaptiveSamplingWindowSeconds: 600,
-      adaptiveSamplingEnterRequestPercent: 10,
+      adaptiveSamplingFirstTokenWarningRequestPercent: 10,
       adaptiveSamplingRecoverRequestPercent: 95,
       adaptiveSamplingSwitchConfirmRequestPercent: 95,
       adaptiveSamplingMinComparableChannels: 2,
@@ -1016,137 +1016,76 @@ describe('channel monitor settings schema', () => {
       }).success,
       false
     )
-    for (const explorationMaxPromptTokens of [0, 1, 1_000_000]) {
+    for (const explorationMaxPromptKTokens of [0, 1, 50, 1_000]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, explorationMaxPromptTokens },
+            { ...groupPolicy, explorationMaxPromptKTokens },
           ],
         }).success,
         true
       )
     }
-    for (const explorationMaxPromptTokens of [-1, 1_000_001, 1.5]) {
+    for (const explorationMaxPromptKTokens of [-1, 1_001, 1.5]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, explorationMaxPromptTokens },
+            { ...groupPolicy, explorationMaxPromptKTokens },
           ],
         }).success,
         false
       )
     }
-    for (const stabilityReleaseMaxPromptTokens of [0, 1, 1_000_000]) {
+    for (const stabilityReleaseMaxPromptKTokens of [0, 1, 50, 1_000]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, stabilityReleaseMaxPromptTokens },
+            { ...groupPolicy, stabilityReleaseMaxPromptKTokens },
           ],
         }).success,
         true
       )
     }
-    for (const stabilityReleaseMaxPromptTokens of [-1, 1_000_001, 1.5]) {
+    for (const stabilityReleaseMaxPromptKTokens of [-1, 1_001, 1.5]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, stabilityReleaseMaxPromptTokens },
+            { ...groupPolicy, stabilityReleaseMaxPromptKTokens },
           ],
         }).success,
         false
       )
     }
-    for (const prioritySamplingIntervalMinutes of [1, 1440]) {
+    for (const samplingOrder of ['priority_weight', 'ratio'] as const) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingIntervalMinutes },
-          ],
+          smartScheduleGroupPolicies: [{ ...groupPolicy, samplingOrder }],
         }).success,
         true
       )
     }
-    for (const prioritySamplingIntervalMinutes of [0, 1.5, 1441]) {
+    for (const samplingOrder of ['', 'weight', 'priority'] as const) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingIntervalMinutes },
-          ],
+          smartScheduleGroupPolicies: [{ ...groupPolicy, samplingOrder }],
         }).success,
         false
       )
     }
-    for (const prioritySamplingBasePercent of [0.1, 20]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingBasePercent },
-          ],
-        }).success,
-        true
-      )
-    }
-    for (const prioritySamplingBasePercent of [0.09, 20.1]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingBasePercent },
-          ],
-        }).success,
-        false
-      )
-    }
-    for (const prioritySamplingDecayPercent of [1, 100]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingDecayPercent },
-          ],
-        }).success,
-        true
-      )
-    }
-    for (const prioritySamplingDecayPercent of [0.9, 100.1]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingDecayPercent },
-          ],
-        }).success,
-        false
-      )
-    }
-    for (const prioritySamplingMinPercent of [0.01, 5]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingMinPercent },
-          ],
-        }).success,
-        true
-      )
-    }
-    for (const prioritySamplingMinPercent of [0, 5.1]) {
-      assert.equal(
-        schema.safeParse({
-          ...baseSettings,
-          smartScheduleGroupPolicies: [
-            { ...groupPolicy, prioritySamplingMinPercent },
-          ],
-        }).success,
-        false
-      )
-    }
+    const incompletePolicy: Record<string, unknown> = { ...groupPolicy }
+    delete incompletePolicy.samplingOrder
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [incompletePolicy],
+      }).success,
+      false
+    )
   })
 })

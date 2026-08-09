@@ -43,7 +43,6 @@ const normalPool = {
   degradedCount: 0,
   probingCount: 0,
   insufficientSampleCount: 0,
-  prioritySamplingCount: 0,
 }
 
 function createRoute(
@@ -70,6 +69,8 @@ function createRoute(
       model,
       window_start: 0,
       observation_since: 0,
+      recovery_success_count: 0,
+      recovery_success_at: 0,
       last_time: 0,
       last_success: false,
       last_error: '',
@@ -107,7 +108,15 @@ function createRoute(
       temporary_traffic_kind: '',
       temporary_traffic_since: 0,
       temporary_traffic_target_percent: 0,
-      last_priority_sample_time: 0,
+      rolling_stability_score: null,
+      rolling_stability_sample_count: 0,
+      rolling_stability_slow_count: 0,
+      rolling_stability_allowed_slow_count: 0,
+      rolling_stability_updated_at: 0,
+      sampling_debt: 0,
+      sampling_candidate: false,
+      sampling_order: '',
+      last_sampling_at: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: false,
     },
@@ -171,14 +180,7 @@ describe('smart schedule pool status', () => {
         ...normalPool,
         insufficientSampleCount: 1,
       }),
-      '样本不足补量'
-    )
-    assert.equal(
-      getChannelMonitorSmartSchedulePoolStatus({
-        ...normalPool,
-        prioritySamplingCount: 1,
-      }),
-      '低优先级轮转'
+      '统一采样'
     )
   })
 
@@ -241,7 +243,7 @@ describe('smart schedule pool status', () => {
     const routeDisabled = createRoute(1, 'vip', 'model-b', 90, 80)
     routeDisabled.enabled = false
     routeDisabled.state.stability_state = 'probing'
-    routeDisabled.state.temporary_traffic_kind = 'priority_sampling'
+    routeDisabled.state.temporary_traffic_kind = 'adaptive_sampling'
     routeDisabled.state.last_schedule_status = 'failed'
     const routes = [channelDisabled, routeDisabled]
 
@@ -253,7 +255,6 @@ describe('smart schedule pool status', () => {
     assert.equal(channel.groups[0]?.degradedCount, 0)
     assert.equal(channel.groups[0]?.probingCount, 0)
     assert.equal(channel.groups[0]?.insufficientSampleCount, 0)
-    assert.equal(channel.groups[0]?.prioritySamplingCount, 0)
     assert.equal(pools.length, 2)
     for (const pool of pools) {
       requireSummaryHasNoActiveAlerts(pool)
@@ -669,7 +670,6 @@ function requireSummaryHasNoActiveAlerts(
     degradedCount: number
     probingCount: number
     insufficientSampleCount: number
-    prioritySamplingCount: number
     failedCount: number
   } | null
 ): asserts summary {
@@ -678,6 +678,5 @@ function requireSummaryHasNoActiveAlerts(
   assert.equal(summary.degradedCount, 0)
   assert.equal(summary.probingCount, 0)
   assert.equal(summary.insufficientSampleCount, 0)
-  assert.equal(summary.prioritySamplingCount, 0)
   assert.equal(summary.failedCount, 0)
 }

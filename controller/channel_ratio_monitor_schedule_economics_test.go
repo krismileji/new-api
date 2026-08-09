@@ -209,7 +209,8 @@ func TestRunChannelSmartScheduleWritesBreakEvenFallbackLayer(t *testing.T) {
 	require.Len(t, abilities, 2)
 	require.NotNil(t, abilities[0].Priority)
 	require.NotNil(t, abilities[1].Priority)
-	assert.Equal(t, priority, *abilities[0].Priority)
+	assert.Equal(t, int64(2), *abilities[0].Priority)
+	assert.Equal(t, uint(1000), abilities[0].Weight)
 	assert.Equal(t, int64(1), *abilities[1].Priority)
 
 	var fallbackState model.ChannelSmartScheduleRouteState

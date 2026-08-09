@@ -28,6 +28,10 @@ import type {
   ChannelMonitorSmartScheduleGroupPolicyFormValues,
   ChannelMonitorSmartSchedulePolicyFormValues,
 } from './schema'
+import {
+  channelMonitorSmartScheduleKTokensToTokens,
+  channelMonitorSmartScheduleTokensToKTokens,
+} from './smart-schedule-prompt-tokens'
 
 type SmartScheduleScoringFormValues =
   ChannelMonitorSmartSchedulePolicyFormValues['scoring']
@@ -45,7 +49,6 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmart
     models: [],
     modelOrder: [],
     sampleMode: 'off',
-    prioritySamplingEnabled: true,
   }
 
 export function channelMonitorSmartScheduleScoringToForm(
@@ -128,20 +131,22 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.recoverySuccessThreshold,
     cooldownMinutes: policy.cooldown_minutes,
     sampleMode: policy.sample_mode,
+    samplingOrder: policy.sampling_order,
     explorationTrafficPercent: policy.exploration_traffic_percent,
-    explorationMaxPromptTokens:
-      policy.exploration_max_prompt_tokens ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptTokens,
-    stabilityReleaseMaxPromptTokens:
-      policy.stability_release_max_prompt_tokens ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.stabilityReleaseMaxPromptTokens,
+    explorationMaxPromptKTokens:
+      policy.exploration_max_prompt_tokens == null
+        ? DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.explorationMaxPromptKTokens
+        : channelMonitorSmartScheduleTokensToKTokens(
+            policy.exploration_max_prompt_tokens
+          ),
+    stabilityReleaseMaxPromptKTokens:
+      policy.stability_release_max_prompt_tokens == null
+        ? DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.stabilityReleaseMaxPromptKTokens
+        : channelMonitorSmartScheduleTokensToKTokens(
+            policy.stability_release_max_prompt_tokens
+          ),
     probeIntervalMinutes: policy.probe_interval_minutes,
     degradedProbeEnabled: policy.degraded_probe_enabled ?? false,
-    prioritySamplingEnabled: policy.priority_sampling_enabled,
-    prioritySamplingIntervalMinutes: policy.priority_sampling_interval_minutes,
-    prioritySamplingBasePercent: policy.priority_sampling_base_percent,
-    prioritySamplingDecayPercent: policy.priority_sampling_decay_percent,
-    prioritySamplingMinPercent: policy.priority_sampling_min_percent,
     adaptiveSamplingEnabled: policy.adaptive_sampling_enabled,
     adaptiveSamplingBasePercent: policy.adaptive_sampling_base_percent,
     adaptiveSamplingMaxPercent: policy.adaptive_sampling_max_percent,
@@ -156,8 +161,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     adaptiveSamplingFirstTokenCriticalSeconds:
       policy.adaptive_sampling_first_token_critical_seconds,
     adaptiveSamplingWindowSeconds: policy.adaptive_sampling_window_seconds,
-    adaptiveSamplingEnterRequestPercent:
-      policy.adaptive_sampling_enter_request_percent,
+    adaptiveSamplingFirstTokenWarningRequestPercent:
+      policy.adaptive_sampling_first_token_warning_request_percent,
     adaptiveSamplingRecoverRequestPercent:
       policy.adaptive_sampling_recover_request_percent,
     adaptiveSamplingSwitchConfirmRequestPercent:
@@ -196,16 +201,17 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     recovery_success_threshold: policy.recoverySuccessThreshold,
     cooldown_minutes: policy.cooldownMinutes,
     sample_mode: policy.sampleMode,
+    sampling_order: policy.samplingOrder,
     exploration_traffic_percent: policy.explorationTrafficPercent,
-    exploration_max_prompt_tokens: policy.explorationMaxPromptTokens,
-    stability_release_max_prompt_tokens: policy.stabilityReleaseMaxPromptTokens,
+    exploration_max_prompt_tokens: channelMonitorSmartScheduleKTokensToTokens(
+      policy.explorationMaxPromptKTokens
+    ),
+    stability_release_max_prompt_tokens:
+      channelMonitorSmartScheduleKTokensToTokens(
+        policy.stabilityReleaseMaxPromptKTokens
+      ),
     probe_interval_minutes: policy.probeIntervalMinutes,
     degraded_probe_enabled: policy.degradedProbeEnabled,
-    priority_sampling_enabled: policy.prioritySamplingEnabled,
-    priority_sampling_interval_minutes: policy.prioritySamplingIntervalMinutes,
-    priority_sampling_base_percent: policy.prioritySamplingBasePercent,
-    priority_sampling_decay_percent: policy.prioritySamplingDecayPercent,
-    priority_sampling_min_percent: policy.prioritySamplingMinPercent,
     adaptive_sampling_enabled: policy.adaptiveSamplingEnabled,
     adaptive_sampling_base_percent: policy.adaptiveSamplingBasePercent,
     adaptive_sampling_max_percent: policy.adaptiveSamplingMaxPercent,
@@ -220,8 +226,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     adaptive_sampling_first_token_critical_seconds:
       policy.adaptiveSamplingFirstTokenCriticalSeconds,
     adaptive_sampling_window_seconds: policy.adaptiveSamplingWindowSeconds,
-    adaptive_sampling_enter_request_percent:
-      policy.adaptiveSamplingEnterRequestPercent,
+    adaptive_sampling_first_token_warning_request_percent:
+      policy.adaptiveSamplingFirstTokenWarningRequestPercent,
     adaptive_sampling_recover_request_percent:
       policy.adaptiveSamplingRecoverRequestPercent,
     adaptive_sampling_switch_confirm_request_percent:
@@ -260,16 +266,12 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     recoverySuccessThreshold: policy.recoverySuccessThreshold,
     cooldownMinutes: policy.cooldownMinutes,
     sampleMode: policy.sampleMode,
+    samplingOrder: policy.samplingOrder,
     explorationTrafficPercent: policy.explorationTrafficPercent,
-    explorationMaxPromptTokens: policy.explorationMaxPromptTokens,
-    stabilityReleaseMaxPromptTokens: policy.stabilityReleaseMaxPromptTokens,
+    explorationMaxPromptKTokens: policy.explorationMaxPromptKTokens,
+    stabilityReleaseMaxPromptKTokens: policy.stabilityReleaseMaxPromptKTokens,
     probeIntervalMinutes: policy.probeIntervalMinutes,
     degradedProbeEnabled: policy.degradedProbeEnabled,
-    prioritySamplingEnabled: policy.prioritySamplingEnabled,
-    prioritySamplingIntervalMinutes: policy.prioritySamplingIntervalMinutes,
-    prioritySamplingBasePercent: policy.prioritySamplingBasePercent,
-    prioritySamplingDecayPercent: policy.prioritySamplingDecayPercent,
-    prioritySamplingMinPercent: policy.prioritySamplingMinPercent,
     adaptiveSamplingEnabled: policy.adaptiveSamplingEnabled,
     adaptiveSamplingBasePercent: policy.adaptiveSamplingBasePercent,
     adaptiveSamplingMaxPercent: policy.adaptiveSamplingMaxPercent,
@@ -283,8 +285,8 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     adaptiveSamplingFirstTokenCriticalSeconds:
       policy.adaptiveSamplingFirstTokenCriticalSeconds,
     adaptiveSamplingWindowSeconds: policy.adaptiveSamplingWindowSeconds,
-    adaptiveSamplingEnterRequestPercent:
-      policy.adaptiveSamplingEnterRequestPercent,
+    adaptiveSamplingFirstTokenWarningRequestPercent:
+      policy.adaptiveSamplingFirstTokenWarningRequestPercent,
     adaptiveSamplingRecoverRequestPercent:
       policy.adaptiveSamplingRecoverRequestPercent,
     adaptiveSamplingSwitchConfirmRequestPercent:

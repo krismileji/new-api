@@ -23,6 +23,7 @@
 | `PUT` | `/channel/:id` | 人工记录渠道倍率和备注；`ratio`、`remark` |
 | `PUT` | `/channel/:id/schedule/routes` | 批量更新该渠道全部分组模型路由的参与状态；`excluded`，不修改当前路由值或稳定性状态 |
 | `PUT` | `/channel/:id/schedule/route` | 更新一条分组模型路由的参与状态；`group`、`model`、`excluded` |
+| `PUT` | `/channel/:id/schedule/route/pause` | 暂停或恢复一条分组模型路由的业务流量；`group`、`model`、`duration_minutes`，`0` 表示恢复；不提供分组级暂停接口 |
 | `PUT` | `/channel/:id/schedule/route/primary` | 固定、续期或解除一条分组模型路由的主渠道状态；`group`、`model`、`duration_minutes` |
 | `POST` | `/channel/:id/schedule/route/stability/clear` | 手动解除一条分组模型路由的低成功率降级或稳定性试放；`group`、`model` |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
@@ -85,13 +86,19 @@
 
 `error_message_mapping` 对全部渠道统一生效。系统优先匹配上游错误码，再匹配最终 HTTP 状态码；匹配后的文案用于用户使用日志，并只在请求响应尚未开始时替换返回给用户的错误信息。未配置或未匹配时保持原有行为，用户使用日志只展示状态码。
 
-`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少独立秒级窗口或请求占比字段会校验失败，旧的轮数字段和探索租约字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`。探索流量只允许与 `priority_weight` 一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
+`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少首字告警请求占比、恢复健康占比、独立秒级窗口或切换确认占比会校验失败，旧的轮数字段和探索租约字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`，`sampling_order` 支持 `priority_weight`、`ratio`。探索流量只允许与 `priority_weight` 应用方式一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
-`smart_schedule_interval_minutes` 只控制完整评分、正常选主、基础 P/W、常规探索和低优先级轮转。稳定性硬保护在有效失败请求结束时立即执行；自适应备援在每个有效生产请求、手动测试或定时探测完成后，按 `adaptive_sampling_window_seconds` 轻量刷新关联调度池，只修改软健康状态和临时采样覆盖。两者都不等待分钟聚合或下一轮完整调度；若完整调度已经运行，自适应事件会保留到其提交新基础路由后再执行，硬保护仍立即执行。
+探索流量和低优先级轮转合并为统一样本补充。当前版本删除 `priority_sampling_enabled`、`priority_sampling_interval_minutes`、`priority_sampling_base_percent`、`priority_sampling_decay_percent`、`priority_sampling_min_percent`，不读取或迁移旧值。管理端先展示样本补充方式；选择 `sample_mode=traffic` 后，在同一个探索流量配置组内依次展示 `exploration_traffic_percent`、`exploration_max_prompt_tokens`、`sampling_order`，不把统一采样顺序显示为组外的独立常驻字段。切换到其他补充方式后保留该顺序值，自适应备援继续复用它；选择 `sample_mode=probe` 时展示 `probe_interval_minutes`。管理端的探索请求上限和稳定性释放请求上限都以 K Token 输入和回显，默认分别为 `50K` 与 `0K`，其中 `1K = 1000 Token`；API 仍提交实际 Token 数。
 
-`GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本；相同渠道模型的多条分组路由返回相同的 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。
+`exploration_max_prompt_tokens` 和 `stability_release_max_prompt_tokens` 的 API 值必须为 `0` 或 `1000` 的整数倍，范围为 `0..1000000 Token`；`0` 表示不做该类路由的上限过滤。当前版本不读取、不迁移旧的非整 K 值，例如旧默认值 `16384` 会被拒绝。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或分钟级稳定性评分限制。成功只清零连续失败，窗口内失败继续保留。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚。请求失败上限由 `relay_response_header_timeout_seconds` 控制。当前版本不接受已删除的旧字段；完整策略示例：
+`smart_schedule_interval_minutes` 只控制常规情况下的完整评分、正常选主、基础排名和基础 P/W。样本补充对象切换、稳定性保护、自适应备援、降级定时探测、探测恢复、冷却结束试放以及成功延迟抖动都使用分组策略自己的窗口、请求事件或定时器，不等待完整调度。普通采样、软健康和抖动事件按 `(分组, 模型)` 合并 `1` 秒；429 冷却和稳定性硬保护立即执行。完整调度运行期间到达的软事件在新基础快照提交后重放，不能被完整调度覆盖。
+
+`GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，包含 `rolling_stability_*`、`sampling_debt`、`sampling_candidate`、`sampling_order`、`last_sampling_at` 和持久化的 `adaptive_health_first_token_warning_request_percent` 等秒级运行时字段；没有窗口内样本时 `rolling_stability_score` 返回 `null`。`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本，并返回持久化的 `recovery_success_count` 与 `recovery_success_at`；相同渠道模型的多条分组路由返回同一份 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。健康明细返回 `error_request_percent`、`first_token_warning_request_percent`、`risk_request_percent` 和 `healthy_request_percent`：前两项分别解释错误与首字进入信号，风险占比用于看板与执行明细解释，健康占比用于压力状态恢复和备用切换确认，风险占比不再作为统一进入门槛。429 冷却是独立的 `(渠道, 模型)` 避让状态：普通选路优先跳过，但当前分组没有其他可用候选时允许兜底；亲和、手动测试、常规/降级探测和全部采样仍必须跳过，冷却到期由独立秒级检查触发池刷新。
+
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或滚动稳定性评分限制。成功只清零连续失败，窗口内失败继续保留。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚；每个超出容忍数量的慢成功从稳定性得分中扣除 `1 / 稳定性总样本数`，事件值按池合并 `1` 秒更新。请求失败上限由 `relay_response_header_timeout_seconds` 控制。
+
+自适应进入使用两个独立信号：窗口内非 429 错误率超过 `adaptive_sampling_error_warning_percent`，或首字达到告警秒数的成功请求占比达到必填的 `adaptive_sampling_first_token_warning_request_percent`。后者默认 `10%`，有效范围为 `>0..100%`。两个信号按 OR 判定，不先合并风险请求再经过统一进入门槛；压力状态只有在两个进入信号都解除且健康请求占比达到 `adaptive_sampling_recover_request_percent` 后恢复，仍命中的进入信号优先于恢复判断。保存时要求 `adaptive_sampling_first_token_warning_request_percent + adaptive_sampling_recover_request_percent > 100%`。旧字段 `adaptive_sampling_enter_request_percent` 会被明确拒绝，不读取、不输出、不迁移，不提供旧配置兼容。完整策略示例：
 
 ```json
 [
@@ -119,14 +126,10 @@
     "degraded_probe_enabled": false,
     "sample_mode": "probe",
     "exploration_traffic_percent": 3,
-    "exploration_max_prompt_tokens": 16384,
-    "stability_release_max_prompt_tokens": 0,
+    "exploration_max_prompt_tokens": 50000,
+    "sampling_order": "priority_weight",
     "probe_interval_minutes": 10,
-    "priority_sampling_enabled": true,
-    "priority_sampling_interval_minutes": 60,
-    "priority_sampling_base_percent": 3,
-    "priority_sampling_decay_percent": 70,
-    "priority_sampling_min_percent": 0.5,
+    "stability_release_max_prompt_tokens": 0,
     "adaptive_sampling_enabled": true,
     "adaptive_sampling_base_percent": 3,
     "adaptive_sampling_max_percent": 30,
@@ -135,9 +138,9 @@
     "adaptive_sampling_error_critical_percent": 15,
     "adaptive_sampling_first_token_warning_seconds": 5,
     "adaptive_sampling_first_token_critical_seconds": 10,
-    "adaptive_sampling_window_seconds": 600,
-    "adaptive_sampling_enter_request_percent": 10,
+    "adaptive_sampling_first_token_warning_request_percent": 10,
     "adaptive_sampling_recover_request_percent": 95,
+    "adaptive_sampling_window_seconds": 600,
     "adaptive_sampling_switch_confirm_request_percent": 95,
     "adaptive_sampling_min_comparable_channels": 2,
     "scoring": {
@@ -206,7 +209,7 @@
 | 任务类型 | 触发方式 | 说明 |
 | --- | --- | --- |
 | `channel_ratio_monitor` | 设置的更新间隔或手动 API | 更新倍率和余额、执行策略、通知和恢复 |
-| `channel_smart_schedule` | 设置的调度间隔、手动 API 或强制重置 | 计算并应用优先级和权重 |
+| `channel_smart_schedule` | 设置的调度间隔、手动 API 或强制重置 | 执行常规完整评分并应用基础优先级和权重；不承担事件驱动采样、保护或恢复 |
 | `channel_smart_schedule_probe` | 启用定时探测的分组所配置的最短探测间隔 | 为到期文本路由补充流式 Responses 样本；渠道并发已满时跳过 |
 | `channel_monitor_cost_retention` | 默认每天一次 | 分批删除超出各自配置保留期的分钟指标、日成本、执行明细、已结束监控任务和倍率历史 |
 

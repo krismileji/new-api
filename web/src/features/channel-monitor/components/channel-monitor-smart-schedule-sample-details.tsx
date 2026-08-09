@@ -42,6 +42,8 @@ const EMPTY_SHARED_SAMPLES: ChannelMonitorSmartScheduleSharedSamples = {
   model: '',
   window_start: 0,
   observation_since: 0,
+  recovery_success_count: 0,
+  recovery_success_at: 0,
   last_time: 0,
   last_success: false,
   last_error: '',
@@ -142,6 +144,14 @@ export function ChannelMonitorSmartScheduleSampleDetails(
     performanceSamples.average_tps == null
       ? '-'
       : performanceSamples.average_tps.toFixed(2)
+  const recoverySuccessCount =
+    fallbackSamples.recovery_success_count > 0
+      ? `${fallbackSamples.recovery_success_count} 次`
+      : '-'
+  const recoverySuccessAt =
+    fallbackSamples.recovery_success_at > 0
+      ? formatTimestampToDate(fallbackSamples.recovery_success_at)
+      : '-'
 
   return (
     <section className='border-t px-4 py-4' aria-label='渠道与模型共享窗口数据'>
@@ -254,6 +264,8 @@ export function ChannelMonitorSmartScheduleSampleDetails(
               value={`${performanceSamples.tps_sample_count} 次`}
             />
             <SampleMetric label='平均 TPS' value={probeAverageTPS} />
+            <SampleMetric label='连续恢复成功' value={recoverySuccessCount} />
+            <SampleMetric label='最近恢复探测成功' value={recoverySuccessAt} />
           </div>
           {performanceSamples.last_time > 0 ? (
             <p className='text-muted-foreground mt-2 text-xs'>

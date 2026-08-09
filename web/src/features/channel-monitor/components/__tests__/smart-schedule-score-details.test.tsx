@@ -90,7 +90,9 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       latency_pressure: 0,
       sample_count: 30,
       window_seconds: 600,
+      error_request_percent: 0,
       risk_request_percent: 0,
+      first_token_warning_request_percent: 0,
       healthy_request_percent: 100,
     },
     final_score: 0.87,
@@ -109,7 +111,7 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       applied_weight: 90,
       actual_highest_priority: 3,
       actual_top_layer_channel_ids: [7],
-      temporary_traffic_kind: 'priority_sampling',
+      temporary_traffic_kind: 'adaptive_sampling',
       temporary_traffic_target_percent: 2.5,
       switch_threshold_percent: 3,
       primary_traffic_percent: 90,
@@ -170,6 +172,9 @@ describe('smart schedule score calculation details', () => {
     )
     assert.ok(markup.includes('稳定性贡献 48.00 分'))
     assert.ok(markup.includes('30 个样本 · 配置权重 50.0%'))
+    assert.ok(markup.includes('窗口内错误请求'))
+    assert.ok(markup.includes('窗口内首字告警请求'))
+    assert.ok(markup.includes('错误率和首字告警请求占比按'))
     assert.ok(markup.includes('最终得分'))
     assert.ok(markup.includes('87.00 分'))
     assert.ok(
@@ -185,7 +190,7 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('基础排名'))
     assert.ok(markup.includes('当前应用'))
     assert.ok(markup.includes('实际最高层'))
-    assert.ok(markup.includes('低优先级轮转'))
+    assert.ok(markup.includes('自适应备援采样'))
     assert.ok(markup.includes('2.5%'))
     assert.ok(markup.includes('切换分差'))
     assert.ok(markup.includes('3.0%'))

@@ -54,23 +54,16 @@ import {
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
-  MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
+  MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT,
   MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS,
   MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS,
   MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT,
   MAX_SMART_SCHEDULE_MIN_SAMPLES,
-  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
-  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
-  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES,
-  MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
-  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT,
-  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT,
-  MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT,
   MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
   MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
@@ -78,6 +71,7 @@ import {
 } from '../lib/schema'
 import {
   CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS,
+  CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS,
 } from '../lib/smart-schedule-options'
 import {
@@ -187,57 +181,6 @@ function GroupPolicyMetricFields(props: {
   )
 }
 
-type PrioritySamplingPercentFieldName =
-  | 'prioritySamplingBasePercent'
-  | 'prioritySamplingDecayPercent'
-  | 'prioritySamplingMinPercent'
-
-function PrioritySamplingPercentField(props: {
-  form: UseFormReturn<ChannelMonitorSmartSchedulePolicyFormValues>
-  name: PrioritySamplingPercentFieldName
-  label: string
-  description: string
-  min: number
-  max: number
-  step: number
-  helpKey: ChannelMonitorSettingHelpKey
-}) {
-  return (
-    <FormField
-      control={props.form.control}
-      name={props.name}
-      render={({ field }) => (
-        <FormItem>
-          <ChannelMonitorSettingLabel
-            label={props.label}
-            helpKey={props.helpKey}
-          />
-          <FormControl>
-            <InputGroup>
-              <InputGroupInput
-                type='number'
-                min={props.min}
-                max={props.max}
-                step={props.step}
-                inputMode='decimal'
-                value={field.value}
-                onBlur={field.onBlur}
-                onChange={field.onChange}
-                name={field.name}
-                ref={field.ref}
-                aria-invalid={props.form.getFieldState(props.name).invalid}
-              />
-              <InputGroupAddon align='inline-end'>%</InputGroupAddon>
-            </InputGroup>
-          </FormControl>
-          <FormDescription>{props.description}</FormDescription>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  )
-}
-
 type AdaptiveSamplingFieldName =
   | 'adaptiveSamplingBasePercent'
   | 'adaptiveSamplingMaxPercent'
@@ -247,7 +190,7 @@ type AdaptiveSamplingFieldName =
   | 'adaptiveSamplingFirstTokenWarningSeconds'
   | 'adaptiveSamplingFirstTokenCriticalSeconds'
   | 'adaptiveSamplingWindowSeconds'
-  | 'adaptiveSamplingEnterRequestPercent'
+  | 'adaptiveSamplingFirstTokenWarningRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
   | 'adaptiveSamplingMinComparableChannels'
@@ -261,7 +204,7 @@ type AdaptiveSamplingHelpKey =
   | 'adaptiveSamplingFirstTokenWarningSeconds'
   | 'adaptiveSamplingFirstTokenCriticalSeconds'
   | 'adaptiveSamplingWindowSeconds'
-  | 'adaptiveSamplingEnterRequestPercent'
+  | 'adaptiveSamplingFirstTokenWarningRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
   | 'adaptiveSamplingMinComparableChannels'
@@ -348,10 +291,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
   const sampleMode = useWatch({
     control: props.form.control,
     name: 'sampleMode',
-  })
-  const prioritySamplingEnabled = useWatch({
-    control: props.form.control,
-    name: 'prioritySamplingEnabled',
   })
   const adaptiveSamplingEnabled = useWatch({
     control: props.form.control,
@@ -637,76 +576,122 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         />
 
         {sampleMode === 'traffic' ? (
-          <div className='grid items-start gap-4 sm:grid-cols-2'>
+          <div className='flex flex-col gap-4'>
+            <div className='grid items-start gap-4 sm:grid-cols-2'>
+              <FormField
+                control={props.form.control}
+                name='explorationTrafficPercent'
+                render={({ field }) => (
+                  <FormItem>
+                    <ChannelMonitorSettingLabel
+                      label='目标探索流量'
+                      helpKey='explorationTraffic'
+                    />
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={0.1}
+                          max={MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT}
+                          step={0.1}
+                          inputMode='decimal'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors
+                              .explorationTrafficPercent
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      每个分组和模型同时只探索一个渠道，实际比例会受整数权重影响
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={props.form.control}
+                name='explorationMaxPromptKTokens'
+                render={({ field }) => (
+                  <FormItem>
+                    <ChannelMonitorSettingLabel
+                      label='探索请求上限'
+                      helpKey='explorationMaxPromptKTokens'
+                    />
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={0}
+                          max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS}
+                          step={1}
+                          inputMode='numeric'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors
+                              .explorationMaxPromptKTokens
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>
+                          K Token
+                        </InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      超过上限的请求优先使用其他候选，0 表示无限制
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
             <FormField
               control={props.form.control}
-              name='explorationTrafficPercent'
+              name='samplingOrder'
               render={({ field }) => (
                 <FormItem>
                   <ChannelMonitorSettingLabel
-                    label='目标探索流量'
-                    helpKey='explorationTraffic'
+                    label='统一采样顺序'
+                    helpKey='samplingOrder'
                   />
-                  <FormControl>
-                    <InputGroup>
-                      <InputGroupInput
-                        type='number'
-                        min={0.1}
-                        max={MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT}
-                        step={0.1}
-                        inputMode='decimal'
-                        value={field.value}
-                        onBlur={field.onBlur}
-                        onChange={field.onChange}
-                        name={field.name}
-                        ref={field.ref}
-                        aria-invalid={Boolean(
-                          props.form.formState.errors.explorationTrafficPercent
+                  <Select
+                    items={
+                      CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS
+                    }
+                    value={field.value}
+                    onValueChange={(value) =>
+                      value !== null && field.onChange(value)
+                    }
+                  >
+                    <FormControl>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS.map(
+                          (option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          )
                         )}
-                      />
-                      <InputGroupAddon align='inline-end'>%</InputGroupAddon>
-                    </InputGroup>
-                  </FormControl>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                   <FormDescription>
-                    每个分组和模型同时只探索一个渠道，实际比例会受整数权重影响
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={props.form.control}
-              name='explorationMaxPromptTokens'
-              render={({ field }) => (
-                <FormItem>
-                  <ChannelMonitorSettingLabel
-                    label='探索请求上限'
-                    helpKey='explorationMaxPromptTokens'
-                  />
-                  <FormControl>
-                    <InputGroup>
-                      <InputGroupInput
-                        type='number'
-                        min={0}
-                        max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS}
-                        step={1}
-                        inputMode='numeric'
-                        value={field.value}
-                        onBlur={field.onBlur}
-                        onChange={field.onChange}
-                        name={field.name}
-                        ref={field.ref}
-                        aria-invalid={Boolean(
-                          props.form.formState.errors.explorationMaxPromptTokens
-                        )}
-                      />
-                      <InputGroupAddon align='inline-end'>
-                        Token
-                      </InputGroupAddon>
-                    </InputGroup>
-                  </FormControl>
-                  <FormDescription>
-                    超过上限的请求优先使用其他候选，0 表示无限制
+                    常规探索和自适应备援共用此候选顺序
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -716,113 +701,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         ) : null}
 
         {sampleMode === 'probe' ? probeIntervalField : null}
-      </div>
-
-      <div className='bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
-        <FormField
-          control={props.form.control}
-          name='prioritySamplingEnabled'
-          render={({ field }) => (
-            <FormItem className='flex items-center justify-between gap-4'>
-              <div className='flex flex-col gap-1'>
-                <ChannelMonitorSettingLabel
-                  label='低优先级轮转采样'
-                  helpKey='prioritySampling'
-                />
-                <FormDescription>
-                  每轮选择一条健康低优先级渠道，临时提升到主渠道同层获取少量真实流量
-                </FormDescription>
-              </div>
-              <FormControl>
-                <Switch
-                  checked={field.value}
-                  disabled={applyMode !== 'priority_weight'}
-                  onCheckedChange={field.onChange}
-                  aria-label='低优先级轮转采样'
-                />
-              </FormControl>
-            </FormItem>
-          )}
-        />
-
-        {applyMode !== 'priority_weight' ? (
-          <FormDescription>
-            仅“优先级分层 + 权重”支持轮转采样，当前配置不会生效
-          </FormDescription>
-        ) : null}
-
-        {applyMode === 'priority_weight' && prioritySamplingEnabled ? (
-          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-            <FormField
-              control={props.form.control}
-              name='prioritySamplingIntervalMinutes'
-              render={({ field }) => (
-                <FormItem>
-                  <ChannelMonitorSettingLabel
-                    label='轮转间隔'
-                    helpKey='prioritySamplingInterval'
-                  />
-                  <FormControl>
-                    <InputGroup>
-                      <InputGroupInput
-                        type='number'
-                        min={1}
-                        max={
-                          MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_INTERVAL_MINUTES
-                        }
-                        step={1}
-                        inputMode='numeric'
-                        value={field.value}
-                        onBlur={field.onBlur}
-                        onChange={field.onChange}
-                        name={field.name}
-                        ref={field.ref}
-                        aria-invalid={
-                          props.form.getFieldState(
-                            'prioritySamplingIntervalMinutes'
-                          ).invalid
-                        }
-                      />
-                      <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-                    </InputGroup>
-                  </FormControl>
-                  <FormDescription>切换本轮采样渠道的间隔</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <PrioritySamplingPercentField
-              form={props.form}
-              name='prioritySamplingBasePercent'
-              label='基础采样比例'
-              description='基础排名第 2 名的目标流量'
-              helpKey='prioritySamplingBasePercent'
-              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT}
-              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_BASE_PERCENT}
-              step={0.1}
-            />
-            <PrioritySamplingPercentField
-              form={props.form}
-              name='prioritySamplingDecayPercent'
-              label='排名递减比例'
-              description='每降低一名保留的流量比例'
-              helpKey='prioritySamplingDecayPercent'
-              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT}
-              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_DECAY_PERCENT}
-              step={0.1}
-            />
-            <PrioritySamplingPercentField
-              form={props.form}
-              name='prioritySamplingMinPercent'
-              label='最低采样比例'
-              description='低排名渠道仍能获得的最小流量'
-              helpKey='prioritySamplingMinPercent'
-              min={MIN_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT}
-              max={MAX_SMART_SCHEDULE_PRIORITY_SAMPLING_MIN_PERCENT}
-              step={0.01}
-            />
-          </div>
-        ) : null}
       </div>
 
       <Separator />
@@ -969,8 +847,30 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   unit='秒'
                   helpKey='adaptiveSamplingFirstTokenCriticalSeconds'
                 />
+                <AdaptiveSamplingNumberField
+                  form={props.form}
+                  name='adaptiveSamplingFirstTokenWarningRequestPercent'
+                  label='首字告警请求占比'
+                  min={0.1}
+                  max={100}
+                  step={0.1}
+                  unit='%'
+                  helpKey='adaptiveSamplingFirstTokenWarningRequestPercent'
+                  description='窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值'
+                />
+                <AdaptiveSamplingNumberField
+                  form={props.form}
+                  name='adaptiveSamplingRecoverRequestPercent'
+                  label='恢复健康请求占比'
+                  min={0.1}
+                  max={100}
+                  step={0.1}
+                  unit='%'
+                  helpKey='adaptiveSamplingRecoverRequestPercent'
+                  description='错误和首字进入信号解除后，窗口内健康请求达到该比例才恢复'
+                />
               </div>
-              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
                 <AdaptiveSamplingNumberField
                   form={props.form}
                   name='adaptiveSamplingWindowSeconds'
@@ -982,30 +882,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   helpKey='adaptiveSamplingWindowSeconds'
                   description='按最近窗口内的业务、手动测试和定时探测样本计算风险和健康比例'
                 />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingEnterRequestPercent'
-                  label='进入压力请求占比'
-                  min={0.1}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingEnterRequestPercent'
-                  description='窗口内风险请求达到该比例后进入压力状态'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingRecoverRequestPercent'
-                  label='恢复健康请求占比'
-                  min={0.1}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingRecoverRequestPercent'
-                  description='窗口内健康请求达到该比例后恢复健康状态'
-                />
-              </div>
-              <div className='grid items-start gap-4 sm:grid-cols-2'>
                 <AdaptiveSamplingNumberField
                   form={props.form}
                   name='adaptiveSamplingSwitchConfirmRequestPercent'
@@ -1111,19 +987,19 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             </div>
             <FormField
               control={props.form.control}
-              name='stabilityReleaseMaxPromptTokens'
+              name='stabilityReleaseMaxPromptKTokens'
               render={({ field }) => (
                 <FormItem className='max-w-72'>
                   <ChannelMonitorSettingLabel
                     label='稳定性释放请求上限'
-                    helpKey='stabilityReleaseMaxPromptTokens'
+                    helpKey='stabilityReleaseMaxPromptKTokens'
                   />
                   <FormControl>
                     <InputGroup>
                       <InputGroupInput
                         type='number'
                         min={0}
-                        max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS}
+                        max={MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS}
                         step={1}
                         inputMode='numeric'
                         value={field.value}
@@ -1133,11 +1009,11 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                         ref={field.ref}
                         aria-invalid={Boolean(
                           props.form.formState.errors
-                            .stabilityReleaseMaxPromptTokens
+                            .stabilityReleaseMaxPromptKTokens
                         )}
                       />
                       <InputGroupAddon align='inline-end'>
-                        Token
+                        K Token
                       </InputGroupAddon>
                     </InputGroup>
                   </FormControl>

@@ -292,7 +292,6 @@ export function ChannelMonitorSmartScheduleBoard(
         pool.summary.degradedCount === 0 &&
         pool.summary.probingCount === 0 &&
         pool.summary.insufficientSampleCount === 0 &&
-        pool.summary.prioritySamplingCount === 0 &&
         pool.summary.failedCount === 0 &&
         pool.summary.pausedCount === 0
       ) {
@@ -307,9 +306,6 @@ export function ChannelMonitorSmartScheduleBoard(
   const firstProbingPool = pools.find((pool) => pool.summary.probingCount > 0)
   const firstInsufficientSamplePool = pools.find(
     (pool) => pool.summary.insufficientSampleCount > 0
-  )
-  const firstPrioritySamplingPool = pools.find(
-    (pool) => pool.summary.prioritySamplingCount > 0
   )
   const firstPausedPool = pools.find((pool) => pool.summary.pausedCount > 0)
   const selectedGroupValue = props.selection?.group ?? selectedGroup
@@ -646,7 +642,6 @@ export function ChannelMonitorSmartScheduleBoard(
         summary.failedCount > 0 ||
         summary.probingCount > 0 ||
         summary.insufficientSampleCount > 0 ||
-        summary.prioritySamplingCount > 0 ||
         summary.pausedCount > 0) ? (
         <section
           className='border-border flex flex-wrap items-center gap-2 border-b px-4 pb-3'
@@ -702,21 +697,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 }
               }}
             >
-              样本不足补量 {summary.insufficientSampleCount}
-            </Badge>
-          ) : null}
-          {summary.prioritySamplingCount > 0 ? (
-            <Badge
-              render={<button type='button' />}
-              variant='warning'
-              className='cursor-pointer'
-              onClick={() => {
-                if (firstPrioritySamplingPool) {
-                  selectPool(firstPrioritySamplingPool)
-                }
-              }}
-            >
-              低优先级轮转 {summary.prioritySamplingCount}
+              统一采样 {summary.insufficientSampleCount}
             </Badge>
           ) : null}
           {summary.pausedCount > 0 ? (
@@ -851,7 +832,6 @@ export function ChannelMonitorSmartScheduleBoard(
                     pool.summary.degradedCount > 0 ||
                     pool.summary.probingCount > 0 ||
                     pool.summary.insufficientSampleCount > 0 ||
-                    pool.summary.prioritySamplingCount > 0 ||
                     pool.summary.failedCount > 0 ||
                     pool.summary.pausedCount > 0
                   return (

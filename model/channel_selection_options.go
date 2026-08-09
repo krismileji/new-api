@@ -15,7 +15,8 @@ type ChannelSelectionOptions struct {
 }
 
 const (
-	DefaultChannelSmartScheduleExplorationMaxPromptTokens      = 16_384
+	ChannelSmartSchedulePromptTokensPerK                       = 1_000
+	DefaultChannelSmartScheduleExplorationMaxPromptTokens      = 50_000
 	DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens = 0
 	MaxChannelSmartScheduleExplorationPromptTokens             = 1_000_000
 	requestBodyBytesPerPromptToken                             = 3

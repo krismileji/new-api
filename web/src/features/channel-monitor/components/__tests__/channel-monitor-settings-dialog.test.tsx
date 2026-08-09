@@ -165,15 +165,10 @@ function SmartScheduleGroupPoliciesFixture(props: {
               cooldownMinutes: 30,
               sampleMode: props.sampleMode ?? 'traffic',
               explorationTrafficPercent: 3,
-              explorationMaxPromptTokens: 16_384,
-              stabilityReleaseMaxPromptTokens: 0,
+              explorationMaxPromptKTokens: 50,
+              stabilityReleaseMaxPromptKTokens: 0,
               probeIntervalMinutes: 10,
               degradedProbeEnabled: false,
-              prioritySamplingEnabled: true,
-              prioritySamplingIntervalMinutes: 10,
-              prioritySamplingBasePercent: 3,
-              prioritySamplingDecayPercent: 70,
-              prioritySamplingMinPercent: 0.5,
             },
           ]
         : [],
@@ -198,9 +193,9 @@ function SmartScheduleGroupPoliciesFixture(props: {
 function SmartScheduleGroupPolicyFieldsFixture(props: {
   applyMode: ChannelMonitorSmartSchedulePolicyFormValues['applyMode']
   sampleMode: ChannelMonitorSmartSchedulePolicyFormValues['sampleMode']
+  samplingOrder?: ChannelMonitorSmartSchedulePolicyFormValues['samplingOrder']
   jitterEnabled?: boolean
   degradedProbeEnabled?: boolean
-  prioritySamplingEnabled?: boolean
 }) {
   const form = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     defaultValues: {
@@ -237,16 +232,12 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
       slowFailureSeconds: 10,
       cooldownMinutes: 30,
       sampleMode: props.sampleMode,
+      samplingOrder: props.samplingOrder ?? 'priority_weight',
       explorationTrafficPercent: 3,
-      explorationMaxPromptTokens: 16_384,
-      stabilityReleaseMaxPromptTokens: 0,
+      explorationMaxPromptKTokens: 50,
+      stabilityReleaseMaxPromptKTokens: 0,
       probeIntervalMinutes: 15,
       degradedProbeEnabled: props.degradedProbeEnabled ?? false,
-      prioritySamplingEnabled: props.prioritySamplingEnabled ?? true,
-      prioritySamplingIntervalMinutes: 10,
-      prioritySamplingBasePercent: 3,
-      prioritySamplingDecayPercent: 70,
-      prioritySamplingMinPercent: 0.5,
     },
   })
   return (
@@ -427,11 +418,9 @@ describe('channel monitor settings dialog', () => {
       '参与模型',
       '模型卡片顺序',
       '样本补充方式',
-      '低优先级轮转采样',
-      '轮转间隔',
-      '基础采样比例',
-      '排名递减比例',
-      '最低采样比例',
+      '统一采样顺序',
+      '目标探索流量',
+      '探索请求上限',
       '稳定性保护',
       '降级期间定时探测',
       '稳定性占比',
@@ -463,10 +452,9 @@ describe('channel monitor settings dialog', () => {
       '错误高风险阈值',
       '首字告警阈值',
       '首字高风险阈值',
-      '请求比例窗口',
-      '进入压力请求占比',
+      '首字告警请求占比',
       '恢复健康请求占比',
-      '探索租约',
+      '请求比例窗口',
       '切换确认请求占比',
       '最少可比渠道数',
     ]) {
@@ -491,8 +479,13 @@ describe('channel monitor settings dialog', () => {
     )
     assert.match(
       trafficPolicyMarkup,
-      /<input(?=[^>]*name="stabilityReleaseMaxPromptTokens")(?=[^>]*min="0")(?=[^>]*max="1000000")(?=[^>]*value="0")[^>]*>/
+      /<input(?=[^>]*name="explorationMaxPromptKTokens")(?=[^>]*min="0")(?=[^>]*max="1000")(?=[^>]*step="1")(?=[^>]*value="50")[^>]*>/
     )
+    assert.match(
+      trafficPolicyMarkup,
+      /<input(?=[^>]*name="stabilityReleaseMaxPromptKTokens")(?=[^>]*min="0")(?=[^>]*max="1000")(?=[^>]*step="1")(?=[^>]*value="0")[^>]*>/
+    )
+    assert.ok(trafficPolicyMarkup.includes('K Token'))
     assert.ok(
       trafficPolicyMarkup.includes('aria-label="查看“目标探索流量”说明"')
     )
@@ -508,6 +501,38 @@ describe('channel monitor settings dialog', () => {
     assert.ok(
       weightPolicyMarkup.includes('aria-label="查看“主渠道目标流量”说明"')
     )
+  })
+
+  test('keeps adaptive error and first-token thresholds in decision order', () => {
+    const markup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='traffic'
+      />
+    )
+    const fieldNames = [
+      'adaptiveSamplingErrorWarningPercent',
+      'adaptiveSamplingErrorCriticalPercent',
+      'adaptiveSamplingFirstTokenWarningSeconds',
+      'adaptiveSamplingFirstTokenCriticalSeconds',
+      'adaptiveSamplingFirstTokenWarningRequestPercent',
+      'adaptiveSamplingRecoverRequestPercent',
+      'adaptiveSamplingWindowSeconds',
+      'adaptiveSamplingSwitchConfirmRequestPercent',
+      'adaptiveSamplingMinComparableChannels',
+    ]
+    const indexes = fieldNames.map((name) => markup.indexOf(`name="${name}"`))
+
+    assert.equal(
+      indexes.every((index) => index >= 0),
+      true
+    )
+    assert.deepEqual(
+      indexes,
+      [...indexes].sort((left, right) => left - right)
+    )
+    assert.ok(markup.includes('首字告警请求占比'))
+    assert.equal(markup.includes('进入压力请求占比'), false)
   })
 
   test('shows primary traffic only for weight mode and switch threshold for both modes', () => {
@@ -564,8 +589,9 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('按成本倍率'))
     assert.ok(markup.includes('优先级分层 + 权重'))
     assert.ok(markup.includes('探索流量 3%'))
-    assert.ok(markup.includes('≤ 16384 Token'))
-    assert.ok(markup.includes('每 10 分钟 · 3% 起'))
+    assert.ok(markup.includes('≤ 50K Token'))
+    assert.ok(markup.includes('统一采样顺序'))
+    assert.ok(markup.includes('按基础优先级和权重'))
     assert.ok(markup.includes('全部模型'))
     assert.equal(markup.includes('未参与调度'), false)
     assert.ok(markup.includes('aria-label="编辑分组策略 vip"'))
@@ -596,6 +622,8 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('定时探测'))
     assert.ok(markup.includes('目标探索流量'))
     assert.ok(markup.includes('探索请求上限'))
+    assert.ok(markup.includes('统一采样顺序'))
+    assert.ok(markup.indexOf('统一采样顺序') > markup.indexOf('探索请求上限'))
     assert.equal(markup.includes('探测间隔'), false)
   })
 
@@ -632,60 +660,53 @@ describe('channel monitor settings dialog', () => {
     assert.ok(probeIntervalIndex > degradedProbeIndex)
   })
 
-  test('shows bounded low-priority rotation fields only in priority mode while enabled', () => {
-    const priorityMarkup = renderToStaticMarkup(
+  test('places one shared sampling order below the exploration traffic controls without legacy rotation controls', () => {
+    const offMarkup = renderToStaticMarkup(
       <SmartScheduleGroupPolicyFieldsFixture
         applyMode='priority_weight'
         sampleMode='off'
       />
     )
-    const disabledMarkup = renderToStaticMarkup(
+    const trafficMarkup = renderToStaticMarkup(
       <SmartScheduleGroupPolicyFieldsFixture
         applyMode='priority_weight'
-        sampleMode='off'
-        prioritySamplingEnabled={false}
+        sampleMode='traffic'
       />
     )
-    const weightMarkup = renderToStaticMarkup(
+    const probeMarkup = renderToStaticMarkup(
       <SmartScheduleGroupPolicyFieldsFixture
         applyMode='weight'
         sampleMode='probe'
       />
     )
+    const ratioMarkup = renderToStaticMarkup(
+      <SmartScheduleGroupPolicyFieldsFixture
+        applyMode='priority_weight'
+        sampleMode='traffic'
+        samplingOrder='ratio'
+      />
+    )
 
-    assert.ok(priorityMarkup.includes('低优先级轮转采样'))
-    assert.match(
-      priorityMarkup,
-      /<input(?=[^>]*name="prioritySamplingIntervalMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="10")[^>]*>/
+    for (const markup of [offMarkup, probeMarkup]) {
+      assert.equal(markup.includes('统一采样顺序'), false)
+      assert.equal(markup.includes('常规探索和自适应备援共用此候选顺序'), false)
+    }
+    for (const markup of [offMarkup, trafficMarkup, probeMarkup, ratioMarkup]) {
+      assert.equal(markup.includes('低优先级轮转采样'), false)
+      assert.equal(markup.includes('轮转间隔'), false)
+    }
+    assert.ok(trafficMarkup.includes('统一采样顺序'))
+    assert.ok(trafficMarkup.includes('按基础优先级和权重'))
+    assert.ok(trafficMarkup.includes('常规探索和自适应备援共用此候选顺序'))
+    assert.ok(ratioMarkup.includes('按成本倍率'))
+    assert.ok(
+      trafficMarkup.indexOf('统一采样顺序') >
+        trafficMarkup.indexOf('探索请求上限')
     )
-    assert.match(
-      priorityMarkup,
-      /<input(?=[^>]*name="prioritySamplingBasePercent")(?=[^>]*min="0.1")(?=[^>]*max="20")(?=[^>]*value="3")[^>]*>/
+    assert.ok(
+      trafficMarkup.indexOf('软降级与自适应备援采样') >
+        trafficMarkup.indexOf('统一采样顺序')
     )
-    assert.match(
-      priorityMarkup,
-      /<input(?=[^>]*name="prioritySamplingDecayPercent")(?=[^>]*min="1")(?=[^>]*max="100")(?=[^>]*value="70")[^>]*>/
-    )
-    assert.match(
-      priorityMarkup,
-      /<input(?=[^>]*name="prioritySamplingMinPercent")(?=[^>]*min="0.01")(?=[^>]*max="5")(?=[^>]*value="0.5")[^>]*>/
-    )
-    assert.equal(
-      disabledMarkup.includes('name="prioritySamplingIntervalMinutes"'),
-      false
-    )
-    assert.ok(weightMarkup.includes('当前配置不会生效'))
-    assert.equal(
-      weightMarkup.includes('name="prioritySamplingIntervalMinutes"'),
-      false
-    )
-    const samplingSwitchMarkup =
-      weightMarkup.match(
-        /<[^>]*(?=[^>]*role="switch")(?=[^>]*aria-label="低优先级轮转采样")[^>]*>/
-      )?.[0] ?? ''
-    assert.ok(samplingSwitchMarkup)
-    assert.match(samplingSwitchMarkup, /\sdata-disabled=""/)
-    assert.match(samplingSwitchMarkup, /\saria-disabled="true"/)
   })
 
   test('shows bounded successful latency jitter controls while enabled', () => {

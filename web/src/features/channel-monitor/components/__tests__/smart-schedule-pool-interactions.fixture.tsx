@@ -107,6 +107,8 @@ function createRoute(
       model: 'cache-model',
       window_start: 1_752_700_000,
       observation_since: 0,
+      recovery_success_count: channelId === 1 ? 2 : 0,
+      recovery_success_at: channelId === 1 ? 1_752_777_840 : 0,
       last_time: 1_752_777_845,
       last_success: true,
       last_error: '',
@@ -145,7 +147,15 @@ function createRoute(
       temporary_traffic_kind: '',
       temporary_traffic_since: 0,
       temporary_traffic_target_percent: 0,
-      last_priority_sample_time: 0,
+      rolling_stability_score: null,
+      rolling_stability_sample_count: 0,
+      rolling_stability_slow_count: 0,
+      rolling_stability_allowed_slow_count: 0,
+      rolling_stability_updated_at: 0,
+      sampling_debt: 0,
+      sampling_candidate: false,
+      sampling_order: '',
+      last_sampling_at: 0,
       manual_primary_until: 0,
       manual_primary_allow_stability_degrade: true,
       ...overrides.state,
@@ -203,6 +213,21 @@ const routes = [
     state: {
       manual_primary_until: 1_900_000_000,
       manual_primary_allow_stability_degrade: true,
+      temporary_traffic_kind: 'insufficient_samples',
+      temporary_traffic_since: 1_752_777_800,
+      temporary_traffic_target_percent: 3,
+      adaptive_health_state: 'pressure',
+      adaptive_health_pressure: 0.65,
+      adaptive_health_first_token_warning_request_percent: 12,
+      rolling_stability_score: 0.94,
+      rolling_stability_sample_count: 20,
+      rolling_stability_slow_count: 3,
+      rolling_stability_allowed_slow_count: 1,
+      rolling_stability_updated_at: 1_752_777_840,
+      sampling_debt: 4,
+      sampling_candidate: true,
+      sampling_order: 'ratio',
+      last_sampling_at: 1_752_777_830,
     } as ChannelMonitorSmartScheduleRoute['state'],
   }),
   createRoute(2, '北京备用渠道', 90),
@@ -381,7 +406,11 @@ assert.ok(expanded.container.textContent?.includes('实际最高层'))
 assert.ok(expanded.container.textContent?.includes('基础排名'))
 assert.ok(expanded.container.textContent?.includes('基础 P / W'))
 assert.ok(expanded.container.textContent?.includes('当前 P / W'))
-assert.ok(expanded.container.textContent?.includes('临时流量'))
+assert.ok(expanded.container.textContent?.includes('当前采样'))
+assert.ok(expanded.container.textContent?.includes('当前采样渠道'))
+assert.ok(expanded.container.textContent?.includes('样本欠账 4'))
+assert.ok(expanded.container.textContent?.includes('滚动稳定性 94.0 分'))
+assert.ok(expanded.container.textContent?.includes('软健康 压力'))
 const detailButtons = expanded.container.querySelectorAll<HTMLButtonElement>(
   '[aria-label="查看 上海主渠道 的调度详情"]'
 )
@@ -403,7 +432,17 @@ assert.ok(details)
 assert.ok(details.textContent?.includes('基础排名'))
 assert.ok(details.textContent?.includes('基础 P / W'))
 assert.ok(details.textContent?.includes('当前 P / W'))
-assert.ok(details.textContent?.includes('临时流量类型与目标'))
+assert.ok(details.textContent?.includes('当前采样渠道与类型'))
+assert.ok(details.textContent?.includes('样本欠账 / 候选'))
+assert.ok(details.textContent?.includes('4 / 是'))
+assert.ok(details.textContent?.includes('采样顺序'))
+assert.ok(details.textContent?.includes('按成本倍率'))
+assert.ok(details.textContent?.includes('滚动稳定性'))
+assert.ok(details.textContent?.includes('94.0 分 · 20 个样本'))
+assert.ok(details.textContent?.includes('滚动慢成功 / 允许'))
+assert.ok(details.textContent?.includes('3 / 1'))
+assert.ok(details.textContent?.includes('错误 / 首字告警 / 风险 / 健康请求'))
+assert.ok(details.textContent?.includes('未切换原因'))
 assert.ok(details.querySelector('[aria-label="调度池决策结果"]'))
 const sharedWindow = details.querySelector<HTMLElement>(
   '[aria-label="渠道与模型共享窗口数据"]'
@@ -416,6 +455,10 @@ assert.ok(sharedWindow.textContent?.includes('性能窗口'))
 assert.ok(sharedWindow.textContent?.includes('1248 次'))
 assert.ok(sharedWindow.textContent?.includes('测试 / 探测'))
 assert.ok(sharedWindow.textContent?.includes('12 次'))
+assert.ok(sharedWindow.textContent?.includes('连续恢复成功'))
+assert.ok(sharedWindow.textContent?.includes('2 次'))
+assert.ok(sharedWindow.textContent?.includes('最近恢复探测成功'))
+assert.equal(sharedWindow.textContent?.includes('最近恢复探测成功-'), false)
 await act(async () => expanded.root.unmount())
 expanded.container.remove()
 

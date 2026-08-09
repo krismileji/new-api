@@ -41,7 +41,10 @@ import {
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
-import { ChannelMonitorSettingLabel } from './channel-monitor-setting-label'
+import {
+  ChannelMonitorSettingLabel,
+  type ChannelMonitorSettingHelpKey,
+} from './channel-monitor-setting-label'
 import { ChannelMonitorSmartScheduleGroupPolicies } from './channel-monitor-smart-schedule-group-policies'
 
 type ChannelMonitorSmartScheduleFieldsProps = {
@@ -57,6 +60,7 @@ function ChannelMonitorSmartScheduleWindowField(props: {
     | 'smartScheduleStabilityWindowMinutes'
   label: string
   description: string
+  helpKey: ChannelMonitorSettingHelpKey
 }) {
   return (
     <FormField
@@ -66,7 +70,7 @@ function ChannelMonitorSmartScheduleWindowField(props: {
         <FormItem>
           <ChannelMonitorSettingLabel
             label={props.label}
-            helpKey='performanceRange'
+            helpKey={props.helpKey}
           />
           <FormControl>
             <InputGroup>
@@ -264,6 +268,7 @@ export function ChannelMonitorSmartScheduleFields(
             name='smartSchedulePerformanceWindowMinutes'
             label='性能窗口'
             description='用于首字、TPS 和业务性能评分'
+            helpKey='performanceRange'
           />
 
           <ChannelMonitorSmartScheduleWindowField
@@ -271,6 +276,7 @@ export function ChannelMonitorSmartScheduleFields(
             name='smartScheduleStabilityWindowMinutes'
             label='稳定性评分窗口'
             description='用于成功率、失败耗时和首字抖动的软评分'
+            helpKey='stabilityRange'
           />
 
           <ChannelMonitorRateLimitCooldownField form={props.form} />
