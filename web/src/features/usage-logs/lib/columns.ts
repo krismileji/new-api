@@ -38,16 +38,19 @@ export function useColumnsByCategory(
 ): ColumnDef<any>[] {
   const capabilities = getLogsViewCapabilities(viewScope)
   const commonColumns = useCommonLogsColumns(
-    capabilities.showChannelColumn,
-    capabilities.showUserColumn
+    capabilities.isAdminView,
+    capabilities.showUserColumn,
+    capabilities.showChannelColumn
   )
   const drawingColumns = useDrawingLogsColumns(
-    capabilities.showChannelColumn,
-    capabilities.showUserColumn
+    capabilities.isAdminView,
+    capabilities.showUserColumn,
+    capabilities.showChannelColumn
   )
   const taskColumns = useTaskLogsColumns(
-    capabilities.showChannelColumn,
-    capabilities.showUserColumn
+    capabilities.isAdminView,
+    capabilities.showUserColumn,
+    capabilities.showChannelColumn
   )
 
   switch (logCategory) {

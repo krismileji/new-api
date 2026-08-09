@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestGetAllUserVisibleTaskHidesChannelAndIncludesUser(t *testing.T) {
+func TestGetAllUserVisibleTaskFiltersAndIncludesChannelAndUser(t *testing.T) {
 	originalDB := model.DB
 	originalRedisEnabled := common.RedisEnabled
 	t.Cleanup(func() {
@@ -52,11 +52,18 @@ func TestGetAllUserVisibleTaskHidesChannelAndIncludesUser(t *testing.T) {
 		ChannelId: 321,
 		Status:    model.TaskStatusSuccess,
 	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task-user-visible-other-channel",
+		Platform:  constant.TaskPlatform("test"),
+		UserId:    user.Id,
+		ChannelId: 654,
+		Status:    model.TaskStatusSuccess,
+	}).Error)
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
-	context.Request = httptest.NewRequest(http.MethodGet, "/api/task/user-visible?p=1&page_size=20", nil)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/task/user-visible?p=1&page_size=20&channel_id=321", nil)
 
 	GetAllUserVisibleTask(context)
 
@@ -70,6 +77,6 @@ func TestGetAllUserVisibleTaskHidesChannelAndIncludesUser(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
 	require.Len(t, response.Data.Items, 1)
-	assert.Zero(t, response.Data.Items[0].ChannelId)
+	assert.Equal(t, 321, response.Data.Items[0].ChannelId)
 	assert.Equal(t, user.Username, response.Data.Items[0].Username)
 }

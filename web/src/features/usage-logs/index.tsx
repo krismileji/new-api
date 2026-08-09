@@ -120,7 +120,7 @@ function UsageLogsContent() {
         search: {
           ...searchParams,
           page: 1,
-          channel: scope === 'all' ? searchParams.channel : undefined,
+          channel: scope === 'self' ? undefined : searchParams.channel,
           username: scope === 'self' ? undefined : searchParams.username,
         },
         replace: true,

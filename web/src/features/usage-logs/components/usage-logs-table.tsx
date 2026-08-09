@@ -60,13 +60,10 @@ function getColumnVisibilityStorageKey(
   logCategory: LogCategory,
   viewScope: LogsViewScope
 ): string {
-  if (viewScope === 'all') {
+  if (viewScope !== 'self') {
     return `usage-logs:${logCategory}:admin:column-visibility`
   }
-  if (viewScope === 'self') {
-    return `usage-logs:${logCategory}:user:column-visibility`
-  }
-  return `usage-logs:${logCategory}:user-visible:column-visibility`
+  return `usage-logs:${logCategory}:user:column-visibility`
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
@@ -110,7 +107,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       { columnId: 'model_name', searchKey: 'model', type: 'string' as const },
       { columnId: 'token_name', searchKey: 'token', type: 'string' as const },
       { columnId: 'group', searchKey: 'group', type: 'string' as const },
-      ...(isAdminView
+      ...(isAllUsersView
         ? [
             {
               columnId: 'channel',

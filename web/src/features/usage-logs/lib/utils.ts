@@ -153,7 +153,7 @@ export function buildBaseParams(config: {
   return {
     p: page,
     page_size: pageSize,
-    ...(scope === 'all' && searchParams.channel
+    ...(scope !== 'self' && searchParams.channel
       ? {
           channel_id: String(searchParams.channel),
         }
@@ -173,7 +173,6 @@ export function buildApiParams(config: {
   scope: LogsViewScope
 }): GetLogsParams {
   const { page, pageSize, searchParams, columnFilters = [], scope } = config
-  const isAdminView = scope === 'all'
   const isAllUsersView = scope !== 'self'
 
   // Helper to process type parameter (single value from array)
@@ -200,7 +199,7 @@ export function buildApiParams(config: {
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),
-    ...(isAdminView && searchParams.channel
+    ...(isAllUsersView && searchParams.channel
       ? { channel: Number(searchParams.channel) || 0 }
       : {}),
     ...(isAllUsersView && searchParams.username
@@ -234,7 +233,7 @@ export function buildApiParams(config: {
           params.group = String(value)
           break
         case 'channel':
-          if (isAdminView) params.channel = Number(value) || 0
+          if (isAllUsersView) params.channel = Number(value) || 0
           break
         case 'username':
           if (isAllUsersView) params.username = String(value)

@@ -49,7 +49,7 @@ describe('usage log view scope', () => {
       isAdminView: false,
       isAllUsersView: true,
       showUserColumn: true,
-      showChannelColumn: false,
+      showChannelColumn: true,
     })
     assert.deepEqual(getLogsViewCapabilities('self'), {
       isAdminView: false,

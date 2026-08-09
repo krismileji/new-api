@@ -84,7 +84,8 @@ function getDrawingTypeIcon(action: string): LucideIcon {
 
 export function useDrawingLogsColumns(
   isAdmin: boolean,
-  showUser: boolean = isAdmin
+  showUser: boolean = isAdmin,
+  showChannel: boolean = isAdmin
 ): ColumnDef<MidjourneyLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<MidjourneyLog>[] = [
@@ -113,7 +114,7 @@ export function useDrawingLogsColumns(
     },
   ]
 
-  if (isAdmin) {
+  if (showChannel) {
     columns.push(
       createChannelColumn<MidjourneyLog>({ headerLabel: t('Channel') })
     )
@@ -204,7 +205,7 @@ export function useDrawingLogsColumns(
     })
   )
 
-  if (isAdmin) {
+  if (showChannel) {
     columns.push({
       accessorKey: 'code',
       header: t('Submit Result'),

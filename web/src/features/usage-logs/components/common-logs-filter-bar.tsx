@@ -116,7 +116,7 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const { isAdminView, isAllUsersView } = useLogsViewScope()
+  const { isAllUsersView } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
@@ -188,7 +188,7 @@ export function CommonLogsFilterBar<TData>(
   const handleApply = useCallback(() => {
     const scopedFilters: CommonLogFilters = {
       ...filters,
-      channel: isAdminView ? filters.channel : undefined,
+      channel: isAllUsersView ? filters.channel : undefined,
       username: isAllUsersView ? filters.username : undefined,
     }
     const filterParams = buildSearchParams(scopedFilters, 'common')
@@ -203,7 +203,7 @@ export function CommonLogsFilterBar<TData>(
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
     queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [filters, isAdminView, isAllUsersView, logType, navigate, queryClient])
+  }, [filters, isAllUsersView, logType, navigate, queryClient])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
@@ -241,7 +241,7 @@ export function CommonLogsFilterBar<TData>(
   const hasExpandedFilters =
     !!filters.token ||
     (isAllUsersView && !!filters.username) ||
-    (isAdminView && !!filters.channel) ||
+    (isAllUsersView && !!filters.channel) ||
     !!filters.requestId ||
     !!filters.upstreamRequestId
 
@@ -252,7 +252,7 @@ export function CommonLogsFilterBar<TData>(
   const expandedFilterCount = [
     filters.token,
     isAllUsersView ? filters.username : undefined,
-    isAdminView ? filters.channel : undefined,
+    isAllUsersView ? filters.channel : undefined,
     filters.requestId,
     filters.upstreamRequestId,
   ].filter(Boolean).length
@@ -385,7 +385,7 @@ export function CommonLogsFilterBar<TData>(
           />
         </LogsFilterField>
       )}
-      {isAdminView && (
+      {isAllUsersView && (
         <LogsFilterField>
           <LogsFilterInput
             placeholder={t('Channel ID')}

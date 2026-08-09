@@ -12,6 +12,7 @@ import (
 func GetAllUserVisibleMidjourney(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	queryParams := model.TaskQueryParams{
+		ChannelID:      c.Query("channel_id"),
 		MjID:           c.Query("mj_id"),
 		StartTimestamp: c.Query("start_timestamp"),
 		EndTimestamp:   c.Query("end_timestamp"),

@@ -2,8 +2,11 @@ package model
 
 import (
 	"errors"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+
+	"gorm.io/gorm"
 )
 
 type userVisibleLogQueryParams struct {
@@ -16,6 +19,7 @@ type userVisibleLogQueryParams struct {
 	tokenName         string
 	startIdx          int
 	num               int
+	channel           int
 	group             string
 	requestID         string
 	upstreamRequestID string
@@ -50,6 +54,9 @@ func queryUserVisibleLogs(params userVisibleLogQueryParams) (logs []*Log, total 
 	if params.endTimestamp != 0 {
 		tx = tx.Where("logs.created_at <= ?", params.endTimestamp)
 	}
+	if params.channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", params.channel)
+	}
 	if params.group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", params.group)
 	}
@@ -72,6 +79,25 @@ func queryUserVisibleLogs(params userVisibleLogQueryParams) (logs []*Log, total 
 }
 
 func GetAllUserVisibleLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, group string, requestID string, upstreamRequestID string) (logs []*Log, total int64, err error) {
+	return GetAllUserVisibleLogsWithChannel(
+		logType,
+		startTimestamp,
+		endTimestamp,
+		modelName,
+		username,
+		tokenName,
+		startIdx,
+		num,
+		0,
+		group,
+		requestID,
+		upstreamRequestID,
+	)
+}
+
+// GetAllUserVisibleLogsWithChannel queries all users while applying the
+// user-visible projection and an optional channel filter.
+func GetAllUserVisibleLogsWithChannel(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestID string, upstreamRequestID string) (logs []*Log, total int64, err error) {
 	return queryUserVisibleLogs(userVisibleLogQueryParams{
 		logType:           logType,
 		startTimestamp:    startTimestamp,
@@ -81,8 +107,90 @@ func GetAllUserVisibleLogs(logType int, startTimestamp int64, endTimestamp int64
 		tokenName:         tokenName,
 		startIdx:          startIdx,
 		num:               num,
+		channel:           channel,
 		group:             group,
 		requestID:         requestID,
 		upstreamRequestID: upstreamRequestID,
 	})
+}
+
+// sumUsedQuotaFromQuery keeps aggregate statistics aligned with the log
+// visibility query while allowing the complete and user-visible views to use
+// different base scopes.
+func sumUsedQuotaFromQuery(base *gorm.DB, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, requestID string, upstreamRequestID string) (stat Stat, err error) {
+	_ = logType // Statistics intentionally cover consume logs, matching the existing API contract.
+	tx := base.Session(&gorm.Session{}).Select("COALESCE(sum(quota), 0) quota")
+	rpmTpmQuery := base.Session(&gorm.Session{}).Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
+
+	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
+		return stat, err
+	}
+	if tokenName != "" {
+		tx = tx.Where("token_name = ?", tokenName)
+		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
+		return stat, err
+	}
+	if channel != 0 {
+		tx = tx.Where("channel_id = ?", channel)
+		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
+	}
+	if group != "" {
+		tx = tx.Where(logGroupCol+" = ?", group)
+		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
+	}
+	if requestID != "" {
+		tx = tx.Where("request_id = ?", requestID)
+		rpmTpmQuery = rpmTpmQuery.Where("request_id = ?", requestID)
+	}
+	if upstreamRequestID != "" {
+		tx = tx.Where("upstream_request_id = ?", upstreamRequestID)
+		rpmTpmQuery = rpmTpmQuery.Where("upstream_request_id = ?", upstreamRequestID)
+	}
+
+	tx = tx.Where("type = ?", LogTypeConsume)
+	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
+
+	if err := tx.Scan(&stat).Error; err != nil {
+		common.SysError("failed to query log stat: " + err.Error())
+		return stat, errors.New("查询统计数据失败")
+	}
+	if err := rpmTpmQuery.Scan(&stat).Error; err != nil {
+		common.SysError("failed to query rpm/tpm stat: " + err.Error())
+		return stat, errors.New("查询统计数据失败")
+	}
+
+	return stat, nil
+}
+
+// SumUserVisibleQuota applies the same retry filtering and response scope as
+// user-visible log rows before calculating aggregate usage statistics.
+func SumUserVisibleQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, requestID string, upstreamRequestID string) (stat Stat, err error) {
+	return sumUsedQuotaFromQuery(
+		userVisibleLogs(LOG_DB.Table("logs")),
+		logType,
+		startTimestamp,
+		endTimestamp,
+		modelName,
+		username,
+		tokenName,
+		channel,
+		group,
+		requestID,
+		upstreamRequestID,
+	)
 }

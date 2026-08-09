@@ -42,7 +42,7 @@ describe('usage log scope filters', () => {
     assert.equal(params.username, 'alice')
   })
 
-  test('keeps the user filter but removes the channel in user-visible view', () => {
+  test('keeps aggregate filters in user-visible view', () => {
     const params = buildApiParams({
       page: 1,
       pageSize: 20,
@@ -50,7 +50,7 @@ describe('usage log scope filters', () => {
       scope: 'user-visible',
     })
 
-    assert.equal(params.channel, undefined)
+    assert.equal(params.channel, 12)
     assert.equal(params.username, 'alice')
   })
 
@@ -66,7 +66,7 @@ describe('usage log scope filters', () => {
     assert.equal(params.username, undefined)
   })
 
-  test('sends task channel filters only for the complete view', () => {
+  test('sends task channel filters for both aggregate views', () => {
     const complete = buildBaseParams({
       page: 1,
       pageSize: 20,
@@ -81,6 +81,6 @@ describe('usage log scope filters', () => {
     })
 
     assert.equal(complete.channel_id, '12')
-    assert.equal(userVisible.channel_id, undefined)
+    assert.equal(userVisible.channel_id, '12')
   })
 })

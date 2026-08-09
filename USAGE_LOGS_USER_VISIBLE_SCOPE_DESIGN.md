@@ -11,7 +11,7 @@
 | 视图 | 数据范围 | 数据表现 | 使用者 |
 | --- | --- | --- | --- |
 | 全部 | 所有用户 | 完整管理日志，包括渠道、重试过程和管理员诊断信息 | 管理员 |
-| 用户侧 | 所有用户 | 与“仅自己”相同的用户侧过滤和脱敏规则 | 管理员 |
+| 用户侧 | 所有用户 | 按“仅自己”规则过滤和脱敏，只保留最终结果；筛选和聚合表格布局与“全部”一致 | 管理员 |
 | 仅自己 | 当前用户 | 用户侧过滤和脱敏规则 | 当前登录用户 |
 
 “用户侧”的业务契约是复用“仅自己”的可见性规则，唯一差异是取消当前用户限制。两个视图不得分别维护过滤或脱敏逻辑。
@@ -40,8 +40,9 @@ GET /api/task/user-visible
 - 使用用户侧格式化逻辑清理渠道名称、管理员信息和操作审计信息。
 - 错误详情采用与“仅自己”一致的安全表现。
 - 支持时间、类型、用户名、API 密钥名称、模型、分组和请求 ID 等聚合查询条件。
+- 用户侧额外支持与“全部”一致的渠道筛选；统计同样排除重试过程记录。
 
-绘图和任务日志使用与各自 `/self` 接口相同的响应表现，只扩大用户范围，并在管理员聚合视图中补充用户标识。
+绘图和任务日志沿用各自用户侧的结果内容，只扩大用户范围；聚合视图保留渠道编号并补充用户标识，便于与“全部”表格保持一致。
 
 ## 前端设计
 
@@ -54,17 +55,17 @@ type LogsViewScope = 'all' | 'user-visible' | 'self'
 不同能力分别派生，不能继续由单一管理员布尔值同时控制数据源、列和筛选器：
 
 - `all`：显示管理员详情、用户列和渠道列。
-- `user-visible`：显示用户列，不显示渠道及管理员详情。
+- `user-visible`：显示用户列和渠道列，使用与“全部”相同的聚合筛选；详情和数据内容仍按用户侧规则脱敏。
 - `self`：不显示用户列、渠道及管理员详情。
 
 切换范围时：
 
 - 返回第一页。
 - 保留三种范围都支持的筛选条件。
-- 清理当前范围不支持的渠道或用户名筛选条件。
+- 仅切换到“仅自己”时清理渠道和用户名筛选条件；“用户侧”保留聚合筛选条件。
 - React Query 查询键必须包含完整范围值。
 - 仅允许相同日志分类和相同范围复用占位数据，避免切换时短暂显示其他范围的日志。
-- 每个范围使用独立的列可见性存储键。
+- “全部”和“用户侧”共用聚合表格的列可见性配置；“仅自己”单独保存。
 
 ## 下游改动边界
 
@@ -72,15 +73,15 @@ type LogsViewScope = 'all' | 'user-visible' | 'self'
 
 | 文件 | 修改必要性 |
 | --- | --- |
-| `model/log.go` | 让现有“仅自己”查询调用共享的用户侧过滤与脱敏实现，避免两套规则分叉。 |
+| `model/log.go` | 让完整统计和用户侧统计共享统计查询实现，并由用户侧入口复用最终结果过滤。 |
 | `router/api-router.go` | 在现有日志、绘图和任务路由组注册管理员专属接口。 |
 | `web/src/features/usage-logs/api.ts` | 将现有二态接口选择扩展为三态，并拆出无循环依赖的查询参数模块。 |
-| `web/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 在“用户侧”显示用户列，同时保持渠道列仅“全部”可见。 |
+| `web/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 在“用户侧”显示与“全部”一致的用户、渠道列，同时由管理员标志控制详情脱敏。 |
 | `web/src/features/usage-logs/components/columns/drawing-logs-columns.tsx` | 为跨用户绘图日志补充用户列。 |
 | `web/src/features/usage-logs/components/columns/task-logs-columns.tsx` | 将用户列和渠道列的显示能力拆开。 |
-| `web/src/features/usage-logs/components/common-logs-filter-bar.tsx` | 允许“用户侧”按用户名筛选并禁用渠道筛选。 |
+| `web/src/features/usage-logs/components/common-logs-filter-bar.tsx` | 让“用户侧”使用与“全部”一致的用户名和渠道筛选。 |
 | `web/src/features/usage-logs/components/common-logs-stats.tsx` | 按完整范围选择统计接口并隔离查询缓存。 |
-| `web/src/features/usage-logs/components/task-logs-filter-bar.tsx` | 非“全部”范围不再携带渠道筛选。 |
+| `web/src/features/usage-logs/components/task-logs-filter-bar.tsx` | 让“用户侧”保留与“全部”一致的渠道筛选。 |
 | `web/src/features/usage-logs/components/usage-logs-mobile-card.tsx` | 在移动端跨用户绘图日志中呈现用户字段。 |
 | `web/src/features/usage-logs/components/usage-logs-provider.tsx` | 将有效范围和数据、用户列、渠道列能力分别派生。 |
 | `web/src/features/usage-logs/components/usage-logs-table.tsx` | 按完整范围隔离查询、占位数据和列可见性配置。 |
@@ -94,7 +95,7 @@ type LogsViewScope = 'all' | 'user-visible' | 'self'
 - 管理员能看到并切换三个范围，普通用户看不到范围切换器。
 - 普通用户调用任一 `user-visible` 接口会被拒绝。
 - “用户侧”能返回多个用户的数据，并支持按用户名定位。
-- “用户侧”和“仅自己”采用相同的过滤、脱敏和错误表现。
+- “用户侧”和“仅自己”采用相同的最终结果过滤、脱敏和错误表现；用户侧的聚合筛选与表格列能力和“全部”一致。
 - “全部”的管理诊断能力保持不变。
 - 通用、绘图和任务日志的范围行为一致。
 - 切换范围不会复用错误的缓存、分页或列配置。

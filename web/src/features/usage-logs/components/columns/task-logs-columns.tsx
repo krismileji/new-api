@@ -92,7 +92,8 @@ function AudioPreviewCell({ log }: { log: TaskLog }) {
 
 export function useTaskLogsColumns(
   isAdmin: boolean,
-  showUser: boolean = isAdmin
+  showUser: boolean = isAdmin,
+  showChannel: boolean = isAdmin
 ): ColumnDef<TaskLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<TaskLog>[] = [
@@ -122,7 +123,7 @@ export function useTaskLogsColumns(
     },
   ]
 
-  if (isAdmin) {
+  if (showChannel) {
     columns.push(createChannelColumn<TaskLog>({ headerLabel: t('Channel') }))
   }
 

@@ -69,7 +69,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const { isAdminView } = useLogsViewScope()
+  const { isAllUsersView } = useLogsViewScope()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
   const [filters, setFilters] = useState<TaskLogsFilters>(() => {
@@ -84,7 +84,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
         ? new Date(searchParams.startTime)
         : start,
       endTime: searchParams.endTime ? new Date(searchParams.endTime) : end,
-      ...(isAdminView && searchParams.channel
+      ...(isAllUsersView && searchParams.channel
         ? { channel: String(searchParams.channel) }
         : {}),
     }
@@ -106,7 +106,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
     searchParams.endTime,
     searchParams.channel,
     searchParams.filter,
-    isAdminView,
+    isAllUsersView,
   ])
 
   const handleChange = useCallback(
@@ -119,7 +119,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
   const handleApply = useCallback(() => {
     const scopedFilters = {
       ...filters,
-      channel: isAdminView ? filters.channel : undefined,
+      channel: isAllUsersView ? filters.channel : undefined,
     }
     const filterParams = buildSearchParams(scopedFilters, props.logCategory)
     navigate({
@@ -131,7 +131,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
       },
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
-  }, [filters, isAdminView, navigate, props.logCategory, queryClient])
+  }, [filters, isAllUsersView, navigate, props.logCategory, queryClient])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
@@ -170,7 +170,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
       ? t('Filter by MjProxy task ID')
       : t('Filter by task ID')
   const hasAdditionalFilters =
-    !!filterValue || (isAdminView && !!filters.channel)
+    !!filterValue || (isAllUsersView && !!filters.channel)
   const dateRangeFilter = (
     <LogsFilterField wide>
       <CompactDateTimeRangePicker
@@ -194,7 +194,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
       />
     </LogsFilterField>
   )
-  const channelFilter = isAdminView ? (
+  const channelFilter = isAllUsersView ? (
     <LogsFilterField>
       <LogsFilterInput
         placeholder={t('Channel ID')}
@@ -223,8 +223,9 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
         </>
       }
       mobileFilterCount={
-        [filterValue, isAdminView ? filters.channel : undefined].filter(Boolean)
-          .length
+        [filterValue, isAllUsersView ? filters.channel : undefined].filter(
+          Boolean
+        ).length
       }
       hasActiveFilters={hasAdditionalFilters}
       onSearch={handleApply}
