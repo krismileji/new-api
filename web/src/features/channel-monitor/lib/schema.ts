@@ -95,7 +95,6 @@ export const MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 51
 export const MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 99
 export const MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 60
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 3_600
-export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES = 1_440
 export const MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS = 10
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
@@ -436,18 +435,6 @@ const smartScheduleAdaptiveSamplingRequestPercentSchema = (label: string) =>
       .max(100, `${label}不能超过 100%`)
   )
 
-const smartScheduleAdaptiveSamplingLeaseSchema = z.preprocess(
-  (value) => (value === '' ? undefined : value),
-  z.coerce
-    .number()
-    .int('探索租约必须是整数')
-    .min(1, '探索租约不能小于 1 分钟')
-    .max(
-      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES,
-      '探索租约不能超过 1440 分钟'
-    )
-)
-
 const smartScheduleAdaptiveSamplingComparableChannelsSchema = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.coerce
@@ -529,8 +516,6 @@ const smartSchedulePolicyShape = {
     smartScheduleAdaptiveSamplingRequestPercentSchema('进入压力请求占比'),
   adaptiveSamplingRecoverRequestPercent:
     smartScheduleAdaptiveSamplingRequestPercentSchema('恢复健康请求占比'),
-  adaptiveSamplingExplorationLeaseMinutes:
-    smartScheduleAdaptiveSamplingLeaseSchema,
   adaptiveSamplingSwitchConfirmRequestPercent:
     smartScheduleAdaptiveSamplingRequestPercentSchema('切换确认请求占比'),
   adaptiveSamplingMinComparableChannels:

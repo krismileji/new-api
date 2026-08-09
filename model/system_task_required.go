@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -10,6 +11,20 @@ import (
 )
 
 var errSystemTaskStateChanged = errors.New("系统任务状态已变化")
+
+// IsSystemTaskRunning reports whether a claimed task of the requested type is
+// currently executing. Pending successor tasks are intentionally excluded.
+func IsSystemTaskRunning(taskType string) (bool, error) {
+	taskType = strings.TrimSpace(taskType)
+	if taskType == "" {
+		return false, nil
+	}
+	var count int64
+	err := DB.Model(&SystemTask{}).
+		Where("type = ? AND status = ?", taskType, SystemTaskStatusRunning).
+		Count(&count).Error
+	return count > 0, err
+}
 
 // EnqueueRequiredSystemTask guarantees that payload will be handled by a
 // future run. A pending task is upgraded in place; a running task keeps its

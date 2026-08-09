@@ -388,3 +388,14 @@ func TestChannelRateLimitCooldownRepairsMismatchedRedisRevision(t *testing.T) {
 		"model-a", model.ChannelSelectionOptions{},
 	).ExcludedChannelIds)
 }
+
+func TestChannelRateLimitCooldownUntilMatchingCoversWildcardRoute(t *testing.T) {
+	ClearChannelRateLimitCooldowns()
+	t.Cleanup(ClearChannelRateLimitCooldowns)
+	StartChannelRateLimitCooldown(51, "gpt-4o-mini", 60)
+
+	assert.Positive(t, ChannelRateLimitCooldownUntilMatching(51, "gpt-4o*"))
+	assert.Positive(t, ChannelRateLimitCooldownUntilMatching(51, "gpt-4o-mini"))
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(51, "claude*"))
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(52, "gpt-4o*"))
+}

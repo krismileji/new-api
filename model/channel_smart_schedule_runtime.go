@@ -51,12 +51,14 @@ type ChannelSmartScheduleAdaptiveHealthMetricResult struct {
 }
 
 type channelSmartScheduleAdaptiveHealthLog struct {
-	ChannelId int
-	ModelName string
-	Type      int
-	IsStream  bool
-	Other     string
-	CreatedAt int64
+	ChannelId        int
+	ModelName        string
+	Type             int
+	IsStream         bool
+	CompletionTokens int
+	UseTime          int
+	Other            string
+	CreatedAt        int64
 }
 
 func channelSmartScheduleAdaptiveModelMatches(logModelName, requestedModelName string) bool {
@@ -92,6 +94,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	results := make([]ChannelSmartScheduleAdaptiveHealthMetricResult, len(windows))
 	minimumStart := endTimestamp
 	channelIds := make(map[int]struct{}, len(windows))
+	windowIndexesByChannel := make(map[int][]int, len(windows))
 	for index, window := range windows {
 		window.ModelName = channelSmartScheduleModelName(window.ModelName)
 		if window.ObservationSince > window.StartTimestamp {
@@ -102,6 +105,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 			continue
 		}
 		channelIds[window.ChannelId] = struct{}{}
+		windowIndexesByChannel[window.ChannelId] = append(windowIndexesByChannel[window.ChannelId], index)
 		if window.StartTimestamp < minimumStart {
 			minimumStart = window.StartTimestamp
 		}
@@ -115,7 +119,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	}
 	query := LOG_DB.WithContext(ctx).
 		Model(&Log{}).
-		Select("channel_id, model_name, type, is_stream, other, created_at").
+		Select("channel_id, model_name, type, is_stream, completion_tokens, use_time, other, created_at").
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
 		Where("channel_id IN ?", channelIdList).
 		Where("created_at >= ? AND created_at < ?", minimumStart, endTimestamp)
@@ -127,7 +131,8 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	for rows.Next() {
 		var log channelSmartScheduleAdaptiveHealthLog
 		if err := rows.Scan(
-			&log.ChannelId, &log.ModelName, &log.Type, &log.IsStream, &log.Other, &log.CreatedAt,
+			&log.ChannelId, &log.ModelName, &log.Type, &log.IsStream, &log.CompletionTokens,
+			&log.UseTime, &log.Other, &log.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -138,9 +143,9 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
 			continue
 		}
-		for index, window := range results {
-			if window.Window.ChannelId != log.ChannelId ||
-				log.CreatedAt < window.Window.StartTimestamp ||
+		for _, index := range windowIndexesByChannel[log.ChannelId] {
+			window := results[index]
+			if log.CreatedAt < window.Window.StartTimestamp ||
 				!channelSmartScheduleAdaptiveModelMatches(log.ModelName, window.Window.ModelName) {
 				continue
 			}
@@ -157,6 +162,9 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 			metric.RequestCount++
 			metric.HealthyRequestCount++
 			metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
+			if log.CompletionTokens > 0 && log.UseTime > 0 {
+				metric.TPSSampleCount++
+			}
 			if !log.IsStream || !parsed || parsedOther.FirstResponseTime == nil ||
 				*parsedOther.FirstResponseTime <= 0 ||
 				math.IsNaN(*parsedOther.FirstResponseTime) ||

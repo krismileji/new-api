@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -21,6 +22,80 @@ type channelSmartScheduleCachedRoute struct {
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
+
+// RefreshChannelSmartScheduleRoutePoolCache reloads one route pool after a
+// runtime overlay changes Ability routing or request-limit state.
+func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) error {
+	if !common.MemoryCacheEnabled {
+		return nil
+	}
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	if group == "" || modelName == "" {
+		return nil
+	}
+	channelCacheRefreshLock.Lock()
+	defer channelCacheRefreshLock.Unlock()
+
+	var abilities []*Ability
+	if err := DB.Where(&Ability{Group: group, Model: modelName}).
+		Order("channel_id ASC").Find(&abilities).Error; err != nil {
+		return err
+	}
+	channelIds := make([]int, 0, len(abilities))
+	for _, ability := range abilities {
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+	channels := make(map[int]*Channel, len(channelIds))
+	if len(channelIds) > 0 {
+		var poolChannels []*Channel
+		if err := DB.Select("id", "status", "priority", "weight").
+			Where("id IN ?", channelIds).Find(&poolChannels).Error; err != nil {
+			return err
+		}
+		for _, channel := range poolChannels {
+			channels[channel.Id] = channel
+		}
+	}
+	var states []ChannelSmartScheduleRouteState
+	if err := DB.Where("group_name = ? AND model_name = ?", group, modelName).
+		Find(&states).Error; err != nil {
+		return err
+	}
+	var pauses []ChannelSmartScheduleGroupPause
+	if len(channelIds) > 0 {
+		if err := DB.Where(
+			"group_name = ? AND channel_id IN ? AND paused_until > ?",
+			group, channelIds, common.GetTimestamp(),
+		).Find(&pauses).Error; err != nil {
+			return err
+		}
+	}
+	refreshed := buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, states, pauses)
+
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	if channelSmartScheduleRouteCache == nil {
+		return nil
+	}
+	modelRoutes := channelSmartScheduleRouteCache[group]
+	poolRoutes := refreshed[group][modelName]
+	if len(poolRoutes) == 0 {
+		if modelRoutes != nil {
+			delete(modelRoutes, modelName)
+			if len(modelRoutes) == 0 {
+				delete(channelSmartScheduleRouteCache, group)
+			}
+		}
+		return nil
+	}
+	if modelRoutes == nil {
+		modelRoutes = make(map[string][]channelSmartScheduleCachedRoute)
+		channelSmartScheduleRouteCache[group] = modelRoutes
+	}
+	modelRoutes[modelName] = poolRoutes
+	return nil
+}
 
 func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]*Channel) map[string]map[string][]channelSmartScheduleCachedRoute {
 	var states []ChannelSmartScheduleRouteState

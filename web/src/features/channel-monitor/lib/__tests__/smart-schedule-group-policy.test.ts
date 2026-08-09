@@ -85,7 +85,6 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   adaptiveSamplingWindowSeconds: 600,
   adaptiveSamplingEnterRequestPercent: 10,
   adaptiveSamplingRecoverRequestPercent: 95,
-  adaptiveSamplingExplorationLeaseMinutes: 10,
   adaptiveSamplingSwitchConfirmRequestPercent: 95,
   adaptiveSamplingMinComparableChannels: 2,
 }
@@ -187,8 +186,6 @@ describe('smart schedule group policy', () => {
           defaultPolicy.adaptiveSamplingEnterRequestPercent,
         adaptive_sampling_recover_request_percent:
           defaultPolicy.adaptiveSamplingRecoverRequestPercent,
-        adaptive_sampling_exploration_lease_minutes:
-          defaultPolicy.adaptiveSamplingExplorationLeaseMinutes,
         adaptive_sampling_switch_confirm_request_percent:
           defaultPolicy.adaptiveSamplingSwitchConfirmRequestPercent,
         adaptive_sampling_min_comparable_channels:

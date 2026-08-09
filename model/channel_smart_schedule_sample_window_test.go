@@ -92,12 +92,13 @@ func TestChannelSmartScheduleSampleSeriesAdaptiveHealthUsesWindowRequestClasses(
 	warningFirstTokenMs := 5_000.0
 	criticalFirstTokenMs := 10_000.0
 	invalidFirstTokenMs := math.NaN()
+	tpsWithoutFirstToken := 20.0
 	series := ChannelSmartScheduleSampleSeries{
 		observationSince: 150,
 		samples: []channelSmartScheduleSample{
 			{Time: 140, Success: false},
 			{Time: 170, Success: false},
-			{Time: 180, Success: true},
+			{Time: 180, Success: true, TPS: &tpsWithoutFirstToken},
 			{Time: 190, Success: true, FirstTokenMs: &fastFirstTokenMs},
 			{Time: 200, Success: true, FirstTokenMs: &warningFirstTokenMs},
 			{Time: 210, Success: true, FirstTokenMs: &criticalFirstTokenMs},
@@ -112,6 +113,7 @@ func TestChannelSmartScheduleSampleSeriesAdaptiveHealthUsesWindowRequestClasses(
 	assert.Equal(t, int64(2), metric.SlowRequestCount)
 	assert.Equal(t, int64(3), metric.HealthyRequestCount)
 	assert.Equal(t, int64(3), metric.FirstTokenCount)
+	assert.Equal(t, int64(1), metric.TPSSampleCount)
 	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
 	assert.Equal(t, int64(220), metric.LastUsedTime)
 }

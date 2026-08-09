@@ -97,3 +97,52 @@ func TestChannelSmartScheduleRuntimeSampleCountReadsOldPartialMinuteFromLogs(t *
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), sampleCount)
 }
+
+func TestChannelSmartScheduleAdaptiveHealthMetricsCountsIndependentTPSAndRequestClasses(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]Log{
+		{
+			CreatedAt: now - 4, Type: LogTypeConsume, ChannelId: 2404,
+			ModelName: "model-a", CompletionTokens: 10, UseTime: 1,
+		},
+		{
+			CreatedAt: now - 3, Type: LogTypeConsume, ChannelId: 2404,
+			ModelName: "model-a", IsStream: true, CompletionTokens: 10, UseTime: 1,
+			Other: `{"frt":10000}`,
+		},
+		{
+			CreatedAt: now - 2, Type: LogTypeError, ChannelId: 2404,
+			ModelName: "model-a", Other: `{"status_code":503}`,
+		},
+		{
+			CreatedAt: now - 1, Type: LogTypeError, ChannelId: 2404,
+			ModelName: "model-a", Other: `{"status_code":429}`,
+		},
+		{
+			CreatedAt: now, Type: LogTypeConsume, ChannelId: 2404,
+			ModelName: "model-a", IsStream: true, CompletionTokens: 10, UseTime: 1,
+			Other: `{"frt":100,"channel_monitor_smart_schedule_probe":true}`,
+		},
+	}).Error)
+
+	results, err := GetChannelSmartScheduleAdaptiveHealthMetrics(
+		context.Background(),
+		[]ChannelSmartScheduleAdaptiveHealthMetricWindow{{
+			ChannelId: 2404, ModelName: "model-a", StartTimestamp: now - 10,
+			WarningSeconds: 5, CriticalSeconds: 10,
+		}},
+		now+1,
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	metric := results[0].Metric
+	assert.Equal(t, int64(3), metric.RequestCount)
+	assert.Equal(t, int64(1), metric.FailureCount)
+	assert.Equal(t, int64(1), metric.SlowRequestCount)
+	assert.Equal(t, int64(1), metric.HealthyRequestCount)
+	assert.Equal(t, int64(1), metric.FirstTokenCount)
+	assert.Equal(t, int64(2), metric.TPSSampleCount)
+	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
+	assert.Equal(t, now-2, metric.LastUsedTime)
+}

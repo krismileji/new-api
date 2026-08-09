@@ -94,6 +94,7 @@ type channelSmartScheduleCandidate struct {
 	HealthLatencyPressure       float64
 	HealthEvidence              bool
 	HealthSampleCount           int64
+	HealthLastSampleAt          int64
 	SampleDebt                  int
 	MinComparableChannels       int
 	HealthRiskRequestPercent    float64

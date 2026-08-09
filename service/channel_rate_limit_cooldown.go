@@ -402,6 +402,31 @@ func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 	return entry.until
 }
 
+// ChannelRateLimitCooldownUntilMatching returns the latest active cooldown for
+// an exact route model or any concrete model covered by a wildcard route.
+func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int64 {
+	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	if channelId <= 0 || modelName == "" {
+		return 0
+	}
+	if !strings.HasSuffix(modelName, "*") {
+		return ChannelRateLimitCooldownUntil(channelId, modelName)
+	}
+	ensureChannelRateLimitCooldownRedisSync()
+	prefix := strings.TrimSuffix(modelName, "*")
+	now := common.GetTimestamp()
+	controlRevision := channelRateLimitCooldownControlRevision()
+	latestUntil := int64(0)
+	for key, entry := range loadChannelRateLimitCooldownSnapshot().untilByRoute {
+		if key.channelId != channelId || entry.revision != controlRevision || entry.until <= now ||
+			!strings.HasPrefix(key.modelName, prefix) {
+			continue
+		}
+		latestUntil = max(latestUntil, entry.until)
+	}
+	return latestUntil
+}
+
 func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if modelName == "" {

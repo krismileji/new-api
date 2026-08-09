@@ -125,6 +125,65 @@ func TestChannelSmartScheduleAffinityEligibilityUsesActivePoolCacheWithoutDataba
 	assert.Zero(t, queryCount)
 }
 
+func TestRefreshChannelSmartScheduleRoutePoolCachePublishesOnlyChangedPool(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	channelSyncLock.Lock()
+	originalGroupCache := group2model2channels
+	originalChannelCache := channelsIDM
+	originalAdvancedCustomCache := channel2advancedCustomConfig
+	originalRouteCache := channelSmartScheduleRouteCache
+	channelSyncLock.Unlock()
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelSyncLock.Lock()
+		group2model2channels = originalGroupCache
+		channelsIDM = originalChannelCache
+		channel2advancedCustomConfig = originalAdvancedCustomCache
+		channelSmartScheduleRouteCache = originalRouteCache
+		channelSyncLock.Unlock()
+	})
+
+	highPriority := int64(100)
+	lowPriority := int64(20)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1733, Name: "pool primary", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+		{Id: 1734, Name: "pool backup", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"},
+		{Id: 1735, Name: "unrelated", Status: common.ChannelStatusEnabled, Group: "other", Models: "model-b"},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1733, Group: "vip", Model: "model-a", Enabled: true, Priority: &highPriority, Weight: 100},
+		{ChannelId: 1734, Group: "vip", Model: "model-a", Enabled: true, Priority: &lowPriority, Weight: 100},
+		{ChannelId: 1735, Group: "other", Model: "model-b", Enabled: true, Priority: &highPriority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1733, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1734, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	InitChannelCache()
+	channelSyncLock.RLock()
+	unrelatedBefore := append([]channelSmartScheduleCachedRoute(nil), channelSmartScheduleRouteCache["other"]["model-b"]...)
+	channelSyncLock.RUnlock()
+
+	require.NoError(t, db.Model(&Ability{}).
+		Where(&Ability{ChannelId: 1734, Group: "vip", Model: "model-a"}).
+		Updates(map[string]any{"priority": highPriority, "weight": 100}).Error)
+	require.NoError(t, db.Model(&ChannelSmartScheduleRouteState{}).
+		Where("channel_id = ? AND group_name = ? AND model_name = ?", 1734, "vip", "model-a").
+		Updates(map[string]any{
+			"temporary_traffic_kind":        ChannelSmartScheduleTemporaryTrafficAdaptive,
+			"exploration_max_prompt_tokens": 100,
+		}).Error)
+	require.NoError(t, RefreshChannelSmartScheduleRoutePoolCache("vip", "model-a"))
+
+	assert.Equal(t, ChannelSmartScheduleAffinityEligible,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1734, "/v1/chat/completions"))
+	channelSyncLock.RLock()
+	assert.Equal(t, unrelatedBefore, channelSmartScheduleRouteCache["other"]["model-b"])
+	channelSyncLock.RUnlock()
+}
+
 func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeRequest(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled

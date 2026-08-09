@@ -75,7 +75,6 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   adaptiveSamplingWindowSeconds: 600,
   adaptiveSamplingEnterRequestPercent: 10,
   adaptiveSamplingRecoverRequestPercent: 95,
-  adaptiveSamplingExplorationLeaseMinutes: 10,
   adaptiveSamplingSwitchConfirmRequestPercent: 95,
   adaptiveSamplingMinComparableChannels: 2,
 } as const

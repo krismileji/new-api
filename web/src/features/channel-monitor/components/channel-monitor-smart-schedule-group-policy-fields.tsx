@@ -52,7 +52,6 @@ import {
   MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS,
   MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT,
-  MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
   MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_TOKENS,
@@ -250,7 +249,6 @@ type AdaptiveSamplingFieldName =
   | 'adaptiveSamplingWindowSeconds'
   | 'adaptiveSamplingEnterRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
-  | 'adaptiveSamplingExplorationLeaseMinutes'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
   | 'adaptiveSamplingMinComparableChannels'
 
@@ -265,7 +263,6 @@ type AdaptiveSamplingHelpKey =
   | 'adaptiveSamplingWindowSeconds'
   | 'adaptiveSamplingEnterRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
-  | 'adaptiveSamplingExplorationLeaseMinutes'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
   | 'adaptiveSamplingMinComparableChannels'
 
@@ -906,7 +903,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   step={0.1}
                   unit='%'
                   helpKey='adaptiveSamplingBasePercent'
-                  description='主渠道健康时的样本补量上限'
+                  description='主渠道刚进入压力时的起始采样上限'
                 />
                 <AdaptiveSamplingNumberField
                   form={props.form}
@@ -931,7 +928,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   description='软降级期间保留的最低主渠道流量'
                 />
               </div>
-              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
                 <AdaptiveSamplingNumberField
                   form={props.form}
                   name='adaptiveSamplingErrorWarningPercent'
@@ -1006,16 +1003,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   unit='%'
                   helpKey='adaptiveSamplingRecoverRequestPercent'
                   description='窗口内健康请求达到该比例后恢复健康状态'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingExplorationLeaseMinutes'
-                  label='探索租约'
-                  min={1}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_LEASE_MINUTES}
-                  step={1}
-                  unit='分钟'
-                  helpKey='adaptiveSamplingExplorationLeaseMinutes'
                 />
               </div>
               <div className='grid items-start gap-4 sm:grid-cols-2'>

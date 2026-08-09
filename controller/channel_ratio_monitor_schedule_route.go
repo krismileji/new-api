@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -142,6 +143,7 @@ func channelSmartScheduleMergeAdaptiveHealthMetric(
 	production.SlowRequestCount += samples.SlowRequestCount
 	production.HealthyRequestCount += samples.HealthyRequestCount
 	production.FirstTokenCount += samples.FirstTokenCount
+	production.TPSSampleCount += samples.TPSSampleCount
 	production.LatencyPressure += samples.LatencyPressure
 	production.LastUsedTime = max(production.LastUsedTime, samples.LastUsedTime)
 	return production
@@ -678,6 +680,7 @@ func runChannelSmartScheduleByRouteOnce(
 			HealthErrorPressure: health.ErrorPressure, HealthLatencyPressure: health.LatencyPressure,
 			HealthEvidence:              health.Evidence,
 			HealthSampleCount:           health.SampleCount,
+			HealthLastSampleAt:          health.LastSampleAt,
 			HealthRiskRequestPercent:    health.RiskRequestPercent,
 			HealthHealthyRequestPercent: health.HealthyRequestPercent,
 			HealthWindowSeconds:         health.WindowSeconds,
@@ -941,6 +944,9 @@ func runChannelSmartScheduleByRouteOnce(
 				if candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
 					continue
 				}
+				if service.ChannelRateLimitCooldownUntilMatching(item.ChannelId, poolKey.model) > 0 {
+					continue
+				}
 				if channelSmartScheduleCandidateNeedsExplorationWithScoring(
 					candidate, policy.Strategy, policy.StabilityEnabled, policy.MinSamples, policy.Scoring,
 				) {
@@ -964,27 +970,19 @@ func runChannelSmartScheduleByRouteOnce(
 					rightCandidate := candidateByChannel[right.ChannelId]
 					leftState := routeByKey[routeKeyByPoolChannel[poolKey][left.ChannelId]].State
 					rightState := routeByKey[routeKeyByPoolChannel[poolKey][right.ChannelId]].State
-					leaseRank := func(state model.ChannelSmartScheduleRouteState) int {
-						if state.TemporaryTrafficKind != model.ChannelSmartScheduleTemporaryTrafficAdaptive {
-							return 1
-						}
-						leaseSeconds := int64(max(policy.AdaptiveSamplingExplorationLeaseMinutes, 1) * 60)
-						if state.TemporaryTrafficSince <= 0 || now-state.TemporaryTrafficSince >= leaseSeconds {
-							return 0
-						}
-						return 2
-					}
-					if leftLeaseRank, rightLeaseRank := leaseRank(leftState), leaseRank(rightState); leftLeaseRank != rightLeaseRank {
-						return leftLeaseRank > rightLeaseRank
-					}
 					if leftRank, rightRank := channelSmartScheduleAdaptiveCandidateRank(leftCandidate), channelSmartScheduleAdaptiveCandidateRank(rightCandidate); leftRank != rightRank {
 						return leftRank < rightRank
 					}
 					if leftCandidate.SampleDebt != rightCandidate.SampleDebt {
 						return leftCandidate.SampleDebt > rightCandidate.SampleDebt
 					}
-					if leftState.LastPrioritySampleTime != rightState.LastPrioritySampleTime {
-						return leftState.LastPrioritySampleTime < rightState.LastPrioritySampleTime
+					leftActive := leftState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
+					rightActive := rightState.TemporaryTrafficKind == model.ChannelSmartScheduleTemporaryTrafficAdaptive
+					if leftActive != rightActive {
+						return leftActive
+					}
+					if leftCandidate.HealthLastSampleAt != rightCandidate.HealthLastSampleAt {
+						return leftCandidate.HealthLastSampleAt < rightCandidate.HealthLastSampleAt
 					}
 					if left.BaseRank != right.BaseRank {
 						return left.BaseRank < right.BaseRank
@@ -1040,6 +1038,9 @@ func runChannelSmartScheduleByRouteOnce(
 						continue
 					}
 					if candidateByChannel[item.ChannelId].EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
+						continue
+					}
+					if service.ChannelRateLimitCooldownUntilMatching(item.ChannelId, poolKey.model) > 0 {
 						continue
 					}
 					samplingIndexes = append(samplingIndexes, index)

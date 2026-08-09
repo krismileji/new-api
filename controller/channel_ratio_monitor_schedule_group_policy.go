@@ -35,7 +35,6 @@ const (
 	maxChannelMonitorSmartScheduleSamplingFloorPercent                 = 5.0
 	minChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 60
 	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 3600
-	maxChannelMonitorSmartScheduleAdaptiveSamplingLeaseMinutes         = 1440
 	maxChannelMonitorSmartScheduleAdaptiveSamplingMinComparable        = 10
 )
 
@@ -84,7 +83,6 @@ type channelSmartScheduleGroupPolicy struct {
 	AdaptiveSamplingWindowSeconds               *int                         `json:"adaptive_sampling_window_seconds,omitempty"`
 	AdaptiveSamplingEnterRequestPercent         *float64                     `json:"adaptive_sampling_enter_request_percent,omitempty"`
 	AdaptiveSamplingRecoverRequestPercent       *float64                     `json:"adaptive_sampling_recover_request_percent,omitempty"`
-	AdaptiveSamplingExplorationLeaseMinutes     *int                         `json:"adaptive_sampling_exploration_lease_minutes,omitempty"`
 	AdaptiveSamplingSwitchConfirmRequestPercent *float64                     `json:"adaptive_sampling_switch_confirm_request_percent,omitempty"`
 	AdaptiveSamplingMinComparableChannels       *int                         `json:"adaptive_sampling_min_comparable_channels,omitempty"`
 }
@@ -134,7 +132,6 @@ type channelSmartSchedulePolicy struct {
 	AdaptiveSamplingWindowSeconds               int
 	AdaptiveSamplingEnterRequestPercent         float64
 	AdaptiveSamplingRecoverRequestPercent       float64
-	AdaptiveSamplingExplorationLeaseMinutes     int
 	AdaptiveSamplingSwitchConfirmRequestPercent float64
 	AdaptiveSamplingMinComparableChannels       int
 }
@@ -227,7 +224,6 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.AdaptiveSamplingFirstTokenWarningSeconds == nil || policy.AdaptiveSamplingFirstTokenCriticalSeconds == nil ||
 			policy.AdaptiveSamplingWindowSeconds == nil || policy.AdaptiveSamplingEnterRequestPercent == nil ||
 			policy.AdaptiveSamplingRecoverRequestPercent == nil ||
-			policy.AdaptiveSamplingExplorationLeaseMinutes == nil ||
 			policy.AdaptiveSamplingSwitchConfirmRequestPercent == nil || policy.AdaptiveSamplingMinComparableChannels == nil {
 			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、样本补充、低优先级轮转和自适应采样")
 		}
@@ -426,9 +422,6 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		if *policy.AdaptiveSamplingSwitchConfirmRequestPercent < *policy.AdaptiveSamplingRecoverRequestPercent {
 			return nil, errors.New("自适应采样切换确认请求占比不能低于恢复请求占比")
 		}
-		if *policy.AdaptiveSamplingExplorationLeaseMinutes <= 0 || *policy.AdaptiveSamplingExplorationLeaseMinutes > maxChannelMonitorSmartScheduleAdaptiveSamplingLeaseMinutes {
-			return nil, errors.New("自适应采样探索租约必须在 1 到 1440 分钟之间")
-		}
 		if *policy.AdaptiveSamplingMinComparableChannels < 2 ||
 			*policy.AdaptiveSamplingMinComparableChannels > maxChannelMonitorSmartScheduleAdaptiveSamplingMinComparable {
 			return nil, errors.New("自适应采样最少可比渠道数必须在 2 到 10 之间")
@@ -513,7 +506,6 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		AdaptiveSamplingWindowSeconds:               *configured.AdaptiveSamplingWindowSeconds,
 		AdaptiveSamplingEnterRequestPercent:         *configured.AdaptiveSamplingEnterRequestPercent,
 		AdaptiveSamplingRecoverRequestPercent:       *configured.AdaptiveSamplingRecoverRequestPercent,
-		AdaptiveSamplingExplorationLeaseMinutes:     *configured.AdaptiveSamplingExplorationLeaseMinutes,
 		AdaptiveSamplingSwitchConfirmRequestPercent: *configured.AdaptiveSamplingSwitchConfirmRequestPercent,
 		AdaptiveSamplingMinComparableChannels:       *configured.AdaptiveSamplingMinComparableChannels,
 	}

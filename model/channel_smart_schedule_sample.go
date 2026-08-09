@@ -94,6 +94,7 @@ type ChannelSmartScheduleAdaptiveHealthMetric struct {
 	SlowRequestCount    int64
 	HealthyRequestCount int64
 	FirstTokenCount     int64
+	TPSSampleCount      int64
 	LatencyPressure     float64
 	LastUsedTime        int64
 }
@@ -189,6 +190,10 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
 			continue
 		}
 		metric.HealthyRequestCount++
+		if sample.TPS != nil && *sample.TPS > 0 &&
+			!math.IsNaN(*sample.TPS) && !math.IsInf(*sample.TPS, 0) {
+			metric.TPSSampleCount++
+		}
 		if sample.FirstTokenMs == nil || *sample.FirstTokenMs <= 0 ||
 			math.IsNaN(*sample.FirstTokenMs) || math.IsInf(*sample.FirstTokenMs, 0) {
 			continue

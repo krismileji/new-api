@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/stretchr/testify/assert"
@@ -50,7 +51,6 @@ func channelSmartScheduleTestGroupPolicy(
 	adaptiveSamplingWindowSeconds := 600
 	adaptiveSamplingEnterRequestPercent := 10.0
 	adaptiveSamplingRecoverRequestPercent := 95.0
-	adaptiveSamplingExplorationLeaseMinutes := 10
 	adaptiveSamplingSwitchConfirmRequestPercent := 95.0
 	adaptiveSamplingMinComparableChannels := 2
 	recoveryStabilityScore = math.Min(recoveryStabilityScore+5, 100)
@@ -112,7 +112,6 @@ func channelSmartScheduleTestGroupPolicy(
 		AdaptiveSamplingWindowSeconds:               &adaptiveSamplingWindowSeconds,
 		AdaptiveSamplingEnterRequestPercent:         &adaptiveSamplingEnterRequestPercent,
 		AdaptiveSamplingRecoverRequestPercent:       &adaptiveSamplingRecoverRequestPercent,
-		AdaptiveSamplingExplorationLeaseMinutes:     &adaptiveSamplingExplorationLeaseMinutes,
 		AdaptiveSamplingSwitchConfirmRequestPercent: &adaptiveSamplingSwitchConfirmRequestPercent,
 		AdaptiveSamplingMinComparableChannels:       &adaptiveSamplingMinComparableChannels,
 	}
@@ -2402,6 +2401,22 @@ func TestRunChannelSmartScheduleUsesPressureBudgetToSampleUnknownBackup(t *testi
 	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficAdaptive, backupState.TemporaryTrafficKind)
 	assert.InDelta(t, 30, backupState.TemporaryTrafficTargetPercent, 1e-9)
 	assert.Contains(t, backupState.LastScheduleError, "主渠道健康应急采样")
+
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	service.StartChannelRateLimitCooldown(67, "model-a", 60)
+	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 67, Group: "vip", Model: "model-a",
+	}).First(&backupAbility).Error)
+	require.NotNil(t, backupAbility.Priority)
+	assert.Equal(t, backupState.BasePriority, *backupAbility.Priority)
+	assert.Equal(t, backupState.BaseWeight, backupAbility.Weight)
+	require.NoError(t, db.Where(
+		"channel_id = ? AND group_name = ? AND model_name = ?", 67, "vip", "model-a",
+	).First(&backupState).Error)
+	assert.Empty(t, backupState.TemporaryTrafficKind)
 }
 
 func TestRunChannelSmartSchedulePrioritySamplingUsesRankDecayAndFairRotation(t *testing.T) {

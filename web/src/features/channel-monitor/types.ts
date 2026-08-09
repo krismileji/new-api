@@ -524,7 +524,6 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   adaptive_sampling_window_seconds: number
   adaptive_sampling_enter_request_percent: number
   adaptive_sampling_recover_request_percent: number
-  adaptive_sampling_exploration_lease_minutes: number
   adaptive_sampling_switch_confirm_request_percent: number
   adaptive_sampling_min_comparable_channels: number
 }

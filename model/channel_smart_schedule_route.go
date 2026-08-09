@@ -169,6 +169,7 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	GuardCurrent               bool
 	PoolGuard                  bool
 	ObservationOnly            bool
+	AdaptiveOverlayOnly        bool
 	ExpectedRevision           int64
 	ExpectedControlRevision    string
 	ExpectedEconomicRevision   string
@@ -415,6 +416,89 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 
 func GetChannelSmartScheduleRouteSummaries() ([]ChannelSmartScheduleRoute, error) {
 	return getChannelSmartScheduleRoutes(false)
+}
+
+// GetChannelSmartScheduleRoutePool loads one exact group/model pool for a
+// request-driven adaptive refresh. It avoids materializing unrelated route
+// states and shared sample buffers on every runtime event.
+func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]ChannelSmartScheduleRoute, error) {
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	if group == "" || modelName == "" {
+		return []ChannelSmartScheduleRoute{}, nil
+	}
+	var abilities []Ability
+	if err := DB.Where(&Ability{Group: group, Model: modelName}).
+		Order("channel_id ASC").Find(&abilities).Error; err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return []ChannelSmartScheduleRoute{}, nil
+	}
+	channelIds := make([]int, 0, len(abilities))
+	for _, ability := range abilities {
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+	var channels []Channel
+	if err := DB.Select("id", "name", "status", "priority", "weight").
+		Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	var states []ChannelSmartScheduleRouteState
+	if err := DB.Where("group_name = ? AND model_name = ?", group, modelName).
+		Find(&states).Error; err != nil {
+		return nil, err
+	}
+	pausedUntilByChannel := make(map[int]int64)
+	var pauses []ChannelSmartScheduleGroupPause
+	if err := DB.Select("channel_id", "paused_until").
+		Where("group_name = ? AND channel_id IN ? AND paused_until > ?", group, channelIds, common.GetTimestamp()).
+		Find(&pauses).Error; err != nil {
+		return nil, err
+	}
+	for _, pause := range pauses {
+		pausedUntilByChannel[pause.ChannelId] = pause.PausedUntil
+	}
+	normalizedModelName := channelSmartScheduleModelName(modelName)
+	var sharedSampleStates []ChannelSmartScheduleModelSampleState
+	if err := DB.Where("channel_id IN ? AND model_name = ?", channelIds, normalizedModelName).
+		Find(&sharedSampleStates).Error; err != nil {
+		return nil, err
+	}
+	channelById := make(map[int]Channel, len(channels))
+	for _, channel := range channels {
+		channelById[channel.Id] = channel
+	}
+	stateByChannel := make(map[int]ChannelSmartScheduleRouteState, len(states))
+	for _, state := range states {
+		stateByChannel[state.ChannelId] = state
+	}
+	sharedSamplesByChannel := make(map[int]ChannelSmartScheduleModelSampleState, len(sharedSampleStates))
+	for _, state := range sharedSampleStates {
+		sharedSamplesByChannel[state.ChannelId] = state
+	}
+	routes := make([]ChannelSmartScheduleRoute, 0, len(abilities))
+	for _, ability := range abilities {
+		channel, exists := channelById[ability.ChannelId]
+		if !exists {
+			continue
+		}
+		priority, weight := channelSmartScheduleAbilityRouting(ability, &channel)
+		sharedSamples := sharedSamplesByChannel[ability.ChannelId]
+		if sharedSamples.ChannelId == 0 {
+			sharedSamples.ChannelId = ability.ChannelId
+			sharedSamples.ModelName = normalizedModelName
+		}
+		routes = append(routes, ChannelSmartScheduleRoute{
+			ChannelId: ability.ChannelId, ChannelName: channel.Name,
+			ChannelStatus: channel.Status, ChannelPriority: channel.GetPriority(),
+			ChannelWeight: uint(channel.GetWeight()), Group: group, Model: modelName,
+			Enabled: ability.Enabled, Priority: priority, Weight: weight,
+			TrafficPausedUntil: pausedUntilByChannel[ability.ChannelId], State: stateByChannel[ability.ChannelId],
+			SharedSamples: sharedSamples,
+		})
+	}
+	return routes, nil
 }
 
 func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartScheduleRoute, error) {
@@ -1646,6 +1730,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	seenChannels := make(map[int]struct{}, len(results))
 	outcomes := make([]ChannelSmartScheduleRouteApplyOutcome, len(results))
 	poolGuarded := false
+	adaptiveOverlayOnly := results[0].AdaptiveOverlayOnly
 	for index, result := range results {
 		if result.Group != group || result.Model != modelName {
 			return nil, errors.New("智能调度路由结果必须属于同一分组和模型池")
@@ -1654,6 +1739,14 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			return nil, errors.New("智能调度池包含重复渠道")
 		}
 		seenChannels[result.ChannelId] = struct{}{}
+		if result.AdaptiveOverlayOnly != adaptiveOverlayOnly {
+			return nil, errors.New("智能调度整池结果不能混用运行时覆盖和完整调度写入")
+		}
+		if result.AdaptiveOverlayOnly && !result.ObservationOnly &&
+			(result.Status != "" || result.Error != "" || result.Score != nil || result.ScoreDetails != nil ||
+				result.Stability != nil || result.RuntimeProtectionUntil != nil) {
+			return nil, errors.New("自适应运行时覆盖不能修改完整调度或稳定性保护状态")
+		}
 		outcomes[index].Key = channelSmartScheduleRouteKey(result.ChannelId, result.Group, result.Model)
 		outcomes[index].ObservationOnly = result.ObservationOnly
 		poolGuarded = poolGuarded || result.PoolGuard
@@ -1670,7 +1763,14 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	observationBoundaryAdvanced := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		controlRevision, economicRevision, err := lockChannelSmartScheduleRevisionsTx(tx)
+		controlRevision := ""
+		economicRevision := ""
+		var err error
+		if adaptiveOverlayOnly {
+			controlRevision, err = lockChannelSmartScheduleControlRevisionTx(tx)
+		} else {
+			controlRevision, economicRevision, err = lockChannelSmartScheduleRevisionsTx(tx)
+		}
 		if err != nil {
 			return err
 		}
@@ -1749,7 +1849,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			currentPriority, currentWeight := channelSmartScheduleAbilityRouting(ability, &channel)
 			if result.PoolGuard {
 				if !channelExists || controlRevision != result.ExpectedControlRevision ||
-					economicRevision != result.ExpectedEconomicRevision ||
+					(!adaptiveOverlayOnly && economicRevision != result.ExpectedEconomicRevision) ||
 					state.Revision != result.ExpectedRevision ||
 					state.ParticipationSet != result.ExpectedParticipationSet ||
 					state.Excluded != result.ExpectedExcluded ||
@@ -1761,7 +1861,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				}
 			} else if result.GuardCurrent {
 				if controlRevision != result.ExpectedControlRevision ||
-					economicRevision != result.ExpectedEconomicRevision ||
+					(!adaptiveOverlayOnly && economicRevision != result.ExpectedEconomicRevision) ||
 					state.Revision != result.ExpectedRevision ||
 					!state.Participates() || !ability.Enabled || currentPriority != result.ExpectedPriority ||
 					currentWeight != result.ExpectedWeight ||
@@ -1788,41 +1888,43 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			if len(messageRunes) > 255 {
 				message = string(messageRunes[:255])
 			}
-			updatedTime := result.Time
-			if updatedTime <= 0 {
-				updatedTime = common.GetTimestamp()
-			}
-			scoreDetails, err := EncodeChannelSmartScheduleScoreDetails(result.ScoreDetails)
-			if err != nil {
-				return fmt.Errorf("保存智能调度评分明细失败: %w", err)
-			}
-			state.LastScheduleStatus = result.Status
-			state.LastScheduleError = message
-			state.LastScheduleScore = result.Score
-			state.LastScheduleScoreDetails = scoreDetails
-			state.LastSchedulePriority = result.Priority
-			state.LastScheduleWeight = result.Weight
-			state.LastScheduleTime = updatedTime
-			if result.Stability != nil {
-				state.StabilityState = result.Stability.State
-				state.StabilityUntil = result.Stability.Until
-				state.StabilitySince = result.Stability.Since
-				state.StabilitySavedPriority = result.Stability.SavedPriority
-				state.StabilitySavedWeight = result.Stability.SavedWeight
-				if previousStabilityState != "" && result.Stability.State == "" {
-					state.StabilitySince = 0
-					sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
-						tx, result.ChannelId, result.Model, updatedTime,
-					)
-					if observationErr != nil {
-						return observationErr
-					}
-					outcomes[index].ObservationSince = sampleState.ObservationSince
-					observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
+			if !adaptiveOverlayOnly {
+				updatedTime := result.Time
+				if updatedTime <= 0 {
+					updatedTime = common.GetTimestamp()
 				}
-			}
-			if result.RuntimeProtectionUntil != nil {
-				state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
+				scoreDetails, encodeErr := EncodeChannelSmartScheduleScoreDetails(result.ScoreDetails)
+				if encodeErr != nil {
+					return fmt.Errorf("保存智能调度评分明细失败: %w", encodeErr)
+				}
+				state.LastScheduleStatus = result.Status
+				state.LastScheduleError = message
+				state.LastScheduleScore = result.Score
+				state.LastScheduleScoreDetails = scoreDetails
+				state.LastSchedulePriority = result.Priority
+				state.LastScheduleWeight = result.Weight
+				state.LastScheduleTime = updatedTime
+				if result.Stability != nil {
+					state.StabilityState = result.Stability.State
+					state.StabilityUntil = result.Stability.Until
+					state.StabilitySince = result.Stability.Since
+					state.StabilitySavedPriority = result.Stability.SavedPriority
+					state.StabilitySavedWeight = result.Stability.SavedWeight
+					if previousStabilityState != "" && result.Stability.State == "" {
+						state.StabilitySince = 0
+						sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
+							tx, result.ChannelId, result.Model, updatedTime,
+						)
+						if observationErr != nil {
+							return observationErr
+						}
+						outcomes[index].ObservationSince = sampleState.ObservationSince
+						observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
+					}
+				}
+				if result.RuntimeProtectionUntil != nil {
+					state.RuntimeProtectionUntil = *result.RuntimeProtectionUntil
+				}
 			}
 			if result.AdaptiveHealthSet {
 				state.AdaptiveHealthState = result.AdaptiveHealthState
@@ -1831,21 +1933,25 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state.AdaptiveHealthLastSampleAt = result.AdaptiveHealthLastSampleAt
 			}
 			if result.RoutingSnapshot != nil {
-				state.BaseRank = result.RoutingSnapshot.BaseRank
-				state.BasePriority = result.RoutingSnapshot.BasePriority
-				state.BaseWeight = result.RoutingSnapshot.BaseWeight
-				if state.ManualPrimarySaved {
-					state.ManualPrimarySavedPriority = result.RoutingSnapshot.BasePriority
-					state.ManualPrimarySavedWeight = result.RoutingSnapshot.BaseWeight
+				if !adaptiveOverlayOnly {
+					state.BaseRank = result.RoutingSnapshot.BaseRank
+					state.BasePriority = result.RoutingSnapshot.BasePriority
+					state.BaseWeight = result.RoutingSnapshot.BaseWeight
+					if state.ManualPrimarySaved {
+						state.ManualPrimarySavedPriority = result.RoutingSnapshot.BasePriority
+						state.ManualPrimarySavedWeight = result.RoutingSnapshot.BaseWeight
+					}
 				}
 				state.TemporaryTrafficKind = result.RoutingSnapshot.TemporaryTrafficKind
 				state.TemporaryTrafficSince = result.RoutingSnapshot.TemporaryTrafficSince
 				state.TemporaryTrafficTargetPercent = result.RoutingSnapshot.TemporaryTrafficTargetPercent
 				state.ExplorationMaxPromptTokens = result.RoutingSnapshot.ExplorationMaxPromptTokens
-				state.StabilityReleaseMaxPromptTokens = result.RoutingSnapshot.StabilityReleaseMaxPromptTokens
+				if !adaptiveOverlayOnly {
+					state.StabilityReleaseMaxPromptTokens = result.RoutingSnapshot.StabilityReleaseMaxPromptTokens
+				}
 				state.LastPrioritySampleTime = result.RoutingSnapshot.LastPrioritySampleTime
 			}
-			if state.StabilityState != ChannelSmartScheduleStabilityProbing {
+			if !adaptiveOverlayOnly && state.StabilityState != ChannelSmartScheduleStabilityProbing {
 				state.StabilityReleaseMaxPromptTokens = 0
 			}
 			if state.Revision == math.MaxInt64 {

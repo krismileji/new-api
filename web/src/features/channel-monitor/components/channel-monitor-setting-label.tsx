@@ -137,8 +137,6 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     '窗口内风险请求（非 429 错误或首字达到告警阈值的成功请求）达到此占比后进入压力状态。',
   adaptiveSamplingRecoverRequestPercent:
     '压力状态下，窗口内健康请求（成功且首字未达到告警阈值）达到此占比后恢复健康；与进入阈值形成滞回。',
-  adaptiveSamplingExplorationLeaseMinutes:
-    '同一分组和模型的备用采样租约持续时间，租约内固定补同一候选；达到最少样本或租约到期后轮换。',
   adaptiveSamplingSwitchConfirmRequestPercent:
     '备用渠道作为评分胜者时，窗口内健康请求达到此占比且健康证据足够后才替换主渠道；硬不可用或硬保护路径不等待此确认。',
   adaptiveSamplingMinComparableChannels:

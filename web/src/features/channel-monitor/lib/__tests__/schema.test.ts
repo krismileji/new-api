@@ -598,7 +598,6 @@ describe('channel monitor settings schema', () => {
       adaptiveSamplingWindowSeconds: 600,
       adaptiveSamplingEnterRequestPercent: 10,
       adaptiveSamplingRecoverRequestPercent: 95,
-      adaptiveSamplingExplorationLeaseMinutes: 10,
       adaptiveSamplingSwitchConfirmRequestPercent: 95,
       adaptiveSamplingMinComparableChannels: 2,
     }

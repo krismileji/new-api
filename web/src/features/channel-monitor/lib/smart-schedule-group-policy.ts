@@ -160,8 +160,6 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
       policy.adaptive_sampling_enter_request_percent,
     adaptiveSamplingRecoverRequestPercent:
       policy.adaptive_sampling_recover_request_percent,
-    adaptiveSamplingExplorationLeaseMinutes:
-      policy.adaptive_sampling_exploration_lease_minutes,
     adaptiveSamplingSwitchConfirmRequestPercent:
       policy.adaptive_sampling_switch_confirm_request_percent,
     adaptiveSamplingMinComparableChannels:
@@ -226,8 +224,6 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
       policy.adaptiveSamplingEnterRequestPercent,
     adaptive_sampling_recover_request_percent:
       policy.adaptiveSamplingRecoverRequestPercent,
-    adaptive_sampling_exploration_lease_minutes:
-      policy.adaptiveSamplingExplorationLeaseMinutes,
     adaptive_sampling_switch_confirm_request_percent:
       policy.adaptiveSamplingSwitchConfirmRequestPercent,
     adaptive_sampling_min_comparable_channels:
@@ -291,8 +287,6 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
       policy.adaptiveSamplingEnterRequestPercent,
     adaptiveSamplingRecoverRequestPercent:
       policy.adaptiveSamplingRecoverRequestPercent,
-    adaptiveSamplingExplorationLeaseMinutes:
-      policy.adaptiveSamplingExplorationLeaseMinutes,
     adaptiveSamplingSwitchConfirmRequestPercent:
       policy.adaptiveSamplingSwitchConfirmRequestPercent,
     adaptiveSamplingMinComparableChannels:

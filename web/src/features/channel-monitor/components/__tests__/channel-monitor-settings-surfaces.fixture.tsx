@@ -154,7 +154,6 @@ const settings = {
       adaptive_sampling_window_seconds: 600,
       adaptive_sampling_enter_request_percent: 10,
       adaptive_sampling_recover_request_percent: 95,
-      adaptive_sampling_exploration_lease_minutes: 10,
       adaptive_sampling_switch_confirm_request_percent: 95,
       adaptive_sampling_min_comparable_channels: 2,
     },
