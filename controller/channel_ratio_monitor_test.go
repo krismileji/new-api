@@ -1887,6 +1887,12 @@ func TestSaveChannelMonitorUpstreamConfigAppliesCostConversion(t *testing.T) {
 
 func TestSaveChannelMonitorCustomUpstreamConfigAppliesFixedValues(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":0.3}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":0.3}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
 	baseURL := "https://custom.example/api"
 	require.NoError(t, db.Create(&model.Channel{
 		Id:      28,
@@ -1898,10 +1904,11 @@ func TestSaveChannelMonitorCustomUpstreamConfigAppliesFixedValues(t *testing.T) 
 	}).Error)
 
 	request := map[string]any{
-		"type":      service.CustomUpstreamType,
-		"base_url":  baseURL,
-		"group":     "",
-		"auth_type": service.CustomUpstreamAuthType,
+		"type":                  service.CustomUpstreamType,
+		"base_url":              baseURL,
+		"group":                 "",
+		"auth_type":             service.CustomUpstreamAuthType,
+		"single_channel_action": channelMonitorPolicyActionDisableChannel,
 		"custom_config": map[string]any{
 			"version": 1,
 			"ratio": map[string]any{
@@ -1938,6 +1945,9 @@ func TestSaveChannelMonitorCustomUpstreamConfigAppliesFixedValues(t *testing.T) 
 	assert.NotZero(t, monitor.UpdatedTime)
 	require.NotNil(t, monitor.UpstreamBalance)
 	assert.Equal(t, 25.5, *monitor.UpstreamBalance)
+	channel, err := model.GetChannelById(28, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
 	storedConfig, err := service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 	require.NoError(t, err)
 	assert.Equal(t, service.ChannelMonitorCustomSourceFixed, storedConfig.Balance.Source)
@@ -2466,6 +2476,12 @@ func TestListChannelMonitorUpstreamGroupsAcceptsUnsavedSub2APIToken(t *testing.T
 
 func TestApplyChannelMonitorUpstreamGroupUpdatesRemoteTokenAndRecordsRatio(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
 	disableChannelMonitorSSRFProtection(t)
 
 	updatedGroup := ""
@@ -2511,6 +2527,7 @@ func TestApplyChannelMonitorUpstreamGroupUpdatesRemoteTokenAndRecordsRatio(t *te
 		UpstreamAuthType:    service.NewAPIUpstreamAuthUser,
 		UpstreamUserId:      42,
 		UpstreamAccessToken: "dashboard-token",
+		SingleChannelAction: channelMonitorPolicyActionDisableChannel,
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/22/upstream/group/apply", nil)
@@ -2533,6 +2550,9 @@ func TestApplyChannelMonitorUpstreamGroupUpdatesRemoteTokenAndRecordsRatio(t *te
 	assert.InDelta(t, 1.4, monitor.Ratio, 1e-9)
 	assert.Equal(t, model.ChannelRatioFetchStatusSucceeded, monitor.LastFetchStatus)
 	assert.Contains(t, monitor.Remark, "切换到分组 vip")
+	storedChannel, err := model.GetChannelById(22, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, storedChannel.Status)
 }
 
 func TestApplyChannelMonitorUpstreamGroupDoesNotOverwriteNewerConfig(t *testing.T) {
@@ -2884,7 +2904,12 @@ func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			db := setupChannelMonitorControllerTestDB(t)
-			useChannelMonitorOptionMap(t, map[string]string{})
+			useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+			originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+			t.Cleanup(func() {
+				require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+			})
 			disableChannelMonitorSSRFProtection(t)
 			var upstreamRequests atomic.Int32
 
@@ -2925,10 +2950,13 @@ func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
 			require.NoError(t, db.Create(&model.Channel{
 				Id: 25, Name: "shared metrics", Key: "secret", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled,
 			}).Error)
+			require.NoError(t, db.Create(&model.Channel{
+				Id: 26, Name: "shared peer", Key: "secret", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled,
+			}).Error)
 			require.NoError(t, db.Create(&model.Ability{
 				Group: "vip", Model: "model-a", ChannelId: 25, Enabled: true,
 			}).Error)
-			autoDisableThreshold := 4.0
+			autoDisableThreshold := 3.0
 			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
 				ChannelId:                   25,
 				Ratio:                       1,
@@ -2937,6 +2965,7 @@ func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
 				UpstreamAuthType:            service.CustomUpstreamAuthType,
 				CustomUpstreamConfig:        customConfig,
 				BalanceAutoDisableThreshold: &autoDisableThreshold,
+				MultipleChannelsAction:      channelMonitorPolicyActionDisableChannel,
 			}).Error)
 
 			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, test.path, nil)
@@ -2954,6 +2983,10 @@ func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
 			channel, err := model.GetChannelById(25, true)
 			require.NoError(t, err)
 			assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+			assert.Equal(t, channelMonitorCostRatioPolicyDisableReason, channel.GetOtherInfo()["status_reason"])
+			peer, err := model.GetChannelById(26, true)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusEnabled, peer.Status)
 			var ability model.Ability
 			require.NoError(t, db.First(&ability, "channel_id = ?", 25).Error)
 			assert.False(t, ability.Enabled)
@@ -3117,6 +3150,50 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 		assert.InDelta(t, 1.25, plan.GroupRatioUpdates["vip"], 1e-9)
 	})
 
+	t.Run("multiple disables re-evaluate the remaining single channel", func(t *testing.T) {
+		plan := planChannelMonitorPolicyActions(
+			[]*model.Channel{enabledChannel(1, "vip"), enabledChannel(2, "vip")},
+			map[int]channelMonitorPolicyInput{
+				1: {
+					CostRatio:              1.2,
+					MultipleChannelsAction: channelMonitorPolicyActionDisableChannel,
+				},
+				2: {
+					CostRatio:              1.3,
+					SingleChannelAction:    channelMonitorPolicyActionUpdateGroupRatio,
+					MultipleChannelsAction: channelMonitorPolicyActionDisableChannel,
+				},
+			},
+			map[string]float64{"vip": 1},
+			nil,
+		)
+		assert.Equal(t, []int{1}, plan.DisableChannelIds)
+		require.Contains(t, plan.GroupRatioUpdates, "vip")
+		assert.InDelta(t, 1.3, plan.GroupRatioUpdates["vip"], 1e-9)
+	})
+
+	t.Run("single channel disable can continue after multiple channel disable", func(t *testing.T) {
+		plan := planChannelMonitorPolicyActions(
+			[]*model.Channel{enabledChannel(1, "vip"), enabledChannel(2, "vip")},
+			map[int]channelMonitorPolicyInput{
+				1: {
+					CostRatio:              1.2,
+					SingleChannelAction:    channelMonitorPolicyActionDisableChannel,
+					MultipleChannelsAction: channelMonitorPolicyActionDisableChannel,
+				},
+				2: {
+					CostRatio:              1.3,
+					SingleChannelAction:    channelMonitorPolicyActionDisableChannel,
+					MultipleChannelsAction: channelMonitorPolicyActionDisableChannel,
+				},
+			},
+			map[string]float64{"vip": 1},
+			nil,
+		)
+		assert.Equal(t, []int{1, 2}, plan.DisableChannelIds)
+		assert.Empty(t, plan.GroupRatioUpdates)
+	})
+
 	t.Run("temporary channel is disabled then stable channel uses single policy", func(t *testing.T) {
 		plan := planChannelMonitorPolicyActions(
 			[]*model.Channel{enabledChannel(1, "vip"), enabledChannel(2, "vip")},
@@ -3275,6 +3352,121 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 		assert.Empty(t, plan.GroupRatioUpdates)
 		assert.Equal(t, 1, plan.SkippedGroupCount)
 	})
+}
+
+func TestUpdateChannelMonitorRatioAppliesSingleChannelPolicyImmediately(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 29, Name: "single policy", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 29, Ratio: 1, UpdatedTime: 1,
+		SingleChannelAction: channelMonitorPolicyActionDisableChannel,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/29/ratio", map[string]any{
+		"ratio": 1.25,
+	})
+	ctx.Params = gin.Params{{Key: "id", Value: "29"}}
+	UpdateChannelMonitorRatio(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+	channel, err := model.GetChannelById(29, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+}
+
+func TestSaveChannelMonitorUpstreamConfigAppliesPolicyAfterCostConversionChange(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+
+	baseURL := "https://upstream.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 30, Name: "conversion policy", Group: "vip", BaseURL: &baseURL,
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 30, Ratio: 1, UpdatedTime: 1,
+		UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: baseURL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic,
+	}).Error)
+
+	request := map[string]any{
+		"type":                  service.NewAPIUpstreamType,
+		"base_url":              baseURL,
+		"group":                 "vip",
+		"auth_type":             service.NewAPIUpstreamAuthPublic,
+		"single_channel_action": channelMonitorPolicyActionDisableChannel,
+		"cost_conversion": map[string]any{
+			"mode":         service.ChannelMonitorCostConversionRecharge,
+			"paid_cny":     200,
+			"credited_usd": 100,
+		},
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/30/upstream", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "30"}}
+	SaveChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	channel, err := model.GetChannelById(30, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+}
+
+func TestFetchChannelMonitorUpstreamRatioAppliesMultipleChannelPolicyImmediately(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{"GroupRatio": `{"vip":1}`})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	disableChannelMonitorSSRFProtection(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"group_ratio":{"vip":1.25}}`))
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 31, Name: "refresh policy", Key: "secret", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 32, Name: "refresh peer", Key: "secret", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 31, Ratio: 1, UpdatedTime: 1,
+		UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic,
+		UpstreamBalanceSyncDisabled: true,
+		MultipleChannelsAction:      channelMonitorPolicyActionDisableChannel,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/31/upstream/fetch", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "31"}}
+	FetchChannelMonitorUpstreamRatio(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	channel, err := model.GetChannelById(31, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	peer, err := model.GetChannelById(32, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, peer.Status)
 }
 
 func TestApplyChannelMonitorPolicyPlanMarksGroupUpdateFailure(t *testing.T) {

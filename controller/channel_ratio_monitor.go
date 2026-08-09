@@ -668,6 +668,10 @@ func UpdateChannelMonitorRatio(c *gin.Context) {
 		return
 	}
 	service.InvalidateChannelDailyCostSnapshot(channelId)
+	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
+		common.ApiError(c, fmt.Errorf("倍率已保存，但分组策略执行失败: %w", err))
+		return
+	}
 	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.monitor_ratio_update", map[string]interface{}{
 		"id": channelId, "ratio": *request.Ratio, "changed": changed,
@@ -910,6 +914,10 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 				service.ResetProxyClientCache()
 			}
 		}
+	}
+	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
+		common.ApiError(c, fmt.Errorf("上游配置已保存，但分组策略执行失败: %w", err))
+		return
 	}
 	auditDetails := map[string]interface{}{
 		"id": channelId, "upstream_type": config.Type, "upstream_type_label": channelMonitorUpstreamTypeLabel(config.Type), "group": config.Group, "auth_type": config.AuthType,
@@ -1453,6 +1461,7 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	monitor = outcome.Monitor
 	balanceAutoDisabled := false
 	if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
 		effectiveBalance := *outcome.Result.Balance.Amount
@@ -1476,6 +1485,10 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 			model.InitChannelCache()
 			service.ResetProxyClientCache()
 		}
+	}
+	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
+		common.ApiError(c, fmt.Errorf("上游倍率已更新，但分组策略执行失败: %w", err))
+		return
 	}
 	recordManageAudit(c, "channel.monitor_upstream_ratio_fetch", map[string]interface{}{
 		"id": channelId, "upstream_type": monitor.UpstreamType, "group": monitor.UpstreamGroup,
@@ -1549,6 +1562,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		}
 		result = outcome.Result.Balance
 		balanceEvaluation = outcome.BalanceEvaluation
+		monitor = outcome.Monitor
 	} else {
 		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 		if err != nil {
@@ -1580,6 +1594,12 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 	if balanceAutoDisabled {
 		model.InitChannelCache()
 		service.ResetProxyClientCache()
+	}
+	if ratioRefreshed {
+		if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
+			common.ApiError(c, fmt.Errorf("上游倍率已更新，但分组策略执行失败: %w", err))
+			return
+		}
 	}
 	recordManageAudit(c, "channel.monitor_upstream_balance_fetch", map[string]interface{}{
 		"id": channelId, "upstream_type": monitor.UpstreamType, "balance": *result.Amount,
@@ -1676,6 +1696,10 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		return
 	}
 	service.InvalidateChannelDailyCostSnapshot(channelId)
+	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), updatedMonitor); err != nil {
+		common.ApiError(c, fmt.Errorf("上游令牌已切换且倍率已记录，但分组策略执行失败: %w", err))
+		return
+	}
 	recordManageAudit(c, "channel.monitor_upstream_group_apply", map[string]interface{}{
 		"id":                channelId,
 		"upstream_type":     monitor.UpstreamType,

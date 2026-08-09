@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 const channelMonitorRatioEpsilon = 1e-9
@@ -92,6 +93,42 @@ func collectChannelMonitorPolicyMembers(
 	return members, activeChannelCount, complete
 }
 
+// applyChannelMonitorRatioPolicy applies the policy for one freshly saved
+// monitor. Other channels are intentionally omitted from policyInputs: their
+// stored ratios may be stale, while the planner still has enough channel
+// status and membership information to evaluate disable/remove actions.
+func applyChannelMonitorRatioPolicy(ctx context.Context, monitor model.ChannelRatioMonitor) error {
+	if monitor.UpdatedTime <= 0 ||
+		(normalizeChannelMonitorPolicyAction(monitor.SingleChannelAction) == channelMonitorPolicyActionNone &&
+			normalizeChannelMonitorPolicyAction(monitor.MultipleChannelsAction) == channelMonitorPolicyActionNone) {
+		return nil
+	}
+
+	costRatio, _, err := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
+	if err != nil {
+		return err
+	}
+	channels, err := model.GetAllChannelsForMonitor()
+	if err != nil {
+		return err
+	}
+	plan := planChannelMonitorPolicyActions(
+		channels,
+		map[int]channelMonitorPolicyInput{
+			monitor.ChannelId: {
+				UpstreamRevision:       monitor.UpstreamRevision,
+				CostRatio:              costRatio,
+				SingleChannelAction:    monitor.SingleChannelAction,
+				MultipleChannelsAction: monitor.MultipleChannelsAction,
+			},
+		},
+		ratio_setting.GetGroupRatioCopy(),
+		getChannelMonitorGroupCoefficients(),
+	)
+	_, _, _, _, err = applyChannelMonitorPolicyPlan(ctx, plan)
+	return err
+}
+
 func planChannelMonitorPolicyActions(
 	channels []*model.Channel,
 	policyInputs map[int]channelMonitorPolicyInput,
@@ -173,7 +210,7 @@ func planChannelMonitorPolicyActions(
 	disableChannelIds := make(map[int]struct{})
 	removedMemberships := make(map[channelMonitorPolicyMembership]struct{})
 	for {
-		nextDisableChannelIds := make(map[int]struct{})
+		nextDisableChannelId := 0
 		for _, group := range groups {
 			members, activeChannelCount, _ := collectChannelMonitorPolicyMembers(group, policyInputs, disableChannelIds, removedMemberships)
 			if len(members) == 0 {
@@ -183,21 +220,26 @@ func planChannelMonitorPolicyActions(
 				member := members[0]
 				if member.Target-group.CurrentRatio > channelMonitorRatioEpsilon &&
 					member.SingleChannelAction == channelMonitorPolicyActionDisableChannel {
-					nextDisableChannelIds[member.ChannelId] = struct{}{}
+					nextDisableChannelId = member.ChannelId
+				}
+				if nextDisableChannelId > 0 {
+					break
 				}
 				continue
 			}
 			for _, member := range members {
 				if member.Target-group.CurrentRatio > channelMonitorRatioEpsilon &&
 					member.MultipleChannelsAction == channelMonitorPolicyActionDisableChannel {
-					nextDisableChannelIds[member.ChannelId] = struct{}{}
+					nextDisableChannelId = member.ChannelId
+					break
 				}
 			}
-		}
-		if len(nextDisableChannelIds) > 0 {
-			for channelId := range nextDisableChannelIds {
-				disableChannelIds[channelId] = struct{}{}
+			if nextDisableChannelId > 0 {
+				break
 			}
+		}
+		if nextDisableChannelId > 0 {
+			disableChannelIds[nextDisableChannelId] = struct{}{}
 			continue
 		}
 
