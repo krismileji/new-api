@@ -491,6 +491,29 @@ func TestChannelSmartScheduleSettingsRejectIncompleteStoredPolicies(t *testing.T
 	assert.False(t, (channelSmartScheduleTaskHandler{}).Enabled())
 }
 
+func TestChannelSmartScheduleSettingsIgnoreRemovedPrimaryMinimum(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	serializedPolicy, err := common.Marshal(policy)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, common.Unmarshal(serializedPolicy, &fields))
+	fields["adaptive_sampling_primary_min_percent"] = 70
+	serializedLegacyPolicy, err := common.Marshal(fields)
+	require.NoError(t, err)
+
+	var decoded channelSmartScheduleGroupPolicy
+	require.NoError(t, common.Unmarshal(serializedLegacyPolicy, &decoded))
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{decoded})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	serializedNormalized, err := common.Marshal(normalized)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serializedNormalized), "adaptive_sampling_primary_min_percent")
+}
+
 func TestSavingFirstGroupPolicyDoesNotImplicitlyEnableScheduling(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
@@ -897,7 +920,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"sampling_order":                " ratio ",
 				"exploration_traffic_percent":   3, "probe_interval_minutes": 10,
 				"adaptive_sampling_enabled": false, "adaptive_sampling_base_percent": 3,
-				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
+				"adaptive_sampling_max_percent":           30,
 				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
 				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
 				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_first_token_warning_request_percent": 10,
@@ -924,7 +947,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"sampling_order":                channelMonitorSmartScheduleSamplingOrderPriorityWeight,
 				"exploration_traffic_percent":   5, "probe_interval_minutes": 5,
 				"adaptive_sampling_enabled": true, "adaptive_sampling_base_percent": 3,
-				"adaptive_sampling_max_percent": 30, "adaptive_sampling_primary_min_percent": 70,
+				"adaptive_sampling_max_percent":           30,
 				"adaptive_sampling_error_warning_percent": 5, "adaptive_sampling_error_critical_percent": 15,
 				"adaptive_sampling_first_token_warning_seconds": 5, "adaptive_sampling_first_token_critical_seconds": 10,
 				"adaptive_sampling_window_seconds": 600, "adaptive_sampling_first_token_warning_request_percent": 10,

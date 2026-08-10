@@ -514,7 +514,6 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   adaptive_sampling_enabled: boolean
   adaptive_sampling_base_percent: number
   adaptive_sampling_max_percent: number
-  adaptive_sampling_primary_min_percent: number
   adaptive_sampling_error_warning_percent: number
   adaptive_sampling_error_critical_percent: number
   adaptive_sampling_first_token_warning_seconds: number

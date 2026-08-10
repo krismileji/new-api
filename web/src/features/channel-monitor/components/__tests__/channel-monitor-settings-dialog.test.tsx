@@ -447,7 +447,6 @@ describe('channel monitor settings dialog', () => {
       '自适应备援采样',
       '基础备援预算',
       '最大备援预算',
-      '主渠道最低流量',
       '错误告警阈值',
       '错误高风险阈值',
       '首字告警阈值',
@@ -469,6 +468,15 @@ describe('channel monitor settings dialog', () => {
     assert.ok(stabilityHelpIndex >= 0)
     assert.ok(softDegradeSectionIndex > stabilityHelpIndex)
     assert.equal(trafficPolicyMarkup.includes('降级稳定性得分'), false)
+    assert.equal(
+      trafficPolicyMarkup.includes('adaptiveSamplingPrimaryMinPercent'),
+      false
+    )
+    assert.ok(
+      trafficPolicyMarkup.includes(
+        '池级最高采样比例，主渠道最低保留 100% - 本值'
+      )
+    )
     assert.match(
       trafficPolicyMarkup,
       /<input(?=[^>]*name="fastFailureSameChannelRetryCount")(?=[^>]*min="0")(?=[^>]*max="10")(?=[^>]*value="0")[^>]*>/

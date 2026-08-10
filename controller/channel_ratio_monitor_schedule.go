@@ -1436,11 +1436,7 @@ func channelSmartScheduleAdaptiveSamplingBudget(
 	maxPercent := max(policy.AdaptiveSamplingMaxPercent, basePercent)
 	pressure := min(max(primary.HealthPressure, 0), 1)
 	budget := demand * (basePercent + pressure*(maxPercent-basePercent))
-	maxByPrimaryFloor := channelMonitorScorePercentageTotal - policy.AdaptiveSamplingPrimaryMinPercent
-	if maxByPrimaryFloor < 0 {
-		return 0
-	}
-	return min(max(budget, 0), min(maxPercent, maxByPrimaryFloor))
+	return min(max(budget, 0), maxPercent)
 }
 
 func channelSmartScheduleAdaptiveCandidateRank(candidate channelSmartScheduleCandidate) int {

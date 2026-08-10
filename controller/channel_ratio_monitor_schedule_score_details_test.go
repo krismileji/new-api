@@ -338,13 +338,12 @@ func TestChannelSmartScheduleHealthUsesWindowRequestPercentages(t *testing.T) {
 
 func TestChannelSmartScheduleAdaptiveSamplingBudgetUsesConfiguredPressure(t *testing.T) {
 	policy := channelSmartSchedulePolicy{
-		AdaptiveSamplingEnabled:           true,
-		AdaptiveSamplingBasePercent:       3,
-		AdaptiveSamplingMaxPercent:        30,
-		AdaptiveSamplingPrimaryMinPercent: 70,
-		ExplorationTrafficPercent:         8,
-		MinSamples:                        5,
-		SampleMode:                        channelMonitorSmartScheduleSampleTraffic,
+		AdaptiveSamplingEnabled:     true,
+		AdaptiveSamplingBasePercent: 3,
+		AdaptiveSamplingMaxPercent:  30,
+		ExplorationTrafficPercent:   8,
+		MinSamples:                  5,
+		SampleMode:                  channelMonitorSmartScheduleSampleTraffic,
 	}
 	backup := channelSmartScheduleCandidate{ChannelId: 2, SampleDebt: 5}
 
@@ -361,6 +360,12 @@ func TestChannelSmartScheduleAdaptiveSamplingBudgetUsesConfiguredPressure(t *tes
 	pressuredPrimary.HealthPressure = 1
 	assert.InDelta(t, 30, channelSmartScheduleAdaptiveSamplingBudget(
 		pressuredPrimary, []channelSmartScheduleCandidate{pressuredPrimary, backup}, policy,
+	), 1e-9)
+
+	maxBudgetPolicy := policy
+	maxBudgetPolicy.AdaptiveSamplingMaxPercent = 49
+	assert.InDelta(t, 49, channelSmartScheduleAdaptiveSamplingBudget(
+		pressuredPrimary, []channelSmartScheduleCandidate{pressuredPrimary, backup}, maxBudgetPolicy,
 	), 1e-9)
 }
 

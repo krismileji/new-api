@@ -150,8 +150,6 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     adaptiveSamplingEnabled: policy.adaptive_sampling_enabled,
     adaptiveSamplingBasePercent: policy.adaptive_sampling_base_percent,
     adaptiveSamplingMaxPercent: policy.adaptive_sampling_max_percent,
-    adaptiveSamplingPrimaryMinPercent:
-      policy.adaptive_sampling_primary_min_percent,
     adaptiveSamplingErrorWarningPercent:
       policy.adaptive_sampling_error_warning_percent,
     adaptiveSamplingErrorCriticalPercent:
@@ -215,8 +213,6 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     adaptive_sampling_enabled: policy.adaptiveSamplingEnabled,
     adaptive_sampling_base_percent: policy.adaptiveSamplingBasePercent,
     adaptive_sampling_max_percent: policy.adaptiveSamplingMaxPercent,
-    adaptive_sampling_primary_min_percent:
-      policy.adaptiveSamplingPrimaryMinPercent,
     adaptive_sampling_error_warning_percent:
       policy.adaptiveSamplingErrorWarningPercent,
     adaptive_sampling_error_critical_percent:
@@ -275,7 +271,6 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     adaptiveSamplingEnabled: policy.adaptiveSamplingEnabled,
     adaptiveSamplingBasePercent: policy.adaptiveSamplingBasePercent,
     adaptiveSamplingMaxPercent: policy.adaptiveSamplingMaxPercent,
-    adaptiveSamplingPrimaryMinPercent: policy.adaptiveSamplingPrimaryMinPercent,
     adaptiveSamplingErrorWarningPercent:
       policy.adaptiveSamplingErrorWarningPercent,
     adaptiveSamplingErrorCriticalPercent:

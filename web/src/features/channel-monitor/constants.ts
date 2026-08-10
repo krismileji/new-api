@@ -64,7 +64,6 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
   adaptiveSamplingEnabled: true,
   adaptiveSamplingBasePercent: 3,
   adaptiveSamplingMaxPercent: 30,
-  adaptiveSamplingPrimaryMinPercent: 70,
   adaptiveSamplingErrorWarningPercent: 5,
   adaptiveSamplingErrorCriticalPercent: 15,
   adaptiveSamplingFirstTokenWarningSeconds: 5,

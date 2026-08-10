@@ -100,7 +100,7 @@
 
 评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或滚动稳定性评分限制。成功只清零连续失败，窗口内失败继续保留。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚；每个超出容忍数量的慢成功从稳定性得分中扣除 `1 / 稳定性总样本数`，事件值按池合并 `1` 秒更新。请求失败上限由 `relay_response_header_timeout_seconds` 控制。
 
-自适应进入使用两个独立信号：窗口内非 429 错误率超过 `adaptive_sampling_error_warning_percent`，或首字达到告警秒数的成功请求占比达到必填的 `adaptive_sampling_first_token_warning_request_percent`。后者默认 `10%`，有效范围为 `>0..100%`。两个信号按 OR 判定，不先合并风险请求再经过统一进入门槛；压力状态只有在两个进入信号都解除且健康请求占比达到 `adaptive_sampling_recover_request_percent` 后恢复，仍命中的进入信号优先于恢复判断。保存时要求 `adaptive_sampling_first_token_warning_request_percent + adaptive_sampling_recover_request_percent > 100%`。旧字段 `adaptive_sampling_enter_request_percent` 会被明确拒绝，不读取、不输出、不迁移，不提供旧配置兼容。完整策略示例：
+自适应进入使用两个独立信号：窗口内非 429 错误率超过 `adaptive_sampling_error_warning_percent`，或首字达到告警秒数的成功请求占比达到必填的 `adaptive_sampling_first_token_warning_request_percent`。后者默认 `10%`，有效范围为 `>0..100%`。两个信号按 OR 判定，不先合并风险请求再经过统一进入门槛；压力状态只有在两个进入信号都解除且健康请求占比达到 `adaptive_sampling_recover_request_percent` 后恢复，仍命中的进入信号优先于恢复判断。保存时要求 `adaptive_sampling_first_token_warning_request_percent + adaptive_sampling_recover_request_percent > 100%`。正常单主渠道最低保留比例由 `100% - adaptive_sampling_max_percent` 自动推导；`adaptive_sampling_primary_min_percent` 已从当前契约移除，旧配置中的该字段兼容忽略且不再输出。旧字段 `adaptive_sampling_enter_request_percent` 会被明确拒绝，不读取、不输出、不迁移，不提供旧配置兼容。完整策略示例：
 
 ```json
 [
@@ -135,7 +135,6 @@
     "adaptive_sampling_enabled": true,
     "adaptive_sampling_base_percent": 3,
     "adaptive_sampling_max_percent": 30,
-    "adaptive_sampling_primary_min_percent": 70,
     "adaptive_sampling_error_warning_percent": 5,
     "adaptive_sampling_error_critical_percent": 15,
     "adaptive_sampling_first_token_warning_seconds": 5,

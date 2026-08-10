@@ -125,6 +125,7 @@ describe('smart schedule policy schema', () => {
     assert.equal(
       schema.safeParse({
         ...basePolicy,
+        adaptiveSamplingMaxPercent: 49,
         adaptiveSamplingWindowSeconds: 60,
         adaptiveSamplingFirstTokenWarningRequestPercent: 10,
         adaptiveSamplingRecoverRequestPercent: 95,
@@ -590,7 +591,6 @@ describe('channel monitor settings schema', () => {
       adaptiveSamplingEnabled: true,
       adaptiveSamplingBasePercent: 3,
       adaptiveSamplingMaxPercent: 30,
-      adaptiveSamplingPrimaryMinPercent: 70,
       adaptiveSamplingErrorWarningPercent: 5,
       adaptiveSamplingErrorCriticalPercent: 15,
       adaptiveSamplingFirstTokenWarningSeconds: 5,

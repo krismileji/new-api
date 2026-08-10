@@ -38,7 +38,6 @@ const ADAPTIVE_SAMPLING_POLICY = {
   adaptive_sampling_enabled: true,
   adaptive_sampling_base_percent: 3,
   adaptive_sampling_max_percent: 30,
-  adaptive_sampling_primary_min_percent: 70,
   adaptive_sampling_error_warning_percent: 5,
   adaptive_sampling_error_critical_percent: 15,
   adaptive_sampling_first_token_warning_seconds: 5,

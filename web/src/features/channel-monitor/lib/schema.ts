@@ -85,8 +85,6 @@ export const DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 30
 export const MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 300
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT = 10
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT = 49
-export const MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 51
-export const MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT = 99
 export const MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 60
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 3_600
 export const MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS = 10
@@ -450,11 +448,6 @@ const smartSchedulePolicyShape = {
     MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
     '自适应采样最大预算'
   ),
-  adaptiveSamplingPrimaryMinPercent: smartScheduleAdaptiveSamplingPercentSchema(
-    MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
-    MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
-    '主渠道最低流量'
-  ),
   adaptiveSamplingErrorWarningPercent:
     smartScheduleAdaptiveSamplingPercentSchema(0, 100, '错误告警阈值'),
   adaptiveSamplingErrorCriticalPercent:
@@ -544,7 +537,6 @@ function validateSmartSchedulePolicy(
     adaptiveSamplingEnabled: boolean
     adaptiveSamplingBasePercent: number
     adaptiveSamplingMaxPercent: number
-    adaptiveSamplingPrimaryMinPercent: number
     adaptiveSamplingErrorWarningPercent: number
     adaptiveSamplingErrorCriticalPercent: number
     adaptiveSamplingFirstTokenWarningSeconds: number
@@ -584,16 +576,6 @@ function validateSmartSchedulePolicy(
         code: 'custom',
         path: ['adaptiveSamplingBasePercent'],
         message: '自适应采样基础预算不能大于最大预算',
-      })
-    }
-    if (
-      values.adaptiveSamplingMaxPercent >
-      100 - values.adaptiveSamplingPrimaryMinPercent
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: ['adaptiveSamplingMaxPercent'],
-        message: '自适应采样最大预算与主渠道最低流量冲突',
       })
     }
     if (

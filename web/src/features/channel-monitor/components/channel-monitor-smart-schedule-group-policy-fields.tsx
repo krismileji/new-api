@@ -50,7 +50,6 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS,
-  MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
@@ -65,7 +64,6 @@ import {
   MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
   MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
-  MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT,
   MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
@@ -184,7 +182,6 @@ function GroupPolicyMetricFields(props: {
 type AdaptiveSamplingFieldName =
   | 'adaptiveSamplingBasePercent'
   | 'adaptiveSamplingMaxPercent'
-  | 'adaptiveSamplingPrimaryMinPercent'
   | 'adaptiveSamplingErrorWarningPercent'
   | 'adaptiveSamplingErrorCriticalPercent'
   | 'adaptiveSamplingFirstTokenWarningSeconds'
@@ -198,7 +195,6 @@ type AdaptiveSamplingFieldName =
 type AdaptiveSamplingHelpKey =
   | 'adaptiveSamplingBasePercent'
   | 'adaptiveSamplingMaxPercent'
-  | 'adaptiveSamplingPrimaryMinPercent'
   | 'adaptiveSamplingErrorWarningPercent'
   | 'adaptiveSamplingErrorCriticalPercent'
   | 'adaptiveSamplingFirstTokenWarningSeconds'
@@ -771,7 +767,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
           {applyMode === 'priority_weight' &&
           adaptiveSamplingEnabled === true ? (
             <>
-              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+              <div className='grid items-start gap-4 sm:grid-cols-2'>
                 <AdaptiveSamplingNumberField
                   form={props.form}
                   name='adaptiveSamplingBasePercent'
@@ -792,18 +788,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   step={0.1}
                   unit='%'
                   helpKey='adaptiveSamplingMaxPercent'
-                  description='主渠道有压力时的池级最高采样比例'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingPrimaryMinPercent'
-                  label='主渠道最低流量'
-                  min={MIN_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_PRIMARY_MIN_PERCENT}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingPrimaryMinPercent'
-                  description='软降级期间保留的最低主渠道流量'
+                  description='池级最高采样比例，主渠道最低保留 100% - 本值'
                 />
               </div>
               <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>

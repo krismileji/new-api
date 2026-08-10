@@ -396,20 +396,14 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     constraints: '不得大于最大备援预算，仅自适应备援开启时生效',
   }),
   adaptiveSamplingMaxPercent: smartScheduleSettingHelp({
-    meaning: '设定高压力时整个池可分给备援采样的最高预算。',
+    meaning:
+      '设定高压力时整个池可分给备援采样的最高预算，主渠道最低保留比例自动按 100% - 本值计算。',
     unit: '%',
     range: '1–49',
     defaultValue: '30',
     scheduleRelation: EVENT_REFRESH,
-    constraints: '必须不小于基础预算，且不得超过 100% - 主渠道最低流量',
-  }),
-  adaptiveSamplingPrimaryMinPercent: smartScheduleSettingHelp({
-    meaning: '设定软压力期间健康主渠道保留的最低流量。',
-    unit: '%',
-    range: '51–99',
-    defaultValue: '70',
-    scheduleRelation: EVENT_REFRESH,
-    constraints: '最大备援预算不得超过 100% - 本值；硬不可用时不受此限制',
+    constraints:
+      '必须不小于基础预算，范围上限为 49%（正常单主渠道至少保留 51%）；硬不可用时不受该预算限制',
   }),
   adaptiveSamplingErrorWarningPercent: smartScheduleSettingHelp({
     meaning: '设定主渠道非 429 错误进入软压力计算的告警阈值。',

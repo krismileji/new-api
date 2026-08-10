@@ -97,7 +97,6 @@ const formValues = {
       adaptiveSamplingEnabled: true,
       adaptiveSamplingBasePercent: 3,
       adaptiveSamplingMaxPercent: 30,
-      adaptiveSamplingPrimaryMinPercent: 70,
       adaptiveSamplingErrorWarningPercent: 5,
       adaptiveSamplingErrorCriticalPercent: 15,
       adaptiveSamplingFirstTokenWarningSeconds: 5,
@@ -179,6 +178,7 @@ describe('channel monitor settings submit payload', () => {
       'priority_sampling_decay_percent',
       'priority_sampling_min_percent',
       'adaptive_sampling_enter_request_percent',
+      'adaptive_sampling_primary_min_percent',
     ]) {
       assert.equal(
         Object.hasOwn(

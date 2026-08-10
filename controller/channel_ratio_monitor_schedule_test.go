@@ -39,7 +39,6 @@ func channelSmartScheduleTestGroupPolicy(
 	adaptiveSamplingEnabled := applyMode == channelMonitorSmartScheduleApplyPriorityWeight
 	adaptiveSamplingBasePercent := 3.0
 	adaptiveSamplingMaxPercent := 30.0
-	adaptiveSamplingPrimaryMinPercent := 70.0
 	adaptiveSamplingErrorWarningPercent := 5.0
 	adaptiveSamplingErrorCriticalPercent := 15.0
 	adaptiveSamplingFirstTokenWarningSeconds := 5.0
@@ -96,7 +95,6 @@ func channelSmartScheduleTestGroupPolicy(
 		AdaptiveSamplingEnabled:                         &adaptiveSamplingEnabled,
 		AdaptiveSamplingBasePercent:                     &adaptiveSamplingBasePercent,
 		AdaptiveSamplingMaxPercent:                      &adaptiveSamplingMaxPercent,
-		AdaptiveSamplingPrimaryMinPercent:               &adaptiveSamplingPrimaryMinPercent,
 		AdaptiveSamplingErrorWarningPercent:             &adaptiveSamplingErrorWarningPercent,
 		AdaptiveSamplingErrorCriticalPercent:            &adaptiveSamplingErrorCriticalPercent,
 		AdaptiveSamplingFirstTokenWarningSeconds:        &adaptiveSamplingFirstTokenWarningSeconds,
@@ -172,14 +170,6 @@ func TestNormalizeChannelSmartScheduleGroupPolicyValidatesAdaptiveSamplingCombin
 				policy.AdaptiveSamplingBasePercent = &base
 			},
 			message: "基础预算不能大于最大预算",
-		},
-		{
-			name: "primary floor conflicts with maximum",
-			prepare: func(policy *channelSmartScheduleGroupPolicy) {
-				value := 80.0
-				policy.AdaptiveSamplingPrimaryMinPercent = &value
-			},
-			message: "最大预算与主渠道最低流量冲突",
 		},
 		{
 			name: "weight mode cannot enable adaptive sampling",

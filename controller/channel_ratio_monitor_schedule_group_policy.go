@@ -64,7 +64,6 @@ type channelSmartScheduleGroupPolicy struct {
 	AdaptiveSamplingEnabled                         *bool                        `json:"adaptive_sampling_enabled,omitempty"`
 	AdaptiveSamplingBasePercent                     *float64                     `json:"adaptive_sampling_base_percent,omitempty"`
 	AdaptiveSamplingMaxPercent                      *float64                     `json:"adaptive_sampling_max_percent,omitempty"`
-	AdaptiveSamplingPrimaryMinPercent               *float64                     `json:"adaptive_sampling_primary_min_percent,omitempty"`
 	AdaptiveSamplingErrorWarningPercent             *float64                     `json:"adaptive_sampling_error_warning_percent,omitempty"`
 	AdaptiveSamplingErrorCriticalPercent            *float64                     `json:"adaptive_sampling_error_critical_percent,omitempty"`
 	AdaptiveSamplingFirstTokenWarningSeconds        *float64                     `json:"adaptive_sampling_first_token_warning_seconds,omitempty"`
@@ -139,7 +138,6 @@ type channelSmartSchedulePolicy struct {
 	AdaptiveSamplingEnabled                         bool
 	AdaptiveSamplingBasePercent                     float64
 	AdaptiveSamplingMaxPercent                      float64
-	AdaptiveSamplingPrimaryMinPercent               float64
 	AdaptiveSamplingErrorWarningPercent             float64
 	AdaptiveSamplingErrorCriticalPercent            float64
 	AdaptiveSamplingFirstTokenWarningSeconds        float64
@@ -231,7 +229,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.ExplorationMaxPromptTokens == nil || policy.StabilityReleaseMaxPromptTokens == nil ||
 			policy.ProbeIntervalMinutes == nil || policy.DegradedProbeEnabled == nil ||
 			policy.AdaptiveSamplingEnabled == nil || policy.AdaptiveSamplingBasePercent == nil ||
-			policy.AdaptiveSamplingMaxPercent == nil || policy.AdaptiveSamplingPrimaryMinPercent == nil ||
+			policy.AdaptiveSamplingMaxPercent == nil ||
 			policy.AdaptiveSamplingErrorWarningPercent == nil || policy.AdaptiveSamplingErrorCriticalPercent == nil ||
 			policy.AdaptiveSamplingFirstTokenWarningSeconds == nil || policy.AdaptiveSamplingFirstTokenCriticalSeconds == nil ||
 			policy.AdaptiveSamplingWindowSeconds == nil || policy.AdaptiveSamplingFirstTokenWarningRequestPercent == nil ||
@@ -368,15 +366,8 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.AdaptiveSamplingMaxPercent < 1 || *policy.AdaptiveSamplingMaxPercent > 49 {
 			return nil, errors.New("自适应采样最大预算必须在 1% 到 49% 之间")
 		}
-		if math.IsNaN(*policy.AdaptiveSamplingPrimaryMinPercent) || math.IsInf(*policy.AdaptiveSamplingPrimaryMinPercent, 0) ||
-			*policy.AdaptiveSamplingPrimaryMinPercent < 51 || *policy.AdaptiveSamplingPrimaryMinPercent > 99 {
-			return nil, errors.New("自适应采样主渠道最低流量必须在 51% 到 99% 之间")
-		}
 		if *policy.AdaptiveSamplingBasePercent > *policy.AdaptiveSamplingMaxPercent {
 			return nil, errors.New("自适应采样基础预算不能大于最大预算")
-		}
-		if *policy.AdaptiveSamplingMaxPercent > 100-*policy.AdaptiveSamplingPrimaryMinPercent {
-			return nil, errors.New("自适应采样最大预算与主渠道最低流量冲突")
 		}
 		for _, threshold := range []*float64{
 			policy.AdaptiveSamplingErrorWarningPercent,
@@ -492,7 +483,6 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		AdaptiveSamplingEnabled:                         *configured.AdaptiveSamplingEnabled,
 		AdaptiveSamplingBasePercent:                     *configured.AdaptiveSamplingBasePercent,
 		AdaptiveSamplingMaxPercent:                      *configured.AdaptiveSamplingMaxPercent,
-		AdaptiveSamplingPrimaryMinPercent:               *configured.AdaptiveSamplingPrimaryMinPercent,
 		AdaptiveSamplingErrorWarningPercent:             *configured.AdaptiveSamplingErrorWarningPercent,
 		AdaptiveSamplingErrorCriticalPercent:            *configured.AdaptiveSamplingErrorCriticalPercent,
 		AdaptiveSamplingFirstTokenWarningSeconds:        *configured.AdaptiveSamplingFirstTokenWarningSeconds,

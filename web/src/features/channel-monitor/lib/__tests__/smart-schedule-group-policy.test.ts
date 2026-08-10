@@ -73,7 +73,6 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   adaptiveSamplingEnabled: false,
   adaptiveSamplingBasePercent: 3,
   adaptiveSamplingMaxPercent: 30,
-  adaptiveSamplingPrimaryMinPercent: 70,
   adaptiveSamplingErrorWarningPercent: 5,
   adaptiveSamplingErrorCriticalPercent: 15,
   adaptiveSamplingFirstTokenWarningSeconds: 5,
@@ -158,8 +157,6 @@ describe('smart schedule group policy', () => {
         adaptive_sampling_base_percent:
           defaultPolicy.adaptiveSamplingBasePercent,
         adaptive_sampling_max_percent: defaultPolicy.adaptiveSamplingMaxPercent,
-        adaptive_sampling_primary_min_percent:
-          defaultPolicy.adaptiveSamplingPrimaryMinPercent,
         adaptive_sampling_error_warning_percent:
           defaultPolicy.adaptiveSamplingErrorWarningPercent,
         adaptive_sampling_error_critical_percent:
