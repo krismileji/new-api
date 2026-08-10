@@ -16,16 +16,27 @@ const (
 	maxChannelMonitorSmartScheduleFailureSeconds                       = 60
 	maxChannelMonitorSmartScheduleJitterTolerancePercent               = 50
 	maxChannelMonitorSmartScheduleJitterSlowThresholdSeconds           = 60
+	maxChannelMonitorSmartScheduleBurstFailureWindowMinutes            = 60
+	maxChannelMonitorSmartScheduleBurstFailureWindowRequests           = 1000
+	maxChannelMonitorSmartScheduleBurstFailureThresholdPercent         = 100
 	maxChannelMonitorSmartScheduleBurstFailureWindowSeconds            = 300
 	maxChannelMonitorSmartScheduleRuntimeFailureThreshold              = 100
 	maxChannelMonitorSmartScheduleFastFailureSameChannelRetryCount     = 10
 	maxChannelMonitorSmartScheduleFastRetryDelayMs                     = 60_000
+	defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes        = 1
+	defaultChannelMonitorSmartScheduleBurstFailureWindowRequests       = 100
+	defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent     = 3.0
 	defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds        = 30
 	defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold      = 2
 	defaultChannelMonitorSmartScheduleBurstFailureThreshold            = 3
 	defaultChannelMonitorSmartScheduleRecoverySuccessThreshold         = 2
 	defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount = 0
 	defaultChannelMonitorSmartScheduleFastRetryDelayMs                 = 1_000
+	minChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes        = 1
+	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes        = 60
+	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests       = 1000
+	defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes    = 10
+	defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests   = 100
 	minChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 60
 	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds        = 3600
 	maxChannelMonitorSmartScheduleAdaptiveSamplingMinComparable        = 10
@@ -46,6 +57,9 @@ type channelSmartScheduleGroupPolicy struct {
 	FastFailureSameChannelRetryCount                *int                         `json:"fast_failure_same_channel_retry_count,omitempty"`
 	FastFailureRetryDelayMs                         *int                         `json:"fast_failure_same_channel_retry_delay_ms,omitempty"`
 	SlowFailureSeconds                              *float64                     `json:"slow_failure_seconds,omitempty"`
+	BurstFailureWindowMinutes                       *int                         `json:"burst_failure_window_minutes,omitempty"`
+	BurstFailureWindowRequests                      *int                         `json:"burst_failure_window_requests,omitempty"`
+	BurstFailureThresholdPercent                    *float64                     `json:"burst_failure_threshold_percent,omitempty"`
 	BurstFailureWindowSeconds                       *int                         `json:"burst_failure_window_seconds,omitempty"`
 	ConsecutiveFailureThreshold                     *int                         `json:"consecutive_failure_threshold,omitempty"`
 	BurstFailureThreshold                           *int                         `json:"burst_failure_threshold,omitempty"`
@@ -68,11 +82,16 @@ type channelSmartScheduleGroupPolicy struct {
 	AdaptiveSamplingErrorCriticalPercent            *float64                     `json:"adaptive_sampling_error_critical_percent,omitempty"`
 	AdaptiveSamplingFirstTokenWarningSeconds        *float64                     `json:"adaptive_sampling_first_token_warning_seconds,omitempty"`
 	AdaptiveSamplingFirstTokenCriticalSeconds       *float64                     `json:"adaptive_sampling_first_token_critical_seconds,omitempty"`
+	AdaptiveSamplingWindowMinutes                   *int                         `json:"adaptive_sampling_window_minutes,omitempty"`
+	AdaptiveSamplingWindowRequests                  *int                         `json:"adaptive_sampling_window_requests,omitempty"`
 	AdaptiveSamplingWindowSeconds                   *int                         `json:"adaptive_sampling_window_seconds,omitempty"`
 	AdaptiveSamplingFirstTokenWarningRequestPercent *float64                     `json:"adaptive_sampling_first_token_warning_request_percent,omitempty"`
 	AdaptiveSamplingRecoverRequestPercent           *float64                     `json:"adaptive_sampling_recover_request_percent,omitempty"`
 	AdaptiveSamplingSwitchConfirmRequestPercent     *float64                     `json:"adaptive_sampling_switch_confirm_request_percent,omitempty"`
 	AdaptiveSamplingMinComparableChannels           *int                         `json:"adaptive_sampling_min_comparable_channels,omitempty"`
+	legacyBurstFailureWindow                        bool
+	legacyBurstFailureThreshold                     bool
+	legacyAdaptiveSamplingWindow                    bool
 }
 
 func (policy *channelSmartScheduleGroupPolicy) UnmarshalJSON(data []byte) error {
@@ -101,11 +120,67 @@ func (policy *channelSmartScheduleGroupPolicy) UnmarshalJSON(data []byte) error 
 	if err := common.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
+	decoded.legacyBurstFailureWindow = decoded.BurstFailureWindowMinutes == nil &&
+		decoded.BurstFailureWindowSeconds != nil
+	decoded.legacyBurstFailureThreshold = decoded.BurstFailureThresholdPercent == nil &&
+		decoded.BurstFailureThreshold != nil
+	decoded.legacyAdaptiveSamplingWindow = decoded.AdaptiveSamplingWindowMinutes == nil &&
+		decoded.AdaptiveSamplingWindowSeconds != nil
 	*policy = channelSmartScheduleGroupPolicy(decoded)
 	return nil
 }
 
+// MarshalJSON keeps old persisted policies readable while making newly
+// normalized policies use the minute/request based contract. Legacy aliases
+// are deliberately omitted when a policy was configured with the new fields.
+func (policy channelSmartScheduleGroupPolicy) MarshalJSON() ([]byte, error) {
+	type policyAlias channelSmartScheduleGroupPolicy
+	raw, err := common.Marshal(policyAlias(policy))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]any
+	if err := common.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	legacyWindow := policy.legacyBurstFailureWindow ||
+		(policy.BurstFailureWindowMinutes == nil && policy.BurstFailureWindowSeconds != nil)
+	legacyThreshold := policy.legacyBurstFailureThreshold ||
+		(policy.BurstFailureThresholdPercent == nil && policy.BurstFailureThreshold != nil)
+	legacyAdaptiveWindow := policy.legacyAdaptiveSamplingWindow ||
+		(policy.AdaptiveSamplingWindowMinutes == nil && policy.AdaptiveSamplingWindowSeconds != nil)
+	if legacyWindow {
+		delete(fields, "burst_failure_window_minutes")
+		delete(fields, "burst_failure_window_requests")
+	} else {
+		delete(fields, "burst_failure_window_seconds")
+	}
+	if legacyThreshold {
+		delete(fields, "burst_failure_threshold_percent")
+	} else {
+		delete(fields, "burst_failure_threshold")
+	}
+	if legacyAdaptiveWindow {
+		delete(fields, "adaptive_sampling_window_minutes")
+		delete(fields, "adaptive_sampling_window_requests")
+	} else {
+		delete(fields, "adaptive_sampling_window_seconds")
+	}
+	return common.Marshal(fields)
+}
+
 type smartScheduleGroupPolicies []channelSmartScheduleGroupPolicy
+
+func channelSmartScheduleMinutesFromSeconds(seconds int) int {
+	if seconds <= 0 {
+		return 1
+	}
+	maxInt := int(^uint(0) >> 1)
+	if seconds > maxInt-59 {
+		return maxInt / 60
+	}
+	return max(1, (seconds+59)/60)
+}
 
 type channelSmartSchedulePolicy struct {
 	Strategy                                        string
@@ -120,9 +195,13 @@ type channelSmartSchedulePolicy struct {
 	FastFailureSameChannelRetryCount                int
 	FastFailureRetryDelayMs                         int
 	SlowFailureSeconds                              float64
+	BurstFailureWindowMinutes                       int
+	BurstFailureWindowRequests                      int
+	BurstFailureThresholdPercent                    float64
 	BurstFailureWindowSeconds                       int
 	ConsecutiveFailureThreshold                     int
 	BurstFailureThreshold                           int
+	BurstFailureThresholdLegacy                     int
 	RecoverySuccessThreshold                        int
 	JitterEnabled                                   bool
 	JitterTolerancePercent                          float64
@@ -142,6 +221,8 @@ type channelSmartSchedulePolicy struct {
 	AdaptiveSamplingErrorCriticalPercent            float64
 	AdaptiveSamplingFirstTokenWarningSeconds        float64
 	AdaptiveSamplingFirstTokenCriticalSeconds       float64
+	AdaptiveSamplingWindowMinutes                   int
+	AdaptiveSamplingWindowRequests                  int
 	AdaptiveSamplingWindowSeconds                   int
 	AdaptiveSamplingFirstTokenWarningRequestPercent float64
 	AdaptiveSamplingRecoverRequestPercent           float64
@@ -182,6 +263,27 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("同一分组不能配置多个调度策略")
 		}
 		seenGroups[policy.Group] = struct{}{}
+		policy.legacyBurstFailureWindow = policy.BurstFailureWindowMinutes == nil &&
+			policy.BurstFailureWindowSeconds != nil
+		policy.legacyBurstFailureThreshold = policy.BurstFailureThresholdPercent == nil &&
+			policy.BurstFailureThreshold != nil
+		policy.legacyAdaptiveSamplingWindow = policy.AdaptiveSamplingWindowMinutes == nil &&
+			policy.AdaptiveSamplingWindowSeconds != nil
+		if policy.BurstFailureWindowMinutes == nil {
+			value := defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes
+			if policy.BurstFailureWindowSeconds != nil {
+				value = channelSmartScheduleMinutesFromSeconds(*policy.BurstFailureWindowSeconds)
+			}
+			policy.BurstFailureWindowMinutes = &value
+		}
+		if policy.BurstFailureWindowRequests == nil {
+			value := defaultChannelMonitorSmartScheduleBurstFailureWindowRequests
+			policy.BurstFailureWindowRequests = &value
+		}
+		if policy.BurstFailureThresholdPercent == nil {
+			value := defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent
+			policy.BurstFailureThresholdPercent = &value
+		}
 		if policy.BurstFailureWindowSeconds == nil {
 			value := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
 			policy.BurstFailureWindowSeconds = &value
@@ -218,6 +320,17 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			value := false
 			policy.DegradedProbeEnabled = &value
 		}
+		if policy.AdaptiveSamplingWindowMinutes == nil {
+			value := defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes
+			if policy.AdaptiveSamplingWindowSeconds != nil {
+				value = channelSmartScheduleMinutesFromSeconds(*policy.AdaptiveSamplingWindowSeconds)
+			}
+			policy.AdaptiveSamplingWindowMinutes = &value
+		}
+		if policy.AdaptiveSamplingWindowRequests == nil {
+			value := defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests
+			policy.AdaptiveSamplingWindowRequests = &value
+		}
 		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.RecoveryStabilityScore == nil ||
@@ -232,7 +345,8 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.AdaptiveSamplingMaxPercent == nil ||
 			policy.AdaptiveSamplingErrorWarningPercent == nil || policy.AdaptiveSamplingErrorCriticalPercent == nil ||
 			policy.AdaptiveSamplingFirstTokenWarningSeconds == nil || policy.AdaptiveSamplingFirstTokenCriticalSeconds == nil ||
-			policy.AdaptiveSamplingWindowSeconds == nil || policy.AdaptiveSamplingFirstTokenWarningRequestPercent == nil ||
+			policy.AdaptiveSamplingWindowMinutes == nil || policy.AdaptiveSamplingWindowRequests == nil ||
+			policy.AdaptiveSamplingFirstTokenWarningRequestPercent == nil ||
 			policy.AdaptiveSamplingRecoverRequestPercent == nil ||
 			policy.AdaptiveSamplingSwitchConfirmRequestPercent == nil || policy.AdaptiveSamplingMinComparableChannels == nil {
 			return nil, errors.New("分组调度策略必须完整配置调度方式、稳定性保护、评分、调整方式、参与模型、最少样本数、稳定性阈值、失败耗时、成功延迟抖动、探索请求上限、降级时长、统一样本补充和自适应采样")
@@ -292,16 +406,32 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			*policy.SlowFailureSeconds > maxChannelMonitorSmartScheduleFailureSeconds {
 			return nil, errors.New("分组调度慢失败界限必须大于快速失败界限且不超过 60 秒")
 		}
-		if *policy.BurstFailureWindowSeconds <= 0 ||
-			*policy.BurstFailureWindowSeconds > maxChannelMonitorSmartScheduleBurstFailureWindowSeconds {
+		if *policy.BurstFailureWindowMinutes < 1 ||
+			*policy.BurstFailureWindowMinutes > maxChannelMonitorSmartScheduleBurstFailureWindowMinutes {
+			return nil, errors.New("分组调度保护失败窗口分钟数必须在 1 到 60 分钟之间")
+		}
+		if *policy.BurstFailureWindowRequests < 1 ||
+			*policy.BurstFailureWindowRequests > maxChannelMonitorSmartScheduleBurstFailureWindowRequests {
+			return nil, errors.New("分组调度保护失败窗口请求数必须在 1 到 1000 次之间")
+		}
+		if math.IsNaN(*policy.BurstFailureThresholdPercent) ||
+			math.IsInf(*policy.BurstFailureThresholdPercent, 0) ||
+			*policy.BurstFailureThresholdPercent <= 0 ||
+			*policy.BurstFailureThresholdPercent > maxChannelMonitorSmartScheduleBurstFailureThresholdPercent {
+			return nil, errors.New("分组调度窗口失败阈值必须大于 0% 且不超过 100%")
+		}
+		if policy.legacyBurstFailureWindow && (policy.BurstFailureWindowSeconds == nil ||
+			*policy.BurstFailureWindowSeconds <= 0 ||
+			*policy.BurstFailureWindowSeconds > maxChannelMonitorSmartScheduleBurstFailureWindowSeconds) {
 			return nil, errors.New("分组调度保护失败窗口必须在 1 到 300 秒之间")
 		}
 		if *policy.ConsecutiveFailureThreshold <= 0 ||
 			*policy.ConsecutiveFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {
 			return nil, errors.New("分组调度连续失败阈值必须在 1 到 100 次之间")
 		}
-		if *policy.BurstFailureThreshold <= 0 ||
-			*policy.BurstFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold {
+		if policy.legacyBurstFailureThreshold && (policy.BurstFailureThreshold == nil ||
+			*policy.BurstFailureThreshold <= 0 ||
+			*policy.BurstFailureThreshold > maxChannelMonitorSmartScheduleRuntimeFailureThreshold) {
 			return nil, errors.New("分组调度窗口失败阈值必须在 1 到 100 次之间")
 		}
 		if *policy.RecoverySuccessThreshold <= 0 ||
@@ -391,9 +521,18 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		if *policy.AdaptiveSamplingFirstTokenCriticalSeconds <= *policy.AdaptiveSamplingFirstTokenWarningSeconds {
 			return nil, errors.New("自适应采样首字高风险阈值必须大于告警阈值")
 		}
-		if *policy.AdaptiveSamplingWindowSeconds < minChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds ||
-			*policy.AdaptiveSamplingWindowSeconds > maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds {
+		if policy.legacyAdaptiveSamplingWindow && (policy.AdaptiveSamplingWindowSeconds == nil ||
+			*policy.AdaptiveSamplingWindowSeconds < minChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds ||
+			*policy.AdaptiveSamplingWindowSeconds > maxChannelMonitorSmartScheduleAdaptiveSamplingWindowSeconds) {
 			return nil, errors.New("自适应采样统计窗口必须在 60 到 3600 秒之间")
+		}
+		if *policy.AdaptiveSamplingWindowMinutes < minChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes ||
+			*policy.AdaptiveSamplingWindowMinutes > maxChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes {
+			return nil, errors.New("自适应采样统计窗口分钟数必须在 1 到 60 分钟之间")
+		}
+		if *policy.AdaptiveSamplingWindowRequests < 1 ||
+			*policy.AdaptiveSamplingWindowRequests > maxChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests {
+			return nil, errors.New("自适应采样统计窗口请求数必须在 1 到 1000 次之间")
 		}
 		for _, threshold := range []*float64{
 			policy.AdaptiveSamplingFirstTokenWarningRequestPercent,
@@ -432,17 +571,37 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	if configured.FastFailureRetryDelayMs != nil {
 		fastFailureRetryDelayMs = *configured.FastFailureRetryDelayMs
 	}
-	burstFailureWindowSeconds := defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds
-	if configured.BurstFailureWindowSeconds != nil {
+	burstFailureWindowMinutes := defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes
+	if configured.BurstFailureWindowMinutes != nil {
+		burstFailureWindowMinutes = *configured.BurstFailureWindowMinutes
+	} else if configured.BurstFailureWindowSeconds != nil {
+		burstFailureWindowMinutes = channelSmartScheduleMinutesFromSeconds(*configured.BurstFailureWindowSeconds)
+	}
+	burstFailureWindowRequests := defaultChannelMonitorSmartScheduleBurstFailureWindowRequests
+	if configured.BurstFailureWindowRequests != nil {
+		burstFailureWindowRequests = *configured.BurstFailureWindowRequests
+	}
+	burstFailureWindowSeconds := burstFailureWindowMinutes * 60
+	if configured.legacyBurstFailureWindow ||
+		(configured.BurstFailureWindowMinutes == nil && configured.BurstFailureWindowSeconds != nil) {
 		burstFailureWindowSeconds = *configured.BurstFailureWindowSeconds
 	}
 	consecutiveFailureThreshold := defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold
 	if configured.ConsecutiveFailureThreshold != nil {
 		consecutiveFailureThreshold = *configured.ConsecutiveFailureThreshold
 	}
-	burstFailureThreshold := defaultChannelMonitorSmartScheduleBurstFailureThreshold
+	burstFailureThresholdPercent := defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent
+	if configured.BurstFailureThresholdPercent != nil {
+		burstFailureThresholdPercent = *configured.BurstFailureThresholdPercent
+	}
+	burstFailureThreshold := int(math.Round(burstFailureThresholdPercent))
 	if configured.BurstFailureThreshold != nil {
 		burstFailureThreshold = *configured.BurstFailureThreshold
+	}
+	legacyBurstFailureThreshold := 0
+	if configured.legacyBurstFailureThreshold ||
+		(configured.BurstFailureThresholdPercent == nil && configured.BurstFailureThreshold != nil) {
+		legacyBurstFailureThreshold = burstFailureThreshold
 	}
 	recoverySuccessThreshold := defaultChannelMonitorSmartScheduleRecoverySuccessThreshold
 	if configured.RecoverySuccessThreshold != nil {
@@ -451,6 +610,21 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	degradedProbeEnabled := false
 	if configured.DegradedProbeEnabled != nil {
 		degradedProbeEnabled = *configured.DegradedProbeEnabled
+	}
+	adaptiveSamplingWindowMinutes := defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes
+	if configured.AdaptiveSamplingWindowMinutes != nil {
+		adaptiveSamplingWindowMinutes = *configured.AdaptiveSamplingWindowMinutes
+	} else if configured.AdaptiveSamplingWindowSeconds != nil {
+		adaptiveSamplingWindowMinutes = channelSmartScheduleMinutesFromSeconds(*configured.AdaptiveSamplingWindowSeconds)
+	}
+	adaptiveSamplingWindowRequests := defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests
+	if configured.AdaptiveSamplingWindowRequests != nil {
+		adaptiveSamplingWindowRequests = *configured.AdaptiveSamplingWindowRequests
+	}
+	adaptiveSamplingWindowSeconds := adaptiveSamplingWindowMinutes * 60
+	if configured.legacyAdaptiveSamplingWindow ||
+		(configured.AdaptiveSamplingWindowMinutes == nil && configured.AdaptiveSamplingWindowSeconds != nil) {
+		adaptiveSamplingWindowSeconds = *configured.AdaptiveSamplingWindowSeconds
 	}
 	return channelSmartSchedulePolicy{
 		Strategy:                                        *configured.Strategy,
@@ -465,9 +639,13 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		FastFailureSameChannelRetryCount:                fastFailureSameChannelRetryCount,
 		FastFailureRetryDelayMs:                         fastFailureRetryDelayMs,
 		SlowFailureSeconds:                              *configured.SlowFailureSeconds,
+		BurstFailureWindowMinutes:                       burstFailureWindowMinutes,
+		BurstFailureWindowRequests:                      burstFailureWindowRequests,
+		BurstFailureThresholdPercent:                    burstFailureThresholdPercent,
 		BurstFailureWindowSeconds:                       burstFailureWindowSeconds,
 		ConsecutiveFailureThreshold:                     consecutiveFailureThreshold,
 		BurstFailureThreshold:                           burstFailureThreshold,
+		BurstFailureThresholdLegacy:                     legacyBurstFailureThreshold,
 		RecoverySuccessThreshold:                        recoverySuccessThreshold,
 		JitterEnabled:                                   *configured.JitterEnabled,
 		JitterTolerancePercent:                          *configured.JitterTolerancePercent,
@@ -487,7 +665,9 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		AdaptiveSamplingErrorCriticalPercent:            *configured.AdaptiveSamplingErrorCriticalPercent,
 		AdaptiveSamplingFirstTokenWarningSeconds:        *configured.AdaptiveSamplingFirstTokenWarningSeconds,
 		AdaptiveSamplingFirstTokenCriticalSeconds:       *configured.AdaptiveSamplingFirstTokenCriticalSeconds,
-		AdaptiveSamplingWindowSeconds:                   *configured.AdaptiveSamplingWindowSeconds,
+		AdaptiveSamplingWindowMinutes:                   adaptiveSamplingWindowMinutes,
+		AdaptiveSamplingWindowRequests:                  adaptiveSamplingWindowRequests,
+		AdaptiveSamplingWindowSeconds:                   adaptiveSamplingWindowSeconds,
 		AdaptiveSamplingFirstTokenWarningRequestPercent: *configured.AdaptiveSamplingFirstTokenWarningRequestPercent,
 		AdaptiveSamplingRecoverRequestPercent:           *configured.AdaptiveSamplingRecoverRequestPercent,
 		AdaptiveSamplingSwitchConfirmRequestPercent:     *configured.AdaptiveSamplingSwitchConfirmRequestPercent,

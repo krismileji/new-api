@@ -101,7 +101,8 @@ type channelSmartScheduleCandidate struct {
 	HealthRiskRequestPercent              float64
 	HealthFirstTokenWarningRequestPercent float64
 	HealthHealthyRequestPercent           float64
-	HealthWindowSeconds                   int
+	HealthWindowMinutes                   int
+	HealthWindowRequests                  int
 }
 
 type channelSmartSchedulePlanItem struct {

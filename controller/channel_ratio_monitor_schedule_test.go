@@ -258,17 +258,11 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsAndValidatesFastFailure
 	}
 }
 
-func TestNormalizeChannelSmartScheduleGroupPolicyRequiresAdaptiveWindowPercentages(t *testing.T) {
+func TestNormalizeChannelSmartScheduleGroupPolicyRequiresAdaptivePercentages(t *testing.T) {
 	tests := []struct {
 		name    string
 		prepare func(*channelSmartScheduleGroupPolicy)
 	}{
-		{
-			name: "window seconds",
-			prepare: func(policy *channelSmartScheduleGroupPolicy) {
-				policy.AdaptiveSamplingWindowSeconds = nil
-			},
-		},
 		{
 			name: "first-token warning request percent",
 			prepare: func(policy *channelSmartScheduleGroupPolicy) {
@@ -410,6 +404,52 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsPromptLimits(t *testing
 	require.NotNil(t, normalized[0].StabilityReleaseMaxPromptTokens)
 	assert.Equal(t, 50_000, *normalized[0].ExplorationMaxPromptTokens)
 	assert.Zero(t, *normalized[0].StabilityReleaseMaxPromptTokens)
+}
+
+func TestChannelSmartScheduleGroupPolicyWindowContractSerialization(t *testing.T) {
+	newPolicy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	burstMinutes, burstRequests, burstPercent := 2, 80, 12.5
+	adaptiveMinutes, adaptiveRequests := 15, 240
+	newPolicy.BurstFailureWindowMinutes = &burstMinutes
+	newPolicy.BurstFailureWindowRequests = &burstRequests
+	newPolicy.BurstFailureThresholdPercent = &burstPercent
+	newPolicy.BurstFailureWindowSeconds = nil
+	newPolicy.BurstFailureThreshold = nil
+	newPolicy.AdaptiveSamplingWindowMinutes = &adaptiveMinutes
+	newPolicy.AdaptiveSamplingWindowRequests = &adaptiveRequests
+	newPolicy.AdaptiveSamplingWindowSeconds = nil
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{newPolicy})
+	require.NoError(t, err)
+	raw, err := common.Marshal(normalized)
+	require.NoError(t, err)
+	serialized := string(raw)
+	assert.Contains(t, serialized, `"burst_failure_window_minutes":2`)
+	assert.Contains(t, serialized, `"burst_failure_window_requests":80`)
+	assert.Contains(t, serialized, `"burst_failure_threshold_percent":12.5`)
+	assert.Contains(t, serialized, `"adaptive_sampling_window_minutes":15`)
+	assert.Contains(t, serialized, `"adaptive_sampling_window_requests":240`)
+	assert.NotContains(t, serialized, `"burst_failure_window_seconds"`)
+	assert.NotContains(t, serialized, `"burst_failure_threshold"`)
+	assert.NotContains(t, serialized, `"adaptive_sampling_window_seconds"`)
+
+	legacyPolicy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	normalized, err = normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{legacyPolicy})
+	require.NoError(t, err)
+	raw, err = common.Marshal(normalized)
+	require.NoError(t, err)
+	serialized = string(raw)
+	assert.Contains(t, serialized, `"burst_failure_window_seconds"`)
+	assert.Contains(t, serialized, `"burst_failure_threshold"`)
+	assert.Contains(t, serialized, `"adaptive_sampling_window_seconds"`)
+	assert.NotContains(t, serialized, `"burst_failure_window_minutes"`)
+	assert.NotContains(t, serialized, `"burst_failure_threshold_percent"`)
+	assert.NotContains(t, serialized, `"adaptive_sampling_window_minutes"`)
 }
 
 func TestNormalizeChannelSmartScheduleGroupPolicyValidatesPromptLimits(t *testing.T) {

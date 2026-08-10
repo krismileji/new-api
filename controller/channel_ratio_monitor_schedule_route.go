@@ -158,6 +158,19 @@ func channelSmartScheduleMergeAdaptiveHealthMetric(
 	return production
 }
 
+func channelSmartScheduleRemainingAdaptiveWindowRequests(limit int, used int64) int {
+	if limit <= 0 {
+		return 0
+	}
+	if used <= 0 {
+		return limit
+	}
+	if used >= int64(limit) {
+		return 0
+	}
+	return limit - int(used)
+}
+
 func channelSmartScheduleClonePerformance(
 	performance *channelSmartSchedulePerformance,
 ) *channelSmartSchedulePerformance {
@@ -390,6 +403,7 @@ func runChannelSmartScheduleByRouteOnce(
 				ModelName:        route.Model,
 				StartTimestamp:   now - int64(policy.AdaptiveSamplingWindowSeconds),
 				ObservationSince: route.SharedSamples.ObservationSince,
+				MaxRequests:      policy.AdaptiveSamplingWindowRequests,
 				WarningSeconds:   policy.AdaptiveSamplingFirstTokenWarningSeconds,
 				CriticalSeconds:  policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 			})
@@ -588,11 +602,15 @@ func runChannelSmartScheduleByRouteOnce(
 			channelSmartScheduleApplyJitterMeasurement(performance, policy)
 		}
 		adaptiveHealthMetric := adaptiveHealthByRoute[key]
+		remainingAdaptiveRequests := channelSmartScheduleRemainingAdaptiveWindowRequests(
+			policy.AdaptiveSamplingWindowRequests, adaptiveHealthMetric.RequestCount,
+		)
 		adaptiveHealthMetric = channelSmartScheduleMergeAdaptiveHealthMetric(
 			adaptiveHealthMetric,
 			sampleMetricCache.adaptiveHealthMetrics(
 				modelKey,
 				now-int64(policy.AdaptiveSamplingWindowSeconds),
+				remainingAdaptiveRequests,
 				policy.AdaptiveSamplingFirstTokenWarningSeconds,
 				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 			),
@@ -610,7 +628,8 @@ func runChannelSmartScheduleByRouteOnce(
 			HealthRiskRequestPercent:              health.RiskRequestPercent,
 			HealthFirstTokenWarningRequestPercent: health.FirstTokenWarningRequestPercent,
 			HealthHealthyRequestPercent:           health.HealthyRequestPercent,
-			HealthWindowSeconds:                   health.WindowSeconds,
+			HealthWindowMinutes:                   policy.AdaptiveSamplingWindowMinutes,
+			HealthWindowRequests:                  policy.AdaptiveSamplingWindowRequests,
 			MinComparableChannels:                 policy.AdaptiveSamplingMinComparableChannels,
 			Ratio:                                 economics.CostRatio, CostRatio: economics.CostRatio,
 			GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,

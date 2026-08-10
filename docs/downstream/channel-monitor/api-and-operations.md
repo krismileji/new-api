@@ -98,9 +98,9 @@
 
 `GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，包含 `rolling_stability_*`、`sampling_debt`、`sampling_candidate`、`sampling_order`、`last_sampling_at` 和持久化的 `adaptive_health_first_token_warning_request_percent` 等秒级运行时字段；没有窗口内样本时 `rolling_stability_score` 返回 `null`。`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本，并返回持久化的 `recovery_success_count` 与 `recovery_success_at`；相同渠道模型的多条分组路由返回同一份 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。健康明细返回 `error_request_percent`、`first_token_warning_request_percent`、`risk_request_percent` 和 `healthy_request_percent`：前两项分别解释错误与首字进入信号，风险占比用于看板与执行明细解释，健康占比用于压力状态恢复和备用切换确认，风险占比不再作为统一进入门槛。429 冷却是独立的 `(渠道, 模型)` 避让状态：普通选路优先跳过，但当前分组没有其他可用候选时允许兜底；亲和、手动测试、常规/降级探测和全部采样仍必须跳过，冷却到期由独立秒级检查触发池刷新。
 
-评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。`burst_failure_window_seconds` 是秒级保护失败窗口；正常参与路由的连续失败达到 `consecutive_failure_threshold`，或窗口累计失败达到 `burst_failure_threshold`，就立即进入硬保护，不受 `min_samples` 或滚动稳定性评分限制。成功只清零连续失败，窗口内失败继续保留。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚；每个超出容忍数量的慢成功从稳定性得分中扣除 `1 / 稳定性总样本数`，事件值按池合并 `1` 秒更新。请求失败上限由 `relay_response_header_timeout_seconds` 控制。
+评分对象的两组业务指标占比各自必须合计为 `100%`。`primary_traffic_percent` 表示“只调整权重”模式下主渠道的目标流量，范围为 `51%..99%`；`primary_switch_threshold_percent` 表示挑战渠道替换当前主渠道所需的最小得分差，范围为 `0%..100%`。`fast_failure_same_channel_retry_count` 范围为 `0..10`，默认 `0`；错误符合原有重试规则且本次耗时不超过 `fast_failure_seconds` 时，系统先在当前渠道额外重试，且不消耗普通 `RetryTimes`，额度用尽后才进入普通重试并排除当前渠道。`fast_failure_same_channel_retry_delay_ms` 控制每次同渠道快速重试前的固定等待，范围为 `0..60000` 毫秒、默认 `1000` 毫秒；普通跨渠道重试不等待，请求取消会中止等待。每次普通重试选中渠道后重新计算这份快速失败额度。保护窗口由 `burst_failure_window_minutes`（`1..60`）和 `burst_failure_window_requests`（`1..1000`）共同限定：在最近分钟范围内只取最近的请求，正常参与路由的连续失败达到 `consecutive_failure_threshold`，或失败请求占比达到 `burst_failure_threshold_percent`（`>0..100%`），就立即进入硬保护，不受 `min_samples` 或滚动稳定性评分限制。成功会清零连续失败并进入失败率分母，429 不进入窗口。`jitter_slow_threshold_seconds` 是固定的首字慢成功阈值，范围为 `0..60` 秒，不叠加历史基线，只参与抖动处罚；每个超出容忍数量的慢成功从稳定性得分中扣除 `1 / 稳定性总样本数`，事件值按池合并 `1` 秒更新。请求失败上限由 `relay_response_header_timeout_seconds` 控制。
 
-自适应进入使用两个独立信号：窗口内非 429 错误率超过 `adaptive_sampling_error_warning_percent`，或首字达到告警秒数的成功请求占比达到必填的 `adaptive_sampling_first_token_warning_request_percent`。后者默认 `10%`，有效范围为 `>0..100%`。两个信号按 OR 判定，不先合并风险请求再经过统一进入门槛；压力状态只有在两个进入信号都解除且健康请求占比达到 `adaptive_sampling_recover_request_percent` 后恢复，仍命中的进入信号优先于恢复判断。保存时要求 `adaptive_sampling_first_token_warning_request_percent + adaptive_sampling_recover_request_percent > 100%`。正常单主渠道最低保留比例由 `100% - adaptive_sampling_max_percent` 自动推导；`adaptive_sampling_primary_min_percent` 已从当前契约移除，旧配置中的该字段兼容忽略且不再输出。旧字段 `adaptive_sampling_enter_request_percent` 会被明确拒绝，不读取、不输出、不迁移，不提供旧配置兼容。完整策略示例：
+自适应进入使用两个独立信号：窗口内非 429 错误率超过 `adaptive_sampling_error_warning_percent`，或首字达到告警秒数的成功请求占比达到必填的 `adaptive_sampling_first_token_warning_request_percent`。请求比例窗口由 `adaptive_sampling_window_minutes`（`1..60`）和 `adaptive_sampling_window_requests`（`1..1000`）共同限定，默认统计最近 10 分钟内最多最近 100 次业务请求、手动测试和定时探测。首字告警请求占比默认 `10%`，有效范围为 `>0..100%`。两个信号按 OR 判定，不先合并风险请求再经过统一进入门槛；压力状态只有在两个进入信号都解除且健康请求占比达到 `adaptive_sampling_recover_request_percent` 后恢复，仍命中的进入信号优先于恢复判断。保存时要求 `adaptive_sampling_first_token_warning_request_percent + adaptive_sampling_recover_request_percent > 100%`。正常单主渠道最低保留比例由 `100% - adaptive_sampling_max_percent` 自动推导；`adaptive_sampling_primary_min_percent` 已从当前契约移除，旧配置中的该字段兼容忽略且不再输出。旧字段 `adaptive_sampling_enter_request_percent` 会被明确拒绝，不读取、不输出、不迁移，不提供旧配置兼容。完整策略示例：
 
 ```json
 [
@@ -117,9 +117,10 @@
     "fast_failure_same_channel_retry_count": 2,
     "fast_failure_same_channel_retry_delay_ms": 1000,
     "slow_failure_seconds": 10,
-    "burst_failure_window_seconds": 30,
+    "burst_failure_window_minutes": 1,
+    "burst_failure_window_requests": 100,
     "consecutive_failure_threshold": 2,
-    "burst_failure_threshold": 3,
+    "burst_failure_threshold_percent": 3,
     "recovery_success_threshold": 2,
     "jitter_enabled": true,
     "jitter_tolerance_percent": 5,
@@ -141,7 +142,8 @@
     "adaptive_sampling_first_token_critical_seconds": 10,
     "adaptive_sampling_first_token_warning_request_percent": 10,
     "adaptive_sampling_recover_request_percent": 95,
-    "adaptive_sampling_window_seconds": 600,
+    "adaptive_sampling_window_minutes": 10,
+    "adaptive_sampling_window_requests": 100,
     "adaptive_sampling_switch_confirm_request_percent": 95,
     "adaptive_sampling_min_comparable_channels": 2,
     "scoring": {
@@ -162,6 +164,8 @@
   }
 ]
 ```
+
+旧持久化策略中的 `burst_failure_window_seconds`、`burst_failure_threshold` 和 `adaptive_sampling_window_seconds` 仅用于只读兼容；管理员打开并保存策略后，前端会提交当前的分钟数、请求数和百分比字段。新策略不再输出旧字段。
 
 ## 固定主渠道
 

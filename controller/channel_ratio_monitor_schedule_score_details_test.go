@@ -265,7 +265,8 @@ func TestChannelSmartScheduleHealthUsesWindowRequestPercentages(t *testing.T) {
 		AdaptiveSamplingErrorCriticalPercent:            15,
 		AdaptiveSamplingFirstTokenWarningSeconds:        5,
 		AdaptiveSamplingFirstTokenCriticalSeconds:       10,
-		AdaptiveSamplingWindowSeconds:                   600,
+		AdaptiveSamplingWindowMinutes:                   10,
+		AdaptiveSamplingWindowRequests:                  100,
 		AdaptiveSamplingFirstTokenWarningRequestPercent: 10,
 		AdaptiveSamplingRecoverRequestPercent:           95,
 	}
@@ -279,7 +280,8 @@ func TestChannelSmartScheduleHealthUsesWindowRequestPercentages(t *testing.T) {
 	assert.InDelta(t, 6, errorUpdate.ErrorRequestPercent, 1e-9)
 	assert.InDelta(t, 6, errorUpdate.RiskRequestPercent, 1e-9)
 	assert.Zero(t, errorUpdate.FirstTokenWarningRequestPercent)
-	assert.Equal(t, 600, errorUpdate.WindowSeconds)
+	assert.Equal(t, 10, errorUpdate.WindowMinutes)
+	assert.Equal(t, 100, errorUpdate.WindowRequests)
 
 	combinedBelowBothGates := model.ChannelSmartScheduleAdaptiveHealthMetric{
 		RequestCount: 100, FailureCount: 5, SlowRequestCount: 9, HealthyRequestCount: 86,

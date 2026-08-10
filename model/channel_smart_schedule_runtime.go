@@ -41,6 +41,7 @@ type ChannelSmartScheduleAdaptiveHealthMetricWindow struct {
 	ModelName        string
 	StartTimestamp   int64
 	ObservationSince int64
+	MaxRequests      int
 	WarningSeconds   float64
 	CriticalSeconds  float64
 }
@@ -123,7 +124,8 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 		Select("channel_id, model_name, type, is_stream, completion_tokens, use_time, is_retry_attempt, other, created_at").
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
 		Where("channel_id IN ?", channelIdList).
-		Where("created_at >= ? AND created_at < ?", minimumStart, endTimestamp)
+		Where("created_at >= ? AND created_at < ?", minimumStart, endTimestamp).
+		Order("created_at DESC, id DESC")
 	rows, err := query.Rows()
 	if err != nil {
 		return nil, err
@@ -134,6 +136,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 	actualFailureCounts := make([]int64, len(results))
 	configuredFinalFailureCounts := make([]int64, len(results))
 	retryFailureCounts := make([]int64, len(results))
+	requestCounts := make([]int, len(results))
 	for rows.Next() {
 		var log channelSmartScheduleAdaptiveHealthLog
 		if err := rows.Scan(
@@ -164,6 +167,10 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 					configuredFinalFailureCounts[index]++
 					continue
 				}
+				if window.Window.MaxRequests > 0 && requestCounts[index] >= window.Window.MaxRequests {
+					continue
+				}
+				requestCounts[index]++
 				metric.RequestCount++
 				metric.FailureCount++
 				metric.LastUsedTime = max(metric.LastUsedTime, log.CreatedAt)
@@ -201,6 +208,10 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 				}
 				continue
 			}
+			if window.Window.MaxRequests > 0 && requestCounts[index] >= window.Window.MaxRequests {
+				continue
+			}
+			requestCounts[index]++
 			metric.RequestCount++
 			metric.StabilitySuccessCount++
 			metric.HealthyRequestCount++

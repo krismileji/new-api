@@ -15,6 +15,28 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestChannelSmartScheduleRemainingAdaptiveWindowRequestsPreventsCombinedWindowOverflow(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		used     int64
+		expected int
+	}{
+		{name: "empty production window", limit: 100, used: 0, expected: 100},
+		{name: "partially filled production window", limit: 100, used: 40, expected: 60},
+		{name: "production window exactly full", limit: 100, used: 100, expected: 0},
+		{name: "production window over limit", limit: 100, used: 101, expected: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, channelSmartScheduleRemainingAdaptiveWindowRequests(
+				test.limit, test.used,
+			))
+		})
+	}
+}
+
 func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)

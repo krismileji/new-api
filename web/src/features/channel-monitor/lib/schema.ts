@@ -85,8 +85,12 @@ export const DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 30
 export const MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 300
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT = 10
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT = 49
-export const MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 60
-export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS = 3_600
+export const MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES = 1
+export const MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES = 60
+export const MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS = 1_000
+export const MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES = 1
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES = 60
+export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS = 1_000
 export const MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS = 10
 export const MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT = 50
 export const MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT = 51
@@ -268,11 +272,32 @@ const smartScheduleRuntimeFailureThresholdSchema = z.coerce
   .min(1, '运行时失败阈值不能小于 1 次')
   .max(100, '运行时失败阈值不能超过 100 次')
 
-const smartScheduleBurstFailureWindowSchema = z.coerce
+const smartScheduleBurstFailureWindowMinutesSchema = z.coerce
   .number()
-  .int('保护失败窗口必须是整数')
-  .min(1, '保护失败窗口不能小于 1 秒')
-  .max(300, '保护失败窗口不能超过 300 秒')
+  .int('保护失败窗口分钟数必须是整数')
+  .min(
+    MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES,
+    '保护失败窗口不能小于 1 分钟'
+  )
+  .max(
+    MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES,
+    '保护失败窗口不能超过 60 分钟'
+  )
+
+const smartScheduleBurstFailureWindowRequestsSchema = z.coerce
+  .number()
+  .int('保护失败窗口请求数必须是整数')
+  .min(1, '保护失败窗口请求数不能小于 1 次')
+  .max(
+    MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS,
+    '保护失败窗口请求数不能超过 1000 次'
+  )
+
+const smartScheduleBurstFailureThresholdPercentSchema = z.coerce
+  .number()
+  .finite('窗口失败阈值必须是有效数字')
+  .gt(0, '窗口失败阈值必须大于 0%')
+  .max(100, '窗口失败阈值不能超过 100%')
 
 const smartScheduleJitterToleranceSchema = z.coerce
   .number()
@@ -363,19 +388,32 @@ const smartScheduleAdaptiveSamplingSecondsSchema = (label: string) =>
       .max(60, `${label}不能超过 60 秒`)
   )
 
-const smartScheduleAdaptiveSamplingWindowSchema = z.preprocess(
+const smartScheduleAdaptiveSamplingWindowMinutesSchema = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.coerce
     .number()
-    .finite('自适应采样统计窗口必须是有效数字')
-    .int('自适应采样统计窗口必须是整数')
+    .finite('请求比例窗口分钟数必须是有效数字')
+    .int('请求比例窗口分钟数必须是整数')
     .min(
-      MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
-      '自适应采样统计窗口不能小于 60 秒'
+      MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES,
+      '请求比例窗口不能小于 1 分钟'
     )
     .max(
-      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
-      '自适应采样统计窗口不能超过 3600 秒'
+      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES,
+      '请求比例窗口不能超过 60 分钟'
+    )
+)
+
+const smartScheduleAdaptiveSamplingWindowRequestsSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce
+    .number()
+    .finite('请求比例窗口请求数必须是有效数字')
+    .int('请求比例窗口请求数必须是整数')
+    .min(1, '请求比例窗口请求数不能小于 1 次')
+    .max(
+      MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS,
+      '请求比例窗口请求数不能超过 1000 次'
     )
 )
 
@@ -422,10 +460,14 @@ const smartSchedulePolicyShape = {
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryDelayMs
     ),
   slowFailureSeconds: smartScheduleFailureSecondsSchema,
-  burstFailureWindowSeconds: smartScheduleBurstFailureWindowSchema.default(30),
+  burstFailureWindowMinutes:
+    smartScheduleBurstFailureWindowMinutesSchema.default(1),
+  burstFailureWindowRequests:
+    smartScheduleBurstFailureWindowRequestsSchema.default(100),
+  burstFailureThresholdPercent:
+    smartScheduleBurstFailureThresholdPercentSchema.default(3),
   consecutiveFailureThreshold:
     smartScheduleRuntimeFailureThresholdSchema.default(2),
-  burstFailureThreshold: smartScheduleRuntimeFailureThresholdSchema.default(3),
   recoverySuccessThreshold:
     smartScheduleRuntimeFailureThresholdSchema.default(2),
   cooldownMinutes: smartScheduleCooldownSchema,
@@ -456,7 +498,10 @@ const smartSchedulePolicyShape = {
     smartScheduleAdaptiveSamplingSecondsSchema('首字告警阈值'),
   adaptiveSamplingFirstTokenCriticalSeconds:
     smartScheduleAdaptiveSamplingSecondsSchema('首字高风险阈值'),
-  adaptiveSamplingWindowSeconds: smartScheduleAdaptiveSamplingWindowSchema,
+  adaptiveSamplingWindowMinutes:
+    smartScheduleAdaptiveSamplingWindowMinutesSchema,
+  adaptiveSamplingWindowRequests:
+    smartScheduleAdaptiveSamplingWindowRequestsSchema,
   adaptiveSamplingFirstTokenWarningRequestPercent:
     smartScheduleAdaptiveSamplingRequestPercentSchema('首字告警请求占比'),
   adaptiveSamplingRecoverRequestPercent:
@@ -498,10 +543,12 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.fastFailureSameChannelRetryDelayMs =
       defaults.fastFailureSameChannelRetryDelayMs
     normalized.slowFailureSeconds = defaults.slowFailureSeconds
-    normalized.burstFailureWindowSeconds = defaults.burstFailureWindowSeconds
+    normalized.burstFailureWindowMinutes = defaults.burstFailureWindowMinutes
+    normalized.burstFailureWindowRequests = defaults.burstFailureWindowRequests
+    normalized.burstFailureThresholdPercent =
+      defaults.burstFailureThresholdPercent
     normalized.consecutiveFailureThreshold =
       defaults.consecutiveFailureThreshold
-    normalized.burstFailureThreshold = defaults.burstFailureThreshold
     normalized.recoverySuccessThreshold = defaults.recoverySuccessThreshold
     normalized.cooldownMinutes = defaults.cooldownMinutes
     normalized.stabilityReleaseMaxPromptKTokens =

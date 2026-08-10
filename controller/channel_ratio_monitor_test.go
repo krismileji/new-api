@@ -579,19 +579,35 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
+	policy.BurstFailureWindowMinutes = nil
+	policy.BurstFailureWindowRequests = nil
 	policy.BurstFailureWindowSeconds = nil
+	policy.BurstFailureThresholdPercent = nil
 	policy.ConsecutiveFailureThreshold = nil
 	policy.BurstFailureThreshold = nil
 	policy.RecoverySuccessThreshold = nil
+	policy.AdaptiveSamplingWindowMinutes = nil
+	policy.AdaptiveSamplingWindowRequests = nil
+	policy.AdaptiveSamplingWindowSeconds = nil
 	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
 	require.NoError(t, err)
 	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].BurstFailureWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes, *normalized[0].BurstFailureWindowMinutes)
+	require.NotNil(t, normalized[0].BurstFailureWindowRequests)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowRequests, *normalized[0].BurstFailureWindowRequests)
+	require.NotNil(t, normalized[0].BurstFailureThresholdPercent)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent, *normalized[0].BurstFailureThresholdPercent)
 	require.NotNil(t, normalized[0].BurstFailureWindowSeconds)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *normalized[0].BurstFailureWindowSeconds)
 	require.NotNil(t, normalized[0].ConsecutiveFailureThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold, *normalized[0].ConsecutiveFailureThreshold)
 	require.NotNil(t, normalized[0].BurstFailureThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThreshold, *normalized[0].BurstFailureThreshold)
+	require.NotNil(t, normalized[0].AdaptiveSamplingWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes, *normalized[0].AdaptiveSamplingWindowMinutes)
+	require.NotNil(t, normalized[0].AdaptiveSamplingWindowRequests)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests, *normalized[0].AdaptiveSamplingWindowRequests)
 	require.NotNil(t, normalized[0].RecoverySuccessThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *normalized[0].RecoverySuccessThreshold)
 }
@@ -726,6 +742,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	)
 	invalidBurstFailureWindowValue := 0
 	invalidBurstFailureWindow.BurstFailureWindowSeconds = &invalidBurstFailureWindowValue
+	invalidBurstFailureWindow.BurstFailureWindowMinutes = &invalidBurstFailureWindowValue
+	invalidBurstFailureWindow.BurstFailureWindowRequests = &invalidBurstFailureWindowValue
 	invalidConsecutiveFailureThreshold := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
@@ -737,7 +755,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
 	invalidBurstFailureThresholdValue := maxChannelMonitorSmartScheduleRuntimeFailureThreshold + 1
+	invalidBurstFailureThresholdPercentValue := 101.0
 	invalidBurstFailureThreshold.BurstFailureThreshold = &invalidBurstFailureThresholdValue
+	invalidBurstFailureThreshold.BurstFailureThresholdPercent = &invalidBurstFailureThresholdPercentValue
 	invalidRecoverySuccessThreshold := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
@@ -1065,12 +1085,16 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount, *groupPolicy.FastFailureSameChannelRetryCount)
 	require.NotNil(t, groupPolicy.FastFailureRetryDelayMs)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleFastRetryDelayMs, *groupPolicy.FastFailureRetryDelayMs)
-	require.NotNil(t, groupPolicy.BurstFailureWindowSeconds)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds, *groupPolicy.BurstFailureWindowSeconds)
+	require.NotNil(t, groupPolicy.BurstFailureWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes, *groupPolicy.BurstFailureWindowMinutes)
+	require.NotNil(t, groupPolicy.BurstFailureWindowRequests)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureWindowRequests, *groupPolicy.BurstFailureWindowRequests)
+	require.NotNil(t, groupPolicy.BurstFailureThresholdPercent)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent, *groupPolicy.BurstFailureThresholdPercent)
+	assert.Nil(t, groupPolicy.BurstFailureWindowSeconds)
 	require.NotNil(t, groupPolicy.ConsecutiveFailureThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold, *groupPolicy.ConsecutiveFailureThreshold)
-	require.NotNil(t, groupPolicy.BurstFailureThreshold)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleBurstFailureThreshold, *groupPolicy.BurstFailureThreshold)
+	assert.Nil(t, groupPolicy.BurstFailureThreshold)
 	require.NotNil(t, groupPolicy.RecoverySuccessThreshold)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRecoverySuccessThreshold, *groupPolicy.RecoverySuccessThreshold)
 	require.NotNil(t, groupPolicy.JitterSlowThresholdSeconds)
@@ -1083,6 +1107,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Zero(t, *groupPolicy.StabilityReleaseMaxPromptTokens)
 	require.NotNil(t, groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	assert.Equal(t, 10.0, *groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
+	require.NotNil(t, groupPolicy.AdaptiveSamplingWindowSeconds)
+	assert.Equal(t, 600, *groupPolicy.AdaptiveSamplingWindowSeconds)
 	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)

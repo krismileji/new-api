@@ -110,7 +110,8 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, fastFailureSameChannelRetryDelayMs: '' },
       { ...basePolicy, jitterSlowThresholdSeconds: '' },
       { ...basePolicy, adaptiveSamplingBasePercent: '' },
-      { ...basePolicy, adaptiveSamplingWindowSeconds: '' },
+      { ...basePolicy, adaptiveSamplingWindowMinutes: '' },
+      { ...basePolicy, adaptiveSamplingWindowRequests: '' },
       { ...basePolicy, adaptiveSamplingFirstTokenWarningRequestPercent: '' },
       { ...basePolicy, adaptiveSamplingMinComparableChannels: '' },
     ]
@@ -120,24 +121,34 @@ describe('smart schedule policy schema', () => {
     }
   })
 
-  test('validates the adaptive window and request percentage hysteresis', () => {
+  test('validates the adaptive time and request windows and percentage hysteresis', () => {
     const basePolicy = CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
     assert.equal(
       schema.safeParse({
         ...basePolicy,
         adaptiveSamplingMaxPercent: 49,
-        adaptiveSamplingWindowSeconds: 60,
+        adaptiveSamplingWindowMinutes: 1,
+        adaptiveSamplingWindowRequests: 1,
         adaptiveSamplingFirstTokenWarningRequestPercent: 10,
         adaptiveSamplingRecoverRequestPercent: 95,
         adaptiveSamplingSwitchConfirmRequestPercent: 95,
       }).success,
       true
     )
-    for (const value of [59, 3_601, 60.5]) {
+    for (const value of [0, 61, 1.5]) {
       assert.equal(
         schema.safeParse({
           ...basePolicy,
-          adaptiveSamplingWindowSeconds: value,
+          adaptiveSamplingWindowMinutes: value,
+        }).success,
+        false
+      )
+    }
+    for (const value of [0, 1_001, 1.5]) {
+      assert.equal(
+        schema.safeParse({
+          ...basePolicy,
+          adaptiveSamplingWindowRequests: value,
         }).success,
         false
       )
@@ -577,9 +588,10 @@ describe('channel monitor settings schema', () => {
       fastFailureSameChannelRetryCount: 2,
       fastFailureSameChannelRetryDelayMs: 750,
       slowFailureSeconds: 10,
-      burstFailureWindowSeconds: 30,
+      burstFailureWindowMinutes: 1,
+      burstFailureWindowRequests: 100,
+      burstFailureThresholdPercent: 3,
       consecutiveFailureThreshold: 2,
-      burstFailureThreshold: 3,
       recoverySuccessThreshold: 2,
       cooldownMinutes: 30,
       sampleMode: 'traffic' as const,
@@ -595,7 +607,8 @@ describe('channel monitor settings schema', () => {
       adaptiveSamplingErrorCriticalPercent: 15,
       adaptiveSamplingFirstTokenWarningSeconds: 5,
       adaptiveSamplingFirstTokenCriticalSeconds: 10,
-      adaptiveSamplingWindowSeconds: 600,
+      adaptiveSamplingWindowMinutes: 10,
+      adaptiveSamplingWindowRequests: 100,
       adaptiveSamplingFirstTokenWarningRequestPercent: 10,
       adaptiveSamplingRecoverRequestPercent: 95,
       adaptiveSamplingSwitchConfirmRequestPercent: 95,
@@ -780,23 +793,67 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
-    for (const burstFailureWindowSeconds of [1, 300]) {
+    for (const burstFailureWindowMinutes of [1, 60]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, burstFailureWindowSeconds },
+            { ...groupPolicy, burstFailureWindowMinutes },
           ],
         }).success,
         true
       )
     }
-    for (const burstFailureWindowSeconds of [0, 1.5, 301]) {
+    for (const burstFailureWindowMinutes of [0, 1.5, 61]) {
       assert.equal(
         schema.safeParse({
           ...baseSettings,
           smartScheduleGroupPolicies: [
-            { ...groupPolicy, burstFailureWindowSeconds },
+            { ...groupPolicy, burstFailureWindowMinutes },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const burstFailureWindowRequests of [1, 1_000]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureWindowRequests },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const burstFailureWindowRequests of [0, 1.5, 1_001]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureWindowRequests },
+          ],
+        }).success,
+        false
+      )
+    }
+    for (const burstFailureThresholdPercent of [0.1, 100]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureThresholdPercent },
+          ],
+        }).success,
+        true
+      )
+    }
+    for (const burstFailureThresholdPercent of [0, 101]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, burstFailureThresholdPercent },
           ],
         }).success,
         false
@@ -804,7 +861,6 @@ describe('channel monitor settings schema', () => {
     }
     for (const field of [
       'consecutiveFailureThreshold',
-      'burstFailureThreshold',
       'recoverySuccessThreshold',
     ] as const) {
       for (const value of [1, 100]) {

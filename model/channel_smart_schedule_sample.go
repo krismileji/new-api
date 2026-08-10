@@ -187,16 +187,42 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSince(
 	warningSeconds float64,
 	criticalSeconds float64,
 ) ChannelSmartScheduleAdaptiveHealthMetric {
+	return series.AdaptiveHealthMetricsSinceWithMaxRequests(
+		windowStart, -1, warningSeconds, criticalSeconds,
+	)
+}
+
+// AdaptiveHealthMetricsSinceWithMaxRequests evaluates the newest valid
+// requests in a time window. A negative limit keeps the historical unlimited
+// behavior, while zero means that the caller has no remaining request budget.
+func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSinceWithMaxRequests(
+	windowStart int64,
+	maxRequests int,
+	warningSeconds float64,
+	criticalSeconds float64,
+) ChannelSmartScheduleAdaptiveHealthMetric {
+	if maxRequests == 0 {
+		return ChannelSmartScheduleAdaptiveHealthMetric{}
+	}
 	if series.observationSince > windowStart {
 		windowStart = series.observationSince
 	}
 	metric := ChannelSmartScheduleAdaptiveHealthMetric{}
 	firstTokenBuckets := make(map[int]ChannelMonitorDurationBucket)
 	failureBucketCounts := [6]int64{}
+	samples := make([]channelSmartScheduleSample, 0, len(series.samples))
 	for _, sample := range series.samples {
-		if sample.Time < windowStart {
-			continue
+		if sample.Time >= windowStart {
+			samples = append(samples, sample)
 		}
+	}
+	if maxRequests > 0 && len(samples) > maxRequests {
+		sort.SliceStable(samples, func(i, j int) bool {
+			return samples[i].Time > samples[j].Time
+		})
+		samples = samples[:maxRequests]
+	}
+	for _, sample := range samples {
 		metric.RequestCount++
 		metric.LastUsedTime = max(metric.LastUsedTime, sample.Time)
 		if !sample.Success {

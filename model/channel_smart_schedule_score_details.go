@@ -6,7 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const ChannelSmartScheduleScoreDetailsVersion = 8
+const ChannelSmartScheduleScoreDetailsVersion = 9
 
 const (
 	ChannelSmartScheduleComparisonNone         = "none"
@@ -79,7 +79,8 @@ type ChannelSmartScheduleHealthDetails struct {
 	ErrorPressure                   float64 `json:"error_pressure"`
 	LatencyPressure                 float64 `json:"latency_pressure"`
 	SampleCount                     int64   `json:"sample_count"`
-	WindowSeconds                   int     `json:"window_seconds"`
+	WindowMinutes                   int     `json:"window_minutes"`
+	WindowRequests                  int     `json:"window_requests"`
 	ErrorRequestPercent             float64 `json:"error_request_percent"`
 	RiskRequestPercent              float64 `json:"risk_request_percent"`
 	FirstTokenWarningRequestPercent float64 `json:"first_token_warning_request_percent"`

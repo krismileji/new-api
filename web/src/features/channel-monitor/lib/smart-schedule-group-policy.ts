@@ -36,6 +36,13 @@ import {
 type SmartScheduleScoringFormValues =
   ChannelMonitorSmartSchedulePolicyFormValues['scoring']
 
+function legacyWindowSecondsToMinutes(
+  seconds: number | undefined,
+  defaultMinutes: number
+): number {
+  return seconds == null ? defaultMinutes : Math.ceil(seconds / 60)
+}
+
 export const CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE: ChannelMonitorSmartSchedulePolicyFormValues =
   {
     strategy: 'smart',
@@ -117,15 +124,22 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
       policy.fast_failure_same_channel_retry_delay_ms ??
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryDelayMs,
     slowFailureSeconds: policy.slow_failure_seconds,
-    burstFailureWindowSeconds:
-      policy.burst_failure_window_seconds ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureWindowSeconds,
+    burstFailureWindowMinutes:
+      policy.burst_failure_window_minutes ??
+      legacyWindowSecondsToMinutes(
+        policy.burst_failure_window_seconds,
+        DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureWindowMinutes
+      ),
+    burstFailureWindowRequests:
+      policy.burst_failure_window_requests ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureWindowRequests,
+    burstFailureThresholdPercent:
+      policy.burst_failure_threshold_percent ??
+      policy.burst_failure_threshold ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureThresholdPercent,
     consecutiveFailureThreshold:
       policy.consecutive_failure_threshold ??
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.consecutiveFailureThreshold,
-    burstFailureThreshold:
-      policy.burst_failure_threshold ??
-      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.burstFailureThreshold,
     recoverySuccessThreshold:
       policy.recovery_success_threshold ??
       DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.recoverySuccessThreshold,
@@ -158,7 +172,15 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
       policy.adaptive_sampling_first_token_warning_seconds,
     adaptiveSamplingFirstTokenCriticalSeconds:
       policy.adaptive_sampling_first_token_critical_seconds,
-    adaptiveSamplingWindowSeconds: policy.adaptive_sampling_window_seconds,
+    adaptiveSamplingWindowMinutes:
+      policy.adaptive_sampling_window_minutes ??
+      legacyWindowSecondsToMinutes(
+        policy.adaptive_sampling_window_seconds,
+        DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.adaptiveSamplingWindowMinutes
+      ),
+    adaptiveSamplingWindowRequests:
+      policy.adaptive_sampling_window_requests ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.adaptiveSamplingWindowRequests,
     adaptiveSamplingFirstTokenWarningRequestPercent:
       policy.adaptive_sampling_first_token_warning_request_percent,
     adaptiveSamplingRecoverRequestPercent:
@@ -193,9 +215,10 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     fast_failure_same_channel_retry_delay_ms:
       policy.fastFailureSameChannelRetryDelayMs,
     slow_failure_seconds: policy.slowFailureSeconds,
-    burst_failure_window_seconds: policy.burstFailureWindowSeconds,
+    burst_failure_window_minutes: policy.burstFailureWindowMinutes,
+    burst_failure_window_requests: policy.burstFailureWindowRequests,
+    burst_failure_threshold_percent: policy.burstFailureThresholdPercent,
     consecutive_failure_threshold: policy.consecutiveFailureThreshold,
-    burst_failure_threshold: policy.burstFailureThreshold,
     recovery_success_threshold: policy.recoverySuccessThreshold,
     cooldown_minutes: policy.cooldownMinutes,
     sample_mode: policy.sampleMode,
@@ -221,7 +244,8 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
       policy.adaptiveSamplingFirstTokenWarningSeconds,
     adaptive_sampling_first_token_critical_seconds:
       policy.adaptiveSamplingFirstTokenCriticalSeconds,
-    adaptive_sampling_window_seconds: policy.adaptiveSamplingWindowSeconds,
+    adaptive_sampling_window_minutes: policy.adaptiveSamplingWindowMinutes,
+    adaptive_sampling_window_requests: policy.adaptiveSamplingWindowRequests,
     adaptive_sampling_first_token_warning_request_percent:
       policy.adaptiveSamplingFirstTokenWarningRequestPercent,
     adaptive_sampling_recover_request_percent:
@@ -256,9 +280,10 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     fastFailureSameChannelRetryDelayMs:
       policy.fastFailureSameChannelRetryDelayMs,
     slowFailureSeconds: policy.slowFailureSeconds,
-    burstFailureWindowSeconds: policy.burstFailureWindowSeconds,
+    burstFailureWindowMinutes: policy.burstFailureWindowMinutes,
+    burstFailureWindowRequests: policy.burstFailureWindowRequests,
+    burstFailureThresholdPercent: policy.burstFailureThresholdPercent,
     consecutiveFailureThreshold: policy.consecutiveFailureThreshold,
-    burstFailureThreshold: policy.burstFailureThreshold,
     recoverySuccessThreshold: policy.recoverySuccessThreshold,
     cooldownMinutes: policy.cooldownMinutes,
     sampleMode: policy.sampleMode,
@@ -279,7 +304,8 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
       policy.adaptiveSamplingFirstTokenWarningSeconds,
     adaptiveSamplingFirstTokenCriticalSeconds:
       policy.adaptiveSamplingFirstTokenCriticalSeconds,
-    adaptiveSamplingWindowSeconds: policy.adaptiveSamplingWindowSeconds,
+    adaptiveSamplingWindowMinutes: policy.adaptiveSamplingWindowMinutes,
+    adaptiveSamplingWindowRequests: policy.adaptiveSamplingWindowRequests,
     adaptiveSamplingFirstTokenWarningRequestPercent:
       policy.adaptiveSamplingFirstTokenWarningRequestPercent,
     adaptiveSamplingRecoverRequestPercent:

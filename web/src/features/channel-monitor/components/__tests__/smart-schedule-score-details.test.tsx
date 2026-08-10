@@ -89,7 +89,8 @@ function createScoreDetails(): ChannelMonitorSmartScheduleScoreDetails {
       error_pressure: 0,
       latency_pressure: 0,
       sample_count: 30,
-      window_seconds: 600,
+      window_minutes: 10,
+      window_requests: 100,
       error_request_percent: 0,
       risk_request_percent: 0,
       first_token_warning_request_percent: 0,
@@ -174,6 +175,8 @@ describe('smart schedule score calculation details', () => {
     assert.ok(markup.includes('30 个样本 · 配置权重 50.0%'))
     assert.ok(markup.includes('窗口内错误请求'))
     assert.ok(markup.includes('窗口内首字告警请求'))
+    assert.ok(markup.includes('最近 10 分钟内最多统计'))
+    assert.ok(markup.includes('100 次有效请求'))
     assert.ok(markup.includes('错误率和首字告警请求占比按'))
     assert.ok(markup.includes('最终得分'))
     assert.ok(markup.includes('87.00 分'))

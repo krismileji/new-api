@@ -497,8 +497,13 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   fast_failure_same_channel_retry_count?: number
   fast_failure_same_channel_retry_delay_ms?: number
   slow_failure_seconds: number
+  burst_failure_window_minutes?: number
+  burst_failure_window_requests?: number
+  burst_failure_threshold_percent?: number
+  /** Legacy fields are accepted when reading persisted policies. */
   burst_failure_window_seconds?: number
   consecutive_failure_threshold?: number
+  /** Legacy absolute threshold accepted when reading persisted policies. */
   burst_failure_threshold?: number
   recovery_success_threshold?: number
   cooldown_minutes: number
@@ -518,7 +523,10 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   adaptive_sampling_error_critical_percent: number
   adaptive_sampling_first_token_warning_seconds: number
   adaptive_sampling_first_token_critical_seconds: number
-  adaptive_sampling_window_seconds: number
+  adaptive_sampling_window_minutes?: number
+  adaptive_sampling_window_requests?: number
+  /** Legacy seconds field accepted when reading persisted policies. */
+  adaptive_sampling_window_seconds?: number
   adaptive_sampling_first_token_warning_request_percent: number
   adaptive_sampling_recover_request_percent: number
   adaptive_sampling_switch_confirm_request_percent: number
@@ -665,7 +673,8 @@ export type ChannelMonitorSmartScheduleScoreDetails = {
     error_pressure: number
     latency_pressure: number
     sample_count: number
-    window_seconds: number
+    window_minutes: number
+    window_requests: number
     error_request_percent: number
     risk_request_percent: number
     first_token_warning_request_percent: number

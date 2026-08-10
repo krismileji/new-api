@@ -464,9 +464,10 @@ export function ChannelMonitorSmartScheduleScoreDetails(
                 </strong>
               </div>
               <p className='text-muted-foreground sm:col-span-3'>
-                最近 {details.health.window_seconds} 秒统计了{' '}
+                最近 {details.health.window_minutes} 分钟内最多统计{' '}
+                {details.health.window_requests} 次有效请求，本次使用了{' '}
                 {details.health.sample_count}{' '}
-                个等价样本（业务请求、手动测试和定时探测）；错误率和首字告警请求占比按
+                次（业务请求、手动测试和定时探测）；错误率和首字告警请求占比按
                 OR 独立进入压力，风险比例仅用于解释两类请求的并集，
                 无首字数据的成功请求按健康处理。首字和 TPS
                 只有达到最少可比渠道数后才参与相对比较。

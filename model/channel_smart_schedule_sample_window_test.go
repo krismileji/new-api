@@ -119,3 +119,23 @@ func TestChannelSmartScheduleSampleSeriesAdaptiveHealthUsesWindowRequestClasses(
 	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
 	assert.Equal(t, int64(220), metric.LastUsedTime)
 }
+
+func TestChannelSmartScheduleSampleSeriesAdaptiveHealthCapsToNewestRequests(t *testing.T) {
+	series := ChannelSmartScheduleSampleSeries{
+		samples: []channelSmartScheduleSample{
+			{Time: 100, Success: false},
+			{Time: 200, Success: true},
+			{Time: 300, Success: true},
+		},
+	}
+
+	metric := series.AdaptiveHealthMetricsSinceWithMaxRequests(0, 2, 5, 10)
+
+	assert.Equal(t, int64(2), metric.RequestCount)
+	assert.Zero(t, metric.FailureCount)
+	assert.Equal(t, int64(2), metric.HealthyRequestCount)
+	assert.Equal(t, int64(300), metric.LastUsedTime)
+
+	empty := series.AdaptiveHealthMetricsSinceWithMaxRequests(0, 0, 5, 10)
+	assert.Zero(t, empty.RequestCount)
+}

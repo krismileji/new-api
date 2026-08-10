@@ -144,7 +144,8 @@ type channelSmartScheduleHealthUpdate struct {
 	RiskRequestPercent              float64
 	FirstTokenWarningRequestPercent float64
 	HealthyRequestPercent           float64
-	WindowSeconds                   int
+	WindowMinutes                   int
+	WindowRequests                  int
 }
 
 func channelSmartScheduleLinearPressure(value, warning, critical float64) float64 {
@@ -176,7 +177,10 @@ func channelSmartScheduleEvaluateHealth(
 	metric model.ChannelSmartScheduleAdaptiveHealthMetric,
 	policy channelSmartSchedulePolicy,
 ) channelSmartScheduleHealthUpdate {
-	update := channelSmartScheduleHealthUpdate{WindowSeconds: policy.AdaptiveSamplingWindowSeconds}
+	update := channelSmartScheduleHealthUpdate{
+		WindowMinutes:  policy.AdaptiveSamplingWindowMinutes,
+		WindowRequests: policy.AdaptiveSamplingWindowRequests,
+	}
 	update.SampleCount = metric.RequestCount
 	update.LastSampleAt = metric.LastUsedTime
 	if metric.RequestCount <= 0 {

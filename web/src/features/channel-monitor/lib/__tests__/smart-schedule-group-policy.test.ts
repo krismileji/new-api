@@ -58,9 +58,10 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   fastFailureSameChannelRetryCount: 2,
   fastFailureSameChannelRetryDelayMs: 750,
   slowFailureSeconds: 10,
-  burstFailureWindowSeconds: 30,
+  burstFailureWindowMinutes: 1,
+  burstFailureWindowRequests: 100,
+  burstFailureThresholdPercent: 3,
   consecutiveFailureThreshold: 2,
-  burstFailureThreshold: 3,
   recoverySuccessThreshold: 2,
   cooldownMinutes: 30,
   sampleMode: 'probe',
@@ -77,7 +78,8 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   adaptiveSamplingErrorCriticalPercent: 15,
   adaptiveSamplingFirstTokenWarningSeconds: 5,
   adaptiveSamplingFirstTokenCriticalSeconds: 10,
-  adaptiveSamplingWindowSeconds: 600,
+  adaptiveSamplingWindowMinutes: 10,
+  adaptiveSamplingWindowRequests: 100,
   adaptiveSamplingFirstTokenWarningRequestPercent: 10,
   adaptiveSamplingRecoverRequestPercent: 95,
   adaptiveSamplingSwitchConfirmRequestPercent: 95,
@@ -146,6 +148,13 @@ describe('smart schedule group policy', () => {
         fast_failure_same_channel_retry_count:
           defaultPolicy.fastFailureSameChannelRetryCount,
         slow_failure_seconds: defaultPolicy.slowFailureSeconds,
+        burst_failure_window_minutes: defaultPolicy.burstFailureWindowMinutes,
+        burst_failure_window_requests: defaultPolicy.burstFailureWindowRequests,
+        burst_failure_threshold_percent:
+          defaultPolicy.burstFailureThresholdPercent,
+        consecutive_failure_threshold:
+          defaultPolicy.consecutiveFailureThreshold,
+        recovery_success_threshold: defaultPolicy.recoverySuccessThreshold,
         cooldown_minutes: defaultPolicy.cooldownMinutes,
         sample_mode: defaultPolicy.sampleMode,
         sampling_order: defaultPolicy.samplingOrder,
@@ -165,8 +174,10 @@ describe('smart schedule group policy', () => {
           defaultPolicy.adaptiveSamplingFirstTokenWarningSeconds,
         adaptive_sampling_first_token_critical_seconds:
           defaultPolicy.adaptiveSamplingFirstTokenCriticalSeconds,
-        adaptive_sampling_window_seconds:
-          defaultPolicy.adaptiveSamplingWindowSeconds,
+        adaptive_sampling_window_minutes:
+          defaultPolicy.adaptiveSamplingWindowMinutes,
+        adaptive_sampling_window_requests:
+          defaultPolicy.adaptiveSamplingWindowRequests,
         adaptive_sampling_first_token_warning_request_percent:
           defaultPolicy.adaptiveSamplingFirstTokenWarningRequestPercent,
         adaptive_sampling_recover_request_percent:
@@ -216,9 +227,10 @@ describe('smart schedule group policy', () => {
       1_000
     )
     assert.equal(apiPolicies[0]?.slow_failure_seconds, 10)
-    assert.equal(apiPolicies[0]?.burst_failure_window_seconds, 30)
+    assert.equal(apiPolicies[0]?.burst_failure_window_minutes, 1)
+    assert.equal(apiPolicies[0]?.burst_failure_window_requests, 100)
+    assert.equal(apiPolicies[0]?.burst_failure_threshold_percent, 3)
     assert.equal(apiPolicies[0]?.consecutive_failure_threshold, 2)
-    assert.equal(apiPolicies[0]?.burst_failure_threshold, 3)
     assert.equal(apiPolicies[0]?.recovery_success_threshold, 2)
     assert.equal(apiPolicies[0]?.sample_mode, 'probe')
     assert.equal(apiPolicies[0]?.sampling_order, 'ratio')
@@ -235,6 +247,9 @@ describe('smart schedule group policy', () => {
       'priority_sampling_decay_percent',
       'priority_sampling_min_percent',
       'adaptive_sampling_enter_request_percent',
+      'burst_failure_window_seconds',
+      'burst_failure_threshold',
+      'adaptive_sampling_window_seconds',
     ]) {
       assert.equal(Object.hasOwn(apiPolicies[0] ?? {}, removedField), false)
     }
@@ -242,6 +257,29 @@ describe('smart schedule group policy', () => {
       apiPolicies[0]?.adaptive_sampling_first_token_warning_request_percent,
       10
     )
+
+    const currentApiPolicy = apiPolicies[0]
+    assert.ok(currentApiPolicy)
+    const legacyApiPolicy = {
+      ...currentApiPolicy,
+      burst_failure_window_seconds: 45,
+      burst_failure_threshold: 6,
+      adaptive_sampling_window_seconds: 601,
+    }
+    delete legacyApiPolicy.burst_failure_window_minutes
+    delete legacyApiPolicy.burst_failure_window_requests
+    delete legacyApiPolicy.burst_failure_threshold_percent
+    delete legacyApiPolicy.adaptive_sampling_window_minutes
+    delete legacyApiPolicy.adaptive_sampling_window_requests
+
+    const [legacyFormPolicy] = channelMonitorSmartScheduleGroupPoliciesToForm([
+      legacyApiPolicy,
+    ])
+    assert.equal(legacyFormPolicy?.burstFailureWindowMinutes, 1)
+    assert.equal(legacyFormPolicy?.burstFailureWindowRequests, 100)
+    assert.equal(legacyFormPolicy?.burstFailureThresholdPercent, 6)
+    assert.equal(legacyFormPolicy?.adaptiveSamplingWindowMinutes, 11)
+    assert.equal(legacyFormPolicy?.adaptiveSamplingWindowRequests, 100)
   })
 
   test('uses a complete editor template without creating a runtime policy', () => {
@@ -309,15 +347,19 @@ describe('smart schedule group policy', () => {
       10
     )
     assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureWindowSeconds,
-      30
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureWindowMinutes,
+      1
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureWindowRequests,
+      100
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.consecutiveFailureThreshold,
       2
     )
     assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureThreshold,
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureThresholdPercent,
       3
     )
     assert.equal(

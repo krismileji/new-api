@@ -81,7 +81,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     unit: '分钟',
     range: '1–43200 的整数',
     defaultValue: '5',
-    constraints: '与性能窗口独立，不替代秒级保护失败窗口',
+    constraints: '与性能窗口独立，不替代请求级保护失败窗口',
   }),
   responseHeaderTimeout: smartScheduleSettingHelp({
     meaning: '限制流式首个有效模型事件或非流式响应头的等待时间。',
@@ -278,13 +278,21 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     scheduleRelation: NEXT_OBSERVATION,
     constraints: '必须大于快速失败界限，两者之间线性增加惩罚',
   }),
-  burstFailureWindow: smartScheduleSettingHelp({
-    meaning: '设定硬保护累计近期失败的滚动窗口。',
-    unit: '秒',
-    range: '1–300 的整数',
-    defaultValue: '30',
+  burstFailureWindowMinutes: smartScheduleSettingHelp({
+    meaning: '设定硬保护统计近期请求的最长时间范围。',
+    unit: '分钟',
+    range: '1–60 的整数',
+    defaultValue: '1',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '不依赖分钟级稳定性评分或最少样本',
+    constraints: '与窗口请求数共同生效，不依赖稳定性评分或最少样本',
+  }),
+  burstFailureWindowRequests: smartScheduleSettingHelp({
+    meaning: '设定硬保护在时间范围内最多统计的最近请求数。',
+    unit: '次',
+    range: '1–1000 的整数',
+    defaultValue: '100',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '与窗口分钟数共同生效，成功请求进入失败率分母，429 不计入',
   }),
   consecutiveFailureThreshold: smartScheduleSettingHelp({
     meaning: '同一渠道模型连续失败达标时立即进入硬保护。',
@@ -294,13 +302,13 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     scheduleRelation: NEXT_OBSERVATION,
     constraints: '成功会清零连续失败计数，429 不计入',
   }),
-  burstFailureThreshold: smartScheduleSettingHelp({
-    meaning: '保护失败窗口内累计失败达标时立即进入硬保护。',
-    unit: '次',
-    range: '1–100 的整数',
+  burstFailureThresholdPercent: smartScheduleSettingHelp({
+    meaning: '保护失败窗口内失败请求占比达标时立即进入硬保护。',
+    unit: '%',
+    range: '>0–100',
     defaultValue: '3',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '窗口内成功不删除已累计失败，429 不计入',
+    constraints: '成功请求进入分母，429 不计入；连续失败阈值仍可独立触发',
   }),
   recoverySuccessThreshold: smartScheduleSettingHelp({
     meaning: '设定试放或降级探测恢复正常流量所需的连续成功次数。',
@@ -380,7 +388,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
   }),
   adaptiveSampling: smartScheduleSettingHelp({
     meaning:
-      '根据主渠道秒级错误与首字压力，动态增加有样本欠账备援的小流量采样。',
+      '根据主渠道近期错误与首字压力，动态增加有样本欠账备援的小流量采样。',
     unit: '开关',
     range: '开启或关闭',
     defaultValue: '开启',
@@ -437,14 +445,22 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     scheduleRelation: NEXT_OBSERVATION,
     constraints: '必须大于首字告警阈值，不等同于上游响应超时',
   }),
-  adaptiveSamplingWindowSeconds: smartScheduleSettingHelp({
+  adaptiveSamplingWindowMinutes: smartScheduleSettingHelp({
     meaning:
-      '设定自适应备援计算错误率、首字告警、风险和健康请求占比的独立秒级窗口。',
-    unit: '秒',
-    range: '60–3600 的整数',
-    defaultValue: '600',
+      '设定自适应备援计算错误率、首字告警、风险和健康请求占比的最长时间范围。',
+    unit: '分钟',
+    range: '1–60 的整数',
+    defaultValue: '10',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '与性能、稳定性分钟窗口独立，不使用调度轮数替代',
+    constraints: '与请求数窗口共同生效，并与性能、稳定性窗口独立',
+  }),
+  adaptiveSamplingWindowRequests: smartScheduleSettingHelp({
+    meaning: '设定自适应备援在时间范围内最多统计的最近有效请求数。',
+    unit: '次',
+    range: '1–1000 的整数',
+    defaultValue: '100',
+    scheduleRelation: NEXT_OBSERVATION,
+    constraints: '业务请求、手动测试和定时探测共用该上限，429 不计入',
   }),
   adaptiveSamplingFirstTokenWarningRequestPercent: smartScheduleSettingHelp({
     meaning: '设定窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值。',

@@ -52,7 +52,10 @@ import {
   MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT,
   MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT,
-  MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
+  MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES,
+  MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS,
+  MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES,
+  MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS,
   MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS,
   MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT,
@@ -63,8 +66,9 @@ import {
   MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
+  MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES,
+  MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES,
   MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
-  MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
 import {
@@ -186,7 +190,8 @@ type AdaptiveSamplingFieldName =
   | 'adaptiveSamplingErrorCriticalPercent'
   | 'adaptiveSamplingFirstTokenWarningSeconds'
   | 'adaptiveSamplingFirstTokenCriticalSeconds'
-  | 'adaptiveSamplingWindowSeconds'
+  | 'adaptiveSamplingWindowMinutes'
+  | 'adaptiveSamplingWindowRequests'
   | 'adaptiveSamplingFirstTokenWarningRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
@@ -199,7 +204,8 @@ type AdaptiveSamplingHelpKey =
   | 'adaptiveSamplingErrorCriticalPercent'
   | 'adaptiveSamplingFirstTokenWarningSeconds'
   | 'adaptiveSamplingFirstTokenCriticalSeconds'
-  | 'adaptiveSamplingWindowSeconds'
+  | 'adaptiveSamplingWindowMinutes'
+  | 'adaptiveSamplingWindowRequests'
   | 'adaptiveSamplingFirstTokenWarningRequestPercent'
   | 'adaptiveSamplingRecoverRequestPercent'
   | 'adaptiveSamplingSwitchConfirmRequestPercent'
@@ -858,14 +864,25 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
                 <AdaptiveSamplingNumberField
                   form={props.form}
-                  name='adaptiveSamplingWindowSeconds'
-                  label='请求比例窗口'
-                  min={MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_SECONDS}
+                  name='adaptiveSamplingWindowMinutes'
+                  label='请求比例窗口分钟数'
+                  min={MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
+                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
                   step={1}
-                  unit='秒'
-                  helpKey='adaptiveSamplingWindowSeconds'
-                  description='按最近窗口内的业务、手动测试和定时探测样本计算风险和健康比例'
+                  unit='分钟'
+                  helpKey='adaptiveSamplingWindowMinutes'
+                  description='只统计最近这段时间内的有效请求'
+                />
+                <AdaptiveSamplingNumberField
+                  form={props.form}
+                  name='adaptiveSamplingWindowRequests'
+                  label='请求比例窗口请求数'
+                  min={1}
+                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS}
+                  step={1}
+                  unit='次'
+                  helpKey='adaptiveSamplingWindowRequests'
+                  description='时间范围内只取最近这些业务、手动测试和定时探测请求'
                 />
                 <AdaptiveSamplingNumberField
                   form={props.form}
@@ -1188,22 +1205,22 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                 )}
               />
             </div>
-            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
               <FormField
                 control={props.form.control}
-                name='burstFailureWindowSeconds'
+                name='burstFailureWindowMinutes'
                 render={({ field }) => (
                   <FormItem>
                     <ChannelMonitorSettingLabel
-                      label='保护失败窗口'
-                      helpKey='burstFailureWindow'
+                      label='保护失败窗口分钟数'
+                      helpKey='burstFailureWindowMinutes'
                     />
                     <FormControl>
                       <InputGroup>
                         <InputGroupInput
                           type='number'
-                          min={1}
-                          max={300}
+                          min={MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
+                          max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
                           step={1}
                           inputMode='numeric'
                           value={field.value}
@@ -1213,13 +1230,52 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                           ref={field.ref}
                           aria-invalid={Boolean(
                             props.form.formState.errors
-                              .burstFailureWindowSeconds
+                              .burstFailureWindowMinutes
                           )}
                         />
-                        <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+                        <InputGroupAddon align='inline-end'>
+                          分钟
+                        </InputGroupAddon>
                       </InputGroup>
                     </FormControl>
-                    <FormDescription>只累计窗口内的近期失败</FormDescription>
+                    <FormDescription>只统计最近这段时间</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={props.form.control}
+                name='burstFailureWindowRequests'
+                render={({ field }) => (
+                  <FormItem>
+                    <ChannelMonitorSettingLabel
+                      label='保护失败窗口请求数'
+                      helpKey='burstFailureWindowRequests'
+                    />
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={1}
+                          max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS}
+                          step={1}
+                          inputMode='numeric'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors
+                              .burstFailureWindowRequests
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      时间范围内只取最近这些请求
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -1261,34 +1317,37 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               />
               <FormField
                 control={props.form.control}
-                name='burstFailureThreshold'
+                name='burstFailureThresholdPercent'
                 render={({ field }) => (
                   <FormItem>
                     <ChannelMonitorSettingLabel
                       label='窗口失败阈值'
-                      helpKey='burstFailureThreshold'
+                      helpKey='burstFailureThresholdPercent'
                     />
                     <FormControl>
                       <InputGroup>
                         <InputGroupInput
                           type='number'
-                          min={1}
+                          min={0.1}
                           max={100}
-                          step={1}
-                          inputMode='numeric'
+                          step={0.1}
+                          inputMode='decimal'
                           value={field.value}
                           onBlur={field.onBlur}
                           onChange={field.onChange}
                           name={field.name}
                           ref={field.ref}
                           aria-invalid={Boolean(
-                            props.form.formState.errors.burstFailureThreshold
+                            props.form.formState.errors
+                              .burstFailureThresholdPercent
                           )}
                         />
-                        <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                        <InputGroupAddon align='inline-end'>%</InputGroupAddon>
                       </InputGroup>
                     </FormControl>
-                    <FormDescription>窗口内累计错误立即摘除</FormDescription>
+                    <FormDescription>
+                      窗口内失败请求占比达标即摘除
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

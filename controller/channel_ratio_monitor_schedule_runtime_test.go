@@ -466,6 +466,94 @@ func TestChannelSmartScheduleRuntimeSuccessResetsOnlyConsecutiveFailures(t *test
 	assert.Len(t, requestSuccess.FailureTimes, 1)
 }
 
+func TestChannelSmartScheduleRuntimeWindowFailureThresholdUsesRecentRequestPercentage(t *testing.T) {
+	snapshot := channelSmartScheduleRuntimeHealthSnapshot{
+		RequestEvents: []channelSmartScheduleRuntimeRequestEvent{
+			{Timestamp: 100, Failure: true},
+			{Timestamp: 101},
+			{Timestamp: 102},
+			{Timestamp: 103},
+		},
+	}
+
+	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
+		snapshot, 104, 60, 4, 25,
+	)
+	assert.True(t, reached)
+	assert.Equal(t, 1, failures)
+	assert.Equal(t, 4, requests)
+
+	reached, failures, requests = channelSmartScheduleRuntimeWindowFailureThresholdReached(
+		snapshot, 104, 60, 4, 25.1,
+	)
+	assert.False(t, reached)
+	assert.Equal(t, 1, failures)
+	assert.Equal(t, 4, requests)
+
+	// The cap keeps only the newest requests, so the old failure no longer
+	// contributes to the denominator or numerator.
+	reached, failures, requests = channelSmartScheduleRuntimeWindowFailureThresholdReached(
+		snapshot, 104, 60, 3, 1,
+	)
+	assert.False(t, reached)
+	assert.Zero(t, failures)
+	assert.Equal(t, 3, requests)
+}
+
+func TestChannelSmartScheduleRuntimeSuccessEntersFailureRateDenominator(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	const revision = "runtime-health-percentage"
+
+	observeChannelSmartScheduleRuntimeFailure(1602, "model-a", 100, 3600, revision)
+	requestSuccess := observeChannelSmartScheduleRuntimeSuccess(1602, "model-a", 101, revision)
+
+	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
+		requestSuccess, 101, 3600, 100, 50,
+	)
+	assert.True(t, reached)
+	assert.Equal(t, 1, failures)
+	assert.Equal(t, 2, requests)
+}
+
+func TestChannelSmartScheduleRuntimeRequestWindowSharesSuccessAndFailureThroughRedis(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
+		require.NoError(t, client.Close())
+	})
+
+	const revision = "runtime-health-redis-percentage"
+	first := observeChannelSmartScheduleRuntimeFailure(1603, "model-a", 100, 3600, revision)
+	assert.Len(t, first.RequestEvents, 1)
+
+	// Drop the process-local state to model a second instance. The success
+	// must still be visible through the shared Redis request stream.
+	channelSmartScheduleRuntimeHealth.Lock()
+	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
+	channelSmartScheduleRuntimeHealth.Unlock()
+	shared := observeChannelSmartScheduleRuntimeSuccess(1603, "model-a", 101, revision)
+	assert.Len(t, shared.RequestEvents, 2)
+	assert.Zero(t, shared.ConsecutiveFailures)
+
+	channelSmartScheduleRuntimeHealth.Lock()
+	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
+	channelSmartScheduleRuntimeHealth.Unlock()
+	shared = observeChannelSmartScheduleRuntimeFailure(1603, "model-a", 102, 3600, revision)
+	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
+		shared, 102, 3600, 100, 50,
+	)
+	assert.True(t, reached)
+	assert.Equal(t, 2, failures)
+	assert.Equal(t, 3, requests)
+}
+
 func TestChannelSmartScheduleRuntimeHealthKeepsFailuresForLongerConfiguredWindows(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	const (

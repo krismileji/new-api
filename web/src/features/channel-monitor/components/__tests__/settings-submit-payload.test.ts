@@ -82,9 +82,10 @@ const formValues = {
       fastFailureSameChannelRetryCount: 2,
       fastFailureSameChannelRetryDelayMs: 750,
       slowFailureSeconds: 10,
-      burstFailureWindowSeconds: 45,
+      burstFailureWindowMinutes: 2,
+      burstFailureWindowRequests: 80,
+      burstFailureThresholdPercent: 5,
       consecutiveFailureThreshold: 3,
-      burstFailureThreshold: 5,
       recoverySuccessThreshold: 4,
       cooldownMinutes: 30,
       sampleMode: 'probe',
@@ -101,7 +102,8 @@ const formValues = {
       adaptiveSamplingErrorCriticalPercent: 15,
       adaptiveSamplingFirstTokenWarningSeconds: 5,
       adaptiveSamplingFirstTokenCriticalSeconds: 10,
-      adaptiveSamplingWindowSeconds: 600,
+      adaptiveSamplingWindowMinutes: 10,
+      adaptiveSamplingWindowRequests: 100,
       adaptiveSamplingFirstTokenWarningRequestPercent: 10,
       adaptiveSamplingRecoverRequestPercent: 95,
       adaptiveSamplingSwitchConfirmRequestPercent: 95,
@@ -179,6 +181,9 @@ describe('channel monitor settings submit payload', () => {
       'priority_sampling_min_percent',
       'adaptive_sampling_enter_request_percent',
       'adaptive_sampling_primary_min_percent',
+      'burst_failure_window_seconds',
+      'burst_failure_threshold',
+      'adaptive_sampling_window_seconds',
     ]) {
       assert.equal(
         Object.hasOwn(
@@ -230,16 +235,31 @@ describe('channel monitor settings submit payload', () => {
       10
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.burst_failure_window_seconds,
-      45
+      payload.smart_schedule_group_policies?.[0]?.burst_failure_window_minutes,
+      2
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.burst_failure_window_requests,
+      80
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.burst_failure_threshold_percent,
+      5
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.consecutive_failure_threshold,
       3
     )
     assert.equal(
-      payload.smart_schedule_group_policies?.[0]?.burst_failure_threshold,
-      5
+      payload.smart_schedule_group_policies?.[0]
+        ?.adaptive_sampling_window_minutes,
+      10
+    )
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]
+        ?.adaptive_sampling_window_requests,
+      100
     )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.recovery_success_threshold,

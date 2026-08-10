@@ -175,3 +175,41 @@ func TestChannelSmartScheduleAdaptiveHealthMetricsCountsIndependentTPSAndRequest
 	assert.InDelta(t, 1, metric.LatencyPressure, 1e-9)
 	assert.Equal(t, now-2, metric.LastUsedTime)
 }
+
+func TestChannelSmartScheduleAdaptiveHealthMetricsUsesNewestRequestCap(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]Log{
+		{
+			CreatedAt: now - 4, Type: LogTypeError, ChannelId: 2406,
+			ModelName: "model-a", Other: `{"status_code":503}`,
+		},
+		{
+			CreatedAt: now - 3, Type: LogTypeConsume, ChannelId: 2406,
+			ModelName: "model-a",
+		},
+		{
+			CreatedAt: now - 2, Type: LogTypeError, ChannelId: 2406,
+			ModelName: "model-a", Other: `{"status_code":503}`,
+		},
+		{
+			CreatedAt: now - 1, Type: LogTypeConsume, ChannelId: 2406,
+			ModelName: "model-a",
+		},
+	}).Error)
+
+	results, err := GetChannelSmartScheduleAdaptiveHealthMetrics(
+		context.Background(),
+		[]ChannelSmartScheduleAdaptiveHealthMetricWindow{{
+			ChannelId: 2406, ModelName: "model-a", StartTimestamp: now - 10,
+			MaxRequests: 2, WarningSeconds: 5, CriticalSeconds: 10,
+		}},
+		now+1,
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	metric := results[0].Metric
+	assert.Equal(t, int64(2), metric.RequestCount)
+	assert.Equal(t, int64(1), metric.FailureCount)
+	assert.Equal(t, now-1, metric.LastUsedTime)
+}
