@@ -291,14 +291,24 @@ func abilityPriority(ability Ability) int64 {
 
 func channelSmartScheduleManualPrimaryPriority(
 	abilities []Ability,
+	states []ChannelSmartScheduleRouteState,
 	channelStatusById map[int]int,
 	channelId int,
 	minimumPriority int64,
 	channelDefaults ...map[int]Channel,
 ) (int64, error) {
+	participatingChannelIds := make(map[int]struct{}, len(states))
+	for _, state := range states {
+		if state.Participates() {
+			participatingChannelIds[state.ChannelId] = struct{}{}
+		}
+	}
 	highestOtherPriority := int64(0)
 	for _, ability := range abilities {
 		if ability.ChannelId == channelId || !ability.Enabled {
+			continue
+		}
+		if _, participates := participatingChannelIds[ability.ChannelId]; !participates {
 			continue
 		}
 		if status, exists := channelStatusById[ability.ChannelId]; !exists || status != common.ChannelStatusEnabled {
@@ -690,7 +700,7 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 		targetState.Excluded = excluded
 		stateChanged := created || participationChanged
 		routingChanged = participationChanged
-		if excluded && participationChanged {
+		if excluded {
 			if targetState.ManualPrimaryUntil > 0 || targetState.ManualPrimarySaved {
 				changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, targetState, targetAbility)
 				if restoreErr != nil {
@@ -704,18 +714,6 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 					return clearErr
 				}
 				routingChanged = routingChanged || changed
-			}
-			if targetState.TemporaryTrafficKind != "" {
-				priority := targetState.BasePriority
-				weight := targetState.BaseWeight
-				routingChanged = routingChanged || abilityPriority(*targetAbility) != priority || targetAbility.Weight != weight
-				if err := updateAbilitySmartSchedulePriorityWeightTx(
-					tx, channelSmartScheduleRouteKey(channelId, group, modelName), &priority, &weight,
-				); err != nil {
-					return err
-				}
-				targetAbility.Priority = &priority
-				targetAbility.Weight = weight
 			}
 			if targetAbility.Priority != nil || targetAbility.Weight != 0 {
 				routingChanged = true
@@ -847,7 +845,7 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 			state.Excluded = excluded
 			stateChanged := created || participationChanged
 			routingChanged := participationChanged
-			if excluded && participationChanged {
+			if excluded {
 				if state.ManualPrimaryUntil > 0 || state.ManualPrimarySaved {
 					changed, restoreErr := restoreChannelSmartScheduleRoutePrimaryTx(tx, state, ability)
 					if restoreErr != nil {
@@ -861,18 +859,6 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 						return clearErr
 					}
 					routingChanged = routingChanged || changed
-				}
-				if state.TemporaryTrafficKind != "" {
-					priority := state.BasePriority
-					weight := state.BaseWeight
-					if abilityPriority(*ability) != priority || ability.Weight != weight {
-						routingChanged = true
-					}
-					if err := updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight); err != nil {
-						return err
-					}
-					ability.Priority = &priority
-					ability.Weight = weight
 				}
 				if ability.Priority != nil || ability.Weight != 0 {
 					routingChanged = true
@@ -1118,6 +1104,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 		}
 		manualPriority, err := channelSmartScheduleManualPrimaryPriority(
 			abilities,
+			states,
 			channelStatusById,
 			channelId,
 			minimumPriority,
@@ -2059,11 +2046,22 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 			channelStatusById[channel.Id] = channel.Status
 			channelById[channel.Id] = channel
 		}
-		var state ChannelSmartScheduleRouteState
+		var states []ChannelSmartScheduleRouteState
 		if err := lockForUpdate(tx).
-			Where(&ChannelSmartScheduleRouteState{ChannelId: channelId, GroupName: group, ModelName: modelName}).
-			First(&state).Error; err != nil {
+			Where("group_name = ? AND model_name = ?", group, modelName).
+			Order("channel_id ASC").
+			Find(&states).Error; err != nil {
 			return err
+		}
+		var state *ChannelSmartScheduleRouteState
+		for index := range states {
+			if states[index].ChannelId == channelId {
+				state = &states[index]
+				break
+			}
+		}
+		if state == nil {
+			return gorm.ErrRecordNotFound
 		}
 		var abilities []Ability
 		if err := lockForUpdate(tx).
@@ -2084,7 +2082,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		var clearErr error
 		result, clearErr = clearChannelSmartScheduleRouteStabilityTx(
 			tx,
-			&state,
+			state,
 			ability,
 			fallbackPriority,
 			fallbackWeight,
@@ -2105,6 +2103,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		currentPriority, _ := channelSmartScheduleAbilityRouting(*ability, &channel)
 		manualPriority, priorityErr := channelSmartScheduleManualPrimaryPriority(
 			abilities,
+			states,
 			channelStatusById,
 			channelId,
 			max(currentPriority, state.LastSchedulePriority),
@@ -2135,7 +2134,7 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		state.LastScheduleWeight = manualWeight
 		state.LastScheduleTime = now
 		state.Revision++
-		if err := saveChannelSmartScheduleRouteStateTx(tx, &state); err != nil {
+		if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
 			return err
 		}
 		result.Priority = manualPriority

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExcludeChannelSmartScheduleRouteClearsOverrideAndInheritsChannelRouting(t *testing.T) {
+func TestExcludeChannelSmartScheduleRouteAlwaysClearsOverride(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	channelPriority := int64(80)
 	channelWeight := uint(50)
@@ -62,11 +62,10 @@ func TestExcludeChannelSmartScheduleRouteClearsOverrideAndInheritsChannelRouting
 		Updates(map[string]any{"priority": stalePriority, "weight": uint(999)}).Error)
 	_, routingChanged, err = SaveChannelSmartScheduleRouteConfig(5101, "vip", "model-a", true)
 	require.NoError(t, err)
-	assert.False(t, routingChanged)
+	assert.True(t, routingChanged)
 	require.NoError(t, db.Where(&Ability{ChannelId: 5101, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, stalePriority, *ability.Priority)
-	assert.Equal(t, uint(999), ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 
 	_, routingChanged, err = SaveChannelSmartScheduleRouteConfig(5101, "vip", "model-a", false)
 	require.NoError(t, err)
@@ -204,12 +203,10 @@ func TestRouteCacheSelectionUsesChannelRoutingWhenGroupOverrideIsMissing(t *test
 		{ChannelId: 5105, Group: "vip", Model: "model-a", Enabled: true},
 		{ChannelId: 5106, Group: "vip", Model: "model-a", Enabled: true, Priority: &groupPriority, Weight: 1000},
 	}
-	channelSmartScheduleRouteCache = buildChannelSmartScheduleRouteCacheWithManagedPools(
+	channelSmartScheduleRouteCache = buildChannelSmartScheduleRouteCacheWithStates(
 		abilities,
 		channelsIDM,
 		nil,
-		nil,
-		false,
 	)
 
 	channel, handled, err := getRandomSatisfiedChannelByAbility(

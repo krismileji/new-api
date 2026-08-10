@@ -82,7 +82,13 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		routing.sameChannelID = 0
 		routing.sameGroup = ""
 		channel, err := model.CacheGetChannel(channelID)
-		groupEligible := group != "" && model.IsChannelEnabledForGroupModel(group, retryParam.ModelName, channelID)
+		groupEligible := group != "" && model.ChannelSmartScheduleAffinityEligibility(
+			group,
+			retryParam.ModelName,
+			channelID,
+			retryParam.RequestPath,
+			retryParam.SelectionOptions,
+		) == model.ChannelSmartScheduleAffinityEligible
 		if retryParam.TokenGroup == "auto" {
 			groupAllowed := false
 			if retryParam.Ctx != nil {
@@ -94,7 +100,13 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 					}
 				}
 			}
-			groupEligible = groupAllowed && model.IsChannelEnabledForGroupModel(group, retryParam.ModelName, channelID)
+			groupEligible = groupAllowed && model.ChannelSmartScheduleAffinityEligibility(
+				group,
+				retryParam.ModelName,
+				channelID,
+				retryParam.RequestPath,
+				retryParam.SelectionOptions,
+			) == model.ChannelSmartScheduleAffinityEligible
 		}
 		if err == nil && channel != nil && channel.Status == common.ChannelStatusEnabled &&
 			groupEligible &&

@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSaveChannelSmartScheduleRoutePrimaryIncludesAbilityWithoutRouteState(t *testing.T) {
+func TestSaveChannelSmartScheduleRoutePrimaryIgnoresAbilityWithoutRouteState(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	targetPriority := int64(10)
-	manualPriority := int64(500)
+	unmanagedPriority := int64(500)
 	weight := uint(100)
 	require.NoError(t, db.Create(&[]Channel{
 		{Id: 3181, Name: "固定目标", Status: common.ChannelStatusEnabled},
@@ -21,7 +21,7 @@ func TestSaveChannelSmartScheduleRoutePrimaryIncludesAbilityWithoutRouteState(t 
 	}).Error)
 	require.NoError(t, db.Create(&[]Ability{
 		{ChannelId: 3181, Group: "vip", Model: "model-a", Enabled: true, Priority: &targetPriority, Weight: weight},
-		{ChannelId: 3182, Group: "vip", Model: "model-a", Enabled: true, Priority: &manualPriority, Weight: weight},
+		{ChannelId: 3182, Group: "vip", Model: "model-a", Enabled: true, Priority: &unmanagedPriority, Weight: weight},
 	}).Error)
 	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
 		ChannelId: 3181, GroupName: "vip", ModelName: "model-a",
@@ -41,7 +41,7 @@ func TestSaveChannelSmartScheduleRoutePrimaryIncludesAbilityWithoutRouteState(t 
 	require.NoError(t, db.Where(&Ability{
 		ChannelId: 3181, Group: "vip", Model: "model-a",
 	}).First(&ability).Error)
-	assert.Equal(t, int64(501), abilityPriority(ability))
+	assert.Equal(t, targetPriority, abilityPriority(ability))
 	assert.Equal(t, uint(1000), ability.Weight)
 }
 
@@ -103,7 +103,7 @@ func TestClearChannelSmartScheduleRouteStabilityReappliesActivePrimary(t *testin
 	assert.Equal(t, baseWeight, ability.Weight)
 }
 
-func TestUpdateAbilitiesKeepsActivePrimaryAboveNewRoute(t *testing.T) {
+func TestUpdateAbilitiesKeepsActivePrimaryAboveParticipatingRoutes(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	fixedPriority := int64(10)
 	newRoutePriority := int64(500)
@@ -142,7 +142,7 @@ func TestUpdateAbilitiesKeepsActivePrimaryAboveNewRoute(t *testing.T) {
 	require.NoError(t, db.Where(&Ability{Group: "vip", Model: "model-a"}).
 		Order("channel_id ASC").Find(&abilities).Error)
 	require.Len(t, abilities, 2)
-	assert.Equal(t, int64(501), abilityPriority(abilities[0]))
+	assert.Equal(t, fixedPriority, abilityPriority(abilities[0]))
 	assert.Equal(t, uint(1000), abilities[0].Weight)
 	assert.Nil(t, abilities[1].Priority)
 	assert.Zero(t, abilities[1].Weight)
@@ -151,7 +151,7 @@ func TestUpdateAbilitiesKeepsActivePrimaryAboveNewRoute(t *testing.T) {
 	assert.Equal(t, uint(100), effectiveWeight)
 }
 
-func TestUpdateAbilityStatusKeepsActivePrimaryAboveEnabledRoute(t *testing.T) {
+func TestUpdateAbilityStatusKeepsActivePrimaryAboveEnabledParticipatingRoute(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	fixedPriority := int64(10)
 	disabledPriority := int64(500)
@@ -182,7 +182,7 @@ func TestUpdateAbilityStatusKeepsActivePrimaryAboveEnabledRoute(t *testing.T) {
 	require.NoError(t, db.Where(&Ability{Group: "vip", Model: "model-a"}).
 		Order("channel_id ASC").Find(&abilities).Error)
 	require.Len(t, abilities, 2)
-	assert.Equal(t, int64(501), abilityPriority(abilities[0]))
+	assert.Equal(t, fixedPriority, abilityPriority(abilities[0]))
 	assert.Equal(t, uint(1000), abilities[0].Weight)
 	assert.True(t, abilities[1].Enabled)
 	assert.Equal(t, disabledPriority, abilityPriority(abilities[1]))

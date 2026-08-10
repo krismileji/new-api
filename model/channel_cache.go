@@ -126,17 +126,22 @@ func SyncChannelCache(frequency int) {
 
 func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, options ...ChannelSelectionOptions) (*Channel, error) {
 	selectionOptions := channelSelectionOptions(options)
+	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
 	if selectionOptions.HasExcludedChannels() {
 		retry = 0
 	}
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return getRandomSatisfiedChannelWithoutCache(group, model, retry, requestPath, selectionOptions)
+		return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+			group, model, retry, requestPath, selectionOptions, trafficPolicy,
+		)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
-	if channel, handled, err := getRandomSatisfiedChannelByAbility(group, model, retry, requestPath, selectionOptions); handled {
+	if channel, handled, err := getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
+		group, model, retry, requestPath, selectionOptions, trafficPolicy,
+	); handled {
 		return channel, err
 	}
 

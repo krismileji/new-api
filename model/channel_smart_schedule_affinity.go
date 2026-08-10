@@ -15,9 +15,8 @@ const (
 	ChannelSmartScheduleAffinityTemporarilyUnavailable
 )
 
-// ChannelSmartScheduleAffinityEligibility keeps an affinity hit only when it
-// belongs to the highest usable priority for the current request. Pools
-// without an active participating route retain the official affinity behavior.
+// ChannelSmartScheduleAffinityEligibility applies the same strict pool and
+// participation gate as normal routing while smart scheduling is enabled.
 func ChannelSmartScheduleAffinityEligibility(
 	group string,
 	modelName string,
@@ -27,124 +26,186 @@ func ChannelSmartScheduleAffinityEligibility(
 ) ChannelSmartScheduleAffinityStatus {
 	group = strings.TrimSpace(group)
 	requestModelName := strings.TrimSpace(modelName)
-	selectionOptions := channelSelectionOptions(options)
 	modelNames := channelSmartScheduleRouteModelNames(requestModelName)
 	if group == "" || len(modelNames) == 0 || channelId <= 0 {
 		return ChannelSmartScheduleAffinityInvalid
 	}
 
-	if !common.MemoryCacheEnabled {
-		selectedModel := ""
-		var abilities []Ability
-		var usableChannels map[int]*Channel
-		preferredPaused := false
-		for _, candidateModel := range modelNames {
-			var candidateAbilities []Ability
-			if err := DB.Select("channel_id", "priority").
-				Where(&Ability{Group: group, Model: candidateModel, Enabled: true}).
-				Find(&candidateAbilities).Error; err != nil {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-			if len(candidateAbilities) == 0 {
-				continue
-			}
-			channelIds := make([]int, 0, len(candidateAbilities))
-			for _, ability := range candidateAbilities {
-				channelIds = append(channelIds, ability.ChannelId)
-			}
-			pausedChannelIds, err := loadActiveChannelSmartSchedulePausedChannelIds(
-				DB, group, candidateModel, channelIds, common.GetTimestamp(),
-			)
-			if err != nil {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-			if _, paused := pausedChannelIds[channelId]; paused {
-				preferredPaused = true
-			}
-			var channels []Channel
-			if err := DB.Where("id IN ? AND status = ?", channelIds, common.ChannelStatusEnabled).
-				Find(&channels).Error; err != nil {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-			candidateChannels := make(map[int]*Channel, len(channels))
-			for index := range channels {
-				channel := &channels[index]
-				if channel.Type == constant.ChannelTypeAdvancedCustom {
-					config := channel.GetOtherSettings().AdvancedCustom
-					if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
-						continue
-					}
-				}
-				candidateChannels[channel.Id] = channel
-			}
-			for _, ability := range candidateAbilities {
-				if _, paused := pausedChannelIds[ability.ChannelId]; paused {
-					continue
-				}
-				if _, usable := candidateChannels[ability.ChannelId]; usable {
-					abilities = append(abilities, ability)
-				}
-			}
-			if len(abilities) > 0 {
-				selectedModel = candidateModel
-				usableChannels = candidateChannels
-				break
-			}
-		}
-		if selectedModel == "" {
-			if preferredPaused {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-			return ChannelSmartScheduleAffinityInvalid
-		}
-		if preferredPaused {
+	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
+	if trafficPolicy == nil || !trafficPolicy.enabled {
+		paused, err := channelSmartScheduleAffinityRoutePaused(group, modelNames, channelId)
+		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
-		originalAbilities := append([]Ability(nil), abilities...)
-		preferredInOriginal := false
-		for _, ability := range originalAbilities {
-			if ability.ChannelId == channelId {
-				preferredInOriginal = true
-				break
+		if paused {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		channel, err := CacheGetChannel(channelId)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			return ChannelSmartScheduleAffinityInvalid
+		}
+		if requestPath != "" && channel.Type == constant.ChannelTypeAdvancedCustom {
+			config := channel.GetOtherSettings().AdvancedCustom
+			if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
+				return ChannelSmartScheduleAffinityInvalid
 			}
 		}
-		if selectionOptions.HasRequestSize() {
-			channelIDs := make([]int, 0, len(originalAbilities))
-			for _, ability := range originalAbilities {
-				channelIDs = append(channelIDs, ability.ChannelId)
+		if !IsChannelEnabledForGroupModel(group, requestModelName, channelId) {
+			return ChannelSmartScheduleAffinityInvalid
+		}
+		return ChannelSmartScheduleAffinityEligible
+	}
+
+	selectionOptions := channelSelectionOptions(options)
+	if !common.MemoryCacheEnabled {
+		return channelSmartScheduleAffinityEligibilityFromDatabase(
+			group, requestModelName, modelNames, channelId, requestPath, selectionOptions, trafficPolicy,
+		)
+	}
+	return channelSmartScheduleAffinityEligibilityFromCache(
+		group, requestModelName, modelNames, channelId, requestPath, selectionOptions, trafficPolicy,
+	)
+}
+
+func channelSmartScheduleAffinityRoutePaused(
+	group string,
+	modelNames []string,
+	channelId int,
+) (bool, error) {
+	now := common.GetTimestamp()
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		if channelSmartScheduleRouteCache == nil {
+			return false, nil
+		}
+		for _, modelName := range modelNames {
+			for _, route := range channelSmartScheduleRouteCache[group][modelName] {
+				if route.channelId == channelId && route.trafficPausedUntil > now {
+					return true, nil
+				}
 			}
+		}
+		return false, nil
+	}
+	if DB == nil || !DB.Migrator().HasTable(&ChannelSmartScheduleGroupPause{}) {
+		return false, nil
+	}
+	for _, modelName := range modelNames {
+		pausedChannelIDs, err := loadActiveChannelSmartSchedulePausedChannelIds(
+			DB, group, modelName, []int{channelId}, now,
+		)
+		if err != nil {
+			return false, err
+		}
+		if _, paused := pausedChannelIDs[channelId]; paused {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func channelSmartScheduleAffinityEligibilityFromDatabase(
+	group string,
+	requestModelName string,
+	modelNames []string,
+	channelId int,
+	requestPath string,
+	selectionOptions ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) ChannelSmartScheduleAffinityStatus {
+	preferredPaused := false
+	preferredFilteredByRequestLimit := false
+	for _, candidateModel := range modelNames {
+		if !trafficPolicy.allowsPool(group, candidateModel) {
+			continue
+		}
+		var abilities []Ability
+		if err := DB.Select("channel_id", "priority", "weight").
+			Where(&Ability{Group: group, Model: candidateModel, Enabled: true}).
+			Find(&abilities).Error; err != nil {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		var err error
+		abilities, err = filterChannelSmartScheduleTrafficAbilities(
+			abilities, group, candidateModel, trafficPolicy,
+		)
+		if err != nil {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		if len(abilities) == 0 {
+			continue
+		}
+
+		channelIDs := make([]int, 0, len(abilities))
+		for _, ability := range abilities {
+			channelIDs = append(channelIDs, ability.ChannelId)
+		}
+		pausedChannelIDs, err := loadActiveChannelSmartSchedulePausedChannelIds(
+			DB, group, candidateModel, channelIDs, common.GetTimestamp(),
+		)
+		if err != nil {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		if _, paused := pausedChannelIDs[channelId]; paused {
+			preferredPaused = true
+		}
+
+		var channels []Channel
+		if err := DB.Where("id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).
+			Find(&channels).Error; err != nil {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		channelByID := make(map[int]*Channel, len(channels))
+		for index := range channels {
+			channel := &channels[index]
+			if requestPath != "" && channel.Type == constant.ChannelTypeAdvancedCustom {
+				config := channel.GetOtherSettings().AdvancedCustom
+				if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
+					continue
+				}
+			}
+			channelByID[channel.Id] = channel
+		}
+
+		available := make([]Ability, 0, len(abilities))
+		for _, ability := range abilities {
+			if _, paused := pausedChannelIDs[ability.ChannelId]; paused {
+				continue
+			}
+			if channelByID[ability.ChannelId] != nil {
+				available = append(available, ability)
+			}
+		}
+		if len(available) == 0 {
+			continue
+		}
+
+		preferredAvailable := containsAbilityChannel(available, channelId)
+		if selectionOptions.HasRequestSize() {
 			requestLimitStates, err := loadChannelSmartScheduleRequestLimitStates(
-				group, selectedModel, channelIDs,
+				group, candidateModel, channelIDs,
 			)
 			if err != nil {
 				return ChannelSmartScheduleAffinityTemporarilyUnavailable
 			}
-			abilities = filterAbilitiesBySmartScheduleRequestLimits(abilities, requestLimitStates, selectionOptions)
-			if preferredInOriginal && !containsAbilityChannel(abilities, channelId) {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
+			available = filterAbilitiesBySmartScheduleRequestLimits(
+				available, requestLimitStates, selectionOptions,
+			)
+			if preferredAvailable && !containsAbilityChannel(available, channelId) {
+				preferredFilteredByRequestLimit = true
 			}
+		}
+		if len(available) == 0 {
+			continue
 		}
 
-		var activeStateCount int64
-		if DB.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
-			if err := DB.Model(&ChannelSmartScheduleRouteState{}).
-				Where(
-					"group_name = ? AND model_name = ? AND participation_set = ? AND excluded = ?",
-					group, selectedModel, true, false,
-				).
-				Count(&activeStateCount).Error; err != nil {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-		}
 		highestPriority := int64(0)
 		highestPrioritySet := false
 		preferredPriority := int64(0)
 		preferredFound := false
-		for _, ability := range abilities {
-			priority, _ := channelSmartScheduleAbilityRouting(
-				ability,
-				usableChannels[ability.ChannelId],
-			)
+		for _, ability := range available {
+			priority, _ := channelSmartScheduleAbilityRouting(ability, channelByID[ability.ChannelId])
 			if !highestPrioritySet || priority > highestPriority {
 				highestPriority = priority
 				highestPrioritySet = true
@@ -154,103 +215,105 @@ func ChannelSmartScheduleAffinityEligibility(
 				preferredFound = true
 			}
 		}
-		if activeStateCount == 0 {
-			if preferredFound {
-				return ChannelSmartScheduleAffinityEligible
+		if preferredFound && preferredPriority == highestPriority {
+			return ChannelSmartScheduleAffinityEligible
+		}
+		if preferredFound || preferredPaused || preferredFilteredByRequestLimit {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		return ChannelSmartScheduleAffinityInvalid
+	}
+	if preferredPaused || preferredFilteredByRequestLimit {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	}
+	return ChannelSmartScheduleAffinityInvalid
+}
+
+func channelSmartScheduleAffinityEligibilityFromCache(
+	group string,
+	requestModelName string,
+	modelNames []string,
+	channelId int,
+	requestPath string,
+	selectionOptions ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) ChannelSmartScheduleAffinityStatus {
+	baseOptions := selectionOptions
+	baseOptions.EstimatedPromptTokens = 0
+	baseOptions.RequestBodyBytes = 0
+	preferredPaused := false
+	preferredFilteredByRequestLimit := false
+	now := common.GetTimestamp()
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	if channelSmartScheduleRouteCache == nil {
+		return ChannelSmartScheduleAffinityInvalid
+	}
+	for _, candidateModel := range modelNames {
+		routes := filterChannelSmartScheduleTrafficCachedRoutes(
+			channelSmartScheduleRouteCache[group][candidateModel],
+			group,
+			candidateModel,
+			trafficPolicy,
+		)
+		for _, route := range routes {
+			if route.channelId == channelId && route.trafficPausedUntil > now {
+				preferredPaused = true
 			}
-			return ChannelSmartScheduleAffinityInvalid
+		}
+		allRoutes := filterChannelSmartScheduleCachedRoutes(
+			routes, requestPath, requestModelName, baseOptions,
+		)
+		availableRoutes := filterChannelSmartScheduleCachedRoutes(
+			routes, requestPath, requestModelName, selectionOptions,
+		)
+		preferredInAll := containsChannelSmartScheduleCachedRoute(allRoutes, channelId)
+		if preferredInAll && !containsChannelSmartScheduleCachedRoute(availableRoutes, channelId) {
+			preferredFilteredByRequestLimit = true
+		}
+		if len(availableRoutes) == 0 {
+			continue
+		}
+
+		highestPriority := availableRoutes[0].priority
+		preferredPriority := int64(0)
+		preferredFound := false
+		for _, route := range availableRoutes {
+			if route.priority > highestPriority {
+				highestPriority = route.priority
+			}
+			if route.channelId == channelId {
+				preferredPriority = route.priority
+				preferredFound = true
+			}
 		}
 		if preferredFound && preferredPriority == highestPriority {
 			return ChannelSmartScheduleAffinityEligible
 		}
-		if preferredFound {
+		if preferredFound || preferredPaused || preferredFilteredByRequestLimit {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
 		return ChannelSmartScheduleAffinityInvalid
 	}
-
-	var routes []channelSmartScheduleCachedRoute
-	var allRoutes []channelSmartScheduleCachedRoute
-	preferredPaused := false
-	baseOptions := selectionOptions
-	baseOptions.EstimatedPromptTokens = 0
-	baseOptions.RequestBodyBytes = 0
-	channelSyncLock.RLock()
-	for _, candidateModel := range modelNames {
-		candidateRoutes := channelSmartScheduleRouteCache[group][candidateModel]
-		for _, route := range candidateRoutes {
-			if route.channelId == channelId && route.trafficPausedUntil > common.GetTimestamp() {
-				preferredPaused = true
-				break
-			}
-		}
-		candidateRoutes = filterChannelSmartScheduleCachedRoutes(
-			candidateRoutes, requestPath, requestModelName, selectionOptions,
-		)
-		if len(candidateRoutes) > 0 {
-			routes = candidateRoutes
-			allRoutes = filterChannelSmartScheduleCachedRoutes(
-				channelSmartScheduleRouteCache[group][candidateModel],
-				requestPath, requestModelName, baseOptions,
-			)
-			break
-		}
+	if preferredPaused || preferredFilteredByRequestLimit {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
 	}
-	channelSyncLock.RUnlock()
-	if len(routes) == 0 {
-		if preferredPaused {
-			return ChannelSmartScheduleAffinityTemporarilyUnavailable
-		}
-		return ChannelSmartScheduleAffinityInvalid
-	}
-
-	highestPriority := routes[0].priority
-	managed := false
-	preferredPriority := int64(0)
-	preferredFound := false
-	for _, route := range routes {
-		managed = managed || route.managed
-		if route.priority > highestPriority {
-			highestPriority = route.priority
-		}
-		if route.channelId == channelId {
-			preferredPriority = route.priority
-			preferredFound = true
-		}
-	}
-	preferredInAll := false
-	preferredFilteredByRequestLimit := false
-	for _, route := range allRoutes {
-		if route.channelId == channelId {
-			preferredInAll = true
-			preferredFilteredByRequestLimit = shouldAvoidChannelSmartScheduleRoute(
-				route.temporaryTrafficKind,
-				route.stabilityState,
-				route.explorationMaxPromptTokens,
-				route.stabilityReleaseMaxPromptTokens,
-				selectionOptions,
-			)
-			break
-		}
-	}
-	if !preferredFound {
-		if preferredPaused {
-			return ChannelSmartScheduleAffinityTemporarilyUnavailable
-		}
-		if preferredInAll && preferredFilteredByRequestLimit {
-			return ChannelSmartScheduleAffinityTemporarilyUnavailable
-		}
-		return ChannelSmartScheduleAffinityInvalid
-	}
-	if !managed || preferredPriority == highestPriority {
-		return ChannelSmartScheduleAffinityEligible
-	}
-	return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	return ChannelSmartScheduleAffinityInvalid
 }
 
 func containsAbilityChannel(abilities []Ability, channelId int) bool {
 	for _, ability := range abilities {
 		if ability.ChannelId == channelId {
+			return true
+		}
+	}
+	return false
+}
+
+func containsChannelSmartScheduleCachedRoute(routes []channelSmartScheduleCachedRoute, channelId int) bool {
+	for _, route := range routes {
+		if route.channelId == channelId {
 			return true
 		}
 	}

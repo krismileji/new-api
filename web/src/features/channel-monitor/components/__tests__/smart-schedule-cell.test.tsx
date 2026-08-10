@@ -150,6 +150,32 @@ describe('channel monitor smart schedule cell status', () => {
     assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
   })
 
+  test('shows nonparticipation before stale pause and protection state', () => {
+    const markup = renderCell([
+      createRoute({
+        traffic_paused_until: 4_102_444_800,
+        state: {
+          participation_set: false,
+          excluded: false,
+          stability_state: 'degraded',
+          stability_since: 1_752_700_000,
+          stability_until: 4_102_444_800,
+          temporary_traffic_kind: 'insufficient_samples',
+          temporary_traffic_since: 1_752_700_000,
+          temporary_traffic_target_percent: 3,
+          manual_primary_until: 4_102_444_800,
+        },
+      }),
+    ])
+
+    assert.ok(markup.includes('查看当前调度状态详情：未参与调度'))
+    assert.equal(markup.includes('流量已暂停'), false)
+    assert.equal(markup.includes('稳定性降级'), false)
+    assert.equal(markup.includes('统一探索采样'), false)
+    assert.equal(markup.includes('固定主渠道'), false)
+    assert.equal(markup.includes('aria-label="解除 '), false)
+  })
+
   test('opens clearing from degradation, release, and exploration states only', () => {
     const fixturePath = fileURLToPath(
       new URL('./smart-schedule-cell-protection.fixture.tsx', import.meta.url)

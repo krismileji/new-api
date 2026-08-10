@@ -73,7 +73,7 @@ func TestUpdateAbilitiesPreservesExistingSmartScheduleRouteRouting(t *testing.T)
 	defaultPriority := int64(80)
 	defaultWeight := uint(50)
 	degradedPriority := int64(0)
-	manualPriority := int64(95)
+	stalePriority := int64(95)
 	channel := Channel{
 		Id: 1001, Name: "scheduled", Status: common.ChannelStatusEnabled,
 		Group: "vip,standard,new", Models: "model-a", Priority: &defaultPriority, Weight: &defaultWeight,
@@ -81,7 +81,7 @@ func TestUpdateAbilitiesPreservesExistingSmartScheduleRouteRouting(t *testing.T)
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&[]Ability{
 		{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true, Priority: &degradedPriority, Weight: 0},
-		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &manualPriority, Weight: 70},
+		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &stalePriority, Weight: 70},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
@@ -100,9 +100,8 @@ func TestUpdateAbilitiesPreservesExistingSmartScheduleRouteRouting(t *testing.T)
 	require.NotNil(t, byGroup["vip"].Priority)
 	assert.Equal(t, int64(0), *byGroup["vip"].Priority)
 	assert.Zero(t, byGroup["vip"].Weight)
-	require.NotNil(t, byGroup["standard"].Priority)
-	assert.Equal(t, manualPriority, *byGroup["standard"].Priority)
-	assert.Equal(t, uint(70), byGroup["standard"].Weight)
+	assert.Nil(t, byGroup["standard"].Priority)
+	assert.Zero(t, byGroup["standard"].Weight)
 	require.NotNil(t, byGroup["new"].Priority)
 	assert.Equal(t, defaultPriority, *byGroup["new"].Priority)
 	assert.Equal(t, defaultWeight, byGroup["new"].Weight)
@@ -250,7 +249,7 @@ func TestSaveChannelSmartScheduleRoutePrimaryIgnoresDisabledChannelPriority(t *t
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{ChannelId: 3111, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
 		{ChannelId: 3112, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
-		{ChannelId: 3113, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Excluded: true, Revision: 1},
+		{ChannelId: 3113, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
 	}).Error)
 
 	result, err := SaveChannelSmartScheduleRoutePrimary(
@@ -475,12 +474,12 @@ func TestUpdateAbilitiesRemovesDeletedRouteScheduleState(t *testing.T) {
 	assert.Empty(t, recreatedState.TemporaryTrafficKind)
 }
 
-func TestFixAbilityPreservesManualRouteRouting(t *testing.T) {
+func TestFixAbilityClearsNonparticipatingRouteRouting(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	defaultPriority := int64(80)
 	defaultWeight := uint(50)
 	degradedPriority := int64(0)
-	manualPriority := int64(95)
+	stalePriority := int64(95)
 	channel := Channel{
 		Id: 1012, Name: "fix-route-lifecycle", Status: common.ChannelStatusEnabled,
 		Group: "vip,standard", Models: "model-a", Priority: &defaultPriority, Weight: &defaultWeight,
@@ -488,7 +487,7 @@ func TestFixAbilityPreservesManualRouteRouting(t *testing.T) {
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&[]Ability{
 		{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true, Priority: &degradedPriority, Weight: 0},
-		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &manualPriority, Weight: 70},
+		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &stalePriority, Weight: 70},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{
@@ -514,9 +513,8 @@ func TestFixAbilityPreservesManualRouteRouting(t *testing.T) {
 	require.NotNil(t, byGroup["vip"].Priority)
 	assert.Zero(t, *byGroup["vip"].Priority)
 	assert.Zero(t, byGroup["vip"].Weight)
-	require.NotNil(t, byGroup["standard"].Priority)
-	assert.Equal(t, manualPriority, *byGroup["standard"].Priority)
-	assert.Equal(t, uint(70), byGroup["standard"].Weight)
+	assert.Nil(t, byGroup["standard"].Priority)
+	assert.Zero(t, byGroup["standard"].Weight)
 
 	var routeState ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
@@ -530,12 +528,12 @@ func TestFixAbilityPreservesManualRouteRouting(t *testing.T) {
 	assert.Zero(t, staleStateCount)
 }
 
-func TestEditChannelByTagKeepsManualRouteRouting(t *testing.T) {
+func TestEditChannelByTagClearsNonparticipatingRouteRouting(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	defaultPriority := int64(80)
 	defaultWeight := uint(50)
 	degradedPriority := int64(0)
-	manualPriority := int64(95)
+	stalePriority := int64(95)
 	tag := "bulk-routing"
 	channel := Channel{
 		Id: 1013, Name: "bulk-routing", Status: common.ChannelStatusEnabled,
@@ -544,7 +542,7 @@ func TestEditChannelByTagKeepsManualRouteRouting(t *testing.T) {
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&[]Ability{
 		{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true, Priority: &degradedPriority, Weight: 0, Tag: &tag},
-		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &manualPriority, Weight: 70, Tag: &tag},
+		{ChannelId: channel.Id, Group: "standard", Model: "model-a", Enabled: true, Priority: &stalePriority, Weight: 70, Tag: &tag},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{
@@ -570,9 +568,8 @@ func TestEditChannelByTagKeepsManualRouteRouting(t *testing.T) {
 	require.NotNil(t, byGroup["vip"].Priority)
 	assert.Zero(t, *byGroup["vip"].Priority)
 	assert.Zero(t, byGroup["vip"].Weight)
-	require.NotNil(t, byGroup["standard"].Priority)
-	assert.Equal(t, manualPriority, *byGroup["standard"].Priority)
-	assert.Equal(t, uint(70), byGroup["standard"].Weight)
+	assert.Nil(t, byGroup["standard"].Priority)
+	assert.Zero(t, byGroup["standard"].Weight)
 	var routeState ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
 		ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a",

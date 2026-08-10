@@ -2615,7 +2615,7 @@ func TestRuntimeRefreshUsesPressureBudgetToSampleUnknownBackup(t *testing.T) {
 	assert.Empty(t, backupState.TemporaryTrafficKind)
 }
 
-func TestRunChannelSmartScheduleFixedPrimaryStaysAboveUnmanagedManualRoute(t *testing.T) {
+func TestRunChannelSmartScheduleFixedPrimaryIgnoresUnmanagedManualRoute(t *testing.T) {
 	for _, test := range []struct {
 		name           string
 		applyMode      string
@@ -2671,7 +2671,8 @@ func TestRunChannelSmartScheduleFixedPrimaryStaysAboveUnmanagedManualRoute(t *te
 			var fixedAbility model.Ability
 			require.NoError(t, db.Where(&model.Ability{ChannelId: 81, Group: "vip", Model: "model-a"}).First(&fixedAbility).Error)
 			require.NotNil(t, fixedAbility.Priority)
-			assert.Equal(t, test.manualPriority+1, *fixedAbility.Priority)
+			expectedFixedPriority := max(test.fixedPriority, managedPriority+1)
+			assert.Equal(t, expectedFixedPriority, *fixedAbility.Priority)
 			var manualAbility model.Ability
 			require.NoError(t, db.Where(&model.Ability{ChannelId: 83, Group: "vip", Model: "model-a"}).First(&manualAbility).Error)
 			require.NotNil(t, manualAbility.Priority)

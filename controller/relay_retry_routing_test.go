@@ -111,6 +111,61 @@ func TestRelayRetryRoutingReloadsCompletePinnedChannelForRetry(t *testing.T) {
 	assert.Equal(t, []int{initialChannel.Id}, options.ExcludedChannelIds)
 }
 
+func TestRelayRetryRoutingRejectsNonparticipatingSameChannelWhenSmartScheduleEnabled(t *testing.T) {
+	t.Cleanup(model.InitChannelCache)
+	db := setupChannelMonitorControllerTestDB(t)
+	priority := int64(100)
+	weight := uint(10)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 261, Name: "未参与原渠道", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+		{Id: 262, Name: "参与候选", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 261, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 262, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 262, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	originalEnabled, hadEnabled := common.OptionMap["ChannelMonitorSmartScheduleEnabled"]
+	originalPolicies, hadPolicies := common.OptionMap["ChannelMonitorSmartScheduleGroupPolicies"]
+	common.OptionMap["ChannelMonitorSmartScheduleEnabled"] = "true"
+	common.OptionMap["ChannelMonitorSmartScheduleGroupPolicies"] = `[{"group":"vip","models":["model-a"]}]`
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		if hadEnabled {
+			common.OptionMap["ChannelMonitorSmartScheduleEnabled"] = originalEnabled
+		} else {
+			delete(common.OptionMap, "ChannelMonitorSmartScheduleEnabled")
+		}
+		if hadPolicies {
+			common.OptionMap["ChannelMonitorSmartScheduleGroupPolicies"] = originalPolicies
+		} else {
+			delete(common.OptionMap, "ChannelMonitorSmartScheduleGroupPolicies")
+		}
+		common.OptionMapRWMutex.Unlock()
+	})
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+
+	routing := newRelayRetryRouting()
+	routing.retrySameChannel(&model.Channel{Id: 261}, "vip")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	selected, group, err := routing.selectChannel(&service.RetryParam{
+		Ctx: ctx, TokenGroup: "vip", ModelName: "model-a", RequestPath: "/v1/chat/completions",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 262, selected.Id)
+	assert.Equal(t, "vip", group)
+}
+
 func TestRelayRetryRoutingRetries502WithReloadedBaseURL(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	var requestCount atomic.Int32

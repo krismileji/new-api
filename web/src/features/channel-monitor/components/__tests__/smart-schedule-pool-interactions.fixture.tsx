@@ -304,11 +304,6 @@ assert.ok(poolSummary)
 async function renderPool(options?: {
   onSetPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
-  onSaveManualRouting?: (
-    route: ChannelMonitorSmartScheduleRoute,
-    priority: number,
-    weight: number
-  ) => void
   onGroupPauseChange?: (
     route: ChannelMonitorSmartScheduleRoute,
     durationMinutes: number
@@ -327,14 +322,12 @@ async function renderPool(options?: {
         performanceByRoute={performanceByRoute}
         stabilityByRoute={stabilityByRoute}
         updateRouteKey={null}
-        manualRoutingKey={null}
         groupPauseKey={null}
         updateDisabled={false}
         onParticipationChange={() => {}}
         onClearProtection={() => {}}
         onSetPrimary={options?.onSetPrimary ?? (() => {})}
         onClearPrimary={options?.onClearPrimary ?? (() => {})}
-        onSaveManualRouting={options?.onSaveManualRouting ?? (() => {})}
         onGroupPauseChange={options?.onGroupPauseChange ?? (() => {})}
       />
     )
@@ -556,47 +549,4 @@ assert.deepEqual(groupPauseActions.at(-1), {
 await act(async () => groupResume.root.unmount())
 groupResume.container.remove()
 
-let submitted:
-  | {
-      route: ChannelMonitorSmartScheduleRoute
-      priority: number
-      weight: number
-    }
-  | undefined
-const manual = await renderPool({
-  onSaveManualRouting: (route, priority, weight) => {
-    submitted = { route, priority, weight }
-  },
-})
-const manualButtons = manual.container.querySelectorAll<HTMLButtonElement>(
-  '[aria-label="查看 广州暂停渠道 的调度详情"]'
-)
-assert.equal(manualButtons.length, 2)
-await act(async () => manualButtons[0]?.click())
-const manualDetails = document.querySelector<HTMLElement>(
-  '[aria-label="广州暂停渠道 调度详情"]'
-)
-assert.ok(manualDetails)
-assert.ok(manualDetails.textContent?.includes('人工路由设置'))
-const priorityInput =
-  manualDetails.querySelector<HTMLInputElement>('#manual-priority-3')
-const weightInput =
-  manualDetails.querySelector<HTMLInputElement>('#manual-weight-3')
-const manualForm = manualDetails.querySelector<HTMLFormElement>(
-  '[aria-label="广州暂停渠道 production cache-model 人工路由设置"]'
-)
-const submit = manualForm?.querySelector<HTMLButtonElement>(
-  'button[type="submit"]'
-)
-assert.ok(priorityInput)
-assert.ok(weightInput)
-assert.ok(submit)
-priorityInput.value = '30'
-weightInput.value = '400'
-await act(async () => submit.click())
-assert.equal(submitted?.route.channel_id, 3)
-assert.equal(submitted?.priority, 30)
-assert.equal(submitted?.weight, 400)
-await act(async () => manual.root.unmount())
-manual.container.remove()
 domWindow.close()

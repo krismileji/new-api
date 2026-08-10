@@ -61,10 +61,8 @@ func clearChannelSmartScheduleAbilityRoutingTx(
 	return nil
 }
 
-// getChannelSmartScheduleRouteRouting preserves the current per-route routing
-// values while a channel edit rebuilds its abilities. Participating routes
-// keep their scheduler-controlled overrides; routes without an override use
-// the channel defaults.
+// getChannelSmartScheduleRouteRouting preserves scheduler-controlled routing
+// while a channel edit rebuilds its participating abilities.
 func getChannelSmartScheduleRouteRouting(
 	tx *gorm.DB,
 	channelId int,
@@ -127,16 +125,6 @@ func getChannelSmartScheduleRouteRouting(
 			}
 			routingByKey[key] = channelSmartScheduleRouteRouting{priority: priority, weight: weight}
 			continue
-		}
-		// Excluded routes may be explicitly configured for manual takeover. Keep
-		// that override; a normal excluded route has no entry and inherits the
-		// channel defaults at selection time.
-		if ability.Priority != nil {
-			priority := *ability.Priority
-			routingByKey[key] = channelSmartScheduleRouteRouting{
-				priority: &priority,
-				weight:   ability.Weight,
-			}
 		}
 	}
 	return routingByKey, nil

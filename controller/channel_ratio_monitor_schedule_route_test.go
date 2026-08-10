@@ -1055,7 +1055,7 @@ func TestUpdateChannelMonitorSmartScheduleChannelConfigUpdatesAllRoutes(t *testi
 	UpdateChannelMonitorSmartScheduleChannelConfig(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"total":2`)
-	assert.Contains(t, recorder.Body.String(), `"updated":1`)
+	assert.Contains(t, recorder.Body.String(), `"updated":2`)
 
 	var states []model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where("channel_id = ?", 1210).Find(&states).Error)
@@ -1063,6 +1063,13 @@ func TestUpdateChannelMonitorSmartScheduleChannelConfigUpdatesAllRoutes(t *testi
 	for _, state := range states {
 		assert.True(t, state.ParticipationSet)
 		assert.True(t, state.Excluded)
+	}
+	var abilities []model.Ability
+	require.NoError(t, db.Where("channel_id = ?", 1210).Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+	for _, ability := range abilities {
+		assert.Nil(t, ability.Priority)
+		assert.Zero(t, ability.Weight)
 	}
 }
 

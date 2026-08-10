@@ -12,6 +12,7 @@ import (
 
 func TestIsChannelSmartScheduleAffinityEligibleRequiresHighestPriority(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
 	highPriority := int64(100)
 	lowPriority := int64(80)
 	require.NoError(t, db.Create(&[]Channel{
@@ -78,6 +79,7 @@ func TestChannelSmartScheduleAffinityEligibilityIgnoresExcludedOnlyPool(t *testi
 
 func TestChannelSmartScheduleAffinityEligibilityUsesActivePoolCacheWithoutDatabaseRead(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
 	channelSyncLock.Lock()
@@ -106,8 +108,9 @@ func TestChannelSmartScheduleAffinityEligibilityUsesActivePoolCacheWithoutDataba
 		{ChannelId: 1724, Group: "vip", Model: "model-a", Enabled: true, Priority: &highPriority, Weight: 100},
 		{ChannelId: 1725, Group: "vip", Model: "model-a", Enabled: true, Priority: &lowPriority, Weight: 100},
 	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1724, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1724, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1725, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	InitChannelCache()
 
@@ -186,6 +189,7 @@ func TestRefreshChannelSmartScheduleRoutePoolCachePublishesOnlyChangedPool(t *te
 
 func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeRequest(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	channelSyncLock.Lock()
 	originalRouteCache := channelSmartScheduleRouteCache
@@ -210,10 +214,11 @@ func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeReque
 		{ChannelId: 1726, Group: "vip", Model: "model-a", Enabled: true, Priority: &explorationPriority, Weight: 100},
 		{ChannelId: 1727, Group: "vip", Model: "model-a", Enabled: true, Priority: &stablePriority, Weight: 100},
 	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1726, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-		TemporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
-		ExplorationMaxPromptTokens: 100,
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1726, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			TemporaryTrafficKind:       ChannelSmartScheduleTemporaryTrafficExploration,
+			ExplorationMaxPromptTokens: 100},
+		{ChannelId: 1727, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	InitChannelCache()
 
@@ -226,6 +231,7 @@ func TestChannelSmartScheduleAffinityEligibilityKeepsStableAffinityForLargeReque
 
 func TestChannelSmartScheduleAffinityEligibilityDefersLimitedStabilityReleaseForLargeRequest(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
 	t.Cleanup(func() {
@@ -242,10 +248,11 @@ func TestChannelSmartScheduleAffinityEligibilityDefersLimitedStabilityReleaseFor
 		{ChannelId: 1728, Group: "vip", Model: "model-a", Enabled: true, Priority: &releasePriority, Weight: 100},
 		{ChannelId: 1729, Group: "vip", Model: "model-a", Enabled: true, Priority: &stablePriority, Weight: 100},
 	}).Error)
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1728, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-		StabilityState:                  ChannelSmartScheduleStabilityProbing,
-		StabilityReleaseMaxPromptTokens: 100,
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1728, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			StabilityState:                  ChannelSmartScheduleStabilityProbing,
+			StabilityReleaseMaxPromptTokens: 100},
+		{ChannelId: 1729, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	InitChannelCache()
 
@@ -277,6 +284,7 @@ func TestChannelSmartScheduleAffinityEligibilitySkipsDisabledHigherPriority(t *t
 
 func TestChannelSmartScheduleAffinityEligibilityPrefersExactParameterizedPool(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["gemini-2.5-pro-thinking-2048","gemini-2.5-pro-thinking-*"]}]`)
 	const exactModel = "gemini-2.5-pro-thinking-2048"
 	const wildcardModel = "gemini-2.5-pro-thinking-*"
 	priority := int64(100)
@@ -290,14 +298,37 @@ func TestChannelSmartScheduleAffinityEligibilityPrefersExactParameterizedPool(t 
 	}).Error)
 	// A wildcard pool can be managed independently. It must not make a request
 	// with an exact configured route use the wildcard pool's affinity rules.
-	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
-		ChannelId: 1742, GroupName: "vip", ModelName: wildcardModel, ParticipationSet: true,
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1741, GroupName: "vip", ModelName: exactModel, ParticipationSet: true},
+		{ChannelId: 1742, GroupName: "vip", ModelName: wildcardModel, ParticipationSet: true},
 	}).Error)
 
 	assert.Equal(t, ChannelSmartScheduleAffinityEligible,
 		ChannelSmartScheduleAffinityEligibility("vip", exactModel, 1741, "/v1/chat/completions"))
 	assert.Equal(t, ChannelSmartScheduleAffinityInvalid,
 		ChannelSmartScheduleAffinityEligibility("vip", exactModel, 1742, "/v1/chat/completions"))
+}
+
+func TestChannelSmartScheduleAffinityEligibilityRejectsNonparticipatingRouteWhenEnabled(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
+	priority := int64(100)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1743, Name: "未参与亲和", Status: common.ChannelStatusEnabled},
+		{Id: 1744, Name: "参与亲和", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1743, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100},
+		{ChannelId: 1744, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 1744, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	assert.Equal(t, ChannelSmartScheduleAffinityInvalid,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1743, "/v1/chat/completions"))
+	assert.Equal(t, ChannelSmartScheduleAffinityEligible,
+		ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1744, "/v1/chat/completions"))
 }
 
 func TestGetChannelSmartScheduleRuntimeTemporaryRoutesUsesSelectedRouteModel(t *testing.T) {

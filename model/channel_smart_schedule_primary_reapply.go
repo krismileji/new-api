@@ -145,6 +145,7 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 		primaryPriority, _ := channelSmartScheduleAbilityRouting(*primaryAbility, &primaryChannel)
 		priority, err := channelSmartScheduleManualPrimaryPriority(
 			abilities,
+			states,
 			channelStatusById,
 			primaryState.ChannelId,
 			max(primaryPriority, primaryState.LastSchedulePriority),

@@ -35,6 +35,10 @@ export function ChannelMonitorSmartScheduleRouteState(
   props: ChannelMonitorSmartScheduleRouteStateProps
 ) {
   const route = props.route
+  if (!channelMonitorSmartScheduleRouteParticipates(route)) {
+    return <Badge variant='outline'>未参与</Badge>
+  }
+
   let clearProtectionLabel: string | undefined
   if (route.state.stability_state === 'degraded') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
@@ -125,9 +129,6 @@ export function ChannelMonitorSmartScheduleRouteState(
         自适应备援采样
       </Badge>
     )
-  }
-  if (!channelMonitorSmartScheduleRouteParticipates(route)) {
-    return <Badge variant='outline'>未参与</Badge>
   }
   if (route.state.last_schedule_status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>

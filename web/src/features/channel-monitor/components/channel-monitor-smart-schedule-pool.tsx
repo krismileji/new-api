@@ -110,7 +110,6 @@ type ChannelMonitorSmartSchedulePoolProps = {
   >
   samplesByModel?: ReadonlyMap<string, ChannelMonitorSmartScheduleSampleItem>
   updateRouteKey: string | null
-  manualRoutingKey: string | null
   groupPauseKey: string | null
   updateDisabled: boolean
   onParticipationChange: (
@@ -120,11 +119,6 @@ type ChannelMonitorSmartSchedulePoolProps = {
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-  onSaveManualRouting: (
-    route: ChannelMonitorSmartScheduleRoute,
-    priority: number,
-    weight: number
-  ) => void
   onGroupPauseChange: (
     route: ChannelMonitorSmartScheduleRoute,
     durationMinutes: number
@@ -1238,9 +1232,6 @@ export function ChannelMonitorSmartSchedulePool(
           props.updateRouteKey ===
             channelMonitorSmartScheduleRouteKey(detailRoute)
         }
-        manualRoutingPending={
-          detailRoute != null && props.manualRoutingKey === detailRouteKey
-        }
         groupPausePending={
           detailRoute != null &&
           props.groupPauseKey ===
@@ -1254,7 +1245,6 @@ export function ChannelMonitorSmartSchedulePool(
         onClearProtection={props.onClearProtection}
         onSetPrimary={props.onSetPrimary}
         onClearPrimary={props.onClearPrimary}
-        onSaveManualRouting={props.onSaveManualRouting}
         onGroupPauseChange={props.onGroupPauseChange}
       />
     </section>

@@ -60,7 +60,6 @@ import {
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   runChannelMonitorSmartSchedule,
   updateChannelMonitorSmartScheduleGroupPause,
-  updateChannelMonitorSmartScheduleManualRouting,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
@@ -391,12 +390,6 @@ export function ChannelMonitorSmartScheduleBoard(
       })
     },
   })
-  const manualRoutingMutation = useMutation({
-    mutationFn: updateChannelMonitorSmartScheduleManualRouting,
-    onError: handleChannelMonitorMutationError,
-    onSuccess: () => toast.success('人工优先级和权重已保存'),
-    onSettled: invalidateSchedule,
-  })
   const groupPauseMutation = useMutation({
     mutationFn: updateChannelMonitorSmartScheduleGroupPause,
     onError: handleChannelMonitorMutationError,
@@ -463,14 +456,6 @@ export function ChannelMonitorSmartScheduleBoard(
           channel_id: updateMutation.variables.channelId,
           group: updateMutation.variables.group,
           model: updateMutation.variables.model,
-        })
-      : null
-  const manualRoutingKey =
-    manualRoutingMutation.isPending && manualRoutingMutation.variables
-      ? channelMonitorSmartScheduleRouteKey({
-          channel_id: manualRoutingMutation.variables.channelId,
-          group: manualRoutingMutation.variables.group,
-          model: manualRoutingMutation.variables.model,
         })
       : null
   const groupPauseKey =
@@ -890,12 +875,10 @@ export function ChannelMonitorSmartScheduleBoard(
                 stabilityByRoute={stabilityByRoute}
                 samplesByModel={samplesByModel}
                 updateRouteKey={updateRouteKey}
-                manualRoutingKey={manualRoutingKey}
                 groupPauseKey={groupPauseKey}
                 updateDisabled={
                   updateMutation.isPending ||
                   primaryMutation.isPending ||
-                  manualRoutingMutation.isPending ||
                   groupPauseMutation.isPending
                 }
                 onParticipationChange={(route, checked) =>
@@ -929,15 +912,6 @@ export function ChannelMonitorSmartScheduleBoard(
                       durationMinutes: 0,
                       allowStabilityDegrade: false,
                     },
-                  })
-                }
-                onSaveManualRouting={(route, priority, weight) =>
-                  manualRoutingMutation.mutate({
-                    channelId: route.channel_id,
-                    group: route.group,
-                    model: route.model,
-                    priority,
-                    weight,
                   })
                 }
                 onGroupPauseChange={(route, durationMinutes) =>

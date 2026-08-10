@@ -206,19 +206,6 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if len(abilities) == 0 {
 		return nil
 	}
-	// Keep an existing ability untouched when AddAbilities is retried. Only
-	// rows exposed for the first time need the explicit NULL cleanup below;
-	// otherwise a retry could erase an administrator's excluded-route override.
-	var existingAbilities []Ability
-	if err := useDB.Select("group", "model").
-		Where("channel_id = ?", channel.Id).
-		Find(&existingAbilities).Error; err != nil {
-		return err
-	}
-	existingKeys := make(map[string]struct{}, len(existingAbilities))
-	for _, ability := range existingAbilities {
-		existingKeys[ability.Group+"|"+ability.Model] = struct{}{}
-	}
 	for _, chunk := range lo.Chunk(abilities, 50) {
 		err := useDB.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 		if err != nil {
@@ -226,9 +213,6 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 		}
 	}
 	for _, ability := range abilities {
-		if _, exists := existingKeys[ability.Group+"|"+ability.Model]; exists {
-			continue
-		}
 		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
 		if _, ok := routingByKey[key]; ok {
 			continue

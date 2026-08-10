@@ -65,7 +65,7 @@ function createProtectedRoute(
       group: 'vip',
       model: 'model-a',
       participation_set: true,
-      excluded: true,
+      excluded: false,
       last_schedule_status: 'succeeded',
       last_schedule_error: '',
       last_schedule_score: null,
@@ -100,6 +100,25 @@ function createProtectedRoute(
 }
 
 describe('smart schedule route protection state', () => {
+  test('shows nonparticipation before stale pause and protection state', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    route.traffic_paused_until = 4_102_444_800
+    route.state.excluded = true
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteState
+        route={route}
+        onProtectedStatusClick={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('未参与'))
+    assert.equal(markup.includes('流量已暂停'), false)
+    assert.equal(markup.includes('稳定性降级'), false)
+    assert.equal(markup.includes('aria-label="解除 '), false)
+  })
+
   test('shows channel disabled instead of stale stability degradation', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSmartScheduleRouteState

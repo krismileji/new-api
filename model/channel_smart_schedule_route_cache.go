@@ -13,7 +13,7 @@ type channelSmartScheduleCachedRoute struct {
 	channelId                       int
 	priority                        int64
 	weight                          uint
-	managed                         bool
+	participates                    bool
 	trafficPausedUntil              int64
 	temporaryTrafficKind            string
 	stabilityState                  string
@@ -109,7 +109,7 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 			Where("participation_set = ? AND excluded = ?", true, false).
 			Find(&states).Error; err != nil {
 			common.SysError("load smart schedule managed pools failed: " + err.Error())
-			return buildChannelSmartScheduleRouteCacheWithManagedPools(abilities, channels, nil, nil, true)
+			return buildChannelSmartScheduleRouteCacheFromStates(abilities, channels, nil)
 		}
 	}
 	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(DB, common.GetTimestamp())
@@ -125,7 +125,6 @@ func buildChannelSmartScheduleRouteCacheFromStates(
 	states []ChannelSmartScheduleRouteState,
 	groupPauses ...[]ChannelSmartScheduleGroupPause,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
-	managedPools := make(map[channelSmartScheduleRoutePool]struct{})
 	statesByPool := make(map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState)
 	for _, state := range states {
 		if !state.Participates() {
@@ -136,28 +135,23 @@ func buildChannelSmartScheduleRouteCacheFromStates(
 			statesByPool[pool] = make(map[int]ChannelSmartScheduleRouteState)
 		}
 		statesByPool[pool][state.ChannelId] = state
-		managedPools[pool] = struct{}{}
 	}
 	var pauses []ChannelSmartScheduleGroupPause
 	if len(groupPauses) > 0 {
 		pauses = groupPauses[0]
 	}
-	return buildChannelSmartScheduleRouteCacheWithManagedPools(
+	return buildChannelSmartScheduleRouteCacheWithStates(
 		abilities,
 		channels,
-		managedPools,
 		statesByPool,
-		false,
 		channelSmartScheduleGroupPauseUntilByKey(pauses),
 	)
 }
 
-func buildChannelSmartScheduleRouteCacheWithManagedPools(
+func buildChannelSmartScheduleRouteCacheWithStates(
 	abilities []*Ability,
 	channels map[int]*Channel,
-	managedPools map[channelSmartScheduleRoutePool]struct{},
 	statesByPool map[channelSmartScheduleRoutePool]map[int]ChannelSmartScheduleRouteState,
-	managedLookupFailed bool,
 	pausedUntilByKey ...map[ChannelSmartScheduleRouteKey]int64,
 ) map[string]map[string][]channelSmartScheduleCachedRoute {
 	groupPauseUntilByKey := map[ChannelSmartScheduleRouteKey]int64{}
@@ -176,17 +170,16 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 			cache[ability.Group] = modelRoutes
 		}
 		pool := channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}
-		_, managed := managedPools[pool]
 		state := statesByPool[pool][ability.ChannelId]
 		priority, weight := channelSmartScheduleAbilityRouting(
 			*ability,
 			channel,
 		)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
-			channelId: ability.ChannelId,
-			priority:  priority,
-			weight:    weight,
-			managed:   managedLookupFailed || managed,
+			channelId:    ability.ChannelId,
+			priority:     priority,
+			weight:       weight,
+			participates: state.Participates(),
 			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleRouteKey(
 				ability.ChannelId, ability.Group, ability.Model,
 			)],
@@ -212,14 +205,32 @@ func buildChannelSmartScheduleRouteCacheWithManagedPools(
 // getRandomSatisfiedChannelByAbility uses the route-specific priority and
 // weight stored on Ability. Caller must hold channelSyncLock for reading.
 func getRandomSatisfiedChannelByAbility(group string, modelName string, retry int, requestPath string, options ChannelSelectionOptions) (*Channel, bool, error) {
+	return getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
+		group, modelName, retry, requestPath, options, currentChannelSmartScheduleTrafficPolicy(),
+	)
+}
+
+func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
+	group string,
+	modelName string,
+	retry int,
+	requestPath string,
+	options ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) (*Channel, bool, error) {
 	if channelSmartScheduleRouteCache == nil {
+		if trafficPolicy != nil && trafficPolicy.enabled {
+			return nil, true, nil
+		}
 		return nil, false, nil
 	}
 	routes := channelSmartScheduleRouteCache[group][modelName]
+	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, modelName, trafficPolicy)
 	routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	if len(routes) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
 		routes = channelSmartScheduleRouteCache[group][normalizedModel]
+		routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, normalizedModel, trafficPolicy)
 		routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	}
 	if len(routes) == 0 {

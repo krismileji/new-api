@@ -15,7 +15,22 @@ func getRandomSatisfiedChannelWithoutCache(
 	requestPath string,
 	options ChannelSelectionOptions,
 ) (*Channel, error) {
-	channel, err := getChannelFromDatabasePool(group, modelName, modelName, retry, requestPath, options)
+	return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+		group, modelName, retry, requestPath, options, currentChannelSmartScheduleTrafficPolicy(),
+	)
+}
+
+func getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+	group string,
+	modelName string,
+	retry int,
+	requestPath string,
+	options ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) (*Channel, error) {
+	channel, err := getChannelFromDatabasePoolWithTrafficPolicy(
+		group, modelName, modelName, retry, requestPath, options, trafficPolicy,
+	)
 	if err != nil || channel != nil {
 		return channel, err
 	}
@@ -24,7 +39,9 @@ func getRandomSatisfiedChannelWithoutCache(
 	if matchingModelName == "" || matchingModelName == modelName {
 		return nil, nil
 	}
-	return getChannelFromDatabasePool(group, matchingModelName, modelName, retry, requestPath, options)
+	return getChannelFromDatabasePoolWithTrafficPolicy(
+		group, matchingModelName, modelName, retry, requestPath, options, trafficPolicy,
+	)
 }
 
 func getChannelFromDatabasePool(
@@ -35,6 +52,24 @@ func getChannelFromDatabasePool(
 	requestPath string,
 	options ChannelSelectionOptions,
 ) (*Channel, error) {
+	return getChannelFromDatabasePoolWithTrafficPolicy(
+		group, poolModelName, requestModelName, retry, requestPath, options,
+		currentChannelSmartScheduleTrafficPolicy(),
+	)
+}
+
+func getChannelFromDatabasePoolWithTrafficPolicy(
+	group string,
+	poolModelName string,
+	requestModelName string,
+	retry int,
+	requestPath string,
+	options ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) (*Channel, error) {
+	if trafficPolicy != nil && trafficPolicy.enabled && !trafficPolicy.allowsPool(group, poolModelName) {
+		return nil, nil
+	}
 	query := DB.Model(&Ability{}).
 		Where(commonGroupCol+" = ? AND model = ? AND enabled = ?", group, poolModelName, true)
 	query = applyChannelSelectionOptions(query, options)
@@ -48,6 +83,13 @@ func getChannelFromDatabasePool(
 	}
 	if len(abilities) == 0 {
 		return nil, nil
+	}
+	var err error
+	abilities, err = filterChannelSmartScheduleTrafficAbilities(
+		abilities, group, poolModelName, trafficPolicy,
+	)
+	if err != nil || len(abilities) == 0 {
+		return nil, err
 	}
 
 	channelIds := make([]int, len(abilities))

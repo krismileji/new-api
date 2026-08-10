@@ -34,7 +34,7 @@ func seedActiveFixedPrimary(t *testing.T, db *gorm.DB, channelId int) {
 	}).Error)
 }
 
-func TestChannelInsertReappliesActiveFixedPrimary(t *testing.T) {
+func TestChannelInsertReappliesActiveFixedPrimaryIgnoringUnmanagedRoute(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
 		insert func(Channel) error
@@ -66,13 +66,13 @@ func TestChannelInsertReappliesActiveFixedPrimary(t *testing.T) {
 			require.NoError(t, db.Where(&Ability{
 				ChannelId: 9371, Group: "vip", Model: "model-a",
 			}).First(&fixed).Error)
-			assert.Equal(t, int64(201), abilityPriority(fixed))
+			assert.Equal(t, int64(100), abilityPriority(fixed))
 			assert.Equal(t, uint(1000), fixed.Weight)
 		})
 	}
 }
 
-func TestChannelInsertRollsBackWhenFixedPrimaryCannotBeReapplied(t *testing.T) {
+func TestChannelInsertIgnoresUnmanagedMaxPriorityWhenReapplyingFixedPrimary(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
 		insert func(Channel) error
@@ -95,18 +95,23 @@ func TestChannelInsertRollsBackWhenFixedPrimaryCannotBeReapplied(t *testing.T) {
 			seedActiveFixedPrimary(t, db, 9381)
 			priority := int64(math.MaxInt64)
 			weight := uint(100)
-			err := testCase.insert(Channel{
+			require.NoError(t, testCase.insert(Channel{
 				Id: 9382, Name: "unplaceable route", Status: common.ChannelStatusEnabled,
 				Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
-			})
-			require.Error(t, err)
+			}))
 
 			var channelCount int64
 			require.NoError(t, db.Model(&Channel{}).Where("id = ?", 9382).Count(&channelCount).Error)
-			assert.Zero(t, channelCount)
+			assert.Equal(t, int64(1), channelCount)
 			var abilityCount int64
 			require.NoError(t, db.Model(&Ability{}).Where("channel_id = ?", 9382).Count(&abilityCount).Error)
-			assert.Zero(t, abilityCount)
+			assert.Equal(t, int64(1), abilityCount)
+			var fixed Ability
+			require.NoError(t, db.Where(&Ability{
+				ChannelId: 9381, Group: "vip", Model: "model-a",
+			}).First(&fixed).Error)
+			assert.Equal(t, int64(100), abilityPriority(fixed))
+			assert.Equal(t, uint(1000), fixed.Weight)
 		})
 	}
 }

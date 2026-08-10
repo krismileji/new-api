@@ -92,19 +92,28 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   const now = Math.floor(Date.now() / 1000)
   const statuses: SmartScheduleStatusBadge[] = []
   const details: Array<{ label: string; value: string }> = []
+  const participates = channelMonitorSmartScheduleRouteParticipates(route)
   const trafficPaused =
+    participates &&
     route.channel_status === CHANNEL_STATUS.ENABLED &&
     route.enabled &&
     channelMonitorSmartScheduleRouteIsTrafficPaused(route, now)
-  const available = channelMonitorSmartScheduleRouteIsAvailable(route)
+  const available =
+    participates && channelMonitorSmartScheduleRouteIsAvailable(route)
   let unavailableClearProtectionLabel: string | undefined
-  if (route.state.stability_state === 'degraded') {
+  if (participates && route.state.stability_state === 'degraded') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
-  } else if (route.state.stability_state === 'probing') {
+  } else if (participates && route.state.stability_state === 'probing') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`
-  } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+  } else if (
+    participates &&
+    route.state.temporary_traffic_kind === 'insufficient_samples'
+  ) {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`
-  } else if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+  } else if (
+    participates &&
+    route.state.temporary_traffic_kind === 'adaptive_sampling'
+  ) {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`
   }
   const stabilityRemaining = formatRemainingTime(
@@ -128,10 +137,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     })
   }
 
-  const fixedRemaining = formatRemainingTime(
-    route.state.manual_primary_until,
-    now
-  )
+  const fixedRemaining = participates
+    ? formatRemainingTime(route.state.manual_primary_until, now)
+    : ''
   const breakEvenFallback =
     channelMonitorSmartScheduleRouteIsBreakEvenFallback(route)
   const decision = route.state.last_schedule_score_details?.decision
@@ -181,7 +189,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     })
   }
 
-  if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
+  if (!participates) {
+    statuses.push({ key: 'excluded', label: '未参与调度', variant: 'outline' })
+  } else if (route.channel_status !== CHANNEL_STATUS.ENABLED) {
     statuses.push({
       key: 'channel-disabled',
       label: '渠道禁用',
@@ -201,8 +211,6 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       label: '流量已暂停',
       variant: 'warning',
     })
-  } else if (!channelMonitorSmartScheduleRouteParticipates(route)) {
-    statuses.push({ key: 'excluded', label: '未参与调度', variant: 'outline' })
   } else if (route.state.last_schedule_status === 'failed') {
     statuses.push({ key: 'failed', label: '调度失败', variant: 'destructive' })
   }
@@ -237,32 +245,32 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       }
     )
   }
-  if (route.state.stability_since > 0) {
+  if (participates && route.state.stability_since > 0) {
     details.push({
       label:
         route.state.stability_state === 'probing' ? '释放开始' : '降级开始',
       value: formatTimestampToDate(route.state.stability_since),
     })
   }
-  if (route.state.stability_until > 0) {
+  if (participates && route.state.stability_until > 0) {
     details.push({
       label: '预计试放',
       value: formatTimestampToDate(route.state.stability_until),
     })
   }
-  if (route.state.runtime_protection_until > now) {
+  if (participates && route.state.runtime_protection_until > now) {
     details.push({
       label: '即时保护至',
       value: formatTimestampToDate(route.state.runtime_protection_until),
     })
   }
-  if (route.state.temporary_traffic_since > 0) {
+  if (participates && route.state.temporary_traffic_since > 0) {
     details.push({
       label: '采样开始',
       value: formatTimestampToDate(route.state.temporary_traffic_since),
     })
   }
-  if (route.state.temporary_traffic_kind !== '') {
+  if (participates && route.state.temporary_traffic_kind !== '') {
     details.push({
       label: '目标流量',
       value: `${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,

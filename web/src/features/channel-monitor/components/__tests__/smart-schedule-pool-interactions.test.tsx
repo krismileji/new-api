@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-test('supports dense pool filtering, details, and manual routing', () => {
+test('supports dense pool filtering and route details', () => {
   const fixturePath = fileURLToPath(
     new URL('./smart-schedule-pool-interactions.fixture.tsx', import.meta.url)
   )

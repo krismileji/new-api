@@ -157,11 +157,11 @@ describe('smart schedule pool status', () => {
     )
   })
 
-  test('prioritizes protection states over participation and availability', () => {
+  test('prioritizes protection states after participation is configured', () => {
     assert.equal(
       getChannelMonitorSmartSchedulePoolStatus({
         ...normalPool,
-        participatingCount: 0,
+        participatingCount: 1,
         activeCount: 0,
         degradedCount: 1,
       }),
@@ -266,6 +266,28 @@ describe('smart schedule pool status', () => {
     requireSummaryHasNoActiveAlerts(overview)
     assert.equal(overview.healthyPoolCount, 0)
   })
+
+  test('ignores stale pause and protection states from nonparticipating routes', () => {
+    const excluded = createRoute(1, 'vip', 'model-a', 100, 100)
+    excluded.state.excluded = true
+    excluded.traffic_paused_until = 4_102_444_800
+    excluded.state.stability_state = 'degraded'
+    excluded.state.temporary_traffic_kind = 'insufficient_samples'
+    excluded.state.last_schedule_status = 'failed'
+
+    const channel = summarizeChannelMonitorSmartScheduleChannel([excluded])
+    const pool = summarizeChannelMonitorSmartSchedulePools([excluded])[0]
+    const overview = summarizeChannelMonitorSmartScheduleOverview([excluded])
+
+    requireSummaryHasNoActiveAlerts(channel)
+    assert.equal(channel.pausedCount, 0)
+    requireSummaryHasNoActiveAlerts(pool)
+    assert.equal(pool.pausedCount, 0)
+    assert.equal(getChannelMonitorSmartSchedulePoolStatus(pool), '未参与调度')
+    requireSummaryHasNoActiveAlerts(overview)
+    assert.equal(overview.pausedCount, 0)
+    assert.equal(overview.healthyPoolCount, 0)
+  })
 })
 
 describe('smart schedule route placement', () => {
@@ -303,7 +325,7 @@ describe('smart schedule route placement', () => {
     assert.deepEqual(summary.actualTopLayerChannelIds, [2])
   })
 
-  test('keeps nonparticipating manual routing in the actual highest layer', () => {
+  test('excludes nonparticipating routing from the actual highest layer', () => {
     const uninitialized = createRoute(1, 'vip', 'model-a', 100, 100)
     uninitialized.state.participation_set = false
     const active = createRoute(2, 'vip', 'model-a', 80, 100)
@@ -319,22 +341,27 @@ describe('smart schedule route placement', () => {
     )
     assert.equal(
       placements.get(channelMonitorSmartScheduleRouteKey(uninitialized))?.role,
-      'primary'
+      'excluded'
+    )
+    assert.equal(
+      placements.get(channelMonitorSmartScheduleRouteKey(uninitialized))
+        ?.estimatedShare,
+      0
     )
     assert.deepEqual(
       placements.get(channelMonitorSmartScheduleRouteKey(active)),
       {
-        role: 'backup',
-        estimatedShare: null,
-        topPriority: 100,
+        role: 'primary',
+        estimatedShare: 1,
+        topPriority: 80,
         candidateCount: 1,
-        actualPrimaryChannelId: 1,
+        actualPrimaryChannelId: 2,
         scoringWinnerChannelId: 0,
-        actualHighestPriority: 100,
-        actualTopLayerChannelIds: [1],
-        isActualPrimary: false,
+        actualHighestPriority: 80,
+        actualTopLayerChannelIds: [2],
+        isActualPrimary: true,
         isScoringWinner: false,
-        isActualTopLayer: false,
+        isActualTopLayer: true,
       }
     )
   })
@@ -418,8 +445,9 @@ describe('smart schedule route placement', () => {
     )
   })
 
-  test('uses current routing after a fixed primary replaces a stale schedule decision', () => {
+  test('ignores an excluded stale decision after a fixed primary takes over', () => {
     const previousPrimary = createRoute(1, 'vip', 'model-a', 100, 1000)
+    previousPrimary.state.excluded = true
     const fixedPrimary = createRoute(2, 'vip', 'model-a', 101, 1000)
     fixedPrimary.state.manual_primary_until = 1_900_000_000
     previousPrimary.state.last_schedule_score_details = {
@@ -463,7 +491,7 @@ describe('smart schedule route placement', () => {
         topPriority: 101,
         candidateCount: 1,
         actualPrimaryChannelId: 2,
-        scoringWinnerChannelId: 1,
+        scoringWinnerChannelId: 0,
         actualHighestPriority: 101,
         actualTopLayerChannelIds: [2],
         isActualPrimary: true,
@@ -476,6 +504,7 @@ describe('smart schedule route placement', () => {
       fixedPrimary,
     ])
     assert.equal(summaries[0]?.actualPrimaryChannelId, 2)
+    assert.equal(summaries[0]?.scoringWinnerChannelId, 0)
     assert.equal(summaries[0]?.actualHighestPriority, 101)
     assert.deepEqual(summaries[0]?.actualTopLayerChannelIds, [2])
   })
@@ -508,7 +537,7 @@ describe('smart schedule route placement', () => {
     )
   })
 
-  test('shows an enabled manual route as actual traffic while keeping disabled routes unavailable', () => {
+  test('shows an excluded route as zero traffic while keeping disabled routes unavailable', () => {
     const excluded = createRoute(1, 'vip', 'model-a', 100, 100)
     excluded.state.excluded = true
     const disabled = createRoute(2, 'vip', 'model-a', 100, 100)
@@ -523,7 +552,12 @@ describe('smart schedule route placement', () => {
 
     assert.equal(
       placements.get(channelMonitorSmartScheduleRouteKey(excluded))?.role,
-      'primary'
+      'excluded'
+    )
+    assert.equal(
+      placements.get(channelMonitorSmartScheduleRouteKey(excluded))
+        ?.estimatedShare,
+      0
     )
     assert.equal(
       placements.get(channelMonitorSmartScheduleRouteKey(disabled))?.role,
@@ -531,7 +565,7 @@ describe('smart schedule route placement', () => {
     )
     assert.equal(
       placements.get(channelMonitorSmartScheduleRouteKey(active))?.role,
-      'backup'
+      'primary'
     )
   })
 })

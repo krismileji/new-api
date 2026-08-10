@@ -16,17 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  Cancel01Icon,
-  InformationCircleIcon,
-  Tick02Icon,
-} from '@hugeicons/core-free-icons'
+import { Cancel01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import {
   Sheet,
   SheetClose,
@@ -75,7 +69,6 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   stability: ChannelMonitorSmartScheduleRouteStability | undefined
   samples: ChannelMonitorSmartScheduleSampleItem | undefined
   updatePending: boolean
-  manualRoutingPending: boolean
   groupPausePending: boolean
   updateDisabled: boolean
   onOpenChange: (open: boolean) => void
@@ -86,11 +79,6 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   onClearProtection: (route: ChannelMonitorSmartScheduleRoute) => void
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
-  onSaveManualRouting: (
-    route: ChannelMonitorSmartScheduleRoute,
-    priority: number,
-    weight: number
-  ) => void
   onGroupPauseChange: (
     route: ChannelMonitorSmartScheduleRoute,
     durationMinutes: number
@@ -230,8 +218,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     props.placement?.actualTopLayerChannelIds ??
     decision?.actual_top_layer_channel_ids ??
     []
-  const pending =
-    props.updatePending || props.manualRoutingPending || props.groupPausePending
+  const pending = props.updatePending || props.groupPausePending
   const samplingOrder = route.state.sampling_order
     ? getChannelMonitorSmartScheduleSamplingOrderLabel(
         route.state.sampling_order
@@ -530,85 +517,6 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             disabled={props.updateDisabled}
             onUpdate={props.onGroupPauseChange}
           />
-
-          {!participates ? (
-            <section className='border-t px-4 py-4' aria-label='人工路由设置'>
-              <div className='flex items-start gap-2'>
-                <HugeiconsIcon
-                  icon={InformationCircleIcon}
-                  className='text-muted-foreground mt-0.5 size-4 shrink-0'
-                  aria-hidden='true'
-                />
-                <div>
-                  <h3 className='text-sm font-medium'>人工路由设置</h3>
-                  <p className='text-muted-foreground mt-1 text-xs'>
-                    该路由未参与智能调度，调度任务不会修改这里保存的优先级和权重。绝对优先级高于智能主渠道时，真实请求会优先进入该路由。
-                  </p>
-                </div>
-              </div>
-              <form
-                key={`${route.channel_id}\u0000${route.group}\u0000${route.model}\u0000${route.priority}\u0000${route.weight}`}
-                className='mt-4 flex flex-col gap-3 sm:flex-row sm:items-end'
-                aria-label={`${route.channel_name} ${route.group} ${route.model} 人工路由设置`}
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  const formData = new FormData(event.currentTarget)
-                  const priority = Number(formData.get('manual_priority'))
-                  const weight = Number(formData.get('manual_weight'))
-                  if (
-                    !Number.isInteger(priority) ||
-                    !Number.isInteger(weight)
-                  ) {
-                    return
-                  }
-                  props.onSaveManualRouting(route, priority, weight)
-                }}
-              >
-                <FieldGroup className='grid flex-1 grid-cols-2 gap-3'>
-                  <Field>
-                    <FieldLabel htmlFor={`manual-priority-${route.channel_id}`}>
-                      人工优先级
-                    </FieldLabel>
-                    <Input
-                      id={`manual-priority-${route.channel_id}`}
-                      name='manual_priority'
-                      type='number'
-                      min={0}
-                      max={2_147_483_647}
-                      step={1}
-                      defaultValue={route.priority}
-                      disabled={props.updateDisabled}
-                      required
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`manual-weight-${route.channel_id}`}>
-                      人工权重
-                    </FieldLabel>
-                    <Input
-                      id={`manual-weight-${route.channel_id}`}
-                      name='manual_weight'
-                      type='number'
-                      min={0}
-                      max={2_147_483_647}
-                      step={1}
-                      defaultValue={route.weight}
-                      disabled={props.updateDisabled}
-                      required
-                    />
-                  </Field>
-                </FieldGroup>
-                <Button type='submit' disabled={props.updateDisabled}>
-                  {props.manualRoutingPending ? (
-                    <Spinner data-icon='inline-start' />
-                  ) : (
-                    <HugeiconsIcon icon={Tick02Icon} data-icon='inline-start' />
-                  )}
-                  保存人工路由
-                </Button>
-              </form>
-            </section>
-          ) : null}
 
           <ChannelMonitorSmartScheduleScoreDetails
             details={route.current_window_score_details}
