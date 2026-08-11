@@ -15,8 +15,8 @@ const (
 	ChannelSmartScheduleAffinityTemporarilyUnavailable
 )
 
-// ChannelSmartScheduleAffinityEligibility applies the same strict pool and
-// participation gate as normal routing while smart scheduling is enabled.
+// ChannelSmartScheduleAffinityEligibility applies the strict participation
+// gate to managed pools and preserves official affinity for other pools.
 func ChannelSmartScheduleAffinityEligibility(
 	group string,
 	modelName string,
@@ -32,7 +32,7 @@ func ChannelSmartScheduleAffinityEligibility(
 	}
 
 	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
-	if trafficPolicy == nil || !trafficPolicy.enabled {
+	if trafficPolicy == nil || !trafficPolicy.managesAnyPool(group, modelNames) {
 		paused, err := channelSmartScheduleAffinityRoutePaused(group, modelNames, channelId)
 		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
@@ -117,9 +117,7 @@ func channelSmartScheduleAffinityEligibilityFromDatabase(
 	preferredPaused := false
 	preferredFilteredByRequestLimit := false
 	for _, candidateModel := range modelNames {
-		if !trafficPolicy.allowsPool(group, candidateModel) {
-			continue
-		}
+		managedPool := trafficPolicy.managesPool(group, candidateModel)
 		var abilities []Ability
 		if err := DB.Select("channel_id", "priority", "weight").
 			Where(&Ability{Group: group, Model: candidateModel, Enabled: true}).
@@ -199,6 +197,12 @@ func channelSmartScheduleAffinityEligibilityFromDatabase(
 		if len(available) == 0 {
 			continue
 		}
+		if !managedPool {
+			if containsAbilityChannel(available, channelId) {
+				return ChannelSmartScheduleAffinityEligible
+			}
+			return ChannelSmartScheduleAffinityInvalid
+		}
 
 		highestPriority := int64(0)
 		highestPrioritySet := false
@@ -251,6 +255,7 @@ func channelSmartScheduleAffinityEligibilityFromCache(
 		return ChannelSmartScheduleAffinityInvalid
 	}
 	for _, candidateModel := range modelNames {
+		managedPool := trafficPolicy.managesPool(group, candidateModel)
 		routes := filterChannelSmartScheduleTrafficCachedRoutes(
 			channelSmartScheduleRouteCache[group][candidateModel],
 			group,
@@ -274,6 +279,12 @@ func channelSmartScheduleAffinityEligibilityFromCache(
 		}
 		if len(availableRoutes) == 0 {
 			continue
+		}
+		if !managedPool {
+			if containsChannelSmartScheduleCachedRoute(availableRoutes, channelId) {
+				return ChannelSmartScheduleAffinityEligible
+			}
+			return ChannelSmartScheduleAffinityInvalid
 		}
 
 		highestPriority := availableRoutes[0].priority

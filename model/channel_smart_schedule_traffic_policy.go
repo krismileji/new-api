@@ -99,9 +99,9 @@ func parseChannelSmartScheduleTrafficPolicy(rawEnabled string, rawPolicies strin
 	return policy
 }
 
-func (policy *channelSmartScheduleTrafficPolicy) allowsPool(group string, modelName string) bool {
+func (policy *channelSmartScheduleTrafficPolicy) managesPool(group string, modelName string) bool {
 	if policy == nil || !policy.enabled {
-		return true
+		return false
 	}
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
@@ -112,6 +112,15 @@ func (policy *channelSmartScheduleTrafficPolicy) allowsPool(group string, modelN
 	return allowed
 }
 
+func (policy *channelSmartScheduleTrafficPolicy) managesAnyPool(group string, modelNames []string) bool {
+	for _, modelName := range modelNames {
+		if policy.managesPool(group, modelName) {
+			return true
+		}
+	}
+	return false
+}
+
 func (policy *channelSmartScheduleTrafficPolicy) allowsRoute(
 	group string,
 	modelName string,
@@ -120,7 +129,7 @@ func (policy *channelSmartScheduleTrafficPolicy) allowsRoute(
 	if policy == nil || !policy.enabled {
 		return true
 	}
-	return participates && policy.allowsPool(group, modelName)
+	return !policy.managesPool(group, modelName) || participates
 }
 
 func filterChannelSmartScheduleTrafficAbilities(
@@ -129,10 +138,10 @@ func filterChannelSmartScheduleTrafficAbilities(
 	modelName string,
 	policy *channelSmartScheduleTrafficPolicy,
 ) ([]Ability, error) {
-	if policy == nil || !policy.enabled {
+	if policy == nil || !policy.managesPool(group, modelName) {
 		return abilities, nil
 	}
-	if len(abilities) == 0 || !policy.allowsPool(group, modelName) {
+	if len(abilities) == 0 {
 		return nil, nil
 	}
 
@@ -171,10 +180,10 @@ func filterChannelSmartScheduleTrafficCachedRoutes(
 	modelName string,
 	policy *channelSmartScheduleTrafficPolicy,
 ) []channelSmartScheduleCachedRoute {
-	if policy == nil || !policy.enabled {
+	if policy == nil || !policy.managesPool(group, modelName) {
 		return routes
 	}
-	if len(routes) == 0 || !policy.allowsPool(group, modelName) {
+	if len(routes) == 0 {
 		return nil
 	}
 	filtered := make([]channelSmartScheduleCachedRoute, 0, len(routes))

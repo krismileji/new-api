@@ -38,18 +38,19 @@ func TestIsChannelSmartScheduleAffinityEligibleRequiresHighestPriority(t *testin
 	assert.Equal(t, ChannelSmartScheduleAffinityEligible, ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1712, "/v1/chat/completions"))
 }
 
-func TestIsChannelSmartScheduleAffinityEligibleKeepsUnmanagedPool(t *testing.T) {
+func TestChannelSmartScheduleAffinityEligibilityKeepsUnmanagedPoolWhenEnabled(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
 	priority := int64(80)
 	require.NoError(t, db.Create(&Channel{
 		Id: 1721, Name: "unmanaged", Status: common.ChannelStatusEnabled,
 	}).Error)
 	require.NoError(t, db.Create(&Ability{
-		ChannelId: 1721, Group: "vip", Model: "model-a", Enabled: true,
+		ChannelId: 1721, Group: "unconfigured", Model: "model-a", Enabled: true,
 		Priority: &priority, Weight: 100,
 	}).Error)
 
-	assert.Equal(t, ChannelSmartScheduleAffinityEligible, ChannelSmartScheduleAffinityEligibility("vip", "model-a", 1721, "/v1/chat/completions"))
+	assert.Equal(t, ChannelSmartScheduleAffinityEligible, ChannelSmartScheduleAffinityEligibility("unconfigured", "model-a", 1721, "/v1/chat/completions"))
 }
 
 func TestChannelSmartScheduleAffinityEligibilityIgnoresExcludedOnlyPool(t *testing.T) {

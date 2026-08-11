@@ -67,9 +67,6 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	options ChannelSelectionOptions,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) (*Channel, error) {
-	if trafficPolicy != nil && trafficPolicy.enabled && !trafficPolicy.allowsPool(group, poolModelName) {
-		return nil, nil
-	}
 	query := DB.Model(&Ability{}).
 		Where(commonGroupCol+" = ? AND model = ? AND enabled = ?", group, poolModelName, true)
 	query = applyChannelSelectionOptions(query, options)

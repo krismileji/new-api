@@ -219,7 +219,9 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) (*Channel, bool, error) {
 	if channelSmartScheduleRouteCache == nil {
-		if trafficPolicy != nil && trafficPolicy.enabled {
+		if trafficPolicy != nil && trafficPolicy.managesAnyPool(
+			group, channelSmartScheduleRouteModelNames(modelName),
+		) {
 			return nil, true, nil
 		}
 		return nil, false, nil

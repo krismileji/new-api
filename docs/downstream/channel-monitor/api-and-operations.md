@@ -88,7 +88,7 @@
 
 `smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少首字告警请求占比、恢复健康占比、独立秒级窗口或切换确认占比会校验失败，旧的轮数字段和探索租约字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`，`sampling_order` 支持 `priority_weight`、`ratio`。探索流量只允许与 `priority_weight` 应用方式一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
-全局智能调度开启后，请求流量只进入同时满足“分组已配置策略、Ability 模型命中策略范围、路由明确参与调度”的候选。未配置分组、未命中模型范围、从未设置参与状态或已取消参与的路由不接收首请求、亲和或重试流量；候选为空时返回无可用渠道，不回退渠道默认 P/W。旧的未参与路由人工 P/W 接口已删除，不提供兼容入口。
+全局智能调度开启后，命中分组策略及其模型范围的调度池只允许明确参与调度的路由接收首请求、亲和或重试流量；参与候选为空时返回无可用渠道，不回退渠道默认 P/W。未配置策略的分组以及未命中策略模型范围的模型池不参与智能调度，继续使用官方 Ability 候选集合。旧的未参与路由人工 P/W 接口已删除，不提供兼容入口。
 
 探索流量和低优先级轮转合并为统一样本补充。当前版本删除 `priority_sampling_enabled`、`priority_sampling_interval_minutes`、`priority_sampling_base_percent`、`priority_sampling_decay_percent`、`priority_sampling_min_percent`，不读取或迁移旧值。管理端先展示样本补充方式；选择 `sample_mode=traffic` 后，在同一个探索流量配置组内依次展示 `exploration_traffic_percent`、`exploration_max_prompt_tokens`、`sampling_order`，不把统一采样顺序显示为组外的独立常驻字段。切换到其他补充方式后保留该顺序值，自适应备援继续复用它；选择 `sample_mode=probe` 时展示 `probe_interval_minutes`。管理端的探索请求上限和稳定性释放请求上限都以 K Token 输入和回显，默认分别为 `50K` 与 `0K`，其中 `1K = 1000 Token`；API 仍提交实际 Token 数。
 

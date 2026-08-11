@@ -38,7 +38,7 @@ func useChannelSmartScheduleTrafficPolicy(t *testing.T, enabled bool, policies s
 	channelSmartScheduleTrafficPolicyCache.Store(nil)
 }
 
-func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionRequiresPolicyAndParticipation(t *testing.T) {
+func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionScopesParticipationToManagedPools(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	useDatabaseChannelSelection(t)
 	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
@@ -63,8 +63,6 @@ func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionRequiresPolicyAndPart
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{ChannelId: 5202, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 		{ChannelId: 5203, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Excluded: true},
-		{ChannelId: 5204, GroupName: "unconfigured", ModelName: "model-a", ParticipationSet: true},
-		{ChannelId: 5205, GroupName: "vip", ModelName: "model-b", ParticipationSet: true},
 	}).Error)
 
 	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
@@ -74,11 +72,13 @@ func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionRequiresPolicyAndPart
 
 	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
 	require.NoError(t, err)
-	assert.Nil(t, channel)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5204, channel.Id)
 
 	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, "")
 	require.NoError(t, err)
-	assert.Nil(t, channel)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5205, channel.Id)
 }
 
 func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackToEligibleWildcard(t *testing.T) {
@@ -108,15 +108,20 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 	channelsIDM = map[int]*Channel{
 		5211: {Id: 5211, Name: "未参与精确模型", Status: common.ChannelStatusEnabled},
 		5212: {Id: 5212, Name: "参与通配模型", Status: common.ChannelStatusEnabled},
+		5213: {Id: 5213, Name: "未配置分组", Status: common.ChannelStatusEnabled},
+		5214: {Id: 5214, Name: "策略外模型", Status: common.ChannelStatusEnabled},
 	}
 	group2model2channels = map[string]map[string][]int{
-		"vip": {exactModel: {5211}, wildcardModel: {5212}},
+		"vip":          {exactModel: {5211}, wildcardModel: {5212}, "model-b": {5214}},
+		"unconfigured": {"model-a": {5213}},
 	}
 	channel2advancedCustomConfig = nil
 	channelSmartScheduleRouteCache = buildChannelSmartScheduleRouteCacheFromStates(
 		[]*Ability{
 			{ChannelId: 5211, Group: "vip", Model: exactModel, Enabled: true, Priority: &highPriority, Weight: 1000},
 			{ChannelId: 5212, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &highPriority, Weight: 100},
+			{ChannelId: 5213, Group: "unconfigured", Model: "model-a", Enabled: true, Priority: &highPriority, Weight: 100},
+			{ChannelId: 5214, Group: "vip", Model: "model-b", Enabled: true, Priority: &highPriority, Weight: 100},
 		},
 		channelsIDM,
 		[]ChannelSmartScheduleRouteState{
@@ -129,10 +134,25 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 	require.NotNil(t, channel)
 	assert.Equal(t, 5212, channel.Id)
 
+	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5213, channel.Id)
+
+	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5214, channel.Id)
+
 	channelSmartScheduleRouteCache = nil
 	channel, err = GetRandomSatisfiedChannel("vip", exactModel, 0, "")
 	require.NoError(t, err)
 	assert.Nil(t, channel)
+
+	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5213, channel.Id)
 }
 
 func TestChannelSmartScheduleTrafficPolicyDisabledRestoresOfficialCandidates(t *testing.T) {
