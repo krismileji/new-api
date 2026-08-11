@@ -24,7 +24,15 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -124,7 +132,7 @@ function matchesStatusFilter(
   return health === filter
 }
 
-export function ChannelStatusProbeView() {
+export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [groupFilter, setGroupFilter] = useState('')
@@ -210,6 +218,12 @@ export function ChannelStatusProbeView() {
   const historyChannel = channels.find(
     (channel) => channel.id === historyChannelId
   )
+  const openHistory = useCallback((channelId: number) => {
+    setHistoryChannelId(channelId)
+  }, [])
+  const openConfig = useCallback((channelId: number) => {
+    setConfigChannelId(channelId)
+  }, [])
   const runMutation = useMutation({
     mutationFn: (channel: ChannelStatusProbeChannel) =>
       runChannelStatusProbe(channel.id),
@@ -289,10 +303,10 @@ export function ChannelStatusProbeView() {
             channel={channel}
             serverNow={serverNow}
             actionPending={pendingChannelId === channel.id}
-            onOpenHistory={(selected) => setHistoryChannelId(selected.id)}
-            onOpenConfig={(selected) => setConfigChannelId(selected.id)}
-            onRun={(selected) => runMutation.mutate(selected)}
-            onToggleEnabled={(selected) => toggleMutation.mutate(selected)}
+            onOpenHistory={openHistory}
+            onOpenConfig={openConfig}
+            onRun={runMutation.mutate}
+            onToggleEnabled={toggleMutation.mutate}
           />
         ))}
       </div>
@@ -464,4 +478,4 @@ export function ChannelStatusProbeView() {
       )}
     </div>
   )
-}
+})

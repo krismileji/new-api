@@ -16,7 +16,9 @@ type channelSmartScheduleCachedRoute struct {
 	participates                    bool
 	trafficPausedUntil              int64
 	temporaryTrafficKind            string
+	temporaryTrafficSince           int64
 	stabilityState                  string
+	stabilitySince                  int64
 	explorationMaxPromptTokens      int
 	stabilityReleaseMaxPromptTokens int
 }
@@ -79,6 +81,7 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 		return nil
 	}
 	modelRoutes := channelSmartScheduleRouteCache[group]
+	previousRoutes := append([]channelSmartScheduleCachedRoute(nil), modelRoutes[modelName]...)
 	poolRoutes := refreshed[group][modelName]
 	if len(poolRoutes) == 0 {
 		if modelRoutes != nil {
@@ -87,6 +90,7 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 				delete(channelSmartScheduleRouteCache, group)
 			}
 		}
+		refreshChannelSmartScheduleRuntimeRouteIndex(group, modelName, previousRoutes, nil)
 		return nil
 	}
 	if modelRoutes == nil {
@@ -94,6 +98,7 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 		channelSmartScheduleRouteCache[group] = modelRoutes
 	}
 	modelRoutes[modelName] = poolRoutes
+	refreshChannelSmartScheduleRuntimeRouteIndex(group, modelName, previousRoutes, poolRoutes)
 	return nil
 }
 
@@ -103,7 +108,8 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 		if err := DB.
 			Select(
 				"channel_id", "group_name", "model_name", "participation_set", "excluded",
-				"temporary_traffic_kind", "stability_state", "exploration_max_prompt_tokens",
+				"temporary_traffic_kind", "temporary_traffic_since", "stability_state", "stability_since",
+				"exploration_max_prompt_tokens",
 				"stability_release_max_prompt_tokens",
 			).
 			Where("participation_set = ? AND excluded = ?", true, false).
@@ -176,10 +182,12 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 			channel,
 		)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
-			channelId:    ability.ChannelId,
-			priority:     priority,
-			weight:       weight,
-			participates: state.Participates(),
+			channelId:             ability.ChannelId,
+			priority:              priority,
+			weight:                weight,
+			participates:          state.Participates(),
+			temporaryTrafficSince: state.TemporaryTrafficSince,
+			stabilitySince:        state.StabilitySince,
 			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleRouteKey(
 				ability.ChannelId, ability.Group, ability.Model,
 			)],

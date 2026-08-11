@@ -98,6 +98,7 @@ type channelMonitorMinuteLogOther struct {
 	FinalRetrySummary     bool     `json:"channel_monitor_final_retry_summary"`
 	SmartScheduleProbe    bool     `json:"channel_monitor_smart_schedule_probe"`
 	ChannelTest           bool     `json:"channel_monitor_channel_test"`
+	StatusProbe           bool     `json:"channel_monitor_status_probe"`
 	StatusCode            any      `json:"status_code"`
 }
 
@@ -369,7 +370,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		}
 		scannedLogRows++
 		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
+		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
 			continue
 		}
 		durationMs := int64(log.UseTime)
@@ -600,10 +601,58 @@ func aggregateChannelMonitorMinuteRangeWithState(
 	if err := ensureChannelMonitorAggregationState(ctx); err != nil {
 		return result, err
 	}
+	observedCoverage, err := GetChannelMonitorAggregationCoverage(ctx)
+	if err != nil {
+		return result, err
+	}
+	return aggregateChannelMonitorMinuteRangeFromObservation(
+		ctx,
+		startTimestamp,
+		endTimestamp,
+		publishWatermark,
+		extendCoverage,
+		observedCoverage,
+	)
+}
+
+func aggregateChannelMonitorMinuteRangeFromObservation(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+	publishWatermark bool,
+	extendCoverage bool,
+	observedCoverage ChannelMonitorAggregationCoverage,
+) (ChannelMonitorMinuteAggregationResult, error) {
+	result := ChannelMonitorMinuteAggregationResult{
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+	}
+	skipped := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		state, err := lockChannelMonitorAggregationState(tx)
 		if err != nil {
 			return err
+		}
+		if publishWatermark &&
+			state.LastPublishedRevision > observedCoverage.Revision &&
+			state.LastPublishedStart <= startTimestamp &&
+			state.LastPublishedEnd >= endTimestamp {
+			skipped = true
+			return nil
+		}
+		if extendCoverage && !publishWatermark {
+			coveredFrom := state.CoveredFrom
+			if coveredFrom <= 0 {
+				coveredFrom = state.CompletedThrough
+			}
+			coverageAdvanced := state.CompletedThrough > observedCoverage.CompletedThrough ||
+				(state.CoveredFrom > 0 &&
+					(observedCoverage.CoveredFrom <= 0 || state.CoveredFrom < observedCoverage.CoveredFrom))
+			if coverageAdvanced &&
+				coveredFrom > 0 && coveredFrom <= startTimestamp && state.CompletedThrough >= endTimestamp {
+				skipped = true
+				return nil
+			}
 		}
 		logDB := LOG_DB
 		if LOG_DB == DB {
@@ -629,6 +678,9 @@ func aggregateChannelMonitorMinuteRangeWithState(
 	})
 	if err != nil {
 		return result, err
+	}
+	if skipped {
+		return result, nil
 	}
 	InvalidateChannelMonitorAggregateCaches()
 	return result, nil

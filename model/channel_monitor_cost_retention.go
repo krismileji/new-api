@@ -10,6 +10,7 @@ type ChannelMonitorCostRetentionResult struct {
 	APIKeyRowsDeleted         int64 `json:"api_key_rows_deleted"`
 	MinuteRowsDeleted         int64 `json:"minute_rows_deleted"`
 	DurationBucketRowsDeleted int64 `json:"duration_bucket_rows_deleted"`
+	Incomplete                bool  `json:"-"`
 }
 
 func DeleteChannelMonitorCostsBefore(
@@ -17,6 +18,7 @@ func DeleteChannelMonitorCostsBefore(
 	costCutoff int64,
 	minuteCutoff int64,
 	batchSize int,
+	budget ChannelMonitorCleanupBudget,
 ) (ChannelMonitorCostRetentionResult, error) {
 	result := ChannelMonitorCostRetentionResult{}
 	if costCutoff <= 0 {
@@ -29,8 +31,13 @@ func DeleteChannelMonitorCostsBefore(
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
 	}
 
+	durationBudget := budget.Slice(4)
 	if DB.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		for {
+			if durationBudget.Exhausted() {
+				result.Incomplete = true
+				break
+			}
 			var ids []int64
 			if err := DB.WithContext(ctx).
 				Model(&ChannelMonitorMinuteDurationBucket{}).
@@ -51,7 +58,12 @@ func DeleteChannelMonitorCostsBefore(
 		}
 	}
 
+	minuteBudget := budget.Slice(3)
 	for {
+		if minuteBudget.Exhausted() {
+			result.Incomplete = true
+			break
+		}
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelMonitorMinuteMetric{}).
@@ -77,7 +89,12 @@ func DeleteChannelMonitorCostsBefore(
 		InvalidateChannelMonitorAggregateCaches()
 	}
 
+	apiKeyBudget := budget.Slice(2)
 	for {
+		if apiKeyBudget.Exhausted() {
+			result.Incomplete = true
+			break
+		}
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelDailyAPIKeyCost{}).
@@ -97,7 +114,12 @@ func DeleteChannelMonitorCostsBefore(
 		result.APIKeyRowsDeleted += deleted.RowsAffected
 	}
 
+	channelBudget := budget.Slice(1)
 	for {
+		if channelBudget.Exhausted() {
+			result.Incomplete = true
+			break
+		}
 		var ids []int64
 		if err := DB.WithContext(ctx).
 			Model(&ChannelDailyCost{}).
@@ -116,6 +138,5 @@ func DeleteChannelMonitorCostsBefore(
 		}
 		result.ChannelRowsDeleted += deleted.RowsAffected
 	}
-
 	return result, nil
 }

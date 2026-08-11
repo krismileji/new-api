@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -56,8 +57,25 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 		ID: channelMonitorAggregationStateID, CoveredFrom: 1_000, CompletedThrough: 11_000,
 	}).Error)
 
-	result, err := DeleteChannelMonitorCostsBefore(context.Background(), cutoff, minuteCutoff, 1)
+	exhaustedBudget := ChannelMonitorCleanupBudget{deadline: time.Now().Add(-time.Second)}
+	result, err := DeleteChannelMonitorCostsBefore(
+		context.Background(), cutoff, minuteCutoff, 1, exhaustedBudget,
+	)
 	require.NoError(t, err)
+	assert.True(t, result.Incomplete)
+	assert.Zero(t, result.ChannelRowsDeleted)
+	assert.Zero(t, result.APIKeyRowsDeleted)
+	assert.Zero(t, result.MinuteRowsDeleted)
+	assert.Zero(t, result.DurationBucketRowsDeleted)
+	var beforeResume int64
+	require.NoError(t, db.Model(&ChannelDailyCost{}).Count(&beforeResume).Error)
+	assert.EqualValues(t, 3, beforeResume)
+
+	result, err = DeleteChannelMonitorCostsBefore(
+		context.Background(), cutoff, minuteCutoff, 1, ChannelMonitorCleanupBudget{},
+	)
+	require.NoError(t, err)
+	assert.False(t, result.Incomplete)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)
 	assert.Equal(t, int64(2), result.APIKeyRowsDeleted)
 	assert.Equal(t, int64(1), result.MinuteRowsDeleted)
@@ -90,12 +108,12 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 }
 
 func TestDeleteChannelMonitorCostsBeforeRejectsInvalidArguments(t *testing.T) {
-	_, err := DeleteChannelMonitorCostsBefore(context.Background(), 0, 100, 100)
+	_, err := DeleteChannelMonitorCostsBefore(context.Background(), 0, 100, 100, ChannelMonitorCleanupBudget{})
 	assert.Error(t, err)
 
-	_, err = DeleteChannelMonitorCostsBefore(context.Background(), 100, 0, 100)
+	_, err = DeleteChannelMonitorCostsBefore(context.Background(), 100, 0, 100, ChannelMonitorCleanupBudget{})
 	assert.Error(t, err)
 
-	_, err = DeleteChannelMonitorCostsBefore(context.Background(), 100, 100, 0)
+	_, err = DeleteChannelMonitorCostsBefore(context.Background(), 100, 100, 0, ChannelMonitorCleanupBudget{})
 	assert.Error(t, err)
 }

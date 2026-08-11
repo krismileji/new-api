@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { areChannelStatusProbeCardPropsEqual } from '../../lib/status-probe-card-render'
 import type { ChannelStatusProbeChannel } from '../../types'
 import { ChannelStatusProbeCard } from '../channel-status-probe-card'
 
@@ -149,6 +150,40 @@ function createChannel(): ChannelStatusProbeChannel {
 }
 
 describe('状态探测卡片', () => {
+  test('服务端时钟只在下次执行展示文本变化时触发重渲染', () => {
+    const props = {
+      channel: createChannel(),
+      serverNow: 1_754_000_000,
+      actionPending: false,
+      onOpenHistory: noop,
+      onOpenConfig: noop,
+      onRun: noop,
+      onToggleEnabled: noop,
+    }
+
+    assert.equal(
+      areChannelStatusProbeCardPropsEqual(props, {
+        ...props,
+        serverNow: props.serverNow + 1,
+      }),
+      true
+    )
+    assert.equal(
+      areChannelStatusProbeCardPropsEqual(props, {
+        ...props,
+        serverNow: props.serverNow + 60,
+      }),
+      false
+    )
+    assert.equal(
+      areChannelStatusProbeCardPropsEqual(props, {
+        ...props,
+        actionPending: true,
+      }),
+      false
+    )
+  })
+
   test('每个配置模型固定渲染一条状态带并保留独立操作入口', () => {
     const channel = createChannel()
     const html = renderToStaticMarkup(

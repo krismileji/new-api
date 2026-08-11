@@ -149,7 +149,7 @@ func GetChannelSmartScheduleAdaptiveHealthMetrics(
 			continue
 		}
 		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest) {
+		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
 			continue
 		}
 		for _, index := range windowIndexesByChannel[log.ChannelId] {
@@ -322,6 +322,9 @@ func getChannelSmartScheduleRuntimeAbilityRoutes(channelId int, modelName string
 // smart-schedule routes for one channel and requested model. Exact abilities
 // take precedence over matching wildcard abilities in the same group.
 func GetChannelSmartScheduleRuntimeParticipatingRoutes(channelId int, modelName string) (map[string]string, error) {
+	if routes, cacheEnabled := GetCachedChannelSmartScheduleRuntimeParticipatingRoutes(channelId, modelName); cacheEnabled {
+		return routes, nil
+	}
 	selectedModelByGroup, modelNames, err := getChannelSmartScheduleRuntimeAbilityRoutes(channelId, modelName)
 	if err != nil || len(selectedModelByGroup) == 0 {
 		return selectedModelByGroup, err
@@ -351,6 +354,9 @@ func GetChannelSmartScheduleRuntimeParticipatingRoutes(channelId int, modelName 
 // one channel/model request, including normal routes that may need short-term
 // runtime protection before the scheduled stability score catches up.
 func GetChannelSmartScheduleRuntimeRoutes(channelId int, modelName string) (map[string]ChannelSmartScheduleRuntimeRoute, error) {
+	if routes, cacheEnabled := GetCachedChannelSmartScheduleRuntimeRoutes(channelId, modelName); cacheEnabled {
+		return routes, nil
+	}
 	selectedModelByGroup, modelNames, err := getChannelSmartScheduleRuntimeAbilityRoutes(channelId, modelName)
 	if err != nil || len(selectedModelByGroup) == 0 {
 		return map[string]ChannelSmartScheduleRuntimeRoute{}, err
@@ -584,7 +590,7 @@ func GetChannelSmartScheduleRouteSampleCount(
 				continue
 			}
 			other, parsed := channelMonitorMinuteOther(log.Other)
-			if parsed && (other.SmartScheduleProbe || other.ChannelTest) {
+			if parsed && (other.SmartScheduleProbe || other.ChannelTest || other.StatusProbe) {
 				continue
 			}
 			switch log.Type {

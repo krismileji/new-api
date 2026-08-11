@@ -254,3 +254,38 @@ func TestChannelMonitorMinuteRetentionCutoffProtectsLongestScheduleWindow(t *tes
 	assert.Equal(t, olderConfiguredCutoff, cutoff)
 	assert.Equal(t, 180, protectedMinutes)
 }
+
+func TestChannelMonitorCleanupContinuationDelayUsesConfiguredBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		expected time.Duration
+	}{
+		{name: "default", value: "", expected: time.Minute},
+		{name: "minimum", value: "15", expected: 15 * time.Second},
+		{name: "maximum", value: "3600", expected: time.Hour},
+		{name: "below minimum", value: "14", expected: time.Minute},
+		{name: "above maximum", value: "3601", expected: time.Minute},
+		{name: "invalid", value: "invalid", expected: time.Minute},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS", test.value)
+			assert.Equal(t, test.expected, channelMonitorCleanupContinuationDelay())
+		})
+	}
+}
+
+func TestScheduleChannelMonitorCleanupContinuationUsesConfiguredDelay(t *testing.T) {
+	originalScheduler := channelMonitorCleanupContinuationScheduler
+	t.Cleanup(func() { channelMonitorCleanupContinuationScheduler = originalScheduler })
+	t.Setenv("CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS", "45")
+
+	var scheduledDelay time.Duration
+	channelMonitorCleanupContinuationScheduler = func(delay time.Duration) {
+		scheduledDelay = delay
+	}
+	scheduleChannelMonitorCleanupContinuation()
+
+	assert.Equal(t, 45*time.Second, scheduledDelay)
+}

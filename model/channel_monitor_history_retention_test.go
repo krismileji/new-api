@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,7 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 		{ChannelId: 3, OldRatio: 3, NewRatio: 4, CreatedTime: ratioCutoff},
 	}).Error)
 
+	exhaustedBudget := ChannelMonitorCleanupBudget{deadline: time.Now().Add(-time.Second)}
 	result, err := DeleteChannelMonitorHistoryBefore(
 		context.Background(),
 		ChannelMonitorHistoryRetentionCutoffs{
@@ -67,8 +69,31 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 		[]string{monitoredTaskType},
 		2,
 		1,
+		exhaustedBudget,
 	)
 	require.NoError(t, err)
+	assert.True(t, result.Incomplete)
+	assert.Zero(t, result.ExecutionDetailRowsDeleted)
+	assert.Zero(t, result.TaskRowsDeleted)
+	assert.Zero(t, result.RatioHistoryRowsDeleted)
+	var beforeResume int64
+	require.NoError(t, db.Model(&ChannelRatioHistory{}).Count(&beforeResume).Error)
+	assert.EqualValues(t, 3, beforeResume)
+
+	result, err = DeleteChannelMonitorHistoryBefore(
+		context.Background(),
+		ChannelMonitorHistoryRetentionCutoffs{
+			ExecutionDetail: detailCutoff,
+			Task:            taskCutoff,
+			RatioHistory:    ratioCutoff,
+		},
+		[]string{monitoredTaskType},
+		2,
+		1,
+		ChannelMonitorCleanupBudget{},
+	)
+	require.NoError(t, err)
+	assert.False(t, result.Incomplete)
 	assert.Equal(t, int64(3), result.ExecutionDetailRowsDeleted)
 	assert.Equal(t, int64(1), result.TaskRowsDeleted)
 	assert.Equal(t, int64(2), result.RatioHistoryRowsDeleted)
@@ -129,6 +154,7 @@ func TestDeleteChannelMonitorHistoryBeforeRejectsInvalidArguments(t *testing.T) 
 				test.taskTypes,
 				test.keepLatest,
 				test.batchSize,
+				ChannelMonitorCleanupBudget{},
 			)
 			assert.Error(t, err)
 		})

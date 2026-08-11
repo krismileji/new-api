@@ -54,19 +54,19 @@ var (
 
 type ChannelStatusProbeConfig struct {
 	Id                int64  `json:"id"`
-	ChannelId         int    `json:"channel_id" gorm:"not null;uniqueIndex"`
-	Enabled           bool   `json:"enabled"`
+	ChannelId         int    `json:"channel_id" gorm:"not null;uniqueIndex;index:idx_channel_status_probe_scheduled_due,priority:4;index:idx_channel_status_probe_manual_due,priority:4"`
+	Enabled           bool   `json:"enabled" gorm:"index:idx_channel_status_probe_scheduled_due,priority:1"`
 	ModelsJSON        string `json:"-" gorm:"type:text;not null"`
 	IntervalSeconds   int    `json:"interval_seconds"`
 	DisplayValue      int    `json:"display_value"`
 	DisplayUnit       string `json:"display_unit" gorm:"type:varchar(16)"`
 	RecordSample      bool   `json:"record_sample"`
-	NextRunAt         int64  `json:"next_run_at" gorm:"bigint;index"`
-	ManualRequestId   string `json:"manual_request_id" gorm:"type:varchar(64)"`
-	ManualRequestedAt int64  `json:"manual_requested_at" gorm:"bigint;index"`
+	NextRunAt         int64  `json:"next_run_at" gorm:"bigint;index;index:idx_channel_status_probe_scheduled_due,priority:2"`
+	ManualRequestId   string `json:"manual_request_id" gorm:"type:varchar(64);index:idx_channel_status_probe_manual_due,priority:1"`
+	ManualRequestedAt int64  `json:"manual_requested_at" gorm:"bigint;index;index:idx_channel_status_probe_manual_due,priority:2,sort:desc"`
 	Revision          int64  `json:"revision" gorm:"bigint"`
 	LeaseToken        string `json:"-" gorm:"type:varchar(64)"`
-	LeaseUntil        int64  `json:"lease_until" gorm:"bigint;index"`
+	LeaseUntil        int64  `json:"lease_until" gorm:"bigint;index;index:idx_channel_status_probe_scheduled_due,priority:3;index:idx_channel_status_probe_manual_due,priority:3"`
 	RunningTrigger    string `json:"running_trigger" gorm:"type:varchar(16)"`
 	RunningRunId      string `json:"running_run_id" gorm:"type:varchar(64)"`
 	RunningStartedAt  int64  `json:"running_started_at" gorm:"bigint"`
@@ -242,15 +242,15 @@ func (state ChannelStatusProbeState) Buckets(unit string) ([]ChannelStatusProbeB
 }
 
 type ChannelStatusProbeExecution struct {
-	Id                int64    `json:"id"`
+	Id                int64    `json:"id" gorm:"index:idx_channel_status_probe_channel_result_finished,priority:4,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:4,sort:desc;index:idx_channel_status_probe_sample_retry,priority:4"`
 	RunId             string   `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_status_probe_run_model"`
-	ChannelId         int      `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1"`
+	ChannelId         int      `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1;index:idx_channel_status_probe_channel_result_finished,priority:1;index:idx_channel_status_probe_channel_trigger_finished,priority:1"`
 	ModelName         string   `json:"model_name" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_status_probe_run_model;index:idx_channel_status_probe_channel_model_finished,priority:2"`
 	ConfigRevision    int64    `json:"config_revision" gorm:"bigint"`
-	Trigger           string   `json:"trigger" gorm:"type:varchar(16);index"`
-	Result            string   `json:"result" gorm:"type:varchar(32);index"`
+	Trigger           string   `json:"trigger" gorm:"type:varchar(16);index;index:idx_channel_status_probe_channel_trigger_finished,priority:2"`
+	Result            string   `json:"result" gorm:"type:varchar(32);index;index:idx_channel_status_probe_channel_result_finished,priority:2"`
 	StartedAt         int64    `json:"started_at" gorm:"bigint"`
-	FinishedAt        int64    `json:"finished_at" gorm:"bigint;index;index:idx_channel_status_probe_channel_finished,priority:2,sort:desc;index:idx_channel_status_probe_channel_model_finished,priority:3,sort:desc"`
+	FinishedAt        int64    `json:"finished_at" gorm:"bigint;index;index:idx_channel_status_probe_channel_finished,priority:2,sort:desc;index:idx_channel_status_probe_channel_model_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_result_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:3,sort:desc"`
 	ResponseTimeMs    *float64 `json:"response_time_ms"`
 	FirstTokenMs      *float64 `json:"first_token_ms"`
 	TPS               *float64 `json:"tps"`
@@ -267,10 +267,10 @@ type ChannelStatusProbeExecution struct {
 	ReasoningTokens   int      `json:"reasoning_tokens"`
 	ErrorCode         string   `json:"error_code" gorm:"type:varchar(128)"`
 	ErrorMessage      string   `json:"error_message" gorm:"type:varchar(512)"`
-	SampleRequested   bool     `json:"sample_requested"`
-	SampleStatus      string   `json:"sample_status" gorm:"type:varchar(16)"`
+	SampleRequested   bool     `json:"sample_requested" gorm:"index:idx_channel_status_probe_sample_retry,priority:1"`
+	SampleStatus      string   `json:"sample_status" gorm:"type:varchar(16);index:idx_channel_status_probe_sample_retry,priority:2"`
 	SampleMessage     string   `json:"sample_message" gorm:"type:varchar(255)"`
-	CreatedAt         int64    `json:"created_at" gorm:"bigint"`
+	CreatedAt         int64    `json:"created_at" gorm:"bigint;index:idx_channel_status_probe_sample_retry,priority:3"`
 }
 
 type ChannelStatusProbeConfigInput struct {
@@ -318,39 +318,48 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 				RecordSample:    input.RecordSample,
 				NextRunAt:       nextRunAt, Revision: 1, CreatedAt: now, UpdatedAt: now,
 			}
-			return tx.Create(&saved).Error
-		}
-		if findErr != nil {
+			if err := tx.Create(&saved).Error; err != nil {
+				return err
+			}
+		} else if findErr != nil {
 			return findErr
+		} else {
+			if current.Revision != input.Revision {
+				return ErrChannelStatusProbeConfigChanged
+			}
+			nextRunAt := current.NextRunAt
+			configurationChanged := current.ModelsJSON != string(modelsJSON) || current.IntervalSeconds != input.IntervalSeconds
+			if !input.Enabled {
+				nextRunAt = 0
+			} else if !current.Enabled || configurationChanged || nextRunAt <= 0 {
+				nextRunAt = now + int64(input.IntervalSeconds) + int64(channelId%11)
+			}
+			updates := map[string]any{
+				"enabled": input.Enabled, "models_json": string(modelsJSON),
+				"interval_seconds": input.IntervalSeconds,
+				"display_value":    displayValue,
+				"display_unit":     displayUnit,
+				"record_sample":    input.RecordSample,
+				"next_run_at":      nextRunAt, "revision": current.Revision + 1, "updated_at": now,
+			}
+			updated := tx.Model(&ChannelStatusProbeConfig{}).
+				Where("id = ? AND revision = ?", current.Id, current.Revision).
+				Updates(updates)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrChannelStatusProbeConfigChanged
+			}
+			if err := tx.Where("id = ?", current.Id).First(&saved).Error; err != nil {
+				return err
+			}
 		}
-		if current.Revision != input.Revision {
-			return ErrChannelStatusProbeConfigChanged
+		stateQuery := tx.Where("channel_id = ?", channelId)
+		if len(input.Models) > 0 {
+			stateQuery = stateQuery.Where("model_name NOT IN ?", input.Models)
 		}
-		nextRunAt := current.NextRunAt
-		configurationChanged := current.ModelsJSON != string(modelsJSON) || current.IntervalSeconds != input.IntervalSeconds
-		if !input.Enabled {
-			nextRunAt = 0
-		} else if !current.Enabled || configurationChanged || nextRunAt <= 0 {
-			nextRunAt = now + int64(input.IntervalSeconds) + int64(channelId%11)
-		}
-		updates := map[string]any{
-			"enabled": input.Enabled, "models_json": string(modelsJSON),
-			"interval_seconds": input.IntervalSeconds,
-			"display_value":    displayValue,
-			"display_unit":     displayUnit,
-			"record_sample":    input.RecordSample,
-			"next_run_at":      nextRunAt, "revision": current.Revision + 1, "updated_at": now,
-		}
-		updated := tx.Model(&ChannelStatusProbeConfig{}).
-			Where("id = ? AND revision = ?", current.Id, current.Revision).
-			Updates(updates)
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return ErrChannelStatusProbeConfigChanged
-		}
-		return tx.Where("id = ?", current.Id).First(&saved).Error
+		return stateQuery.Delete(&ChannelStatusProbeState{}).Error
 	})
 	return saved, err
 }
@@ -582,6 +591,30 @@ func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bo
 		}
 		created = true
 
+		var currentConfig ChannelStatusProbeConfig
+		configErr := lockForUpdate(tx).
+			Select("id", "models_json").
+			Where("channel_id = ?", execution.ChannelId).
+			First(&currentConfig).Error
+		if configErr == nil {
+			configuredModels, err := currentConfig.Models()
+			if err != nil {
+				return err
+			}
+			modelConfigured := false
+			for _, modelName := range configuredModels {
+				if modelName == execution.ModelName {
+					modelConfigured = true
+					break
+				}
+			}
+			if !modelConfigured {
+				return nil
+			}
+		} else if !errors.Is(configErr, gorm.ErrRecordNotFound) {
+			return configErr
+		}
+
 		var state ChannelStatusProbeState
 		stateErr := lockForUpdate(tx).
 			Where("channel_id = ? AND model_name = ?", execution.ChannelId, execution.ModelName).
@@ -721,7 +754,12 @@ func ListChannelStatusProbeExecutions(
 	return executions, total, err
 }
 
-func DeleteChannelStatusProbeExecutionsBefore(ctx context.Context, cutoff int64, batchSize int) (int64, error) {
+func DeleteChannelStatusProbeExecutionsBefore(
+	ctx context.Context,
+	cutoff int64,
+	batchSize int,
+	budget ChannelMonitorCleanupBudget,
+) (int64, error) {
 	if cutoff <= 0 || batchSize <= 0 {
 		return 0, errors.New("渠道状态探测历史清理参数无效")
 	}
@@ -731,6 +769,9 @@ func DeleteChannelStatusProbeExecutionsBefore(ctx context.Context, cutoff int64,
 	var deletedRows int64
 	db := DB.WithContext(ctx)
 	for {
+		if budget.Exhausted() {
+			return deletedRows, nil
+		}
 		var ids []int64
 		if err := db.Model(&ChannelStatusProbeExecution{}).
 			Where("finished_at < ?", cutoff).

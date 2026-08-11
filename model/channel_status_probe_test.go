@@ -3,6 +3,7 @@ package model
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -60,6 +61,93 @@ func TestSaveChannelStatusProbeConfigRejectsStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gpt-4.1"}, models)
 	assert.Equal(t, 60, stored.IntervalSeconds)
+}
+
+func TestSaveChannelStatusProbeConfigRemovesOnlyUnconfiguredModelStates(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	created, err := SaveChannelStatusProbeConfig(12, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-a", "model-b"}, IntervalSeconds: 60,
+	}, 1_000)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&[]ChannelStatusProbeState{
+		{ChannelId: 12, ModelName: "model-a", CreatedAt: 1, UpdatedAt: 1},
+		{ChannelId: 12, ModelName: "model-b", CreatedAt: 1, UpdatedAt: 1},
+		{ChannelId: 13, ModelName: "model-a", CreatedAt: 1, UpdatedAt: 1},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelStatusProbeExecution{
+		RunId: "retained-history", ChannelId: 12, ModelName: "model-a", FinishedAt: 1, CreatedAt: 1,
+	}).Error)
+
+	_, err = SaveChannelStatusProbeConfig(12, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-b", "model-c"}, IntervalSeconds: 60,
+		Revision: created.Revision,
+	}, 1_100)
+	require.NoError(t, err)
+
+	var states []ChannelStatusProbeState
+	require.NoError(t, db.Order("channel_id ASC, model_name ASC").Find(&states).Error)
+	require.Len(t, states, 2)
+	assert.Equal(t, []int{12, 13}, []int{states[0].ChannelId, states[1].ChannelId})
+	assert.Equal(t, []string{"model-b", "model-a"}, []string{states[0].ModelName, states[1].ModelName})
+	var executionCount int64
+	require.NoError(t, db.Model(&ChannelStatusProbeExecution{}).Count(&executionCount).Error)
+	assert.EqualValues(t, 1, executionCount)
+}
+
+func TestSaveChannelStatusProbeExecutionDoesNotRecreateRemovedModelState(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	created, err := SaveChannelStatusProbeConfig(14, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-a", "model-b"}, IntervalSeconds: 60,
+	}, 1_000)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&ChannelStatusProbeState{
+		ChannelId: 14, ModelName: "model-a", CreatedAt: 1, UpdatedAt: 1,
+	}).Error)
+	_, err = SaveChannelStatusProbeConfig(14, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-b"}, IntervalSeconds: 60,
+		Revision: created.Revision,
+	}, 1_100)
+	require.NoError(t, err)
+
+	execution := ChannelStatusProbeExecution{
+		RunId: "removed-model-old-claim", ChannelId: 14, ModelName: "model-a",
+		ConfigRevision: created.Revision, Trigger: ChannelStatusProbeTriggerScheduled,
+		Result: ChannelStatusProbeResultSuccess, StartedAt: 1_101, FinishedAt: 1_102,
+		RequestDispatched: true, SampleStatus: ChannelStatusProbeSampleSkipped,
+	}
+	inserted, err := SaveChannelStatusProbeExecution(&execution)
+	require.NoError(t, err)
+	assert.True(t, inserted)
+
+	var executionCount int64
+	require.NoError(t, db.Model(&ChannelStatusProbeExecution{}).
+		Where("run_id = ?", execution.RunId).Count(&executionCount).Error)
+	assert.EqualValues(t, 1, executionCount)
+	var stateCount int64
+	require.NoError(t, db.Model(&ChannelStatusProbeState{}).
+		Where("channel_id = ? AND model_name = ?", 14, "model-a").Count(&stateCount).Error)
+	assert.Zero(t, stateCount)
+}
+
+func TestChannelStatusProbeMigrationsCreateWorkerAndHistoryIndexes(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	configIndexes := []string{
+		"idx_channel_status_probe_scheduled_due",
+		"idx_channel_status_probe_manual_due",
+	}
+	for _, indexName := range configIndexes {
+		assert.True(t, db.Migrator().HasIndex(&ChannelStatusProbeConfig{}, indexName), indexName)
+	}
+	executionIndexes := []string{
+		"idx_channel_status_probe_sample_retry",
+		"idx_channel_status_probe_channel_finished",
+		"idx_channel_status_probe_channel_model_finished",
+		"idx_channel_status_probe_channel_result_finished",
+		"idx_channel_status_probe_channel_trigger_finished",
+	}
+	for _, indexName := range executionIndexes {
+		assert.True(t, db.Migrator().HasIndex(&ChannelStatusProbeExecution{}, indexName), indexName)
+	}
 }
 
 func TestManualChannelStatusProbeClaimKeepsScheduledRunTime(t *testing.T) {
@@ -256,7 +344,15 @@ func TestDeleteChannelStatusProbeExecutionsBeforeUsesStrictCutoff(t *testing.T) 
 	}
 	require.NoError(t, db.Create(&executions).Error)
 
-	deleted, err := DeleteChannelStatusProbeExecutionsBefore(t.Context(), 100, 1)
+	exhaustedBudget := ChannelMonitorCleanupBudget{deadline: time.Now().Add(-time.Second)}
+	deleted, err := DeleteChannelStatusProbeExecutionsBefore(t.Context(), 100, 1, exhaustedBudget)
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
+	var beforeResume int64
+	require.NoError(t, db.Model(&ChannelStatusProbeExecution{}).Count(&beforeResume).Error)
+	assert.EqualValues(t, 3, beforeResume)
+
+	deleted, err = DeleteChannelStatusProbeExecutionsBefore(t.Context(), 100, 1, ChannelMonitorCleanupBudget{})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, deleted)
 	var remaining []ChannelStatusProbeExecution

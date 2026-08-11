@@ -13,16 +13,23 @@ import (
 const channelMonitorAggregationStateID = 1
 
 type ChannelMonitorAggregationState struct {
-	ID               int   `gorm:"primaryKey"`
-	CoveredFrom      int64 `gorm:"not null;default:0"`
-	CompletedThrough int64 `gorm:"not null"`
-	Revision         int64 `gorm:"not null;default:0"`
-	UpdatedAt        int64 `gorm:"not null"`
+	ID                    int   `gorm:"primaryKey"`
+	CoveredFrom           int64 `gorm:"not null;default:0"`
+	CompletedThrough      int64 `gorm:"not null"`
+	Revision              int64 `gorm:"not null;default:0"`
+	LastPublishedStart    int64 `gorm:"not null;default:0"`
+	LastPublishedEnd      int64 `gorm:"not null;default:0"`
+	LastPublishedRevision int64 `gorm:"not null;default:0"`
+	UpdatedAt             int64 `gorm:"not null"`
 }
 
 type ChannelMonitorAggregationCoverage struct {
-	CoveredFrom      int64 `json:"covered_from"`
-	CompletedThrough int64 `json:"completed_through"`
+	CoveredFrom           int64 `json:"covered_from"`
+	CompletedThrough      int64 `json:"completed_through"`
+	Revision              int64 `json:"-"`
+	LastPublishedStart    int64 `json:"-"`
+	LastPublishedEnd      int64 `json:"-"`
+	LastPublishedRevision int64 `json:"-"`
 }
 
 func ensureChannelMonitorAggregationState(ctx context.Context) error {
@@ -58,6 +65,11 @@ func updateChannelMonitorAggregationStateWithTx(
 	if publishWatermark && completedThrough > state.CompletedThrough {
 		updates["completed_through"] = completedThrough
 	}
+	if publishWatermark {
+		updates["last_published_start"] = startTimestamp
+		updates["last_published_end"] = completedThrough
+		updates["last_published_revision"] = state.Revision + 1
+	}
 	if extendCoverage {
 		coverageAnchor := state.CoveredFrom
 		if coverageAnchor <= 0 {
@@ -79,7 +91,10 @@ func updateChannelMonitorAggregationStateWithTx(
 func GetChannelMonitorAggregationCoverage(ctx context.Context) (ChannelMonitorAggregationCoverage, error) {
 	var state ChannelMonitorAggregationState
 	err := DB.WithContext(ctx).
-		Select("covered_from", "completed_through").
+		Select(
+			"covered_from", "completed_through", "revision",
+			"last_published_start", "last_published_end", "last_published_revision",
+		).
 		Where("id = ?", channelMonitorAggregationStateID).
 		Take(&state).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -90,6 +105,9 @@ func GetChannelMonitorAggregationCoverage(ctx context.Context) (ChannelMonitorAg
 	}
 	return ChannelMonitorAggregationCoverage{
 		CoveredFrom: state.CoveredFrom, CompletedThrough: state.CompletedThrough,
+		Revision:           state.Revision,
+		LastPublishedStart: state.LastPublishedStart, LastPublishedEnd: state.LastPublishedEnd,
+		LastPublishedRevision: state.LastPublishedRevision,
 	}, nil
 }
 

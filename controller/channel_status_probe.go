@@ -333,27 +333,34 @@ func mergeChannelStatusProbeRecentWindow(
 }
 
 func GetChannelStatusProbeOverview(c *gin.Context) {
-	now := common.GetTimestamp()
 	selectedModel := strings.TrimSpace(c.Query("model"))
-	channels, err := model.GetAllChannelsForMonitor()
+	response, err := getChannelStatusProbeOverviewCached(selectedModel)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
+}
+
+func buildChannelStatusProbeOverview(
+	selectedModel string,
+	now int64,
+) (channelStatusProbeOverviewResponse, error) {
+	channels, err := model.GetChannelsForStatusProbeOverview()
+	if err != nil {
+		return channelStatusProbeOverviewResponse{}, err
 	}
 	configs, err := model.GetChannelStatusProbeConfigs()
 	if err != nil {
-		common.ApiError(c, err)
-		return
+		return channelStatusProbeOverviewResponse{}, err
 	}
 	states, err := model.GetChannelStatusProbeStates()
 	if err != nil {
-		common.ApiError(c, err)
-		return
+		return channelStatusProbeOverviewResponse{}, err
 	}
 	monitors, err := model.GetChannelRatioMonitors()
 	if err != nil {
-		common.ApiError(c, err)
-		return
+		return channelStatusProbeOverviewResponse{}, err
 	}
 
 	configByChannel := make(map[int]model.ChannelStatusProbeConfig, len(configs))
@@ -390,8 +397,7 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 		if config, exists := configByChannel[channel.Id]; exists {
 			converted, convertErr := channelStatusProbeConfigToResponse(config)
 			if convertErr != nil {
-				common.ApiError(c, convertErr)
-				return
+				return channelStatusProbeOverviewResponse{}, convertErr
 			}
 			configResponse = &converted
 			for _, modelName := range converted.Models {
@@ -475,8 +481,7 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 				displayUnit,
 			)
 			if mergeErr != nil {
-				common.ApiError(c, mergeErr)
-				return
+				return channelStatusProbeOverviewResponse{}, mergeErr
 			}
 			modelConfig := *configResponse
 			modelConfig.Models = []string{modelName}
@@ -587,14 +592,11 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 		sort.Strings(groupModels)
 		modelsByGroup[groupName] = groupModels
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data": channelStatusProbeOverviewResponse{
-			ServerNow: now, ScanIntervalSecond: 1, Summary: summary, Groups: groups, Models: models,
-			ModelsByGroup: modelsByGroup, Channels: items,
-		},
-	})
+	return channelStatusProbeOverviewResponse{
+		ServerNow: now, ScanIntervalSecond: channelStatusProbeScanIntervalSeconds(),
+		Summary: summary, Groups: groups, Models: models,
+		ModelsByGroup: modelsByGroup, Channels: items,
+	}, nil
 }
 
 func UpdateChannelStatusProbeConfig(c *gin.Context) {
@@ -654,6 +656,8 @@ func UpdateChannelStatusProbeConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	invalidateChannelStatusProbeOverviewCache()
+	wakeChannelStatusProbeWorker()
 	response, err := channelStatusProbeConfigToResponse(saved)
 	if err != nil {
 		common.ApiError(c, err)
@@ -694,6 +698,8 @@ func RunChannelStatusProbeNow(c *gin.Context) {
 		}
 		return
 	}
+	invalidateChannelStatusProbeOverviewCache()
+	wakeChannelStatusProbeWorker()
 	recordManageAudit(c, "channel.status_probe_run", map[string]any{"channel_id": channelId, "manual_request_id": requestId})
 	c.JSON(http.StatusAccepted, gin.H{
 		"success": true, "message": "", "data": gin.H{"manual_request_id": requestId},

@@ -30,6 +30,11 @@ func TestChannelSmartScheduleRuntimeSampleCountSharesParameterizedLiveLogs(t *te
 			ModelName: "gemini-2.5-flash-thinking-512", RequestId: "different-model",
 			Other: `{"status_code":503}`,
 		},
+		{
+			CreatedAt: now, Type: LogTypeConsume, ChannelId: 2401,
+			ModelName: "gemini-2.5-pro-thinking-1024", RequestId: "status-probe",
+			Other: `{"channel_monitor_status_probe":true}`,
+		},
 	}).Error)
 
 	sampleCount, err := GetChannelSmartScheduleRouteSampleCount(
@@ -151,6 +156,11 @@ func TestChannelSmartScheduleAdaptiveHealthMetricsCountsIndependentTPSAndRequest
 			ModelName: "model-a", IsStream: true, CompletionTokens: 10, UseTime: 1,
 			Other: `{"frt":100,"channel_monitor_smart_schedule_probe":true}`,
 		},
+		{
+			CreatedAt: now, Type: LogTypeConsume, ChannelId: 2404,
+			ModelName: "model-a", IsStream: true, CompletionTokens: 100, UseTime: 1,
+			Other: `{"frt":100,"channel_monitor_status_probe":true}`,
+		},
 	}).Error)
 
 	results, err := GetChannelSmartScheduleAdaptiveHealthMetrics(
@@ -212,4 +222,54 @@ func TestChannelSmartScheduleAdaptiveHealthMetricsUsesNewestRequestCap(t *testin
 	assert.Equal(t, int64(2), metric.RequestCount)
 	assert.Equal(t, int64(1), metric.FailureCount)
 	assert.Equal(t, now-1, metric.LastUsedTime)
+}
+
+func TestChannelSmartScheduleAdaptiveHealthMetricsPreservesExactWindowAcrossMinutes(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			CreatedAt: 109, Type: LogTypeConsume, ChannelId: 2407,
+			ModelName: "model-a", IsStream: true, CompletionTokens: 100, UseTime: 1,
+			Other: `{"frt":9000}`,
+		},
+		{
+			CreatedAt: 115, Type: LogTypeConsume, ChannelId: 2407,
+			ModelName: "model-a", IsStream: true, CompletionTokens: 20, UseTime: 2,
+			Other: `{"frt":125}`,
+		},
+		{
+			CreatedAt: 119, Type: LogTypeError, ChannelId: 2407,
+			ModelName: "model-a", RequestId: "cross-minute-retry", IsRetryAttempt: true,
+			Other: `{"status_code":503,"channel_monitor_attempt_duration_ms":500}`,
+		},
+		{
+			CreatedAt: 121, Type: LogTypeError, ChannelId: 2407,
+			ModelName: "model-a", RequestId: "cross-minute-retry",
+			Other: `{"status_code":503,"channel_monitor_final_retry_summary":true}`,
+		},
+	}).Error)
+
+	results, err := GetChannelSmartScheduleAdaptiveHealthMetrics(
+		context.Background(),
+		[]ChannelSmartScheduleAdaptiveHealthMetricWindow{{
+			ChannelId: 2407, ModelName: "model-a", StartTimestamp: 100, ObservationSince: 110,
+			WarningSeconds: 5, CriticalSeconds: 10,
+		}},
+		122,
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	metric := results[0].Metric
+	assert.Equal(t, int64(2), metric.RequestCount)
+	assert.Equal(t, int64(1), metric.StabilitySuccessCount)
+	assert.Equal(t, int64(1), metric.StabilityFailureCount)
+	assert.Equal(t, int64(1), metric.StabilityFinalFailureCount)
+	assert.Zero(t, metric.StabilityRetryFailureCount)
+	assert.Equal(t, int64(1), metric.FirstTokenCount)
+	assert.InDelta(t, 125, metric.FirstTokenTotalMs, 1e-9)
+	assert.Equal(t, int64(1), metric.TPSSampleCount)
+	assert.InDelta(t, 10, metric.TPSTotal, 1e-9)
+	require.Len(t, metric.FirstTokenDurationBuckets, 1)
+	assert.Equal(t, int64(1), metric.FirstTokenDurationBuckets[0].Count)
+	assert.InDelta(t, 125, metric.FirstTokenDurationBuckets[0].TotalMs, 1e-9)
 }

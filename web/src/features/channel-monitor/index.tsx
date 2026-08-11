@@ -114,6 +114,7 @@ import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
+  isChannelMonitorPerformanceQueryActive,
 } from './lib/query-options'
 import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
@@ -402,10 +403,12 @@ export function ChannelMonitor() {
   const requestedPerformanceRangeSource = smartSchedulePerformanceRangeActive
     ? 'smart_schedule'
     : 'manual'
+  const performanceQueryActive = isChannelMonitorPerformanceQueryActive(view)
   const performanceQuery = useQuery(
     getChannelMonitorPerformanceQueryOptions(
       requestedPerformanceRangeMinutes,
-      requestedPerformanceRangeSource
+      requestedPerformanceRangeSource,
+      performanceQueryActive
     )
   )
   const smartScheduleSummaryQuery = useQuery(
@@ -1422,7 +1425,9 @@ export function ChannelMonitor() {
                   size='icon'
                   onClick={() => {
                     query.refetch()
-                    performanceQuery.refetch()
+                    if (performanceQueryActive) {
+                      performanceQuery.refetch()
+                    }
                     costQuery.refetch()
                     todaySuccessQuery.refetch()
                     smartScheduleSummaryQuery.refetch()

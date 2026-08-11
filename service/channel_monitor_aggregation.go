@@ -29,6 +29,13 @@ const (
 	channelMonitorAggregationFreshPoll     = 250 * time.Millisecond
 	channelMonitorAggregationLockPoll      = 50 * time.Millisecond
 	channelMonitorAggregationRepairReserve = 5 * time.Second
+
+	channelMonitorAggregationBackfillDefaultMaxChunks     = 1
+	channelMonitorAggregationBackfillMaxChunks            = 24
+	channelMonitorAggregationBackfillDefaultBudgetSeconds = 10
+	channelMonitorAggregationBackfillMaxBudgetSeconds     = 300
+	channelMonitorAggregationBackfillDefaultYieldMillis   = 50
+	channelMonitorAggregationBackfillMaxYieldMillis       = 5000
 )
 
 type channelMonitorAggregationDatabaseKey struct {
@@ -346,6 +353,9 @@ func runChannelMonitorAggregationBackfill(ctx context.Context, targetEnd int64) 
 	if !common.LogConsumeEnabled && !constant.ErrorLogEnabled {
 		return nil
 	}
+	maxChunks, budget, yield := channelMonitorAggregationBackfillLimits()
+	budgetCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
 	windowMinutes := channelMonitorAggregationBackfillWindowMinutes()
 	desiredStart := targetEnd - int64(windowMinutes*60)
 	if desiredStart < 0 {
@@ -353,17 +363,26 @@ func runChannelMonitorAggregationBackfill(ctx context.Context, targetEnd int64) 
 	}
 	key := channelMonitorAggregationDatabaseKey{db: model.DB, logDB: model.LOG_DB}
 	backfilled := false
+	completedChunks := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-budgetCtx.Done():
+			return nil
 		default:
+		}
+		if completedChunks >= maxChunks {
+			return nil
 		}
 
 		channelMonitorAggregationRunMu.Lock()
-		coverage, err := model.GetChannelMonitorAggregationCoverage(ctx)
+		coverage, err := model.GetChannelMonitorAggregationCoverage(budgetCtx)
 		if err != nil {
 			channelMonitorAggregationRunMu.Unlock()
+			if budgetCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
 			return fmt.Errorf("读取渠道监控分钟汇总覆盖范围失败: %w", err)
 		}
 		coveredFrom := coverage.CoveredFrom
@@ -387,14 +406,65 @@ func runChannelMonitorAggregationBackfill(ctx context.Context, targetEnd int64) 
 			chunkStart = desiredStart
 		}
 		err = rebuildChannelMonitorAggregationRange(
-			ctx, key, chunkStart, coveredFrom, "history_backfill", false, true,
+			budgetCtx, key, chunkStart, coveredFrom, "history_backfill", false, true,
 		)
 		channelMonitorAggregationRunMu.Unlock()
 		if err != nil {
+			if budgetCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
 			return err
 		}
 		backfilled = true
+		completedChunks++
+		if chunkStart <= desiredStart {
+			logger.LogInfo(ctx, fmt.Sprintf(
+				"渠道监控历史分钟汇总补齐完成: covered_from=%d completed_through=%d window_minutes=%d",
+				chunkStart,
+				coverage.CompletedThrough,
+				windowMinutes,
+			))
+			return nil
+		}
+		if completedChunks >= maxChunks || yield <= 0 {
+			continue
+		}
+		timer := time.NewTimer(yield)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-budgetCtx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
 	}
+}
+
+func channelMonitorAggregationBackfillLimits() (int, time.Duration, time.Duration) {
+	maxChunks := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS",
+		channelMonitorAggregationBackfillDefaultMaxChunks,
+	)
+	if maxChunks <= 0 || maxChunks > channelMonitorAggregationBackfillMaxChunks {
+		maxChunks = channelMonitorAggregationBackfillDefaultMaxChunks
+	}
+	budgetSeconds := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS",
+		channelMonitorAggregationBackfillDefaultBudgetSeconds,
+	)
+	if budgetSeconds <= 0 || budgetSeconds > channelMonitorAggregationBackfillMaxBudgetSeconds {
+		budgetSeconds = channelMonitorAggregationBackfillDefaultBudgetSeconds
+	}
+	yieldMillis := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_AGGREGATION_BACKFILL_YIELD_MS",
+		channelMonitorAggregationBackfillDefaultYieldMillis,
+	)
+	if yieldMillis < 0 || yieldMillis > channelMonitorAggregationBackfillMaxYieldMillis {
+		yieldMillis = channelMonitorAggregationBackfillDefaultYieldMillis
+	}
+	return maxChunks, time.Duration(budgetSeconds) * time.Second, time.Duration(yieldMillis) * time.Millisecond
 }
 
 func channelMonitorAggregationBackfillWindowMinutes() int {

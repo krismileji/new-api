@@ -29,6 +29,9 @@ import {
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
+  getChannelStatusProbeHistoryLatestExecutionKey,
+  getChannelStatusProbeHistoryRefetchInterval,
+  isChannelMonitorPerformanceQueryActive,
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
@@ -90,6 +93,46 @@ describe('channel monitor query policy', () => {
     const smart = getChannelMonitorPerformanceQueryOptions(60, 'smart_schedule')
 
     assert.notDeepEqual(manual.queryKey, smart.queryKey)
+  })
+
+  test('pauses performance polling while the status probe view is active', () => {
+    const options = getChannelMonitorPerformanceQueryOptions(
+      60,
+      'manual',
+      false
+    )
+
+    assert.equal(options.enabled, false)
+    assert.equal(options.refetchInterval, false)
+  })
+
+  test('skips manual performance refresh while the status probe view is active', () => {
+    assert.equal(isChannelMonitorPerformanceQueryActive('status-probe'), false)
+    assert.equal(isChannelMonitorPerformanceQueryActive('channels'), true)
+  })
+
+  test('only the first history page follows the latest execution id', () => {
+    assert.equal(getChannelStatusProbeHistoryLatestExecutionKey(1, 42), 42)
+    assert.equal(getChannelStatusProbeHistoryLatestExecutionKey(2, 42), 0)
+  })
+
+  test('polls active status probe history only on the visible first page', () => {
+    assert.equal(
+      getChannelStatusProbeHistoryRefetchInterval(1, true, 'visible'),
+      3_000
+    )
+    assert.equal(
+      getChannelStatusProbeHistoryRefetchInterval(2, true, 'visible'),
+      false
+    )
+    assert.equal(
+      getChannelStatusProbeHistoryRefetchInterval(1, true, 'hidden'),
+      false
+    )
+    assert.equal(
+      getChannelStatusProbeHistoryRefetchInterval(1, false, 'visible'),
+      false
+    )
   })
 
   test('separates lightweight schedule summaries from metric details', () => {

@@ -18,13 +18,15 @@ import (
 )
 
 const (
-	channelStatusProbeScanInterval      = time.Second
-	channelStatusProbeLeaseRenewEvery   = 2 * time.Minute
-	channelStatusProbeDefaultConcurrent = 5
-	channelStatusProbeMaxConcurrent     = 20
-	channelStatusProbeSampleRetryEvery  = 30 * time.Second
-	channelStatusProbeSampleRetryMaxAge = 24 * time.Hour
-	channelStatusProbeSampleRetryBatch  = 20
+	channelStatusProbeDefaultScanIntervalMillis = 1000
+	channelStatusProbeMinScanIntervalMillis     = 200
+	channelStatusProbeMaxScanIntervalMillis     = 30000
+	channelStatusProbeLeaseRenewEvery           = 2 * time.Minute
+	channelStatusProbeDefaultConcurrent         = 5
+	channelStatusProbeMaxConcurrent             = 20
+	channelStatusProbeSampleRetryEvery          = 30 * time.Second
+	channelStatusProbeSampleRetryMaxAge         = 24 * time.Hour
+	channelStatusProbeSampleRetryBatch          = 20
 )
 
 type channelStatusProbeTestContextKey struct{}
@@ -40,7 +42,33 @@ type channelStatusProbeOutcome struct {
 	ErrorMessage string
 }
 
-var channelStatusProbeWorkerOnce sync.Once
+var (
+	channelStatusProbeWorkerOnce sync.Once
+	channelStatusProbeWake       = make(chan struct{}, 1)
+)
+
+func channelStatusProbeScanIntervalDuration() time.Duration {
+	intervalMillis := common.GetEnvOrDefault(
+		"CHANNEL_STATUS_PROBE_SCAN_INTERVAL_MS",
+		channelStatusProbeDefaultScanIntervalMillis,
+	)
+	if intervalMillis < channelStatusProbeMinScanIntervalMillis || intervalMillis > channelStatusProbeMaxScanIntervalMillis {
+		intervalMillis = channelStatusProbeDefaultScanIntervalMillis
+	}
+	return time.Duration(intervalMillis) * time.Millisecond
+}
+
+func channelStatusProbeScanIntervalSeconds() int {
+	interval := channelStatusProbeScanIntervalDuration()
+	return max(1, int((interval+time.Second-1)/time.Second))
+}
+
+func wakeChannelStatusProbeWorker() {
+	select {
+	case channelStatusProbeWake <- struct{}{}:
+	default:
+	}
+}
 
 func withChannelStatusProbeTestContext(ctx context.Context) context.Context {
 	if ctx == nil {
@@ -68,7 +96,7 @@ func startChannelStatusProbeWorker() {
 		}
 		semaphore := make(chan struct{}, concurrency)
 		gopool.Go(func() {
-			ticker := time.NewTicker(channelStatusProbeScanInterval)
+			ticker := time.NewTicker(channelStatusProbeScanIntervalDuration())
 			defer ticker.Stop()
 			lastSampleRetry := time.Time{}
 			for {
@@ -81,7 +109,10 @@ func startChannelStatusProbeWorker() {
 					}
 					lastSampleRetry = time.Now()
 				}
-				<-ticker.C
+				select {
+				case <-ticker.C:
+				case <-channelStatusProbeWake:
+				}
 			}
 		})
 	})
@@ -141,6 +172,8 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 		cancel()
 		if err := model.CompleteChannelStatusProbeClaim(claim, common.GetTimestamp()); err != nil {
 			common.SysError(fmt.Sprintf("完成渠道状态探测租约失败: channel_id=%d err=%s", claim.Config.ChannelId, err.Error()))
+		} else {
+			invalidateChannelStatusProbeOverviewCache()
 		}
 	}()
 
@@ -314,13 +347,18 @@ func persistChannelStatusProbeOutcome(
 		}
 	}
 	created, err := model.SaveChannelStatusProbeExecution(&execution)
-	if err != nil || !created || !claim.Config.RecordSample {
+	if err != nil || !created {
 		return err
 	}
+	invalidateChannelStatusProbeOverviewCache()
+	if !claim.Config.RecordSample {
+		return nil
+	}
 	if !outcome.TestExecuted {
-		return model.UpdateChannelStatusProbeExecutionSample(
+		err = updateChannelStatusProbeExecutionSample(
 			execution.Id, model.ChannelStatusProbeSampleSkipped, "探测请求未发出，未计入样本", common.GetTimestamp(),
 		)
+		return err
 	}
 	durationMs := 0.0
 	if outcome.DurationMs != nil {
@@ -337,7 +375,15 @@ func persistChannelStatusProbeOutcome(
 	if sampleStatus == model.ChannelStatusProbeSamplePending {
 		message += "，将在后台重试"
 	}
-	return model.UpdateChannelStatusProbeExecutionSample(execution.Id, sampleStatus, message, common.GetTimestamp())
+	return updateChannelStatusProbeExecutionSample(execution.Id, sampleStatus, message, common.GetTimestamp())
+}
+
+func updateChannelStatusProbeExecutionSample(executionId int64, status string, message string, now int64) error {
+	err := model.UpdateChannelStatusProbeExecutionSample(executionId, status, message, now)
+	if err == nil {
+		invalidateChannelStatusProbeOverviewCache()
+	}
+	return err
 }
 
 func channelStatusProbeSampleDecision(recorded bool, message string) string {
@@ -361,7 +407,7 @@ func retryPendingChannelStatusProbeSamples(ctx context.Context) error {
 			return err
 		}
 		if execution.CreatedAt <= now-int64(channelStatusProbeSampleRetryMaxAge/time.Second) {
-			if err := model.UpdateChannelStatusProbeExecutionSample(
+			if err := updateChannelStatusProbeExecutionSample(
 				execution.Id,
 				model.ChannelStatusProbeSampleFailed,
 				"样本后台重试超过 24 小时，已停止重试",
@@ -374,7 +420,7 @@ func retryPendingChannelStatusProbeSamples(ctx context.Context) error {
 		if !execution.RequestDispatched || execution.Result == model.ChannelStatusProbeResultLocalFailure ||
 			execution.Result == model.ChannelStatusProbeResultSkipped ||
 			execution.Result == model.ChannelStatusProbeResultCanceled {
-			if err := model.UpdateChannelStatusProbeExecutionSample(
+			if err := updateChannelStatusProbeExecutionSample(
 				execution.Id,
 				model.ChannelStatusProbeSampleSkipped,
 				"探测请求未形成有效上游样本",
@@ -385,7 +431,7 @@ func retryPendingChannelStatusProbeSamples(ctx context.Context) error {
 			continue
 		}
 		if execution.Result == model.ChannelStatusProbeResultRateLimited {
-			if err := model.UpdateChannelStatusProbeExecutionSample(
+			if err := updateChannelStatusProbeExecutionSample(
 				execution.Id,
 				model.ChannelStatusProbeSampleSkipped,
 				"上游返回 429，不计入稳定性样本",
@@ -427,7 +473,7 @@ func retryPendingChannelStatusProbeSamples(ctx context.Context) error {
 		if status == model.ChannelStatusProbeSamplePending {
 			message += "，将在后台重试"
 		}
-		if err := model.UpdateChannelStatusProbeExecutionSample(execution.Id, status, message, now); err != nil {
+		if err := updateChannelStatusProbeExecutionSample(execution.Id, status, message, now); err != nil {
 			return err
 		}
 	}

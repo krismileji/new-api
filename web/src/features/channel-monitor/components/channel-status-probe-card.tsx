@@ -23,6 +23,7 @@ import {
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { memo } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -35,23 +36,18 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import {
+  areChannelStatusProbeCardPropsEqual,
+  formatChannelStatusProbeNextRun,
+  type ChannelStatusProbeCardRenderProps,
+} from '../lib/status-probe-card-render'
 import type {
-  ChannelStatusProbeChannel,
   ChannelStatusProbeDisplayUnit,
   ChannelStatusProbeHealth,
   ChannelStatusProbeBucket,
+  ChannelStatusProbeModelStatus,
   ChannelStatusProbeResult,
 } from '../types'
-
-type ChannelStatusProbeCardProps = {
-  channel: ChannelStatusProbeChannel
-  serverNow: number
-  actionPending: boolean
-  onOpenHistory: (channel: ChannelStatusProbeChannel) => void
-  onOpenConfig: (channel: ChannelStatusProbeChannel) => void
-  onRun: (channel: ChannelStatusProbeChannel) => void
-  onToggleEnabled: (channel: ChannelStatusProbeChannel) => void
-}
 
 const HEALTH_PRESENTATION: Record<
   ChannelStatusProbeHealth,
@@ -111,14 +107,6 @@ function formatTPS(value: number | null) {
   return value.toFixed(value >= 100 ? 0 : 1)
 }
 
-function formatNextRun(target: number, serverNow: number) {
-  if (target <= 0) return '-'
-  const seconds = Math.max(0, target - serverNow)
-  if (seconds < 60) return `${seconds} 秒`
-  if (seconds < 3600) return `${Math.ceil(seconds / 60)} 分钟`
-  return `${Math.ceil(seconds / 3600)} 小时`
-}
-
 function displayRangeLabel(value: number, unit: ChannelStatusProbeDisplayUnit) {
   return `近 ${value} ${DISPLAY_UNIT_LABEL[unit]}`
 }
@@ -143,7 +131,111 @@ function bucketTooltip(
   return `${time} · 成功 ${bucket.success} · 失败 ${bucket.upstream_failure + bucket.local_failure} · 限流 ${bucket.rate_limited} · 跳过 ${bucket.skipped + bucket.canceled} · 模型 ${models}`
 }
 
-export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
+const ChannelStatusProbeModelStatuses = memo(
+  function ChannelStatusProbeModelStatuses(props: {
+    channelName: string
+    modelStatuses: ChannelStatusProbeModelStatus[]
+    displayValue: number
+    displayUnit: ChannelStatusProbeDisplayUnit
+    displayRangeLabel: string
+  }) {
+    return (
+      <section
+        className='flex min-h-0 w-full flex-1 flex-col gap-1.5'
+        aria-label={`${props.channelName} 各模型${props.displayRangeLabel}状态`}
+      >
+        <div className='text-muted-foreground flex items-center justify-between gap-2 text-[11px]'>
+          <span>{props.displayRangeLabel}状态</span>
+          <span className='tabular-nums'>
+            {props.modelStatuses.length} 个模型
+          </span>
+        </div>
+        <div className='no-scrollbar min-h-0 flex-1 overflow-y-auto pr-1'>
+          {props.modelStatuses.length === 0 ? (
+            <div className='text-muted-foreground flex h-full min-h-14 items-center justify-center text-xs'>
+              尚未配置探测模型
+            </div>
+          ) : (
+            <div className='flex flex-col gap-2.5'>
+              {props.modelStatuses.map((modelStatus) => {
+                const modelPresentation =
+                  HEALTH_PRESENTATION[modelStatus.health_status]
+                const latest = modelStatus.latest
+                return (
+                  <div
+                    key={modelStatus.model_name}
+                    className='flex min-w-0 flex-col gap-1'
+                    data-slot='status-probe-model'
+                  >
+                    <div className='flex min-w-0 items-center justify-between gap-2 text-[11px]'>
+                      <span
+                        className='flex min-w-0 items-center gap-1.5'
+                        title={modelStatus.model_name}
+                      >
+                        <span
+                          className={cn(
+                            'size-1.5 shrink-0 rounded-full',
+                            modelPresentation.dot
+                          )}
+                          aria-hidden='true'
+                        />
+                        <span className='truncate font-medium'>
+                          {modelStatus.model_name}
+                        </span>
+                      </span>
+                      <span
+                        className='text-muted-foreground shrink-0 tabular-nums'
+                        title={
+                          latest
+                            ? formatTimestampToDate(latest.finished_at)
+                            : '等待首次检测'
+                        }
+                      >
+                        {latest
+                          ? `${RESULT_LABEL[latest.result]} · ${formatTimestampToDate(latest.finished_at).slice(11, 19)}`
+                          : modelPresentation.label}
+                      </span>
+                    </div>
+                    <div
+                      className='grid h-2.5 min-w-0 gap-px overflow-hidden rounded-sm'
+                      style={{
+                        gridTemplateColumns: `repeat(${modelStatus.recent_window.length}, minmax(0, 1fr))`,
+                      }}
+                      aria-label={`${props.channelName} ${modelStatus.model_name} ${props.displayRangeLabel}探测结果`}
+                      data-window-buckets={modelStatus.recent_window.length}
+                      data-status-window-value={props.displayValue}
+                      data-status-window-unit={props.displayUnit}
+                    >
+                      {modelStatus.recent_window.map((bucket) => {
+                        const tooltip = bucketTooltip(bucket, props.displayUnit)
+                        return (
+                          <span
+                            key={bucket.started_at}
+                            className={cn(
+                              'h-2.5 min-w-0',
+                              BUCKET_COLOR[bucket.result]
+                            )}
+                            title={tooltip}
+                            aria-label={tooltip}
+                            data-slot='status-probe-bucket'
+                          />
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+    )
+  }
+)
+
+export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
+  props: ChannelStatusProbeCardRenderProps
+) {
   const presentation = HEALTH_PRESENTATION[props.channel.health_status]
   const config = props.channel.config
   const latest = props.channel.latest
@@ -163,14 +255,14 @@ export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
   return (
     <Card
       size='sm'
-      className='hover:ring-foreground/20 h-[25rem] gap-0 rounded-lg py-0 transition-colors'
+      className='hover:ring-foreground/20 h-[25rem] gap-0 rounded-lg py-0 transition-colors [contain-intrinsic-size:400px] [content-visibility:auto]'
       data-testid='channel-status-probe-card'
     >
       <CardHeader className='grid-cols-[minmax(0,1fr)_auto] gap-3 border-b py-3'>
         <button
           type='button'
           className='focus-visible:ring-ring/50 min-w-0 text-left outline-none focus-visible:ring-2'
-          onClick={() => props.onOpenHistory(props.channel)}
+          onClick={() => props.onOpenHistory(props.channel.id)}
           aria-label={`查看 ${props.channel.name} 的状态探测记录`}
         >
           <div className='flex min-w-0 items-center gap-2'>
@@ -253,7 +345,7 @@ export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
                   variant='ghost'
                   size='icon-sm'
                   disabled={props.actionPending}
-                  onClick={() => props.onOpenConfig(props.channel)}
+                  onClick={() => props.onOpenConfig(props.channel.id)}
                   aria-label='配置状态探测'
                 />
               }
@@ -269,7 +361,7 @@ export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
         <button
           type='button'
           className='focus-visible:ring-ring/50 flex min-h-0 w-full flex-col gap-3 px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset'
-          onClick={() => props.onOpenHistory(props.channel)}
+          onClick={() => props.onOpenHistory(props.channel.id)}
           aria-label={`打开 ${props.channel.name} 状态探测记录`}
         >
           <div
@@ -333,92 +425,13 @@ export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
             )}
           </div>
 
-          <section
-            className='flex min-h-0 w-full flex-1 flex-col gap-1.5'
-            aria-label={`${props.channel.name} 各模型${displayRangeLabelValue}状态`}
-          >
-            <div className='text-muted-foreground flex items-center justify-between gap-2 text-[11px]'>
-              <span>{displayRangeLabelValue}状态</span>
-              <span className='tabular-nums'>
-                {props.channel.model_statuses.length} 个模型
-              </span>
-            </div>
-            <div className='no-scrollbar min-h-0 flex-1 overflow-y-auto pr-1'>
-              {props.channel.model_statuses.length === 0 ? (
-                <div className='text-muted-foreground flex h-full min-h-14 items-center justify-center text-xs'>
-                  尚未配置探测模型
-                </div>
-              ) : (
-                <div className='flex flex-col gap-2.5'>
-                  {props.channel.model_statuses.map((modelStatus) => {
-                    const modelPresentation =
-                      HEALTH_PRESENTATION[modelStatus.health_status]
-                    const latest = modelStatus.latest
-                    return (
-                      <div
-                        key={modelStatus.model_name}
-                        className='flex min-w-0 flex-col gap-1'
-                        data-slot='status-probe-model'
-                      >
-                        <div className='flex min-w-0 items-center justify-between gap-2 text-[11px]'>
-                          <span
-                            className='flex min-w-0 items-center gap-1.5'
-                            title={modelStatus.model_name}
-                          >
-                            <span
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                modelPresentation.dot
-                              )}
-                              aria-hidden='true'
-                            />
-                            <span className='truncate font-medium'>
-                              {modelStatus.model_name}
-                            </span>
-                          </span>
-                          <span
-                            className='text-muted-foreground shrink-0 tabular-nums'
-                            title={
-                              latest
-                                ? formatTimestampToDate(latest.finished_at)
-                                : '等待首次检测'
-                            }
-                          >
-                            {latest
-                              ? `${RESULT_LABEL[latest.result]} · ${formatTimestampToDate(latest.finished_at).slice(11, 19)}`
-                              : modelPresentation.label}
-                          </span>
-                        </div>
-                        <div
-                          className='grid h-2.5 min-w-0 gap-px overflow-hidden rounded-sm'
-                          style={{
-                            gridTemplateColumns: `repeat(${modelStatus.recent_window.length}, minmax(0, 1fr))`,
-                          }}
-                          aria-label={`${props.channel.name} ${modelStatus.model_name} ${displayRangeLabelValue}探测结果`}
-                          data-window-buckets={modelStatus.recent_window.length}
-                          data-status-window-value={displayValue}
-                          data-status-window-unit={displayUnit}
-                        >
-                          {modelStatus.recent_window.map((bucket) => (
-                            <span
-                              key={bucket.started_at}
-                              className={cn(
-                                'h-2.5 min-w-0',
-                                BUCKET_COLOR[bucket.result]
-                              )}
-                              title={bucketTooltip(bucket, displayUnit)}
-                              aria-label={bucketTooltip(bucket, displayUnit)}
-                              data-slot='status-probe-bucket'
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <ChannelStatusProbeModelStatuses
+            channelName={props.channel.name}
+            modelStatuses={props.channel.model_statuses}
+            displayValue={displayValue}
+            displayUnit={displayUnit}
+            displayRangeLabel={displayRangeLabelValue}
+          />
 
           <div className='text-muted-foreground flex w-full items-center justify-between gap-2 text-[11px] tabular-nums'>
             <Badge
@@ -432,11 +445,15 @@ export function ChannelStatusProbeCard(props: ChannelStatusProbeCardProps) {
               {config?.record_sample ? '计入样本' : '不计入样本'}
             </Badge>
             <span>
-              下次 {formatNextRun(config?.next_run_at ?? 0, props.serverNow)}
+              下次{' '}
+              {formatChannelStatusProbeNextRun(
+                config?.next_run_at ?? 0,
+                props.serverNow
+              )}
             </span>
           </div>
         </button>
       </CardContent>
     </Card>
   )
-}
+}, areChannelStatusProbeCardPropsEqual)

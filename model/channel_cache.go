@@ -54,6 +54,7 @@ func InitChannelCache() {
 		snapshot.smartScheduleStates,
 		snapshot.smartScheduleGroupPauses,
 	)
+	newChannelSmartScheduleRuntimeRouteIndex := buildChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRouteCache)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -91,6 +92,7 @@ func InitChannelCache() {
 	channelSyncLock.Lock()
 	group2model2channels = newGroup2model2channels
 	channelSmartScheduleRouteCache = newChannelSmartScheduleRouteCache
+	publishChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRuntimeRouteIndex)
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {

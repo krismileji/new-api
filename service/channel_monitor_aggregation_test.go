@@ -96,6 +96,9 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 }
 
 func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *testing.T) {
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS", "1")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS", "10")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_YIELD_MS", "0")
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -152,7 +155,22 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 	require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&before).Error)
 	assert.Zero(t, before)
 
-	require.NoError(t, runChannelMonitorAggregationBackfill(context.Background(), targetEnd))
+	expectedCoverageStarts := []int64{
+		targetEnd - int64(65*time.Minute/time.Second),
+		targetEnd - int64(125*time.Minute/time.Second),
+		targetEnd - int64(180*time.Minute/time.Second),
+	}
+	for round, expectedCoveredFrom := range expectedCoverageStarts {
+		require.NoError(t, runChannelMonitorAggregationBackfill(context.Background(), targetEnd))
+		coverage, err := model.GetChannelMonitorAggregationCoverage(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, expectedCoveredFrom, coverage.CoveredFrom)
+		if round < len(expectedCoverageStarts)-1 {
+			var metricCount int64
+			require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&metricCount).Error)
+			assert.Zero(t, metricCount)
+		}
+	}
 
 	var metric model.ChannelMonitorMinuteMetric
 	require.NoError(t, db.Where("channel_id = ?", 9).First(&metric).Error)
@@ -161,6 +179,32 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 	require.NoError(t, err)
 	assert.Equal(t, targetEnd-int64(180*time.Minute/time.Second), coverage.CoveredFrom)
 	assert.Equal(t, targetEnd, coverage.CompletedThrough)
+}
+
+func TestChannelMonitorAggregationBackfillLimitsUseDocumentedBounds(t *testing.T) {
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS", "")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS", "")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_YIELD_MS", "")
+	maxChunks, budget, yield := channelMonitorAggregationBackfillLimits()
+	assert.Equal(t, 1, maxChunks)
+	assert.Equal(t, 10*time.Second, budget)
+	assert.Equal(t, 50*time.Millisecond, yield)
+
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS", "24")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS", "300")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_YIELD_MS", "0")
+	maxChunks, budget, yield = channelMonitorAggregationBackfillLimits()
+	assert.Equal(t, 24, maxChunks)
+	assert.Equal(t, 300*time.Second, budget)
+	assert.Zero(t, yield)
+
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS", "25")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS", "0")
+	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_YIELD_MS", "5001")
+	maxChunks, budget, yield = channelMonitorAggregationBackfillLimits()
+	assert.Equal(t, 1, maxChunks)
+	assert.Equal(t, 10*time.Second, budget)
+	assert.Equal(t, 50*time.Millisecond, yield)
 }
 
 func TestChannelMonitorAggregationWindowUsesRecentAndStartupWindows(t *testing.T) {

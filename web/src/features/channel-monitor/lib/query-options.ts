@@ -30,6 +30,7 @@ import type {
 
 const CHANNEL_MONITOR_PERFORMANCE_STALE_TIME = 60_000
 const CHANNEL_MONITOR_REFETCH_INTERVAL = 60_000
+const CHANNEL_STATUS_PROBE_ACTIVE_REFETCH_INTERVAL = 3_000
 
 export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'channel-monitor',
@@ -55,14 +56,36 @@ export function getChannelMonitorOverviewQueryOptions() {
 
 export function getChannelMonitorPerformanceQueryOptions(
   minutes: ChannelMonitorPerformanceRangeMinutes,
-  source: ChannelMonitorPerformanceRangeSource
+  source: ChannelMonitorPerformanceRangeSource,
+  active = true
 ) {
   return queryOptions({
     queryKey: ['channel-monitor-performance', source, minutes],
     queryFn: () => getChannelMonitorPerformance(minutes),
+    enabled: active,
     staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
-    refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
+    refetchInterval: active ? CHANNEL_MONITOR_REFETCH_INTERVAL : false,
   })
+}
+
+export function isChannelMonitorPerformanceQueryActive(view: string) {
+  return view !== 'status-probe'
+}
+
+export function getChannelStatusProbeHistoryLatestExecutionKey(
+  page: number,
+  latestExecutionId: number
+) {
+  return page === 1 ? latestExecutionId : 0
+}
+
+export function getChannelStatusProbeHistoryRefetchInterval(
+  page: number,
+  probeActive: boolean,
+  visibilityState: DocumentVisibilityState
+) {
+  if (page !== 1 || !probeActive || visibilityState === 'hidden') return false
+  return CHANNEL_STATUS_PROBE_ACTIVE_REFETCH_INTERVAL
 }
 
 export function getChannelMonitorSmartScheduleQueryOptions(

@@ -22,6 +22,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func resetChannelSmartScheduleRuntimeHealthForTest() {
+	for index := range channelSmartScheduleRuntimeHealth {
+		shard := &channelSmartScheduleRuntimeHealth[index]
+		shard.Lock()
+		shard.database = model.DB
+		shard.states = make(
+			map[channelSmartScheduleRuntimeHealthKey]channelSmartScheduleRuntimeHealthState,
+		)
+		shard.Unlock()
+	}
+}
+
+func channelSmartScheduleRuntimeHealthStateCountForTest() int {
+	count := 0
+	for index := range channelSmartScheduleRuntimeHealth {
+		shard := &channelSmartScheduleRuntimeHealth[index]
+		shard.Lock()
+		count += len(shard.states)
+		shard.Unlock()
+	}
+	return count
+}
+
 func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	service.ClearChannelRateLimitCooldowns()
@@ -535,16 +558,12 @@ func TestChannelSmartScheduleRuntimeRequestWindowSharesSuccessAndFailureThroughR
 
 	// Drop the process-local state to model a second instance. The success
 	// must still be visible through the shared Redis request stream.
-	channelSmartScheduleRuntimeHealth.Lock()
-	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
-	channelSmartScheduleRuntimeHealth.Unlock()
+	resetChannelSmartScheduleRuntimeHealthForTest()
 	shared := observeChannelSmartScheduleRuntimeSuccess(1603, "model-a", 101, revision)
 	assert.Len(t, shared.RequestEvents, 2)
 	assert.Zero(t, shared.ConsecutiveFailures)
 
-	channelSmartScheduleRuntimeHealth.Lock()
-	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
-	channelSmartScheduleRuntimeHealth.Unlock()
+	resetChannelSmartScheduleRuntimeHealthForTest()
 	shared = observeChannelSmartScheduleRuntimeFailure(1603, "model-a", 102, 3600, revision)
 	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
 		shared, 102, 3600, 100, 50,
@@ -717,14 +736,89 @@ func TestProtectChannelSmartScheduleRuntimeFailureSharesBurstWindowThroughRedis(
 	assert.Equal(t, priority, *ability.Priority)
 	assert.Equal(t, weight, ability.Weight)
 
-	channelSmartScheduleRuntimeHealth.Lock()
-	channelSmartScheduleRuntimeHealth.states = make(map[string]channelSmartScheduleRuntimeHealthState)
-	channelSmartScheduleRuntimeHealth.Unlock()
+	resetChannelSmartScheduleRuntimeHealthForTest()
 
 	protectChannelSmartScheduleRuntimeFailure(1513, "model-a", runtimeError)
 
 	require.NoError(t, db.Where(&model.Ability{
 		ChannelId: 1513, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Zero(t, *ability.Priority)
+	assert.Zero(t, ability.Weight)
+}
+
+func TestProtectChannelSmartScheduleRuntimeFailureSkipsIncompleteSharedWindow(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		resetChannelSmartScheduleRuntimeHealthForTest()
+		resetChannelSmartScheduleRuntimeRedisSuccessQueueForTest()
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
+		require.NoError(t, client.Close())
+	})
+	resetChannelSmartScheduleRuntimeHealthForTest()
+	resetChannelSmartScheduleRuntimeRedisSuccessQueueForTest()
+
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	)
+	consecutiveFailureThreshold := 1
+	policy.ConsecutiveFailureThreshold = &consecutiveFailureThreshold
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1514, Name: "incomplete redis window", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1514, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1514, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	settings := getChannelMonitorRuntimeSettings()
+	redisKey := channelSmartScheduleRuntimeFailureRedisKey(
+		1514, "model-a", settings.SmartScheduleControlRevision,
+	)
+	require.NoError(t, client.Set(
+		context.Background(), channelSmartScheduleRuntimeRedisIncompleteKey(redisKey), "1", time.Hour,
+	).Err())
+	runtimeError := types.NewErrorWithStatusCode(
+		errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503,
+	)
+
+	protectChannelSmartScheduleRuntimeFailure(1514, "model-a", runtimeError)
+
+	var ability model.Ability
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 1514, Group: "vip", Model: "model-a",
+	}).First(&ability).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, weight, ability.Weight)
+
+	require.NoError(t, client.Del(
+		context.Background(), channelSmartScheduleRuntimeRedisIncompleteKey(redisKey),
+	).Err())
+	protectChannelSmartScheduleRuntimeFailure(1514, "model-a", runtimeError)
+
+	require.NoError(t, db.Where(&model.Ability{
+		ChannelId: 1514, Group: "vip", Model: "model-a",
 	}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
 	assert.Zero(t, *ability.Priority)
@@ -1290,6 +1384,29 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresLocalSkipRetry429(t *te
 
 func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	originalRefreshInterval := channelSmartScheduleAdaptiveRefreshMinInterval
+	channelSmartScheduleAdaptiveRefreshMinInterval = 50 * time.Millisecond
+	channelSmartScheduleAdaptiveRefreshThrottle.Lock()
+	channelSmartScheduleAdaptiveRefreshThrottle.database = nil
+	channelSmartScheduleAdaptiveRefreshThrottle.lastRun = make(
+		map[channelSmartScheduleAdaptiveRefreshThrottleKey]time.Time,
+	)
+	channelSmartScheduleAdaptiveRefreshThrottle.scheduled = make(
+		map[channelSmartScheduleAdaptiveRefreshThrottleKey]time.Time,
+	)
+	channelSmartScheduleAdaptiveRefreshThrottle.Unlock()
+	t.Cleanup(func() {
+		channelSmartScheduleAdaptiveRefreshMinInterval = originalRefreshInterval
+		channelSmartScheduleAdaptiveRefreshThrottle.Lock()
+		channelSmartScheduleAdaptiveRefreshThrottle.database = nil
+		channelSmartScheduleAdaptiveRefreshThrottle.lastRun = make(
+			map[channelSmartScheduleAdaptiveRefreshThrottleKey]time.Time,
+		)
+		channelSmartScheduleAdaptiveRefreshThrottle.scheduled = make(
+			map[channelSmartScheduleAdaptiveRefreshThrottleKey]time.Time,
+		)
+		channelSmartScheduleAdaptiveRefreshThrottle.Unlock()
+	})
 	service.ClearChannelRateLimitCooldowns()
 	t.Cleanup(service.ClearChannelRateLimitCooldowns)
 	originalLogConsumeEnabled := common.LogConsumeEnabled

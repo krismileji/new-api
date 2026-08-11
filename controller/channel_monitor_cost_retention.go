@@ -18,7 +18,20 @@ const (
 	channelMonitorCostRetentionMaxBatch       = 10000
 	channelMonitorCostRetentionDefaultMinutes = 24 * 60
 	channelMonitorTaskRetentionKeepLatest     = 100
+	channelMonitorCleanupDefaultBudgetSeconds = 10
+	channelMonitorCleanupMaxBudgetSeconds     = 300
+	channelMonitorCleanupContinuationDefault  = 60
+	channelMonitorCleanupContinuationMin      = 15
+	channelMonitorCleanupContinuationMax      = 3600
 )
+
+var channelMonitorCleanupContinuationScheduler = func(delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		if _, _, err := service.EnqueueSystemTask(channelMonitorCostRetentionTaskType, nil); err != nil {
+			common.SysError("续排渠道监控清理任务失败: " + err.Error())
+		}
+	})
+}
 
 type channelMonitorCostRetentionTaskHandler struct{}
 
@@ -36,6 +49,7 @@ type channelMonitorCostRetentionTaskResult struct {
 	StatusProbeHistoryRetentionDays int   `json:"status_probe_history_retention_days"`
 	StatusProbeHistoryCutoff        int64 `json:"status_probe_history_cutoff"`
 	StatusProbeExecutionsDeleted    int64 `json:"status_probe_executions_deleted"`
+	BudgetExhausted                 bool  `json:"budget_exhausted"`
 	model.ChannelMonitorCostRetentionResult
 	model.ChannelMonitorHistoryRetentionResult
 }
@@ -61,6 +75,21 @@ func (channelMonitorCostRetentionTaskHandler) Interval() time.Duration {
 }
 
 func (channelMonitorCostRetentionTaskHandler) NewPayload() any { return nil }
+
+func channelMonitorCleanupContinuationDelay() time.Duration {
+	seconds := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS",
+		channelMonitorCleanupContinuationDefault,
+	)
+	if seconds < channelMonitorCleanupContinuationMin || seconds > channelMonitorCleanupContinuationMax {
+		seconds = channelMonitorCleanupContinuationDefault
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func scheduleChannelMonitorCleanupContinuation() {
+	channelMonitorCleanupContinuationScheduler(channelMonitorCleanupContinuationDelay())
+}
 
 func channelMonitorCostRetentionCutoff(now int64, days int) int64 {
 	todayStart := model.ChannelDailyCostDayStart(now)
@@ -170,6 +199,14 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 	if batchSize <= 0 || batchSize > channelMonitorCostRetentionMaxBatch {
 		batchSize = channelMonitorCostRetentionDefaultBatch
 	}
+	budgetSeconds := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS",
+		channelMonitorCleanupDefaultBudgetSeconds,
+	)
+	if budgetSeconds <= 0 || budgetSeconds > channelMonitorCleanupMaxBudgetSeconds {
+		budgetSeconds = channelMonitorCleanupDefaultBudgetSeconds
+	}
+	cleanupBudget := model.NewChannelMonitorCleanupBudget(time.Duration(budgetSeconds) * time.Second)
 	now := common.GetTimestamp()
 	costCutoff := channelMonitorCostRetentionCutoff(now, settings.CostRetentionDays)
 	minuteCutoff, protectedWindowMinutes := channelMonitorMinuteRetentionCutoff(
@@ -209,27 +246,38 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		},
 		channelMonitorTaskRetentionKeepLatest,
 		batchSize,
+		cleanupBudget.Slice(3),
 	)
 	result.ChannelMonitorHistoryRetentionResult = historyDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
+	result.BudgetExhausted = historyDeleted.Incomplete
+	statusProbeBudget := cleanupBudget.Slice(2)
 	statusProbeDeleted, err := model.DeleteChannelStatusProbeExecutionsBefore(
 		ctx,
 		statusProbeHistoryCutoff,
 		batchSize,
+		statusProbeBudget,
 	)
 	result.StatusProbeExecutionsDeleted = statusProbeDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
-	costDeleted, err := model.DeleteChannelMonitorCostsBefore(ctx, costCutoff, minuteCutoff, batchSize)
+	result.BudgetExhausted = result.BudgetExhausted || statusProbeBudget.Exhausted()
+	costDeleted, err := model.DeleteChannelMonitorCostsBefore(
+		ctx, costCutoff, minuteCutoff, batchSize, cleanupBudget.Slice(1),
+	)
 	result.ChannelMonitorCostRetentionResult = costDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
+	result.BudgetExhausted = result.BudgetExhausted || costDeleted.Incomplete || cleanupBudget.Exhausted()
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
+	if result.BudgetExhausted {
+		scheduleChannelMonitorCleanupContinuation()
+	}
 }

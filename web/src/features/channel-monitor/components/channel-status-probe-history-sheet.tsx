@@ -62,6 +62,10 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { getChannelStatusProbeExecutions } from '../api'
+import {
+  getChannelStatusProbeHistoryLatestExecutionKey,
+  getChannelStatusProbeHistoryRefetchInterval,
+} from '../lib/query-options'
 import type {
   ChannelStatusProbeChannel,
   ChannelStatusProbeExecution,
@@ -216,13 +220,18 @@ export function ChannelStatusProbeHistorySheet(
   const [result, setResult] = useState<'' | ChannelStatusProbeResult>('')
   const [trigger, setTrigger] = useState<'' | ChannelStatusProbeTrigger>('')
   const pageSize = 20
+  const probeActive =
+    props.channel.running || Boolean(props.channel.config?.manual_request_id)
   const query = useQuery({
     queryKey: [
       'channel-monitor',
       'status-probe',
       'executions',
       props.channel.id,
-      props.channel.latest?.execution_id ?? 0,
+      getChannelStatusProbeHistoryLatestExecutionKey(
+        page,
+        props.channel.latest?.execution_id ?? 0
+      ),
       { page, pageSize, modelName, result, trigger },
     ],
     queryFn: () =>
@@ -235,10 +244,13 @@ export function ChannelStatusProbeHistorySheet(
         trigger,
       }),
     placeholderData: keepPreviousData,
-    refetchInterval:
-      props.channel.running || props.channel.config?.manual_request_id
-        ? 3000
-        : false,
+    refetchInterval: () =>
+      getChannelStatusProbeHistoryRefetchInterval(
+        page,
+        probeActive,
+        document.visibilityState
+      ),
+    refetchIntervalInBackground: false,
   })
   const total = query.data?.data.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -252,8 +264,6 @@ export function ChannelStatusProbeHistorySheet(
     ],
     [props.channel.config?.models]
   )
-  const probeActive =
-    props.channel.running || Boolean(props.channel.config?.manual_request_id)
   let executionContent: ReactNode
   if (query.isLoading) {
     executionContent = (

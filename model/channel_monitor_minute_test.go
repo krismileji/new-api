@@ -148,13 +148,22 @@ func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *t
 	require.NoError(t, db.Create(&Log{
 		ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume,
 	}).Error)
+	rescanned, err := AggregateChannelMonitorMinuteRangeWithState(context.Background(), 60, 120, true)
+	require.NoError(t, err)
+	assert.Equal(t, 2, rescanned.ScannedLogRows)
+	assert.Equal(t, 1, rescanned.MetricRows)
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, int64(2), state.Revision)
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
+	assert.Equal(t, int64(2), metric.ActualSuccessCount)
+
 	_, err = AggregateChannelMonitorMinuteRangeWithState(context.Background(), 60, 120, false)
 	require.NoError(t, err)
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(120), state.CompletedThrough)
 	assert.Equal(t, int64(60), state.CoveredFrom)
-	assert.Equal(t, int64(2), state.Revision)
-	var metric ChannelMonitorMinuteMetric
+	assert.Equal(t, int64(3), state.Revision)
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
 	assert.Equal(t, int64(2), metric.ActualSuccessCount)
 }
@@ -180,6 +189,97 @@ func TestBackfillChannelMonitorMinuteRangeExtendsCoverageWithoutMovingCompletion
 	require.NoError(t, db.Order("minute_start ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 2)
 	assert.Equal(t, []int64{60, 180}, []int64{metrics[0].MinuteStart, metrics[1].MinuteStart})
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume,
+	}).Error)
+	rescanned, err := BackfillChannelMonitorMinuteRangeWithState(context.Background(), 60, 180)
+	require.NoError(t, err)
+	assert.Equal(t, 2, rescanned.ScannedLogRows)
+	assert.Equal(t, 1, rescanned.MetricRows)
+	var state ChannelMonitorAggregationState
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, int64(3), state.Revision)
+	var earliestMetric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ?", 60).First(&earliestMetric).Error)
+	assert.Equal(t, int64(2), earliestMetric.ActualSuccessCount)
+}
+
+func TestAggregateChannelMonitorMinuteRangeSkipsOnlyAfterConcurrentWatermarkAdvance(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume,
+	}).Error)
+	require.NoError(t, AdvanceChannelMonitorAggregationCompletedThrough(context.Background(), 120))
+	observedCoverage, err := GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	_, err = AggregateChannelMonitorMinuteRangeWithState(context.Background(), 120, 180, true)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume,
+	}).Error)
+	skipped, err := aggregateChannelMonitorMinuteRangeFromObservation(
+		context.Background(), 120, 180, true, true, observedCoverage,
+	)
+	require.NoError(t, err)
+	assert.Zero(t, skipped.ScannedLogRows)
+	assert.Zero(t, skipped.MetricRows)
+
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
+	assert.Equal(t, int64(1), metric.ActualSuccessCount)
+}
+
+func TestAggregateChannelMonitorMinuteRangeDoesNotSkipWiderConcurrentRepair(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&[]Log{
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume},
+		{ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume},
+	}).Error)
+	require.NoError(t, AdvanceChannelMonitorAggregationCompletedThrough(context.Background(), 120))
+	observedCoverage, err := GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	_, err = AggregateChannelMonitorMinuteRangeWithState(context.Background(), 120, 180, true)
+	require.NoError(t, err)
+
+	rebuilt, err := aggregateChannelMonitorMinuteRangeFromObservation(
+		context.Background(), 60, 180, true, true, observedCoverage,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 2, rebuilt.ScannedLogRows)
+	assert.Equal(t, 2, rebuilt.MetricRows)
+
+	var metrics []ChannelMonitorMinuteMetric
+	require.NoError(t, db.Order("minute_start ASC").Find(&metrics).Error)
+	require.Len(t, metrics, 2)
+	assert.Equal(t, []int64{60, 120}, []int64{metrics[0].MinuteStart, metrics[1].MinuteStart})
+}
+
+func TestBackfillChannelMonitorMinuteRangeSkipsOnlyAfterConcurrentCoverageAdvance(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume,
+	}).Error)
+	require.NoError(t, AdvanceChannelMonitorAggregationCompletedThrough(context.Background(), 180))
+	observedCoverage, err := GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	_, err = BackfillChannelMonitorMinuteRangeWithState(context.Background(), 120, 180)
+	require.NoError(t, err)
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume,
+	}).Error)
+	skipped, err := aggregateChannelMonitorMinuteRangeFromObservation(
+		context.Background(), 120, 180, false, true, observedCoverage,
+	)
+	require.NoError(t, err)
+	assert.Zero(t, skipped.ScannedLogRows)
+	assert.Zero(t, skipped.MetricRows)
+
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
+	assert.Equal(t, int64(1), metric.ActualSuccessCount)
 }
 
 func TestChannelMonitorMinuteMetricMigrationBackfillsRetryColumns(t *testing.T) {
@@ -344,11 +444,13 @@ func TestAggregateChannelMonitorMinuteSaturatesRetryFailureDuration(t *testing.T
 	assert.Equal(t, int64(math.MaxInt64), metric.RetryFailureDurationTotalMs)
 }
 
-func TestAggregateChannelMonitorMinuteIgnoresProbeAndChannelTestConsumeLogs(t *testing.T) {
+func TestAggregateChannelMonitorMinuteIgnoresMonitoringAndChannelTestConsumeLogs(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	probeOther, err := common.Marshal(channelMonitorMinuteLogOther{SmartScheduleProbe: true})
 	require.NoError(t, err)
 	channelTestOther, err := common.Marshal(channelMonitorMinuteLogOther{ChannelTest: true})
+	require.NoError(t, err)
+	statusProbeOther, err := common.Marshal(channelMonitorMinuteLogOther{StatusProbe: true})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&[]Log{
 		{
@@ -362,8 +464,13 @@ func TestAggregateChannelMonitorMinuteIgnoresProbeAndChannelTestConsumeLogs(t *t
 			UseTime: 2, Other: string(channelTestOther),
 		},
 		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenName: "状态监测",
+			CreatedAt: 123, Type: LogTypeConsume, IsStream: true, CompletionTokens: 20,
+			UseTime: 2, Other: string(statusProbeOther),
+		},
+		{
 			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenName: "业务令牌",
-			CreatedAt: 123, Type: LogTypeConsume,
+			CreatedAt: 124, Type: LogTypeConsume,
 		},
 	}).Error)
 

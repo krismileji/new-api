@@ -18,6 +18,7 @@ type ChannelMonitorHistoryRetentionResult struct {
 	ExecutionDetailRowsDeleted int64 `json:"execution_detail_rows_deleted"`
 	TaskRowsDeleted            int64 `json:"task_rows_deleted"`
 	RatioHistoryRowsDeleted    int64 `json:"ratio_history_rows_deleted"`
+	Incomplete                 bool  `json:"-"`
 }
 
 type channelMonitorRetentionTask struct {
@@ -31,6 +32,7 @@ func DeleteChannelMonitorHistoryBefore(
 	taskTypes []string,
 	keepLatestTasks int,
 	batchSize int,
+	budget ChannelMonitorCleanupBudget,
 ) (ChannelMonitorHistoryRetentionResult, error) {
 	result := ChannelMonitorHistoryRetentionResult{}
 	if cutoffs.ExecutionDetail <= 0 || cutoffs.Task <= 0 || cutoffs.RatioHistory <= 0 {
@@ -65,8 +67,13 @@ func DeleteChannelMonitorHistoryBefore(
 
 	db := DB.WithContext(ctx)
 	detailTableExists := db.Migrator().HasTable(&ChannelSmartScheduleExecutionDetail{})
+	detailBudget := budget.Slice(3)
 	if detailTableExists {
 		for {
+			if detailBudget.Exhausted() {
+				result.Incomplete = true
+				break
+			}
 			var ids []int64
 			if err := db.Model(&ChannelSmartScheduleExecutionDetail{}).
 				Where("created_at < ?", cutoffs.ExecutionDetail).
@@ -86,75 +93,97 @@ func DeleteChannelMonitorHistoryBefore(
 		}
 	}
 
+	taskBudget := budget.Slice(2)
 	if db.Migrator().HasTable(&SystemTask{}) {
-		keptTaskIDs := make([]int64, 0, len(normalizedTaskTypes)*keepLatestTasks)
-		for _, taskType := range normalizedTaskTypes {
-			var ids []int64
-			if err := db.Model(&SystemTask{}).
-				Where("type = ?", taskType).
-				Order("id DESC").
-				Limit(keepLatestTasks).
-				Pluck("id", &ids).Error; err != nil {
-				return result, err
-			}
-			keptTaskIDs = append(keptTaskIDs, ids...)
-		}
-
-		terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
-		for {
-			var tasks []channelMonitorRetentionTask
-			query := db.Model(&SystemTask{}).
-				Select("id", "task_id").
-				Where("type IN ?", normalizedTaskTypes).
-				Where("status IN ?", terminalStatuses).
-				Where("updated_at < ?", cutoffs.Task)
-			if len(keptTaskIDs) > 0 {
-				query = query.Where("id NOT IN ?", keptTaskIDs)
-			}
-			if err := query.Order("updated_at ASC, id ASC").Limit(batchSize).Find(&tasks).Error; err != nil {
-				return result, err
-			}
-			if len(tasks) == 0 {
-				break
+		if taskBudget.Exhausted() {
+			result.Incomplete = true
+		} else {
+			keptTaskIDs := make([]int64, 0, len(normalizedTaskTypes)*keepLatestTasks)
+			prepared := true
+			for _, taskType := range normalizedTaskTypes {
+				if taskBudget.Exhausted() {
+					result.Incomplete = true
+					prepared = false
+					break
+				}
+				var ids []int64
+				if err := db.Model(&SystemTask{}).
+					Where("type = ?", taskType).
+					Order("id DESC").
+					Limit(keepLatestTasks).
+					Pluck("id", &ids).Error; err != nil {
+					return result, err
+				}
+				keptTaskIDs = append(keptTaskIDs, ids...)
 			}
 
-			taskIDs := make([]string, 0, len(tasks))
-			ids := make([]int64, 0, len(tasks))
-			for _, task := range tasks {
-				taskIDs = append(taskIDs, task.TaskID)
-				ids = append(ids, task.ID)
-			}
-			var detailRowsDeleted int64
-			var taskRowsDeleted int64
-			if err := db.Transaction(func(tx *gorm.DB) error {
-				if detailTableExists {
-					deletedDetails := tx.Where("task_id IN ?", taskIDs).
-						Delete(&ChannelSmartScheduleExecutionDetail{})
-					if deletedDetails.Error != nil {
-						return deletedDetails.Error
+			if prepared {
+				terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
+				for {
+					if taskBudget.Exhausted() {
+						result.Incomplete = true
+						break
 					}
-					detailRowsDeleted = deletedDetails.RowsAffected
+					var tasks []channelMonitorRetentionTask
+					query := db.Model(&SystemTask{}).
+						Select("id", "task_id").
+						Where("type IN ?", normalizedTaskTypes).
+						Where("status IN ?", terminalStatuses).
+						Where("updated_at < ?", cutoffs.Task)
+					if len(keptTaskIDs) > 0 {
+						query = query.Where("id NOT IN ?", keptTaskIDs)
+					}
+					if err := query.Order("updated_at ASC, id ASC").Limit(batchSize).Find(&tasks).Error; err != nil {
+						return result, err
+					}
+					if len(tasks) == 0 {
+						break
+					}
+
+					taskIDs := make([]string, 0, len(tasks))
+					ids := make([]int64, 0, len(tasks))
+					for _, task := range tasks {
+						taskIDs = append(taskIDs, task.TaskID)
+						ids = append(ids, task.ID)
+					}
+					var detailRowsDeleted int64
+					var taskRowsDeleted int64
+					if err := db.Transaction(func(tx *gorm.DB) error {
+						if detailTableExists {
+							deletedDetails := tx.Where("task_id IN ?", taskIDs).
+								Delete(&ChannelSmartScheduleExecutionDetail{})
+							if deletedDetails.Error != nil {
+								return deletedDetails.Error
+							}
+							detailRowsDeleted = deletedDetails.RowsAffected
+						}
+						deletedTasks := tx.Where("id IN ?", ids).
+							Where("type IN ?", normalizedTaskTypes).
+							Where("status IN ?", terminalStatuses).
+							Where("updated_at < ?", cutoffs.Task).
+							Delete(&SystemTask{})
+						if deletedTasks.Error != nil {
+							return deletedTasks.Error
+						}
+						taskRowsDeleted = deletedTasks.RowsAffected
+						return nil
+					}); err != nil {
+						return result, err
+					}
+					result.ExecutionDetailRowsDeleted += detailRowsDeleted
+					result.TaskRowsDeleted += taskRowsDeleted
 				}
-				deletedTasks := tx.Where("id IN ?", ids).
-					Where("type IN ?", normalizedTaskTypes).
-					Where("status IN ?", terminalStatuses).
-					Where("updated_at < ?", cutoffs.Task).
-					Delete(&SystemTask{})
-				if deletedTasks.Error != nil {
-					return deletedTasks.Error
-				}
-				taskRowsDeleted = deletedTasks.RowsAffected
-				return nil
-			}); err != nil {
-				return result, err
 			}
-			result.ExecutionDetailRowsDeleted += detailRowsDeleted
-			result.TaskRowsDeleted += taskRowsDeleted
 		}
 	}
 
+	ratioBudget := budget.Slice(1)
 	if db.Migrator().HasTable(&ChannelRatioHistory{}) {
 		for {
+			if ratioBudget.Exhausted() {
+				result.Incomplete = true
+				break
+			}
 			var ids []int
 			if err := db.Model(&ChannelRatioHistory{}).
 				Where("created_time < ?", cutoffs.RatioHistory).
