@@ -46,6 +46,7 @@ function CostRetentionFieldFixture() {
       executionDetailRetentionDays: 14,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
+      statusProbeHistoryRetentionDays: 7,
     },
   })
   return (
@@ -276,6 +277,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('调度执行明细保留天数'))
     assert.ok(markup.includes('监控任务保留天数'))
     assert.ok(markup.includes('倍率历史保留天数'))
+    assert.ok(markup.includes('状态探测记录保留天数'))
     for (const [name, value] of [
       ['costRetentionDays', '120'],
       ['executionDetailRetentionDays', '14'],
@@ -295,6 +297,10 @@ describe('channel monitor settings dialog', () => {
         inputElement.includes(`aria-describedby="${inputId}-description"`)
       )
     }
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="statusProbeHistoryRetentionDays")(?=[^>]*min="1")(?=[^>]*max="90")(?=[^>]*value="7")[^>]*>/
+    )
     assert.ok(markup.includes('不能短于调度执行明细'))
     assert.ok(markup.includes('各类始终保留最近 100 条'))
     assert.ok(markup.includes('删除后不可恢复'))

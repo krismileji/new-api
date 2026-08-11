@@ -23,16 +23,19 @@ const (
 type channelMonitorCostRetentionTaskHandler struct{}
 
 type channelMonitorCostRetentionTaskResult struct {
-	RetentionDays                int   `json:"retention_days"`
-	Cutoff                       int64 `json:"cutoff"`
-	MinuteCutoff                 int64 `json:"minute_cutoff"`
-	ProtectedWindowMinutes       int   `json:"protected_window_minutes"`
-	ExecutionDetailRetentionDays int   `json:"execution_detail_retention_days"`
-	ExecutionDetailCutoff        int64 `json:"execution_detail_cutoff"`
-	TaskRetentionDays            int   `json:"task_retention_days"`
-	TaskCutoff                   int64 `json:"task_cutoff"`
-	RatioHistoryRetentionDays    int   `json:"ratio_history_retention_days"`
-	RatioHistoryCutoff           int64 `json:"ratio_history_cutoff"`
+	RetentionDays                   int   `json:"retention_days"`
+	Cutoff                          int64 `json:"cutoff"`
+	MinuteCutoff                    int64 `json:"minute_cutoff"`
+	ProtectedWindowMinutes          int   `json:"protected_window_minutes"`
+	ExecutionDetailRetentionDays    int   `json:"execution_detail_retention_days"`
+	ExecutionDetailCutoff           int64 `json:"execution_detail_cutoff"`
+	TaskRetentionDays               int   `json:"task_retention_days"`
+	TaskCutoff                      int64 `json:"task_cutoff"`
+	RatioHistoryRetentionDays       int   `json:"ratio_history_retention_days"`
+	RatioHistoryCutoff              int64 `json:"ratio_history_cutoff"`
+	StatusProbeHistoryRetentionDays int   `json:"status_probe_history_retention_days"`
+	StatusProbeHistoryCutoff        int64 `json:"status_probe_history_cutoff"`
+	StatusProbeExecutionsDeleted    int64 `json:"status_probe_executions_deleted"`
 	model.ChannelMonitorCostRetentionResult
 	model.ChannelMonitorHistoryRetentionResult
 }
@@ -74,6 +77,7 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		ExecutionDetailRetentionDays:          defaultChannelMonitorExecutionDetailRetentionDays,
 		TaskRetentionDays:                     defaultChannelMonitorTaskRetentionDays,
 		RatioHistoryRetentionDays:             defaultChannelMonitorRatioHistoryRetentionDays,
+		StatusProbeHistoryRetentionDays:       defaultChannelMonitorStatusProbeHistoryRetentionDays,
 		SmartSchedulePerformanceWindowMinutes: defaultChannelMonitorSmartSchedulePerformanceWindowMinutes,
 		SmartScheduleStabilityWindowMinutes:   defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
 	}
@@ -83,12 +87,13 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
 		channelMonitorRatioHistoryRetentionDaysOption,
+		channelMonitorStatusProbeHistoryRetentionDaysOption,
 		channelMonitorSmartSchedulePerformanceWindowOption,
 		channelMonitorSmartScheduleStabilityWindowOption,
 	}
 	if err := model.DB.WithContext(ctx).
 		Select("key", "value").
-		Where("key IN ?", retentionOptionKeys).
+		Where(map[string]any{"key": retentionOptionKeys}).
 		Find(&options).Error; err != nil {
 		return channelMonitorSettings{}, fmt.Errorf("读取渠道监控保留配置失败: %w", err)
 	}
@@ -118,6 +123,13 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.RatioHistoryRetentionDays = days
+		case channelMonitorStatusProbeHistoryRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays ||
+				days > maxChannelMonitorStatusProbeHistoryRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.StatusProbeHistoryRetentionDays = days
 		case channelMonitorSmartSchedulePerformanceWindowOption:
 			minutes, err := strconv.Atoi(option.Value)
 			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
@@ -171,17 +183,20 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		Task:            channelMonitorHistoryRetentionCutoff(now, settings.TaskRetentionDays),
 		RatioHistory:    channelMonitorHistoryRetentionCutoff(now, settings.RatioHistoryRetentionDays),
 	}
+	statusProbeHistoryCutoff := channelMonitorHistoryRetentionCutoff(now, settings.StatusProbeHistoryRetentionDays)
 	result := channelMonitorCostRetentionTaskResult{
-		RetentionDays:                settings.CostRetentionDays,
-		Cutoff:                       costCutoff,
-		MinuteCutoff:                 minuteCutoff,
-		ProtectedWindowMinutes:       protectedWindowMinutes,
-		ExecutionDetailRetentionDays: settings.ExecutionDetailRetentionDays,
-		ExecutionDetailCutoff:        historyCutoffs.ExecutionDetail,
-		TaskRetentionDays:            settings.TaskRetentionDays,
-		TaskCutoff:                   historyCutoffs.Task,
-		RatioHistoryRetentionDays:    settings.RatioHistoryRetentionDays,
-		RatioHistoryCutoff:           historyCutoffs.RatioHistory,
+		RetentionDays:                   settings.CostRetentionDays,
+		Cutoff:                          costCutoff,
+		MinuteCutoff:                    minuteCutoff,
+		ProtectedWindowMinutes:          protectedWindowMinutes,
+		ExecutionDetailRetentionDays:    settings.ExecutionDetailRetentionDays,
+		ExecutionDetailCutoff:           historyCutoffs.ExecutionDetail,
+		TaskRetentionDays:               settings.TaskRetentionDays,
+		TaskCutoff:                      historyCutoffs.Task,
+		RatioHistoryRetentionDays:       settings.RatioHistoryRetentionDays,
+		RatioHistoryCutoff:              historyCutoffs.RatioHistory,
+		StatusProbeHistoryRetentionDays: settings.StatusProbeHistoryRetentionDays,
+		StatusProbeHistoryCutoff:        statusProbeHistoryCutoff,
 	}
 	historyDeleted, err := model.DeleteChannelMonitorHistoryBefore(
 		ctx,
@@ -196,6 +211,16 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		batchSize,
 	)
 	result.ChannelMonitorHistoryRetentionResult = historyDeleted
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	statusProbeDeleted, err := model.DeleteChannelStatusProbeExecutionsBefore(
+		ctx,
+		statusProbeHistoryCutoff,
+		batchSize,
+	)
+	result.StatusProbeExecutionsDeleted = statusProbeDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return

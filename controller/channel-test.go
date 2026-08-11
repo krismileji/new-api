@@ -256,8 +256,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
+	isStatusProbe := isChannelStatusProbeTest(ctx)
+	isAutomatedProbe := isSmartScheduleProbe || isStatusProbe
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
-	if isSmartScheduleProbe {
+	if isAutomatedProbe {
 		if responseRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {
 			responseRequest.MaxOutputTokens = lo.ToPtr(uint(16))
 		}
@@ -319,7 +321,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	if !isSmartScheduleProbe {
+	if !isAutomatedProbe {
 		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
 	}
 
@@ -565,7 +567,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	usageIsAuthoritative := pointerUsage || valueUsage
 	service.RecordChannelTestDailyCost(c, info, quota, tieredResult, usage, usageIsAuthoritative)
 	consumedTime := time.Since(tik).Seconds()
-	if isSmartScheduleProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
+	if isAutomatedProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
 		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
 		tokenName := "模型测试"
 		content := "模型测试"
@@ -573,6 +575,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			other[model.ChannelMonitorSmartScheduleProbeLogKey] = true
 			tokenName = "智能调度探测"
 			content = "智能调度定时探测"
+		} else if isStatusProbe {
+			other[model.ChannelMonitorStatusProbeLogKey] = true
+			tokenName = "状态探测"
+			content = "渠道状态探测"
 		}
 		model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 			ChannelId:        channel.Id,
@@ -588,7 +594,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			Other:            other,
 		})
 	}
-	if !isSmartScheduleProbe {
+	if !isAutomatedProbe {
 		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	}
 	return testResult{

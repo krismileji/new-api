@@ -48,6 +48,12 @@ import type {
   ChannelMonitorUpstreamRequest,
   ChannelMonitorUpstreamVersionResult,
   ChannelRatioHistoryPage,
+  ChannelStatusProbeConfig,
+  ChannelStatusProbeDisplayUnit,
+  ChannelStatusProbeExecutionPage,
+  ChannelStatusProbeOverview,
+  ChannelStatusProbeResult,
+  ChannelStatusProbeTrigger,
   NewAPIGroupRatioResult,
 } from './types'
 
@@ -72,6 +78,80 @@ export async function getChannelMonitorOverview() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorOverview>
   >('/api/channel_monitor/', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelStatusProbeOverview(model?: string) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelStatusProbeOverview>
+  >(
+    '/api/channel_monitor/status',
+    channelMonitorRequestConfig({ params: { model: model || undefined } })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function updateChannelStatusProbeConfig(request: {
+  channelId: number
+  enabled: boolean
+  models: string[]
+  intervalSeconds: number
+  displayValue: number
+  displayUnit: ChannelStatusProbeDisplayUnit
+  recordSample: boolean
+  revision: number
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelStatusProbeConfig>
+  >(
+    `/api/channel_monitor/status/channel/${request.channelId}/config`,
+    {
+      enabled: request.enabled,
+      models: request.models,
+      interval_seconds: request.intervalSeconds,
+      display_value: request.displayValue,
+      display_unit: request.displayUnit,
+      record_sample: request.recordSample,
+      revision: request.revision,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function runChannelStatusProbe(channelId: number) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<{ manual_request_id: string }>
+  >(
+    `/api/channel_monitor/status/channel/${channelId}/run`,
+    undefined,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelStatusProbeExecutions(request: {
+  channelId: number
+  page: number
+  pageSize: number
+  model?: string
+  result?: '' | ChannelStatusProbeResult
+  trigger?: '' | ChannelStatusProbeTrigger
+}) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelStatusProbeExecutionPage>
+  >(
+    `/api/channel_monitor/status/channel/${request.channelId}/executions`,
+    channelMonitorRequestConfig({
+      params: {
+        page: request.page,
+        page_size: request.pageSize,
+        model: request.model || undefined,
+        result: request.result || undefined,
+        trigger: request.trigger || undefined,
+      },
+    })
+  )
   return ensureChannelMonitorSuccess(response.data)
 }
 

@@ -31,11 +31,66 @@ import {
   getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
   previewChannelMonitorNotificationEmail,
+  updateChannelStatusProbeConfig,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateChannelMonitorSmartScheduleGroupPause,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
+
+test('saves the configured status display window', async () => {
+  const originalAdapter = api.defaults.adapter
+  let requestConfig: AxiosRequestConfig | undefined
+  const adapter: AxiosAdapter = async (config) => {
+    requestConfig = config
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          channel_id: 7,
+          display_value: 12,
+          display_unit: 'hour',
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    await updateChannelStatusProbeConfig({
+      channelId: 7,
+      enabled: true,
+      models: ['gpt-4.1'],
+      intervalSeconds: 300,
+      displayValue: 12,
+      displayUnit: 'hour',
+      recordSample: false,
+      revision: 2,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/status/channel/7/config'
+  )
+  assert.equal(requestConfig?.method, 'put')
+  assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
+    enabled: true,
+    models: ['gpt-4.1'],
+    interval_seconds: 300,
+    display_value: 12,
+    display_unit: 'hour',
+    record_sample: false,
+    revision: 2,
+  })
+})
 
 test('previews an email with exactly the selected notification types', async () => {
   const originalAdapter = api.defaults.adapter

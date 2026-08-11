@@ -216,6 +216,7 @@ const legacyRetentionDefaultsApplied = [
   ['executionDetailRetentionDays', '14'],
   ['taskRetentionDays', '90'],
   ['ratioHistoryRetentionDays', '365'],
+  ['statusProbeHistoryRetentionDays', '7'],
 ].every(
   ([name, value]) =>
     generalDialog.querySelector<HTMLInputElement>(`input[name="${name}"]`)

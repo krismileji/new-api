@@ -63,6 +63,7 @@ export function createChannelMonitorSettingsUpdatePayload(
     execution_detail_retention_days: values.executionDetailRetentionDays,
     task_retention_days: values.taskRetentionDays,
     ratio_history_retention_days: values.ratioHistoryRetentionDays,
+    status_probe_history_retention_days: values.statusProbeHistoryRetentionDays,
     email_notification_enabled: values.emailNotificationEnabled,
     notification_email: values.notificationEmail,
     email_notification_types: values.emailNotificationTypes,

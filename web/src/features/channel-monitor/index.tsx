@@ -19,9 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Analytics01Icon,
   ArrangeIcon,
-  ChartLineData01Icon,
   HistoryIcon,
-  Layers01Icon,
   MoneyBag02Icon,
   Refresh01Icon,
   Route01Icon,
@@ -64,7 +62,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
@@ -96,6 +94,7 @@ import {
 import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-smart-schedule-board'
 import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
+import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
@@ -121,6 +120,7 @@ import {
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
@@ -190,7 +190,17 @@ const loadChannelMonitorSmartScheduleExecutionDialog = () =>
 const LazyChannelMonitorSmartScheduleExecutionDialog = lazy(
   loadChannelMonitorSmartScheduleExecutionDialog
 )
-type MonitorView = 'channels' | 'groups' | 'models' | 'smart-schedule'
+const LazyChannelStatusProbeView = lazy(() =>
+  import('./components/channel-status-probe-view').then((module) => ({
+    default: module.ChannelStatusProbeView,
+  }))
+)
+type MonitorView =
+  | 'channels'
+  | 'groups'
+  | 'models'
+  | 'status-probe'
+  | 'smart-schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
   | 'concurrency'
@@ -231,6 +241,8 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   task_retention_days: DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   ratio_history_retention_days:
     DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  status_probe_history_retention_days:
+    DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   email_notification_enabled: false,
   notification_email: '',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -908,50 +920,16 @@ export function ChannelMonitor() {
           className='gap-4'
         >
           <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
-            <TabsList className='grid h-auto w-full grid-cols-2 sm:inline-flex sm:h-8 sm:w-fit'>
-              <TabsTrigger value='channels'>
-                <HugeiconsIcon
-                  icon={Analytics01Icon}
-                  data-icon='inline-start'
-                />
-                渠道 {channels.length}
-              </TabsTrigger>
-              <TabsTrigger value='groups'>
-                <HugeiconsIcon icon={Layers01Icon} data-icon='inline-start' />
-                分组 {groups.length}
-              </TabsTrigger>
-              <TabsTrigger value='models'>
-                <HugeiconsIcon
-                  icon={ChartLineData01Icon}
-                  data-icon='inline-start'
-                />
-                模型性能 {performanceModelOptions.length}
-              </TabsTrigger>
-              <TabsTrigger value='smart-schedule'>
-                <HugeiconsIcon icon={Route01Icon} data-icon='inline-start' />
-                智能调度 {smartScheduleSummary.poolCount}
-                {smartScheduleHasCriticalIssue ? (
-                  <>
-                    <span
-                      className='bg-destructive size-1.5 shrink-0 rounded-full'
-                      aria-hidden='true'
-                    />
-                    <span className='sr-only'>存在需要关注的调度状态</span>
-                  </>
-                ) : null}
-                {smartScheduleHasProbing ? (
-                  <>
-                    <span
-                      className='bg-warning size-1.5 shrink-0 rounded-full'
-                      aria-hidden='true'
-                    />
-                    <span className='sr-only'>存在稳定性试放中的调度状态</span>
-                  </>
-                ) : null}
-              </TabsTrigger>
-            </TabsList>
+            <ChannelMonitorViewTabs
+              channelCount={channels.length}
+              groupCount={groups.length}
+              performanceModelCount={performanceModelOptions.length}
+              smartSchedulePoolCount={smartScheduleSummary.poolCount}
+              smartScheduleHasCriticalIssue={smartScheduleHasCriticalIssue}
+              smartScheduleHasProbing={smartScheduleHasProbing}
+            />
 
-            {view !== 'smart-schedule' ? (
+            {view !== 'smart-schedule' && view !== 'status-probe' ? (
               <div className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap lg:max-w-5xl lg:justify-end'>
                 {view === 'channels' && (
                   <ToggleGroup
@@ -1161,7 +1139,7 @@ export function ChannelMonitor() {
             ) : null}
           </div>
 
-          {view !== 'smart-schedule' ? (
+          {view !== 'smart-schedule' && view !== 'status-probe' ? (
             <ChannelMonitorPerformanceCoverageAlert
               coverage={performanceQuery.data?.data.metric_coverage}
               rangeLabel={performanceRangeLabel}
@@ -1300,6 +1278,21 @@ export function ChannelMonitor() {
                 })
               }
             />
+          </TabsContent>
+          <TabsContent value='status-probe'>
+            {view === 'status-probe' && (
+              <Suspense
+                fallback={
+                  <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <Skeleton key={index} className='h-[25rem] rounded-lg' />
+                    ))}
+                  </div>
+                }
+              >
+                <LazyChannelStatusProbeView />
+              </Suspense>
+            )}
           </TabsContent>
           <TabsContent value='smart-schedule'>
             <ChannelMonitorSmartScheduleBoard
@@ -1540,7 +1533,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_history_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
+          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
           settings={settings}
           open
           onOpenChange={setSettingsOpen}

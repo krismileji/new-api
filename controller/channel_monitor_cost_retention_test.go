@@ -45,6 +45,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 		wantExecutionDetail int
 		wantTask            int
 		wantRatioHistory    int
+		wantStatusProbe     int
 	}{
 		{
 			name:                "missing uses defaults",
@@ -52,28 +53,33 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantExecutionDetail: defaultChannelMonitorExecutionDetailRetentionDays,
 			wantTask:            defaultChannelMonitorTaskRetentionDays,
 			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
 		},
 		{
 			name: "valid values",
 			values: map[string]string{
-				channelMonitorExecutionDetailRetentionDaysOption: "30",
-				channelMonitorTaskRetentionDaysOption:            "180",
-				channelMonitorRatioHistoryRetentionDaysOption:    "730",
+				channelMonitorExecutionDetailRetentionDaysOption:    "30",
+				channelMonitorTaskRetentionDaysOption:               "180",
+				channelMonitorRatioHistoryRetentionDaysOption:       "730",
+				channelMonitorStatusProbeHistoryRetentionDaysOption: "21",
 			},
 			wantExecutionDetail: 30,
 			wantTask:            180,
 			wantRatioHistory:    730,
+			wantStatusProbe:     21,
 		},
 		{
 			name: "invalid values use defaults",
 			values: map[string]string{
-				channelMonitorExecutionDetailRetentionDaysOption: "0",
-				channelMonitorTaskRetentionDaysOption:            "3651",
-				channelMonitorRatioHistoryRetentionDaysOption:    "invalid",
+				channelMonitorExecutionDetailRetentionDaysOption:    "0",
+				channelMonitorTaskRetentionDaysOption:               "3651",
+				channelMonitorRatioHistoryRetentionDaysOption:       "invalid",
+				channelMonitorStatusProbeHistoryRetentionDaysOption: "91",
 			},
 			wantExecutionDetail: defaultChannelMonitorExecutionDetailRetentionDays,
 			wantTask:            defaultChannelMonitorTaskRetentionDays,
 			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
 		},
 		{
 			name: "task retention is raised to preserve execution details",
@@ -84,6 +90,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantExecutionDetail: 365,
 			wantTask:            365,
 			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
 		},
 	}
 
@@ -95,6 +102,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			assert.Equal(t, test.wantExecutionDetail, settings.ExecutionDetailRetentionDays)
 			assert.Equal(t, test.wantTask, settings.TaskRetentionDays)
 			assert.Equal(t, test.wantRatioHistory, settings.RatioHistoryRetentionDays)
+			assert.Equal(t, test.wantStatusProbe, settings.StatusProbeHistoryRetentionDays)
 		})
 	}
 }
@@ -102,16 +110,18 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorCostRetentionDaysOption:            "7",
-		channelMonitorExecutionDetailRetentionDaysOption: "7",
-		channelMonitorTaskRetentionDaysOption:            "7",
-		channelMonitorRatioHistoryRetentionDaysOption:    "7",
+		channelMonitorCostRetentionDaysOption:               "7",
+		channelMonitorExecutionDetailRetentionDaysOption:    "7",
+		channelMonitorTaskRetentionDaysOption:               "7",
+		channelMonitorRatioHistoryRetentionDaysOption:       "7",
+		channelMonitorStatusProbeHistoryRetentionDaysOption: "7",
 	})
 	require.NoError(t, db.Create(&[]model.Option{
 		{Key: channelMonitorCostRetentionDaysOption, Value: "180"},
 		{Key: channelMonitorExecutionDetailRetentionDaysOption, Value: "30"},
 		{Key: channelMonitorTaskRetentionDaysOption, Value: "120"},
 		{Key: channelMonitorRatioHistoryRetentionDaysOption, Value: "730"},
+		{Key: channelMonitorStatusProbeHistoryRetentionDaysOption, Value: "21"},
 	}).Error)
 
 	settings, err := loadChannelMonitorRetentionSettings(t.Context())
@@ -121,15 +131,17 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 	assert.Equal(t, 30, settings.ExecutionDetailRetentionDays)
 	assert.Equal(t, 120, settings.TaskRetentionDays)
 	assert.Equal(t, 730, settings.RatioHistoryRetentionDays)
+	assert.Equal(t, 21, settings.StatusProbeHistoryRetentionDays)
 }
 
 func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"execution_detail_retention_days": 30,
-		"task_retention_days":             180,
-		"ratio_history_retention_days":    730,
+		"execution_detail_retention_days":     30,
+		"task_retention_days":                 180,
+		"ratio_history_retention_days":        730,
+		"status_probe_history_retention_days": 21,
 	})
 
 	UpdateChannelMonitorSettings(ctx)
@@ -141,11 +153,13 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 	assert.Equal(t, 30, response.Data.ExecutionDetailRetentionDays)
 	assert.Equal(t, 180, response.Data.TaskRetentionDays)
 	assert.Equal(t, 730, response.Data.RatioHistoryRetentionDays)
+	assert.Equal(t, 21, response.Data.StatusProbeHistoryRetentionDays)
 
 	wantOptions := map[string]string{
-		channelMonitorExecutionDetailRetentionDaysOption: "30",
-		channelMonitorTaskRetentionDaysOption:            "180",
-		channelMonitorRatioHistoryRetentionDaysOption:    "730",
+		channelMonitorExecutionDetailRetentionDaysOption:    "30",
+		channelMonitorTaskRetentionDaysOption:               "180",
+		channelMonitorRatioHistoryRetentionDaysOption:       "730",
+		channelMonitorStatusProbeHistoryRetentionDaysOption: "21",
 	}
 	for key, want := range wantOptions {
 		var option model.Option
@@ -166,6 +180,8 @@ func TestUpdateChannelMonitorSettingsRejectsInvalidHistoryRetentionDays(t *testi
 		{name: "task above maximum", field: "task_retention_days", value: 3651},
 		{name: "ratio history below minimum", field: "ratio_history_retention_days", value: 0},
 		{name: "ratio history above maximum", field: "ratio_history_retention_days", value: 3651},
+		{name: "status probe below minimum", field: "status_probe_history_retention_days", value: 0},
+		{name: "status probe above maximum", field: "status_probe_history_retention_days", value: 91},
 	}
 
 	for _, test := range tests {

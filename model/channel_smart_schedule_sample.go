@@ -139,6 +139,7 @@ const (
 	ChannelSmartScheduleSampleScopeChannelModel    = "channel_model"
 	ChannelSmartScheduleSampleSourceScheduledProbe = "scheduled_probe"
 	ChannelSmartScheduleSampleSourceManualTest     = "manual_test"
+	ChannelSmartScheduleSampleSourceStatusProbe    = "status_probe"
 )
 
 func (state ChannelSmartScheduleModelSampleState) MetricsSince(windowStart int64) ChannelSmartScheduleSampleMetrics {
@@ -542,7 +543,8 @@ func SaveChannelSmartScheduleModelSample(
 			source = ChannelSmartScheduleSampleSourceScheduledProbe
 		}
 		if source != ChannelSmartScheduleSampleSourceScheduledProbe &&
-			source != ChannelSmartScheduleSampleSourceManualTest {
+			source != ChannelSmartScheduleSampleSourceManualTest &&
+			source != ChannelSmartScheduleSampleSourceStatusProbe {
 			return errors.New("智能调度样本来源无效")
 		}
 		sampleId := strings.TrimSpace(result.SampleId)

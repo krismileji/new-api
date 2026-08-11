@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,6 +31,16 @@ func seedChannelDeleteCleanupData(t *testing.T, db *gorm.DB, channelId int, stat
 	}).Error)
 	require.NoError(t, db.Create(&ChannelSmartScheduleModelSampleState{
 		ChannelId: channelId, ModelName: "model-a",
+	}).Error)
+	require.NoError(t, db.Create(&ChannelStatusProbeConfig{
+		ChannelId: channelId, ModelsJSON: `["model-a"]`, IntervalSeconds: 300, Revision: 1,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelStatusProbeState{
+		ChannelId: channelId, ModelName: "model-a", FinishedAt: 100,
+	}).Error)
+	require.NoError(t, db.Create(&ChannelStatusProbeExecution{
+		RunId: fmt.Sprintf("delete-cleanup-%d", channelId), ChannelId: channelId,
+		ModelName: "model-a", FinishedAt: 100,
 	}).Error)
 	require.NoError(t, db.Create(&ChannelDailyCost{
 		ChannelId: channelId, DayStart: 1, CreatedAt: 1, UpdatedAt: 1,
@@ -112,6 +123,9 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelDailyAPIKeyCost{},
 				&ChannelMonitorMinuteMetric{},
 				&ChannelMonitorMinuteDurationBucket{},
+				&ChannelStatusProbeConfig{},
+				&ChannelStatusProbeState{},
+				&ChannelStatusProbeExecution{},
 			))
 			for index, channelId := range []int{1801, 1802, 1803} {
 				seedChannelDeleteCleanupData(t, db, channelId, test.statuses[index])
@@ -131,6 +145,9 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelSmartScheduleRouteState{},
 				&ChannelSmartScheduleGroupPause{},
 				&ChannelSmartScheduleModelSampleState{},
+				&ChannelStatusProbeConfig{},
+				&ChannelStatusProbeState{},
+				&ChannelStatusProbeExecution{},
 			}
 			historyTables := []any{
 				&ChannelRatioHistory{},

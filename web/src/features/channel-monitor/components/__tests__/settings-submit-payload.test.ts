@@ -34,6 +34,7 @@ const formValues = {
   executionDetailRetentionDays: 14,
   taskRetentionDays: 90,
   ratioHistoryRetentionDays: 365,
+  statusProbeHistoryRetentionDays: 7,
   emailNotificationEnabled: true,
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
@@ -327,6 +328,7 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_output_tokens',
       'probe_response_text',
       'ratio_history_retention_days',
+      'status_probe_history_retention_days',
       'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
@@ -334,6 +336,7 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(payload.execution_detail_retention_days, 14)
     assert.equal(payload.task_retention_days, 90)
     assert.equal(payload.ratio_history_retention_days, 365)
+    assert.equal(payload.status_probe_history_retention_days, 7)
     assert.deepEqual(payload.email_notification_types, [
       'balance_warning',
       'task_failed',

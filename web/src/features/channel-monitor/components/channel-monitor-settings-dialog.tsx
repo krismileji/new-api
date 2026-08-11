@@ -82,6 +82,7 @@ import {
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
@@ -97,6 +98,7 @@ import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
@@ -151,12 +153,14 @@ type ChannelMonitorRetentionFieldName =
   | 'executionDetailRetentionDays'
   | 'taskRetentionDays'
   | 'ratioHistoryRetentionDays'
+  | 'statusProbeHistoryRetentionDays'
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   name: ChannelMonitorRetentionFieldName
   label: string
   description: string
+  max?: number
 }) {
   return (
     <FormField
@@ -170,7 +174,7 @@ function ChannelMonitorRetentionDayField(props: {
               <InputGroupInput
                 type='number'
                 min={MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS}
-                max={MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS}
+                max={props.max ?? MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS}
                 step={1}
                 inputMode='numeric'
                 value={field.value}
@@ -236,6 +240,13 @@ export function ChannelMonitorRetentionFields(props: {
           name='ratioHistoryRetentionDays'
           label='倍率历史保留天数'
           description='保留渠道成本倍率的历史变更记录'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='statusProbeHistoryRetentionDays'
+          label='状态探测记录保留天数'
+          description='仅清理每次模型执行明细，渠道配置和最新状态始终保留'
+          max={MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS}
         />
       </div>
     </section>
@@ -381,6 +392,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       ratioHistoryRetentionDays:
         props.settings.ratio_history_retention_days ??
         DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+      statusProbeHistoryRetentionDays:
+        props.settings.status_probe_history_retention_days ??
+        DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,

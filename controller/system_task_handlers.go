@@ -19,6 +19,7 @@ import (
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	startChannelSmartScheduleStabilityReleaseWorker()
+	startChannelStatusProbeWorker()
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(channelRatioMonitorTaskHandler{})

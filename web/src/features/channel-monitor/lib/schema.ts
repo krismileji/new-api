@@ -56,6 +56,8 @@ export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
 export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 14
 export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
+export const MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 7
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const MAX_ERROR_MESSAGE_MAPPING_ENTRIES = 100
 export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
@@ -871,6 +873,17 @@ export function createChannelMonitorSettingsSchema() {
         .max(
           MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
           '倍率历史保留天数不能超过 3650 天'
+        ),
+      statusProbeHistoryRetentionDays: z.coerce
+        .number()
+        .int('状态探测执行记录保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '状态探测执行记录保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+          '状态探测执行记录保留天数不能超过 90 天'
         ),
       emailNotificationEnabled: z.boolean(),
       emailNotificationTypes: z

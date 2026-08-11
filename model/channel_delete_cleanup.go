@@ -144,6 +144,9 @@ func deleteChannelMonitorDataTx(tx *gorm.DB, channelIds []int) error {
 		&ChannelSmartScheduleRouteState{},
 		&ChannelSmartScheduleGroupPause{},
 		&ChannelSmartScheduleModelSampleState{},
+		&ChannelStatusProbeConfig{},
+		&ChannelStatusProbeState{},
+		&ChannelStatusProbeExecution{},
 	}
 	for _, table := range monitorTables {
 		if !tx.Migrator().HasTable(table) {

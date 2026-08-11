@@ -41,8 +41,50 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 	durationMs float64,
 	group string,
 ) (bool, string) {
+	return recordChannelSmartScheduleProbeResult(
+		channel,
+		result,
+		durationMs,
+		group,
+		model.ChannelSmartScheduleSampleSourceManualTest,
+		"",
+		0,
+	)
+}
+
+func recordChannelStatusProbeSmartScheduleResult(
+	channel *model.Channel,
+	result testResult,
+	durationMs float64,
+	sampleId string,
+	probeTime int64,
+) (bool, string) {
+	return recordChannelSmartScheduleProbeResult(
+		channel,
+		result,
+		durationMs,
+		"",
+		model.ChannelSmartScheduleSampleSourceStatusProbe,
+		sampleId,
+		probeTime,
+	)
+}
+
+func recordChannelSmartScheduleProbeResult(
+	channel *model.Channel,
+	result testResult,
+	durationMs float64,
+	group string,
+	source string,
+	sampleId string,
+	requestedProbeTime int64,
+) (bool, string) {
 	if channel == nil {
 		return false, "渠道不可用，未计入智能调度样本"
+	}
+	probeLabel := "手动渠道测试"
+	if source == model.ChannelSmartScheduleSampleSourceStatusProbe {
+		probeLabel = "渠道状态探测"
 	}
 	group = strings.TrimSpace(group)
 	modelName := strings.TrimSpace(result.originalModelName)
@@ -56,14 +98,17 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 	if !settings.SmartScheduleEnabled {
 		return false, "智能调度未启用，本次未计入样本"
 	}
-	probeTime := common.GetTimestamp()
+	probeTime := requestedProbeTime
+	if probeTime <= 0 || probeTime > common.GetTimestamp() {
+		probeTime = common.GetTimestamp()
+	}
 	retentionMinutes := max(
 		settings.SmartSchedulePerformanceWindowMinutes,
 		settings.SmartScheduleStabilityWindowMinutes,
 	)
 	windowStart := probeTime - int64(retentionMinutes*60)
-	sampleId := ""
-	if result.context != nil {
+	sampleId = strings.TrimSpace(sampleId)
+	if sampleId == "" && result.context != nil {
 		sampleId = strings.TrimSpace(result.context.GetString(common.RequestIdKey))
 		if sampleId == "" && result.context.Request != nil {
 			if value, ok := result.context.Request.Context().Value(common.RequestIdKey).(string); ok {
@@ -92,8 +137,8 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		)
 		if err != nil {
 			common.SysError(fmt.Sprintf(
-				"保存手动渠道测试探测样本前读取路由失败: channel_id=%d group=%s model=%s err=%s",
-				channel.Id, configured.Group, modelName, err.Error(),
+				"保存%s样本前读取路由失败: channel_id=%d group=%s model=%s err=%s",
+				probeLabel, channel.Id, configured.Group, modelName, err.Error(),
 			))
 			continue
 		}
@@ -133,15 +178,15 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 	)
 	if recoveryErr != nil {
 		common.SysError(fmt.Sprintf(
-			"保存手动渠道测试恢复状态前读取路由失败: channel_id=%d model=%s err=%s",
-			channel.Id, modelName, recoveryErr.Error(),
+			"保存%s恢复状态前读取路由失败: channel_id=%d model=%s err=%s",
+			probeLabel, channel.Id, modelName, recoveryErr.Error(),
 		))
 		return false, "恢复状态读取失败，请查看服务端日志"
 	}
 	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId:     channel.Id,
 		Model:         routeModelName,
-		Source:        model.ChannelSmartScheduleSampleSourceManualTest,
+		Source:        source,
 		SampleId:      sampleId,
 		WindowStart:   windowStart,
 		Time:          probeTime,
@@ -154,8 +199,8 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 	})
 	if err != nil {
 		common.SysError(fmt.Sprintf(
-			"保存手动渠道测试共享样本失败: channel_id=%d model=%s matched_group=%s err=%s",
-			channel.Id, modelName, eligibleGroup, err.Error(),
+			"保存%s共享样本失败: channel_id=%d model=%s matched_group=%s err=%s",
+			probeLabel, channel.Id, modelName, eligibleGroup, err.Error(),
 		))
 		return false, "样本保存失败，请查看服务端日志"
 	}

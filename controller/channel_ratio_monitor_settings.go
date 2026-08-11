@@ -31,6 +31,7 @@ const (
 	channelMonitorExecutionDetailRetentionDaysOption           = "ChannelMonitorExecutionDetailRetentionDays"
 	channelMonitorTaskRetentionDaysOption                      = "ChannelMonitorTaskRetentionDays"
 	channelMonitorRatioHistoryRetentionDaysOption              = "ChannelMonitorRatioHistoryRetentionDays"
+	channelMonitorStatusProbeHistoryRetentionDaysOption        = "ChannelMonitorStatusProbeHistoryRetentionDays"
 	channelMonitorEmailNotificationOption                      = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
@@ -75,6 +76,7 @@ const (
 	maxChannelMonitorAutoUpdateConsecutiveFailureLimit         = 100
 	minChannelMonitorCostRetentionDays                         = 1
 	maxChannelMonitorCostRetentionDays                         = 3650
+	maxChannelMonitorStatusProbeHistoryRetentionDays           = 90
 	maxChannelMonitorNotificationEmailLength                   = 254
 	maxChannelMonitorChannelOrderCount                         = 100000
 	maxChannelMonitorSmartScheduleModelLength                  = 255
@@ -93,6 +95,7 @@ const (
 	defaultChannelMonitorExecutionDetailRetentionDays          = 14
 	defaultChannelMonitorTaskRetentionDays                     = 90
 	defaultChannelMonitorRatioHistoryRetentionDays             = 365
+	defaultChannelMonitorStatusProbeHistoryRetentionDays       = 7
 	defaultChannelMonitorGroupCoefficient                      = 1
 	defaultChannelMonitorSmartScheduleInterval                 = 10
 	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
@@ -127,6 +130,7 @@ type channelMonitorSettings struct {
 	ExecutionDetailRetentionDays          int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     int                        `json:"task_retention_days"`
 	RatioHistoryRetentionDays             int                        `json:"ratio_history_retention_days"`
+	StatusProbeHistoryRetentionDays       int                        `json:"status_probe_history_retention_days"`
 	EmailNotificationEnabled              bool                       `json:"email_notification_enabled"`
 	NotificationEmail                     string                     `json:"notification_email"`
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
@@ -165,6 +169,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	ExecutionDetailRetentionDays          *int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     *int                        `json:"task_retention_days"`
 	RatioHistoryRetentionDays             *int                        `json:"ratio_history_retention_days"`
+	StatusProbeHistoryRetentionDays       *int                        `json:"status_probe_history_retention_days"`
 	EmailNotificationEnabled              *bool                       `json:"email_notification_enabled"`
 	NotificationEmail                     *string                     `json:"notification_email"`
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
@@ -206,6 +211,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawExecutionDetailRetentionDays := common.OptionMap[channelMonitorExecutionDetailRetentionDaysOption]
 	rawTaskRetentionDays := common.OptionMap[channelMonitorTaskRetentionDaysOption]
 	rawRatioHistoryRetentionDays := common.OptionMap[channelMonitorRatioHistoryRetentionDaysOption]
+	rawStatusProbeHistoryRetentionDays := common.OptionMap[channelMonitorStatusProbeHistoryRetentionDaysOption]
 	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
 	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
 	rawEmailNotificationTypes := common.OptionMap[channelMonitorEmailNotificationTypesOption]
@@ -269,6 +275,11 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil || ratioHistoryRetentionDays < minChannelMonitorCostRetentionDays || ratioHistoryRetentionDays > maxChannelMonitorCostRetentionDays {
 		ratioHistoryRetentionDays = defaultChannelMonitorRatioHistoryRetentionDays
 	}
+	statusProbeHistoryRetentionDays, err := strconv.Atoi(rawStatusProbeHistoryRetentionDays)
+	if err != nil || statusProbeHistoryRetentionDays < minChannelMonitorCostRetentionDays ||
+		statusProbeHistoryRetentionDays > maxChannelMonitorStatusProbeHistoryRetentionDays {
+		statusProbeHistoryRetentionDays = defaultChannelMonitorStatusProbeHistoryRetentionDays
+	}
 	notificationEmail, err := normalizeChannelMonitorNotificationEmail(rawNotificationEmail)
 	if err != nil {
 		notificationEmail = ""
@@ -320,6 +331,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		ExecutionDetailRetentionDays:          executionDetailRetentionDays,
 		TaskRetentionDays:                     taskRetentionDays,
 		RatioHistoryRetentionDays:             ratioHistoryRetentionDays,
+		StatusProbeHistoryRetentionDays:       statusProbeHistoryRetentionDays,
 		EmailNotificationEnabled:              emailNotificationEnabled,
 		NotificationEmail:                     notificationEmail,
 		EmailNotificationTypes:                emailNotificationTypes,
@@ -619,6 +631,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ExecutionDetailRetentionDays == nil &&
 		request.TaskRetentionDays == nil &&
 		request.RatioHistoryRetentionDays == nil &&
+		request.StatusProbeHistoryRetentionDays == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
 		request.EmailNotificationTypes == nil &&
@@ -778,6 +791,19 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.RatioHistoryRetentionDays != nil {
 		settings.RatioHistoryRetentionDays = *request.RatioHistoryRetentionDays
 		values[channelMonitorRatioHistoryRetentionDaysOption] = strconv.Itoa(settings.RatioHistoryRetentionDays)
+	}
+	if request.StatusProbeHistoryRetentionDays != nil &&
+		(*request.StatusProbeHistoryRetentionDays < minChannelMonitorCostRetentionDays ||
+			*request.StatusProbeHistoryRetentionDays > maxChannelMonitorStatusProbeHistoryRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "状态探测执行记录保留天数必须在 1 到 90 天之间",
+		})
+		return
+	}
+	if request.StatusProbeHistoryRetentionDays != nil {
+		settings.StatusProbeHistoryRetentionDays = *request.StatusProbeHistoryRetentionDays
+		values[channelMonitorStatusProbeHistoryRetentionDaysOption] = strconv.Itoa(settings.StatusProbeHistoryRetentionDays)
 	}
 	if settings.TaskRetentionDays < settings.ExecutionDetailRetentionDays {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1072,6 +1098,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"execution_detail_retention_days":            settings.ExecutionDetailRetentionDays,
 		"task_retention_days":                        settings.TaskRetentionDays,
 		"ratio_history_retention_days":               settings.RatioHistoryRetentionDays,
+		"status_probe_history_retention_days":        settings.StatusProbeHistoryRetentionDays,
 		"email_notification_enabled":                 settings.EmailNotificationEnabled,
 		"notification_email_configured":              settings.NotificationEmail != "",
 		"email_notification_types":                   settings.EmailNotificationTypes,

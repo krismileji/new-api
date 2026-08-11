@@ -545,6 +545,7 @@ export type ChannelMonitorSettings = {
   execution_detail_retention_days?: number
   task_retention_days?: number
   ratio_history_retention_days?: number
+  status_probe_history_retention_days?: number
   email_notification_enabled: boolean
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
@@ -1071,6 +1072,182 @@ export type ChannelRatioHistoryPage = {
   total: number
   items: ChannelRatioHistory[]
 }
+
+export type ChannelStatusProbeResult =
+  | 'success'
+  | 'upstream_failure'
+  | 'rate_limited'
+  | 'local_failure'
+  | 'skipped'
+  | 'canceled'
+
+export type ChannelStatusProbeHealth =
+  | 'unconfigured'
+  | 'paused'
+  | 'pending'
+  | 'healthy'
+  | 'partial'
+  | 'unhealthy'
+  | 'rate_limited'
+  | 'stale'
+
+export type ChannelStatusProbeTrigger = 'scheduled' | 'manual'
+
+export type ChannelStatusProbeSampleStatus =
+  | 'pending'
+  | 'recorded'
+  | 'skipped'
+  | 'failed'
+
+export type ChannelStatusProbeDisplayUnit = 'minute' | 'hour' | 'day'
+
+export type ChannelStatusProbeConfig = {
+  id: number
+  channel_id: number
+  enabled: boolean
+  models: string[]
+  interval_seconds: number
+  display_value: number
+  display_unit: ChannelStatusProbeDisplayUnit
+  record_sample: boolean
+  next_run_at: number
+  manual_request_id: string
+  manual_requested_at: number
+  revision: number
+  running_trigger: '' | ChannelStatusProbeTrigger
+  running_run_id: string
+  running_started_at: number
+  created_at: number
+  updated_at: number
+}
+
+export type ChannelStatusProbeState = {
+  id: number
+  channel_id: number
+  model_name: string
+  execution_id: number
+  run_id: string
+  started_at: number
+  finished_at: number
+  result: ChannelStatusProbeResult
+  success: boolean
+  request_dispatched: boolean
+  response_time_ms: number | null
+  first_token_ms: number | null
+  tps: number | null
+  error_code: string
+  error_message: string
+  consecutive_successes: number
+  consecutive_failures: number
+  last_health_result: '' | ChannelStatusProbeResult
+  last_health_execution_id: number
+  last_health_finished_at: number
+  sample_status: ChannelStatusProbeSampleStatus
+  sample_message: string
+  trigger: ChannelStatusProbeTrigger
+  endpoint: string
+  stream: boolean
+  created_at: number
+  updated_at: number
+}
+
+export type ChannelStatusProbeBucket = {
+  started_at: number
+  result: '' | ChannelStatusProbeResult
+  success: number
+  upstream_failure: number
+  rate_limited: number
+  local_failure: number
+  skipped: number
+  canceled: number
+  models?: string[]
+}
+
+export type ChannelStatusProbeModelStatus = {
+  model_name: string
+  health_status: ChannelStatusProbeHealth
+  latest: ChannelStatusProbeState | null
+  recent_window: ChannelStatusProbeBucket[]
+  avg_first_token_ms: number | null
+  avg_tps: number | null
+}
+
+export type ChannelStatusProbeChannel = {
+  id: number
+  name: string
+  type: number
+  channel_status: number
+  remark: string
+  groups: string[]
+  cost_ratio: number | null
+  supported_models: string[]
+  allows_custom_model: boolean
+  config: ChannelStatusProbeConfig | null
+  health_status: ChannelStatusProbeHealth
+  running: boolean
+  latest: ChannelStatusProbeState | null
+  avg_first_token_ms: number | null
+  avg_tps: number | null
+  model_statuses: ChannelStatusProbeModelStatus[]
+  configured_model_count: number
+}
+
+export type ChannelStatusProbeOverview = {
+  server_now: number
+  scan_interval_seconds: number
+  summary: Record<ChannelStatusProbeHealth, number>
+  groups: string[]
+  models: string[]
+  models_by_group: Record<string, string[]>
+  channels: ChannelStatusProbeChannel[]
+}
+
+export type ChannelStatusProbeExecution = {
+  id: number
+  run_id: string
+  channel_id: number
+  model_name: string
+  config_revision: number
+  trigger: ChannelStatusProbeTrigger
+  result: ChannelStatusProbeResult
+  started_at: number
+  finished_at: number
+  response_time_ms: number | null
+  first_token_ms: number | null
+  tps: number | null
+  endpoint: string
+  stream: boolean
+  request_id: string
+  request_dispatched: boolean
+  usage_available: boolean
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cached_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  error_code: string
+  error_message: string
+  sample_requested: boolean
+  sample_status: ChannelStatusProbeSampleStatus
+  sample_message: string
+  created_at: number
+}
+
+export type ChannelStatusProbeExecutionPage = {
+  page: number
+  page_size: number
+  total: number
+  items: ChannelStatusProbeExecution[]
+}
+
+export type ChannelStatusProbeSortMode =
+  | 'ratio_asc'
+  | 'ratio_desc'
+  | 'first_token_asc'
+  | 'first_token_desc'
+  | 'tps_desc'
+  | 'tps_asc'
 
 export type ChannelMonitorApiResponse<T> = {
   success: boolean

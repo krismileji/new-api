@@ -27,6 +27,7 @@ import {
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MAX_PROBE_RESPONSE_DELAY_MS,
   MAX_PROBE_RESPONSE_TOKEN_COUNT,
@@ -209,6 +210,7 @@ describe('channel monitor settings schema', () => {
       executionDetailRetentionDays: 14,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
+      statusProbeHistoryRetentionDays: 7,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -240,6 +242,7 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.executionDetailRetentionDays, 14)
     assert.equal(settings.taskRetentionDays, 90)
     assert.equal(settings.ratioHistoryRetentionDays, 365)
+    assert.equal(settings.statusProbeHistoryRetentionDays, 7)
     assert.equal(
       settings.errorMessageMapping,
       '{"429":"请求过于频繁，请稍后再试"}'
@@ -272,6 +275,7 @@ describe('channel monitor settings schema', () => {
       executionDetailRetentionDays: 14,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
+      statusProbeHistoryRetentionDays: 7,
       emailNotificationEnabled: true,
       notificationEmail: 'alerts@example.com',
       emailNotificationTypes: [],
@@ -316,6 +320,7 @@ describe('channel monitor settings schema', () => {
       executionDetailRetentionDays: 14,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
+      statusProbeHistoryRetentionDays: 7,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -446,6 +451,27 @@ describe('channel monitor settings schema', () => {
           false
         )
       }
+    }
+    for (const retentionDays of [
+      MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+      MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+    ]) {
+      assert.equal(
+        schema.parse({
+          ...baseSettings,
+          statusProbeHistoryRetentionDays: retentionDays,
+        }).statusProbeHistoryRetentionDays,
+        retentionDays
+      )
+    }
+    for (const retentionDays of [0, 1.5, 91]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          statusProbeHistoryRetentionDays: retentionDays,
+        }).success,
+        false
+      )
     }
     const invalidRetentionRelationship = schema.safeParse({
       ...baseSettings,
@@ -626,6 +652,7 @@ describe('channel monitor settings schema', () => {
       executionDetailRetentionDays: 14,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
+      statusProbeHistoryRetentionDays: 7,
       emailNotificationEnabled: false,
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
