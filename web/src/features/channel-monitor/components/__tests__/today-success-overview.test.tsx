@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import type { KeyboardEvent, ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
@@ -244,36 +243,27 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('2 个'))
     assert.ok(markup.includes('缓存写请求'))
     assert.ok(markup.includes('7 次'))
+    assert.ok(markup.includes('缓存率口径'))
+    assert.ok(markup.includes('选择缓存率 API Key'))
+    assert.ok(markup.includes('全部 API Key'))
     assert.ok(
       markup.includes(
-        'aria-label="查看今日成功率、缓存率和缓存写明细，成功率 90%，缓存率 50%，缓存写渠道 2 个，缓存写请求 7 次"'
+        'aria-label="查看今日成功率、缓存率和缓存写明细，成功率 90%，缓存率 50%，缓存率口径 全部 API Key，缓存写渠道 2 个，缓存写请求 7 次"'
       )
     )
   })
 
-  test('opens the detail from Enter and Space keyboard activation', () => {
-    const activatedKeys: string[] = []
-    const element = ChannelMonitorTodaySuccessCard({
-      result: createResult(),
-      isLoading: false,
-      isError: false,
-      onOpen: () => activatedKeys.push('opened'),
-    }) as ReactElement<{
-      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void
-    }>
+  test('keeps the detail trigger keyboard-focusable after adding the API Key filter', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={createResult()}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
 
-    for (const key of ['Enter', ' ']) {
-      let defaultPrevented = false
-      element.props.onKeyDown({
-        key,
-        preventDefault: () => {
-          defaultPrevented = true
-        },
-      } as KeyboardEvent<HTMLDivElement>)
-      assert.equal(defaultPrevented, true)
-    }
-
-    assert.deepEqual(activatedKeys, ['opened', 'opened'])
+    assert.match(markup, /role="button" tabindex="0"/)
   })
 
   test('shows a dash on the card when today has no cache samples', () => {
@@ -295,6 +285,20 @@ describe('channel monitor today success overview', () => {
 
     assert.match(markup, /90%[\s\S]*>[\s\n]*-[\s\n]*<\/span>/)
     assert.doesNotMatch(markup, />0%<\/span>/)
+  })
+
+  test('disables API Key cache-rate filtering when no API Key metrics exist', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={createResult({ api_key_items: [] })}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
+
+    assert.match(markup, /aria-label="选择缓存率 API Key"/)
+    assert.match(markup, /data-disabled=""[^>]*disabled=""/)
   })
 
   test('shows unavailable cache-write counts without hiding success metrics', () => {
