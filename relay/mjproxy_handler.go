@@ -228,7 +228,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
-	service.BeginPerCallChannelDailyCostAttempt(c, info.ChannelId, modelName, priceData)
+	service.BeginChannelDailyCostAttempt(c, info.ChannelId)
 	defer service.FinalizeChannelDailyCostAttempt(c, info.ChannelId, false)
 	mjResp, _, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	if err != nil {
@@ -537,7 +537,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	}
 
 	costChannelID := c.GetInt("channel_id")
-	service.BeginPerCallChannelDailyCostAttempt(c, costChannelID, modelName, priceData)
+	service.BeginChannelDailyCostAttempt(c, costChannelID)
 	defer service.FinalizeChannelDailyCostAttempt(c, costChannelID, false)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	if err != nil {

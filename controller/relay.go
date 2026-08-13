@@ -175,11 +175,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 	}
-	estimatedMaxTokens := 0
-	if meta != nil {
-		estimatedMaxTokens = meta.MaxTokens
-	}
-
 	defer func() {
 		// Only return quota if downstream failed and quota was actually pre-consumed
 		if newAPIError != nil {
@@ -274,7 +269,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		service.BeginChannelDailyCostAttemptWithEstimate(c, channel.Id, relayInfo, estimatedMaxTokens)
+		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
@@ -803,7 +798,7 @@ func RelayTask(c *gin.Context) {
 		addUsedChannel(c, channel.Id)
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		service.BeginPerCallChannelDailyCostAttempt(c, channel.Id, relayInfo.OriginModelName, relayInfo.PriceData)
+		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)

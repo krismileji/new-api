@@ -465,11 +465,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
-	estimatedMaxTokens := 0
-	if tokenCountMeta != nil {
-		estimatedMaxTokens = tokenCountMeta.MaxTokens
-	}
-	service.BeginChannelDailyCostAttemptWithEstimate(c, channel.Id, info, estimatedMaxTokens)
+	service.BeginChannelDailyCostAttempt(c, channel.Id)
 	defer func() {
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, result.requestDispatched)
 	}()

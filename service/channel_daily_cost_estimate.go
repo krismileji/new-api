@@ -2,45 +2,18 @@ package service
 
 import (
 	"math"
-	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 )
 
 const (
-	channelDailyCostEstimateSafetyMargin      = 1.05
-	channelDailyCostEstimateDefaultMaxTokens  = 8192
-	channelDailyCostEstimateCalibrationWindow = 32
-	channelDailyCostEstimateMaxProfiles       = 4096
+	channelDailyCostEstimateSafetyMargin     = 1.05
+	channelDailyCostEstimateDefaultMaxTokens = 8192
 )
-
-type channelDailyCostEstimateProfileKey struct {
-	ChannelId int
-	ModelName string
-}
-
-type channelDailyCostEstimateProfile struct {
-	mu          sync.RWMutex
-	ratios      [channelDailyCostEstimateCalibrationWindow]float64
-	count       int
-	next        int
-	calibration float64
-}
-
-type channelDailyCostEstimateCalibrator struct {
-	profiles sync.Map
-	count    atomic.Int64
-}
-
-var dailyCostEstimateCalibrator channelDailyCostEstimateCalibrator
 
 func channelDailyCostEstimateQuotaBeforeGroup(info *relaycommon.RelayInfo, maxTokens int, quotaPerUnit float64) float64 {
 	if info == nil {
@@ -125,21 +98,6 @@ func channelDailyCostEstimateToolQuota(info *relaycommon.RelayInfo, quotaPerUnit
 	return validChannelDailyCostEstimate(quota)
 }
 
-func channelDailyCostEstimatePerCallQuotaBeforeGroup(modelName string, priceData types.PriceData, quotaPerUnit float64) float64 {
-	quotaPerUnit = channelDailyCostEstimateQuotaPerUnitOrDefault(quotaPerUnit)
-	if quotaPerUnit == 0 {
-		return 0
-	}
-	quota := priceData.ModelPrice * quotaPerUnit
-	if !priceData.UsePrice {
-		quota = priceData.ModelRatio / 2 * quotaPerUnit
-	}
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quota = priceData.ApplyOtherRatiosToFloat(quota)
-	}
-	return validChannelDailyCostEstimate(quota)
-}
-
 func channelDailyCostEstimateQuotaPerUnitOrDefault(quotaPerUnit float64) float64 {
 	if quotaPerUnit > 0 && !math.IsNaN(quotaPerUnit) && !math.IsInf(quotaPerUnit, 0) {
 		return quotaPerUnit
@@ -176,121 +134,4 @@ func validChannelDailyCostEstimate(quota float64) float64 {
 		return float64(common.MaxQuota)
 	}
 	return quota
-}
-
-func channelDailyCostEstimatedQuota(channelId int, modelName string, quotaBeforeGroup float64) float64 {
-	quotaBeforeGroup = validChannelDailyCostEstimate(quotaBeforeGroup)
-	if quotaBeforeGroup == 0 {
-		return 0
-	}
-	calibration := dailyCostEstimateCalibrator.factor(channelId, modelName)
-	return validChannelDailyCostEstimate(quotaBeforeGroup * calibration * channelDailyCostEstimateSafetyMargin)
-}
-
-func observeChannelDailyCostEstimate(channelId int, modelName string, estimatedQuotaBeforeGroup float64, actualQuotaBeforeGroup float64) {
-	estimatedQuotaBeforeGroup = validChannelDailyCostEstimate(estimatedQuotaBeforeGroup)
-	actualQuotaBeforeGroup = validChannelDailyCostEstimate(actualQuotaBeforeGroup)
-	if channelId <= 0 || estimatedQuotaBeforeGroup == 0 || actualQuotaBeforeGroup == 0 {
-		return
-	}
-	delta := actualQuotaBeforeGroup - estimatedQuotaBeforeGroup
-	if math.IsNaN(delta) || math.IsInf(delta, 0) {
-		return
-	}
-	dailyCostEstimateCalibrator.observe(channelDailyCostEstimateProfileKey{
-		ChannelId: channelId,
-		ModelName: strings.TrimSpace(modelName),
-	}, estimatedQuotaBeforeGroup, delta)
-}
-
-func (c *channelDailyCostEstimateCalibrator) observe(key channelDailyCostEstimateProfileKey, estimatedQuota float64, delta float64) {
-	if estimatedQuota <= 0 || math.IsNaN(estimatedQuota) || math.IsInf(estimatedQuota, 0) || delta <= 0 {
-		return
-	}
-	ratio := 1 + delta/estimatedQuota
-	if ratio <= 1 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
-		return
-	}
-	value, exists := c.profiles.Load(key)
-	if !exists {
-		reserved := false
-		for {
-			count := c.count.Load()
-			if count >= channelDailyCostEstimateMaxProfiles {
-				value, exists = c.profiles.Load(key)
-				if !exists {
-					return
-				}
-				break
-			}
-			if c.count.CompareAndSwap(count, count+1) {
-				reserved = true
-				break
-			}
-		}
-		if reserved {
-			created := &channelDailyCostEstimateProfile{calibration: 1}
-			value, exists = c.profiles.LoadOrStore(key, created)
-			if !exists {
-				value = created
-			} else {
-				c.count.Add(-1)
-			}
-		}
-	}
-	profile, ok := value.(*channelDailyCostEstimateProfile)
-	if !ok || profile == nil {
-		return
-	}
-	profile.mu.Lock()
-	if profile.count < channelDailyCostEstimateCalibrationWindow {
-		profile.ratios[profile.count] = ratio
-		profile.count++
-		if ratio > profile.calibration {
-			profile.calibration = ratio
-		}
-	} else {
-		wasMaximum := profile.ratios[profile.next] == profile.calibration
-		profile.ratios[profile.next] = ratio
-		profile.next = (profile.next + 1) % channelDailyCostEstimateCalibrationWindow
-		if ratio > profile.calibration {
-			profile.calibration = ratio
-		} else if wasMaximum {
-			profile.calibration = 1
-			for _, observedRatio := range profile.ratios {
-				if observedRatio > profile.calibration {
-					profile.calibration = observedRatio
-				}
-			}
-		}
-	}
-	profile.mu.Unlock()
-}
-
-func (c *channelDailyCostEstimateCalibrator) factor(channelId int, modelName string) float64 {
-	key := channelDailyCostEstimateProfileKey{ChannelId: channelId, ModelName: strings.TrimSpace(modelName)}
-	value, exists := c.profiles.Load(key)
-	if !exists {
-		return 1
-	}
-	profile, ok := value.(*channelDailyCostEstimateProfile)
-	if !ok || profile == nil {
-		return 1
-	}
-	profile.mu.RLock()
-	if profile.count == 0 {
-		profile.mu.RUnlock()
-		return 1
-	}
-	factor := profile.calibration
-	profile.mu.RUnlock()
-	return max(1, factor)
-}
-
-func resetChannelDailyCostEstimateCalibratorForTest() {
-	dailyCostEstimateCalibrator.profiles.Range(func(key any, _ any) bool {
-		dailyCostEstimateCalibrator.profiles.Delete(key)
-		return true
-	})
-	dailyCostEstimateCalibrator.count.Store(0)
 }

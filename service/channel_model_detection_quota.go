@@ -22,8 +22,8 @@ type ChannelModelDetectionQuotaResult struct {
 	Reliable       bool
 }
 
-// EstimateChannelModelDetectionQuota freezes the same conservative,
-// pre-group estimate used by channel cost monitoring without recording it.
+// EstimateChannelModelDetectionQuota calculates a conservative pre-group
+// estimate for model detection only. It never writes channel daily costs.
 func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens int, snapshot ChannelModelDetectionCostSnapshot) (int64, bool) {
 	if info == nil {
 		return 0, false
@@ -32,8 +32,8 @@ func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens i
 	if snapshot.QuotaPerUnit != nil {
 		quotaPerUnit = float64(*snapshot.QuotaPerUnit)
 	}
-	baseEstimate := channelDailyCostEstimateQuotaBeforeGroup(info, maxTokens, quotaPerUnit)
-	estimate := channelDailyCostEstimatedQuota(info.ChannelId, info.OriginModelName, baseEstimate)
+	estimate := channelDailyCostEstimateQuotaBeforeGroup(info, maxTokens, quotaPerUnit)
+	estimate = validChannelDailyCostEstimate(estimate * channelDailyCostEstimateSafetyMargin)
 	if estimate == 0 {
 		return 0, true
 	}
