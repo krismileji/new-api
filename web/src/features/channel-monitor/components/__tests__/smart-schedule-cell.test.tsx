@@ -348,6 +348,27 @@ describe('channel monitor smart schedule cell status', () => {
     )
   })
 
+  test('reveals the nonparticipating models from the partial badge', () => {
+    const fixturePath = fileURLToPath(
+      new URL(
+        './smart-schedule-cell-partial-tooltip.fixture.tsx',
+        import.meta.url
+      )
+    )
+    const execution = spawnSync(process.execPath, [fixturePath], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    })
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr ||
+        execution.stdout ||
+        '部分参与模型 Tooltip 交互测试失败'
+    )
+  })
+
   test('disables participation while a participation update is pending', () => {
     const markup = renderCell([createRoute()], true)
     const switchElement = markup.match(/<[^>]*role="switch"[^>]*>/)?.[0] ?? ''

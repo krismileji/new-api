@@ -32,6 +32,12 @@ import {
 } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -405,6 +411,12 @@ export function ChannelMonitorSmartScheduleCell(
   const participating = participatingCount > 0
   const allParticipating =
     props.routes.length > 0 && participatingCount === props.routes.length
+  const nonParticipatingRoutes = props.routes.filter(
+    (route) => !channelMonitorSmartScheduleRouteParticipates(route)
+  )
+  const nonParticipatingModelLabel = nonParticipatingRoutes
+    .map((route) => `${route.group} / ${route.model}`)
+    .join('、')
   let participationVariant: 'outline' | 'secondary' | 'warning' = 'outline'
   let participationLabel = `未参与 0/${props.routes.length}`
   if (allParticipating) {
@@ -429,9 +441,47 @@ export function ChannelMonitorSmartScheduleCell(
           onCheckedChange={(checked) => props.onUpdate(!checked)}
           aria-label={`${participating ? '取消' : '开启'} ${props.channelName} 全部路由的智能调度参与`}
         />
-        <Badge variant={participationVariant} className='whitespace-nowrap'>
-          {participationLabel}
-        </Badge>
+        {nonParticipatingRoutes.length > 0 && participating ? (
+          <TooltipProvider delay={150}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className='focus-visible:ring-ring/50 inline-flex min-w-0 cursor-help rounded-4xl focus-visible:ring-2 focus-visible:outline-none'
+                    tabIndex={0}
+                    aria-label={`查看未参与智能调度的模型：${nonParticipatingModelLabel}`}
+                  />
+                }
+              >
+                <Badge
+                  variant={participationVariant}
+                  className='whitespace-nowrap'
+                >
+                  {participationLabel}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent
+                side='top'
+                className='max-w-80 text-left leading-5 whitespace-normal'
+              >
+                <div className='space-y-1'>
+                  <div className='font-medium'>未参与智能调度的模型</div>
+                  <div className='max-h-48 overflow-y-auto break-all'>
+                    {nonParticipatingRoutes.map((route) => (
+                      <div key={`${route.group}\u0000${route.model}`}>
+                        {route.group} / {route.model}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Badge variant={participationVariant} className='whitespace-nowrap'>
+            {participationLabel}
+          </Badge>
+        )}
       </div>
       <div
         className='flex h-5 min-w-0 items-center'
