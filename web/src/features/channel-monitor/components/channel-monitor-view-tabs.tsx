@@ -44,14 +44,6 @@ export function ChannelMonitorViewTabs(props: ChannelMonitorViewTabsProps) {
         <HugeiconsIcon icon={Analytics01Icon} data-icon='inline-start' />
         渠道 {props.channelCount}
       </TabsTrigger>
-      <TabsTrigger value='status-probe'>
-        <HugeiconsIcon icon={TestTubeIcon} data-icon='inline-start' />
-        状态监测
-      </TabsTrigger>
-      <TabsTrigger value='model-detection'>
-        <HugeiconsIcon icon={FingerPrintScanIcon} data-icon='inline-start' />
-        模型检测
-      </TabsTrigger>
       <TabsTrigger value='smart-schedule'>
         <HugeiconsIcon icon={Route01Icon} data-icon='inline-start' />
         智能调度 {props.smartSchedulePoolCount}
@@ -73,6 +65,14 @@ export function ChannelMonitorViewTabs(props: ChannelMonitorViewTabsProps) {
             <span className='sr-only'>存在稳定性试放中的调度状态</span>
           </>
         ) : null}
+      </TabsTrigger>
+      <TabsTrigger value='status-probe'>
+        <HugeiconsIcon icon={TestTubeIcon} data-icon='inline-start' />
+        状态监测
+      </TabsTrigger>
+      <TabsTrigger value='model-detection'>
+        <HugeiconsIcon icon={FingerPrintScanIcon} data-icon='inline-start' />
+        模型检测
       </TabsTrigger>
       <TabsTrigger value='groups'>
         <HugeiconsIcon icon={Layers01Icon} data-icon='inline-start' />

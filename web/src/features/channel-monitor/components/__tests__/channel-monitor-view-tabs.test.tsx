@@ -26,7 +26,7 @@ import { Tabs } from '@/components/ui/tabs'
 import { ChannelMonitorViewTabs } from '../channel-monitor-view-tabs'
 
 describe('渠道监控视图导航', () => {
-  test('按渠道、状态监测、模型检测、智能调度、分组、模型性能的顺序展示', () => {
+  test('按渠道、智能调度、状态监测、模型检测、分组、模型性能的顺序展示', () => {
     const markup = renderToStaticMarkup(
       <Tabs defaultValue='channels'>
         <ChannelMonitorViewTabs
@@ -41,9 +41,9 @@ describe('渠道监控视图导航', () => {
     )
     const labels = [
       '渠道 12',
+      '智能调度 4',
       '状态监测',
       '模型检测',
-      '智能调度 4',
       '分组 3',
       '模型性能 5',
     ]
