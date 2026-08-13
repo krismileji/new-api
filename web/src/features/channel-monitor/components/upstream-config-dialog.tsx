@@ -80,10 +80,7 @@ import {
   saveChannelMonitorUpstreamConfig,
   testChannelMonitorUpstreamConfig,
 } from '../api'
-import {
-  createChannelMonitorCustomFormConfig,
-  createChannelMonitorCustomRequestConfig,
-} from '../lib/custom-upstream'
+import { createChannelMonitorCustomFormConfig } from '../lib/custom-upstream'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
 import {
@@ -91,12 +88,13 @@ import {
   MAX_BALANCE_THRESHOLD,
   type UpstreamConfigFormValues,
 } from '../lib/schema'
+import { createChannelMonitorUpstreamRequest } from '../lib/upstream-request'
 import type {
   ChannelMonitorItem,
   ChannelMonitorCostConversion,
   ChannelMonitorPolicyAction,
   ChannelMonitorUpstreamGroup,
-  ChannelMonitorUpstreamRequest,
+  ChannelMonitorUpstreamAuthType,
   NewAPIGroupRatioResult,
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
@@ -138,60 +136,6 @@ const SUB2API_ACCESS_TOKEN_COMMAND =
 const SUB2API_REFRESH_TOKEN_COMMAND =
   "copy(localStorage.getItem('refresh_token') || '')"
 
-function createUpstreamRequest(
-  values: UpstreamConfigFormValues
-): ChannelMonitorUpstreamRequest {
-  const userAuthentication =
-    values.upstreamType === 'new_api' && values.authType === 'user'
-  const sub2APITokenAuthentication =
-    values.upstreamType === 'sub2api' && values.authType === 'token'
-  const sub2APIRefreshTokenAuthentication =
-    values.upstreamType === 'sub2api' && values.authType === 'refresh_token'
-  const sub2APIAccountAuthentication =
-    values.upstreamType === 'sub2api' && values.authType === 'account'
-  let costConversion: ChannelMonitorCostConversion = { mode: 'none' }
-  if (values.costConversionMode === 'recharge') {
-    costConversion = {
-      mode: 'recharge',
-      paid_cny: values.rechargePaidCny,
-      credited_usd: values.rechargeCreditedUsd,
-    }
-  } else if (values.costConversionMode === 'subscription') {
-    costConversion = {
-      mode: 'subscription',
-      subscription_period: values.subscriptionPeriod,
-      subscription_price_cny: values.subscriptionPriceCny,
-      subscription_daily_usd: values.subscriptionDailyUsd,
-    }
-  }
-  return {
-    type: values.upstreamType,
-    base_url: values.baseUrl.trim(),
-    group: values.group.trim(),
-    auth_type: values.authType,
-    user_id: userAuthentication ? values.userId : 0,
-    access_token:
-      userAuthentication ||
-      sub2APITokenAuthentication ||
-      sub2APIRefreshTokenAuthentication
-        ? values.accessToken.trim()
-        : '',
-    account: sub2APIAccountAuthentication ? values.account.trim() : '',
-    password: sub2APIAccountAuthentication ? values.password : '',
-    single_channel_action: values.singleChannelAction,
-    multiple_channels_action: values.multipleChannelsAction,
-    balance_warning_threshold: values.balanceWarningThreshold,
-    balance_auto_disable_threshold: values.balanceAutoDisableThreshold,
-    ratio_sync_enabled: values.ratioSyncEnabled,
-    balance_sync_enabled: values.balanceSyncEnabled,
-    cost_conversion: costConversion,
-    custom_config:
-      values.upstreamType === 'custom'
-        ? createChannelMonitorCustomRequestConfig(values.customConfig)
-        : undefined,
-  }
-}
-
 export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const queryClient = useQueryClient()
   const { copyToClipboard } = useCopyToClipboard({
@@ -201,6 +145,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const [testResult, setTestResult] = useState<NewAPIGroupRatioResult | null>(
     null
   )
+  const [testedAuthType, setTestedAuthType] =
+    useState<ChannelMonitorUpstreamAuthType | null>(null)
   const [ratioEditorOpen, setRatioEditorOpen] = useState(false)
   const [upstreamVersion, setUpstreamVersion] = useState<string | null>(null)
   const savedUpstream = props.channel.upstream
@@ -233,6 +179,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       authType: props.channel.upstream?.auth_type || 'public',
       userId: props.channel.upstream?.user_id || 0,
       accessToken: '',
+      refreshToken: '',
       account: savedUpstream?.account || '',
       password: '',
       singleChannelAction: savedUpstream?.single_channel_action || 'none',
@@ -272,6 +219,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const baseUrl = useWatch({ control: form.control, name: 'baseUrl' })
   const authType = useWatch({ control: form.control, name: 'authType' })
   const accessToken = useWatch({ control: form.control, name: 'accessToken' })
+  const refreshToken = useWatch({ control: form.control, name: 'refreshToken' })
   const account = useWatch({ control: form.control, name: 'account' })
   const password = useWatch({ control: form.control, name: 'password' })
   const ratioSyncEnabled = useWatch({
@@ -292,13 +240,26 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const isCustom = upstreamType === 'custom'
   const needsSub2APIToken = isSub2API && authType === 'token'
   const needsSub2APIRefreshToken = isSub2API && authType === 'refresh_token'
+  const usesSub2APITokenCredential =
+    needsSub2APIToken || needsSub2APIRefreshToken
   const needsSub2APIAccount = isSub2API && authType === 'account'
   const hasMatchingSavedAccessToken =
     savedCredential?.hasAccessToken === true &&
     savedCredential.type === upstreamType &&
     savedCredential.authType === authType
-  const hasSub2APIToken =
-    hasMatchingSavedAccessToken || accessToken.trim().length > 0
+  const hasSavedSub2APIToken =
+    savedCredential?.hasAccessToken === true &&
+    savedCredential.type === 'sub2api' &&
+    savedCredential.authType === 'token' &&
+    savedCredential.baseUrl === baseUrl
+  const hasSavedSub2APIRefreshToken =
+    savedCredential?.hasAccessToken === true &&
+    savedCredential.type === 'sub2api' &&
+    savedCredential.authType === 'refresh_token' &&
+    savedCredential.baseUrl === baseUrl
+  const hasSub2APIToken = hasSavedSub2APIToken || accessToken.trim().length > 0
+  const hasSub2APIRefreshToken =
+    hasSavedSub2APIRefreshToken || refreshToken.trim().length > 0
   const hasMatchingSavedPassword =
     savedCredential?.hasPassword === true &&
     savedCredential.type === upstreamType &&
@@ -312,13 +273,13 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     !isCustom &&
     (needsUserAuthentication ||
       (needsSub2APIToken && hasSub2APIToken) ||
-      (needsSub2APIRefreshToken && hasSub2APIToken) ||
+      (needsSub2APIRefreshToken && hasSub2APIRefreshToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const canLoadGroups =
     !isCustom &&
     (!isSub2API ||
       (needsSub2APIToken && hasSub2APIToken) ||
-      (needsSub2APIRefreshToken && hasSub2APIToken) ||
+      (needsSub2APIRefreshToken && hasSub2APIRefreshToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const authDescription =
     authType === 'public'
@@ -377,6 +338,12 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   } else if (isCustom) {
     groupSourceDescription = '自定义上游分组为可选项，仅用于展示和记录'
   }
+  let testResultTitle = '测试成功'
+  if (testedAuthType === 'token') {
+    testResultTitle = '手动 Token 测试成功'
+  } else if (testedAuthType === 'refresh_token') {
+    testResultTitle = 'Refresh Token 测试成功'
+  }
   const upstreamGroupByName = useMemo(
     () => new Map(upstreamGroups.map((group) => [group.name, group])),
     [upstreamGroups]
@@ -400,8 +367,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const testMutation = useMutation({
     mutationFn: testChannelMonitorUpstreamConfig,
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
+    onSuccess: (response, variables) => {
       setTestResult(response.data)
+      setTestedAuthType(variables.config.auth_type)
       if (response.data.balance.error) {
         toast.warning('上游倍率获取成功，但余额获取失败')
       } else {
@@ -419,7 +387,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   })
   const groupsMutation = useMutation({
     mutationFn: (values: UpstreamConfigFormValues) => {
-      const config = createUpstreamRequest(values)
+      const config = createChannelMonitorUpstreamRequest(values)
       return listChannelMonitorUpstreamGroups({
         channelId: props.channel.id,
         config,
@@ -450,7 +418,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     mutationFn: async (values: UpstreamConfigFormValues) => {
       await saveChannelMonitorUpstreamConfig({
         channelId: props.channel.id,
-        config: createUpstreamRequest(values),
+        config: createChannelMonitorUpstreamRequest(values),
       })
       try {
         const response = await applyChannelMonitorUpstreamGroup(
@@ -497,16 +465,59 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     if (!requireGroup(values)) return
     saveMutation.mutate({
       channelId: props.channel.id,
-      config: createUpstreamRequest(values),
+      config: createChannelMonitorUpstreamRequest(values),
     })
   })
   const handleTest = form.handleSubmit((values) => {
     if (!requireGroup(values)) return
+    setTestResult(null)
+    setTestedAuthType(values.authType)
     testMutation.mutate({
       channelId: props.channel.id,
-      config: createUpstreamRequest(values),
+      config: createChannelMonitorUpstreamRequest(values),
     })
   })
+  const handleTestSub2APICredential = async (
+    testAuthType: 'token' | 'refresh_token'
+  ) => {
+    const fieldName =
+      testAuthType === 'refresh_token' ? 'refreshToken' : 'accessToken'
+    const values = form.getValues()
+    if (!requireGroup(values)) return
+
+    const credential = values[fieldName].trim()
+    const hasSavedCredential =
+      testAuthType === 'refresh_token'
+        ? hasSavedSub2APIRefreshToken
+        : hasSavedSub2APIToken
+    if (!credential && !hasSavedCredential) {
+      form.setError(fieldName, {
+        type: 'manual',
+        message:
+          testAuthType === 'refresh_token'
+            ? '请输入 Sub2API Refresh Token'
+            : '请输入 Sub2API Token（旧版访问令牌）',
+      })
+      return
+    }
+    if (credential.length > 4096) {
+      form.setError(fieldName, {
+        type: 'manual',
+        message:
+          testAuthType === 'refresh_token'
+            ? 'Refresh Token 过长'
+            : '访问令牌过长',
+      })
+      return
+    }
+
+    setTestResult(null)
+    setTestedAuthType(testAuthType)
+    testMutation.mutate({
+      channelId: props.channel.id,
+      config: createChannelMonitorUpstreamRequest(values, testAuthType),
+    })
+  }
   const handleLoadGroups = form.handleSubmit((values) => {
     groupsMutation.mutate(values)
   })
@@ -535,7 +546,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     }
   }
   const handlePasteToken = async (
-    fieldName: 'accessToken',
+    fieldName: 'accessToken' | 'refreshToken',
     tokenLabel: string
   ) => {
     if (!navigator.clipboard?.readText) {
@@ -543,15 +554,17 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       return
     }
     try {
-      const accessToken = (await navigator.clipboard.readText()).trim()
-      if (!accessToken) {
+      const token = (await navigator.clipboard.readText()).trim()
+      if (!token) {
         toast.error(`剪贴板中没有${tokenLabel}`)
         return
       }
-      form.setValue(fieldName, accessToken, {
+      form.setValue(fieldName, token, {
         shouldDirty: true,
         shouldValidate: true,
       })
+      setTestResult(null)
+      setTestedAuthType(null)
       toast.success(`${tokenLabel} 已粘贴`)
     } catch {
       toast.error('读取剪贴板失败，请手动粘贴')
@@ -618,10 +631,12 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                             shouldValidate: true,
                           })
                           form.setValue('accessToken', '')
+                          form.setValue('refreshToken', '')
                           form.setValue('account', '')
                           form.setValue('password', '')
                           setUpstreamGroups([])
                           setTestResult(null)
+                          setTestedAuthType(null)
                           setUpstreamVersion(null)
                         }}
                         variant='outline'
@@ -663,6 +678,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           field.onChange(event)
                           setUpstreamGroups([])
                           setTestResult(null)
+                          setTestedAuthType(null)
                           setUpstreamVersion(null)
                         }}
                         name={field.name}
@@ -1025,6 +1041,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                               form.setValue('accessToken', '')
                               setUpstreamGroups([])
                               setTestResult(null)
+                              setTestedAuthType(null)
                             }
                           }}
                           variant='outline'
@@ -1069,10 +1086,10 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                               return
                             }
                             field.onChange(nextValue)
-                            form.setValue('accessToken', '')
                             form.setValue('password', '')
                             setUpstreamGroups([])
                             setTestResult(null)
+                            setTestedAuthType(null)
                             setUpstreamVersion(null)
                           }}
                           variant='outline'
@@ -1117,41 +1134,20 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           )}
                           获取上游版本
                         </Button>
-                        {needsSub2APIToken || needsSub2APIRefreshToken ? (
-                          <>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleOpenSub2APILogin}
-                              disabled={pending || !baseUrl.trim()}
-                            >
-                              <HugeiconsIcon
-                                icon={LinkSquare01Icon}
-                                data-icon='inline-start'
-                              />
-                              打开上游登录
-                            </Button>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={() =>
-                                void copyToClipboard(
-                                  needsSub2APIRefreshToken
-                                    ? SUB2API_REFRESH_TOKEN_COMMAND
-                                    : SUB2API_ACCESS_TOKEN_COMMAND
-                                )
-                              }
-                              disabled={pending}
-                            >
-                              <HugeiconsIcon
-                                icon={Copy01Icon}
-                                data-icon='inline-start'
-                              />
-                              复制提取命令
-                            </Button>
-                          </>
+                        {usesSub2APITokenCredential ? (
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={handleOpenSub2APILogin}
+                            disabled={pending || !baseUrl.trim()}
+                          >
+                            <HugeiconsIcon
+                              icon={LinkSquare01Icon}
+                              data-icon='inline-start'
+                            />
+                            打开上游登录
+                          </Button>
                         ) : null}
                         {upstreamVersion ? (
                           <span className='text-muted-foreground text-sm'>
@@ -1205,6 +1201,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                             }
                             autoComplete='new-password'
                             {...field}
+                            onChange={(event) => {
+                              field.onChange(event)
+                              setTestResult(null)
+                              setTestedAuthType(null)
+                            }}
                           />
                         </FormControl>
                         <FormDescription>
@@ -1253,6 +1254,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                             }
                             autoComplete='new-password'
                             {...field}
+                            onChange={(event) => {
+                              field.onChange(event)
+                              setTestResult(null)
+                              setTestedAuthType(null)
+                            }}
                           />
                         </FormControl>
                         <FormDescription>
@@ -1268,105 +1274,185 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                 </div>
               ) : null}
 
-              {needsSub2APIToken ? (
-                <FormField
-                  control={form.control}
-                  name='accessToken'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Sub2API 手动 Token</FormLabel>
-                      <div className='flex min-w-0 gap-2'>
+              {usesSub2APITokenCredential ? (
+                <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
+                  <FormField
+                    control={form.control}
+                    name='accessToken'
+                    render={({ field }) => (
+                      <FormItem className='min-w-0'>
+                        <FormLabel>Sub2API 手动 Token</FormLabel>
                         <FormControl>
                           <PasswordInput
-                            className='min-w-0 flex-1'
+                            className='w-full min-w-0'
                             placeholder={
-                              hasMatchingSavedAccessToken
-                                ? '留空保留原 Token'
+                              hasSavedSub2APIToken
+                                ? '留空使用已保存 Token'
                                 : '输入登录后的 JWT Token'
                             }
                             autoComplete='new-password'
                             {...field}
+                            onChange={(event) => {
+                              field.onChange(event)
+                              setTestResult(null)
+                              setTestedAuthType(null)
+                            }}
                           />
                         </FormControl>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          onClick={() =>
-                            void handlePasteToken('accessToken', '访问令牌')
-                          }
-                          disabled={pending}
-                          className='shrink-0'
-                        >
-                          <HugeiconsIcon
-                            icon={ClipboardPasteIcon}
-                            data-icon='inline-start'
-                          />
-                          粘贴
-                        </Button>
-                      </div>
-                      <FormDescription>
-                        适用于上游开启 Turnstile、Cloudflare 人机验证或 TOTP
-                        的情况；登录后执行已复制的控制台命令，再点击“粘贴”
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : null}
-
-              {needsSub2APIRefreshToken ? (
-                <FormField
-                  control={form.control}
-                  name='accessToken'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Sub2API Refresh Token</FormLabel>
-                      <div className='flex min-w-0 gap-2'>
+                        <div className='flex flex-wrap gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void handlePasteToken('accessToken', '手动 Token')
+                            }
+                            disabled={pending}
+                          >
+                            <HugeiconsIcon
+                              icon={ClipboardPasteIcon}
+                              data-icon='inline-start'
+                            />
+                            粘贴
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void copyToClipboard(SUB2API_ACCESS_TOKEN_COMMAND)
+                            }
+                            disabled={pending}
+                          >
+                            <HugeiconsIcon
+                              icon={Copy01Icon}
+                              data-icon='inline-start'
+                            />
+                            提取命令
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='secondary'
+                            size='sm'
+                            onClick={() =>
+                              void handleTestSub2APICredential('token')
+                            }
+                            disabled={pending || !hasSub2APIToken}
+                          >
+                            {testMutation.isPending &&
+                            testedAuthType === 'token' ? (
+                              <Spinner data-icon='inline-start' />
+                            ) : (
+                              <HugeiconsIcon
+                                icon={TestTubeIcon}
+                                data-icon='inline-start'
+                              />
+                            )}
+                            测试手动 Token
+                          </Button>
+                        </div>
+                        <FormDescription>
+                          短期 JWT；仅在选择“手动 Token”时保存并用于监控。
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='refreshToken'
+                    render={({ field }) => (
+                      <FormItem className='min-w-0'>
+                        <FormLabel>Sub2API Refresh Token</FormLabel>
                         <FormControl>
                           <PasswordInput
-                            className='min-w-0 flex-1'
+                            className='w-full min-w-0'
                             placeholder={
-                              hasMatchingSavedAccessToken
-                                ? '留空保留原 Refresh Token'
+                              hasSavedSub2APIRefreshToken
+                                ? '留空使用已保存 Refresh Token'
                                 : '输入 Sub2API Refresh Token'
                             }
                             autoComplete='new-password'
                             {...field}
+                            onChange={(event) => {
+                              field.onChange(event)
+                              setTestResult(null)
+                              setTestedAuthType(null)
+                            }}
                           />
                         </FormControl>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          onClick={() =>
-                            void handlePasteToken(
-                              'accessToken',
-                              'Refresh Token'
-                            )
-                          }
-                          disabled={pending}
-                          className='shrink-0'
-                        >
-                          <HugeiconsIcon
-                            icon={ClipboardPasteIcon}
-                            data-icon='inline-start'
-                          />
-                          粘贴
-                        </Button>
-                      </div>
-                      <FormDescription>
-                        Refresh Token
-                        会自动换取短期访问令牌；上游轮换后新值会自动保存。
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                        <div className='flex flex-wrap gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void handlePasteToken(
+                                'refreshToken',
+                                'Refresh Token'
+                              )
+                            }
+                            disabled={pending}
+                          >
+                            <HugeiconsIcon
+                              icon={ClipboardPasteIcon}
+                              data-icon='inline-start'
+                            />
+                            粘贴
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              void copyToClipboard(
+                                SUB2API_REFRESH_TOKEN_COMMAND
+                              )
+                            }
+                            disabled={pending}
+                          >
+                            <HugeiconsIcon
+                              icon={Copy01Icon}
+                              data-icon='inline-start'
+                            />
+                            提取命令
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='secondary'
+                            size='sm'
+                            onClick={() =>
+                              void handleTestSub2APICredential('refresh_token')
+                            }
+                            disabled={pending || !hasSub2APIRefreshToken}
+                          >
+                            {testMutation.isPending &&
+                            testedAuthType === 'refresh_token' ? (
+                              <Spinner data-icon='inline-start' />
+                            ) : (
+                              <HugeiconsIcon
+                                icon={TestTubeIcon}
+                                data-icon='inline-start'
+                              />
+                            )}
+                            测试 Refresh Token
+                          </Button>
+                        </div>
+                        <FormDescription>
+                          长期凭据；测试会实际换取 Access
+                          Token。仅在选择“Refresh Token”时保存并用于监控。
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               ) : null}
 
               {testResult && (
                 <Alert>
                   <HugeiconsIcon icon={Tick02Icon} />
-                  <AlertTitle>测试成功</AlertTitle>
+                  <AlertTitle>{testResultTitle}</AlertTitle>
                   <AlertDescription className='flex min-w-0 flex-col gap-2 text-left break-all'>
                     <span>
                       上游倍率 {formatMonitorRatio(testResult.ratio)} · 换算系数{' '}
@@ -1424,7 +1510,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                 >
                   取消
                 </Button>
-                {ratioSyncEnabled || isCustom ? (
+                {(ratioSyncEnabled || isCustom) &&
+                !usesSub2APITokenCredential ? (
                   <Button
                     type='button'
                     variant='secondary'

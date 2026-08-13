@@ -50,6 +50,7 @@ const upstreamConfigBase = {
   authType: 'refresh_token' as const,
   userId: 0,
   accessToken: '',
+  refreshToken: '',
   account: '',
   password: '',
   singleChannelAction: 'none' as const,
@@ -77,7 +78,7 @@ describe('Sub2API refresh token schema', () => {
     assert.ok(
       result.error.issues.some(
         (issue) =>
-          issue.path.join('.') === 'accessToken' &&
+          issue.path.join('.') === 'refreshToken' &&
           issue.message === '请输入 Sub2API Refresh Token'
       )
     )
@@ -94,6 +95,25 @@ describe('Sub2API refresh token schema', () => {
     })
 
     assert.equal(schema.safeParse(upstreamConfigBase).success, true)
+  })
+
+  test('validates manual and refresh Token fields independently', () => {
+    const schema = createUpstreamConfigSchema(null)
+    const manualTokenResult = schema.safeParse({
+      ...upstreamConfigBase,
+      authType: 'token',
+      accessToken: 'access-token',
+      refreshToken: '',
+    })
+    const refreshTokenResult = schema.safeParse({
+      ...upstreamConfigBase,
+      authType: 'refresh_token',
+      accessToken: '',
+      refreshToken: 'refresh-token',
+    })
+
+    assert.equal(manualTokenResult.success, true)
+    assert.equal(refreshTokenResult.success, true)
   })
 })
 

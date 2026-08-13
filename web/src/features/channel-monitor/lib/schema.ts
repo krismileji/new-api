@@ -1349,6 +1349,11 @@ export function createUpstreamConfigSchema(
       ]),
       userId: z.coerce.number().int().min(0, '上游用户 ID 必须大于 0'),
       accessToken: z.string().trim().max(4096, '访问令牌过长'),
+      refreshToken: z
+        .string()
+        .trim()
+        .max(4096, 'Refresh Token 过长')
+        .default(''),
       account: z
         .string()
         .trim()
@@ -1542,10 +1547,17 @@ export function createUpstreamConfigSchema(
         })
         return
       }
-      if (!values.accessToken && !hasSavedAccessToken) {
+      const credential =
+        values.authType === 'refresh_token'
+          ? values.refreshToken
+          : values.accessToken
+      if (!credential && !hasSavedAccessToken) {
         context.addIssue({
           code: 'custom',
-          path: ['accessToken'],
+          path:
+            values.authType === 'refresh_token'
+              ? ['refreshToken']
+              : ['accessToken'],
           message:
             values.authType === 'refresh_token'
               ? '请输入 Sub2API Refresh Token'

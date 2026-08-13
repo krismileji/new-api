@@ -16,6 +16,8 @@ Sub2API 还可以在不提供凭据的情况下读取公开版本信息，便于
 
 Sub2API 的 Refresh Token 模式适合无人值守监控。首次配置时从已登录的 Sub2API 面板读取 `localStorage` 中的 `refresh_token`；监控请求会通过 `/api/v1/auth/refresh` 换取短期访问 Token，并在访问 Token 被拒绝时刷新后重试。上游返回新的 Refresh Token 时，服务端会按渠道配置修订号和旧凭据做条件更新，避免并发中的旧请求覆盖新配置。手动 Token 模式继续保留，用于兼容旧配置和不支持刷新接口的上游版本。
 
+编辑 Sub2API 配置时可同时填写手动 Token 和 Refresh Token，并分别执行真实上游测试。保存时仅持久化所选认证方式对应的凭据；测试另一种凭据不会改变监控实际使用的认证方式。
+
 ## 自定义上游
 
 倍率和余额可以分别选择固定值或 HTTP 数据源。HTTP 数据源支持：
