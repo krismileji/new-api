@@ -862,9 +862,9 @@ export function ChannelMonitor() {
         costOverview.coverage.settled_count,
         costOverview.coverage.unresolved_count
       )}`
-    : '按北京时间记录精确成本和非精确请求'
+    : '按北京时间记录已结算成本'
   if (costOverview && costOverview.coverage.unresolved_count > 0) {
-    costDescription += ` · 非精确 ${costOverview.coverage.unresolved_count}`
+    costDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
   }
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
@@ -921,7 +921,7 @@ export function ChannelMonitor() {
             icon={Analytics01Icon}
           />
           <MonitorStatCard
-            label='今日成本'
+            label='今日已结算成本'
             value={
               costQuery.isLoading ? (
                 <Skeleton className='h-7 w-24' />

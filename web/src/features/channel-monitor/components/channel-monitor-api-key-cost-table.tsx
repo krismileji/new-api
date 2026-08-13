@@ -128,9 +128,8 @@ export function ChannelMonitorAPIKeyCostTable(
                         {item.channels.length} 个渠道
                       </span>
                       <span className='font-mono tabular-nums'>
-                        精确 {item.settled_count} · 非精确{' '}
-                        {item.unresolved_count}{' '}
-                        · 解析率{' '}
+                        已结算 {item.settled_count} · 未解析{' '}
+                        {item.unresolved_count} · 解析率{' '}
                         {formatChannelMonitorResolutionRate(
                           item.settled_count,
                           item.unresolved_count
@@ -152,13 +151,13 @@ export function ChannelMonitorAPIKeyCostTable(
                           <TableRow>
                             <TableHead className='w-[44%]'>关联渠道</TableHead>
                             <TableHead className='w-[20%] text-right'>
-                              成本（含估算）
+                              已结算成本
                             </TableHead>
                             <TableHead className='w-[12%] text-right'>
-                              精确
+                              已结算
                             </TableHead>
                             <TableHead className='w-[12%] text-right'>
-                              非精确
+                              未解析
                             </TableHead>
                             <TableHead className='w-[12%] text-right'>
                               解析率
