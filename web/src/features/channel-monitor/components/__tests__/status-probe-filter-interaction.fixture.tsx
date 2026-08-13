@@ -86,7 +86,7 @@ const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
     server_now: 1_700_000_000,
     scan_interval_seconds: 1,
     summary: {
-      unconfigured: 0,
+      unconfigured: 1,
       paused: 0,
       pending: 2,
       healthy: 0,
@@ -104,6 +104,12 @@ const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
     channels: [
       createChannel(1, '默认渠道', ['default'], ['model-a']),
       createChannel(2, 'VIP 渠道', ['vip'], ['model-b', 'model-c']),
+      {
+        ...createChannel(3, '未配置渠道', ['default'], []),
+        config: null,
+        health_status: 'unconfigured',
+        configured_model_count: 0,
+      },
     ],
   },
 }
@@ -176,6 +182,15 @@ try {
   )
   assert.ok(groupTrigger)
   assert.ok(modelTrigger)
+  const onlyConfigured = container.querySelector<HTMLElement>(
+    '[aria-label="仅展示已配置的状态探测卡片"]'
+  )
+  assert.ok(onlyConfigured)
+  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+  assert.equal(container.textContent?.includes('未配置渠道'), false)
+  await act(async () => onlyConfigured.click())
+  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'false')
+  assert.ok(container.textContent?.includes('未配置渠道'))
   assert.equal(modelTrigger.disabled, true)
   assert.ok(modelTrigger.textContent?.includes('请先选择分组'))
 

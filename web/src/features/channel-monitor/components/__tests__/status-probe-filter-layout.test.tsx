@@ -120,6 +120,17 @@ describe('状态监测筛选布局', () => {
       domWindow.document.querySelector('[aria-label="按样本设置筛选渠道"]'),
       null
     )
+    const onlyConfigured = domWindow.document.querySelector(
+      '[aria-label="仅展示已配置的状态探测卡片"]'
+    )
+    assert.ok(onlyConfigured)
+    assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+    assert.equal(
+      domWindow.document.querySelector(
+        'label[for="status-probe-only-configured"]'
+      )?.textContent,
+      '仅展示已配置'
+    )
 
     const search = domWindow.document.querySelector(
       '[aria-label="搜索状态探测渠道"]'

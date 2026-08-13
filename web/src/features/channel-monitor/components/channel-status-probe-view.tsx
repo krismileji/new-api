@@ -36,6 +36,7 @@ import {
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Empty,
   EmptyDescription,
@@ -47,6 +48,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -135,6 +137,7 @@ function matchesStatusFilter(
 export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [onlyConfigured, setOnlyConfigured] = useState(true)
   const [groupFilter, setGroupFilter] = useState('')
   const [modelFilter, setModelFilter] = useState('')
   const [sortMode, setSortMode] = useState<ChannelStatusProbeSortMode>(
@@ -190,6 +193,9 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
   }, [groupFilter, groupModels])
   const filteredChannels = useMemo(() => {
     const filtered = channels.filter((channel) => {
+      if (onlyConfigured && channel.configured_model_count === 0) {
+        return false
+      }
       if (!matchesStatusFilter(channel.health_status, statusFilter)) {
         return false
       }
@@ -199,7 +205,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
       return matchesChannelStatusProbeSearch(channel, search)
     })
     return sortChannelStatusProbeChannels(filtered, sortMode)
-  }, [channels, groupFilter, search, sortMode, statusFilter])
+  }, [channels, groupFilter, onlyConfigured, search, sortMode, statusFilter])
   const summary = query.data?.data.summary
   const statusCounts: Record<StatusFilter, number> = {
     all: channels.length,
@@ -346,6 +352,20 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
           className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end'
           data-slot='status-probe-filter-controls'
         >
+          <div className='flex h-9 shrink-0 items-center gap-2 px-1'>
+            <Checkbox
+              id='status-probe-only-configured'
+              checked={onlyConfigured}
+              onCheckedChange={(checked) => setOnlyConfigured(checked === true)}
+              aria-label='仅展示已配置的状态探测卡片'
+            />
+            <Label
+              htmlFor='status-probe-only-configured'
+              className='text-muted-foreground cursor-pointer text-sm font-normal whitespace-nowrap'
+            >
+              仅展示已配置
+            </Label>
+          </div>
           <Select
             items={groupOptions}
             value={groupFilter || null}
