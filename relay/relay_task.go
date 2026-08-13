@@ -190,6 +190,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
+	service.BeginPerCallChannelDailyCostAttempt(c, info.ChannelId, modelName, info.PriceData)
 
 	// 7. 每次发送前确保已按本次渠道价格预扣足额。
 	if taskErr := prepareTaskBilling(c, info); taskErr != nil {
@@ -278,6 +279,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			info.PriceData.Quota = finalQuota
 		}
 	}
+	service.RefreshPerCallChannelDailyCostAttempt(c, info.ChannelId, modelName, info.PriceData)
 
 	return &TaskSubmitResult{
 		UpstreamTaskID: upstreamTaskID,

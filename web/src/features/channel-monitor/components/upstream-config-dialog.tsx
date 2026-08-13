@@ -135,6 +135,8 @@ const MULTIPLE_CHANNELS_ACTION_DESCRIPTIONS: Record<
 
 const SUB2API_ACCESS_TOKEN_COMMAND =
   "copy(localStorage.getItem('auth_token') || '')"
+const SUB2API_REFRESH_TOKEN_COMMAND =
+  "copy(localStorage.getItem('refresh_token') || '')"
 
 function createUpstreamRequest(
   values: UpstreamConfigFormValues
@@ -143,6 +145,8 @@ function createUpstreamRequest(
     values.upstreamType === 'new_api' && values.authType === 'user'
   const sub2APITokenAuthentication =
     values.upstreamType === 'sub2api' && values.authType === 'token'
+  const sub2APIRefreshTokenAuthentication =
+    values.upstreamType === 'sub2api' && values.authType === 'refresh_token'
   const sub2APIAccountAuthentication =
     values.upstreamType === 'sub2api' && values.authType === 'account'
   let costConversion: ChannelMonitorCostConversion = { mode: 'none' }
@@ -167,7 +171,9 @@ function createUpstreamRequest(
     auth_type: values.authType,
     user_id: userAuthentication ? values.userId : 0,
     access_token:
-      userAuthentication || sub2APITokenAuthentication
+      userAuthentication ||
+      sub2APITokenAuthentication ||
+      sub2APIRefreshTokenAuthentication
         ? values.accessToken.trim()
         : '',
     account: sub2APIAccountAuthentication ? values.account.trim() : '',
@@ -285,6 +291,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const isSub2API = upstreamType === 'sub2api'
   const isCustom = upstreamType === 'custom'
   const needsSub2APIToken = isSub2API && authType === 'token'
+  const needsSub2APIRefreshToken = isSub2API && authType === 'refresh_token'
   const needsSub2APIAccount = isSub2API && authType === 'account'
   const hasMatchingSavedAccessToken =
     savedCredential?.hasAccessToken === true &&
@@ -305,11 +312,13 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     !isCustom &&
     (needsUserAuthentication ||
       (needsSub2APIToken && hasSub2APIToken) ||
+      (needsSub2APIRefreshToken && hasSub2APIToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const canLoadGroups =
     !isCustom &&
     (!isSub2API ||
       (needsSub2APIToken && hasSub2APIToken) ||
+      (needsSub2APIRefreshToken && hasSub2APIToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const authDescription =
     authType === 'public'
@@ -320,12 +329,16 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     sub2APIAuthDescription = '使用登录邮箱和密码自动获取并缓存访问 Token'
   } else if (authType === 'token') {
     sub2APIAuthDescription = '使用手动获取的旧版 Token 读取倍率、余额和分组'
+  } else if (authType === 'refresh_token') {
+    sub2APIAuthDescription = '使用 Refresh Token 自动换取并刷新访问 Token'
   }
   let applyGroupDescription =
     '应用分组会保存配置，并将当前渠道的全部上游令牌切换到该分组'
   if (!canApplyGroup) {
     if (needsSub2APIAccount) {
       applyGroupDescription = '应用分组需要先填写登录邮箱和密码'
+    } else if (needsSub2APIRefreshToken) {
+      applyGroupDescription = '应用分组需要先填写 Refresh Token'
     } else if (isSub2API) {
       applyGroupDescription = '应用分组需要先填写手动 Token'
     } else {
@@ -339,7 +352,10 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     } else if (authType === 'account') {
       upstreamTypeDescription = '自动登录 Sub2API 后读取倍率、余额和分组'
     } else {
-      upstreamTypeDescription = '使用手动 Token 读取倍率、余额和分组'
+      upstreamTypeDescription =
+        authType === 'refresh_token'
+          ? '使用 Refresh Token 自动读取倍率、余额和分组'
+          : '使用手动 Token 读取倍率、余额和分组'
     }
   } else if (isCustom) {
     upstreamTypeDescription = '通过固定值或自定义接口读取倍率和余额'
@@ -354,7 +370,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
         '账号密码会自动换取 Token，可获取可用分组，也可直接填写分组名称或数字 ID'
     } else {
       groupSourceDescription =
-        '手动 Token 可获取可用分组，也可直接填写分组名称或数字 ID'
+        authType === 'refresh_token'
+          ? 'Refresh Token 可自动获取可用分组，也可直接填写分组名称或数字 ID'
+          : '手动 Token 可获取可用分组，也可直接填写分组名称或数字 ID'
     }
   } else if (isCustom) {
     groupSourceDescription = '自定义上游分组为可选项，仅用于展示和记录'
@@ -516,7 +534,10 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       form.setError('baseUrl', { message: '请输入有效的面板地址' })
     }
   }
-  const handlePasteAccessToken = async () => {
+  const handlePasteToken = async (
+    fieldName: 'accessToken',
+    tokenLabel: string
+  ) => {
     if (!navigator.clipboard?.readText) {
       toast.error('当前浏览器不支持读取剪贴板')
       return
@@ -524,14 +545,14 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     try {
       const accessToken = (await navigator.clipboard.readText()).trim()
       if (!accessToken) {
-        toast.error('剪贴板中没有访问令牌')
+        toast.error(`剪贴板中没有${tokenLabel}`)
         return
       }
-      form.setValue('accessToken', accessToken, {
+      form.setValue(fieldName, accessToken, {
         shouldDirty: true,
         shouldValidate: true,
       })
-      toast.success('Token 已粘贴')
+      toast.success(`${tokenLabel} 已粘贴`)
     } catch {
       toast.error('读取剪贴板失败，请手动粘贴')
     }
@@ -1042,7 +1063,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                             if (
                               nextValue !== 'api_key' &&
                               nextValue !== 'account' &&
-                              nextValue !== 'token'
+                              nextValue !== 'token' &&
+                              nextValue !== 'refresh_token'
                             ) {
                               return
                             }
@@ -1055,13 +1077,19 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           }}
                           variant='outline'
                           spacing={2}
-                          className='grid w-full grid-cols-3'
+                          className='grid w-full grid-cols-2 sm:grid-cols-4'
                         >
                           <ToggleGroupItem value='api_key' className='w-full'>
                             API Key（新版）
                           </ToggleGroupItem>
                           <ToggleGroupItem value='account' className='w-full'>
                             账号密码
+                          </ToggleGroupItem>
+                          <ToggleGroupItem
+                            value='refresh_token'
+                            className='w-full'
+                          >
+                            Refresh Token
                           </ToggleGroupItem>
                           <ToggleGroupItem value='token' className='w-full'>
                             手动 Token
@@ -1089,7 +1117,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           )}
                           获取上游版本
                         </Button>
-                        {needsSub2APIToken ? (
+                        {needsSub2APIToken || needsSub2APIRefreshToken ? (
                           <>
                             <Button
                               type='button'
@@ -1110,7 +1138,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                               size='sm'
                               onClick={() =>
                                 void copyToClipboard(
-                                  SUB2API_ACCESS_TOKEN_COMMAND
+                                  needsSub2APIRefreshToken
+                                    ? SUB2API_REFRESH_TOKEN_COMMAND
+                                    : SUB2API_ACCESS_TOKEN_COMMAND
                                 )
                               }
                               disabled={pending}
@@ -1119,7 +1149,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                                 icon={Copy01Icon}
                                 data-icon='inline-start'
                               />
-                              复制控制台命令
+                              复制提取命令
                             </Button>
                           </>
                         ) : null}
@@ -1229,7 +1259,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           Token
                           缺失或过期时会自动登录；密码作为敏感配置保存在服务端，接口不会回传明文。上游开启
                           Turnstile、Cloudflare 人机验证或 TOTP
-                          时无法无人值守登录，请改用手动 Token
+                          时无法无人值守登录，请改用 Refresh Token 或手动 Token
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1261,7 +1291,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                         <Button
                           type='button'
                           variant='outline'
-                          onClick={() => void handlePasteAccessToken()}
+                          onClick={() =>
+                            void handlePasteToken('accessToken', '访问令牌')
+                          }
                           disabled={pending}
                           className='shrink-0'
                         >
@@ -1275,6 +1307,55 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                       <FormDescription>
                         适用于上游开启 Turnstile、Cloudflare 人机验证或 TOTP
                         的情况；登录后执行已复制的控制台命令，再点击“粘贴”
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+
+              {needsSub2APIRefreshToken ? (
+                <FormField
+                  control={form.control}
+                  name='accessToken'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sub2API Refresh Token</FormLabel>
+                      <div className='flex min-w-0 gap-2'>
+                        <FormControl>
+                          <PasswordInput
+                            className='min-w-0 flex-1'
+                            placeholder={
+                              hasMatchingSavedAccessToken
+                                ? '留空保留原 Refresh Token'
+                                : '输入 Sub2API Refresh Token'
+                            }
+                            autoComplete='new-password'
+                            {...field}
+                          />
+                        </FormControl>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() =>
+                            void handlePasteToken(
+                              'accessToken',
+                              'Refresh Token'
+                            )
+                          }
+                          disabled={pending}
+                          className='shrink-0'
+                        >
+                          <HugeiconsIcon
+                            icon={ClipboardPasteIcon}
+                            data-icon='inline-start'
+                          />
+                          粘贴
+                        </Button>
+                      </div>
+                      <FormDescription>
+                        Refresh Token
+                        会自动换取短期访问令牌；上游轮换后新值会自动保存。
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

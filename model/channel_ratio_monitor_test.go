@@ -717,6 +717,37 @@ func TestChannelRatioUpstreamTokenIsNotSerialized(t *testing.T) {
 	assert.Empty(t, monitor.UpstreamAccessToken)
 }
 
+func TestRotateChannelRatioUpstreamCredentialRequiresMatchingSnapshot(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 14)
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId:           14,
+		UpstreamType:        "sub2api",
+		UpstreamAuthType:    "refresh_token",
+		UpstreamAccessToken: "refresh-old",
+		UpstreamRevision:    3,
+	}).Error)
+
+	rotated, err := RotateChannelRatioUpstreamCredential(14, "sub2api", "refresh_token", 2, "refresh-old", "refresh-stale")
+	require.NoError(t, err)
+	assert.False(t, rotated)
+	rotated, err = RotateChannelRatioUpstreamCredential(14, "sub2api", "refresh_token", 3, "refresh-other", "refresh-stale")
+	require.NoError(t, err)
+	assert.False(t, rotated)
+
+	monitor, err := GetChannelRatioMonitor(14)
+	require.NoError(t, err)
+	assert.Equal(t, "refresh-old", monitor.UpstreamAccessToken)
+
+	rotated, err = RotateChannelRatioUpstreamCredential(14, "sub2api", "refresh_token", 3, "refresh-old", "refresh-new")
+	require.NoError(t, err)
+	assert.True(t, rotated)
+	monitor, err = GetChannelRatioMonitor(14)
+	require.NoError(t, err)
+	assert.Equal(t, "refresh-new", monitor.UpstreamAccessToken)
+	assert.Equal(t, int64(3), monitor.UpstreamRevision)
+}
+
 func TestGetAllChannelsForMonitorIncludesDisabledChannelsWithoutKeys(t *testing.T) {
 	resetChannelRatioMonitorTables(t)
 

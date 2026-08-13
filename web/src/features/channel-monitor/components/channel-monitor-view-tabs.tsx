@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Analytics01Icon,
   ChartLineData01Icon,
+  FingerPrintScanIcon,
   Layers01Icon,
   Route01Icon,
   TestTubeIcon,
@@ -46,6 +47,10 @@ export function ChannelMonitorViewTabs(props: ChannelMonitorViewTabsProps) {
       <TabsTrigger value='status-probe'>
         <HugeiconsIcon icon={TestTubeIcon} data-icon='inline-start' />
         状态监测
+      </TabsTrigger>
+      <TabsTrigger value='model-detection'>
+        <HugeiconsIcon icon={FingerPrintScanIcon} data-icon='inline-start' />
+        模型检测
       </TabsTrigger>
       <TabsTrigger value='smart-schedule'>
         <HugeiconsIcon icon={Route01Icon} data-icon='inline-start' />

@@ -84,7 +84,7 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('2 个渠道'))
     assert.ok(markup.includes('仅未确认渠道'))
     assert.ok(markup.includes('仅未确认 API Key'))
-    assert.ok(markup.includes('未解析 2'))
+    assert.ok(markup.includes('非精确 2'))
     assert.ok(markup.includes('解析率 81.8%'))
     assert.ok(markup.includes('0%'))
   })

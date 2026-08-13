@@ -307,6 +307,13 @@ func migrateDB() error {
 		&ChannelStatusProbeConfig{},
 		&ChannelStatusProbeState{},
 		&ChannelStatusProbeExecution{},
+		&ChannelModelDetectionGlobalConfig{},
+		&ChannelModelDetectionConfig{},
+		&ChannelModelDetectionTarget{},
+		&ChannelModelDetectionBatch{},
+		&ChannelModelDetectionRun{},
+		&ChannelModelDetectionExecution{},
+		&ChannelModelDetectionCostEvent{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -387,6 +394,13 @@ func migrateDBFast() error {
 		{&ChannelStatusProbeConfig{}, "ChannelStatusProbeConfig"},
 		{&ChannelStatusProbeState{}, "ChannelStatusProbeState"},
 		{&ChannelStatusProbeExecution{}, "ChannelStatusProbeExecution"},
+		{&ChannelModelDetectionGlobalConfig{}, "ChannelModelDetectionGlobalConfig"},
+		{&ChannelModelDetectionConfig{}, "ChannelModelDetectionConfig"},
+		{&ChannelModelDetectionTarget{}, "ChannelModelDetectionTarget"},
+		{&ChannelModelDetectionBatch{}, "ChannelModelDetectionBatch"},
+		{&ChannelModelDetectionRun{}, "ChannelModelDetectionRun"},
+		{&ChannelModelDetectionExecution{}, "ChannelModelDetectionExecution"},
+		{&ChannelModelDetectionCostEvent{}, "ChannelModelDetectionCostEvent"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

@@ -162,7 +162,7 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('0.5'))
     assert.ok(markup.includes('仅未确认渠道'))
     assert.ok(markup.includes('成本待解析'))
-    assert.ok(markup.includes('已结算 0 · 未解析 3'))
+    assert.ok(markup.includes('精确 0 · 非精确 3'))
     assert.ok(markup.includes('解析率 0%'))
     assert.ok(markup.includes('配置缺失'))
   })
@@ -183,11 +183,15 @@ describe('channel monitor cost history dialog layout', () => {
 
     const markup = renderToStaticMarkup(<CostHistoryData overview={overview} />)
 
-    assert.ok(markup.includes('已结算请求 1 · 未解析请求 2 · 解析率 33.3%'))
-    assert.ok(markup.includes('当前金额不包含 2 次未解析的上游请求尝试'))
+    assert.ok(markup.includes('精确请求 1 · 非精确请求 2 · 解析率 33.3%'))
+    assert.ok(
+      markup.includes(
+        '新产生且可计算的非精确请求已按参数保守估算并只向上校准；升级前记录或缺少成本配置的请求可能只计数、不计金额。'
+      )
+    )
     assert.ok(markup.includes('其中 1 个渠道缺少有效成本配置'))
-    assert.ok(markup.includes('已结算成本'))
-    assert.ok(markup.includes('未解析'))
+    assert.ok(markup.includes('成本（含估算）'))
+    assert.ok(markup.includes('非精确请求'))
   })
 
   test('orders cost channels by enabled status and then ascending ratio', () => {

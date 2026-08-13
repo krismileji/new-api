@@ -49,10 +49,14 @@ type channelDailyCostSnapshotCacheEntry struct {
 }
 
 type channelDailyCostAttemptState struct {
-	mu         sync.Mutex
-	ChannelId  int
-	Dispatched bool
-	Recorded   bool
+	mu                        sync.Mutex
+	ChannelId                 int
+	ModelName                 string
+	BaseEstimateQuota         float64
+	EstimatedQuotaBeforeGroup float64
+	CalibrationApplied        bool
+	Dispatched                bool
+	Recorded                  bool
 }
 
 var (
@@ -77,10 +81,94 @@ func CaptureChannelDailyCostSnapshot(ctx *gin.Context, channelId int) {
 // selected channel attempt. Local setup failures remain unrecorded until the
 // transport marks the attempt as dispatched.
 func BeginChannelDailyCostAttempt(ctx *gin.Context, channelId int) {
+	BeginChannelDailyCostAttemptWithEstimate(ctx, channelId, nil, 0)
+}
+
+// BeginChannelDailyCostAttemptWithEstimate freezes the already-computed
+// request estimate for one upstream attempt. It performs no I/O; unresolved
+// attempts can therefore add a conservative estimate without delaying relay.
+func BeginChannelDailyCostAttemptWithEstimate(ctx *gin.Context, channelId int, relayInfo *relaycommon.RelayInfo, maxTokens int) {
 	if ctx == nil || channelId <= 0 {
 		return
 	}
-	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{ChannelId: channelId})
+	state := &channelDailyCostAttemptState{ChannelId: channelId}
+	if relayInfo != nil {
+		state.ModelName = relayInfo.OriginModelName
+		state.BaseEstimateQuota = channelDailyCostEstimateQuotaBeforeGroup(
+			relayInfo,
+			maxTokens,
+			channelDailyCostQuotaPerUnitFromContext(ctx, channelId),
+		)
+		state.EstimatedQuotaBeforeGroup = channelDailyCostEstimatedQuota(
+			channelId,
+			state.ModelName,
+			state.BaseEstimateQuota,
+		)
+		state.CalibrationApplied = state.EstimatedQuotaBeforeGroup > 0
+	}
+	ctx.Set(channelDailyCostAttemptContextKey, state)
+}
+
+// BeginPerCallChannelDailyCostAttempt freezes a task or Midjourney estimate
+// after all validated request multipliers have been applied.
+func BeginPerCallChannelDailyCostAttempt(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
+	if ctx == nil || channelId <= 0 {
+		return
+	}
+	baseEstimateQuota := channelDailyCostEstimatePerCallQuotaBeforeGroup(
+		modelName,
+		priceData,
+		channelDailyCostQuotaPerUnitFromContext(ctx, channelId),
+	)
+	estimatedQuotaBeforeGroup := channelDailyCostEstimatedQuota(channelId, modelName, baseEstimateQuota)
+	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{
+		ChannelId:                 channelId,
+		ModelName:                 modelName,
+		BaseEstimateQuota:         baseEstimateQuota,
+		EstimatedQuotaBeforeGroup: estimatedQuotaBeforeGroup,
+		CalibrationApplied:        estimatedQuotaBeforeGroup > 0,
+	})
+}
+
+// RefreshPerCallChannelDailyCostAttempt updates the frozen monitor estimate
+// after an upstream submit response provides more accurate billing ratios.
+func RefreshPerCallChannelDailyCostAttempt(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
+	if ctx == nil || channelId <= 0 {
+		return
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return
+	}
+	baseEstimateQuota := channelDailyCostEstimatePerCallQuotaBeforeGroup(
+		modelName,
+		priceData,
+		channelDailyCostQuotaPerUnitFromContext(ctx, channelId),
+	)
+	estimatedQuotaBeforeGroup := channelDailyCostEstimatedQuota(channelId, modelName, baseEstimateQuota)
+	state.mu.Lock()
+	if !state.Recorded {
+		state.ModelName = modelName
+		state.BaseEstimateQuota = baseEstimateQuota
+		state.EstimatedQuotaBeforeGroup = estimatedQuotaBeforeGroup
+		state.CalibrationApplied = estimatedQuotaBeforeGroup > 0
+	}
+	state.mu.Unlock()
+}
+
+func channelDailyCostQuotaPerUnitFromContext(ctx *gin.Context, channelId int) float64 {
+	if ctx != nil {
+		if value, exists := ctx.Get(channelDailyCostSnapshotContextKey); exists {
+			if snapshot, ok := value.(channelDailyCostSnapshot); ok && snapshot.ChannelId == channelId {
+				return snapshot.QuotaPerUnit
+			}
+		}
+	}
+	return common.QuotaPerUnit
 }
 
 // MarkChannelDailyCostRequestDispatched marks the exact boundary where a
@@ -89,6 +177,7 @@ func MarkChannelDailyCostRequestDispatched(ctx *gin.Context) {
 	if ctx == nil {
 		return
 	}
+	logChannelModelDetectionDispatchError(ctx, markChannelModelDetectionRequestDispatched(ctx))
 	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
 	if !exists {
 		return
@@ -150,8 +239,11 @@ func FinalizeChannelDailyCostAttempt(ctx *gin.Context, channelId int, requestDis
 		return
 	}
 	state.Recorded = true
+	modelName := state.ModelName
+	estimatedQuotaBeforeGroup := state.EstimatedQuotaBeforeGroup
+	calibrationApplied := state.CalibrationApplied
 	state.mu.Unlock()
-	recordChannelDailyCostUnresolved(ctx, channelId)
+	recordChannelDailyCostUnresolvedEstimate(ctx, channelId, modelName, estimatedQuotaBeforeGroup, calibrationApplied)
 }
 
 func markChannelDailyCostAttemptRecorded(ctx *gin.Context, channelId int) {
@@ -324,12 +416,43 @@ func channelDailyCostSnapshotWithCurrentKey(ctx *gin.Context, snapshot channelDa
 // quotaBeforeGroup must exclude the local user/group multiplier.
 func recordChannelDailyCostFromQuota(ctx *gin.Context, channelId int, quotaBeforeGroup float64) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
+	observeChannelDailyCostEstimateForAttempt(ctx, channelId, quotaBeforeGroup)
 	recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup)
 }
 
 func recordChannelDailyCostUnresolved(ctx *gin.Context, channelId int) {
+	modelName, _, estimatedQuotaBeforeGroup, calibrationApplied := channelDailyCostAttemptEstimate(ctx, channelId)
+	recordChannelDailyCostUnresolvedEstimate(ctx, channelId, modelName, estimatedQuotaBeforeGroup, calibrationApplied)
+}
+
+func recordChannelDailyCostUnresolvedEstimate(ctx *gin.Context, channelId int, modelName string, estimatedQuotaBeforeGroup float64, calibrationApplied bool) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
-	recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
+	if !calibrationApplied {
+		estimatedQuotaBeforeGroup = channelDailyCostEstimatedQuota(channelId, modelName, estimatedQuotaBeforeGroup)
+	}
+	recordChannelDailyCostWithSnapshotAndCounts(ctx, snapshot, estimatedQuotaBeforeGroup, 0, 1)
+}
+
+func channelDailyCostAttemptEstimate(ctx *gin.Context, channelId int) (string, float64, float64, bool) {
+	if ctx == nil {
+		return "", 0, 0, false
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return "", 0, 0, false
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return "", 0, 0, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.ModelName, state.BaseEstimateQuota, state.EstimatedQuotaBeforeGroup, state.CalibrationApplied
+}
+
+func observeChannelDailyCostEstimateForAttempt(ctx *gin.Context, channelId int, actualQuotaBeforeGroup float64) {
+	modelName, baseEstimateQuota, _, _ := channelDailyCostAttemptEstimate(ctx, channelId)
+	observeChannelDailyCostEstimate(channelId, modelName, baseEstimateQuota, actualQuotaBeforeGroup)
 }
 
 func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bool {
@@ -343,6 +466,10 @@ func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bo
 }
 
 func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) {
+	recordChannelDailyCostWithSnapshotAndCounts(ctx, snapshot, quotaBeforeGroup, 1, 0)
+}
+
+func recordChannelDailyCostWithSnapshotAndCounts(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64, settledDelta int64, unresolvedDelta int64) {
 	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
 	if !snapshot.Configured {
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
@@ -356,13 +483,17 @@ func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyC
 	costNano := decimal.NewFromFloat(quotaBeforeGroup).
 		Div(decimal.NewFromFloat(snapshot.QuotaPerUnit)).
 		Mul(decimal.NewFromFloat(snapshot.CostRatioCNY)).
-		Mul(decimal.NewFromInt(model.ChannelDailyCostNanoPerCNY)).
-		Round(0)
+		Mul(decimal.NewFromInt(model.ChannelDailyCostNanoPerCNY))
+	if unresolvedDelta > 0 {
+		costNano = costNano.Ceil()
+	} else {
+		costNano = costNano.Round(0)
+	}
 	if costNano.IsNegative() || costNano.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
-	recordChannelDailyCostEvent(ctx, snapshot, costNano.IntPart(), 1, 0)
+	recordChannelDailyCostEvent(ctx, snapshot, costNano.IntPart(), settledDelta, unresolvedDelta)
 }
 
 func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnapshot, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) {
@@ -486,13 +617,7 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 // RecordPerCallChannelDailyCost records successful task and Midjourney calls.
 func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
-
-	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
-	if !priceData.UsePrice {
-		quotaBeforeGroup = priceData.ModelRatio / 2 * snapshot.QuotaPerUnit
-	}
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(quotaBeforeGroup)
-	}
+	quotaBeforeGroup := channelDailyCostEstimatePerCallQuotaBeforeGroup(modelName, priceData, snapshot.QuotaPerUnit)
+	observeChannelDailyCostEstimateForAttempt(ctx, channelId, quotaBeforeGroup)
 	recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup)
 }

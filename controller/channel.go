@@ -731,6 +731,10 @@ func DeleteChannel(c *gin.Context) {
 		channelLookupFailed = true
 	}
 	channel := model.Channel{Id: id}
+	if err := service.CancelChannelModelDetectionRunsForChannels(c.Request.Context(), nil, []int{id}); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	err := channel.Delete()
 	if err != nil {
 		common.ApiError(c, err)
@@ -755,6 +759,13 @@ func DeleteChannel(c *gin.Context) {
 }
 
 func DeleteDisabledChannel(c *gin.Context) {
+	if err := service.CancelChannelModelDetectionRunsForStatuses(c.Request.Context(), nil, []int64{
+		common.ChannelStatusAutoDisabled,
+		common.ChannelStatusManuallyDisabled,
+	}); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
 		common.ApiError(c, err)
@@ -920,6 +931,10 @@ func DeleteChannelBatch(c *gin.Context) {
 			"success": false,
 			"message": "参数错误",
 		})
+		return
+	}
+	if err := service.CancelChannelModelDetectionRunsForChannels(c.Request.Context(), nil, channelBatch.Ids); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	deletedCount, err := model.BatchDeleteChannels(channelBatch.Ids)

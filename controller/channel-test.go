@@ -325,7 +325,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
 	}
 
-	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
+	tokenCountMeta := request.GetTokenCountMeta()
+	priceData, err := helper.ModelPriceHelper(c, info, 0, tokenCountMeta)
 	if err != nil {
 		return testResult{
 			context:     c,
@@ -464,7 +465,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
-	service.BeginChannelDailyCostAttempt(c, channel.Id)
+	estimatedMaxTokens := 0
+	if tokenCountMeta != nil {
+		estimatedMaxTokens = tokenCountMeta.MaxTokens
+	}
+	service.BeginChannelDailyCostAttemptWithEstimate(c, channel.Id, info, estimatedMaxTokens)
 	defer func() {
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, result.requestDispatched)
 	}()

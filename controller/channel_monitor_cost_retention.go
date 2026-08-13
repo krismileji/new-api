@@ -49,9 +49,12 @@ type channelMonitorCostRetentionTaskResult struct {
 	StatusProbeHistoryRetentionDays int   `json:"status_probe_history_retention_days"`
 	StatusProbeHistoryCutoff        int64 `json:"status_probe_history_cutoff"`
 	StatusProbeExecutionsDeleted    int64 `json:"status_probe_executions_deleted"`
+	ModelDetectionRetentionDays     int   `json:"model_detection_retention_days"`
+	ModelDetectionCutoff            int64 `json:"model_detection_cutoff"`
 	BudgetExhausted                 bool  `json:"budget_exhausted"`
 	model.ChannelMonitorCostRetentionResult
 	model.ChannelMonitorHistoryRetentionResult
+	model.ChannelModelDetectionRetentionResult
 }
 
 func init() {
@@ -98,6 +101,17 @@ func channelMonitorCostRetentionCutoff(now int64, days int) int64 {
 
 func channelMonitorHistoryRetentionCutoff(now int64, days int) int64 {
 	return now - int64(days)*channelMonitorCostDaySeconds
+}
+
+func channelModelDetectionRetentionDays() int {
+	days := common.GetEnvOrDefault(
+		"CHANNEL_MODEL_DETECTION_RETENTION_DAYS",
+		model.ChannelModelDetectionDefaultRetentionDays,
+	)
+	if days < model.ChannelModelDetectionMinRetentionDays || days > model.ChannelModelDetectionMaxRetentionDays {
+		return model.ChannelModelDetectionDefaultRetentionDays
+	}
+	return days
 }
 
 func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSettings, error) {
@@ -221,6 +235,8 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		RatioHistory:    channelMonitorHistoryRetentionCutoff(now, settings.RatioHistoryRetentionDays),
 	}
 	statusProbeHistoryCutoff := channelMonitorHistoryRetentionCutoff(now, settings.StatusProbeHistoryRetentionDays)
+	modelDetectionRetentionDays := channelModelDetectionRetentionDays()
+	modelDetectionCutoff := channelMonitorHistoryRetentionCutoff(now, modelDetectionRetentionDays)
 	result := channelMonitorCostRetentionTaskResult{
 		RetentionDays:                   settings.CostRetentionDays,
 		Cutoff:                          costCutoff,
@@ -234,7 +250,21 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		RatioHistoryCutoff:              historyCutoffs.RatioHistory,
 		StatusProbeHistoryRetentionDays: settings.StatusProbeHistoryRetentionDays,
 		StatusProbeHistoryCutoff:        statusProbeHistoryCutoff,
+		ModelDetectionRetentionDays:     modelDetectionRetentionDays,
+		ModelDetectionCutoff:            modelDetectionCutoff,
 	}
+	modelDetectionDeleted, err := model.DeleteChannelModelDetectionHistoryBefore(
+		ctx,
+		modelDetectionCutoff,
+		batchSize,
+		cleanupBudget.Slice(4),
+	)
+	result.ChannelModelDetectionRetentionResult = modelDetectionDeleted
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	result.BudgetExhausted = modelDetectionDeleted.Incomplete
 	historyDeleted, err := model.DeleteChannelMonitorHistoryBefore(
 		ctx,
 		historyCutoffs,
@@ -253,7 +283,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
-	result.BudgetExhausted = historyDeleted.Incomplete
+	result.BudgetExhausted = result.BudgetExhausted || historyDeleted.Incomplete
 	statusProbeBudget := cleanupBudget.Slice(2)
 	statusProbeDeleted, err := model.DeleteChannelStatusProbeExecutionsBefore(
 		ctx,

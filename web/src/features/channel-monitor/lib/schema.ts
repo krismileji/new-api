@@ -1344,6 +1344,7 @@ export function createUpstreamConfigSchema(
         'api_key',
         'account',
         'token',
+        'refresh_token',
         'custom',
       ]),
       userId: z.coerce.number().int().min(0, '上游用户 ID 必须大于 0'),
@@ -1533,7 +1534,7 @@ export function createUpstreamConfigSchema(
         }
         return
       }
-      if (values.authType !== 'token') {
+      if (values.authType !== 'token' && values.authType !== 'refresh_token') {
         context.addIssue({
           code: 'custom',
           path: ['authType'],
@@ -1545,7 +1546,10 @@ export function createUpstreamConfigSchema(
         context.addIssue({
           code: 'custom',
           path: ['accessToken'],
-          message: '请输入 Sub2API Token（旧版访问令牌）',
+          message:
+            values.authType === 'refresh_token'
+              ? '请输入 Sub2API Refresh Token'
+              : '请输入 Sub2API Token（旧版访问令牌）',
         })
       }
     })

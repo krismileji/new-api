@@ -77,6 +77,7 @@ import {
   fetchChannelMonitorUpstreamBalance,
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
+  getChannelModelDetectionOverview,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateMonitoredChannelStatus,
@@ -109,6 +110,7 @@ import {
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
+import { channelModelDetectionPollInterval } from './lib/model-detection'
 import {
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorOverviewQueryOptions,
@@ -196,11 +198,17 @@ const LazyChannelStatusProbeView = lazy(() =>
     default: module.ChannelStatusProbeView,
   }))
 )
+const LazyChannelModelDetectionView = lazy(() =>
+  import('./components/channel-model-detection-workspace').then((module) => ({
+    default: module.ChannelModelDetectionWorkspace,
+  }))
+)
 type MonitorView =
   | 'channels'
   | 'groups'
   | 'models'
   | 'status-probe'
+  | 'model-detection'
   | 'smart-schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
@@ -403,7 +411,8 @@ export function ChannelMonitor() {
   const requestedPerformanceRangeSource = smartSchedulePerformanceRangeActive
     ? 'smart_schedule'
     : 'manual'
-  const performanceQueryActive = isChannelMonitorPerformanceQueryActive(view)
+  const performanceQueryActive =
+    isChannelMonitorPerformanceQueryActive(view) && view !== 'model-detection'
   const performanceQuery = useQuery(
     getChannelMonitorPerformanceQueryOptions(
       requestedPerformanceRangeMinutes,
@@ -417,6 +426,21 @@ export function ChannelMonitor() {
   const smartScheduleDetailQuery = useQuery({
     ...getChannelMonitorSmartScheduleQueryOptions(true),
     enabled: view === 'smart-schedule',
+  })
+  const modelDetectionQuery = useQuery({
+    queryKey: ['channel-monitor', 'model-detection', 'overview'],
+    queryFn: getChannelModelDetectionOverview,
+    enabled: view === 'model-detection',
+    refetchInterval: (currentQuery) =>
+      channelModelDetectionPollInterval(
+        Boolean(
+          currentQuery.state.data?.data.channels.some(
+            (channel) => channel.active_run
+          )
+        ),
+        document.visibilityState !== 'hidden'
+      ),
+    refetchIntervalInBackground: false,
   })
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
@@ -838,9 +862,9 @@ export function ChannelMonitor() {
         costOverview.coverage.settled_count,
         costOverview.coverage.unresolved_count
       )}`
-    : '按北京时间记录已结算成本'
+    : '按北京时间记录精确成本和非精确请求'
   if (costOverview && costOverview.coverage.unresolved_count > 0) {
-    costDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
+    costDescription += ` · 非精确 ${costOverview.coverage.unresolved_count}`
   }
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
@@ -897,7 +921,7 @@ export function ChannelMonitor() {
             icon={Analytics01Icon}
           />
           <MonitorStatCard
-            label='今日已结算成本'
+            label='今日成本'
             value={
               costQuery.isLoading ? (
                 <Skeleton className='h-7 w-24' />
@@ -932,7 +956,9 @@ export function ChannelMonitor() {
               smartScheduleHasProbing={smartScheduleHasProbing}
             />
 
-            {view !== 'smart-schedule' && view !== 'status-probe' ? (
+            {view !== 'smart-schedule' &&
+            view !== 'status-probe' &&
+            view !== 'model-detection' ? (
               <div className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap lg:max-w-5xl lg:justify-end'>
                 {view === 'channels' && (
                   <ToggleGroup
@@ -1142,7 +1168,9 @@ export function ChannelMonitor() {
             ) : null}
           </div>
 
-          {view !== 'smart-schedule' && view !== 'status-probe' ? (
+          {view !== 'smart-schedule' &&
+          view !== 'status-probe' &&
+          view !== 'model-detection' ? (
             <ChannelMonitorPerformanceCoverageAlert
               coverage={performanceQuery.data?.data.metric_coverage}
               rangeLabel={performanceRangeLabel}
@@ -1294,6 +1322,33 @@ export function ChannelMonitor() {
                 }
               >
                 <LazyChannelStatusProbeView />
+              </Suspense>
+            )}
+          </TabsContent>
+          <TabsContent value='model-detection'>
+            {view === 'model-detection' && (
+              <Suspense
+                fallback={
+                  <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <Skeleton key={index} className='h-[25rem] rounded-lg' />
+                    ))}
+                  </div>
+                }
+              >
+                <LazyChannelModelDetectionView
+                  overview={modelDetectionQuery.data?.data}
+                  loading={modelDetectionQuery.isLoading}
+                  refreshing={modelDetectionQuery.isFetching}
+                  error={
+                    modelDetectionQuery.isError
+                      ? '模型检测数据加载失败，请稍后重试'
+                      : null
+                  }
+                  onRefresh={() => {
+                    void modelDetectionQuery.refetch()
+                  }}
+                />
               </Suspense>
             )}
           </TabsContent>

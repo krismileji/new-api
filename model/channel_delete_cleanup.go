@@ -131,6 +131,9 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 		if err := reapplyChannelSmartScheduleRoutePrimariesTx(tx, pools); err != nil {
 			return 0, err
 		}
+		if err := deleteChannelModelDetectionDataTx(tx, existingIds); err != nil {
+			return 0, err
+		}
 		if err := deleteChannelMonitorDataTx(tx, existingIds); err != nil {
 			return 0, err
 		}

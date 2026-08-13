@@ -19,11 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
+import { createChannelMonitorCustomFormConfig } from '../custom-upstream'
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../email-notification'
 import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
   createChannelMonitorSmartSchedulePolicySchema,
+  createUpstreamConfigSchema,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
@@ -40,6 +42,60 @@ import {
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
 } from '../schema'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE } from '../smart-schedule-group-policy'
+
+const upstreamConfigBase = {
+  upstreamType: 'sub2api' as const,
+  baseUrl: 'https://upstream.example',
+  group: 'vip',
+  authType: 'refresh_token' as const,
+  userId: 0,
+  accessToken: '',
+  account: '',
+  password: '',
+  singleChannelAction: 'none' as const,
+  multipleChannelsAction: 'none' as const,
+  ratioSyncEnabled: true,
+  balanceSyncEnabled: true,
+  balanceWarningThreshold: null,
+  balanceAutoDisableThreshold: null,
+  costConversionMode: 'none' as const,
+  rechargePaidCny: 1,
+  rechargeCreditedUsd: 1,
+  subscriptionPeriod: 'month' as const,
+  subscriptionPriceCny: 1,
+  subscriptionDailyUsd: 1,
+  customConfig: createChannelMonitorCustomFormConfig(undefined),
+}
+
+describe('Sub2API refresh token schema', () => {
+  test('requires a refresh token for a new configuration', () => {
+    const schema = createUpstreamConfigSchema(null)
+    const result = schema.safeParse(upstreamConfigBase)
+
+    assert.equal(result.success, false)
+    if (result.success) return
+    assert.ok(
+      result.error.issues.some(
+        (issue) =>
+          issue.path.join('.') === 'accessToken' &&
+          issue.message === '请输入 Sub2API Refresh Token'
+      )
+    )
+  })
+
+  test('allows an empty field when the same upstream already stores a refresh token', () => {
+    const schema = createUpstreamConfigSchema({
+      type: 'sub2api',
+      baseUrl: upstreamConfigBase.baseUrl,
+      authType: 'refresh_token',
+      hasAccessToken: true,
+      account: '',
+      hasPassword: false,
+    })
+
+    assert.equal(schema.safeParse(upstreamConfigBase).success, true)
+  })
+})
 
 describe('smart schedule policy schema', () => {
   const schema = createChannelMonitorSmartSchedulePolicySchema()

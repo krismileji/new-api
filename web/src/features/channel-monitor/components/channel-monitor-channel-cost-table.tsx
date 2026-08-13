@@ -121,7 +121,7 @@ export function ChannelMonitorChannelCostTable(
                 成本倍率
               </TableHead>
               <TableHead className='w-[18%] text-right whitespace-normal'>
-                已结算成本
+                成本（含估算）
               </TableHead>
               <TableHead className='w-[24%] text-right whitespace-normal'>
                 成本覆盖
@@ -172,7 +172,7 @@ export function ChannelMonitorChannelCostTable(
                 <TableCell className='text-right'>
                   <div className='flex flex-col items-end gap-0.5 text-xs'>
                     <span className='font-mono tabular-nums'>
-                      已结算 {channel.settled_count} · 未解析{' '}
+                      精确 {channel.settled_count} · 非精确{' '}
                       {channel.unresolved_count}
                     </span>
                     <span className='text-muted-foreground'>

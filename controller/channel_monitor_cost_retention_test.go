@@ -230,6 +230,27 @@ func TestChannelMonitorHistoryRetentionCutoffUsesFullDays(t *testing.T) {
 	assert.Equal(t, now-14*channelMonitorCostDaySeconds, channelMonitorHistoryRetentionCutoff(now, 14))
 }
 
+func TestChannelModelDetectionRetentionDaysUsesConfiguredBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		expected int
+	}{
+		{name: "default", expected: model.ChannelModelDetectionDefaultRetentionDays},
+		{name: "minimum", value: "7", expected: model.ChannelModelDetectionMinRetentionDays},
+		{name: "maximum", value: "180", expected: model.ChannelModelDetectionMaxRetentionDays},
+		{name: "below minimum", value: "6", expected: model.ChannelModelDetectionDefaultRetentionDays},
+		{name: "above maximum", value: "181", expected: model.ChannelModelDetectionDefaultRetentionDays},
+		{name: "invalid", value: "invalid", expected: model.ChannelModelDetectionDefaultRetentionDays},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("CHANNEL_MODEL_DETECTION_RETENTION_DAYS", test.value)
+			assert.Equal(t, test.expected, channelModelDetectionRetentionDays())
+		})
+	}
+}
+
 func TestChannelMonitorMinuteRetentionCutoffProtectsLongestScheduleWindow(t *testing.T) {
 	const now = int64(2_000_000)
 	requiredStart := now - int64(180*time.Minute/time.Second)

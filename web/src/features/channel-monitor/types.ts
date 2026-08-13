@@ -62,6 +62,7 @@ export type ChannelMonitorUpstreamAuthType =
   | 'api_key'
   | 'account'
   | 'token'
+  | 'refresh_token'
   | 'custom'
 
 export type ChannelMonitorCustomSource = 'fixed' | 'http'

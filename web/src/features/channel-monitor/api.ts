@@ -56,6 +56,10 @@ import type {
   ChannelStatusProbeTrigger,
   NewAPIGroupRatioResult,
 } from './types'
+import type {
+  ChannelModelDetectionApiResponse,
+  ChannelModelDetectionOverview,
+} from './types-model-detection'
 
 const channelMonitorRequestConfig = (
   config: ApiRequestConfig = {}
@@ -78,6 +82,13 @@ export async function getChannelMonitorOverview() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorOverview>
   >('/api/channel_monitor/', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelModelDetectionOverview() {
+  const response = await api.get<
+    ChannelModelDetectionApiResponse<ChannelModelDetectionOverview>
+  >('/api/channel_monitor/model_detection', channelMonitorRequestConfig())
   return ensureChannelMonitorSuccess(response.data)
 }
 

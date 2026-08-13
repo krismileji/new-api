@@ -1,0 +1,455 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/model"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+type channelModelDetectionDetectorStub struct {
+	mu            sync.Mutex
+	bootstrap     ChannelModelDetectorBootstrapResponse
+	estimate      ChannelModelDetectorEstimateResponse
+	statuses      []ChannelModelDetectorStatusResponse
+	report        ChannelModelDetectorReportResponse
+	start         ChannelModelDetectorStartResponse
+	startErr      error
+	statusErr     error
+	startHook     func(ChannelModelDetectorStartRequest)
+	startCalls    int
+	startRequests []ChannelModelDetectorStartRequest
+}
+
+func (stub *channelModelDetectionDetectorStub) Bootstrap(context.Context) (ChannelModelDetectorBootstrapResponse, error) {
+	return stub.bootstrap, nil
+}
+
+func (stub *channelModelDetectionDetectorStub) Estimate(context.Context, ChannelModelDetectorPresetConfig) (ChannelModelDetectorEstimateResponse, error) {
+	return stub.estimate, nil
+}
+
+func (stub *channelModelDetectionDetectorStub) Start(_ context.Context, request ChannelModelDetectorStartRequest) (ChannelModelDetectorStartResponse, error) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.startCalls++
+	stub.startRequests = append(stub.startRequests, request)
+	if stub.startHook != nil {
+		stub.startHook(request)
+	}
+	return stub.start, stub.startErr
+}
+
+func (stub *channelModelDetectionDetectorStub) Status(context.Context) (ChannelModelDetectorStatusResponse, error) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.statusErr != nil {
+		return ChannelModelDetectorStatusResponse{}, stub.statusErr
+	}
+	if len(stub.statuses) == 0 {
+		return ChannelModelDetectorStatusResponse{Status: "idle"}, nil
+	}
+	status := stub.statuses[0]
+	if len(stub.statuses) > 1 {
+		stub.statuses = stub.statuses[1:]
+	}
+	return status, nil
+}
+
+func (stub *channelModelDetectionDetectorStub) Report(context.Context) (ChannelModelDetectorReportResponse, error) {
+	return stub.report, nil
+}
+
+func (stub *channelModelDetectionDetectorStub) Stop(context.Context) (ChannelModelDetectorStopResponse, error) {
+	return ChannelModelDetectorStopResponse{}, nil
+}
+
+func presetForChannelModelDetectionWorkerTest(t *testing.T, hash string) ChannelModelDetectorPresetConfig {
+	t.Helper()
+	raw := detectorContractPreset(t, hash)
+	return raw
+}
+
+func seedChannelModelDetectionWorkerRun(t *testing.T, db *gorm.DB, now time.Time, sessionID string, status string) (model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) {
+	t.Helper()
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		ScheduleTime: "02:30", Timezone: "Asia/Shanghai", IntervalHours: 24,
+	}).Error)
+	config := model.ChannelModelDetectionConfig{ChannelId: 501}
+	require.NoError(t, db.Create(&config).Error)
+	target := model.ChannelModelDetectionTarget{
+		ConfigId: config.Id, ChannelId: config.ChannelId, RequestModel: "channel-alias",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Enabled: true,
+	}
+	require.NoError(t, db.Create(&target).Error)
+	run := model.ChannelModelDetectionRun{
+		ChannelId: config.ChannelId, ConfigRevision: config.Revision, GlobalConfigRevision: 1,
+		Trigger: model.ChannelModelDetectionTriggerManual, Preset: model.ChannelModelDetectionPresetMedium,
+		Status: model.ChannelModelDetectionRunStatusQueued, TargetCount: 1,
+		QueuedAt: now.Unix(), CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
+	}
+	created, err := model.CreateChannelModelDetectionRun(db, &run)
+	require.NoError(t, err)
+	require.True(t, created)
+	execution := model.ChannelModelDetectionExecution{
+		RunId: run.RunId, TargetKey: target.TargetKey, TargetId: target.Id, ChannelId: target.ChannelId,
+		RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Preset: run.Preset,
+		Status: status, OfficialSessionId: sessionID,
+		CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
+	}
+	require.NoError(t, db.Create(&execution).Error)
+	return run, execution
+}
+
+func TestChannelModelDetectionWorkerStartsOneSessionAndFreezesOfficialConfig(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 6, 0, 0, 0, time.UTC)
+	_, execution := seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	preset := presetForChannelModelDetectionWorkerTest(t, "worker-hash")
+	totalRequests := int64(14)
+	stub := &channelModelDetectionDetectorStub{
+		bootstrap: ChannelModelDetectorBootstrapResponse{SinglePresets: map[string]ChannelModelDetectorPresetConfig{
+			model.ChannelModelDetectionPresetMedium: preset,
+		}},
+		estimate: ChannelModelDetectorEstimateResponse{TotalRequests: &totalRequests, ConfigHash: "worker-hash"},
+		statuses: []ChannelModelDetectorStatusResponse{{Status: "idle", SessionID: "old-session"}},
+		start:    ChannelModelDetectorStartResponse{Started: true, SessionID: "official-session", ConfigHash: "worker-hash"},
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+		return "task-secret", "https://relay.example/internal/model-detector/v1", nil
+	})
+	worker.Now = func() time.Time { return now }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Started)
+	assert.Equal(t, "official-session", result.OfficialSessionID)
+	assert.Equal(t, 1, stub.startCalls)
+	require.Len(t, stub.startRequests, 1)
+	assert.Empty(t, stub.startRequests[0].PreviousSessionID)
+	assert.Equal(t, "task-secret", stub.startRequests[0].APIKey)
+
+	var stored model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&stored, execution.Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusRunning, stored.Status)
+	assert.Equal(t, "worker-hash", stored.ConfigHash)
+	assert.NotEmpty(t, stored.OfficialConfigJSON)
+	assert.NotContains(t, stored.OfficialConfigJSON, "task-secret")
+	assert.Equal(t, int64(14), stored.PlannedLogicalRequests)
+}
+
+func TestChannelModelDetectionWorkerSubmissionUnknownStopsAutomaticRedispatch(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 6, 30, 0, 0, time.UTC)
+	_, _ = seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	preset := presetForChannelModelDetectionWorkerTest(t, "unknown-hash")
+	totalRequests := int64(14)
+	stub := &channelModelDetectionDetectorStub{
+		bootstrap: ChannelModelDetectorBootstrapResponse{SinglePresets: map[string]ChannelModelDetectorPresetConfig{model.ChannelModelDetectionPresetMedium: preset}},
+		estimate:  ChannelModelDetectorEstimateResponse{TotalRequests: &totalRequests, ConfigHash: "unknown-hash"},
+		statuses:  []ChannelModelDetectorStatusResponse{{Status: "idle"}},
+		startErr:  ErrChannelModelDetectorSubmissionUnknown,
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+		return "task-secret", "https://relay.example/internal/model-detector/v1", nil
+	})
+	worker.Now = func() time.Time { return now }
+
+	_, err := worker.RunOnce(context.Background())
+	assert.ErrorIs(t, err, ErrChannelModelDetectionSubmissionUnknown)
+	assert.Equal(t, 1, stub.startCalls)
+
+	_, err = worker.RunOnce(context.Background())
+	assert.ErrorIs(t, err, ErrChannelModelDetectionSubmissionUnknown)
+	assert.Equal(t, 1, stub.startCalls)
+
+	var run model.ChannelModelDetectionRun
+	require.NoError(t, db.First(&run).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusSubmissionUnknown, run.Status)
+}
+
+func TestChannelModelDetectionRecoveryAdoptsMatchingUnknownSubmissionWithoutRestart(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 6, 45, 0, 0, time.UTC)
+	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusSubmitting)
+	preset := presetForChannelModelDetectionWorkerTest(t, "adopt-hash")
+	require.NoError(t, execution.SetOfficialConfig(preset))
+	execution.ConfigHash = "adopt-hash"
+	require.NoError(t, db.Model(&execution).Updates(map[string]any{"official_config_json": execution.OfficialConfigJSON, "config_hash": execution.ConfigHash}).Error)
+	require.NoError(t, db.Model(&run).Updates(map[string]any{"status": model.ChannelModelDetectionRunStatusSubmissionUnknown}).Error)
+	stub := &channelModelDetectionDetectorStub{statuses: []ChannelModelDetectorStatusResponse{{
+		Status: "running", SessionID: "adopted-session", ConfigHash: "adopt-hash", ClaimedModel: execution.ClaimedModel,
+	}}}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now.Add(time.Minute) }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "adopted-session", result.OfficialSessionID)
+	assert.Zero(t, stub.startCalls)
+	var stored model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&stored, execution.Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusRunning, stored.Status)
+}
+
+func TestChannelModelDetectionRecoveryRejectsExternalSessionWithoutTakingItOver(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 7, 0, 0, 0, time.UTC)
+	_, execution := seedChannelModelDetectionWorkerRun(t, db, now, "owned-session", model.ChannelModelDetectionExecutionStatusRunning)
+	stub := &channelModelDetectionDetectorStub{statuses: []ChannelModelDetectorStatusResponse{{Status: "running", SessionID: "external-session"}}}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now }
+
+	_, err := worker.RunOnce(context.Background())
+	assert.ErrorIs(t, err, ErrChannelModelDetectionExternalSessionConflict)
+	assert.Zero(t, stub.startCalls)
+
+	var stored model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&stored, execution.Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, stored.Status)
+	assert.Equal(t, "external_session_conflict", stored.ErrorCode)
+}
+
+func TestChannelModelDetectionRecoveryResumesOnlyMatchingInterruptedSession(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 7, 30, 0, 0, time.UTC)
+	_, execution := seedChannelModelDetectionWorkerRun(t, db, now, "owned-session", model.ChannelModelDetectionExecutionStatusRunning)
+	preset := presetForChannelModelDetectionWorkerTest(t, "resume-hash")
+	execution.ConfigHash = "resume-hash"
+	require.NoError(t, execution.SetOfficialConfig(preset))
+	require.NoError(t, db.Model(&execution).Updates(map[string]any{"config_hash": execution.ConfigHash, "official_config_json": execution.OfficialConfigJSON}).Error)
+	stub := &channelModelDetectionDetectorStub{
+		statuses: []ChannelModelDetectorStatusResponse{{
+			Status: "interrupted", SessionID: "owned-session", ConfigHash: "resume-hash", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+		}},
+		start: ChannelModelDetectorStartResponse{Started: true, SessionID: "owned-session", ConfigHash: "resume-hash"},
+	}
+	issued := 0
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+		issued++
+		return "new-task-secret", "https://relay.example/internal/model-detector/v1", nil
+	})
+	worker.Now = func() time.Time { return now }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Resumed)
+	assert.Equal(t, 1, issued)
+	require.Len(t, stub.startRequests, 1)
+	assert.Equal(t, "owned-session", stub.startRequests[0].ResumeSessionID)
+	assert.Equal(t, "owned-session", stub.startRequests[0].PreviousSessionID)
+}
+
+func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 8, 0, 0, 0, time.UTC)
+	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "owned-session", model.ChannelModelDetectionExecutionStatusRunning)
+	execution.ConfigHash = "report-hash"
+	require.NoError(t, db.Model(&execution).Update("config_hash", execution.ConfigHash).Error)
+	report := ChannelModelDetectorReportResponse{
+		SessionID: "owned-session", ConfigHash: "report-hash", OutcomeCode: "juice_pass_fingerprint_strong",
+		OverallVerdict: "通过", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+	}
+	schemaVersion := int64(3)
+	report.SchemaVersion = &schemaVersion
+	stub := &channelModelDetectionDetectorStub{
+		statuses: []ChannelModelDetectorStatusResponse{{Status: "complete", SessionID: "owned-session", ConfigHash: "report-hash"}},
+		report:   report,
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now.Add(time.Minute) }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Completed)
+	var storedRun model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&storedRun).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusCompleted, storedRun.Status)
+	assert.Positive(t, storedRun.FinishedAt)
+	var config model.ChannelModelDetectionConfig
+	require.NoError(t, db.Where("channel_id = ?", run.ChannelId).First(&config).Error)
+	assert.Empty(t, config.RunningRunId)
+}
+
+func TestChannelModelDetectionLeaseIsSingleSessionAndRenewable(t *testing.T) {
+	worker := NewChannelModelDetectionWorker(nil, nil, nil)
+	now := time.Date(2026, time.August, 13, 9, 0, 0, 0, time.UTC)
+	token, ok := worker.TryAcquireLease(now)
+	require.True(t, ok)
+	assert.NotEmpty(t, token)
+	_, ok = worker.TryAcquireLease(now.Add(time.Second))
+	assert.False(t, ok)
+	assert.False(t, worker.RenewLease("wrong-token", now.Add(time.Second)))
+	assert.True(t, worker.RenewLease(token, now.Add(time.Second)))
+	_, ok = worker.TryAcquireLease(now.Add(channelModelDetectionWorkerLeaseDuration))
+	assert.False(t, ok)
+	_, ok = worker.TryAcquireLease(now.Add(2*channelModelDetectionWorkerLeaseDuration + 4*time.Second))
+	assert.True(t, ok)
+}
+
+func TestChannelModelDetectionWorkerDBLeasePreventsConcurrentStart(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 9, 15, 0, 0, time.UTC)
+	_, _ = seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	preset := presetForChannelModelDetectionWorkerTest(t, "db-lease-hash")
+	totalRequests := int64(14)
+	startEntered := make(chan struct{})
+	releaseStart := make(chan struct{})
+	stub := &channelModelDetectionDetectorStub{
+		bootstrap: ChannelModelDetectorBootstrapResponse{SinglePresets: map[string]ChannelModelDetectorPresetConfig{
+			model.ChannelModelDetectionPresetMedium: preset,
+		}},
+		estimate: ChannelModelDetectorEstimateResponse{TotalRequests: &totalRequests, ConfigHash: "db-lease-hash"},
+		start:    ChannelModelDetectorStartResponse{Started: true, SessionID: "db-lease-session", ConfigHash: "db-lease-hash"},
+		startHook: func(ChannelModelDetectorStartRequest) {
+			close(startEntered)
+			<-releaseStart
+		},
+	}
+	newWorker := func() *ChannelModelDetectionWorker {
+		worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+			return "task-secret", "https://relay.example/internal/model-detector/v1", nil
+		})
+		worker.Now = func() time.Time { return now }
+		return worker
+	}
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := newWorker().RunOnce(context.Background())
+		firstResult <- err
+	}()
+	<-startEntered
+
+	_, secondErr := newWorker().RunOnce(context.Background())
+	assert.ErrorIs(t, secondErr, ErrChannelModelDetectionWorkerBusy)
+	close(releaseStart)
+	require.NoError(t, <-firstResult)
+	assert.Equal(t, 1, stub.startCalls)
+}
+
+func TestChannelModelDetectionWorkerDBLeaseFencesStaleCompletion(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 9, 30, 0, 0, time.UTC)
+	_, execution := seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	preset := presetForChannelModelDetectionWorkerTest(t, "stale-owner-hash")
+	totalRequests := int64(14)
+	stub := &channelModelDetectionDetectorStub{
+		bootstrap: ChannelModelDetectorBootstrapResponse{SinglePresets: map[string]ChannelModelDetectorPresetConfig{
+			model.ChannelModelDetectionPresetMedium: preset,
+		}},
+		estimate: ChannelModelDetectorEstimateResponse{TotalRequests: &totalRequests, ConfigHash: "stale-owner-hash"},
+		start:    ChannelModelDetectorStartResponse{Started: true, SessionID: "stale-owner-session", ConfigHash: "stale-owner-hash"},
+		startHook: func(ChannelModelDetectorStartRequest) {
+			require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).
+				Where("id = ?", model.ChannelModelDetectionConfigID).
+				Updates(map[string]any{
+					"worker_lease_token": "new-owner",
+					"worker_lease_until": now.Add(channelModelDetectionWorkerLeaseDuration).Unix(),
+				}).Error)
+		},
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+		return "task-secret", "https://relay.example/internal/model-detector/v1", nil
+	})
+	worker.Now = func() time.Time { return now }
+
+	_, err := worker.RunOnce(context.Background())
+	assert.ErrorIs(t, err, ErrChannelModelDetectionWorkerBusy)
+	var stored model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&stored, execution.Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusSubmitting, stored.Status)
+	assert.Empty(t, stored.OfficialSessionId)
+	assert.NotEmpty(t, stored.DetectorURLSnapshot)
+	var global model.ChannelModelDetectionGlobalConfig
+	require.NoError(t, db.First(&global, model.ChannelModelDetectionConfigID).Error)
+	assert.Equal(t, "new-owner", global.WorkerLeaseToken)
+}
+
+func TestChannelModelDetectionDetectorURLSnapshotSurvivesGlobalChange(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 9, 45, 0, 0, time.UTC)
+	_, execution := seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	preset := presetForChannelModelDetectionWorkerTest(t, "url-snapshot-hash")
+	totalRequests := int64(14)
+	stub := &channelModelDetectionDetectorStub{
+		bootstrap: ChannelModelDetectorBootstrapResponse{SinglePresets: map[string]ChannelModelDetectorPresetConfig{
+			model.ChannelModelDetectionPresetMedium: preset,
+		}},
+		estimate: ChannelModelDetectorEstimateResponse{TotalRequests: &totalRequests, ConfigHash: "url-snapshot-hash"},
+		start:    ChannelModelDetectorStartResponse{Started: true, SessionID: "url-snapshot-session", ConfigHash: "url-snapshot-hash"},
+	}
+	var factoryMu sync.Mutex
+	factoryURLs := make([]string, 0, 2)
+	factory := func(baseURL string) (ChannelModelDetectionDetector, error) {
+		factoryMu.Lock()
+		factoryURLs = append(factoryURLs, baseURL)
+		factoryMu.Unlock()
+		return stub, nil
+	}
+	issuer := func(context.Context, model.ChannelModelDetectionRun, model.ChannelModelDetectionExecution) (string, string, error) {
+		return "task-secret", "https://relay.example/internal/model-detector/v1", nil
+	}
+	worker := NewChannelModelDetectionWorker(db, factory, issuer)
+	worker.Now = func() time.Time { return now }
+	_, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+
+	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).
+		Where("id = ?", model.ChannelModelDetectionConfigID).
+		Update("detector_url", "http://127.0.0.1:18081").Error)
+	stub.mu.Lock()
+	stub.statuses = []ChannelModelDetectorStatusResponse{{
+		Status: "running", SessionID: "url-snapshot-session", ConfigHash: "url-snapshot-hash",
+	}}
+	stub.mu.Unlock()
+	worker = NewChannelModelDetectionWorker(db, factory, issuer)
+	worker.Now = func() time.Time { return now.Add(time.Minute) }
+	_, err = worker.RunOnce(context.Background())
+	require.NoError(t, err)
+
+	var stored model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&stored, execution.Id).Error)
+	assert.Equal(t, "http://127.0.0.1:18080", stored.DetectorURLSnapshot)
+	factoryMu.Lock()
+	assert.Equal(t, []string{"http://127.0.0.1:18080", "http://127.0.0.1:18080"}, factoryURLs)
+	factoryMu.Unlock()
+}
+
+func TestChannelModelDetectionWorkerKeepsUnavailableDetectorAsInfrastructureState(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 10, 0, 0, 0, time.UTC)
+	_, _ = seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) {
+		return nil, errors.New("dial failed")
+	}, nil)
+	worker.Now = func() time.Time { return now }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Waiting)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusWaitingDetector, result.Status)
+}
+
+func TestChannelModelDetectionWorkerCancelQueuedRunDoesNotCallDetector(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 10, 30, 0, 0, time.UTC)
+	run, _ := seedChannelModelDetectionWorkerRun(t, db, now, "", model.ChannelModelDetectionExecutionStatusPending)
+	stub := &channelModelDetectionDetectorStub{}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now }
+
+	require.NoError(t, worker.CancelRun(context.Background(), run.RunId))
+	require.NoError(t, worker.CancelRun(context.Background(), run.RunId))
+	assert.Zero(t, stub.startCalls)
+	var stored model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&stored).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusCanceled, stored.Status)
+}

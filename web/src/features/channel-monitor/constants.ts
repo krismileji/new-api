@@ -116,5 +116,6 @@ export const CHANNEL_MONITOR_UPSTREAM_AUTH_LABELS: Record<
   api_key: 'API Key（新版）',
   account: '账号密码登录',
   token: '手动 Token',
+  refresh_token: 'Refresh Token',
   custom: '自定义请求',
 }

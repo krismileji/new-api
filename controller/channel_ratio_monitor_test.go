@@ -2326,6 +2326,195 @@ func TestSaveChannelMonitorSub2APIConfigPersistsToken(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "jwt-token")
 }
 
+func TestSaveChannelMonitorSub2APIConfigPersistsRefreshToken(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	baseURL := "https://upstream.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      16,
+		Name:    "refreshable upstream",
+		Key:     "secret",
+		Group:   "vip",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	request := map[string]any{
+		"type":         service.Sub2APIUpstreamType,
+		"base_url":     baseURL,
+		"group":        "vip",
+		"auth_type":    service.Sub2APIAuthRefreshToken,
+		"access_token": "refresh-token",
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/16/upstream", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "16"}}
+	SaveChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	monitor, err := model.GetChannelRatioMonitor(16)
+	require.NoError(t, err)
+	assert.Equal(t, service.Sub2APIAuthRefreshToken, monitor.UpstreamAuthType)
+	assert.Equal(t, "refresh-token", monitor.UpstreamAccessToken)
+	assert.NotContains(t, recorder.Body.String(), "refresh-token")
+}
+
+func TestSaveChannelMonitorSub2APIConfigPersistsRotatedRefreshToken(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	disableChannelMonitorSSRFProtection(t)
+	var refreshRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			refreshRequests.Add(1)
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"access-fresh","refresh_token":"refresh-rotated","expires_in":3600}}`))
+		case "/api/v1/groups/available":
+			assert.Equal(t, "Bearer access-fresh", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      18,
+		Name:    "rotating refresh token upstream",
+		Key:     "secret",
+		Group:   "vip",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	request := map[string]any{
+		"type":                 service.Sub2APIUpstreamType,
+		"base_url":             baseURL,
+		"group":                "vip",
+		"auth_type":            service.Sub2APIAuthRefreshToken,
+		"access_token":         "refresh-original",
+		"balance_sync_enabled": false,
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/18/upstream/test", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "18"}}
+	TestChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/18/upstream", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "18"}}
+	SaveChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.EqualValues(t, 1, refreshRequests.Load())
+	monitor, err := model.GetChannelRatioMonitor(18)
+	require.NoError(t, err)
+	assert.Equal(t, "refresh-rotated", monitor.UpstreamAccessToken)
+	assert.NotContains(t, recorder.Body.String(), "refresh-rotated")
+}
+
+func TestSaveChannelMonitorSub2APIConfigCanonicalizesExplicitRotatedRefreshToken(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	disableChannelMonitorSSRFProtection(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"access-fresh","refresh_token":"refresh-rotated","expires_in":3600}}`))
+		case "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      19,
+		Name:    "existing rotating refresh token upstream",
+		Key:     "secret",
+		Group:   "vip",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:           19,
+		UpstreamType:        service.Sub2APIUpstreamType,
+		UpstreamBaseURL:     baseURL,
+		UpstreamGroup:       "vip",
+		UpstreamAuthType:    service.Sub2APIAuthRefreshToken,
+		UpstreamAccessToken: "refresh-original",
+		UpstreamRevision:    3,
+	}).Error)
+
+	request := map[string]any{
+		"type":                 service.Sub2APIUpstreamType,
+		"base_url":             baseURL,
+		"group":                "vip",
+		"auth_type":            service.Sub2APIAuthRefreshToken,
+		"access_token":         "refresh-original",
+		"balance_sync_enabled": false,
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/19/upstream/test", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "19"}}
+	TestChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/19/upstream", request)
+	ctx.Params = gin.Params{{Key: "id", Value: "19"}}
+	SaveChannelMonitorUpstreamConfig(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	monitor, err := model.GetChannelRatioMonitor(19)
+	require.NoError(t, err)
+	assert.Equal(t, "refresh-rotated", monitor.UpstreamAccessToken)
+}
+
+func TestResolveChannelMonitorSub2APIRefreshTokenCredentialBinding(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	baseURL := "https://upstream.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      17,
+		Name:    "refreshable upstream",
+		Key:     "secret",
+		Group:   "vip",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId:           17,
+		UpstreamType:        service.Sub2APIUpstreamType,
+		UpstreamBaseURL:     baseURL,
+		UpstreamAuthType:    service.Sub2APIAuthRefreshToken,
+		UpstreamAccessToken: "saved-refresh-token",
+		UpstreamRevision:    4,
+	}).Error)
+	channel, err := model.GetChannelById(17, false)
+	require.NoError(t, err)
+
+	config, err := resolveChannelMonitorUpstreamRequest(channel, channelMonitorUpstreamRequest{
+		Type:     service.Sub2APIUpstreamType,
+		BaseURL:  baseURL,
+		Group:    "vip",
+		AuthType: service.Sub2APIAuthRefreshToken,
+	}, true)
+	require.NoError(t, err)
+	assert.Equal(t, "saved-refresh-token", config.AccessToken)
+	assert.Equal(t, 17, config.CredentialID)
+	assert.Equal(t, int64(4), config.Revision)
+
+	config, err = resolveChannelMonitorUpstreamRequest(channel, channelMonitorUpstreamRequest{
+		Type:        service.Sub2APIUpstreamType,
+		BaseURL:     baseURL,
+		Group:       "vip",
+		AuthType:    service.Sub2APIAuthRefreshToken,
+		AccessToken: "replacement-refresh-token",
+	}, true)
+	require.NoError(t, err)
+	assert.Equal(t, "replacement-refresh-token", config.AccessToken)
+	assert.Zero(t, config.CredentialID)
+	assert.Zero(t, config.Revision)
+}
+
 func TestSaveChannelMonitorSub2APIConfigPersistsAccountPassword(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	baseURL := "https://upstream.example"

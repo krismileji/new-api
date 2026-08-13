@@ -180,7 +180,7 @@ func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", channel.Id).Error)
-	assert.Zero(t, cost.CostNanoCNY)
+	assert.Greater(t, cost.CostNanoCNY, int64(0))
 	assert.Zero(t, cost.SettledCount)
 	assert.Equal(t, int64(1), cost.UnresolvedCount)
 }

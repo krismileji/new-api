@@ -11,6 +11,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	monitorRoute := apiRouter.Group("/channel_monitor")
 	monitorRoute.Use(middleware.RootAuth())
 	{
+		registerChannelModelDetectionRoutes(monitorRoute)
 		monitorRoute.GET("/", controller.GetChannelMonitorOverview)
 		monitorRoute.GET("/cost", controller.GetChannelMonitorCostOverview)
 		monitorRoute.GET("/performance", controller.GetChannelMonitorPerformance)

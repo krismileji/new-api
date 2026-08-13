@@ -141,7 +141,7 @@ export function ChannelMonitorCostHistoryDialog(
             {props.channelName ? `渠道成本：${props.channelName}` : '渠道成本'}
           </DialogTitle>
           <DialogDescription>
-            按北京时间记录请求结算时固化的已结算上游成本；未解析尝试单独展示，后续配置更新不会改写历史金额。
+            按北京时间记录请求结算时固化的精确成本；无法取得精确用量时，新请求按参数保守估算，升级前记录无法自动补算。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 flex-1 overflow-y-auto pr-1'>
@@ -217,15 +217,15 @@ function CostSummary(props: {
   return (
     <div className='grid min-w-0 grid-cols-3 gap-4 sm:gap-8'>
       <CostSummaryValue
-        label='今日已结算成本'
+        label='今日成本'
         value={props.overview?.today_cost_cny}
       />
       <CostSummaryValue
-        label='昨日已结算成本'
+        label='昨日成本'
         value={props.overview?.yesterday_cost_cny}
       />
       <CostSummaryValue
-        label='区间已结算成本'
+        label='区间成本'
         value={props.overview?.total_cost_cny}
       />
     </div>
@@ -362,7 +362,7 @@ export function CostHistoryData(props: {
           title: { value: (datum: { date: string }) => datum.date },
           content: [
             {
-              key: '已结算成本',
+              key: '成本（含估算）',
               value: (datum: { cost: number }) =>
                 formatChannelMonitorCost(datum.cost),
             },
@@ -371,7 +371,7 @@ export function CostHistoryData(props: {
               value: (datum: { settledCount: number }) => datum.settledCount,
             },
             {
-              key: '未解析请求',
+              key: '估算请求',
               value: (datum: { unresolvedCount: number }) =>
                 datum.unresolvedCount,
             },
@@ -453,9 +453,9 @@ export function CostHistoryData(props: {
                 <TableHeader>
                   <TableRow>
                     <TableHead>日期</TableHead>
-                    <TableHead className='text-right'>已结算成本</TableHead>
+                    <TableHead className='text-right'>成本（含估算）</TableHead>
                     <TableHead className='text-right'>已结算</TableHead>
-                    <TableHead className='text-right'>未解析</TableHead>
+                    <TableHead className='text-right'>估算</TableHead>
                     <TableHead className='text-right'>解析率</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -557,17 +557,16 @@ function CostCoverage(props: {
       />
       <div className='flex min-w-0 flex-col gap-1'>
         <span className='font-medium'>
-          已结算请求 {props.coverage.settled_count} · 未解析请求{' '}
+          精确请求 {props.coverage.settled_count} · 非精确请求{' '}
           {props.coverage.unresolved_count} · 解析率 {resolutionRate}
         </span>
         <span className='text-muted-foreground'>
-          已结算渠道 {props.coverage.included_channel_count} 个 ·
-          存在未解析尝试的渠道 {props.coverage.unresolved_channel_count} 个
+          已记录渠道 {props.coverage.included_channel_count} 个 ·
+          存在非精确请求的渠道 {props.coverage.unresolved_channel_count} 个
         </span>
         {props.coverage.unresolved_count > 0 ? (
           <span className='text-warning'>
-            当前金额不包含 {props.coverage.unresolved_count}{' '}
-            次未解析的上游请求尝试。
+            新产生且可计算的非精确请求已按参数保守估算并只向上校准；升级前记录或缺少成本配置的请求可能只计数、不计金额。
           </span>
         ) : null}
         {props.coverage.missing_cost_config_channel_count > 0 ? (

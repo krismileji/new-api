@@ -299,6 +299,30 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 	return monitor, err
 }
 
+// RotateChannelRatioUpstreamCredential replaces a one-time rotating credential
+// only when the monitor still has the revision and credential used by the caller.
+func RotateChannelRatioUpstreamCredential(channelId int, upstreamType string, authType string, expectedRevision int64, oldCredential string, newCredential string) (bool, error) {
+	if channelId <= 0 || expectedRevision < 0 || oldCredential == "" || newCredential == "" {
+		return false, errors.New("渠道监控上游凭据轮换参数无效")
+	}
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+	result := DB.Model(&ChannelRatioMonitor{}).
+		Where(
+			"channel_id = ? AND upstream_type = ? AND upstream_auth_type = ? AND upstream_revision = ? AND upstream_access_token = ?",
+			channelId,
+			upstreamType,
+			authType,
+			expectedRevision,
+			oldCredential,
+		).
+		Update("upstream_access_token", newCredential)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 func UpdateChannelRatioMonitor(channelId int, ratio float64, remark string, operatorId int, operatorUsername string) (monitor ChannelRatioMonitor, created bool, changed bool, err error) {
 	return updateChannelRatioMonitor(channelId, ratio, remark, operatorId, operatorUsername, false)
 }

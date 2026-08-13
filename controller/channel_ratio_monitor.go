@@ -338,26 +338,55 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 			}
 			return config, nil
 		}
-		if request.AuthType != service.Sub2APIAuthToken {
+		if request.AuthType != service.Sub2APIAuthToken && request.AuthType != service.Sub2APIAuthRefreshToken {
 			return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API 认证方式无效")
+		}
+		var savedMonitor model.ChannelRatioMonitor
+		hasSavedMonitor := false
+		monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return service.ChannelMonitorUpstreamConfig{}, findErr
+		}
+		if findErr == nil && monitor.UpstreamType == config.Type && monitor.UpstreamBaseURL == config.BaseURL && monitor.UpstreamAuthType == config.AuthType {
+			savedMonitor = monitor
+			hasSavedMonitor = true
 		}
 		config.AccessToken = strings.TrimSpace(request.AccessToken)
 		if utf8.RuneCountInString(config.AccessToken) > 4096 {
+			if request.AuthType == service.Sub2APIAuthRefreshToken {
+				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Refresh Token 过长")
+			}
 			return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Token 过长")
 		}
-		if config.AccessToken == "" {
-			monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
-			if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
-				return service.ChannelMonitorUpstreamConfig{}, findErr
-			}
-			if findErr == nil &&
-				monitor.UpstreamType == config.Type &&
-				monitor.UpstreamBaseURL == config.BaseURL &&
-				monitor.UpstreamAuthType == config.AuthType {
-				config.AccessToken = monitor.UpstreamAccessToken
-			}
+		if request.AuthType == service.Sub2APIAuthRefreshToken && config.AccessToken != "" && hasSavedMonitor {
+			config.AccessToken = service.CanonicalSub2APIRefreshToken(service.ChannelMonitorUpstreamConfig{
+				BaseURL:      config.BaseURL,
+				AuthType:     config.AuthType,
+				AccessToken:  config.AccessToken,
+				CredentialID: savedMonitor.ChannelId,
+				Revision:     savedMonitor.UpstreamRevision,
+				Proxy:        config.Proxy,
+			})
 		}
 		if config.AccessToken == "" {
+			if hasSavedMonitor {
+				config.AccessToken = savedMonitor.UpstreamAccessToken
+				config.CredentialID = savedMonitor.ChannelId
+				config.Revision = savedMonitor.UpstreamRevision
+			}
+		} else if hasSavedMonitor && config.AccessToken == savedMonitor.UpstreamAccessToken {
+			config.CredentialID = savedMonitor.ChannelId
+			config.Revision = savedMonitor.UpstreamRevision
+		}
+		if request.AuthType == service.Sub2APIAuthRefreshToken && config.AccessToken != "" && config.CredentialID == 0 {
+			// A new unsaved credential must be allowed to refresh first; the
+			// save path canonicalizes any rotated value afterward.
+			config.Revision = 0
+		}
+		if config.AccessToken == "" {
+			if request.AuthType == service.Sub2APIAuthRefreshToken {
+				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Refresh Token 不能为空")
+			}
 			return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Token 不能为空")
 		}
 		return config, nil
@@ -469,7 +498,10 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		}
 		if cost, exists := todayCostByChannel[channel.Id]; exists {
 			item.TodayCostCNY = channelMonitorCostCNY(cost.CostNanoCNY)
-			item.TodayCostConfigured = cost.SettledCount > 0
+			// An unresolved row is considered configured only when it carries a
+			// positive conservative estimate. A zero-cost unresolved row usually
+			// means the channel has no usable conversion configuration.
+			item.TodayCostConfigured = cost.SettledCount > 0 || cost.CostNanoCNY > 0
 			item.TodayCostComplete = cost.UnresolvedCount == 0
 			item.TodayCostUnresolvedCount = cost.UnresolvedCount
 		}
@@ -819,6 +851,21 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			return
 		}
 	}
+	if config.Type == service.Sub2APIUpstreamType && config.AuthType == service.Sub2APIAuthRefreshToken {
+		config.AccessToken = service.CanonicalSub2APIRefreshToken(config)
+	}
+	if hasExistingMonitor && existingMonitor.UpstreamType == service.Sub2APIUpstreamType && existingMonitor.UpstreamAuthType == service.Sub2APIAuthRefreshToken &&
+		(config.Type != service.Sub2APIUpstreamType || config.AuthType != service.Sub2APIAuthRefreshToken || config.BaseURL != existingMonitor.UpstreamBaseURL || config.AccessToken != existingMonitor.UpstreamAccessToken) {
+		service.ForgetSub2APIRefreshTokenCache(service.ChannelMonitorUpstreamConfig{
+			Type:         existingMonitor.UpstreamType,
+			BaseURL:      existingMonitor.UpstreamBaseURL,
+			AuthType:     existingMonitor.UpstreamAuthType,
+			AccessToken:  existingMonitor.UpstreamAccessToken,
+			CredentialID: existingMonitor.ChannelId,
+			Revision:     existingMonitor.UpstreamRevision,
+			Proxy:        channel.GetSetting().Proxy,
+		})
+	}
 
 	monitor, err := model.SaveChannelRatioUpstreamConfig(
 		channelId,
@@ -961,10 +1008,10 @@ func ListChannelMonitorUpstreamGroups(c *gin.Context) {
 		return
 	}
 	if config.Type == service.Sub2APIUpstreamType {
-		if config.AuthType != service.Sub2APIAuthToken && config.AuthType != service.Sub2APIAuthAccount {
+		if config.AuthType != service.Sub2APIAuthToken && config.AuthType != service.Sub2APIAuthRefreshToken && config.AuthType != service.Sub2APIAuthAccount {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
-				"message": "Sub2API API Key 认证不支持获取或应用分组，请手动填写分组或切换为账号密码或 Token 认证",
+				"message": "Sub2API API Key 认证不支持获取或应用分组，请手动填写分组或切换为账号密码、Refresh Token 或手动 Token 认证",
 			})
 			return
 		}
@@ -1189,8 +1236,11 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 			if len(channelKeys) == 0 {
 				return outcome, errors.New("Sub2API API Key 认证需要当前渠道配置上游 API Key")
 			}
-		case service.Sub2APIAuthToken:
+		case service.Sub2APIAuthToken, service.Sub2APIAuthRefreshToken:
 			if monitor.UpstreamAccessToken == "" {
+				if monitor.UpstreamAuthType == service.Sub2APIAuthRefreshToken {
+					return outcome, errors.New("请重新保存 Sub2API Refresh Token 配置")
+				}
 				return outcome, errors.New("请重新保存 Sub2API Token 配置")
 			}
 		case service.Sub2APIAuthAccount:
@@ -1222,6 +1272,8 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		AuthType:       monitor.UpstreamAuthType,
 		UserID:         monitor.UpstreamUserId,
 		AccessToken:    monitor.UpstreamAccessToken,
+		CredentialID:   monitor.ChannelId,
+		Revision:       monitor.UpstreamRevision,
 		Account:        monitor.UpstreamAccount,
 		Password:       monitor.UpstreamPassword,
 		ChannelKeys:    channelKeys,
@@ -1312,6 +1364,8 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 			AuthType:       monitor.UpstreamAuthType,
 			UserID:         monitor.UpstreamUserId,
 			AccessToken:    monitor.UpstreamAccessToken,
+			CredentialID:   monitor.ChannelId,
+			Revision:       monitor.UpstreamRevision,
 			Account:        monitor.UpstreamAccount,
 			Password:       monitor.UpstreamPassword,
 			ChannelKeys:    channelKeys,
@@ -1643,6 +1697,8 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 			AuthType:       monitor.UpstreamAuthType,
 			UserID:         monitor.UpstreamUserId,
 			AccessToken:    monitor.UpstreamAccessToken,
+			CredentialID:   monitor.ChannelId,
+			Revision:       monitor.UpstreamRevision,
 			Account:        monitor.UpstreamAccount,
 			Password:       monitor.UpstreamPassword,
 			Proxy:          channel.GetSetting().Proxy,
