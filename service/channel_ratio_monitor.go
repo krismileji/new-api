@@ -59,23 +59,25 @@ func (err *channelMonitorUpstreamAuthenticationError) Is(target error) bool {
 // ChannelMonitorUpstreamConfig contains the credentials needed to read a
 // group multiplier from a configured upstream panel.
 type ChannelMonitorUpstreamConfig struct {
-	Type           string
-	BaseURL        string
-	Group          string
-	AuthType       string
-	UserID         int
-	AccessToken    string
-	CredentialID   int
-	Revision       int64
-	Account        string
-	Password       string
-	ChannelKeys    []string
-	Proxy          string
-	RequestTimeout time.Duration
-	SkipBalance    bool
-	CostConversion ChannelMonitorCostConversion
-	CustomConfig   ChannelMonitorCustomUpstreamConfig
-	CustomDebug    bool
+	Type                         string
+	BaseURL                      string
+	Group                        string
+	AuthType                     string
+	UserID                       int
+	AccessToken                  string
+	RefreshToken                 string
+	RefreshTokenStoredSeparately bool
+	CredentialID                 int
+	Revision                     int64
+	Account                      string
+	Password                     string
+	ChannelKeys                  []string
+	Proxy                        string
+	RequestTimeout               time.Duration
+	SkipBalance                  bool
+	CostConversion               ChannelMonitorCostConversion
+	CustomConfig                 ChannelMonitorCustomUpstreamConfig
+	CustomDebug                  bool
 }
 
 func channelMonitorUpstreamRequestTimeout(timeout time.Duration) time.Duration {
@@ -148,17 +150,19 @@ type ChannelMonitorUpstreamGroupApplyResult struct {
 }
 
 type Sub2APIGroupRatioConfig struct {
-	BaseURL      string
-	Group        string
-	AuthType     string
-	AccessToken  string
-	CredentialID int
-	Revision     int64
-	Account      string
-	Password     string
-	Proxy        string
-	ChannelKeys  []string
-	SkipBalance  bool
+	BaseURL                      string
+	Group                        string
+	AuthType                     string
+	AccessToken                  string
+	RefreshToken                 string
+	RefreshTokenStoredSeparately bool
+	CredentialID                 int
+	Revision                     int64
+	Account                      string
+	Password                     string
+	Proxy                        string
+	ChannelKeys                  []string
+	SkipBalance                  bool
 }
 
 type newAPIGroupRatioEntry struct {
@@ -287,17 +291,19 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 		}
 	case Sub2APIUpstreamType:
 		result, err = fetchSub2APIGroupRatio(requestContext, client, Sub2APIGroupRatioConfig{
-			BaseURL:      config.BaseURL,
-			Group:        config.Group,
-			AuthType:     config.AuthType,
-			AccessToken:  config.AccessToken,
-			CredentialID: config.CredentialID,
-			Revision:     config.Revision,
-			Account:      config.Account,
-			Password:     config.Password,
-			Proxy:        config.Proxy,
-			ChannelKeys:  config.ChannelKeys,
-			SkipBalance:  config.SkipBalance,
+			BaseURL:                      config.BaseURL,
+			Group:                        config.Group,
+			AuthType:                     config.AuthType,
+			AccessToken:                  config.AccessToken,
+			RefreshToken:                 config.RefreshToken,
+			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			CredentialID:                 config.CredentialID,
+			Revision:                     config.Revision,
+			Account:                      config.Account,
+			Password:                     config.Password,
+			Proxy:                        config.Proxy,
+			ChannelKeys:                  config.ChannelKeys,
+			SkipBalance:                  config.SkipBalance,
 		}, ValidateSSRFProtectedFetchURL)
 		if err != nil {
 			return result, err
@@ -348,15 +354,17 @@ func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonit
 		}, ValidateSSRFProtectedFetchURL)
 	case Sub2APIUpstreamType:
 		return fetchSub2APIUpstreamBalance(requestContext, client, Sub2APIGroupRatioConfig{
-			BaseURL:      config.BaseURL,
-			AuthType:     config.AuthType,
-			AccessToken:  config.AccessToken,
-			CredentialID: config.CredentialID,
-			Revision:     config.Revision,
-			Account:      config.Account,
-			Password:     config.Password,
-			Proxy:        config.Proxy,
-			ChannelKeys:  config.ChannelKeys,
+			BaseURL:                      config.BaseURL,
+			AuthType:                     config.AuthType,
+			AccessToken:                  config.AccessToken,
+			RefreshToken:                 config.RefreshToken,
+			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			CredentialID:                 config.CredentialID,
+			Revision:                     config.Revision,
+			Account:                      config.Account,
+			Password:                     config.Password,
+			Proxy:                        config.Proxy,
+			ChannelKeys:                  config.ChannelKeys,
 		}, ValidateSSRFProtectedFetchURL)
 	case CustomUpstreamType:
 		return fetchChannelMonitorCustomUpstreamBalance(
@@ -485,15 +493,17 @@ func FetchChannelMonitorUpstreamGroups(ctx context.Context, config ChannelMonito
 		return result, nil
 	case Sub2APIUpstreamType:
 		return fetchSub2APIUpstreamGroups(ctx, client, Sub2APIGroupRatioConfig{
-			BaseURL:      config.BaseURL,
-			AuthType:     config.AuthType,
-			AccessToken:  config.AccessToken,
-			CredentialID: config.CredentialID,
-			Revision:     config.Revision,
-			Account:      config.Account,
-			Password:     config.Password,
-			Proxy:        config.Proxy,
-			SkipBalance:  config.SkipBalance,
+			BaseURL:                      config.BaseURL,
+			AuthType:                     config.AuthType,
+			AccessToken:                  config.AccessToken,
+			RefreshToken:                 config.RefreshToken,
+			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			CredentialID:                 config.CredentialID,
+			Revision:                     config.Revision,
+			Account:                      config.Account,
+			Password:                     config.Password,
+			Proxy:                        config.Proxy,
+			SkipBalance:                  config.SkipBalance,
 		}, channelKeys, ValidateSSRFProtectedFetchURL)
 	default:
 		return ChannelMonitorUpstreamGroupsResult{}, errors.New("不支持的上游类型")
@@ -1048,6 +1058,16 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 		groupsResult, fetchErr := fetchSub2APIUpstreamGroups(ctx, client, config, nil, validateURL)
 		result := NewAPIGroupRatioResult{Balance: groupsResult.Balance}
 		if fetchErr != nil {
+			if errors.Is(fetchErr, ErrChannelMonitorUpstreamAuthentication) && strings.TrimSpace(config.RefreshToken) != "" {
+				refreshConfig := config
+				refreshConfig.AccessToken = config.RefreshToken
+				refreshConfig.RefreshToken = ""
+				resolvedConfig, resolveErr := resolveSub2APIRefreshTokenConfig(ctx, client, refreshConfig, validateURL)
+				if resolveErr != nil {
+					return NewAPIGroupRatioResult{}, resolveErr
+				}
+				return fetchSub2APIGroupRatio(ctx, client, resolvedConfig, validateURL)
+			}
 			return result, fetchErr
 		}
 		for _, entry := range groupsResult.Groups {
@@ -1234,6 +1254,25 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 	defer cancel()
 	result, err := fetchSub2APIUpstreamGroupsWithToken(requestContext, client, baseURL, accessToken, validateURL)
 	if err != nil {
+		if errors.Is(err, ErrChannelMonitorUpstreamAuthentication) && strings.TrimSpace(config.RefreshToken) != "" {
+			refreshConfig := Sub2APIGroupRatioConfig{
+				BaseURL:                      config.BaseURL,
+				Group:                        config.Group,
+				AuthType:                     config.AuthType,
+				AccessToken:                  config.RefreshToken,
+				RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+				CredentialID:                 config.CredentialID,
+				Revision:                     config.Revision,
+				Proxy:                        config.Proxy,
+			}
+			tokenConfig, resolveErr := resolveSub2APIRefreshTokenConfig(ctx, client, refreshConfig, validateURL)
+			if resolveErr != nil {
+				return result, resolveErr
+			}
+			config.AccessToken = tokenConfig.AccessToken
+			config.RefreshToken = ""
+			return fetchSub2APIUpstreamGroups(ctx, client, config, channelKeys, validateURL)
+		}
 		return result, redactUpstreamGroupRatioSecrets(err, accessToken)
 	}
 	if !config.SkipBalance {
@@ -1362,7 +1401,18 @@ func fetchSub2APIUpstreamBalance(ctx context.Context, client *http.Client, confi
 		if err != nil {
 			return ChannelMonitorUpstreamBalanceResult{}, err
 		}
-		return fetchSub2APIUpstreamBalanceWithToken(ctx, client, baseURL, accessToken, validateURL)
+		result, fetchErr := fetchSub2APIUpstreamBalanceWithToken(ctx, client, baseURL, accessToken, validateURL)
+		if !errors.Is(fetchErr, ErrChannelMonitorUpstreamAuthentication) || strings.TrimSpace(config.RefreshToken) == "" {
+			return result, fetchErr
+		}
+		refreshConfig := config
+		refreshConfig.AccessToken = config.RefreshToken
+		refreshConfig.RefreshToken = ""
+		resolvedConfig, resolveErr := resolveSub2APIRefreshTokenConfig(ctx, client, refreshConfig, validateURL)
+		if resolveErr != nil {
+			return ChannelMonitorUpstreamBalanceResult{}, resolveErr
+		}
+		return fetchSub2APIUpstreamBalance(ctx, client, resolvedConfig, validateURL)
 	default:
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("Sub2API 认证方式无效")
 	}
@@ -1500,6 +1550,30 @@ func fetchSub2APIUpstreamGroupsWithToken(ctx context.Context, client *http.Clien
 
 func applySub2APIUpstreamGroup(ctx context.Context, client *http.Client, config ChannelMonitorUpstreamConfig, channelKeys []string, validateURL func(string) error) (result ChannelMonitorUpstreamGroupApplyResult, err error) {
 	authType := strings.TrimSpace(config.AuthType)
+	if authType == Sub2APIAuthToken && strings.TrimSpace(config.RefreshToken) != "" {
+		refreshToken := strings.TrimSpace(config.RefreshToken)
+		config.RefreshToken = ""
+		result, applyErr := applySub2APIUpstreamGroup(ctx, client, config, channelKeys, validateURL)
+		if !errors.Is(applyErr, ErrChannelMonitorUpstreamAuthentication) {
+			return result, applyErr
+		}
+		refreshConfig := Sub2APIGroupRatioConfig{
+			BaseURL:                      config.BaseURL,
+			Group:                        config.Group,
+			AuthType:                     config.AuthType,
+			AccessToken:                  refreshToken,
+			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			CredentialID:                 config.CredentialID,
+			Revision:                     config.Revision,
+			Proxy:                        config.Proxy,
+		}
+		tokenConfig, resolveErr := resolveSub2APIRefreshTokenConfig(ctx, client, refreshConfig, validateURL)
+		if resolveErr != nil {
+			return result, resolveErr
+		}
+		config.AccessToken = tokenConfig.AccessToken
+		return applySub2APIUpstreamGroup(ctx, client, config, channelKeys, validateURL)
+	}
 	if authType == Sub2APIAuthAccount {
 		accountConfig := Sub2APIGroupRatioConfig{
 			BaseURL:  config.BaseURL,

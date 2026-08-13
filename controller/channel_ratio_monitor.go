@@ -49,6 +49,7 @@ type channelMonitorUpstreamRequest struct {
 	AuthType                    string                                      `json:"auth_type"`
 	UserId                      int                                         `json:"user_id"`
 	AccessToken                 string                                      `json:"access_token"`
+	RefreshToken                *string                                     `json:"refresh_token"`
 	Account                     string                                      `json:"account"`
 	Password                    string                                      `json:"password"`
 	SingleChannelAction         string                                      `json:"single_channel_action"`
@@ -68,6 +69,7 @@ type channelMonitorUpstreamConfig struct {
 	AuthType                    string                                      `json:"auth_type"`
 	UserId                      int                                         `json:"user_id"`
 	HasAccessToken              bool                                        `json:"has_access_token"`
+	HasRefreshToken             bool                                        `json:"has_refresh_token"`
 	Account                     string                                      `json:"account"`
 	HasPassword                 bool                                        `json:"has_password"`
 	SingleChannelAction         string                                      `json:"single_channel_action"`
@@ -138,13 +140,18 @@ func channelMonitorUpstreamFromModel(monitor model.ChannelRatioMonitor) *channel
 			customConfig = &sanitized
 		}
 	}
+	authType := monitor.UpstreamAuthType
+	if authType == service.Sub2APIAuthRefreshToken {
+		authType = service.Sub2APIAuthToken
+	}
 	return &channelMonitorUpstreamConfig{
 		Type:                        monitor.UpstreamType,
 		BaseURL:                     monitor.UpstreamBaseURL,
 		Group:                       monitor.UpstreamGroup,
-		AuthType:                    monitor.UpstreamAuthType,
+		AuthType:                    authType,
 		UserId:                      monitor.UpstreamUserId,
-		HasAccessToken:              monitor.UpstreamAccessToken != "",
+		HasAccessToken:              monitor.UpstreamAuthType != service.Sub2APIAuthRefreshToken && monitor.UpstreamAccessToken != "",
+		HasRefreshToken:             monitor.UpstreamRefreshToken != "" || monitor.UpstreamAuthType == service.Sub2APIAuthRefreshToken,
 		Account:                     monitor.UpstreamAccount,
 		HasPassword:                 monitor.UpstreamPassword != "",
 		SingleChannelAction:         normalizeChannelMonitorPolicyAction(monitor.SingleChannelAction),
@@ -341,15 +348,58 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 		if request.AuthType != service.Sub2APIAuthToken && request.AuthType != service.Sub2APIAuthRefreshToken {
 			return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API 认证方式无效")
 		}
+		if request.AuthType == service.Sub2APIAuthToken {
+			config.AccessToken = strings.TrimSpace(request.AccessToken)
+			if request.RefreshToken != nil {
+				config.RefreshToken = strings.TrimSpace(*request.RefreshToken)
+			}
+			config.RefreshTokenStoredSeparately = true
+			if utf8.RuneCountInString(config.AccessToken) > 4096 {
+				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Token 过长")
+			}
+			if utf8.RuneCountInString(config.RefreshToken) > 4096 {
+				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Refresh Token 过长")
+			}
+			monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+			if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+				return service.ChannelMonitorUpstreamConfig{}, findErr
+			}
+			if findErr == nil && monitor.UpstreamType == config.Type && monitor.UpstreamBaseURL == config.BaseURL && (monitor.UpstreamAuthType == service.Sub2APIAuthToken || monitor.UpstreamAuthType == service.Sub2APIAuthRefreshToken) {
+				if config.AccessToken == "" {
+					if monitor.UpstreamAuthType == service.Sub2APIAuthToken {
+						config.AccessToken = monitor.UpstreamAccessToken
+					}
+				}
+				if config.RefreshToken == "" && request.RefreshToken == nil {
+					if monitor.UpstreamAuthType == service.Sub2APIAuthToken {
+						config.RefreshToken = monitor.UpstreamRefreshToken
+					} else {
+						config.RefreshToken = monitor.UpstreamAccessToken
+					}
+				}
+				config.CredentialID = monitor.ChannelId
+				config.Revision = monitor.UpstreamRevision
+			}
+			if config.AccessToken == "" {
+				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Token 不能为空")
+			}
+			return config, nil
+		}
 		var savedMonitor model.ChannelRatioMonitor
 		hasSavedMonitor := false
 		monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return service.ChannelMonitorUpstreamConfig{}, findErr
 		}
-		if findErr == nil && monitor.UpstreamType == config.Type && monitor.UpstreamBaseURL == config.BaseURL && monitor.UpstreamAuthType == config.AuthType {
-			savedMonitor = monitor
-			hasSavedMonitor = true
+		if findErr == nil && monitor.UpstreamType == config.Type && monitor.UpstreamBaseURL == config.BaseURL {
+			if monitor.UpstreamAuthType == config.AuthType {
+				savedMonitor = monitor
+				hasSavedMonitor = true
+			} else if request.AuthType == service.Sub2APIAuthRefreshToken && monitor.UpstreamAuthType == service.Sub2APIAuthToken && monitor.UpstreamRefreshToken != "" {
+				savedMonitor = monitor
+				hasSavedMonitor = true
+				config.RefreshTokenStoredSeparately = true
+			}
 		}
 		config.AccessToken = strings.TrimSpace(request.AccessToken)
 		if utf8.RuneCountInString(config.AccessToken) > 4096 {
@@ -370,7 +420,11 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 		}
 		if config.AccessToken == "" {
 			if hasSavedMonitor {
-				config.AccessToken = savedMonitor.UpstreamAccessToken
+				if config.RefreshTokenStoredSeparately {
+					config.AccessToken = savedMonitor.UpstreamRefreshToken
+				} else {
+					config.AccessToken = savedMonitor.UpstreamAccessToken
+				}
 				config.CredentialID = savedMonitor.ChannelId
 				config.Revision = savedMonitor.UpstreamRevision
 			}
@@ -854,6 +908,17 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 	if config.Type == service.Sub2APIUpstreamType && config.AuthType == service.Sub2APIAuthRefreshToken {
 		config.AccessToken = service.CanonicalSub2APIRefreshToken(config)
 	}
+	if config.Type == service.Sub2APIUpstreamType && config.AuthType == service.Sub2APIAuthToken && config.RefreshToken != "" {
+		config.RefreshToken = service.CanonicalSub2APIRefreshToken(service.ChannelMonitorUpstreamConfig{
+			Type:         config.Type,
+			BaseURL:      config.BaseURL,
+			AuthType:     config.AuthType,
+			AccessToken:  config.RefreshToken,
+			CredentialID: config.CredentialID,
+			Revision:     config.Revision,
+			Proxy:        config.Proxy,
+		})
+	}
 	if hasExistingMonitor && existingMonitor.UpstreamType == service.Sub2APIUpstreamType && existingMonitor.UpstreamAuthType == service.Sub2APIAuthRefreshToken &&
 		(config.Type != service.Sub2APIUpstreamType || config.AuthType != service.Sub2APIAuthRefreshToken || config.BaseURL != existingMonitor.UpstreamBaseURL || config.AccessToken != existingMonitor.UpstreamAccessToken) {
 		service.ForgetSub2APIRefreshTokenCache(service.ChannelMonitorUpstreamConfig{
@@ -886,6 +951,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			CustomUpstreamConfig:        customConfig,
 			UpstreamAccount:             config.Account,
 			UpstreamPassword:            config.Password,
+			UpstreamRefreshToken:        config.RefreshToken,
 		},
 	)
 	if err != nil {
@@ -1266,22 +1332,24 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	}
 
 	result, fetchErr := service.FetchChannelMonitorUpstreamGroupRatio(ctx, service.ChannelMonitorUpstreamConfig{
-		Type:           monitor.UpstreamType,
-		BaseURL:        monitor.UpstreamBaseURL,
-		Group:          monitor.UpstreamGroup,
-		AuthType:       monitor.UpstreamAuthType,
-		UserID:         monitor.UpstreamUserId,
-		AccessToken:    monitor.UpstreamAccessToken,
-		CredentialID:   monitor.ChannelId,
-		Revision:       monitor.UpstreamRevision,
-		Account:        monitor.UpstreamAccount,
-		Password:       monitor.UpstreamPassword,
-		ChannelKeys:    channelKeys,
-		Proxy:          proxyURL,
-		RequestTimeout: requestTimeout,
-		SkipBalance:    monitor.UpstreamBalanceSyncDisabled || !fetchBalance,
-		CostConversion: costConversion,
-		CustomConfig:   customConfig,
+		Type:                         monitor.UpstreamType,
+		BaseURL:                      monitor.UpstreamBaseURL,
+		Group:                        monitor.UpstreamGroup,
+		AuthType:                     monitor.UpstreamAuthType,
+		UserID:                       monitor.UpstreamUserId,
+		AccessToken:                  monitor.UpstreamAccessToken,
+		RefreshToken:                 monitor.UpstreamRefreshToken,
+		RefreshTokenStoredSeparately: monitor.UpstreamRefreshToken != "",
+		CredentialID:                 monitor.ChannelId,
+		Revision:                     monitor.UpstreamRevision,
+		Account:                      monitor.UpstreamAccount,
+		Password:                     monitor.UpstreamPassword,
+		ChannelKeys:                  channelKeys,
+		Proxy:                        proxyURL,
+		RequestTimeout:               requestTimeout,
+		SkipBalance:                  monitor.UpstreamBalanceSyncDisabled || !fetchBalance,
+		CostConversion:               costConversion,
+		CustomConfig:                 customConfig,
 	})
 	outcome.Result = result
 	if result.Balance.Amount != nil || strings.TrimSpace(result.Balance.Error) != "" {
@@ -1359,19 +1427,21 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 	result, fetchErr := service.FetchChannelMonitorUpstreamBalance(
 		ctx,
 		service.ChannelMonitorUpstreamConfig{
-			Type:           monitor.UpstreamType,
-			BaseURL:        monitor.UpstreamBaseURL,
-			AuthType:       monitor.UpstreamAuthType,
-			UserID:         monitor.UpstreamUserId,
-			AccessToken:    monitor.UpstreamAccessToken,
-			CredentialID:   monitor.ChannelId,
-			Revision:       monitor.UpstreamRevision,
-			Account:        monitor.UpstreamAccount,
-			Password:       monitor.UpstreamPassword,
-			ChannelKeys:    channelKeys,
-			Proxy:          proxyURL,
-			RequestTimeout: requestTimeout,
-			CustomConfig:   customConfig,
+			Type:                         monitor.UpstreamType,
+			BaseURL:                      monitor.UpstreamBaseURL,
+			AuthType:                     monitor.UpstreamAuthType,
+			UserID:                       monitor.UpstreamUserId,
+			AccessToken:                  monitor.UpstreamAccessToken,
+			RefreshToken:                 monitor.UpstreamRefreshToken,
+			RefreshTokenStoredSeparately: monitor.UpstreamRefreshToken != "",
+			CredentialID:                 monitor.ChannelId,
+			Revision:                     monitor.UpstreamRevision,
+			Account:                      monitor.UpstreamAccount,
+			Password:                     monitor.UpstreamPassword,
+			ChannelKeys:                  channelKeys,
+			Proxy:                        proxyURL,
+			RequestTimeout:               requestTimeout,
+			CustomConfig:                 customConfig,
 		},
 	)
 	if fetchErr == nil && result.Amount == nil {
@@ -1691,18 +1761,20 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 	applyResult, applyErr := service.ApplyChannelMonitorUpstreamGroup(
 		c.Request.Context(),
 		service.ChannelMonitorUpstreamConfig{
-			Type:           monitor.UpstreamType,
-			BaseURL:        monitor.UpstreamBaseURL,
-			Group:          monitor.UpstreamGroup,
-			AuthType:       monitor.UpstreamAuthType,
-			UserID:         monitor.UpstreamUserId,
-			AccessToken:    monitor.UpstreamAccessToken,
-			CredentialID:   monitor.ChannelId,
-			Revision:       monitor.UpstreamRevision,
-			Account:        monitor.UpstreamAccount,
-			Password:       monitor.UpstreamPassword,
-			Proxy:          channel.GetSetting().Proxy,
-			CostConversion: costConversion,
+			Type:                         monitor.UpstreamType,
+			BaseURL:                      monitor.UpstreamBaseURL,
+			Group:                        monitor.UpstreamGroup,
+			AuthType:                     monitor.UpstreamAuthType,
+			UserID:                       monitor.UpstreamUserId,
+			AccessToken:                  monitor.UpstreamAccessToken,
+			RefreshToken:                 monitor.UpstreamRefreshToken,
+			RefreshTokenStoredSeparately: monitor.UpstreamRefreshToken != "",
+			CredentialID:                 monitor.ChannelId,
+			Revision:                     monitor.UpstreamRevision,
+			Account:                      monitor.UpstreamAccount,
+			Password:                     monitor.UpstreamPassword,
+			Proxy:                        channel.GetSetting().Proxy,
+			CostConversion:               costConversion,
 		},
 		channel.GetKeys(),
 	)

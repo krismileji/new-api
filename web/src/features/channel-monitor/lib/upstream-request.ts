@@ -26,7 +26,8 @@ import type { UpstreamConfigFormValues } from './schema'
 
 export function createChannelMonitorUpstreamRequest(
   values: UpstreamConfigFormValues,
-  authType: ChannelMonitorUpstreamAuthType = values.authType
+  authType: ChannelMonitorUpstreamAuthType = values.authType,
+  includeEmptyRefreshToken = false
 ): ChannelMonitorUpstreamRequest {
   const userAuthentication =
     values.upstreamType === 'new_api' && authType === 'user'
@@ -53,10 +54,17 @@ export function createChannelMonitorUpstreamRequest(
   }
 
   let accessToken = ''
+  let refreshToken: string | undefined
   if (userAuthentication || sub2APITokenAuthentication) {
     accessToken = values.accessToken.trim()
   } else if (sub2APIRefreshTokenAuthentication) {
     accessToken = values.refreshToken.trim()
+  }
+  if (values.upstreamType === 'sub2api' && authType === 'token') {
+    const value = values.refreshToken.trim()
+    if (value || includeEmptyRefreshToken) {
+      refreshToken = value
+    }
   }
 
   return {
@@ -66,6 +74,7 @@ export function createChannelMonitorUpstreamRequest(
     auth_type: authType,
     user_id: userAuthentication ? values.userId : 0,
     access_token: accessToken,
+    refresh_token: refreshToken,
     account: sub2APIAccountAuthentication ? values.account.trim() : '',
     password: sub2APIAccountAuthentication ? values.password : '',
     single_channel_action: values.singleChannelAction,

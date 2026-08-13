@@ -1108,6 +1108,7 @@ type SavedUpstreamCredential = {
   baseUrl: string
   authType: ChannelMonitorUpstreamAuthType
   hasAccessToken: boolean
+  hasRefreshToken: boolean
   account: string
   hasPassword: boolean
 } | null
@@ -1547,10 +1548,17 @@ export function createUpstreamConfigSchema(
         })
         return
       }
-      const credential =
-        values.authType === 'refresh_token'
-          ? values.refreshToken
-          : values.accessToken
+      if (values.authType === 'token') {
+        if (!values.accessToken && !hasSavedAccessToken) {
+          context.addIssue({
+            code: 'custom',
+            path: ['accessToken'],
+            message: '请输入 Sub2API Token（旧版访问令牌）',
+          })
+        }
+        return
+      }
+      const credential = values.refreshToken
       if (!credential && !hasSavedAccessToken) {
         context.addIssue({
           code: 'custom',

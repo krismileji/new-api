@@ -165,6 +165,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
           baseUrl: savedUpstream.base_url,
           authType: savedUpstream.auth_type,
           hasAccessToken: savedUpstream.has_access_token,
+          hasRefreshToken: savedUpstream.has_refresh_token === true,
           account: savedUpstream.account || '',
           hasPassword: savedUpstream.has_password,
         }
@@ -239,9 +240,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const isSub2API = upstreamType === 'sub2api'
   const isCustom = upstreamType === 'custom'
   const needsSub2APIToken = isSub2API && authType === 'token'
-  const needsSub2APIRefreshToken = isSub2API && authType === 'refresh_token'
-  const usesSub2APITokenCredential =
-    needsSub2APIToken || needsSub2APIRefreshToken
+  const usesSub2APITokenCredential = needsSub2APIToken
   const needsSub2APIAccount = isSub2API && authType === 'account'
   const hasMatchingSavedAccessToken =
     savedCredential?.hasAccessToken === true &&
@@ -250,12 +249,13 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const hasSavedSub2APIToken =
     savedCredential?.hasAccessToken === true &&
     savedCredential.type === 'sub2api' &&
-    savedCredential.authType === 'token' &&
+    (savedCredential.authType === 'token' ||
+      savedCredential.authType === 'refresh_token') &&
     savedCredential.baseUrl === baseUrl
   const hasSavedSub2APIRefreshToken =
-    savedCredential?.hasAccessToken === true &&
+    savedCredential?.hasRefreshToken === true &&
     savedCredential.type === 'sub2api' &&
-    savedCredential.authType === 'refresh_token' &&
+    savedCredential.authType === 'token' &&
     savedCredential.baseUrl === baseUrl
   const hasSub2APIToken = hasSavedSub2APIToken || accessToken.trim().length > 0
   const hasSub2APIRefreshToken =
@@ -273,13 +273,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     !isCustom &&
     (needsUserAuthentication ||
       (needsSub2APIToken && hasSub2APIToken) ||
-      (needsSub2APIRefreshToken && hasSub2APIRefreshToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const canLoadGroups =
     !isCustom &&
     (!isSub2API ||
       (needsSub2APIToken && hasSub2APIToken) ||
-      (needsSub2APIRefreshToken && hasSub2APIRefreshToken) ||
       (needsSub2APIAccount && hasSub2APIAccountCredential))
   const authDescription =
     authType === 'public'
@@ -291,15 +289,13 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   } else if (authType === 'token') {
     sub2APIAuthDescription = '使用手动获取的旧版 Token 读取倍率、余额和分组'
   } else if (authType === 'refresh_token') {
-    sub2APIAuthDescription = '使用 Refresh Token 自动换取并刷新访问 Token'
+    sub2APIAuthDescription = '使用历史 Refresh Token 配置读取倍率、余额和分组'
   }
   let applyGroupDescription =
     '应用分组会保存配置，并将当前渠道的全部上游令牌切换到该分组'
   if (!canApplyGroup) {
     if (needsSub2APIAccount) {
       applyGroupDescription = '应用分组需要先填写登录邮箱和密码'
-    } else if (needsSub2APIRefreshToken) {
-      applyGroupDescription = '应用分组需要先填写 Refresh Token'
     } else if (isSub2API) {
       applyGroupDescription = '应用分组需要先填写手动 Token'
     } else {
@@ -513,9 +509,15 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
 
     setTestResult(null)
     setTestedAuthType(testAuthType)
+    const testValues =
+      testAuthType === 'token' ? { ...values, refreshToken: '' } : values
     testMutation.mutate({
       channelId: props.channel.id,
-      config: createChannelMonitorUpstreamRequest(values, testAuthType),
+      config: createChannelMonitorUpstreamRequest(
+        testValues,
+        testAuthType,
+        testAuthType === 'token'
+      ),
     })
   }
   const handleLoadGroups = form.handleSubmit((values) => {
@@ -1080,8 +1082,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                             if (
                               nextValue !== 'api_key' &&
                               nextValue !== 'account' &&
-                              nextValue !== 'token' &&
-                              nextValue !== 'refresh_token'
+                              nextValue !== 'token'
                             ) {
                               return
                             }
@@ -1094,7 +1095,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           }}
                           variant='outline'
                           spacing={2}
-                          className='grid w-full grid-cols-2 sm:grid-cols-4'
+                          className='grid w-full grid-cols-3'
                         >
                           <ToggleGroupItem value='api_key' className='w-full'>
                             API Key（新版）
@@ -1102,14 +1103,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           <ToggleGroupItem value='account' className='w-full'>
                             账号密码
                           </ToggleGroupItem>
-                          <ToggleGroupItem
-                            value='refresh_token'
-                            className='w-full'
-                          >
-                            Refresh Token
-                          </ToggleGroupItem>
                           <ToggleGroupItem value='token' className='w-full'>
-                            手动 Token
+                            Token 认证
                           </ToggleGroupItem>
                         </ToggleGroup>
                       </FormControl>
@@ -1352,7 +1347,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           </Button>
                         </div>
                         <FormDescription>
-                          短期 JWT；仅在选择“手动 Token”时保存并用于监控。
+                          必填的短期 JWT；Refresh Token
+                          为可选续期凭据，保存后会在 JWT 过期时自动换取新
+                          Token。
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1439,8 +1436,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           </Button>
                         </div>
                         <FormDescription>
-                          长期凭据；测试会实际换取 Access
-                          Token。仅在选择“Refresh Token”时保存并用于监控。
+                          可选续期凭据；可单独测试，或在手动 Token 失效时自动换取新
+                          Token。
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

@@ -8,15 +8,14 @@
 | New API | 用户 ID + 管理面板访问令牌 | 支持 | 支持读取分组并把当前渠道的上游令牌切换到所选分组 |
 | Sub2API | 当前渠道 API Key | 支持新版倍率和余额 | 不支持自动读取或应用分组，需手工填写分组名或 ID |
 | Sub2API | 登录邮箱 + 密码 | 自动登录并缓存访问 Token | 支持读取和应用分组 |
-| Sub2API | Refresh Token | 自动换取并缓存短期访问 Token | 支持读取和应用分组 |
-| Sub2API | 手动 Token | 支持旧版接口 | 支持读取和应用分组 |
+| Sub2API | 手动 Token（可选 Refresh Token） | 使用手动 Token；可自动换取并缓存短期访问 Token | 支持读取和应用分组 |
 | 自定义上游 | 固定值或自定义 HTTP 请求 | 支持分别配置倍率和余额 | 不自动管理远端分组 |
 
 Sub2API 还可以在不提供凭据的情况下读取公开版本信息，便于确认上游部署版本和接口兼容性。
 
-Sub2API 的 Refresh Token 模式适合无人值守监控。首次配置时从已登录的 Sub2API 面板读取 `localStorage` 中的 `refresh_token`；监控请求会通过 `/api/v1/auth/refresh` 换取短期访问 Token，并在访问 Token 被拒绝时刷新后重试。上游返回新的 Refresh Token 时，服务端会按渠道配置修订号和旧凭据做条件更新，避免并发中的旧请求覆盖新配置。手动 Token 模式继续保留，用于兼容旧配置和不支持刷新接口的上游版本。
+Sub2API 配置要求手动 Token 必填，Refresh Token 可选。首次配置时可从已登录的 Sub2API 面板读取 `localStorage` 中的 `auth_token` 和 `refresh_token`；监控请求默认使用手动 Token，填写 Refresh Token 后会在访问 Token 被拒绝时通过 `/api/v1/auth/refresh` 换取新 Token 并重试。上游返回新的 Refresh Token 时，服务端会按渠道配置修订号和旧凭据做条件更新，避免并发中的旧请求覆盖新配置。历史上单独保存的 Refresh Token 认证配置仍可继续读取。
 
-编辑 Sub2API 配置时可同时填写手动 Token 和 Refresh Token，并分别执行真实上游测试。保存时仅持久化所选认证方式对应的凭据；测试另一种凭据不会改变监控实际使用的认证方式。
+编辑 Sub2API 配置时可同时填写手动 Token 和 Refresh Token，并分别执行真实上游测试。手动 Token 测试只验证手动 Token；Refresh Token 测试只验证 Refresh Token。保存时 Token 是必填主凭据，Refresh Token 作为可选续期凭据一并持久化。
 
 ## 自定义上游
 

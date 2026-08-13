@@ -2309,11 +2309,12 @@ func TestSaveChannelMonitorSub2APIConfigPersistsToken(t *testing.T) {
 	}).Error)
 
 	request := map[string]any{
-		"type":         service.Sub2APIUpstreamType,
-		"base_url":     baseURL,
-		"group":        "vip",
-		"auth_type":    service.Sub2APIAuthToken,
-		"access_token": "jwt-token",
+		"type":          service.Sub2APIUpstreamType,
+		"base_url":      baseURL,
+		"group":         "vip",
+		"auth_type":     service.Sub2APIAuthToken,
+		"access_token":  "jwt-token",
+		"refresh_token": "refresh-token",
 	}
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/13/upstream", request)
 	ctx.Params = gin.Params{{Key: "id", Value: "13"}}
@@ -2323,7 +2324,9 @@ func TestSaveChannelMonitorSub2APIConfigPersistsToken(t *testing.T) {
 	monitor, err := model.GetChannelRatioMonitor(13)
 	require.NoError(t, err)
 	assert.Equal(t, "jwt-token", monitor.UpstreamAccessToken)
+	assert.Equal(t, "refresh-token", monitor.UpstreamRefreshToken)
 	assert.NotContains(t, recorder.Body.String(), "jwt-token")
+	assert.NotContains(t, recorder.Body.String(), "refresh-token")
 }
 
 func TestSaveChannelMonitorSub2APIConfigPersistsRefreshToken(t *testing.T) {

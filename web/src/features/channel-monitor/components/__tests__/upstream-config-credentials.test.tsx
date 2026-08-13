@@ -102,9 +102,10 @@ const channel: ChannelMonitorItem = {
     type: 'sub2api',
     base_url: 'https://upstream.example',
     group: 'vip',
-    auth_type: 'refresh_token',
+    auth_type: 'token',
     user_id: 0,
     has_access_token: false,
+    has_refresh_token: false,
     account: '',
     has_password: false,
     single_channel_action: 'none',
@@ -171,7 +172,7 @@ afterEach(async () => {
 })
 
 describe('Sub2API credential controls', () => {
-  test('keeps both credentials visible and tests each with its own auth type', async () => {
+  test('keeps both credentials visible and tests each credential independently', async () => {
     const requests: ChannelMonitorUpstreamRequest[] = []
     apiClient.post = async (url, data) => {
       assert.equal(url, '/api/channel_monitor/channel/7/upstream/test')
@@ -215,6 +216,16 @@ describe('Sub2API credential controls', () => {
       )
     })
 
+    findButton('API Key（新版）')
+    findButton('账号密码')
+    findButton('Token 认证')
+    assert.equal(
+      [...document.querySelectorAll<HTMLButtonElement>('button')].some(
+        (button) => button.textContent?.trim() === 'Refresh Token'
+      ),
+      false
+    )
+
     await changeInput('输入登录后的 JWT Token', 'access-token')
     await changeInput('输入 Sub2API Refresh Token', 'refresh-token')
 
@@ -234,13 +245,18 @@ describe('Sub2API credential controls', () => {
     )
 
     assert.deepEqual(
-      requests.map(({ auth_type, access_token }) => ({
+      requests.map(({ auth_type, access_token, refresh_token }) => ({
         auth_type,
         access_token,
+        refresh_token,
       })),
       [
-        { auth_type: 'token', access_token: 'access-token' },
-        { auth_type: 'refresh_token', access_token: 'refresh-token' },
+        { auth_type: 'token', access_token: 'access-token', refresh_token: '' },
+        {
+          auth_type: 'refresh_token',
+          access_token: 'refresh-token',
+          refresh_token: undefined,
+        },
       ]
     )
   })

@@ -47,7 +47,7 @@ const upstreamConfigBase = {
   upstreamType: 'sub2api' as const,
   baseUrl: 'https://upstream.example',
   group: 'vip',
-  authType: 'refresh_token' as const,
+  authType: 'token' as const,
   userId: 0,
   accessToken: '',
   refreshToken: '',
@@ -68,8 +68,8 @@ const upstreamConfigBase = {
   customConfig: createChannelMonitorCustomFormConfig(undefined),
 }
 
-describe('Sub2API refresh token schema', () => {
-  test('requires a refresh token for a new configuration', () => {
+describe('Sub2API token schema', () => {
+  test('requires a manual token for a new configuration', () => {
     const schema = createUpstreamConfigSchema(null)
     const result = schema.safeParse(upstreamConfigBase)
 
@@ -78,23 +78,31 @@ describe('Sub2API refresh token schema', () => {
     assert.ok(
       result.error.issues.some(
         (issue) =>
-          issue.path.join('.') === 'refreshToken' &&
-          issue.message === '请输入 Sub2API Refresh Token'
+          issue.path.join('.') === 'accessToken' &&
+          issue.message === '请输入 Sub2API Token（旧版访问令牌）'
       )
     )
   })
 
-  test('allows an empty field when the same upstream already stores a refresh token', () => {
+  test('allows an empty manual token field when the same upstream already stores it', () => {
     const schema = createUpstreamConfigSchema({
       type: 'sub2api',
       baseUrl: upstreamConfigBase.baseUrl,
-      authType: 'refresh_token',
+      authType: 'token',
       hasAccessToken: true,
+      hasRefreshToken: true,
       account: '',
       hasPassword: false,
     })
 
-    assert.equal(schema.safeParse(upstreamConfigBase).success, true)
+    assert.equal(
+      schema.safeParse({
+        ...upstreamConfigBase,
+        authType: 'token',
+        accessToken: '',
+      }).success,
+      true
+    )
   })
 
   test('validates manual and refresh Token fields independently', () => {
@@ -107,8 +115,8 @@ describe('Sub2API refresh token schema', () => {
     })
     const refreshTokenResult = schema.safeParse({
       ...upstreamConfigBase,
-      authType: 'refresh_token',
-      accessToken: '',
+      authType: 'token',
+      accessToken: 'access-token',
       refreshToken: 'refresh-token',
     })
 

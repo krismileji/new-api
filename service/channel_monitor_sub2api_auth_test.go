@@ -134,6 +134,105 @@ func TestFetchSub2APIRefreshTokenRetriesAfterAccessTokenRejection(t *testing.T) 
 	}))
 }
 
+func TestFetchSub2APITokenUsesRefreshTokenOnlyAfterAccessTokenRejection(t *testing.T) {
+	resetSub2APIRefreshTokenCache(t)
+	var refreshRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			refreshRequests.Add(1)
+			var request sub2APIRefreshTokenRequest
+			require.NoError(t, common.DecodeJson(r.Body, &request))
+			assert.Equal(t, "refresh-original", request.RefreshToken)
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"access-fresh","refresh_token":"refresh-next","expires_in":3600}}`))
+		case "/api/v1/groups/available":
+			if r.Header.Get("Authorization") == "Bearer access-expired" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"code":401,"message":"token expired"}`))
+				return
+			}
+			assert.Equal(t, "Bearer access-fresh", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := fetchSub2APIGroupRatio(context.Background(), server.Client(), Sub2APIGroupRatioConfig{
+		BaseURL:      server.URL,
+		Group:        "vip",
+		AuthType:     Sub2APIAuthToken,
+		AccessToken:  "access-expired",
+		RefreshToken: "refresh-original",
+		Revision:     3,
+		SkipBalance:  true,
+	}, nil)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, result.Ratio, 1e-9)
+	assert.EqualValues(t, 1, refreshRequests.Load())
+}
+
+func TestFetchSub2APITokenPersistsRotatedSeparateRefreshToken(t *testing.T) {
+	resetSub2APIRefreshTokenCache(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelRatioMonitor{}))
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9019, Name: "token and refresh-token monitor"}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Where("channel_id = ?", 9019).Delete(&model.ChannelRatioMonitor{}).Error)
+		require.NoError(t, model.DB.Where("id = ?", 9019).Delete(&model.Channel{}).Error)
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/auth/refresh":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"access-fresh","refresh_token":"refresh-new","expires_in":3600}}`))
+		case "/api/v1/groups/available":
+			if r.Header.Get("Authorization") == "Bearer access-expired" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"code":401,"message":"token expired"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`))
+		case "/api/v1/groups/rates":
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	require.NoError(t, model.DB.Create(&model.ChannelRatioMonitor{
+		ChannelId:            9019,
+		UpstreamType:         Sub2APIUpstreamType,
+		UpstreamBaseURL:      server.URL,
+		UpstreamAuthType:     Sub2APIAuthToken,
+		UpstreamAccessToken:  "access-expired",
+		UpstreamRefreshToken: "refresh-old",
+		UpstreamRevision:     8,
+	}).Error)
+
+	_, err := fetchSub2APIGroupRatio(context.Background(), server.Client(), Sub2APIGroupRatioConfig{
+		BaseURL:                      server.URL,
+		Group:                        "vip",
+		AuthType:                     Sub2APIAuthToken,
+		AccessToken:                  "access-expired",
+		RefreshToken:                 "refresh-old",
+		RefreshTokenStoredSeparately: true,
+		CredentialID:                 9019,
+		Revision:                     8,
+		SkipBalance:                  true,
+	}, nil)
+	require.NoError(t, err)
+	monitor, err := model.GetChannelRatioMonitor(9019)
+	require.NoError(t, err)
+	assert.Equal(t, "access-expired", monitor.UpstreamAccessToken)
+	assert.Equal(t, "refresh-new", monitor.UpstreamRefreshToken)
+	assert.Equal(t, int64(8), monitor.UpstreamRevision)
+}
+
 func TestFetchSub2APIRefreshTokenRetriesAfterMultipleRotations(t *testing.T) {
 	resetSub2APIRefreshTokenCache(t)
 	var refreshRequests atomic.Int32

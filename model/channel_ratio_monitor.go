@@ -58,6 +58,7 @@ type ChannelRatioMonitor struct {
 	UpstreamAuthType            string   `json:"upstream_auth_type" gorm:"type:varchar(16)"`
 	UpstreamUserId              int      `json:"upstream_user_id"`
 	UpstreamAccessToken         string   `json:"-" gorm:"type:text"`
+	UpstreamRefreshToken        string   `json:"-" gorm:"type:text"`
 	UpstreamAccount             string   `json:"-" gorm:"type:varchar(320)"`
 	UpstreamPassword            string   `json:"-" gorm:"type:text"`
 	UpstreamRevision            int64    `json:"-" gorm:"bigint"`
@@ -87,6 +88,7 @@ type ChannelRatioUpstreamOptions struct {
 	CustomUpstreamConfig        string
 	UpstreamAccount             string
 	UpstreamPassword            string
+	UpstreamRefreshToken        string
 }
 
 // ChannelRatioMonitorBalanceEstimateState is the persisted state needed to
@@ -198,6 +200,7 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			monitor.UpstreamAuthType != authType ||
 			monitor.UpstreamUserId != userId ||
 			monitor.UpstreamAccessToken != accessToken ||
+			monitor.UpstreamRefreshToken != options.UpstreamRefreshToken ||
 			monitor.UpstreamAccount != options.UpstreamAccount ||
 			monitor.UpstreamPassword != options.UpstreamPassword ||
 			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig
@@ -243,6 +246,7 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		monitor.UpstreamAuthType = authType
 		monitor.UpstreamUserId = userId
 		monitor.UpstreamAccessToken = accessToken
+		monitor.UpstreamRefreshToken = options.UpstreamRefreshToken
 		monitor.UpstreamAccount = options.UpstreamAccount
 		monitor.UpstreamPassword = options.UpstreamPassword
 		monitor.CostConversion = options.CostConversion
@@ -317,6 +321,30 @@ func RotateChannelRatioUpstreamCredential(channelId int, upstreamType string, au
 			oldCredential,
 		).
 		Update("upstream_access_token", newCredential)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// RotateChannelRatioUpstreamRefreshToken updates a rotated refresh credential
+// only when the monitor snapshot used by the request is still current.
+func RotateChannelRatioUpstreamRefreshToken(channelId int, upstreamType string, authType string, expectedRevision int64, oldCredential string, newCredential string) (bool, error) {
+	if channelId <= 0 || expectedRevision < 0 || oldCredential == "" || newCredential == "" {
+		return false, errors.New("渠道监控 Refresh Token 轮换参数无效")
+	}
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+	result := DB.Model(&ChannelRatioMonitor{}).
+		Where(
+			"channel_id = ? AND upstream_type = ? AND upstream_auth_type = ? AND upstream_revision = ? AND upstream_refresh_token = ?",
+			channelId,
+			upstreamType,
+			authType,
+			expectedRevision,
+			oldCredential,
+		).
+		Update("upstream_refresh_token", newCredential)
 	if result.Error != nil {
 		return false, result.Error
 	}

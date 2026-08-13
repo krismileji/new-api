@@ -195,14 +195,27 @@ func resolveSub2APIRefreshTokenConfig(ctx context.Context, client *http.Client, 
 
 		entry, refreshErr := refreshSub2APIToken(ctx, client, baseURL, refreshToken, validateURL)
 		if refreshErr == nil && entry.refreshToken != refreshToken && config.CredentialID > 0 {
-			rotated, persistErr := model.RotateChannelRatioUpstreamCredential(
-				config.CredentialID,
-				Sub2APIUpstreamType,
-				Sub2APIAuthRefreshToken,
-				config.Revision,
-				refreshToken,
-				entry.refreshToken,
-			)
+			var rotated bool
+			var persistErr error
+			if config.RefreshTokenStoredSeparately {
+				rotated, persistErr = model.RotateChannelRatioUpstreamRefreshToken(
+					config.CredentialID,
+					Sub2APIUpstreamType,
+					Sub2APIAuthToken,
+					config.Revision,
+					refreshToken,
+					entry.refreshToken,
+				)
+			} else {
+				rotated, persistErr = model.RotateChannelRatioUpstreamCredential(
+					config.CredentialID,
+					Sub2APIUpstreamType,
+					Sub2APIAuthRefreshToken,
+					config.Revision,
+					refreshToken,
+					entry.refreshToken,
+				)
+			}
 			if persistErr != nil {
 				refreshErr = fmt.Errorf("Sub2API Refresh Token 轮换保存失败: %w", persistErr)
 			} else if !rotated {

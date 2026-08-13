@@ -27,7 +27,7 @@ const values: UpstreamConfigFormValues = {
   upstreamType: 'sub2api',
   baseUrl: ' https://upstream.example ',
   group: ' vip ',
-  authType: 'refresh_token',
+  authType: 'token',
   userId: 0,
   accessToken: ' access-token ',
   refreshToken: ' refresh-token ',
@@ -54,6 +54,7 @@ describe('Sub2API credential test requests', () => {
 
     assert.equal(request.auth_type, 'token')
     assert.equal(request.access_token, 'access-token')
+    assert.equal(request.refresh_token, 'refresh-token')
   })
 
   test('Refresh Token test sends only the Refresh Token credential', () => {
@@ -61,5 +62,6 @@ describe('Sub2API credential test requests', () => {
 
     assert.equal(request.auth_type, 'refresh_token')
     assert.equal(request.access_token, 'refresh-token')
+    assert.equal(request.refresh_token, undefined)
   })
 })
