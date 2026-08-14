@@ -299,7 +299,7 @@ export function ChannelModelDetectionConfigSheet(
               <SideDrawerSection>
                 <SideDrawerSectionHeader
                   title='定时参与'
-                  description='档位、周期、执行时间和时区由模型检测统一设置控制'
+                  description='档位和周期由模型检测统一设置控制'
                   icon={<HugeiconsIcon icon={FingerPrintAddIcon} />}
                   iconTone='primary'
                 />

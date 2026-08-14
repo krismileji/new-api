@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -179,9 +177,10 @@ type ChannelModelDetectionSettingsSummary struct {
 	DetectorURLMasked     string `json:"detector_url_masked"`
 	ScheduledPreset       string `json:"scheduled_preset"`
 	ScheduleEnabled       bool   `json:"schedule_enabled"`
-	IntervalHours         int    `json:"interval_hours"`
-	ScheduleTime          string `json:"schedule_time"`
-	Timezone              string `json:"timezone"`
+	IntervalMinutes       int    `json:"interval_minutes"`
+	IntervalHours         int    `json:"-"`
+	ScheduleTime          string `json:"-"`
+	Timezone              string `json:"-"`
 	NextBatchAt           int64  `json:"next_batch_at"`
 	Revision              int64  `json:"revision"`
 }
@@ -527,7 +526,7 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 		Settings: ChannelModelDetectionSettingsSummary{
 			DetectorURLConfigured: configured, DetectorURLMasked: maskedURL,
 			ScheduledPreset: global.ScheduledPreset, ScheduleEnabled: global.ScheduleEnabled,
-			IntervalHours: global.IntervalHours, ScheduleTime: global.ScheduleTime, Timezone: global.Timezone,
+			IntervalMinutes: global.EffectiveIntervalMinutes(), IntervalHours: global.IntervalHours, ScheduleTime: global.ScheduleTime, Timezone: global.Timezone,
 			NextBatchAt: global.NextBatchAt, Revision: global.Revision,
 		},
 		Detector: ChannelModelDetectionDetectorResponse{
@@ -911,7 +910,7 @@ func channelModelDetectionChannelHealth(now int64, global model.ChannelModelDete
 	if !detectorConfigured {
 		return channelModelDetectionHealthDetectorUnavailable
 	}
-	staleSeconds := int64(global.IntervalHours) * 2 * 60 * 60
+	staleSeconds := int64(global.EffectiveIntervalMinutes()) * 2 * 60
 	if staleSeconds < 48*60*60 {
 		staleSeconds = 48 * 60 * 60
 	}
@@ -928,14 +927,8 @@ func applyChannelModelDetectionGlobalDefaults(config *model.ChannelModelDetectio
 	if config.ScheduledPreset == "" {
 		config.ScheduledPreset = model.ChannelModelDetectionPresetMedium
 	}
-	if config.IntervalHours == 0 {
-		config.IntervalHours = model.ChannelModelDetectionDefaultIntervalHours
-	}
-	if config.ScheduleTime == "" {
-		config.ScheduleTime = model.ChannelModelDetectionDefaultScheduleTime
-	}
-	if config.Timezone == "" {
-		config.Timezone = model.ChannelModelDetectionDefaultTimezone
+	if config.IntervalMinutes <= 0 {
+		config.IntervalMinutes = config.EffectiveIntervalMinutes()
 	}
 }
 
@@ -970,34 +963,9 @@ func sortedChannelModelDetectionSet(values map[string]struct{}) []string {
 }
 
 func maskChannelModelDetectorURL(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
-		return ""
-	}
-	hostname := parsed.Hostname()
-	if ip := net.ParseIP(hostname); ip != nil {
-		if !ip.IsLoopback() {
-			if ipv4 := ip.To4(); ipv4 != nil {
-				hostname = fmt.Sprintf("%d.***.***.***", ipv4[0])
-			} else {
-				hostname = "***"
-			}
-		}
-	} else {
-		parts := strings.Split(hostname, ".")
-		if len(parts) > 1 {
-			hostname = "***." + strings.Join(parts[len(parts)-1:], ".")
-		} else {
-			hostname = "***"
-		}
-	}
-	if parsed.Port() != "" {
-		if strings.Contains(hostname, ":") {
-			hostname = "[" + hostname + "]"
-		}
-		hostname += ":***"
-	}
-	return parsed.Scheme + "://" + hostname
+	// The detector address is an administrator-managed setting, so the UI
+	// should show the same value that is configured instead of a lossy mask.
+	return strings.TrimSpace(raw)
 }
 
 func redactChannelModelDetectionReportSecrets(value any) any {

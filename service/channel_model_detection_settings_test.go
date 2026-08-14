@@ -99,9 +99,9 @@ func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *t
 	}, time.Unix(1_700_000_000, 0).UTC())
 	require.NoError(t, err)
 	assert.True(t, updated.ConnectionTestRequired)
-	assert.Equal(t, "http://127.0.0.1:***", updated.DetectorURLMasked)
+	assert.Equal(t, "http://127.0.0.1:18081", updated.DetectorURLMasked)
 	assert.True(t, updated.PendingDetectorURLConfigured)
-	assert.Equal(t, "http://127.0.0.1:***", updated.PendingDetectorURLMasked)
+	assert.Equal(t, "http://127.0.0.1:18081", updated.PendingDetectorURLMasked)
 	var stored model.ChannelModelDetectionGlobalConfig
 	require.NoError(t, db.First(&stored, model.ChannelModelDetectionConfigID).Error)
 	assert.Equal(t, "http://127.0.0.1:18080", stored.DetectorURL)
@@ -134,7 +134,7 @@ func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T)
 	encoded, err := common.Marshal(response)
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "secret-session")
-	assert.NotContains(t, string(encoded), server.URL)
+	assert.Contains(t, string(encoded), server.URL)
 	assert.NotContains(t, string(encoded), "session_token")
 }
 
@@ -145,10 +145,7 @@ func mustMarshalSettings(t *testing.T, value ChannelModelDetectionSettingsRespon
 	return data
 }
 
-func TestMaskChannelModelDetectorURLDoesNotEchoPathOrCredentials(t *testing.T) {
-	masked := MaskChannelModelDetectorURL("https://user:secret@10.1.2.3:9443/private/path")
-	assert.Equal(t, "https://10.***.***.***:***", masked)
-	assert.NotContains(t, masked, "secret")
-	assert.NotContains(t, masked, "/private")
-	assert.False(t, strings.Contains(masked, "@"))
+func TestMaskChannelModelDetectorURLReturnsConfiguredAddress(t *testing.T) {
+	configured := " https://detector.internal:9443/private/path "
+	assert.Equal(t, strings.TrimSpace(configured), MaskChannelModelDetectorURL(configured))
 }

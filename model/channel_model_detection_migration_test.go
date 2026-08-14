@@ -41,6 +41,57 @@ func (recorder *channelModelDetectionMigrationSQLRecorder) Trace(
 	recorder.statements = append(recorder.statements, statement)
 }
 
+// legacyChannelModelDetectionGlobalConfig mirrors the pre-minute schema. It
+// lets the migration test exercise an existing populated table rather than
+// only an empty AutoMigrate target.
+type legacyChannelModelDetectionGlobalConfig struct {
+	Id                             int64  `gorm:"primaryKey"`
+	DetectorURL                    string `gorm:"type:varchar(1024)"`
+	ScheduledPreset                string `gorm:"type:varchar(16);not null"`
+	ScheduleEnabled                bool   `gorm:"not null"`
+	IntervalHours                  int    `gorm:"not null"`
+	ScheduleTime                   string `gorm:"type:varchar(5);not null"`
+	Timezone                       string `gorm:"type:varchar(64);not null"`
+	ScheduleAnchorAt               int64  `gorm:"bigint"`
+	NextBatchAt                    int64  `gorm:"bigint;index"`
+	PendingDetectorURL             string `gorm:"type:varchar(1024)"`
+	ScheduledHighConfirmedRevision int64  `gorm:"bigint"`
+	Revision                       int64  `gorm:"bigint;not null"`
+	LeaseToken                     string `gorm:"type:varchar(64);index"`
+	LeaseUntil                     int64  `gorm:"bigint;index"`
+	WorkerLeaseToken               string `gorm:"type:varchar(64)"`
+	WorkerLeaseUntil               int64  `gorm:"bigint"`
+	CreatedAt                      int64  `gorm:"bigint;not null"`
+	UpdatedAt                      int64  `gorm:"bigint;not null"`
+}
+
+func (legacyChannelModelDetectionGlobalConfig) TableName() string {
+	return "channel_model_detection_global_configs"
+}
+
+func TestChannelModelDetectionMinuteIntervalMigrationPreservesLegacyRows(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-model-detection-legacy.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+
+	require.NoError(t, db.AutoMigrate(&legacyChannelModelDetectionGlobalConfig{}))
+	require.NoError(t, db.Create(&legacyChannelModelDetectionGlobalConfig{
+		Id: 1, ScheduledPreset: ChannelModelDetectionPresetMedium, ScheduleEnabled: true,
+		IntervalHours: 6, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+		CreatedAt: 1, UpdatedAt: 1,
+	}).Error)
+
+	require.NoError(t, db.AutoMigrate(&ChannelModelDetectionGlobalConfig{}))
+	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "interval_minutes"))
+
+	var migrated ChannelModelDetectionGlobalConfig
+	require.NoError(t, db.First(&migrated, 1).Error)
+	assert.Zero(t, migrated.IntervalMinutes)
+	assert.Equal(t, 360, migrated.EffectiveIntervalMinutes())
+}
+
 func TestChannelModelDetectionSchemaMigrationSQLite(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-model-detection-migration.db")), &gorm.Config{})
 	require.NoError(t, err)

@@ -77,6 +77,23 @@ func TestChannelModelDetectionScheduleUsesIANAWallClockAndSkipsCatchUp(t *testin
 	assert.Equal(t, time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC), following)
 }
 
+func TestNextChannelModelDetectionScheduleMinutesUsesWholeMinuteIntervals(t *testing.T) {
+	base := time.Date(2026, time.August, 13, 2, 30, 37, 0, time.UTC)
+	scheduled, next, err := NextChannelModelDetectionScheduleMinutes(
+		base, 15, time.Date(2026, time.August, 13, 3, 2, 59, 0, time.UTC),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, time.August, 13, 3, 0, 0, 0, time.UTC), scheduled)
+	assert.Equal(t, time.Date(2026, time.August, 13, 3, 15, 0, 0, time.UTC), next)
+
+	_, next, err = NextChannelModelDetectionScheduleMinutes(base, 15, base.Add(5*time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, base.Truncate(time.Minute).Add(15*time.Minute), next)
+
+	_, _, err = NextChannelModelDetectionScheduleMinutes(base, model.ChannelModelDetectionMinIntervalMinutes-1, base)
+	assert.ErrorIs(t, err, ErrChannelModelDetectionScheduleInvalid)
+}
+
 func TestChannelModelDetectionScheduleCreatesFrozenRunsAndSkipsManualDisabled(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
 	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)

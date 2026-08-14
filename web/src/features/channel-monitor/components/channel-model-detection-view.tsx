@@ -374,8 +374,10 @@ export function ChannelModelDetectionView(
           </span>
           <span>
             {' '}
-            · 每 {overview.settings.interval_hours} 小时 ·{' '}
-            {overview.settings.schedule_time}（{overview.settings.timezone}）
+            · 每{' '}
+            {overview.settings.interval_minutes % 60 === 0
+              ? `${overview.settings.interval_minutes / 60} 小时`
+              : `${overview.settings.interval_minutes} 分钟`}
           </span>
           <span>
             {' '}

@@ -39,7 +39,6 @@ const { api } = await import('@/lib/api')
 const { ChannelModelDetectionSettingsSheet } =
   await import('../channel-model-detection-settings-sheet')
 const {
-  CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS,
   channelModelDetectionSettingsSchema,
   createChannelModelDetectionSettingsUpdateRequest,
 } = await import('../../lib/model-detection-settings-schema')
@@ -77,15 +76,13 @@ let renderedSheet: RenderedSheet | null = null
 function settings(overrides: Record<string, unknown> = {}) {
   return {
     detector_url_configured: true,
-    detector_url_masked: 'http://10.0.0.8:***',
+    detector_url_masked: 'http://10.0.0.8:8000/private',
     pending_detector_url_configured: false,
     pending_detector_url_masked: '',
     detector_url_switch_pending: false,
     scheduled_preset: 'medium',
     schedule_enabled: true,
-    interval_hours: 24,
-    schedule_time: '02:30',
-    timezone: 'Asia/Shanghai',
+    interval_minutes: 1440,
     schedule_anchor_at: 1_775_000_000,
     next_batch_at: 1_775_086_400,
     revision: 7,
@@ -100,7 +97,7 @@ function detectorService() {
   return {
     state: 'available',
     detector_url_configured: true,
-    detector_url_masked: 'http://10.0.0.8:***',
+    detector_url_masked: 'http://10.0.0.8:8000/private',
     busy: false,
     active_session_owned: false,
     deployment_id: null,
@@ -253,17 +250,18 @@ afterEach(async () => {
 })
 
 describe('模型检测统一设置规则', () => {
-  test('限制周期、时间、时区、地址互斥和高档确认', () => {
-    for (const intervalHours of CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS) {
+  test('限制整分钟周期、地址互斥和高档确认', () => {
+    for (const interval of [
+      { intervalValue: 15, intervalUnit: 'minute' },
+      { intervalValue: 24, intervalUnit: 'hour' },
+    ] as const) {
       assert.equal(
         channelModelDetectionSettingsSchema.safeParse({
           detectorURL: '',
           clearDetectorURL: false,
           scheduledPreset: 'medium',
           scheduleEnabled: true,
-          intervalHours,
-          scheduleTime: '02:30',
-          timezone: 'Asia/Shanghai',
+          ...interval,
           confirmHighCost: false,
           revision: 1,
         }).success,
@@ -272,9 +270,9 @@ describe('模型检测统一设置规则', () => {
     }
 
     const invalidValues = [
-      { intervalHours: 8 },
-      { scheduleTime: '24:00' },
-      { timezone: 'Not/A_Timezone' },
+      { intervalValue: 0 },
+      { intervalValue: 1.5 },
+      { intervalValue: 8761, intervalUnit: 'hour' },
       { detectorURL: 'ftp://10.0.0.8:8000' },
       {
         detectorURL: 'http://10.0.0.8:8000',
@@ -294,9 +292,8 @@ describe('模型检测统一设置规则', () => {
           clearDetectorURL: false,
           scheduledPreset: 'medium',
           scheduleEnabled: true,
-          intervalHours: 24,
-          scheduleTime: '02:30',
-          timezone: 'Asia/Shanghai',
+          intervalValue: 24,
+          intervalUnit: 'hour',
           confirmHighCost: false,
           revision: 1,
           ...invalid,
@@ -311,9 +308,8 @@ describe('模型检测统一设置规则', () => {
         clearDetectorURL: false,
         scheduledPreset: 'high',
         scheduleEnabled: false,
-        intervalHours: 24,
-        scheduleTime: '02:30',
-        timezone: 'Asia/Shanghai',
+        intervalValue: 24,
+        intervalUnit: 'hour',
         confirmHighCost: false,
         revision: 1,
       }).success,
@@ -327,9 +323,8 @@ describe('模型检测统一设置规则', () => {
       clearDetectorURL: false,
       scheduledPreset: 'medium',
       scheduleEnabled: true,
-      intervalHours: 24,
-      scheduleTime: '02:30',
-      timezone: 'Asia/Shanghai',
+      intervalValue: 90,
+      intervalUnit: 'minute',
       confirmHighCost: true,
       revision: 7,
     })
@@ -341,19 +336,19 @@ describe('模型检测统一设置规则', () => {
       clearDetectorURL: false,
       scheduledPreset: 'high',
       scheduleEnabled: true,
-      intervalHours: 48,
-      scheduleTime: '03:15',
-      timezone: 'UTC',
+      intervalValue: 48,
+      intervalUnit: 'hour',
       confirmHighCost: true,
       revision: 8,
     })
     assert.equal(high.detector_url, 'http://10.0.0.9:8000')
+    assert.equal(high.interval_minutes, 2880)
     assert.equal(high.confirm_high_cost, true)
   })
 })
 
 describe('模型检测统一设置 Sheet', () => {
-  test('脱敏地址不会回填或原样提交，保存期间锁定编辑', async () => {
+  test('配置地址原样展示且不会自动回填输入框，保存期间锁定编辑', async () => {
     const updates: Array<Record<string, unknown>> = []
     const updateRequest = deferred<{ data: unknown }>()
     apiClient.get = async (url) => {
@@ -373,7 +368,7 @@ describe('模型检测统一设置 Sheet', () => {
     const addressInput = getNewDetectorURLInput()
     assert.equal(addressInput.value, '')
     assert.equal(
-      document.body.textContent?.includes('http://10.0.0.8:***'),
+      document.body.textContent?.includes('http://10.0.0.8:8000/private'),
       true
     )
 
@@ -386,8 +381,12 @@ describe('模型检测统一设置 Sheet', () => {
     )
     assert.equal('detector_url' in (updates[0] ?? {}), false)
     assert.equal(updates[0]?.revision, 7)
-    assert.equal(getSaveButton().disabled, true)
-    assert.equal(addressInput.disabled, true)
+    await act(async () =>
+      waitForCondition(
+        () => getSaveButton().disabled && addressInput.disabled,
+        'settings form did not lock during save'
+      )
+    )
 
     await act(async () =>
       updateRequest.resolve(success(settings({ revision: 8 })))
@@ -431,29 +430,32 @@ describe('模型检测统一设置 Sheet', () => {
     assert.deepEqual(tested, [CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest])
   })
 
-  test('待切换地址不会误测旧服务，连接失败会展示检测器状态', async () => {
+  test('待切换地址仍可测试当前已保存服务，连接失败会展示检测器状态', async () => {
     const tested: string[] = []
     apiClient.get = async () =>
       success(
         settings({
           pending_detector_url_configured: true,
-          pending_detector_url_masked: 'http://10.0.0.9:***',
+          pending_detector_url_masked: 'http://10.0.0.9:8000/private',
           detector_url_switch_pending: true,
         })
       )
     apiClient.post = async (url) => {
       tested.push(url)
-      throw new Error('不应测试旧地址')
+      return success(detectorService())
     }
 
     await renderSettingsSheet()
     await waitForLoadedSettings()
-    assert.equal(findButton('测试连接', true).disabled, true)
-    assert.equal(
-      document.body.textContent?.includes('待切换地址生效后才能测试新服务'),
-      true
+    assert.equal(findButton('测试连接', true).disabled, false)
+    await act(async () => findButton('测试连接', true).click())
+    await act(async () =>
+      waitForCondition(
+        () => document.body.textContent?.includes('连接正常') === true,
+        'connection result was not shown'
+      )
     )
-    assert.deepEqual(tested, [])
+    assert.deepEqual(tested, [CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest])
 
     const firstRenderedSheet = renderedSheet
     assert.ok(firstRenderedSheet)
@@ -512,7 +514,11 @@ describe('模型检测统一设置 Sheet', () => {
       updates.push(data as Record<string, unknown>)
       revision += 1
       return success(
-        settings({ scheduled_preset: 'high', revision, schedule_enabled: true })
+        settings({
+          scheduled_preset: 'high',
+          revision,
+          schedule_enabled: true,
+        })
       )
     }
 

@@ -95,6 +95,22 @@ func NextChannelModelDetectionSchedule(anchor time.Time, intervalHours int, now 
 	return NextChannelModelDetectionScheduleInTimezone(anchor, intervalHours, now, "UTC")
 }
 
+func NextChannelModelDetectionScheduleMinutes(nextRunAt time.Time, intervalMinutes int, now time.Time) (scheduledFor time.Time, next time.Time, err error) {
+	if nextRunAt.IsZero() || intervalMinutes < model.ChannelModelDetectionMinIntervalMinutes || intervalMinutes > model.ChannelModelDetectionMaxIntervalMinutes {
+		return time.Time{}, time.Time{}, ErrChannelModelDetectionScheduleInvalid
+	}
+	nextRunAt = nextRunAt.UTC().Truncate(time.Minute)
+	now = now.UTC()
+	if now.Before(nextRunAt) {
+		return time.Time{}, nextRunAt, nil
+	}
+	interval := time.Duration(intervalMinutes) * time.Minute
+	steps := int64(now.Sub(nextRunAt) / interval)
+	scheduledFor = nextRunAt.Add(time.Duration(steps) * interval)
+	next = scheduledFor.Add(interval)
+	return scheduledFor, next, nil
+}
+
 // NextChannelModelDetectionScheduleInTimezone preserves the configured local
 // wall-clock phase across daylight-saving transitions. A repeated local time
 // maps to one instant, and a nonexistent local time is shifted to the first
@@ -218,11 +234,9 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 			result.NextBatchAt = current.NextBatchAt
 			return nil
 		}
-		anchor := time.Unix(current.ScheduleAnchorAt, 0).UTC()
-		if current.ScheduleAnchorAt <= 0 {
-			anchor = time.Unix(current.NextBatchAt, 0).UTC()
-		}
-		scheduledFor, next, scheduleErr := NextChannelModelDetectionScheduleInTimezone(anchor, current.IntervalHours, now, current.Timezone)
+		scheduledFor, next, scheduleErr := NextChannelModelDetectionScheduleMinutes(
+			time.Unix(current.NextBatchAt, 0).UTC(), current.EffectiveIntervalMinutes(), now,
+		)
 		if scheduleErr != nil {
 			return scheduleErr
 		}

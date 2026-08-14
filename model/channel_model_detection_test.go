@@ -201,6 +201,7 @@ func TestChannelModelDetectionGlobalConfigDefaultsAndSingleRow(t *testing.T) {
 	require.NoError(t, db.Create(&config).Error)
 	assert.EqualValues(t, ChannelModelDetectionConfigID, config.Id)
 	assert.Equal(t, ChannelModelDetectionPresetMedium, config.ScheduledPreset)
+	assert.Equal(t, ChannelModelDetectionDefaultIntervalMinutes, config.IntervalMinutes)
 	assert.Equal(t, ChannelModelDetectionDefaultIntervalHours, config.IntervalHours)
 	assert.Equal(t, ChannelModelDetectionDefaultScheduleTime, config.ScheduleTime)
 	assert.Equal(t, ChannelModelDetectionDefaultTimezone, config.Timezone)
@@ -209,8 +210,7 @@ func TestChannelModelDetectionGlobalConfigDefaultsAndSingleRow(t *testing.T) {
 	require.Error(t, db.Create(&ChannelModelDetectionGlobalConfig{DetectorURL: "http://127.0.0.1:3001"}).Error)
 
 	invalid := ChannelModelDetectionGlobalConfig{
-		ScheduledPreset: ChannelModelDetectionPresetLow, IntervalHours: 5,
-		ScheduleTime: "02:30", Timezone: ChannelModelDetectionDefaultTimezone,
+		ScheduledPreset: ChannelModelDetectionPresetLow, IntervalMinutes: ChannelModelDetectionMaxIntervalMinutes + 1,
 	}
 	assert.ErrorIs(t, invalid.Validate(), ErrChannelModelDetectionInvalidSchedule)
 }

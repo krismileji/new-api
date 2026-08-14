@@ -57,14 +57,6 @@ import {
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Sheet,
   SheetClose,
   SheetContent,
@@ -88,10 +80,8 @@ import {
   updateChannelModelDetectionSettings,
 } from '../lib/model-detection-settings-api'
 import {
-  CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS,
   CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES,
   CHANNEL_MODEL_DETECTION_SETTINGS_QUERY_KEY,
-  CHANNEL_MODEL_DETECTION_TIMEZONE_OPTIONS,
   channelModelDetectionSettingsSchema,
   channelModelDetectionSettingsToFormValues,
   createChannelModelDetectionSettingsUpdateRequest,
@@ -112,17 +102,6 @@ const PRESET_OPTIONS = [
   label: string
   description: string
 }>
-
-const INTERVAL_SELECT_ITEMS = CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS.map(
-  (hours) => ({
-    value: String(hours),
-    label: hours === 168 ? '每 7 天' : `每 ${hours} 小时`,
-  })
-)
-
-const TIMEZONE_SELECT_ITEMS = CHANNEL_MODEL_DETECTION_TIMEZONE_OPTIONS.map(
-  (timezone) => ({ value: timezone, label: timezone })
-)
 
 export type ChannelModelDetectionSettingsSheetProps = {
   open: boolean
@@ -320,7 +299,7 @@ export function ChannelModelDetectionSettingsSheet(
           <SideDrawerSection>
             <SideDrawerSectionHeader
               title='检测器服务'
-              description='完整地址只会在本次编辑输入中出现，读取接口不会回显'
+              description='显示当前配置的完整地址，并支持手动测试连接'
               icon={<HugeiconsIcon icon={Link01Icon} />}
               iconTone='info'
             />
@@ -422,7 +401,6 @@ export function ChannelModelDetectionSettingsSheet(
                 disabled={
                   controlsDisabled ||
                   !settings.detector_url_configured ||
-                  settings.detector_url_switch_pending ||
                   clearDetectorURL ||
                   Boolean(detectorURL.trim())
                 }
@@ -439,9 +417,7 @@ export function ChannelModelDetectionSettingsSheet(
                 测试连接
               </Button>
               <p className='text-muted-foreground text-xs'>
-                {settings.detector_url_switch_pending
-                  ? '待切换地址生效后才能测试新服务'
-                  : '测试只使用当前已保存地址；新地址需先保存后再测试'}
+                测试当前已保存地址；新地址需先保存后再测试
               </p>
             </div>
             {connectionResult ? (
@@ -466,7 +442,7 @@ export function ChannelModelDetectionSettingsSheet(
           <SideDrawerSection>
             <SideDrawerSectionHeader
               title='定时检测'
-              description='全部渠道共用同一档位、周期、基准时间和时区'
+              description='全部渠道共用同一档位和检测周期'
               icon={<HugeiconsIcon icon={CalendarClockIcon} />}
               iconTone='primary'
             />
@@ -540,103 +516,50 @@ export function ChannelModelDetectionSettingsSheet(
               )}
             />
 
-            <div className='grid gap-4 sm:grid-cols-2'>
-              <FormField
-                control={form.control}
-                name='intervalHours'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>检测周期</FormLabel>
-                    <Select
-                      items={INTERVAL_SELECT_ITEMS}
-                      value={String(field.value)}
-                      disabled={controlsDisabled}
-                      onValueChange={(value) => {
-                        if (value !== null) field.onChange(Number(value))
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger
-                          className='w-full'
-                          aria-label='选择统一检测周期'
-                        >
-                          <SelectValue>
-                            {field.value === 168
-                              ? '每 7 天'
-                              : `每 ${field.value} 小时`}
-                          </SelectValue>
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {INTERVAL_SELECT_ITEMS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name='scheduleTime'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>基准时间</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type='time'
-                        step={60}
-                        disabled={controlsDisabled}
-                        aria-label='统一检测基准时间'
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
             <FormField
               control={form.control}
-              name='timezone'
+              name='intervalValue'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>时区</FormLabel>
-                  <Select
-                    items={TIMEZONE_SELECT_ITEMS}
-                    value={field.value}
-                    disabled={controlsDisabled}
-                    onValueChange={(value) => {
-                      if (value !== null) field.onChange(value)
-                    }}
-                  >
+                  <FormLabel>检测周期</FormLabel>
+                  <div className='flex min-w-0 gap-2'>
                     <FormControl>
-                      <SelectTrigger
-                        className='w-full'
-                        aria-label='选择统一检测时区'
-                      >
-                        <SelectValue>{field.value}</SelectValue>
-                      </SelectTrigger>
+                      <Input
+                        type='number'
+                        min={1}
+                        step={1}
+                        value={Number.isFinite(field.value) ? field.value : ''}
+                        disabled={controlsDisabled}
+                        className='min-w-0 font-mono tabular-nums'
+                        aria-label='统一检测周期数值'
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
                     </FormControl>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {TIMEZONE_SELECT_ITEMS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                    <FormField
+                      control={form.control}
+                      name='intervalUnit'
+                      render={({ field: unitField }) => (
+                        <ToggleGroup
+                          value={[unitField.value]}
+                          onValueChange={(values) => {
+                            const selected = values[0]
+                            if (selected) unitField.onChange(selected)
+                          }}
+                          variant='outline'
+                          spacing={0}
+                          disabled={controlsDisabled}
+                          aria-label='统一检测周期单位'
+                        >
+                          <ToggleGroupItem value='minute'>分钟</ToggleGroupItem>
+                          <ToggleGroupItem value='hour'>小时</ToggleGroupItem>
+                        </ToggleGroup>
+                      )}
+                    />
+                  </div>
                   <FormDescription>
-                    保存时后端会再次验证 IANA 时区和夏令时规则
+                    周期按整分钟保存；小时会自动换算为分钟
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -692,6 +615,14 @@ export function ChannelModelDetectionSettingsSheet(
                 value={channelModelDetectionPresetLabel(
                   settings.scheduled_preset
                 )}
+              />
+              <SettingSummary
+                label='检测周期'
+                value={
+                  settings.interval_minutes % 60 === 0
+                    ? `每 ${settings.interval_minutes / 60} 小时`
+                    : `每 ${settings.interval_minutes} 分钟`
+                }
               />
               <SettingSummary
                 label='下一批次'

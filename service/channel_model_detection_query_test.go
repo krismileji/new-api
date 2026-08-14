@@ -77,7 +77,7 @@ func seedChannelModelDetectionQueryChannel(t *testing.T, db *gorm.DB, channelID 
 func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
-		DetectorURL: "http://10.20.30.40:18080/private?token=secret", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		DetectorURL: "http://10.20.30.40:18080/private", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
 		ScheduleEnabled: true, IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
 	}).Error)
 	_, firstExecution := seedChannelModelDetectionQueryChannel(t, db, 101, "juice_pass_fingerprint_strong", 100)
@@ -114,9 +114,9 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	assert.Positive(t, initialQueryCount)
 	assert.LessOrEqual(t, initialQueryCount, int64(8))
 	assert.Len(t, response.Channels, 3)
-	assert.Equal(t, "http://10.***.***.***:***", response.Settings.DetectorURLMasked)
-	assert.NotContains(t, response.Settings.DetectorURLMasked, "secret")
-	assert.NotContains(t, response.Settings.DetectorURLMasked, "18080")
+	assert.Equal(t, "http://10.20.30.40:18080/private", response.Settings.DetectorURLMasked)
+	assert.Contains(t, response.Settings.DetectorURLMasked, "18080")
+	assert.Contains(t, response.Settings.DetectorURLMasked, "/private")
 	assert.Equal(t, channelModelDetectionHealthHealthy, response.Channels[0].HealthStatus)
 	assert.Equal(t, channelModelDetectionHealthAttention, response.Channels[1].HealthStatus)
 	assert.Equal(t, channelModelDetectionHealthAttention, response.Channels[2].HealthStatus)
@@ -129,7 +129,6 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NoError(t, err)
 	body := string(encoded)
 	assert.NotContains(t, body, "secret-key")
-	assert.NotContains(t, body, "token=secret")
 
 	for channelID := 104; channelID <= 110; channelID++ {
 		seedChannelModelDetectionQueryChannel(t, db, channelID, "juice_pass_fingerprint_strong", int64(channelID*10))

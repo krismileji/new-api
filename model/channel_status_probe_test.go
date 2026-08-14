@@ -177,6 +177,64 @@ func TestManualChannelStatusProbeClaimKeepsScheduledRunTime(t *testing.T) {
 	assert.Empty(t, stored.RunningRunId)
 }
 
+func TestScheduledStatusProbeMarksOverdueTickWithoutCancelingRunningRequest(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	created, err := SaveChannelStatusProbeConfig(9, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-a"}, IntervalSeconds: 60,
+	}, 1_000)
+	require.NoError(t, err)
+
+	claims, err := ClaimDueChannelStatusProbes(created.NextRunAt, 1)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	claim := claims[0]
+
+	stored, err := GetChannelStatusProbeConfig(9)
+	require.NoError(t, err)
+	assert.Equal(t, created.NextRunAt+60, stored.NextRunAt)
+	assert.Equal(t, claim.RunId, stored.RunningRunId)
+	assert.Equal(t, claim.LeaseToken, stored.LeaseToken)
+
+	overdueClaims, err := ClaimDueChannelStatusProbes(stored.NextRunAt, 1)
+	require.NoError(t, err)
+	assert.Empty(t, overdueClaims)
+
+	var overdue ChannelStatusProbeExecution
+	require.NoError(t, db.Where("channel_id = ? AND error_code = ?", 9, "probe_previous_pending").First(&overdue).Error)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, overdue.Result)
+	assert.False(t, overdue.RequestDispatched)
+	assert.Nil(t, overdue.SettledCostNanoCNY)
+	var state ChannelStatusProbeState
+	require.NoError(t, db.Where("channel_id = ? AND model_name = ?", 9, "model-a").First(&state).Error)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, state.LastHealthResult)
+	assert.EqualValues(t, 1, state.ConsecutiveFailures)
+
+	stillRunning, err := GetChannelStatusProbeConfig(9)
+	require.NoError(t, err)
+	assert.Equal(t, claim.RunId, stillRunning.RunningRunId)
+	assert.Equal(t, claim.LeaseToken, stillRunning.LeaseToken)
+	assert.Equal(t, stored.NextRunAt+60, stillRunning.NextRunAt)
+
+	settledCost := int64(123456)
+	actual := ChannelStatusProbeExecution{
+		RunId: claim.RunId, ChannelId: 9, ModelName: "model-a", ConfigRevision: claim.Config.Revision,
+		Trigger: ChannelStatusProbeTriggerScheduled, Result: ChannelStatusProbeResultSuccess,
+		StartedAt: created.NextRunAt, FinishedAt: stored.NextRunAt + 1,
+		RequestDispatched: true, SettledCostNanoCNY: &settledCost,
+		SampleStatus: ChannelStatusProbeSampleSkipped,
+	}
+	inserted, err := SaveChannelStatusProbeExecution(&actual)
+	require.NoError(t, err)
+	assert.True(t, inserted)
+	assert.Equal(t, settledCost, *actual.SettledCostNanoCNY)
+	require.NoError(t, CompleteChannelStatusProbeClaim(claim, actual.FinishedAt))
+
+	completed, err := GetChannelStatusProbeConfig(9)
+	require.NoError(t, err)
+	assert.Empty(t, completed.RunningRunId)
+	assert.Equal(t, stillRunning.NextRunAt, completed.NextRunAt)
+}
+
 func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *testing.T) {
 	db := setupChannelStatusProbeModelTestDB(t)
 	firstToken := 240.0

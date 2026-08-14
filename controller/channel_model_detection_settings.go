@@ -18,6 +18,9 @@ type channelModelDetectionSettingsUpdateRequest struct {
 	ScheduledPreset  string  `json:"scheduled_preset"`
 	ConfirmHighCost  bool    `json:"confirm_high_cost"`
 	ScheduleEnabled  bool    `json:"schedule_enabled"`
+	IntervalMinutes  int     `json:"interval_minutes"`
+	// Legacy request fields are accepted for one release so old clients can
+	// still save settings while the UI migrates to minute intervals.
 	IntervalHours    int     `json:"interval_hours"`
 	ScheduleTime     string  `json:"schedule_time"`
 	Timezone         string  `json:"timezone"`
@@ -42,7 +45,7 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 	response, err := service.UpdateChannelModelDetectionSettings(c.Request.Context(), nil, service.ChannelModelDetectionSettingsUpdate{
 		DetectorURL: request.DetectorURL, ClearDetectorURL: request.ClearDetectorURL,
 		ScheduledPreset: request.ScheduledPreset, ConfirmHighCost: request.ConfirmHighCost,
-		ScheduleEnabled: request.ScheduleEnabled, IntervalHours: request.IntervalHours,
+		ScheduleEnabled: request.ScheduleEnabled, IntervalMinutes: request.IntervalMinutes, IntervalHours: request.IntervalHours,
 		ScheduleTime: request.ScheduleTime, Timezone: request.Timezone, ExpectedRevision: request.Revision,
 	}, time.Now().UTC())
 	if err != nil {

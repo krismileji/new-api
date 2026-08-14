@@ -37,7 +37,7 @@ func setupChannelModelDetectionSettingsControllerTest(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestChannelModelDetectionSettingsAPIHidesURLAndReturnsRevisionConflict(t *testing.T) {
+func TestChannelModelDetectionSettingsAPIShowsConfiguredURLAndReturnsRevisionConflict(t *testing.T) {
 	db := setupChannelModelDetectionSettingsControllerTest(t)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
 		Id: model.ChannelModelDetectionConfigID, DetectorURL: "http://127.0.0.1:18080/private",
@@ -48,9 +48,7 @@ func TestChannelModelDetectionSettingsAPIHidesURLAndReturnsRevisionConflict(t *t
 	getContext, getRecorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/model_detection/settings", nil)
 	GetChannelModelDetectionSettings(getContext)
 	require.Equal(t, http.StatusOK, getRecorder.Code)
-	assert.Contains(t, getRecorder.Body.String(), `"detector_url_masked":"http://127.0.0.1:***"`)
-	assert.NotContains(t, getRecorder.Body.String(), "18080")
-	assert.NotContains(t, getRecorder.Body.String(), "/private")
+	assert.Contains(t, getRecorder.Body.String(), `"detector_url_masked":"http://127.0.0.1:18080/private"`)
 
 	putContext, putRecorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/model_detection/settings", map[string]any{
 		"scheduled_preset": "medium", "schedule_enabled": false, "interval_hours": 24,

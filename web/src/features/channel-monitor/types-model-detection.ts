@@ -226,9 +226,10 @@ export type ChannelModelDetectionSettingsSummary = {
   detector_url_masked: string
   scheduled_preset: ChannelModelDetectionPreset
   schedule_enabled: boolean
-  interval_hours: number
-  schedule_time: string
-  timezone: string
+  interval_minutes: number
+  interval_hours?: number
+  schedule_time?: string
+  timezone?: string
   next_batch_at: number
   revision: number
 }
@@ -241,10 +242,11 @@ export type ChannelModelDetectionSettings = {
   detector_url_switch_pending: boolean
   scheduled_preset: ChannelModelDetectionPreset
   schedule_enabled: boolean
-  interval_hours: number
-  schedule_time: string
-  timezone: string
-  schedule_anchor_at: number
+  interval_minutes: number
+  interval_hours?: number
+  schedule_time?: string
+  timezone?: string
+  schedule_anchor_at?: number
   next_batch_at: number
   revision: number
   connection_test_required: boolean
@@ -300,9 +302,7 @@ export type ChannelModelDetectionSettingsUpdateRequest = {
   scheduled_preset: ChannelModelDetectionPreset
   confirm_high_cost: boolean
   schedule_enabled: boolean
-  interval_hours: number
-  schedule_time: string
-  timezone: string
+  interval_minutes: number
   revision: number
 }
 

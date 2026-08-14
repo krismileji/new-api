@@ -29,6 +29,9 @@ type ChannelModelDetectionSettingsUpdate struct {
 	ScheduledPreset  string
 	ConfirmHighCost  bool
 	ScheduleEnabled  bool
+	IntervalMinutes  int
+	// Legacy fields are accepted by internal callers while they migrate to
+	// minute-based scheduling.
 	IntervalHours    int
 	ScheduleTime     string
 	Timezone         string
@@ -43,10 +46,11 @@ type ChannelModelDetectionSettingsResponse struct {
 	DetectorURLSwitchPending     bool   `json:"detector_url_switch_pending"`
 	ScheduledPreset              string `json:"scheduled_preset"`
 	ScheduleEnabled              bool   `json:"schedule_enabled"`
-	IntervalHours                int    `json:"interval_hours"`
-	ScheduleTime                 string `json:"schedule_time"`
-	Timezone                     string `json:"timezone"`
-	ScheduleAnchorAt             int64  `json:"schedule_anchor_at"`
+	IntervalMinutes              int    `json:"interval_minutes"`
+	IntervalHours                int    `json:"-"`
+	ScheduleTime                 string `json:"-"`
+	Timezone                     string `json:"-"`
+	ScheduleAnchorAt             int64  `json:"-"`
 	NextBatchAt                  int64  `json:"next_batch_at"`
 	Revision                     int64  `json:"revision"`
 	ConnectionTestRequired       bool   `json:"connection_test_required"`
@@ -164,9 +168,22 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		candidate.Revision = current.Revision + 1
 		candidate.ScheduledPreset = strings.ToLower(strings.TrimSpace(input.ScheduledPreset))
 		candidate.ScheduleEnabled = input.ScheduleEnabled
-		candidate.IntervalHours = input.IntervalHours
-		candidate.ScheduleTime = strings.TrimSpace(input.ScheduleTime)
-		candidate.Timezone = strings.TrimSpace(input.Timezone)
+		candidate.IntervalMinutes = input.IntervalMinutes
+		if candidate.IntervalMinutes <= 0 && input.IntervalHours > 0 {
+			candidate.IntervalMinutes = input.IntervalHours * 60
+		}
+		if candidate.IntervalMinutes <= 0 {
+			candidate.IntervalMinutes = current.EffectiveIntervalMinutes()
+		}
+		if candidate.IntervalMinutes < model.ChannelModelDetectionMinIntervalMinutes || candidate.IntervalMinutes > model.ChannelModelDetectionMaxIntervalMinutes {
+			return model.ErrChannelModelDetectionInvalidSchedule
+		}
+		candidate.IntervalHours = 0
+		if candidate.IntervalMinutes%60 == 0 {
+			candidate.IntervalHours = candidate.IntervalMinutes / 60
+		}
+		candidate.ScheduleTime = ""
+		candidate.Timezone = ""
 		candidate.LeaseToken = ""
 		candidate.LeaseUntil = 0
 		candidate.UpdatedAt = now.Unix()
@@ -201,17 +218,14 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		}
 
 		scheduleChanged := candidate.ScheduleEnabled != current.ScheduleEnabled ||
-			candidate.IntervalHours != current.IntervalHours || candidate.ScheduleTime != current.ScheduleTime || candidate.Timezone != current.Timezone
+			candidate.IntervalMinutes != current.EffectiveIntervalMinutes()
 		if !candidate.ScheduleEnabled {
 			candidate.ScheduleAnchorAt = 0
 			candidate.NextBatchAt = 0
-		} else if scheduleChanged || current.ScheduleAnchorAt <= 0 || current.NextBatchAt <= 0 {
-			anchor, err := CalculateChannelModelDetectionScheduleAnchor(now, candidate.ScheduleTime, candidate.Timezone)
-			if err != nil {
-				return err
-			}
-			candidate.ScheduleAnchorAt = anchor.Unix()
-			candidate.NextBatchAt = anchor.Unix()
+		} else if scheduleChanged || current.NextBatchAt <= 0 {
+			next := now.UTC().Truncate(time.Minute).Add(time.Duration(candidate.IntervalMinutes) * time.Minute)
+			candidate.ScheduleAnchorAt = 0
+			candidate.NextBatchAt = next.Unix()
 		}
 		if err := candidate.ApplyScheduledHighCostConfirmation(input.ConfirmHighCost); err != nil {
 			return err
@@ -220,8 +234,8 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		updates := map[string]any{
 			"detector_url": candidate.DetectorURL, "pending_detector_url": candidate.PendingDetectorURL,
 			"scheduled_preset": candidate.ScheduledPreset, "schedule_enabled": candidate.ScheduleEnabled,
-			"interval_hours": candidate.IntervalHours, "schedule_time": candidate.ScheduleTime, "timezone": candidate.Timezone,
-			"schedule_anchor_at": candidate.ScheduleAnchorAt, "next_batch_at": candidate.NextBatchAt,
+			"interval_minutes": candidate.IntervalMinutes, "interval_hours": candidate.IntervalHours,
+			"schedule_time": "", "timezone": "", "schedule_anchor_at": int64(0), "next_batch_at": candidate.NextBatchAt,
 			"scheduled_high_confirmed_revision": candidate.ScheduledHighConfirmedRevision,
 			"revision":                          candidate.Revision, "lease_token": "", "lease_until": int64(0), "updated_at": candidate.UpdatedAt,
 		}
@@ -426,8 +440,7 @@ func MaskChannelModelDetectorURL(raw string) string {
 func channelModelDetectionDefaultGlobalConfig(now time.Time) model.ChannelModelDetectionGlobalConfig {
 	config := model.ChannelModelDetectionGlobalConfig{
 		Id: model.ChannelModelDetectionConfigID, DetectorURL: strings.TrimSpace(os.Getenv("GPT56_DETECTOR_URL")),
-		ScheduledPreset: model.ChannelModelDetectionPresetMedium, IntervalHours: model.ChannelModelDetectionDefaultIntervalHours,
-		ScheduleTime: model.ChannelModelDetectionDefaultScheduleTime, Timezone: model.ChannelModelDetectionDefaultTimezone,
+		ScheduledPreset: model.ChannelModelDetectionPresetMedium, IntervalMinutes: model.ChannelModelDetectionDefaultIntervalMinutes,
 		Revision: 1, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	}
 	if config.DetectorURL != "" {
@@ -445,8 +458,8 @@ func channelModelDetectionSettingsResponse(config model.ChannelModelDetectionGlo
 		DetectorURLConfigured: strings.TrimSpace(config.DetectorURL) != "", DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
 		PendingDetectorURLConfigured: strings.TrimSpace(config.PendingDetectorURL) != "", PendingDetectorURLMasked: MaskChannelModelDetectorURL(config.PendingDetectorURL),
 		DetectorURLSwitchPending: strings.TrimSpace(config.PendingDetectorURL) != "",
-		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalHours: config.IntervalHours,
-		ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
+		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(),
+		IntervalHours:            config.IntervalHours, ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
 		NextBatchAt: config.NextBatchAt, Revision: config.Revision, ConnectionTestRequired: connectionTestRequired,
 		CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt,
 	}

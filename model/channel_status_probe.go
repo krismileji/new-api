@@ -425,7 +425,10 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		return []ChannelStatusProbeClaim{}, nil
 	}
 	var candidates []ChannelStatusProbeConfig
-	err := DB.Where("lease_until <= ?", now).
+	err := DB.Where(
+		"(lease_until <= ?) OR (lease_until > ? AND running_trigger = ? AND enabled = ? AND next_run_at > 0 AND next_run_at <= ?)",
+		now, now, ChannelStatusProbeTriggerScheduled, true, now,
+	).
 		Where("manual_request_id <> ? OR (enabled = ? AND next_run_at > 0 AND next_run_at <= ?)", "", true, now).
 		Order("manual_requested_at DESC, next_run_at ASC, channel_id ASC").
 		Limit(limit * 3).
@@ -442,6 +445,12 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		if decodeErr != nil {
 			return nil, decodeErr
 		}
+		if candidate.LeaseUntil > now && candidate.RunningTrigger == ChannelStatusProbeTriggerScheduled && candidate.RunningRunId != "" {
+			if err := markOverdueChannelStatusProbe(candidate, models, now); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		trigger := ChannelStatusProbeTriggerScheduled
 		runId := common.GetUUID()
 		manualRequestId := strings.TrimSpace(candidate.ManualRequestId)
@@ -455,11 +464,15 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 			claimQuery = claimQuery.Where("enabled = ? AND next_run_at > 0 AND next_run_at <= ?", true, now)
 		}
 		leaseToken := common.GetUUID()
-		claimed := claimQuery.Updates(map[string]any{
+		claimUpdates := map[string]any{
 			"lease_token": leaseToken, "lease_until": now + ChannelStatusProbeLeaseSeconds,
 			"running_trigger": trigger, "running_run_id": runId, "running_started_at": now,
 			"updated_at": now,
-		})
+		}
+		if trigger == ChannelStatusProbeTriggerScheduled {
+			claimUpdates["next_run_at"] = candidate.NextRunAt + int64(candidate.IntervalSeconds)
+		}
+		claimed := claimQuery.Updates(claimUpdates)
 		if claimed.Error != nil {
 			return nil, claimed.Error
 		}
@@ -477,6 +490,39 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		})
 	}
 	return claims, nil
+}
+
+// markOverdueChannelStatusProbe records the scheduled tick that arrived while
+// the previous request was still running. The in-flight request keeps its
+// context and can later settle its real upstream cost; this synthetic failure
+// only makes the missed monitoring tick visible and advances the next tick.
+func markOverdueChannelStatusProbe(config ChannelStatusProbeConfig, models []string, now int64) error {
+	if config.IntervalSeconds <= 0 || config.NextRunAt <= 0 {
+		return nil
+	}
+	dueAt := config.NextRunAt
+	nextRunAt := dueAt + int64(config.IntervalSeconds)
+	updated := DB.Model(&ChannelStatusProbeConfig{}).
+		Where("id = ? AND running_run_id = ? AND next_run_at = ?", config.Id, config.RunningRunId, dueAt).
+		Update("next_run_at", nextRunAt)
+	if updated.Error != nil || updated.RowsAffected == 0 {
+		return updated.Error
+	}
+	overdueRunID := common.GetUUID()
+	for _, modelName := range models {
+		execution := &ChannelStatusProbeExecution{
+			RunId: overdueRunID, ChannelId: config.ChannelId,
+			ModelName: modelName, ConfigRevision: config.Revision, Trigger: ChannelStatusProbeTriggerScheduled,
+			Result: ChannelStatusProbeResultUpstreamFailure, StartedAt: dueAt, FinishedAt: now,
+			ErrorCode: "probe_previous_pending", ErrorMessage: "上一轮探测尚未返回，本次周期标记为失败",
+			SampleStatus: ChannelStatusProbeSampleSkipped, SampleMessage: "未发起新请求，上一轮请求仍在进行",
+			CreatedAt: now,
+		}
+		if _, err := SaveChannelStatusProbeExecution(execution); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func RenewChannelStatusProbeLease(claim ChannelStatusProbeClaim, now int64) (bool, error) {
@@ -500,7 +546,15 @@ func CompleteChannelStatusProbeClaim(claim ChannelStatusProbeClaim, finishedAt i
 		"running_run_id": "", "running_started_at": int64(0), "updated_at": finishedAt,
 	}
 	if claim.Trigger == ChannelStatusProbeTriggerScheduled {
-		updates["next_run_at"] = finishedAt + int64(claim.Config.IntervalSeconds)
+		nextRunAt := int64(0)
+		var current ChannelStatusProbeConfig
+		if err := DB.Select("next_run_at").Where("id = ?", claim.Config.Id).First(&current).Error; err == nil {
+			nextRunAt = current.NextRunAt
+		}
+		if nextRunAt <= 0 {
+			nextRunAt = finishedAt + int64(claim.Config.IntervalSeconds)
+		}
+		updates["next_run_at"] = nextRunAt
 	} else {
 		updates["manual_request_id"] = ""
 		updates["manual_requested_at"] = int64(0)
@@ -678,8 +732,16 @@ func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bo
 			state.Endpoint = execution.Endpoint
 			state.Stream = execution.Stream
 		}
-		if execution.RequestDispatched && (execution.Result == ChannelStatusProbeResultSuccess ||
-			execution.Result == ChannelStatusProbeResultUpstreamFailure || execution.Result == ChannelStatusProbeResultRateLimited) &&
+		healthOutcome := execution.RequestDispatched && (execution.Result == ChannelStatusProbeResultSuccess ||
+			execution.Result == ChannelStatusProbeResultUpstreamFailure || execution.Result == ChannelStatusProbeResultRateLimited)
+		// A scheduled tick that arrives before the previous request returns is a
+		// real monitoring failure, even though no second upstream request was
+		// dispatched. Keep its cost fields empty while still reflecting the
+		// failure in health counters.
+		if execution.Result == ChannelStatusProbeResultUpstreamFailure && execution.ErrorCode == "probe_previous_pending" {
+			healthOutcome = true
+		}
+		if healthOutcome &&
 			(execution.FinishedAt > state.LastHealthFinishedAt ||
 				(execution.FinishedAt == state.LastHealthFinishedAt && execution.Id > state.LastHealthExecutionId)) {
 			state.LastHealthResult = execution.Result

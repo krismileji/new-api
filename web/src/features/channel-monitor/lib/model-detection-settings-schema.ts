@@ -23,20 +23,7 @@ import type {
   ChannelModelDetectionSettingsUpdateRequest,
 } from '../types-model-detection'
 
-export const CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS = [
-  6, 12, 24, 48, 72, 168,
-] as const
-
-export const CHANNEL_MODEL_DETECTION_TIMEZONE_OPTIONS = [
-  'Asia/Shanghai',
-  'Asia/Hong_Kong',
-  'Asia/Tokyo',
-  'Asia/Singapore',
-  'UTC',
-  'Europe/London',
-  'America/Los_Angeles',
-  'America/New_York',
-] as const
+export const CHANNEL_MODEL_DETECTION_MAX_INTERVAL_MINUTES = 525600
 
 const detectorURLSchema = z
   .string()
@@ -77,32 +64,11 @@ export const channelModelDetectionSettingsSchema = z
     clearDetectorURL: z.boolean(),
     scheduledPreset: z.enum(['low', 'medium', 'high']),
     scheduleEnabled: z.boolean(),
-    intervalHours: z
+    intervalValue: z
       .number()
-      .refine(
-        (value) =>
-          CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS.includes(
-            value as (typeof CHANNEL_MODEL_DETECTION_INTERVAL_OPTIONS)[number]
-          ),
-        '请选择允许的检测周期'
-      ),
-    scheduleTime: z
-      .string()
-      .trim()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '执行时间必须使用 HH:mm 格式'),
-    timezone: z
-      .string()
-      .trim()
-      .min(1, '时区不能为空')
-      .max(64, '时区不能超过 64 个字符')
-      .refine((value) => {
-        try {
-          new Intl.DateTimeFormat('en-US', { timeZone: value }).format()
-          return true
-        } catch {
-          return false
-        }
-      }, '请输入有效的 IANA 时区'),
+      .int('检测周期必须是整数')
+      .min(1, '检测周期不能小于 1'),
+    intervalUnit: z.enum(['minute', 'hour']),
     confirmHighCost: z.boolean(),
     revision: z.number().int().positive(),
   })
@@ -112,6 +78,16 @@ export const channelModelDetectionSettingsSchema = z
         code: 'custom',
         path: ['detectorURL'],
         message: '新地址与清除地址不能同时提交',
+      })
+    }
+    if (
+      value.intervalValue * (value.intervalUnit === 'hour' ? 60 : 1) >
+      CHANNEL_MODEL_DETECTION_MAX_INTERVAL_MINUTES
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['intervalValue'],
+        message: '检测周期不能超过 525600 分钟',
       })
     }
     if (
@@ -143,9 +119,8 @@ export const CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES: ChannelModelDetectio
     clearDetectorURL: false,
     scheduledPreset: 'medium',
     scheduleEnabled: false,
-    intervalHours: 24,
-    scheduleTime: '02:30',
-    timezone: 'Asia/Shanghai',
+    intervalValue: 24,
+    intervalUnit: 'hour',
     confirmHighCost: false,
     revision: 1,
   }
@@ -153,14 +128,15 @@ export const CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES: ChannelModelDetectio
 export function channelModelDetectionSettingsToFormValues(
   settings: ChannelModelDetectionSettings
 ): ChannelModelDetectionSettingsFormValues {
+  const intervalMinutes = settings.interval_minutes
+  const useHours = intervalMinutes >= 60 && intervalMinutes % 60 === 0
   return {
     detectorURL: '',
     clearDetectorURL: false,
     scheduledPreset: settings.scheduled_preset,
     scheduleEnabled: settings.schedule_enabled,
-    intervalHours: settings.interval_hours,
-    scheduleTime: settings.schedule_time,
-    timezone: settings.timezone,
+    intervalValue: useHours ? intervalMinutes / 60 : intervalMinutes,
+    intervalUnit: useHours ? 'hour' : 'minute',
     confirmHighCost: false,
     revision: settings.revision,
   }
@@ -170,6 +146,8 @@ export function createChannelModelDetectionSettingsUpdateRequest(
   values: ChannelModelDetectionSettingsFormValues
 ): ChannelModelDetectionSettingsUpdateRequest {
   const detectorURL = values.detectorURL.trim()
+  const intervalMinutes =
+    values.intervalValue * (values.intervalUnit === 'hour' ? 60 : 1)
   return {
     ...(detectorURL ? { detector_url: detectorURL } : {}),
     clear_detector_url: values.clearDetectorURL,
@@ -179,9 +157,7 @@ export function createChannelModelDetectionSettingsUpdateRequest(
         ? values.confirmHighCost
         : false,
     schedule_enabled: values.scheduleEnabled,
-    interval_hours: values.intervalHours,
-    schedule_time: values.scheduleTime.trim(),
-    timezone: values.timezone.trim(),
+    interval_minutes: intervalMinutes,
     revision: values.revision,
   }
 }

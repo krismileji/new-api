@@ -71,6 +71,10 @@ const (
 	ChannelModelDetectionClaimedModelTerra = "gpt-5.6-terra"
 	ChannelModelDetectionClaimedModelLuna  = "gpt-5.6-luna"
 
+	ChannelModelDetectionDefaultIntervalMinutes     = 24 * 60
+	ChannelModelDetectionMinIntervalMinutes         = 1
+	ChannelModelDetectionMaxIntervalMinutes         = 525600
+	// Legacy values are kept for database compatibility with pre-minute rows.
 	ChannelModelDetectionDefaultIntervalHours       = 24
 	ChannelModelDetectionDefaultScheduleTime        = "02:30"
 	ChannelModelDetectionDefaultTimezone            = "Asia/Shanghai"
@@ -180,10 +184,17 @@ type ChannelModelDetectionGlobalConfig struct {
 	DetectorURL                    string `json:"-" gorm:"type:varchar(1024)"`
 	ScheduledPreset                string `json:"scheduled_preset" gorm:"type:varchar(16);not null"`
 	ScheduleEnabled                bool   `json:"schedule_enabled" gorm:"not null"`
-	IntervalHours                  int    `json:"interval_hours" gorm:"not null"`
-	ScheduleTime                   string `json:"schedule_time" gorm:"type:varchar(5);not null"`
-	Timezone                       string `json:"timezone" gorm:"type:varchar(64);not null"`
-	ScheduleAnchorAt               int64  `json:"schedule_anchor_at" gorm:"bigint"`
+	// A zero value is a migration sentinel for rows created before minute
+	// intervals existed; EffectiveIntervalMinutes falls back to IntervalHours
+	// until the row is next saved.
+	IntervalMinutes                int    `json:"interval_minutes" gorm:"not null;default:0"`
+	// Deprecated scheduling columns remain mapped so existing installations can
+	// migrate without a destructive schema change. Runtime scheduling uses the
+	// minute interval above and ignores wall-clock/timezone values.
+	IntervalHours                  int    `json:"-" gorm:"not null"`
+	ScheduleTime                   string `json:"-" gorm:"type:varchar(5);not null"`
+	Timezone                       string `json:"-" gorm:"type:varchar(64);not null"`
+	ScheduleAnchorAt               int64  `json:"-" gorm:"bigint"`
 	NextBatchAt                    int64  `json:"next_batch_at" gorm:"bigint;index"`
 	PendingDetectorURL             string `json:"-" gorm:"type:varchar(1024)"`
 	ScheduledHighConfirmedRevision int64  `json:"-" gorm:"bigint"`
@@ -203,8 +214,15 @@ func (c *ChannelModelDetectionGlobalConfig) BeforeCreate(_ *gorm.DB) error {
 	if c.ScheduledPreset == "" {
 		c.ScheduledPreset = ChannelModelDetectionPresetMedium
 	}
-	if c.IntervalHours == 0 {
-		c.IntervalHours = ChannelModelDetectionDefaultIntervalHours
+	if c.IntervalMinutes <= 0 {
+		if c.IntervalHours > 0 {
+			c.IntervalMinutes = c.IntervalHours * 60
+		} else {
+			c.IntervalMinutes = ChannelModelDetectionDefaultIntervalMinutes
+		}
+	}
+	if c.IntervalHours == 0 && c.IntervalMinutes%60 == 0 {
+		c.IntervalHours = c.IntervalMinutes / 60
 	}
 	if c.ScheduleTime == "" {
 		c.ScheduleTime = ChannelModelDetectionDefaultScheduleTime
@@ -232,7 +250,8 @@ func (c ChannelModelDetectionGlobalConfig) Validate() error {
 	if !IsChannelModelDetectionPreset(c.ScheduledPreset) {
 		return ErrChannelModelDetectionInvalidPreset
 	}
-	if c.IntervalHours != 6 && c.IntervalHours != 12 && c.IntervalHours != 24 && c.IntervalHours != 48 && c.IntervalHours != 72 && c.IntervalHours != 168 {
+	intervalMinutes := c.EffectiveIntervalMinutes()
+	if intervalMinutes < ChannelModelDetectionMinIntervalMinutes || intervalMinutes > ChannelModelDetectionMaxIntervalMinutes {
 		return ErrChannelModelDetectionInvalidSchedule
 	}
 	highScheduleEnabled := c.ScheduleEnabled && c.ScheduledPreset == ChannelModelDetectionPresetHigh
@@ -242,7 +261,17 @@ func (c ChannelModelDetectionGlobalConfig) Validate() error {
 	if !highScheduleEnabled && c.ScheduledHighConfirmedRevision != 0 {
 		return ErrChannelModelDetectionInvalidSchedule
 	}
-	return validateChannelModelDetectionSchedule(c.ScheduleTime, c.Timezone)
+	return nil
+}
+
+func (c ChannelModelDetectionGlobalConfig) EffectiveIntervalMinutes() int {
+	if c.IntervalMinutes > 0 {
+		return c.IntervalMinutes
+	}
+	if c.IntervalHours > 0 {
+		return c.IntervalHours * 60
+	}
+	return ChannelModelDetectionDefaultIntervalMinutes
 }
 
 // ApplyScheduledHighCostConfirmation consumes the command-only confirmation
