@@ -106,7 +106,7 @@ func newChannelDailyCostBatcher(config channelDailyCostBatcherConfig, write chan
 }
 
 func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) bool {
-	if delta.ChannelId <= 0 || delta.CostNanoCNY < 0 || delta.SettledDelta < 0 || delta.UnresolvedDelta < 0 || (delta.SettledDelta == 0 && delta.UnresolvedDelta == 0) {
+	if delta.ChannelId <= 0 || delta.CostNanoCNY < 0 || delta.ProbeCostNanoCNY < 0 || delta.ProbeCostNanoCNY > delta.CostNanoCNY || delta.SettledDelta < 0 || delta.UnresolvedDelta < 0 || (delta.SettledDelta == 0 && delta.UnresolvedDelta == 0) {
 		return false
 	}
 	key := channelDailyCostAggregateKey{
@@ -121,13 +121,14 @@ func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) boo
 		return false
 	}
 	if current, exists := b.pending[key]; exists {
-		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
+		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
 			b.addDroppedEventsLocked(delta)
 			b.mu.Unlock()
 			b.signal()
 			return false
 		}
 		current.CostNanoCNY += delta.CostNanoCNY
+		current.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
 		current.SettledDelta += delta.SettledDelta
 		current.UnresolvedDelta += delta.UnresolvedDelta
 		if delta.OccurredAt >= current.OccurredAt {
@@ -241,11 +242,12 @@ func (b *channelDailyCostBatcher) requeueBatch(batch []model.ChannelDailyCostDel
 			b.pending[key] = delta
 			continue
 		}
-		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
+		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
 			b.addDroppedEventsLocked(delta)
 			continue
 		}
 		current.CostNanoCNY += delta.CostNanoCNY
+		current.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
 		current.SettledDelta += delta.SettledDelta
 		current.UnresolvedDelta += delta.UnresolvedDelta
 		if delta.OccurredAt >= current.OccurredAt {

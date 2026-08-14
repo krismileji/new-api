@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
@@ -82,6 +83,7 @@ type channelStatusProbeChannelResponse struct {
 	HealthStatus       string                            `json:"health_status"`
 	Running            bool                              `json:"running"`
 	Latest             *model.ChannelStatusProbeState    `json:"latest"`
+	TodayProbeCostCNY  float64                           `json:"today_probe_cost_cny"`
 	AvgFirstTokenMs    *float64                          `json:"avg_first_token_ms"`
 	AvgTPS             *float64                          `json:"avg_tps"`
 	ModelStatuses      []channelStatusProbeModelResponse `json:"model_statuses"`
@@ -362,6 +364,11 @@ func buildChannelStatusProbeOverview(
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
+	todayStart := model.ChannelDailyCostDayStart(now)
+	todayCosts, err := model.GetChannelDailyCosts(context.Background(), todayStart, todayStart+channelMonitorCostDaySeconds)
+	if err != nil {
+		return channelStatusProbeOverviewResponse{}, err
+	}
 
 	configByChannel := make(map[int]model.ChannelStatusProbeConfig, len(configs))
 	for _, config := range configs {
@@ -374,6 +381,10 @@ func buildChannelStatusProbeOverview(
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
+	}
+	todayProbeCostByChannel := make(map[int]int64, len(todayCosts))
+	for _, cost := range todayCosts {
+		todayProbeCostByChannel[cost.ChannelId] = cost.ProbeCostNanoCNY
 	}
 	groupSet := make(map[string]struct{})
 	modelSet := make(map[string]struct{})
@@ -570,7 +581,8 @@ func buildChannelStatusProbeOverview(
 			Remark: remark, Groups: channelGroups, CostRatio: costRatio, SupportedModels: supportedModels,
 			AllowsCustomModel: allowsCustomModel, Config: configResponse, HealthStatus: health,
 			Running: running, Latest: latest, AvgFirstTokenMs: avgFirstTokenMs, AvgTPS: avgTPS,
-			ModelStatuses: modelStatuses, ConfiguredModelNum: configuredModelCount,
+			TodayProbeCostCNY: channelMonitorCostCNY(todayProbeCostByChannel[channel.Id]),
+			ModelStatuses:     modelStatuses, ConfiguredModelNum: configuredModelCount,
 		})
 	}
 	groups := make([]string, 0, len(groupSet))

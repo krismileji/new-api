@@ -229,6 +229,7 @@ export type ChannelMonitorCostDay = {
   date: string
   start_at: number
   cost_cny: number
+  probe_cost_cny?: number
   settled_count: number
   unresolved_count: number
 }
@@ -240,6 +241,7 @@ export type ChannelMonitorCostChannel = {
   status: number
   cost_ratio: number | null
   cost_cny: number
+  probe_cost_cny?: number
   settled_count: number
   unresolved_count: number
 }
@@ -278,8 +280,11 @@ export type ChannelMonitorCostOverview = {
   generated_at: number
   detail_date: string
   today_cost_cny: number
+  today_probe_cost_cny?: number
   yesterday_cost_cny: number
+  yesterday_probe_cost_cny?: number
   total_cost_cny: number
+  total_probe_cost_cny?: number
   coverage: ChannelMonitorCostCoverage
   items: ChannelMonitorCostDay[]
   chart_items: ChannelMonitorCostDay[]
@@ -1138,6 +1143,7 @@ export type ChannelStatusProbeState = {
   response_time_ms: number | null
   first_token_ms: number | null
   tps: number | null
+  settled_cost_nano_cny?: number | null
   error_code: string
   error_message: string
   consecutive_successes: number
@@ -1183,6 +1189,7 @@ export type ChannelStatusProbeChannel = {
   remark: string
   groups: string[]
   cost_ratio: number | null
+  today_probe_cost_cny?: number
   supported_models: string[]
   allows_custom_model: boolean
   config: ChannelStatusProbeConfig | null
@@ -1218,6 +1225,7 @@ export type ChannelStatusProbeExecution = {
   response_time_ms: number | null
   first_token_ms: number | null
   tps: number | null
+  settled_cost_nano_cny?: number | null
   endpoint: string
   stream: boolean
   request_id: string

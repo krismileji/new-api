@@ -49,10 +49,11 @@ type channelDailyCostSnapshotCacheEntry struct {
 }
 
 type channelDailyCostAttemptState struct {
-	mu         sync.Mutex
-	ChannelId  int
-	Dispatched bool
-	Recorded   bool
+	mu                 sync.Mutex
+	ChannelId          int
+	Dispatched         bool
+	Recorded           bool
+	SettledCostNanoCNY *int64
 }
 
 var (
@@ -170,6 +171,45 @@ func markChannelDailyCostAttemptRecorded(ctx *gin.Context, channelId int) {
 	state.mu.Lock()
 	state.Recorded = true
 	state.mu.Unlock()
+}
+
+func setChannelDailyCostAttemptSettledCost(ctx *gin.Context, channelId int, costNanoCNY int64) {
+	if ctx == nil {
+		return
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return
+	}
+	state.mu.Lock()
+	settledCostNanoCNY := costNanoCNY
+	state.SettledCostNanoCNY = &settledCostNanoCNY
+	state.mu.Unlock()
+}
+
+func ChannelDailyCostAttemptSettledCost(ctx *gin.Context, channelId int) *int64 {
+	if ctx == nil {
+		return nil
+	}
+	value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	if !exists {
+		return nil
+	}
+	state, ok := value.(*channelDailyCostAttemptState)
+	if !ok || state == nil || state.ChannelId != channelId {
+		return nil
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.SettledCostNanoCNY == nil {
+		return nil
+	}
+	settledCostNanoCNY := *state.SettledCostNanoCNY
+	return &settledCostNanoCNY
 }
 
 func InvalidateChannelDailyCostSnapshot(channelId int) {
@@ -370,17 +410,25 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 	if snapshot.ChannelId <= 0 {
 		return
 	}
+	probeCostNanoCNY := int64(0)
+	if ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey) && settledDelta > 0 {
+		probeCostNanoCNY = costNanoCNY
+	}
 	enqueueChannelDailyCost(model.ChannelDailyCostDelta{
-		ChannelId:       snapshot.ChannelId,
-		OccurredAt:      common.GetTimestamp(),
-		CostNanoCNY:     costNanoCNY,
-		SettledDelta:    settledDelta,
-		UnresolvedDelta: unresolvedDelta,
-		APIKeyId:        snapshot.APIKeyId,
-		APIKeyName:      snapshot.APIKeyName,
-		KeyFingerprint:  snapshot.KeyFingerprint,
-		KeyDisplay:      snapshot.KeyDisplay,
+		ChannelId:        snapshot.ChannelId,
+		OccurredAt:       common.GetTimestamp(),
+		CostNanoCNY:      costNanoCNY,
+		ProbeCostNanoCNY: probeCostNanoCNY,
+		SettledDelta:     settledDelta,
+		UnresolvedDelta:  unresolvedDelta,
+		APIKeyId:         snapshot.APIKeyId,
+		APIKeyName:       snapshot.APIKeyName,
+		KeyFingerprint:   snapshot.KeyFingerprint,
+		KeyDisplay:       snapshot.KeyDisplay,
 	})
+	if settledDelta > 0 {
+		setChannelDailyCostAttemptSettledCost(ctx, snapshot.ChannelId, costNanoCNY)
+	}
 	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
 }
 

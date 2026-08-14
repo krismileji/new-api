@@ -241,17 +241,19 @@ func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *test
 
 func TestSaveChannelStatusProbeExecutionDoesNotLetOlderResultReplaceLatest(t *testing.T) {
 	setupChannelStatusProbeModelTestDB(t)
+	newerCost := int64(120_000_000)
 	newer := ChannelStatusProbeExecution{
 		RunId: "newer", ChannelId: 4, ModelName: "model-a", Trigger: ChannelStatusProbeTriggerScheduled,
 		Result: ChannelStatusProbeResultSuccess, StartedAt: 7_000, FinishedAt: 7_010,
-		RequestDispatched: true, SampleStatus: ChannelStatusProbeSampleSkipped,
+		RequestDispatched: true, SettledCostNanoCNY: &newerCost, SampleStatus: ChannelStatusProbeSampleSkipped,
 	}
 	_, err := SaveChannelStatusProbeExecution(&newer)
 	require.NoError(t, err)
+	olderCost := int64(80_000_000)
 	older := ChannelStatusProbeExecution{
 		RunId: "older", ChannelId: 4, ModelName: "model-a", Trigger: ChannelStatusProbeTriggerScheduled,
 		Result: ChannelStatusProbeResultUpstreamFailure, StartedAt: 6_900, FinishedAt: 6_910,
-		RequestDispatched: true, SampleStatus: ChannelStatusProbeSampleSkipped,
+		RequestDispatched: true, SettledCostNanoCNY: &olderCost, SampleStatus: ChannelStatusProbeSampleSkipped,
 	}
 	_, err = SaveChannelStatusProbeExecution(&older)
 	require.NoError(t, err)
@@ -260,6 +262,8 @@ func TestSaveChannelStatusProbeExecutionDoesNotLetOlderResultReplaceLatest(t *te
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Equal(t, newer.Id, states[0].ExecutionId)
+	require.NotNil(t, states[0].SettledCostNanoCNY)
+	assert.Equal(t, newerCost, *states[0].SettledCostNanoCNY)
 	assert.Equal(t, ChannelStatusProbeResultSuccess, states[0].Result)
 	assert.Equal(t, ChannelStatusProbeResultSuccess, states[0].LastHealthResult)
 	assert.Equal(t, newer.Id, states[0].LastHealthExecutionId)

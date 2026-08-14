@@ -258,6 +258,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
 	isStatusProbe := isChannelStatusProbeTest(ctx)
 	isAutomatedProbe := isSmartScheduleProbe || isStatusProbe
+	if isStatusProbe {
+		c.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	}
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
 	if isAutomatedProbe {
 		if responseRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {

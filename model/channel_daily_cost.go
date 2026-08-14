@@ -19,24 +19,26 @@ const (
 // one Beijing calendar day. Monetary values use CNY nanos to avoid float
 // accumulation drift.
 type ChannelDailyCost struct {
-	Id              int64 `gorm:"primaryKey"`
-	ChannelId       int   `gorm:"not null;uniqueIndex:idx_channel_daily_cost_day"`
-	DayStart        int64 `gorm:"not null;uniqueIndex:idx_channel_daily_cost_day;index:idx_channel_daily_cost_day_start"`
-	CostNanoCNY     int64 `gorm:"not null"`
-	SettledCount    int64 `gorm:"not null"`
-	UnresolvedCount int64 `gorm:"not null"`
-	CreatedAt       int64 `gorm:"not null"`
-	UpdatedAt       int64 `gorm:"not null"`
+	Id               int64 `gorm:"primaryKey"`
+	ChannelId        int   `gorm:"not null;uniqueIndex:idx_channel_daily_cost_day"`
+	DayStart         int64 `gorm:"not null;uniqueIndex:idx_channel_daily_cost_day;index:idx_channel_daily_cost_day_start"`
+	CostNanoCNY      int64 `gorm:"not null"`
+	ProbeCostNanoCNY int64 `gorm:"not null;default:0"`
+	SettledCount     int64 `gorm:"not null"`
+	UnresolvedCount  int64 `gorm:"not null"`
+	CreatedAt        int64 `gorm:"not null"`
+	UpdatedAt        int64 `gorm:"not null"`
 }
 
 // ChannelDailyCostDayTotal is a database-aggregated daily total. Keeping the
 // aggregation in the query lets callers page calendar ranges without loading
 // every channel row for the whole range into memory.
 type ChannelDailyCostDayTotal struct {
-	DayStart        int64 `gorm:"column:day_start"`
-	CostNanoCNY     int64 `gorm:"column:cost_nano_cny"`
-	SettledCount    int64 `gorm:"column:settled_count"`
-	UnresolvedCount int64 `gorm:"column:unresolved_count"`
+	DayStart         int64 `gorm:"column:day_start"`
+	CostNanoCNY      int64 `gorm:"column:cost_nano_cny"`
+	ProbeCostNanoCNY int64 `gorm:"column:probe_cost_nano_cny"`
+	SettledCount     int64 `gorm:"column:settled_count"`
+	UnresolvedCount  int64 `gorm:"column:unresolved_count"`
 }
 
 // ChannelDailyCostBaseline is the cumulative channel cost captured at one
@@ -138,36 +140,45 @@ func GetChannelDailyCostDelta(ctx context.Context, channelId int, capturedAt int
 // AddChannelDailyCost atomically adds one settled or unresolved event to the
 // single daily row for a channel.
 func AddChannelDailyCost(ctx context.Context, channelId int, occurredAt int64, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
-	return addChannelDailyCost(DB.WithContext(ctx), channelId, occurredAt, costNanoCNY, settledDelta, unresolvedDelta)
+	return AddChannelDailyCostWithProbe(ctx, channelId, occurredAt, costNanoCNY, 0, settledDelta, unresolvedDelta)
 }
 
-func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
+func AddChannelDailyCostWithProbe(ctx context.Context, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
+	return addChannelDailyCost(DB.WithContext(ctx), channelId, occurredAt, costNanoCNY, probeCostNanoCNY, settledDelta, unresolvedDelta)
+}
+
+func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
 	if channelId <= 0 {
 		return errors.New("channel id must be positive")
 	}
 	if costNanoCNY < 0 {
 		return errors.New("daily cost must not be negative")
 	}
+	if probeCostNanoCNY < 0 || probeCostNanoCNY > costNanoCNY {
+		return errors.New("daily probe cost must be between zero and total cost")
+	}
 	if settledDelta < 0 || unresolvedDelta < 0 || (settledDelta == 0 && unresolvedDelta == 0) {
 		return errors.New("daily cost event count must be positive")
 	}
 
 	record := ChannelDailyCost{
-		ChannelId:       channelId,
-		DayStart:        ChannelDailyCostDayStart(occurredAt),
-		CostNanoCNY:     costNanoCNY,
-		SettledCount:    settledDelta,
-		UnresolvedCount: unresolvedDelta,
-		CreatedAt:       occurredAt,
-		UpdatedAt:       occurredAt,
+		ChannelId:        channelId,
+		DayStart:         ChannelDailyCostDayStart(occurredAt),
+		CostNanoCNY:      costNanoCNY,
+		ProbeCostNanoCNY: probeCostNanoCNY,
+		SettledCount:     settledDelta,
+		UnresolvedCount:  unresolvedDelta,
+		CreatedAt:        occurredAt,
+		UpdatedAt:        occurredAt,
 	}
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "channel_id"}, {Name: "day_start"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"cost_nano_cny":    gorm.Expr("cost_nano_cny + ?", costNanoCNY),
-			"settled_count":    gorm.Expr("settled_count + ?", settledDelta),
-			"unresolved_count": gorm.Expr("unresolved_count + ?", unresolvedDelta),
-			"updated_at":       occurredAt,
+			"cost_nano_cny":       gorm.Expr("cost_nano_cny + ?", costNanoCNY),
+			"probe_cost_nano_cny": gorm.Expr("probe_cost_nano_cny + ?", probeCostNanoCNY),
+			"settled_count":       gorm.Expr("settled_count + ?", settledDelta),
+			"unresolved_count":    gorm.Expr("unresolved_count + ?", unresolvedDelta),
+			"updated_at":          occurredAt,
 		}),
 	}).Create(&record).Error
 }
@@ -201,7 +212,7 @@ func getChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, end
 	}
 	query := DB.WithContext(ctx).
 		Model(&ChannelDailyCost{}).
-		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
+		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(probe_cost_nano_cny) AS probe_cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
 		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp)
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)

@@ -32,14 +32,15 @@ const (
 type channelStatusProbeTestContextKey struct{}
 
 type channelStatusProbeOutcome struct {
-	Result       string
-	StartedAt    int64
-	FinishedAt   int64
-	DurationMs   *float64
-	ProbeResult  testResult
-	TestExecuted bool
-	ErrorCode    string
-	ErrorMessage string
+	Result             string
+	StartedAt          int64
+	FinishedAt         int64
+	DurationMs         *float64
+	SettledCostNanoCNY *int64
+	ProbeResult        testResult
+	TestExecuted       bool
+	ErrorCode          string
+	ErrorMessage       string
 }
 
 var (
@@ -271,6 +272,7 @@ func executeChannelStatusProbeModel(
 		}
 	}
 	probeResult := testChannel(probeCtx, channel, testUserId, modelName, "", true)
+	settledCostNanoCNY := service.ChannelDailyCostAttemptSettledCost(probeResult.context, channel.Id)
 	lease.Release()
 	finished := time.Now()
 	durationMs := float64(finished.Sub(started)) / float64(time.Millisecond)
@@ -295,7 +297,8 @@ func executeChannelStatusProbeModel(
 	}
 	return channelStatusProbeOutcome{
 		Result: result, StartedAt: startedAt, FinishedAt: finished.Unix(), DurationMs: &durationMs,
-		ProbeResult: probeResult, TestExecuted: true, ErrorCode: errorCode, ErrorMessage: errorMessage,
+		SettledCostNanoCNY: settledCostNanoCNY, ProbeResult: probeResult, TestExecuted: true,
+		ErrorCode: errorCode, ErrorMessage: errorMessage,
 	}
 }
 
@@ -317,7 +320,8 @@ func persistChannelStatusProbeOutcome(
 		RunId: claim.RunId, ChannelId: claim.Config.ChannelId, ModelName: modelName,
 		ConfigRevision: claim.Config.Revision, Trigger: claim.Trigger, Result: outcome.Result,
 		StartedAt: outcome.StartedAt, FinishedAt: outcome.FinishedAt, ResponseTimeMs: outcome.DurationMs,
-		ErrorCode: string(errorCodeRunes), ErrorMessage: string(errorRunes),
+		SettledCostNanoCNY: outcome.SettledCostNanoCNY,
+		ErrorCode:          string(errorCodeRunes), ErrorMessage: string(errorRunes),
 		SampleRequested: claim.Config.RecordSample, CreatedAt: outcome.FinishedAt,
 	}
 	if claim.Config.RecordSample {

@@ -36,6 +36,7 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { formatChannelMonitorCost } from '../lib/format'
 import {
   areChannelStatusProbeCardPropsEqual,
   formatChannelStatusProbeNextRun,
@@ -79,6 +80,8 @@ const RESULT_LABEL: Record<ChannelStatusProbeResult, string> = {
   skipped: '跳过',
   canceled: '取消',
 }
+
+const NANO_CNY_PER_CNY = 1_000_000_000
 
 const BUCKET_COLOR: Record<'' | ChannelStatusProbeResult, string> = {
   '': 'bg-muted/60',
@@ -239,6 +242,10 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
   const presentation = HEALTH_PRESENTATION[props.channel.health_status]
   const config = props.channel.config
   const latest = props.channel.latest
+  const latestProbeCostCNY =
+    latest?.settled_cost_nano_cny == null
+      ? null
+      : latest.settled_cost_nano_cny / NANO_CNY_PER_CNY
   const displayValue = config?.display_value ?? 60
   const displayUnit = config?.display_unit ?? 'minute'
   const displayRangeLabelValue = displayRangeLabel(displayValue, displayUnit)
@@ -382,6 +389,18 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
               <dt className='text-muted-foreground text-xs'>最近 TPS</dt>
               <dd className='mt-0.5 truncate font-mono text-base font-semibold tabular-nums'>
                 {formatTPS(latest?.tps ?? null)}
+              </dd>
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-xs'>最近探测成本</dt>
+              <dd className='mt-0.5 truncate font-mono text-base font-semibold tabular-nums'>
+                {formatChannelMonitorCost(latestProbeCostCNY)}
+              </dd>
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-xs'>今日探测成本</dt>
+              <dd className='mt-0.5 truncate font-mono text-base font-semibold tabular-nums'>
+                {formatChannelMonitorCost(props.channel.today_probe_cost_cny)}
               </dd>
             </div>
             <div className='min-w-0'>

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -337,6 +338,10 @@ func TestChannelStatusProbeOverviewInvalidatesAfterExecutionResult(t *testing.T)
 	require.Nil(t, initial.Channels[0].Latest)
 
 	now := common.GetTimestamp()
+	settledCostNanoCNY := int64(250_000_000)
+	require.NoError(t, model.AddChannelDailyCostWithProbe(
+		context.Background(), channel.Id, now, 1_000_000_000, settledCostNanoCNY, 1, 0,
+	))
 	err = persistChannelStatusProbeOutcome(
 		channel,
 		model.ChannelStatusProbeClaim{
@@ -346,6 +351,7 @@ func TestChannelStatusProbeOverviewInvalidatesAfterExecutionResult(t *testing.T)
 		"model-a",
 		channelStatusProbeOutcome{
 			Result: model.ChannelStatusProbeResultSuccess, StartedAt: now - 1, FinishedAt: now,
+			SettledCostNanoCNY: &settledCostNanoCNY,
 		},
 	)
 	require.NoError(t, err)
@@ -353,6 +359,9 @@ func TestChannelStatusProbeOverviewInvalidatesAfterExecutionResult(t *testing.T)
 	updated := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.NotNil(t, updated.Channels[0].Latest)
 	assert.Equal(t, "model-a", updated.Channels[0].Latest.ModelName)
+	require.NotNil(t, updated.Channels[0].Latest.SettledCostNanoCNY)
+	assert.Equal(t, settledCostNanoCNY, *updated.Channels[0].Latest.SettledCostNanoCNY)
+	assert.InDelta(t, 0.25, updated.Channels[0].TodayProbeCostCNY, 1e-9)
 }
 
 func TestUpdateChannelStatusProbeConfigValidatesAndUsesOptimisticRevision(t *testing.T) {

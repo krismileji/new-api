@@ -219,25 +219,35 @@ function CostSummary(props: {
       <CostSummaryValue
         label='今日已结算成本'
         value={props.overview?.today_cost_cny}
+        probeValue={props.overview?.today_probe_cost_cny}
       />
       <CostSummaryValue
         label='昨日已结算成本'
         value={props.overview?.yesterday_cost_cny}
+        probeValue={props.overview?.yesterday_probe_cost_cny}
       />
       <CostSummaryValue
         label='区间已结算成本'
         value={props.overview?.total_cost_cny}
+        probeValue={props.overview?.total_probe_cost_cny}
       />
     </div>
   )
 }
 
-function CostSummaryValue(props: { label: string; value: number | undefined }) {
+function CostSummaryValue(props: {
+  label: string
+  value: number | undefined
+  probeValue: number | undefined
+}) {
   return (
     <div className='flex min-w-0 flex-col gap-1'>
       <span className='text-muted-foreground text-xs'>{props.label}</span>
       <span className='truncate font-mono text-base font-semibold tabular-nums sm:text-lg'>
         {formatChannelMonitorCost(props.value)}
+      </span>
+      <span className='text-muted-foreground truncate text-xs'>
+        其中探测 {formatChannelMonitorCost(props.probeValue)}
       </span>
     </div>
   )
@@ -336,6 +346,7 @@ export function CostHistoryData(props: {
           values: chartItems.map((item) => ({
             date: item.date,
             cost: item.cost_cny,
+            probeCost: item.probe_cost_cny ?? 0,
             settledCount: item.settled_count,
             unresolvedCount: item.unresolved_count,
             resolutionRate: formatChannelMonitorResolutionRate(
@@ -365,6 +376,11 @@ export function CostHistoryData(props: {
               key: '已结算成本',
               value: (datum: { cost: number }) =>
                 formatChannelMonitorCost(datum.cost),
+            },
+            {
+              key: '探测成本',
+              value: (datum: { probeCost: number }) =>
+                formatChannelMonitorCost(datum.probeCost),
             },
             {
               key: '已结算请求',
@@ -449,11 +465,12 @@ export function CostHistoryData(props: {
           <section className='flex min-w-0 flex-col gap-2'>
             <h3 className='text-sm font-medium'>按日成本</h3>
             <div className='overflow-auto rounded-md border'>
-              <Table className='min-w-[650px]'>
+              <Table className='min-w-[760px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead>日期</TableHead>
                     <TableHead className='text-right'>已结算成本</TableHead>
+                    <TableHead className='text-right'>探测成本</TableHead>
                     <TableHead className='text-right'>已结算</TableHead>
                     <TableHead className='text-right'>未解析</TableHead>
                     <TableHead className='text-right'>解析率</TableHead>
@@ -472,6 +489,9 @@ export function CostHistoryData(props: {
                         <TableCell className='font-mono'>{item.date}</TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {formatChannelMonitorCost(item.cost_cny)}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {formatChannelMonitorCost(item.probe_cost_cny)}
                         </TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {item.settled_count}

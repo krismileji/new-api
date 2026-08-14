@@ -130,6 +130,39 @@ func TestChannelDailyCostUsesUpstreamRatioWithoutConversion(t *testing.T) {
 	assert.Zero(t, cost.UnresolvedCount)
 }
 
+func TestChannelDailyCostAttributesStatusProbeAndExposesSettledAttemptCost(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 8, 0.5)
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	CaptureChannelDailyCostSnapshot(ctx, 8)
+	BeginChannelDailyCostAttempt(ctx, 8)
+
+	recordChannelDailyCostFromQuota(ctx, 8, 500_000)
+	settledCostNanoCNY := ChannelDailyCostAttemptSettledCost(ctx, 8)
+	require.NotNil(t, settledCostNanoCNY)
+	assert.Equal(t, int64(2_500_000_000), *settledCostNanoCNY)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 8).Error)
+	assert.Equal(t, cost.CostNanoCNY, cost.ProbeCostNanoCNY)
+
+	zeroCost := newChannelDailyCostTestContext()
+	zeroCost.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	BeginChannelDailyCostAttempt(zeroCost, 10)
+	recordChannelDailyCostEvent(zeroCost, channelDailyCostSnapshot{ChannelId: 10}, 0, 1, 0)
+	settledZero := ChannelDailyCostAttemptSettledCost(zeroCost, 10)
+	require.NotNil(t, settledZero)
+	assert.Zero(t, *settledZero)
+
+	unresolved := newChannelDailyCostTestContext()
+	unresolved.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	BeginChannelDailyCostAttempt(unresolved, 9)
+	recordChannelDailyCostUnresolved(unresolved, 9)
+	assert.Nil(t, ChannelDailyCostAttemptSettledCost(unresolved, 9))
+}
+
 func TestChannelDailyCostUsesQuotaBeforeFreeGroup(t *testing.T) {
 	db := setupChannelDailyCostServiceTest(t)
 	createChannelDailyCostMonitor(t, db, 2, 0.2)
@@ -526,13 +559,15 @@ func TestChannelDailyCostBatcherIsBoundedAndKeepsAggregatingExistingKeys(t *test
 	})
 	t.Cleanup(batcher.stop)
 
-	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 1}))
+	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, CostNanoCNY: 10, ProbeCostNanoCNY: 3, SettledDelta: 1}))
 	assert.False(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 2, OccurredAt: 100, SettledDelta: 1}))
-	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 101, SettledDelta: 2}))
+	assert.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 101, CostNanoCNY: 5, ProbeCostNanoCNY: 2, SettledDelta: 2}))
 	require.NoError(t, batcher.flushAll())
 
 	require.Len(t, written, 1)
 	assert.Equal(t, int64(3), written[0].SettledDelta)
+	assert.Equal(t, int64(15), written[0].CostNanoCNY)
+	assert.Equal(t, int64(5), written[0].ProbeCostNanoCNY)
 	assert.Equal(t, int64(1), batcher.droppedCount())
 }
 
@@ -581,7 +616,7 @@ func TestChannelDailyCostBatcherRetainsAFailedBatchForLaterRetry(t *testing.T) {
 	})
 	t.Cleanup(batcher.stop)
 
-	require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 2, UnresolvedDelta: 1}))
+	require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, CostNanoCNY: 100, ProbeCostNanoCNY: 30, SettledDelta: 2, UnresolvedDelta: 1}))
 	require.Error(t, batcher.flushAll())
 	assert.Equal(t, 2, attempts)
 	assert.Equal(t, 1, batcher.pendingCount())
@@ -591,4 +626,5 @@ func TestChannelDailyCostBatcherRetainsAFailedBatchForLaterRetry(t *testing.T) {
 	require.Len(t, written, 1)
 	assert.Equal(t, int64(2), written[0].SettledDelta)
 	assert.Equal(t, int64(1), written[0].UnresolvedDelta)
+	assert.Equal(t, int64(30), written[0].ProbeCostNanoCNY)
 }

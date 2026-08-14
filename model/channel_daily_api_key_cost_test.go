@@ -171,22 +171,23 @@ func TestAddChannelDailyCostBatchAtomicallyAddsTotalsAndAPIKeyDetails(t *testing
 	fingerprintA, displayA := ChannelDailyCostAPIKeyIdentityForToken(11, "sk-alpha")
 	fingerprintB, displayB := ChannelDailyCostAPIKeyIdentityForToken(12, "sk-beta")
 	require.Error(t, AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{
-		{ChannelId: 1, OccurredAt: when, CostNanoCNY: math.MaxInt64, SettledDelta: 1, KeyFingerprint: fingerprintA, KeyDisplay: displayA},
-		{ChannelId: 1, OccurredAt: when, CostNanoCNY: 1, SettledDelta: 1, KeyFingerprint: fingerprintB, KeyDisplay: displayB},
+		{ChannelId: 1, OccurredAt: when, CostNanoCNY: math.MaxInt64, ProbeCostNanoCNY: 1, SettledDelta: 1, KeyFingerprint: fingerprintA, KeyDisplay: displayA},
+		{ChannelId: 1, OccurredAt: when, CostNanoCNY: 1, ProbeCostNanoCNY: 1, SettledDelta: 1, KeyFingerprint: fingerprintB, KeyDisplay: displayB},
 	}))
 	var count int64
 	require.NoError(t, db.Model(&ChannelDailyCost{}).Count(&count).Error)
 	assert.Zero(t, count)
 	require.NoError(t, AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{
 		{
-			ChannelId:      1,
-			OccurredAt:     when,
-			CostNanoCNY:    300,
-			SettledDelta:   3,
-			APIKeyId:       11,
-			APIKeyName:     "生产 Key",
-			KeyFingerprint: fingerprintA,
-			KeyDisplay:     displayA,
+			ChannelId:        1,
+			OccurredAt:       when,
+			CostNanoCNY:      300,
+			ProbeCostNanoCNY: 75,
+			SettledDelta:     3,
+			APIKeyId:         11,
+			APIKeyName:       "生产 Key",
+			KeyFingerprint:   fingerprintA,
+			KeyDisplay:       displayA,
 		},
 		{
 			ChannelId:       1,
@@ -202,6 +203,7 @@ func TestAddChannelDailyCostBatchAtomicallyAddsTotalsAndAPIKeyDetails(t *testing
 	var total ChannelDailyCost
 	require.NoError(t, db.First(&total).Error)
 	assert.Equal(t, int64(300), total.CostNanoCNY)
+	assert.Equal(t, int64(75), total.ProbeCostNanoCNY)
 	assert.Equal(t, int64(3), total.SettledCount)
 	assert.Equal(t, int64(2), total.UnresolvedCount)
 	var details []ChannelDailyAPIKeyCost

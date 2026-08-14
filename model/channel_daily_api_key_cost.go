@@ -36,15 +36,16 @@ type ChannelDailyAPIKeyCost struct {
 // ChannelDailyCostDelta is one already-aggregated channel cost update. A
 // batch can contain different channels, days, and API Keys.
 type ChannelDailyCostDelta struct {
-	ChannelId       int
-	OccurredAt      int64
-	CostNanoCNY     int64
-	SettledDelta    int64
-	UnresolvedDelta int64
-	APIKeyId        int
-	APIKeyName      string
-	KeyFingerprint  string
-	KeyDisplay      string
+	ChannelId        int
+	OccurredAt       int64
+	CostNanoCNY      int64
+	ProbeCostNanoCNY int64
+	SettledDelta     int64
+	UnresolvedDelta  int64
+	APIKeyId         int
+	APIKeyName       string
+	KeyFingerprint   string
+	KeyDisplay       string
 }
 
 // ChannelDailyCostAPIKeyIdentity returns stable, non-reversible identity data
@@ -139,6 +140,9 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 		if delta.CostNanoCNY < 0 {
 			return errors.New("daily cost must not be negative")
 		}
+		if delta.ProbeCostNanoCNY < 0 || delta.ProbeCostNanoCNY > delta.CostNanoCNY {
+			return errors.New("daily probe cost must be between zero and total cost")
+		}
 		if delta.SettledDelta < 0 || delta.UnresolvedDelta < 0 || (delta.SettledDelta == 0 && delta.UnresolvedDelta == 0) {
 			return errors.New("daily cost event count must be positive")
 		}
@@ -174,10 +178,11 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 			channelTotals[key] = delta
 			continue
 		}
-		if total.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || total.SettledDelta > math.MaxInt64-delta.SettledDelta || total.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
+		if total.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || total.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || total.SettledDelta > math.MaxInt64-delta.SettledDelta || total.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
 			return errors.New("daily cost batch total exceeds int64")
 		}
 		total.CostNanoCNY += delta.CostNanoCNY
+		total.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
 		total.SettledDelta += delta.SettledDelta
 		total.UnresolvedDelta += delta.UnresolvedDelta
 		if delta.OccurredAt > total.OccurredAt {
@@ -212,7 +217,7 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, total := range orderedChannelTotals {
-			if err := addChannelDailyCost(tx, total.ChannelId, total.OccurredAt, total.CostNanoCNY, total.SettledDelta, total.UnresolvedDelta); err != nil {
+			if err := addChannelDailyCost(tx, total.ChannelId, total.OccurredAt, total.CostNanoCNY, total.ProbeCostNanoCNY, total.SettledDelta, total.UnresolvedDelta); err != nil {
 				return err
 			}
 		}

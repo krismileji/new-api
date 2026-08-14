@@ -31,8 +31,11 @@ function createOverview(): ChannelMonitorCostOverview {
     days: 30,
     generated_at: 1_752_777_845,
     today_cost_cny: 1.2,
+    today_probe_cost_cny: 0.3,
     yesterday_cost_cny: 0.8,
+    yesterday_probe_cost_cny: 0.1,
     total_cost_cny: 2,
+    total_probe_cost_cny: 0.4,
     detail_date: '2026-07-23',
     coverage: {
       included_channel_count: 1,
@@ -47,6 +50,7 @@ function createOverview(): ChannelMonitorCostOverview {
         date: '2026-07-23',
         start_at: 1_752_681_600,
         cost_cny: 1.2,
+        probe_cost_cny: 0.3,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -56,6 +60,7 @@ function createOverview(): ChannelMonitorCostOverview {
         date: '2026-07-23',
         start_at: 1_752_681_600,
         cost_cny: 1.2,
+        probe_cost_cny: 0.3,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -72,6 +77,7 @@ function createOverview(): ChannelMonitorCostOverview {
         status: 1,
         cost_ratio: 0.5,
         cost_cny: 2,
+        probe_cost_cny: 0.5,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -160,6 +166,8 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('启用'))
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('0.5'))
+    assert.ok(markup.includes('探测成本'))
+    assert.ok(markup.includes('0.5000'))
     assert.ok(markup.includes('仅未确认渠道'))
     assert.ok(markup.includes('成本待解析'))
     assert.ok(markup.includes('已结算 0 · 未解析 3'))
@@ -187,6 +195,8 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('当前金额不包含 2 次未解析的上游请求尝试'))
     assert.ok(markup.includes('其中 1 个渠道缺少有效成本配置'))
     assert.ok(markup.includes('已结算成本'))
+    assert.ok(markup.includes('探测成本'))
+    assert.ok(markup.includes('0.3000'))
     assert.ok(markup.includes('未解析'))
   })
 

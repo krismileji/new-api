@@ -198,6 +198,7 @@ type ChannelStatusProbeState struct {
 	ResponseTimeMs        *float64 `json:"response_time_ms"`
 	FirstTokenMs          *float64 `json:"first_token_ms"`
 	TPS                   *float64 `json:"tps"`
+	SettledCostNanoCNY    *int64   `json:"settled_cost_nano_cny"`
 	ErrorCode             string   `json:"error_code" gorm:"type:varchar(128)"`
 	ErrorMessage          string   `json:"error_message" gorm:"type:varchar(512)"`
 	ConsecutiveSuccesses  int      `json:"consecutive_successes"`
@@ -242,35 +243,36 @@ func (state ChannelStatusProbeState) Buckets(unit string) ([]ChannelStatusProbeB
 }
 
 type ChannelStatusProbeExecution struct {
-	Id                int64    `json:"id" gorm:"index:idx_channel_status_probe_channel_result_finished,priority:4,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:4,sort:desc;index:idx_channel_status_probe_sample_retry,priority:4"`
-	RunId             string   `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_status_probe_run_model"`
-	ChannelId         int      `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1;index:idx_channel_status_probe_channel_result_finished,priority:1;index:idx_channel_status_probe_channel_trigger_finished,priority:1"`
-	ModelName         string   `json:"model_name" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_status_probe_run_model;index:idx_channel_status_probe_channel_model_finished,priority:2"`
-	ConfigRevision    int64    `json:"config_revision" gorm:"bigint"`
-	Trigger           string   `json:"trigger" gorm:"type:varchar(16);index;index:idx_channel_status_probe_channel_trigger_finished,priority:2"`
-	Result            string   `json:"result" gorm:"type:varchar(32);index;index:idx_channel_status_probe_channel_result_finished,priority:2"`
-	StartedAt         int64    `json:"started_at" gorm:"bigint"`
-	FinishedAt        int64    `json:"finished_at" gorm:"bigint;index;index:idx_channel_status_probe_channel_finished,priority:2,sort:desc;index:idx_channel_status_probe_channel_model_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_result_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:3,sort:desc"`
-	ResponseTimeMs    *float64 `json:"response_time_ms"`
-	FirstTokenMs      *float64 `json:"first_token_ms"`
-	TPS               *float64 `json:"tps"`
-	Endpoint          string   `json:"endpoint" gorm:"type:varchar(255)"`
-	Stream            bool     `json:"stream"`
-	RequestId         string   `json:"request_id" gorm:"type:varchar(64)"`
-	RequestDispatched bool     `json:"request_dispatched"`
-	UsageAvailable    bool     `json:"usage_available"`
-	InputTokens       int      `json:"input_tokens"`
-	OutputTokens      int      `json:"output_tokens"`
-	TotalTokens       int      `json:"total_tokens"`
-	CachedTokens      int      `json:"cached_tokens"`
-	CacheWriteTokens  int      `json:"cache_write_tokens"`
-	ReasoningTokens   int      `json:"reasoning_tokens"`
-	ErrorCode         string   `json:"error_code" gorm:"type:varchar(128)"`
-	ErrorMessage      string   `json:"error_message" gorm:"type:varchar(512)"`
-	SampleRequested   bool     `json:"sample_requested" gorm:"index:idx_channel_status_probe_sample_retry,priority:1"`
-	SampleStatus      string   `json:"sample_status" gorm:"type:varchar(16);index:idx_channel_status_probe_sample_retry,priority:2"`
-	SampleMessage     string   `json:"sample_message" gorm:"type:varchar(255)"`
-	CreatedAt         int64    `json:"created_at" gorm:"bigint;index:idx_channel_status_probe_sample_retry,priority:3"`
+	Id                 int64    `json:"id" gorm:"index:idx_channel_status_probe_channel_result_finished,priority:4,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:4,sort:desc;index:idx_channel_status_probe_sample_retry,priority:4"`
+	RunId              string   `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_status_probe_run_model"`
+	ChannelId          int      `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1;index:idx_channel_status_probe_channel_result_finished,priority:1;index:idx_channel_status_probe_channel_trigger_finished,priority:1"`
+	ModelName          string   `json:"model_name" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_status_probe_run_model;index:idx_channel_status_probe_channel_model_finished,priority:2"`
+	ConfigRevision     int64    `json:"config_revision" gorm:"bigint"`
+	Trigger            string   `json:"trigger" gorm:"type:varchar(16);index;index:idx_channel_status_probe_channel_trigger_finished,priority:2"`
+	Result             string   `json:"result" gorm:"type:varchar(32);index;index:idx_channel_status_probe_channel_result_finished,priority:2"`
+	StartedAt          int64    `json:"started_at" gorm:"bigint"`
+	FinishedAt         int64    `json:"finished_at" gorm:"bigint;index;index:idx_channel_status_probe_channel_finished,priority:2,sort:desc;index:idx_channel_status_probe_channel_model_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_result_finished,priority:3,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:3,sort:desc"`
+	ResponseTimeMs     *float64 `json:"response_time_ms"`
+	FirstTokenMs       *float64 `json:"first_token_ms"`
+	TPS                *float64 `json:"tps"`
+	SettledCostNanoCNY *int64   `json:"settled_cost_nano_cny"`
+	Endpoint           string   `json:"endpoint" gorm:"type:varchar(255)"`
+	Stream             bool     `json:"stream"`
+	RequestId          string   `json:"request_id" gorm:"type:varchar(64)"`
+	RequestDispatched  bool     `json:"request_dispatched"`
+	UsageAvailable     bool     `json:"usage_available"`
+	InputTokens        int      `json:"input_tokens"`
+	OutputTokens       int      `json:"output_tokens"`
+	TotalTokens        int      `json:"total_tokens"`
+	CachedTokens       int      `json:"cached_tokens"`
+	CacheWriteTokens   int      `json:"cache_write_tokens"`
+	ReasoningTokens    int      `json:"reasoning_tokens"`
+	ErrorCode          string   `json:"error_code" gorm:"type:varchar(128)"`
+	ErrorMessage       string   `json:"error_message" gorm:"type:varchar(512)"`
+	SampleRequested    bool     `json:"sample_requested" gorm:"index:idx_channel_status_probe_sample_retry,priority:1"`
+	SampleStatus       string   `json:"sample_status" gorm:"type:varchar(16);index:idx_channel_status_probe_sample_retry,priority:2"`
+	SampleMessage      string   `json:"sample_message" gorm:"type:varchar(255)"`
+	CreatedAt          int64    `json:"created_at" gorm:"bigint;index:idx_channel_status_probe_sample_retry,priority:3"`
 }
 
 type ChannelStatusProbeConfigInput struct {
@@ -667,6 +669,7 @@ func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bo
 			state.ResponseTimeMs = execution.ResponseTimeMs
 			state.FirstTokenMs = execution.FirstTokenMs
 			state.TPS = execution.TPS
+			state.SettledCostNanoCNY = execution.SettledCostNanoCNY
 			state.ErrorCode = execution.ErrorCode
 			state.ErrorMessage = execution.ErrorMessage
 			state.SampleStatus = execution.SampleStatus

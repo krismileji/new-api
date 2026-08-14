@@ -26,6 +26,7 @@ type channelMonitorCostDay struct {
 	Date            string  `json:"date"`
 	StartAt         int64   `json:"start_at"`
 	CostCNY         float64 `json:"cost_cny"`
+	ProbeCostCNY    float64 `json:"probe_cost_cny"`
 	SettledCount    int64   `json:"settled_count"`
 	UnresolvedCount int64   `json:"unresolved_count"`
 }
@@ -37,6 +38,7 @@ type channelMonitorCostChannel struct {
 	Status          int      `json:"status"`
 	CostRatio       *float64 `json:"cost_ratio"`
 	CostCNY         float64  `json:"cost_cny"`
+	ProbeCostCNY    float64  `json:"probe_cost_cny"`
 	SettledCount    int64    `json:"settled_count"`
 	UnresolvedCount int64    `json:"unresolved_count"`
 }
@@ -71,21 +73,24 @@ type channelMonitorCostCoverage struct {
 }
 
 type channelMonitorCostOverview struct {
-	Days             int                         `json:"days"`
-	GeneratedAt      int64                       `json:"generated_at"`
-	DetailDate       string                      `json:"detail_date"`
-	TodayCostCNY     float64                     `json:"today_cost_cny"`
-	YesterdayCostCNY float64                     `json:"yesterday_cost_cny"`
-	TotalCostCNY     float64                     `json:"total_cost_cny"`
-	Coverage         channelMonitorCostCoverage  `json:"coverage"`
-	Items            []channelMonitorCostDay     `json:"items"`
-	ChartItems       []channelMonitorCostDay     `json:"chart_items"`
-	ItemTotal        int                         `json:"item_total"`
-	ItemPage         int                         `json:"item_page"`
-	ItemPageSize     int                         `json:"item_page_size"`
-	ItemPageCount    int                         `json:"item_page_count"`
-	Channels         []channelMonitorCostChannel `json:"channels"`
-	APIKeys          []channelMonitorCostAPIKey  `json:"api_keys"`
+	Days                  int                         `json:"days"`
+	GeneratedAt           int64                       `json:"generated_at"`
+	DetailDate            string                      `json:"detail_date"`
+	TodayCostCNY          float64                     `json:"today_cost_cny"`
+	TodayProbeCostCNY     float64                     `json:"today_probe_cost_cny"`
+	YesterdayCostCNY      float64                     `json:"yesterday_cost_cny"`
+	YesterdayProbeCostCNY float64                     `json:"yesterday_probe_cost_cny"`
+	TotalCostCNY          float64                     `json:"total_cost_cny"`
+	TotalProbeCostCNY     float64                     `json:"total_probe_cost_cny"`
+	Coverage              channelMonitorCostCoverage  `json:"coverage"`
+	Items                 []channelMonitorCostDay     `json:"items"`
+	ChartItems            []channelMonitorCostDay     `json:"chart_items"`
+	ItemTotal             int                         `json:"item_total"`
+	ItemPage              int                         `json:"item_page"`
+	ItemPageSize          int                         `json:"item_page_size"`
+	ItemPageCount         int                         `json:"item_page_count"`
+	Channels              []channelMonitorCostChannel `json:"channels"`
+	APIKeys               []channelMonitorCostAPIKey  `json:"api_keys"`
 }
 
 func GetChannelMonitorCostOverview(c *gin.Context) {
@@ -173,6 +178,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 			totalsByDay[row.DayStart] = total
 		}
 		total.CostNanoCNY += row.CostNanoCNY
+		total.ProbeCostNanoCNY += row.ProbeCostNanoCNY
 		total.SettledCount += row.SettledCount
 		total.UnresolvedCount += row.UnresolvedCount
 		if row.SettledCount > 0 {
@@ -206,14 +212,17 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	}
 	for _, item := range items {
 		overview.TotalCostCNY += item.CostCNY
+		overview.TotalProbeCostCNY += item.ProbeCostCNY
 		overview.Coverage.SettledCount += item.SettledCount
 		overview.Coverage.UnresolvedCount += item.UnresolvedCount
 	}
 	if len(items) > 0 {
 		overview.TodayCostCNY = items[len(items)-1].CostCNY
+		overview.TodayProbeCostCNY = items[len(items)-1].ProbeCostCNY
 	}
 	if len(items) > 1 {
 		overview.YesterdayCostCNY = items[len(items)-2].CostCNY
+		overview.YesterdayProbeCostCNY = items[len(items)-2].ProbeCostCNY
 	}
 	return overview, nil
 }
@@ -290,10 +299,12 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	}
 
 	type channelCostSummary struct {
-		CostNanoCNY     int64
-		CostCNY         float64
-		SettledCount    int64
-		UnresolvedCount int64
+		CostNanoCNY      int64
+		ProbeCostNanoCNY int64
+		CostCNY          float64
+		ProbeCostCNY     float64
+		SettledCount     int64
+		UnresolvedCount  int64
 	}
 	channelCosts := make(map[int]*channelCostSummary)
 	includedChannels := make(map[int]struct{})
@@ -325,7 +336,9 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			channelCosts[row.ChannelId] = summary
 		}
 		summary.CostNanoCNY += row.CostNanoCNY
+		summary.ProbeCostNanoCNY += row.ProbeCostNanoCNY
 		summary.CostCNY += costCNY
+		summary.ProbeCostCNY += channelMonitorCostCNY(row.ProbeCostNanoCNY)
 		summary.SettledCount += row.SettledCount
 		summary.UnresolvedCount += row.UnresolvedCount
 	}
@@ -336,8 +349,10 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	}
 	chartItems := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, chartRows)
 	totalCostCNY := 0.0
+	totalProbeCostCNY := 0.0
 	for _, item := range chartItems {
 		totalCostCNY += item.CostCNY
+		totalProbeCostCNY += item.ProbeCostCNY
 	}
 
 	costChannels := make([]channelMonitorCostChannel, 0, len(channelCosts))
@@ -357,6 +372,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			Status:          channelStatuses[channelId],
 			CostRatio:       costRatio,
 			CostCNY:         summary.CostCNY,
+			ProbeCostCNY:    summary.ProbeCostCNY,
 			SettledCount:    summary.SettledCount,
 			UnresolvedCount: summary.UnresolvedCount,
 		})
@@ -586,9 +602,10 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	items := channelMonitorCostDaysFromTotals(pageStartTimestamp, pageEndTimestamp, pageRows)
 
 	overview := channelMonitorCostOverview{
-		Days:         days,
-		GeneratedAt:  now,
-		TotalCostCNY: totalCostCNY,
+		Days:              days,
+		GeneratedAt:       now,
+		TotalCostCNY:      totalCostCNY,
+		TotalProbeCostCNY: totalProbeCostCNY,
 		Coverage: channelMonitorCostCoverage{
 			IncludedChannelCount:          len(includedChannels),
 			UnresolvedChannelCount:        len(unresolvedChannels),
@@ -610,9 +627,11 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	}
 	if len(chartItems) > 0 {
 		overview.TodayCostCNY = chartItems[len(chartItems)-1].CostCNY
+		overview.TodayProbeCostCNY = chartItems[len(chartItems)-1].ProbeCostCNY
 	}
 	if len(chartItems) > 1 {
 		overview.YesterdayCostCNY = chartItems[len(chartItems)-2].CostCNY
+		overview.YesterdayProbeCostCNY = chartItems[len(chartItems)-2].ProbeCostCNY
 	}
 	return overview, nil
 }
@@ -624,6 +643,7 @@ func channelMonitorCostDaysFromTotals(startTimestamp int64, endTimestamp int64, 
 			Date:            channelMonitorCostDate(row.DayStart),
 			StartAt:         row.DayStart,
 			CostCNY:         channelMonitorCostCNY(row.CostNanoCNY),
+			ProbeCostCNY:    channelMonitorCostCNY(row.ProbeCostNanoCNY),
 			SettledCount:    row.SettledCount,
 			UnresolvedCount: row.UnresolvedCount,
 		}

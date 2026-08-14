@@ -60,6 +60,7 @@ function createChannel(): ChannelStatusProbeChannel {
     response_time_ms: 1250,
     first_token_ms: 240,
     tps: 42.5,
+    settled_cost_nano_cny: 12_000_000,
     error_code: '',
     error_message: '',
     consecutive_successes: 1,
@@ -86,6 +87,7 @@ function createChannel(): ChannelStatusProbeChannel {
     success: false,
     first_token_ms: 180,
     tps: 55,
+    settled_cost_nano_cny: 25_000_000,
     consecutive_successes: 0,
     consecutive_failures: 1,
     last_health_result: 'upstream_failure',
@@ -101,6 +103,7 @@ function createChannel(): ChannelStatusProbeChannel {
     remark: '低成本验收渠道',
     groups: ['default', '低成本'],
     cost_ratio: 0.75,
+    today_probe_cost_cny: 0.08,
     supported_models: ['gpt-4.1', 'gpt-4.1-mini'],
     allows_custom_model: false,
     config: {
@@ -256,6 +259,10 @@ describe('状态探测卡片', () => {
     assert.match(html, />180 ms</)
     assert.match(html, /最近 TPS/)
     assert.match(html, />55\.0</)
+    assert.match(html, /最近探测成本/)
+    assert.match(html, /0\.0250/)
+    assert.match(html, /今日探测成本/)
+    assert.match(html, /0\.0800/)
     assert.match(html, /近 60 分钟平均首字/)
     assert.match(html, />240 ms</)
     assert.match(html, /近 60 分钟平均 TPS/)

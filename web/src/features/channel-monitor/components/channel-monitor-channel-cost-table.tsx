@@ -112,18 +112,21 @@ export function ChannelMonitorChannelCostTable(
         </span>
       </div>
       <div className='overflow-auto rounded-md border'>
-        <Table className='min-w-[760px] table-fixed'>
+        <Table className='min-w-[860px] table-fixed'>
           <TableHeader>
             <TableRow>
-              <TableHead className='w-[22%] whitespace-normal'>渠道</TableHead>
-              <TableHead className='w-[22%] whitespace-normal'>备注</TableHead>
-              <TableHead className='w-[14%] text-right whitespace-normal'>
+              <TableHead className='w-[20%] whitespace-normal'>渠道</TableHead>
+              <TableHead className='w-[20%] whitespace-normal'>备注</TableHead>
+              <TableHead className='w-[12%] text-right whitespace-normal'>
                 成本倍率
               </TableHead>
-              <TableHead className='w-[18%] text-right whitespace-normal'>
+              <TableHead className='w-[16%] text-right whitespace-normal'>
                 已结算成本
               </TableHead>
-              <TableHead className='w-[24%] text-right whitespace-normal'>
+              <TableHead className='w-[14%] text-right whitespace-normal'>
+                探测成本
+              </TableHead>
+              <TableHead className='w-[18%] text-right whitespace-normal'>
                 成本覆盖
               </TableHead>
             </TableRow>
@@ -168,6 +171,9 @@ export function ChannelMonitorChannelCostTable(
                 </TableCell>
                 <TableCell className='text-right font-mono tabular-nums'>
                   {formatChannelMonitorCost(channel.cost_cny)}
+                </TableCell>
+                <TableCell className='text-right font-mono tabular-nums'>
+                  {formatChannelMonitorCost(channel.probe_cost_cny)}
                 </TableCell>
                 <TableCell className='text-right'>
                   <div className='flex flex-col items-end gap-0.5 text-xs'>
