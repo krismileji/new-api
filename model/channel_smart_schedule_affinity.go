@@ -126,7 +126,7 @@ func channelSmartScheduleAffinityEligibilityFromDatabase(
 		}
 		var err error
 		abilities, err = filterChannelSmartScheduleTrafficAbilities(
-			abilities, group, candidateModel, trafficPolicy,
+			abilities, group, candidateModel, trafficPolicy, false,
 		)
 		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
@@ -261,6 +261,7 @@ func channelSmartScheduleAffinityEligibilityFromCache(
 			group,
 			candidateModel,
 			trafficPolicy,
+			false,
 		)
 		for _, route := range routes {
 			if route.channelId == channelId && route.trafficPausedUntil > now {

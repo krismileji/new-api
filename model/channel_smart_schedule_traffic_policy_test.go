@@ -173,6 +173,61 @@ func TestChannelSmartScheduleTrafficPolicyDisabledRestoresOfficialCandidates(t *
 	assert.Equal(t, 5221, channel.Id)
 }
 
+func TestChannelSmartScheduleTrafficPolicySelectionSkipsDegradedRouteUntilRetry(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "database", true: "cache"}[memoryCacheEnabled], func(t *testing.T) {
+			db := setupChannelSmartScheduleRouteTestDB(t)
+			useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
+			originalMemoryCacheEnabled := common.MemoryCacheEnabled
+			channelSyncLock.Lock()
+			originalGroupCache := group2model2channels
+			originalChannelCache := channelsIDM
+			originalAdvancedCustomCache := channel2advancedCustomConfig
+			originalRouteCache := channelSmartScheduleRouteCache
+			channelSyncLock.Unlock()
+			common.MemoryCacheEnabled = memoryCacheEnabled
+			t.Cleanup(func() {
+				common.MemoryCacheEnabled = originalMemoryCacheEnabled
+				channelSyncLock.Lock()
+				group2model2channels = originalGroupCache
+				channelsIDM = originalChannelCache
+				channel2advancedCustomConfig = originalAdvancedCustomCache
+				channelSmartScheduleRouteCache = originalRouteCache
+				channelSyncLock.Unlock()
+			})
+
+			degradedPriority := int64(0)
+			require.NoError(t, db.Create(&Channel{
+				Id: 5222, Name: "稳定性降级渠道", Status: common.ChannelStatusEnabled,
+				Group: "vip", Models: "model-a",
+			}).Error)
+			require.NoError(t, db.Create(&Ability{
+				ChannelId: 5222, Group: "vip", Model: "model-a", Enabled: true,
+				Priority: &degradedPriority, Weight: 0,
+			}).Error)
+			require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+				ChannelId: 5222, GroupName: "vip", ModelName: "model-a",
+				ParticipationSet: true, StabilityState: ChannelSmartScheduleStabilityDegraded,
+			}).Error)
+			if memoryCacheEnabled {
+				InitChannelCache()
+			}
+
+			assert.Equal(t, ChannelSmartScheduleAffinityInvalid,
+				ChannelSmartScheduleAffinityEligibility("vip", "model-a", 5222, ""))
+
+			channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+			require.NoError(t, err)
+			assert.Nil(t, channel)
+
+			channel, err = GetRandomSatisfiedChannel("vip", "model-a", 1, "")
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 5222, channel.Id)
+		})
+	}
+}
+
 func TestAddAbilitiesClearsNonparticipatingRouteOverride(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	channelPriority := int64(70)

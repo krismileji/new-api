@@ -291,6 +291,31 @@ describe('smart schedule pool status', () => {
 })
 
 describe('smart schedule route placement', () => {
+  test('keeps a degraded P0/W0 route out of current availability and traffic', () => {
+    const degraded = createRoute(1, 'vip', 'model-a', 0, 0)
+    degraded.state.stability_state = 'degraded'
+
+    const channel = summarizeChannelMonitorSmartScheduleChannel([degraded])
+    const pool = summarizeChannelMonitorSmartSchedulePools([degraded])[0]
+    const overview = summarizeChannelMonitorSmartScheduleOverview([degraded])
+    const placement = placeChannelMonitorSmartScheduleRoutes([degraded]).get(
+      channelMonitorSmartScheduleRouteKey(degraded)
+    )
+
+    assert.equal(channel?.activeCount, 0)
+    assert.equal(channel?.degradedCount, 1)
+    assert.equal(pool.activeCount, 0)
+    assert.equal(pool.degradedCount, 1)
+    assert.equal(pool.actualHighestPriority, null)
+    assert.deepEqual(pool.actualTopLayerChannelIds, [])
+    assert.equal(getChannelMonitorSmartSchedulePoolStatus(pool), '稳定性降级')
+    assert.equal(placement?.estimatedShare, null)
+    assert.equal(placement?.isActualTopLayer, false)
+    assert.equal(overview.activeCount, 0)
+    assert.equal(overview.degradedCount, 1)
+    assert.equal(overview.healthyPoolCount, 0)
+  })
+
   test('removes a paused route from the actual highest layer and gives it zero traffic', () => {
     const paused = createRoute(1, 'vip', 'model-a', 100, 80)
     paused.traffic_paused_until = 4_102_444_800

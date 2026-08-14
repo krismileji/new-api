@@ -83,7 +83,7 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	}
 	var err error
 	abilities, err = filterChannelSmartScheduleTrafficAbilities(
-		abilities, group, poolModelName, trafficPolicy,
+		abilities, group, poolModelName, trafficPolicy, retry > 0,
 	)
 	if err != nil || len(abilities) == 0 {
 		return nil, err

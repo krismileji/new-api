@@ -235,12 +235,12 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		return nil, false, nil
 	}
 	routes := channelSmartScheduleRouteCache[group][modelName]
-	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, modelName, trafficPolicy)
+	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, modelName, trafficPolicy, retry > 0)
 	routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	if len(routes) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
 		routes = channelSmartScheduleRouteCache[group][normalizedModel]
-		routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, normalizedModel, trafficPolicy)
+		routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, normalizedModel, trafficPolicy, retry > 0)
 		routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	}
 	if len(routes) == 0 {

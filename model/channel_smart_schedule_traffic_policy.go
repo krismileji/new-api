@@ -137,6 +137,7 @@ func filterChannelSmartScheduleTrafficAbilities(
 	group string,
 	modelName string,
 	policy *channelSmartScheduleTrafficPolicy,
+	allowDegradedFallback bool,
 ) ([]Ability, error) {
 	if policy == nil || !policy.managesPool(group, modelName) {
 		return abilities, nil
@@ -153,7 +154,7 @@ func filterChannelSmartScheduleTrafficAbilities(
 	if DB == nil {
 		return nil, nil
 	}
-	if err := DB.Select("channel_id").
+	if err := DB.Select("channel_id", "stability_state").
 		Where(
 			"group_name = ? AND model_name = ? AND channel_id IN ? AND participation_set = ? AND excluded = ?",
 			group, modelName, channelIDs, true, false,
@@ -163,6 +164,9 @@ func filterChannelSmartScheduleTrafficAbilities(
 	}
 	participating := make(map[int]struct{}, len(states))
 	for _, state := range states {
+		if state.StabilityState == ChannelSmartScheduleStabilityDegraded && !allowDegradedFallback {
+			continue
+		}
 		participating[state.ChannelId] = struct{}{}
 	}
 	filtered := make([]Ability, 0, len(participating))
@@ -179,6 +183,7 @@ func filterChannelSmartScheduleTrafficCachedRoutes(
 	group string,
 	modelName string,
 	policy *channelSmartScheduleTrafficPolicy,
+	allowDegradedFallback bool,
 ) []channelSmartScheduleCachedRoute {
 	if policy == nil || !policy.managesPool(group, modelName) {
 		return routes
@@ -188,7 +193,8 @@ func filterChannelSmartScheduleTrafficCachedRoutes(
 	}
 	filtered := make([]channelSmartScheduleCachedRoute, 0, len(routes))
 	for _, route := range routes {
-		if route.participates {
+		if route.participates &&
+			(allowDegradedFallback || route.stabilityState != ChannelSmartScheduleStabilityDegraded) {
 			filtered = append(filtered, route)
 		}
 	}
