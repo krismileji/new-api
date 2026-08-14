@@ -93,6 +93,7 @@ function createChannel(): ChannelModelDetectionChannel {
     channel_status: 1,
     remark: '主线路',
     groups: ['default'],
+    cost_ratio: null,
     supported_models: ['gpt-5.6'],
     health_status: 'healthy',
     config: {

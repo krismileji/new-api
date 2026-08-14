@@ -359,10 +359,11 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	assert.Equal(t, baselineSubscription.AmountUsed, storedSubscription.AmountUsed)
 	assert.Equal(t, baselineSubscription.UpdatedAt, storedSubscription.UpdatedAt)
 	assert.Equal(t, baselineBoundChannel.UsedQuota, storedBoundChannel.UsedQuota)
-	assert.Equal(t, baselineDailyCost.CostNanoCNY, storedDailyCost.CostNanoCNY)
-	assert.Equal(t, baselineDailyCost.SettledCount, storedDailyCost.SettledCount)
+	assert.Equal(t, baselineDailyCost.CostNanoCNY+*event.SettledCostNanoCNY, storedDailyCost.CostNanoCNY)
+	assert.Equal(t, baselineDailyCost.ModelDetectionCostNanoCNY+*event.SettledCostNanoCNY, storedDailyCost.ModelDetectionCostNanoCNY)
+	assert.Equal(t, baselineDailyCost.SettledCount+1, storedDailyCost.SettledCount)
 	assert.Equal(t, baselineDailyCost.UnresolvedCount, storedDailyCost.UnresolvedCount)
-	assert.Equal(t, baselineDailyCost.UpdatedAt, storedDailyCost.UpdatedAt)
+	assert.Equal(t, event.SettledAt, storedDailyCost.UpdatedAt)
 	var storedDailyCostCount int64
 	var storedLogCount int64
 	require.NoError(t, db.Model(&model.ChannelDailyCost{}).Count(&storedDailyCostCount).Error)

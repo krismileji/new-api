@@ -131,7 +131,11 @@ export function channelModelDetectionSettingsToFormValues(
   const intervalMinutes = settings.interval_minutes
   const useHours = intervalMinutes >= 60 && intervalMinutes % 60 === 0
   return {
-    detectorURL: '',
+    detectorURL:
+      settings.pending_detector_url ||
+      settings.detector_url ||
+      settings.pending_detector_url_masked ||
+      settings.detector_url_masked,
     clearDetectorURL: false,
     scheduledPreset: settings.scheduled_preset,
     scheduleEnabled: settings.schedule_enabled,

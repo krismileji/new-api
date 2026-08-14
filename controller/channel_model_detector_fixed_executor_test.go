@@ -49,6 +49,7 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 		wantRequestCount int64
 		wantDispatch     string
 		wantSettlement   string
+		wantDailyCost    int64
 	}{
 		{
 			name:             "authoritative usage settles after real http dispatch",
@@ -57,6 +58,7 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			wantRequestCount: 1,
 			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
 			wantSettlement:   model.ChannelModelDetectionSettlementSettled,
+			wantDailyCost:    1,
 		},
 		{
 			name:             "missing usage is unresolved after real http dispatch",
@@ -145,7 +147,15 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			assert.Equal(t, pricingUser.RequestCount, storedUser.RequestCount)
 			var dailyCostCount int64
 			require.NoError(t, db.Model(&model.ChannelDailyCost{}).Where("channel_id = ?", channelID).Count(&dailyCostCount).Error)
-			assert.Zero(t, dailyCostCount)
+			assert.Equal(t, test.wantDailyCost, dailyCostCount)
+			if test.wantDailyCost > 0 {
+				var dailyCost model.ChannelDailyCost
+				require.NoError(t, db.Where("channel_id = ?", channelID).First(&dailyCost).Error)
+				assert.Positive(t, dailyCost.CostNanoCNY)
+				assert.Equal(t, dailyCost.CostNanoCNY, dailyCost.ModelDetectionCostNanoCNY)
+				assert.Equal(t, int64(1), dailyCost.SettledCount)
+				assert.Zero(t, dailyCost.UnresolvedCount)
+			}
 		})
 	}
 }

@@ -319,7 +319,7 @@ func TestChannelModelDetectionCostSettlesExplicitLocalEstimateWithoutClaimingAut
 	require.NotNil(t, settled.SettledCostNanoCNY)
 }
 
-func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotWriteDailyCost(t *testing.T) {
+func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDailyCost(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
 	batchId := "batch-1"
@@ -422,9 +422,13 @@ func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotWriteDailyCos
 	require.NotNil(t, batch.EstimatedCostNanoCNY)
 	assert.Equal(t, int64(1_600_000_000), *batch.EstimatedCostNanoCNY)
 
-	var dailyCostRows int64
-	require.NoError(t, db.Model(&model.ChannelDailyCost{}).Count(&dailyCostRows).Error)
-	assert.Zero(t, dailyCostRows)
+	var dailyCosts []model.ChannelDailyCost
+	require.NoError(t, db.Order("id ASC").Find(&dailyCosts).Error)
+	require.Len(t, dailyCosts, 1)
+	assert.Equal(t, int64(400_000_000), dailyCosts[0].CostNanoCNY)
+	assert.Equal(t, int64(400_000_000), dailyCosts[0].ModelDetectionCostNanoCNY)
+	assert.Equal(t, int64(1), dailyCosts[0].SettledCount)
+	assert.Zero(t, dailyCosts[0].UnresolvedCount)
 }
 
 func TestChannelModelDetectionCostAggregationRejectsOverflow(t *testing.T) {

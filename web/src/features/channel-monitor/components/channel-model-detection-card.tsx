@@ -40,7 +40,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Progress } from '@/components/ui/progress'
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from '@/components/ui/progress'
 import {
   Tooltip,
   TooltipContent,
@@ -123,6 +127,37 @@ const ACTIVE_RUN_LABEL: Partial<
   submission_unknown: '启动待确认',
   running: '检测中',
   canceling: '取消中',
+}
+
+function ModelDetectionActiveRunProgress(props: {
+  channelName: string
+  activeRun: NonNullable<ChannelModelDetectionChannel['active_run']>
+}) {
+  const planned = Math.max(0, props.activeRun.progress.planned)
+  const completed = Math.max(0, props.activeRun.progress.logical_completed)
+  const progressValue = planned ? Math.min(100, (completed / planned) * 100) : 0
+  const progressPercent = Math.round(progressValue)
+  const statusLabel = ACTIVE_RUN_LABEL[props.activeRun.status] ?? '任务处理中'
+
+  return (
+    <section
+      className='bg-muted/25 border-b px-3 py-2'
+      data-slot='model-detection-run-progress'
+    >
+      <Progress
+        value={progressValue}
+        className='gap-x-2 gap-y-1.5 [&_[data-slot=progress-indicator]]:duration-500 [&_[data-slot=progress-track]]:h-2.5 [&_[data-slot=progress-track]]:rounded-sm'
+        aria-label={`${props.channelName} 当前轮次进度 ${completed} / ${planned}（${progressPercent}%）`}
+      >
+        <ProgressLabel className='min-w-0 truncate text-[11px]'>
+          当前轮次 · {statusLabel}
+        </ProgressLabel>
+        <ProgressValue className='shrink-0 text-[11px]'>
+          {() => `${completed} / ${planned} · ${progressPercent}%`}
+        </ProgressValue>
+      </Progress>
+    </section>
+  )
 }
 
 function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
@@ -399,6 +434,13 @@ export const ChannelModelDetectionCard = memo(
             />
           </div>
         </CardHeader>
+
+        {activeRun ? (
+          <ModelDetectionActiveRunProgress
+            channelName={props.channel.name}
+            activeRun={activeRun}
+          />
+        ) : null}
 
         <CardContent className='flex min-h-0 flex-1 flex-col px-0 py-0'>
           <dl className='grid w-full grid-cols-2 gap-x-4 border-b px-3 py-2'>

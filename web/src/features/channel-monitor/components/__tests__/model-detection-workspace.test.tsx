@@ -148,6 +148,7 @@ function createChannel(
     channel_status: 1,
     remark: '主线路',
     groups: ['default'],
+    cost_ratio: null,
     supported_models: ['gpt-5.6-sol'],
     health_status: 'healthy',
     config: {

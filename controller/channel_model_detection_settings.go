@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,10 +22,14 @@ type channelModelDetectionSettingsUpdateRequest struct {
 	IntervalMinutes  int     `json:"interval_minutes"`
 	// Legacy request fields are accepted for one release so old clients can
 	// still save settings while the UI migrates to minute intervals.
-	IntervalHours    int     `json:"interval_hours"`
-	ScheduleTime     string  `json:"schedule_time"`
-	Timezone         string  `json:"timezone"`
-	Revision         int64   `json:"revision"`
+	IntervalHours int    `json:"interval_hours"`
+	ScheduleTime  string `json:"schedule_time"`
+	Timezone      string `json:"timezone"`
+	Revision      int64  `json:"revision"`
+}
+
+type channelModelDetectionServiceTestRequest struct {
+	DetectorURL string `json:"detector_url"`
 }
 
 func GetChannelModelDetectionSettings(c *gin.Context) {
@@ -72,7 +77,20 @@ func GetChannelModelDetectionService(c *gin.Context) {
 }
 
 func TestChannelModelDetectionService(c *gin.Context) {
-	response, err := service.TestChannelModelDetectionService(c.Request.Context(), nil, time.Now().UTC())
+	var request channelModelDetectionServiceTestRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "检测器连接测试请求格式无效"})
+			return
+		}
+	}
+	var response service.ChannelModelDetectionServiceResponse
+	var err error
+	if strings.TrimSpace(request.DetectorURL) != "" {
+		response, err = service.TestChannelModelDetectionServiceURL(c.Request.Context(), nil, request.DetectorURL, time.Now().UTC())
+	} else {
+		response, err = service.TestChannelModelDetectionService(c.Request.Context(), nil, time.Now().UTC())
+	}
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, service.ErrChannelModelDetectionDetectorNotConfigured) {

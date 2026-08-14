@@ -188,6 +188,7 @@ export type ChannelModelDetectionChannel = {
   channel_status: number
   remark: string
   groups: string[]
+  cost_ratio: number | null
   supported_models: string[]
   health_status: ChannelModelDetectionHealth
   config: ChannelModelDetectionChannelConfig | null
@@ -236,8 +237,10 @@ export type ChannelModelDetectionSettingsSummary = {
 
 export type ChannelModelDetectionSettings = {
   detector_url_configured: boolean
+  detector_url: string
   detector_url_masked: string
   pending_detector_url_configured: boolean
+  pending_detector_url: string
   pending_detector_url_masked: string
   detector_url_switch_pending: boolean
   scheduled_preset: ChannelModelDetectionPreset
@@ -275,6 +278,8 @@ export type ChannelModelDetectionStatusFilter =
   | 'unconfigured'
 
 export type ChannelModelDetectionSortMode =
+  | 'ratio_asc'
+  | 'ratio_desc'
   | 'latest_desc'
   | 'latest_asc'
   | 'issue_first'
@@ -304,6 +309,10 @@ export type ChannelModelDetectionSettingsUpdateRequest = {
   schedule_enabled: boolean
   interval_minutes: number
   revision: number
+}
+
+export type ChannelModelDetectionServiceTestRequest = {
+  detector_url: string
 }
 
 export type ChannelModelDetectionTargetUpdateRequest = {

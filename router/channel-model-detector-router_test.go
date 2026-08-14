@@ -181,12 +181,14 @@ func setupChannelModelDetectionRouterAuthTest(t *testing.T) (string, string) {
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
 		&model.Channel{},
+		&model.ChannelRatioMonitor{},
 		&model.ChannelModelDetectionGlobalConfig{},
 		&model.ChannelModelDetectionConfig{},
 		&model.ChannelModelDetectionTarget{},
 		&model.ChannelModelDetectionRun{},
 		&model.ChannelModelDetectionExecution{},
 		&model.ChannelModelDetectionCostEvent{},
+		&model.ChannelDailyCost{},
 	))
 	model.DB = db
 	common.RedisEnabled = false

@@ -41,6 +41,7 @@ function createChannel(
     channel_status: 1,
     remark: id === 2 ? '备用线路' : '主线路',
     groups: id === 2 ? ['vip'] : ['default'],
+    cost_ratio: null,
     supported_models: ['gpt-5.6'],
     health_status: health,
     config: null,
@@ -137,6 +138,59 @@ describe('模型检测视图骨架', () => {
       assert.match(control.className, /w-full/)
       assert.match(control.className, /min-w-0/)
     }
+  })
+
+  test('默认按成本倍率从低到高排列渠道，并提供反向排序选项', () => {
+    const overview = createOverview()
+    overview.channels[0] = {
+      ...overview.channels[0],
+      name: '高倍率渠道',
+      cost_ratio: 3,
+    } as ChannelModelDetectionChannel
+    overview.channels[1] = {
+      ...overview.channels[1],
+      name: '低倍率渠道',
+      cost_ratio: 0.5,
+    } as ChannelModelDetectionChannel
+    overview.channels[2] = {
+      ...overview.channels[2],
+      name: '未知倍率渠道',
+      cost_ratio: null,
+    } as ChannelModelDetectionChannel
+
+    domWindow.document.body.innerHTML = renderToStaticMarkup(
+      <ChannelModelDetectionView overview={overview} />
+    )
+
+    const cards = [
+      ...domWindow.document.querySelectorAll(
+        '[data-testid="channel-model-detection-card"]'
+      ),
+    ]
+    assert.deepEqual(
+      cards.map(
+        (card) => card.textContent?.match(/(?:高|低|未知)倍率渠道/)?.[0]
+      ),
+      ['低倍率渠道', '高倍率渠道', '未知倍率渠道']
+    )
+    const sortTrigger = domWindow.document.querySelector(
+      '[aria-label="模型检测卡片排序方式"]'
+    )
+    assert.match(sortTrigger?.textContent ?? '', /成本倍率：从低到高/)
+
+    const html = renderToStaticMarkup(
+      <ChannelModelDetectionView
+        overview={overview}
+        filters={{
+          status: 'all',
+          group: '',
+          model: '',
+          search: '',
+          sort: 'ratio_desc',
+        }}
+      />
+    )
+    assert.match(html, /成本倍率：从高到低/)
   })
 
   test('离线服务、加载、错误、空数据和筛选无结果状态彼此独立', () => {

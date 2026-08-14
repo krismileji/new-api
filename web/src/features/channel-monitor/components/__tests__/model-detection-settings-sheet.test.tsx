@@ -76,8 +76,10 @@ let renderedSheet: RenderedSheet | null = null
 function settings(overrides: Record<string, unknown> = {}) {
   return {
     detector_url_configured: true,
+    detector_url: 'http://10.0.0.8:8000/private',
     detector_url_masked: 'http://10.0.0.8:8000/private',
     pending_detector_url_configured: false,
+    pending_detector_url: '',
     pending_detector_url_masked: '',
     detector_url_switch_pending: false,
     scheduled_preset: 'medium',
@@ -348,7 +350,7 @@ describe('模型检测统一设置规则', () => {
 })
 
 describe('模型检测统一设置 Sheet', () => {
-  test('配置地址原样展示且不会自动回填输入框，保存期间锁定编辑', async () => {
+  test('配置地址回填输入框且保存期间锁定编辑', async () => {
     const updates: Array<Record<string, unknown>> = []
     const updateRequest = deferred<{ data: unknown }>()
     apiClient.get = async (url) => {
@@ -366,7 +368,7 @@ describe('模型检测统一设置 Sheet', () => {
     await waitForLoadedSettings()
 
     const addressInput = getNewDetectorURLInput()
-    assert.equal(addressInput.value, '')
+    assert.equal(addressInput.value, 'http://10.0.0.8:8000/private')
     assert.equal(
       document.body.textContent?.includes('http://10.0.0.8:8000/private'),
       true
@@ -379,7 +381,7 @@ describe('模型检测统一设置 Sheet', () => {
         'settings were not submitted'
       )
     )
-    assert.equal('detector_url' in (updates[0] ?? {}), false)
+    assert.equal(updates[0]?.detector_url, 'http://10.0.0.8:8000/private')
     assert.equal(updates[0]?.revision, 7)
     await act(async () =>
       waitForCondition(
@@ -397,14 +399,28 @@ describe('模型检测统一设置 Sheet', () => {
         'settings form did not unlock after save'
       )
     )
-    assert.equal(getNewDetectorURLInput().value, '')
+    assert.equal(getNewDetectorURLInput().value, 'http://10.0.0.8:8000/private')
   })
 
-  test('连接测试只会在显式点击且没有未保存地址时发起', async () => {
-    const tested: string[] = []
+  test('回填地址后仍可直接选择清除并停止连接测试', async () => {
     apiClient.get = async () => success(settings())
-    apiClient.post = async (url) => {
-      tested.push(url)
+
+    await renderSettingsSheet()
+    await waitForLoadedSettings()
+
+    const clearAddress = getControl('清除已保存检测器地址')
+    assert.equal(clearAddress.getAttribute('aria-disabled'), null)
+    await act(async () => clearAddress.click())
+    assert.equal(getNewDetectorURLInput().value, '')
+    assert.equal(getNewDetectorURLInput().disabled, true)
+    assert.equal(findButton('测试连接', true).disabled, true)
+  })
+
+  test('未保存的新地址可以直接测试且不会先触发保存', async () => {
+    const tested: Array<{ url: string; data: unknown }> = []
+    apiClient.get = async () => success(settings())
+    apiClient.post = async (url, data) => {
+      tested.push({ url, data })
       return success(detectorService())
     }
 
@@ -415,11 +431,8 @@ describe('模型检测统一设置 Sheet', () => {
     const addressInput = getNewDetectorURLInput()
     await changeInput(addressInput, 'http://10.0.0.9:8000')
     const testButton = findButton('测试连接', true)
-    assert.equal(testButton.disabled, true)
-    assert.deepEqual(tested, [])
-
-    await changeInput(addressInput, '')
     assert.equal(testButton.disabled, false)
+    assert.deepEqual(tested, [])
     await act(async () => testButton.click())
     await act(async () =>
       waitForCondition(
@@ -427,26 +440,33 @@ describe('模型检测统一设置 Sheet', () => {
         'connection result was not shown'
       )
     )
-    assert.deepEqual(tested, [CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest])
+    assert.deepEqual(tested, [
+      {
+        url: CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest,
+        data: { detector_url: 'http://10.0.0.9:8000' },
+      },
+    ])
   })
 
-  test('待切换地址仍可测试当前已保存服务，连接失败会展示检测器状态', async () => {
-    const tested: string[] = []
+  test('待切换地址优先回显并可直接测试，连接失败会展示检测器状态', async () => {
+    const tested: Array<{ url: string; data: unknown }> = []
     apiClient.get = async () =>
       success(
         settings({
           pending_detector_url_configured: true,
+          pending_detector_url: 'http://10.0.0.9:8000/private',
           pending_detector_url_masked: 'http://10.0.0.9:8000/private',
           detector_url_switch_pending: true,
         })
       )
-    apiClient.post = async (url) => {
-      tested.push(url)
+    apiClient.post = async (url, data) => {
+      tested.push({ url, data })
       return success(detectorService())
     }
 
     await renderSettingsSheet()
     await waitForLoadedSettings()
+    assert.equal(getNewDetectorURLInput().value, 'http://10.0.0.9:8000/private')
     assert.equal(findButton('测试连接', true).disabled, false)
     await act(async () => findButton('测试连接', true).click())
     await act(async () =>
@@ -455,7 +475,12 @@ describe('模型检测统一设置 Sheet', () => {
         'connection result was not shown'
       )
     )
-    assert.deepEqual(tested, [CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest])
+    assert.deepEqual(tested, [
+      {
+        url: CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest,
+        data: { detector_url: 'http://10.0.0.9:8000/private' },
+      },
+    ])
 
     const firstRenderedSheet = renderedSheet
     assert.ok(firstRenderedSheet)

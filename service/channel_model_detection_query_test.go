@@ -24,6 +24,7 @@ func setupChannelModelDetectionQueryTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.Channel{},
+		&model.ChannelRatioMonitor{},
 		&model.ChannelModelDetectionGlobalConfig{},
 		&model.ChannelModelDetectionConfig{},
 		&model.ChannelModelDetectionTarget{},
@@ -112,7 +113,7 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NoError(t, err)
 	initialQueryCount := queryCount.Load()
 	assert.Positive(t, initialQueryCount)
-	assert.LessOrEqual(t, initialQueryCount, int64(8))
+	assert.LessOrEqual(t, initialQueryCount, int64(9))
 	assert.Len(t, response.Channels, 3)
 	assert.Equal(t, "http://10.20.30.40:18080/private", response.Settings.DetectorURLMasked)
 	assert.Contains(t, response.Settings.DetectorURLMasked, "18080")
@@ -138,6 +139,53 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NoError(t, err)
 	assert.Len(t, expanded.Channels, 10)
 	assert.Equal(t, initialQueryCount, queryCount.Load())
+}
+
+func TestChannelModelDetectionOverviewIncludesSupportedModelsBeforeTargetsAreConfigured(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	channels := []model.Channel{
+		{Id: 111, Name: "default-channel", Key: "secret-default", Group: "default", Models: "model-a,model-shared", Status: common.ChannelStatusEnabled},
+		{Id: 112, Name: "vip-channel", Key: "secret-vip", Group: "vip", Models: "model-b,model-shared", Status: common.ChannelStatusEnabled},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	config := model.ChannelModelDetectionConfig{ChannelId: 112, ScheduleEnabled: false, Revision: 1}
+	require.NoError(t, db.Create(&config).Error)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionTarget{
+		ConfigId: config.Id, ChannelId: 112, TargetKey: "vip-custom-target",
+		RequestModel: "custom-model", ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Enabled: true,
+	}).Error)
+
+	overview, err := GetChannelModelDetectionOverview(context.Background(), db, 1_700_000_000)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"custom-model", "model-a", "model-b", "model-shared"}, overview.Models)
+	assert.Equal(t, []string{"model-a", "model-shared"}, overview.ModelsByGroup["default"])
+	assert.Equal(t, []string{"custom-model", "model-b", "model-shared"}, overview.ModelsByGroup["vip"])
+}
+
+func TestChannelModelDetectionOverviewIncludesCurrentCostRatio(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 121, Name: "ratio-channel", Key: "secret-ratio", Group: "default", Models: "gpt-5.6-sol", Status: common.ChannelStatusEnabled,
+	}).Error)
+	costConversion, err := MarshalChannelMonitorCostConversion(ChannelMonitorCostConversion{
+		Mode:        ChannelMonitorCostConversionRecharge,
+		PaidCNY:     80,
+		CreditedUSD: 100,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 121, Ratio: 1.5, CostConversion: costConversion, UpdatedTime: 1_000,
+	}).Error)
+
+	overview, err := GetChannelModelDetectionOverview(context.Background(), db, 1_700_000_000)
+	require.NoError(t, err)
+	require.Len(t, overview.Channels, 1)
+	require.NotNil(t, overview.Channels[0].CostRatio)
+	assert.InDelta(t, 1.2, *overview.Channels[0].CostRatio, 1e-12)
+
+	encoded, err := common.Marshal(overview.Channels[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"cost_ratio":1.2`)
 }
 
 func TestChannelModelDetectionHistoryValidatesFiltersAndKeepsUnknownCostsNull(t *testing.T) {

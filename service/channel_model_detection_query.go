@@ -141,6 +141,7 @@ type ChannelModelDetectionChannelResponse struct {
 	ChannelStatus              int                                         `json:"channel_status"`
 	Remark                     string                                      `json:"remark"`
 	Groups                     []string                                    `json:"groups"`
+	CostRatio                  *float64                                    `json:"cost_ratio"`
 	SupportedModels            []string                                    `json:"supported_models"`
 	HealthStatus               string                                      `json:"health_status"`
 	Config                     *ChannelModelDetectionChannelConfigResponse `json:"config"`
@@ -358,8 +359,12 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	if err := db.Where("day_start = ?", todayStart).Order("channel_id ASC").Find(&todayCosts).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
+	var ratioMonitors []model.ChannelRatioMonitor
+	if err := db.Select("channel_id", "ratio", "cost_conversion", "updated_time").Order("channel_id ASC").Find(&ratioMonitors).Error; err != nil {
+		return ChannelModelDetectionOverviewResponse{}, err
+	}
 
-	response, err := buildChannelModelDetectionOverview(now, global, channels, configs, targets, runs, executionRows, costEvents, todayCosts)
+	response, err := buildChannelModelDetectionOverview(now, global, channels, configs, targets, runs, executionRows, costEvents, todayCosts, ratioMonitors)
 	if err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
@@ -518,7 +523,7 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 	return response, nil
 }
 
-func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDetectionGlobalConfig, channels []model.Channel, configs []model.ChannelModelDetectionConfig, targets []model.ChannelModelDetectionTarget, runs []model.ChannelModelDetectionRun, executionRows []channelModelDetectionExecutionOverviewRow, costEvents []model.ChannelModelDetectionCostEvent, todayCosts []model.ChannelDailyCost) (ChannelModelDetectionOverviewResponse, error) {
+func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDetectionGlobalConfig, channels []model.Channel, configs []model.ChannelModelDetectionConfig, targets []model.ChannelModelDetectionTarget, runs []model.ChannelModelDetectionRun, executionRows []channelModelDetectionExecutionOverviewRow, costEvents []model.ChannelModelDetectionCostEvent, todayCosts []model.ChannelDailyCost, ratioMonitors []model.ChannelRatioMonitor) (ChannelModelDetectionOverviewResponse, error) {
 	configured := global.DetectorURLConfigured()
 	maskedURL := maskChannelModelDetectorURL(global.DetectorURL)
 	response := ChannelModelDetectionOverviewResponse{
@@ -585,6 +590,21 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 	for i := range todayCosts {
 		todayModelDetectionCostByChannel[todayCosts[i].ChannelId] = todayCosts[i].ModelDetectionCostNanoCNY
 	}
+	costRatioByChannel := make(map[int]float64, len(ratioMonitors))
+	for i := range ratioMonitors {
+		monitor := ratioMonitors[i]
+		if monitor.UpdatedTime <= 0 {
+			continue
+		}
+		conversion, conversionErr := ParseChannelMonitorCostConversion(monitor.CostConversion)
+		if conversionErr != nil {
+			continue
+		}
+		costRatio, _, ratioErr := CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
+		if ratioErr == nil {
+			costRatioByChannel[monitor.ChannelId] = costRatio
+		}
+	}
 
 	groupSet := map[string]struct{}{}
 	modelSet := map[string]struct{}{}
@@ -599,10 +619,19 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 				modelsByGroupSet[group] = map[string]struct{}{}
 			}
 		}
+		for _, supportedModel := range supportedModels {
+			modelSet[supportedModel] = struct{}{}
+			for _, group := range groups {
+				modelsByGroupSet[group][supportedModel] = struct{}{}
+			}
+		}
 		item := ChannelModelDetectionChannelResponse{
 			ID: channel.Id, Name: channel.Name, Type: channel.Type, ChannelStatus: channel.Status,
 			Groups: groups, SupportedModels: supportedModels, Targets: []ChannelModelDetectionTargetSummary{},
 			TodayModelDetectionCostCNY: float64(todayModelDetectionCostByChannel[channel.Id]) / float64(model.ChannelDailyCostNanoPerCNY),
+		}
+		if costRatio, exists := costRatioByChannel[channel.Id]; exists {
+			item.CostRatio = &costRatio
 		}
 		if channel.Remark != nil {
 			item.Remark = *channel.Remark

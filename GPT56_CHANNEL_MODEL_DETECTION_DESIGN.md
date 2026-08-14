@@ -320,7 +320,7 @@ Authorization: Bearer <short-lived-job-token>
 
 统一设置保存后适用于所有渠道的定时检测：渠道卡片只配置检测目标和“参加定时检测”开关，不再保存档位、周期或每日时间。统一设置中的 `scheduled_preset` 只控制定时批次；手动检测在发起时单独选择 `low` / `medium` / `high`，默认预选当前 `scheduled_preset`，但不修改它。更改定时档位只影响保存之后新创建的定时轮次；已经排队或运行的轮次继续使用创建时冻结的档位名称。每个目标实际启动前仍从当前官方实例重新取得该档位的完整预设并冻结配置快照，不能把旧实例的官方配置直接提交给更新后的实例。
 
-检测器地址也在统一设置中编辑。保存地址时只做格式和 SSRF 策略校验，不要求检测器当时在线；保存后提供独立“测试连接”。地址修改不切换正在运行的官方会话：若存在活动 session，设置保存成功但新地址标记为 `pending`，待当前 session 完成或取消后原子切换；新任务在切换完成并通过 health/bootstrap/estimate 契约检查前不启动。排队轮次只冻结档位名称，不冻结旧检测器地址；切换后在新实例上按当前官方预设执行。
+检测器地址也在统一设置中编辑。保存地址时只做格式和 SSRF 策略校验，不要求检测器当时在线；输入完整地址后无需保存即可执行独立“测试连接”，临时测试不写数据库或服务状态缓存。地址修改不切换正在运行的官方会话：若存在活动 session，设置保存成功但新地址标记为 `pending`，待当前 session 完成或取消后原子切换；新任务在切换完成并通过 health/bootstrap/estimate 契约检查前不启动。排队轮次只冻结档位名称，不冻结旧检测器地址；切换后在新实例上按当前官方预设执行。
 
 ### 7.2 定时检测
 
@@ -940,7 +940,7 @@ xl：3 列
 
 使用右侧 `Sheet` 集中配置：
 
-- 官方检测器地址输入框，以及“测试连接”命令；已保存地址只显示脱敏值，修改时重新输入完整地址。
+- 官方检测器地址输入框，以及“测试连接”命令；RootAuth 保护的统一设置接口回显当前或待切换的完整地址，输入框优先回填待切换地址。
 - 定时检测档位 Select：低、中、高。
 - 统一定时 Switch。
 - 周期小时数字输入或步进器。
@@ -948,7 +948,7 @@ xl：3 列
 - 时区 Select，默认 `Asia/Shanghai` 或服务器配置时区。
 - 当前定时档位动态 estimate、预计整批目标数/逻辑请求量和下一批入队时间。
 
-地址测试是显式操作，不因每次输入变化自动请求。保存按钮文案为“保存统一设置”。若选择高档并启用定时，提交前显示明确成本确认；首版允许统一配置高档，但必须展示当前 estimate 和预计整批成本风险。
+地址测试是显式操作，不因每次输入变化自动请求，也不要求先保存。测试请求携带当前输入地址，服务端执行与保存相同的私网目标校验，但不持久化地址或污染已保存服务缓存。保存按钮文案为“保存统一设置”。若选择高档并启用定时，提交前显示明确成本确认；首版允许统一配置高档，但必须展示当前 estimate 和预计整批成本风险。
 
 ### 12.6 渠道配置 Sheet
 
@@ -1537,7 +1537,7 @@ flowchart LR
 验证结果：2026-08-13
 - 命令：`go test ./controller ./router -run 'TestChannelModelDetection(API|Routes|RelayEndpoint)' -count=1`；`go test ./controller ./service ./model ./router`；`go vet ./controller ./service ./model ./router`；`git diff --check`
 - 结果：通过
-- 关键摘要：在 `/api/channel_monitor/model_detection` 精确注册 11 个管理端点并统一继承 `RootAuth`，无凭证返回 401、普通用户返回 403；内部仅注册 `POST /internal/model-detector/v1/responses`，不经过普通 `TokenAuth` 或 `Distribute`，普通 API Bearer 由专属 handler 拒绝；Worker 签发器和内部 Relay 共用进程级 TokenStore，官方 estimate 的动态请求数在签发前校验并冻结为请求预算；模型检测 Worker 已注册为系统任务，终态会提升 pending 检测器地址；响应不泄露 bearer、nonce、完整检测器 URL 或渠道 Key。
+- 关键摘要：在 `/api/channel_monitor/model_detection` 精确注册 11 个管理端点并统一继承 `RootAuth`，无凭证返回 401、普通用户返回 403；内部仅注册 `POST /internal/model-detector/v1/responses`，不经过普通 `TokenAuth` 或 `Distribute`，普通 API Bearer 由专属 handler 拒绝；Worker 签发器和内部 Relay 共用进程级 TokenStore，官方 estimate 的动态请求数在签发前校验并冻结为请求预算；模型检测 Worker 已注册为系统任务，终态会提升 pending 检测器地址；除 RootAuth 统一设置中的地址回显外，响应不泄露 bearer、nonce、完整检测器 URL 或渠道 Key。
 - 实际修改：`router/channel-model-detector-router.go`、`router/channel-model-detector-router_test.go`、`router/channel-monitor-router.go`、`router/main.go`、`service/channel_model_detector_runtime.go`、`service/channel_model_detector_runtime_test.go`、`controller/channel_model_detection_runtime.go`、`controller/channel_model_detector_fixed_executor.go`、`service/channel_model_detection_worker.go`、`controller/system_task_handlers.go`、`model/system_task.go`
 - 遗留风险：任务凭证保存在进程内，多实例部署时必须让官方检测器对内部 Relay 的请求粘滞到签发该凭证的实例；在引入共享凭证存储前，负载均衡不得把同一检测会话的 Relay 请求分发到其他实例。
 
@@ -1590,7 +1590,7 @@ flowchart LR
 - 结果：通过（8 pass，0 fail）
 - 命令：`bun run typecheck`；`bunx oxlint -c .oxlintrc.json src/features/channel-monitor/components/channel-model-detection-settings-sheet.tsx src/features/channel-monitor/components/__tests__/model-detection-settings-sheet.test.tsx src/features/channel-monitor/lib/model-detection-settings-schema.ts src/features/channel-monitor/lib/model-detection-settings-api.ts src/features/channel-monitor/types-model-detection.ts`；`bunx oxfmt --check <本任务 5 个 TS/TSX 文件>`；`git diff --check -- <本任务文件>`
 - 结果：通过
-- 关键摘要：新增独立统一设置 Sheet、专属 React Query API 和 Zod schema；完整地址始终只写不回显，脱敏地址不会填入输入框或提交；支持地址清除、显式连接测试、待切换地址保护、低中高档、固定周期、`HH:mm`、IANA 时区、下一批次摘要、保存/加载禁用状态；定时高档每次保存重新确认；revision 409 必须刷新后使用新 revision 重试；不修改 locale。
+- 关键摘要：新增独立统一设置 Sheet、专属 React Query API 和 Zod schema；完整地址在 RootAuth 统一设置中回显并填入输入框，未保存的新地址可显式测试；支持地址清除、待切换地址保护、低中高档、固定周期、`HH:mm`、IANA 时区、下一批次摘要、保存/加载禁用状态；定时高档每次保存重新确认；revision 409 必须刷新后使用新 revision 重试；不修改 locale。
 - 实际修改：`web/src/features/channel-monitor/components/channel-model-detection-settings-sheet.tsx`、`web/src/features/channel-monitor/components/__tests__/model-detection-settings-sheet.test.tsx`、`web/src/features/channel-monitor/lib/model-detection-settings-schema.ts`、`web/src/features/channel-monitor/lib/model-detection-settings-api.ts`、`web/src/features/channel-monitor/types-model-detection.ts`
 - 遗留风险：本任务按边界不修改共享 `index.tsx`、现有 `api.ts` 或模型检测 view/card；可见入口由后续集成任务挂载。检测器程序源码、运行目录、SQLite 和构建流程均未修改或读取。
 

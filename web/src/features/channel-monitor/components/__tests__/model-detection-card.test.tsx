@@ -106,6 +106,7 @@ function createChannel(
     channel_status: 1,
     remark: '主线路',
     groups: ['default'],
+    cost_ratio: null,
     supported_models: [target.request_model],
     health_status: health,
     config: {
@@ -209,6 +210,10 @@ describe('模型检测渠道卡片', () => {
     const html = renderCard(channel)
 
     assert.match(html, /启动待确认/)
+    assert.match(html, /data-slot="model-detection-run-progress"/)
+    assert.match(html, /当前轮次 · 启动待确认/)
+    assert.match(html, /0 \/ 202 · 0%/)
+    assert.match(html, /aria-label=".*当前轮次进度 0 \/ 202（0%）"/)
     assert.match(html, /aria-label="取消当前模型检测"/)
     assert.doesNotMatch(html, /检测到异常证据/)
   })
@@ -240,6 +245,10 @@ describe('模型检测渠道卡片', () => {
     ) as HTMLButtonElement | null
 
     assert.match(domWindow.document.body.textContent ?? '', /取消中/)
+    assert.match(
+      domWindow.document.body.textContent ?? '',
+      /当前轮次 · 取消中12 \/ 64 · 19%/
+    )
     assert.ok(cancelButton)
     assert.equal(cancelButton.disabled, true)
     assert.doesNotMatch(

@@ -60,6 +60,8 @@ export const CHANNEL_MODEL_DETECTION_STATUS_FILTERS: ReadonlyArray<
 ]
 
 export const CHANNEL_MODEL_DETECTION_SORT_OPTIONS = [
+  { value: 'ratio_asc', label: '成本倍率：从低到高' },
+  { value: 'ratio_desc', label: '成本倍率：从高到低' },
   { value: 'latest_desc', label: '最近检测：从新到旧' },
   { value: 'latest_asc', label: '最近检测：从旧到新' },
   { value: 'issue_first', label: '异常优先' },
@@ -258,6 +260,7 @@ export function filterChannelModelDetectionChannels(
     if (filters.group && !channel.groups.includes(filters.group)) return false
     if (
       filters.model &&
+      !channel.supported_models.includes(filters.model) &&
       !channel.targets.some((target) => target.request_model === filters.model)
     ) {
       return false
@@ -276,6 +279,27 @@ export function sortChannelModelDetectionChannels(
   sort: ChannelModelDetectionFilters['sort']
 ) {
   return [...channels].sort((left, right) => {
+    if (sort === 'ratio_asc' || sort === 'ratio_desc') {
+      const leftRatio = Number.isFinite(left.cost_ratio)
+        ? left.cost_ratio
+        : null
+      const rightRatio = Number.isFinite(right.cost_ratio)
+        ? right.cost_ratio
+        : null
+      let ratioDifference = 0
+      if (leftRatio == null && rightRatio != null) ratioDifference = 1
+      if (leftRatio != null && rightRatio == null) ratioDifference = -1
+      if (leftRatio != null && rightRatio != null) {
+        ratioDifference =
+          sort === 'ratio_asc' ? leftRatio - rightRatio : rightRatio - leftRatio
+      }
+      if (ratioDifference) return ratioDifference
+      const nameDifference = left.name.localeCompare(right.name, 'zh-CN', {
+        numeric: true,
+        sensitivity: 'base',
+      })
+      return nameDifference || left.id - right.id
+    }
     if (sort === 'channel_id_asc') return left.id - right.id
     if (sort === 'schedule_first') {
       const scheduleDifference =

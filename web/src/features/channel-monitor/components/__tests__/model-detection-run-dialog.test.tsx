@@ -71,6 +71,7 @@ function channel() {
     channel_status: 1,
     remark: '',
     groups: ['default'],
+    cost_ratio: null,
     supported_models: ['gpt-5.6-sol'],
     health_status: 'healthy',
     config: {

@@ -85,7 +85,7 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
   group: '',
   model: '',
   search: '',
-  sort: 'latest_desc',
+  sort: 'ratio_asc',
 }
 
 export type ChannelModelDetectionViewProps = {

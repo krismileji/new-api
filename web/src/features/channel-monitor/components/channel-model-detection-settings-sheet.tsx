@@ -236,6 +236,13 @@ export function ChannelModelDetectionSettingsSheet(
     )
   })
 
+  async function handleTestConnection() {
+    if (!(await form.trigger('detectorURL'))) return
+    const value = form.getValues('detectorURL').trim()
+    if (!value) return
+    testMutation.mutate(value)
+  }
+
   let content
   if (query.isPending && !settings) {
     content = (
@@ -348,6 +355,7 @@ export function ChannelModelDetectionSettingsSheet(
                       aria-label='新检测器地址'
                       onChange={(event) => {
                         field.onChange(event)
+                        setConnectionResult(null)
                         if (event.target.value) {
                           form.setValue('clearDetectorURL', false, {
                             shouldValidate: true,
@@ -378,9 +386,10 @@ export function ChannelModelDetectionSettingsSheet(
                   <FormControl>
                     <Checkbox
                       checked={field.value}
-                      disabled={controlsDisabled || Boolean(detectorURL.trim())}
+                      disabled={controlsDisabled}
                       onCheckedChange={(checked) => {
                         field.onChange(checked === true)
+                        setConnectionResult(null)
                         if (checked === true) {
                           form.setValue('detectorURL', '', {
                             shouldValidate: true,
@@ -399,12 +408,9 @@ export function ChannelModelDetectionSettingsSheet(
                 type='button'
                 variant='outline'
                 disabled={
-                  controlsDisabled ||
-                  !settings.detector_url_configured ||
-                  clearDetectorURL ||
-                  Boolean(detectorURL.trim())
+                  controlsDisabled || clearDetectorURL || !detectorURL.trim()
                 }
-                onClick={() => testMutation.mutate()}
+                onClick={() => void handleTestConnection()}
               >
                 {testMutation.isPending ? (
                   <Spinner data-icon='inline-start' />
@@ -417,7 +423,7 @@ export function ChannelModelDetectionSettingsSheet(
                 测试连接
               </Button>
               <p className='text-muted-foreground text-xs'>
-                测试当前已保存地址；新地址需先保存后再测试
+                测试输入框中的地址，不会保存设置
               </p>
             </div>
             {connectionResult ? (

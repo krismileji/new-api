@@ -99,8 +99,10 @@ func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *t
 	}, time.Unix(1_700_000_000, 0).UTC())
 	require.NoError(t, err)
 	assert.True(t, updated.ConnectionTestRequired)
-	assert.Equal(t, "http://127.0.0.1:18081", updated.DetectorURLMasked)
+	assert.Equal(t, "http://127.0.0.1:18080", updated.DetectorURL)
+	assert.Equal(t, "http://127.0.0.1:18080", updated.DetectorURLMasked)
 	assert.True(t, updated.PendingDetectorURLConfigured)
+	assert.Equal(t, "http://127.0.0.1:18081", updated.PendingDetectorURL)
 	assert.Equal(t, "http://127.0.0.1:18081", updated.PendingDetectorURLMasked)
 	var stored model.ChannelModelDetectionGlobalConfig
 	require.NoError(t, db.First(&stored, model.ChannelModelDetectionConfigID).Error)
@@ -136,6 +138,42 @@ func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T)
 	assert.NotContains(t, string(encoded), "secret-session")
 	assert.Contains(t, string(encoded), server.URL)
 	assert.NotContains(t, string(encoded), "session_token")
+}
+
+func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *testing.T) {
+	ResetChannelModelDetectionServiceCache()
+	t.Cleanup(ResetChannelModelDetectionServiceCache)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case channelModelDetectorBootstrapPath:
+			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
+			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+		case channelModelDetectorEstimatePath:
+			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
+		case channelModelDetectorStatusPath:
+			_, _ = writer.Write([]byte(`{"status":"idle"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	db := setupChannelModelDetectionSettingsTestDB(t)
+
+	response, err := TestChannelModelDetectionServiceURL(
+		context.Background(), db, server.URL, time.Unix(1_700_000_000, 0).UTC(),
+		ChannelModelDetectorClientOptions{HTTPClient: server.Client()},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "available", response.State)
+	assert.Equal(t, server.URL, response.DetectorURLMasked)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).Count(&count).Error)
+	assert.Zero(t, count)
+	assert.Equal(t, "unknown", ChannelModelDetectionServiceSnapshot("http://127.0.0.1:18080").State)
 }
 
 func mustMarshalSettings(t *testing.T, value ChannelModelDetectionSettingsResponse) []byte {

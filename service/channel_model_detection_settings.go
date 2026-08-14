@@ -40,8 +40,10 @@ type ChannelModelDetectionSettingsUpdate struct {
 
 type ChannelModelDetectionSettingsResponse struct {
 	DetectorURLConfigured        bool   `json:"detector_url_configured"`
+	DetectorURL                  string `json:"detector_url"`
 	DetectorURLMasked            string `json:"detector_url_masked"`
 	PendingDetectorURLConfigured bool   `json:"pending_detector_url_configured"`
+	PendingDetectorURL           string `json:"pending_detector_url"`
 	PendingDetectorURLMasked     string `json:"pending_detector_url_masked"`
 	DetectorURLSwitchPending     bool   `json:"detector_url_switch_pending"`
 	ScheduledPreset              string `json:"scheduled_preset"`
@@ -366,12 +368,37 @@ func TestChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time
 	if strings.TrimSpace(config.DetectorURL) == "" {
 		return ChannelModelDetectionServiceResponse{}, ErrChannelModelDetectionDetectorNotConfigured
 	}
-	client, err := NewChannelModelDetectorClient(config.DetectorURL, options...)
+	return testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now, true, options...)
+}
+
+func TestChannelModelDetectionServiceURL(ctx context.Context, tx *gorm.DB, rawURL string, now time.Time, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
+	db := tx
+	if db == nil {
+		db = model.DB
+	}
+	if db == nil {
+		return ChannelModelDetectionServiceResponse{}, errors.New("模型检测统一设置数据库不可用")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	normalizedURL, err := ValidateChannelModelDetectorTarget(ctx, rawURL)
+	if err != nil {
+		return ChannelModelDetectionServiceResponse{}, err
+	}
+	return testChannelModelDetectionServiceURL(ctx, db, normalizedURL, now, false, options...)
+}
+
+func testChannelModelDetectionServiceURL(ctx context.Context, db *gorm.DB, detectorURL string, now time.Time, updateCache bool, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
+	client, err := NewChannelModelDetectorClient(detectorURL, options...)
 	if err != nil {
 		return ChannelModelDetectionServiceResponse{}, err
 	}
 	response := ChannelModelDetectionServiceResponse{
-		State: "available", DetectorURLConfigured: true, DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
+		State: "available", DetectorURLConfigured: true, DetectorURLMasked: MaskChannelModelDetectorURL(detectorURL),
 		LastCheckedAt: now.Unix(), CompatibilityMessage: "官方检测器接口兼容", Estimates: map[string]ChannelModelDetectionPresetEstimateResponse{},
 	}
 	compatibility, compatibilityErr := client.CheckCompatibility(ctx)
@@ -421,9 +448,11 @@ func TestChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time
 			response.State = "offline"
 		}
 	}
-	channelModelDetectionServiceCache.Lock()
-	channelModelDetectionServiceCache.value = response
-	channelModelDetectionServiceCache.Unlock()
+	if updateCache {
+		channelModelDetectionServiceCache.Lock()
+		channelModelDetectionServiceCache.value = response
+		channelModelDetectionServiceCache.Unlock()
+	}
 	return response, compatibilityErr
 }
 
@@ -455,11 +484,11 @@ func channelModelDetectionDefaultGlobalConfig(now time.Time) model.ChannelModelD
 
 func channelModelDetectionSettingsResponse(config model.ChannelModelDetectionGlobalConfig, connectionTestRequired bool) ChannelModelDetectionSettingsResponse {
 	return ChannelModelDetectionSettingsResponse{
-		DetectorURLConfigured: strings.TrimSpace(config.DetectorURL) != "", DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
-		PendingDetectorURLConfigured: strings.TrimSpace(config.PendingDetectorURL) != "", PendingDetectorURLMasked: MaskChannelModelDetectorURL(config.PendingDetectorURL),
+		DetectorURLConfigured: strings.TrimSpace(config.DetectorURL) != "", DetectorURL: strings.TrimSpace(config.DetectorURL), DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
+		PendingDetectorURLConfigured: strings.TrimSpace(config.PendingDetectorURL) != "", PendingDetectorURL: strings.TrimSpace(config.PendingDetectorURL), PendingDetectorURLMasked: MaskChannelModelDetectorURL(config.PendingDetectorURL),
 		DetectorURLSwitchPending: strings.TrimSpace(config.PendingDetectorURL) != "",
 		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(),
-		IntervalHours:            config.IntervalHours, ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
+		IntervalHours: config.IntervalHours, ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
 		NextBatchAt: config.NextBatchAt, Revision: config.Revision, ConnectionTestRequired: connectionTestRequired,
 		CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt,
 	}

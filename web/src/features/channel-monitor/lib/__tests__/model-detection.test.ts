@@ -29,6 +29,7 @@ import {
   channelModelDetectionRunPollInterval,
   filterChannelModelDetectionChannels,
   isChannelModelDetectionRunActive,
+  sortChannelModelDetectionChannels,
 } from '../model-detection'
 
 function createCost(overrides: Partial<ChannelModelDetectionCost> = {}) {
@@ -61,6 +62,7 @@ function createChannel(id: number): ChannelModelDetectionChannel {
     channel_status: 1,
     remark: id === 1 ? '华东主线路' : '华北备用',
     groups: id === 1 ? ['default'] : ['vip'],
+    cost_ratio: null,
     supported_models: ['gpt-5.6'],
     health_status: id === 1 ? 'healthy' : 'attention',
     config: null,
@@ -153,5 +155,29 @@ describe('模型检测展示工具', () => {
       sort: 'latest_desc',
     })
     assert.deepEqual(noClaimedModelMatch, [])
+  })
+
+  test('成本倍率升降序都将未知倍率置底，并按渠道名称和 ID 稳定排序', () => {
+    const channels = [
+      { ...createChannel(5), name: '上海渠道', cost_ratio: null },
+      { ...createChannel(4), name: '北京渠道', cost_ratio: 2 },
+      { ...createChannel(3), name: '上海渠道', cost_ratio: 1 },
+      { ...createChannel(2), name: '北京渠道', cost_ratio: 1 },
+      { ...createChannel(1), name: '北京渠道', cost_ratio: 1 },
+      { ...createChannel(6), name: '未知倍率', cost_ratio: Number.NaN },
+    ] as ChannelModelDetectionChannel[]
+
+    assert.deepEqual(
+      sortChannelModelDetectionChannels(channels, 'ratio_asc').map(
+        (channel) => channel.id
+      ),
+      [1, 2, 3, 4, 5, 6]
+    )
+    assert.deepEqual(
+      sortChannelModelDetectionChannels(channels, 'ratio_desc').map(
+        (channel) => channel.id
+      ),
+      [4, 1, 2, 3, 5, 6]
+    )
   })
 })

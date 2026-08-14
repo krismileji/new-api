@@ -23,6 +23,7 @@ import { api, type ApiRequestConfig } from '@/lib/api'
 import type {
   ChannelModelDetectionApiResponse,
   ChannelModelDetectionDetectorService,
+  ChannelModelDetectionServiceTestRequest,
   ChannelModelDetectionSettings,
   ChannelModelDetectionSettingsUpdateRequest,
 } from '../types-model-detection'
@@ -117,11 +118,14 @@ export async function updateChannelModelDetectionSettings(
   }
 }
 
-export async function testChannelModelDetectionService() {
+export async function testChannelModelDetectionService(detectorURL: string) {
+  const request: ChannelModelDetectionServiceTestRequest = {
+    detector_url: detectorURL.trim(),
+  }
   try {
     const response = await api.post<
       ChannelModelDetectionApiResponse<ChannelModelDetectionDetectorService>
-    >(CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest, undefined, requestConfig())
+    >(CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest, request, requestConfig())
     return ensureSuccess(response.data)
   } catch (error) {
     if (!axios.isAxiosError(error)) throw error

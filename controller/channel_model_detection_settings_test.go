@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -48,6 +49,7 @@ func TestChannelModelDetectionSettingsAPIShowsConfiguredURLAndReturnsRevisionCon
 	getContext, getRecorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/model_detection/settings", nil)
 	GetChannelModelDetectionSettings(getContext)
 	require.Equal(t, http.StatusOK, getRecorder.Code)
+	assert.Contains(t, getRecorder.Body.String(), `"detector_url":"http://127.0.0.1:18080/private"`)
 	assert.Contains(t, getRecorder.Body.String(), `"detector_url_masked":"http://127.0.0.1:18080/private"`)
 
 	putContext, putRecorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/model_detection/settings", map[string]any{
@@ -97,4 +99,37 @@ func TestChannelModelDetectionServiceAPIUnconfiguredResponseHasNoSecrets(t *test
 	assert.Contains(t, recorder.Body.String(), `"state":"unconfigured"`)
 	assert.NotContains(t, recorder.Body.String(), "session_token")
 	assert.NotContains(t, recorder.Body.String(), common.GetUUID())
+}
+
+func TestChannelModelDetectionServiceAPITestsUnsavedAddressWithoutPersisting(t *testing.T) {
+	db := setupChannelModelDetectionSettingsControllerTest(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/health":
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case "/api/bootstrap":
+			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
+			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+		case "/api/detector/estimate":
+			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
+		case "/api/detector/status":
+			_, _ = writer.Write([]byte(`{"status":"idle"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	context, recorder := newChannelMonitorControllerContext(
+		t, http.MethodPost, "/api/channel_monitor/model_detection/service/test",
+		map[string]any{"detector_url": server.URL},
+	)
+	TestChannelModelDetectionService(context)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), `"state":"available"`)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
