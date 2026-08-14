@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -131,6 +132,27 @@ func TestChannelModelDetectorRelayEndpointMapsRelayErrorsWithoutLeakingDetails(t
 	}
 }
 
+func TestChannelModelDetectorRelayEndpointPreservesUpstream429ForRetry(t *testing.T) {
+	_, credential := newChannelModelDetectorEndpointCredential(t, 2)
+	runner := &channelModelDetectorRelayEndpointRunner{err: relaytypes.NewErrorWithStatusCode(
+		errors.New("upstream key channel-secret rate limited"),
+		relaytypes.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)}
+	handler := NewChannelModelDetectorRelayHandler(runner)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/internal/model-detector/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol"}`))
+	ctx.Request.Header.Set("Authorization", "Bearer "+credential.BearerToken())
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	handler.PostChannelModelDetectorRelay(ctx)
+
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "模型检测渠道请求失败")
+	assert.NotContains(t, recorder.Body.String(), "channel-secret")
+}
+
 func TestChannelModelDetectorRelayEndpointRejectsAuthContentTypeAndOversizeWithoutLeakingSecrets(t *testing.T) {
 	_, credential := newChannelModelDetectorEndpointCredential(t, 2)
 	runner := &channelModelDetectorRelayEndpointRunner{}
@@ -191,9 +213,10 @@ func TestChannelModelDetectorChannelAllowed(t *testing.T) {
 	}{
 		{name: "scheduled enabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusEnabled, allowed: true},
 		{name: "scheduled manual disabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusManuallyDisabled, allowed: false},
+		{name: "scheduled auto disabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusAutoDisabled, allowed: false},
 		{name: "manual enabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusEnabled, allowed: true},
 		{name: "manual manually disabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusManuallyDisabled, allowed: true},
-		{name: "manual auto disabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusAutoDisabled, allowed: false},
+		{name: "manual auto disabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusAutoDisabled, allowed: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

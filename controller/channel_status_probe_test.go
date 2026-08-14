@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -81,6 +83,66 @@ func TestChannelStatusProbeScanIntervalSecondsMatchesConfiguredWorkerInterval(t 
 	}
 }
 
+func TestChannelStatusProbeDispatchesDuringActive429Cooldown(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+
+	user := model.User{
+		Username: "status-probe-cooldown-user", Password: "status-probe-cooldown-password",
+		Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	var requestCount atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, err := w.Write([]byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
+
+	channel := &model.Channel{
+		Id: 441, Type: constant.ChannelTypeOpenAI, Key: "sk-status-probe-cooldown",
+		Name: "status probe cooldown", Status: common.ChannelStatusEnabled,
+		BaseURL: common.GetPointer(upstream.URL), Models: "gpt-3.5-turbo", Group: "default",
+	}
+	service.StartChannelRateLimitCooldown(channel.Id, "gpt-3.5-turbo", 60)
+
+	outcome := executeChannelStatusProbeModel(context.Background(), channel, user.Id, "gpt-3.5-turbo")
+
+	assert.Equal(t, model.ChannelStatusProbeResultRateLimited, outcome.Result)
+	assert.True(t, outcome.TestExecuted)
+	assert.True(t, outcome.ProbeResult.requestDispatched)
+	assert.Equal(t, int64(1), requestCount.Load())
+	assert.Positive(t, service.ChannelRateLimitCooldownUntilMatching(channel.Id, "gpt-3.5-turbo"))
+}
+
+func TestChannelStatusProbeChannelAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger string
+		status  int
+		allowed bool
+	}{
+		{name: "scheduled enabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusEnabled, allowed: true},
+		{name: "scheduled manual disabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusManuallyDisabled, allowed: false},
+		{name: "scheduled auto disabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusAutoDisabled, allowed: false},
+		{name: "manual enabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusEnabled, allowed: true},
+		{name: "manual manually disabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusManuallyDisabled, allowed: true},
+		{name: "manual auto disabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusAutoDisabled, allowed: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.allowed, channelStatusProbeChannelAllowed(test.trigger, test.status))
+		})
+	}
+}
+
 func TestWakeChannelStatusProbeWorkerCoalescesPendingSignals(t *testing.T) {
 	drainChannelStatusProbeWorkerWake()
 	t.Cleanup(drainChannelStatusProbeWorkerWake)
@@ -106,6 +168,7 @@ func TestChannelStatusProbeHealthSeparatesPausedStaleAndPartial(t *testing.T) {
 	}
 	assert.Equal(t, channelStatusProbeHealthPartial, channelStatusProbeHealth(config, common.ChannelStatusEnabled, states, now))
 	assert.Equal(t, channelStatusProbeHealthPaused, channelStatusProbeHealth(config, common.ChannelStatusManuallyDisabled, states, now))
+	assert.Equal(t, channelStatusProbeHealthPaused, channelStatusProbeHealth(config, common.ChannelStatusAutoDisabled, states, now))
 
 	states["model-a"] = model.ChannelStatusProbeState{
 		ModelName: "model-a", LastHealthResult: model.ChannelStatusProbeResultSuccess,

@@ -347,7 +347,8 @@ func channelModelDetectorChannelAllowed(trigger string, status int) bool {
 	if status == common.ChannelStatusEnabled {
 		return true
 	}
-	return trigger == model.ChannelModelDetectionTriggerManual && status == common.ChannelStatusManuallyDisabled
+	return trigger == model.ChannelModelDetectionTriggerManual &&
+		(status == common.ChannelStatusManuallyDisabled || status == common.ChannelStatusAutoDisabled)
 }
 
 type channelModelDetectorResponseWriter struct {

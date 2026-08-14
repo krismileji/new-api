@@ -120,7 +120,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			}
 		}
 	}
-	if service.ChannelRateLimitCooldownUntilMatching(channel.Id, testModel) > 0 {
+	if !isChannelStatusProbeTest(ctx) && service.ChannelRateLimitCooldownUntilMatching(channel.Id, testModel) > 0 {
 		return testResult{
 			localErr:          errors.New("渠道模型处于 429 冷却中，本次测试未发送"),
 			originalModelName: testModel,

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -135,6 +136,7 @@ func readChannelModelDetectorRequestBody(body io.Reader, maxBytes int64) ([]byte
 func writeChannelModelDetectorRelayExecutionError(c *gin.Context, err error) {
 	statusCode := http.StatusBadGateway
 	message := "模型检测渠道请求失败"
+	var upstreamErr *relaytypes.NewAPIError
 	switch {
 	case errors.Is(err, service.ErrChannelModelDetectorRelayInvalidRequest):
 		statusCode, message = http.StatusBadRequest, "模型检测请求无效"
@@ -148,6 +150,8 @@ func writeChannelModelDetectorRelayExecutionError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrChannelModelDetectorTokenBudgetExceeded),
 		errors.Is(err, service.ErrChannelModelDetectorRelayBusy):
 		statusCode, message = http.StatusTooManyRequests, "模型检测请求暂时无法发送"
+	case errors.As(err, &upstreamErr) && upstreamErr.StatusCode == http.StatusTooManyRequests:
+		statusCode = http.StatusTooManyRequests
 	case errors.Is(err, service.ErrChannelModelDetectorRelayUnavailable):
 		statusCode, message = http.StatusServiceUnavailable, "模型检测固定渠道暂不可用"
 	}

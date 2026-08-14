@@ -182,7 +182,7 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 	if err != nil {
 		return err
 	}
-	if claim.Trigger == model.ChannelStatusProbeTriggerScheduled && channel.Status == common.ChannelStatusManuallyDisabled {
+	if !channelStatusProbeChannelAllowed(claim.Trigger, channel.Status) {
 		return nil
 	}
 	testUserId, testUserErr := resolveChannelTestUserID(nil)
@@ -229,6 +229,14 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 	return nil
 }
 
+func channelStatusProbeChannelAllowed(trigger string, status int) bool {
+	if status == common.ChannelStatusEnabled {
+		return true
+	}
+	return trigger == model.ChannelStatusProbeTriggerManual &&
+		(status == common.ChannelStatusManuallyDisabled || status == common.ChannelStatusAutoDisabled)
+}
+
 func channelStatusProbeCanceledOutcome(message string) channelStatusProbeOutcome {
 	now := common.GetTimestamp()
 	return channelStatusProbeOutcome{
@@ -249,12 +257,6 @@ func executeChannelStatusProbeModel(
 		return channelStatusProbeOutcome{
 			Result: model.ChannelStatusProbeResultLocalFailure, StartedAt: startedAt, FinishedAt: common.GetTimestamp(),
 			ErrorCode: "model_not_supported", ErrorMessage: common.MaskSensitiveInfo(err.Error()),
-		}
-	}
-	if service.ChannelRateLimitCooldownUntilMatching(channel.Id, modelName) > 0 {
-		return channelStatusProbeOutcome{
-			Result: model.ChannelStatusProbeResultSkipped, StartedAt: startedAt, FinishedAt: common.GetTimestamp(),
-			ErrorCode: "rate_limit_cooldown", ErrorMessage: "渠道模型仍处于 429 冷却期，本次未发送请求",
 		}
 	}
 	probeCtx := withChannelStatusProbeTestContext(ctx)

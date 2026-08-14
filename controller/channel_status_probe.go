@@ -181,7 +181,7 @@ func channelStatusProbeHealth(
 	if config == nil || len(config.Models) == 0 {
 		return channelStatusProbeHealthUnconfigured
 	}
-	if !config.Enabled || channelStatus == common.ChannelStatusManuallyDisabled {
+	if !config.Enabled || channelStatus == common.ChannelStatusManuallyDisabled || channelStatus == common.ChannelStatusAutoDisabled {
 		return channelStatusProbeHealthPaused
 	}
 	staleBefore := now - int64(config.IntervalSeconds*2)
