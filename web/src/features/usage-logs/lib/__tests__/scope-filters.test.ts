@@ -66,6 +66,24 @@ describe('usage log scope filters', () => {
     assert.equal(params.username, undefined)
   })
 
+  test('normalizes unsupported common log types in user-facing views', () => {
+    const userVisibleParams = buildApiParams({
+      page: 1,
+      pageSize: 20,
+      searchParams: { ...searchParams, type: ['1'] },
+      scope: 'user-visible',
+    })
+    const selfParams = buildApiParams({
+      page: 1,
+      pageSize: 20,
+      searchParams: { ...searchParams, type: ['6'] },
+      scope: 'self',
+    })
+
+    assert.equal(userVisibleParams.type, 0)
+    assert.equal(selfParams.type, 0)
+  })
+
   test('sends task channel filters for both aggregate views', () => {
     const complete = buildBaseParams({
       page: 1,

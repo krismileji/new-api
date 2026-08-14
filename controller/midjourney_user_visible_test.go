@@ -41,12 +41,36 @@ func TestGetAllUserVisibleMidjourneyFiltersChannel(t *testing.T) {
 		MjId:       "mj-user-visible-channel",
 		ChannelId:  321,
 		SubmitTime: 100,
+		Status:     "SUCCESS",
 	}).Error)
 	require.NoError(t, db.Create(&model.Midjourney{
 		UserId:     2,
 		MjId:       "mj-user-visible-other-channel",
 		ChannelId:  654,
 		SubmitTime: 101,
+		Status:     "SUCCESS",
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     1,
+		MjId:       "mj-user-visible-in-progress",
+		ChannelId:  321,
+		SubmitTime: 102,
+		Status:     "IN_PROGRESS",
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     1,
+		MjId:       "mj-user-visible-failure",
+		ChannelId:  321,
+		SubmitTime: 103,
+		Status:     "FAILURE",
+		FailReason: "upstream failed",
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     1,
+		MjId:       "mj-user-visible-submit-failure",
+		ChannelId:  321,
+		SubmitTime: 104,
+		FailReason: "prompt rejected",
 	}).Error)
 
 	gin.SetMode(gin.TestMode)
@@ -60,11 +84,41 @@ func TestGetAllUserVisibleMidjourneyFiltersChannel(t *testing.T) {
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
+			Total int                 `json:"total"`
 			Items []*model.Midjourney `json:"items"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
-	require.Len(t, response.Data.Items, 1)
-	assert.Equal(t, 321, response.Data.Items[0].ChannelId)
+	assert.Equal(t, 3, response.Data.Total)
+	require.Len(t, response.Data.Items, 3)
+	for _, item := range response.Data.Items {
+		assert.Equal(t, 321, item.ChannelId)
+		assert.NotEqual(t, "IN_PROGRESS", item.Status)
+	}
+
+	selfRecorder := httptest.NewRecorder()
+	selfContext, _ := gin.CreateTestContext(selfRecorder)
+	selfContext.Request = httptest.NewRequest(http.MethodGet, "/api/mj/self?p=1&page_size=20", nil)
+	selfContext.Set("id", 1)
+
+	GetUserMidjourney(selfContext)
+
+	assert.Equal(t, http.StatusOK, selfRecorder.Code)
+	var selfResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Total int                 `json:"total"`
+			Items []*model.Midjourney `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(selfRecorder.Body.Bytes(), &selfResponse))
+	require.True(t, selfResponse.Success)
+	assert.Equal(t, 3, selfResponse.Data.Total)
+	require.Len(t, selfResponse.Data.Items, 3)
+	for _, item := range selfResponse.Data.Items {
+		assert.Equal(t, 1, item.UserId)
+		assert.Equal(t, 321, item.ChannelId)
+		assert.NotEqual(t, "IN_PROGRESS", item.Status)
+	}
 }

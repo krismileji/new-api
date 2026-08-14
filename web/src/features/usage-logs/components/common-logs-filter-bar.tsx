@@ -40,6 +40,7 @@ import {
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
+import { getLogsViewTypeFilters, normalizeLogsViewType } from '../lib/scope'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
@@ -66,15 +67,6 @@ type CommonLogDraft = {
 
 function isLogTypeValue(value: string): value is LogTypeValue {
   return logTypeValueSet.has(value)
-}
-
-function getLogTypeValue(value: unknown): LogTypeValue {
-  return Array.isArray(value) &&
-    value.length === 1 &&
-    typeof value[0] === 'string' &&
-    isLogTypeValue(value[0])
-    ? value[0]
-    : LOG_TYPE_ALL_VALUE
 }
 
 function buildSearchSourceKey(values: {
@@ -116,7 +108,7 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const { isAllUsersView } = useLogsViewScope()
+  const { viewScope, isAllUsersView } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
@@ -150,7 +142,10 @@ export function CommonLogsFilterBar<TData>(
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
       filters,
-      logType: getLogTypeValue(searchParams.type),
+      logType: normalizeLogsViewType(
+        viewScope,
+        searchParams.type
+      ) as LogTypeValue,
     }
   }, [
     searchParams.startTime,
@@ -163,6 +158,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.requestId,
     searchParams.upstreamRequestId,
     searchParams.type,
+    viewScope,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
   const activeDraft =
@@ -257,13 +253,17 @@ export function CommonLogsFilterBar<TData>(
     filters.upstreamRequestId,
   ].filter(Boolean).length
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
+  const availableLogTypeFilters = useMemo(
+    () => getLogsViewTypeFilters(viewScope),
+    [viewScope]
+  )
   const logTypeItems = useMemo(
     () =>
-      LOG_TYPE_FILTERS.map((type) => ({
+      availableLogTypeFilters.map((type) => ({
         value: type.value,
         label: t(type.label),
       })),
-    [t]
+    [availableLogTypeFilters, t]
   )
   const logTypeLabel =
     logTypeItems.find((type) => type.value === logType)?.label ?? t('All Types')
@@ -353,7 +353,7 @@ export function CommonLogsFilterBar<TData>(
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
           <SelectGroup>
-            {LOG_TYPE_FILTERS.map((type) => (
+            {availableLogTypeFilters.map((type) => (
               <SelectItem key={type.value} value={type.value}>
                 {t(type.label)}
               </SelectItem>

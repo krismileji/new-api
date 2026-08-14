@@ -11,8 +11,8 @@
 | 视图 | 数据范围 | 数据表现 | 使用者 |
 | --- | --- | --- | --- |
 | 全部 | 所有用户 | 完整管理日志，包括渠道、重试过程和管理员诊断信息 | 管理员 |
-| 用户侧 | 所有用户 | 按“仅自己”规则过滤和脱敏，只保留最终结果；筛选和聚合表格布局与“全部”一致 | 管理员 |
-| 仅自己 | 当前用户 | 用户侧过滤和脱敏规则 | 当前登录用户 |
+| 用户侧 | 所有用户 | 按“仅自己”规则过滤和脱敏，只保留最终结果和正常用户请求；筛选和聚合表格布局与“全部”一致 | 管理员 |
+| 仅自己 | 当前用户 | 用户侧过滤和脱敏规则，只保留最终结果和正常用户请求 | 当前登录用户 |
 
 “用户侧”的业务契约是复用“仅自己”的可见性规则，唯一差异是取消当前用户限制。两个视图不得分别维护过滤或脱敏逻辑。
 
@@ -37,12 +37,14 @@ GET /api/task/user-visible
 通用日志查询复用现有用户侧规则：
 
 - 排除仅用于内部诊断的重试过程日志。
+- 仅保留正常用户请求的消费记录和最终错误记录；充值、管理、系统、登录、退款、违规附加扣费及渠道维护探测不进入用户侧视图。
 - 使用用户侧格式化逻辑清理渠道名称、管理员信息和操作审计信息。
 - 错误详情采用与“仅自己”一致的安全表现。
 - 支持时间、类型、用户名、API 密钥名称、模型、分组和请求 ID 等聚合查询条件。
 - 用户侧额外支持与“全部”一致的渠道筛选；统计同样排除重试过程记录。
+- “用户侧”和“仅自己”的类型筛选只展示“全部 / 消费 / 错误”；从完整视图切换时，不兼容的类型自动回到“全部”。
 
-绘图和任务日志沿用各自用户侧的结果内容，只扩大用户范围；聚合视图保留渠道编号并补充用户标识，便于与“全部”表格保持一致。
+绘图和任务日志只返回成功或失败的终态结果，不展示排队、提交中或执行中的过程状态；Midjourney 提交阶段已明确失败但历史状态为空的记录，以非空失败原因为终态依据。聚合视图保留渠道编号并补充用户标识，便于与“全部”表格保持一致。
 
 ## 前端设计
 
@@ -73,13 +75,16 @@ type LogsViewScope = 'all' | 'user-visible' | 'self'
 
 | 文件 | 修改必要性 |
 | --- | --- |
+| `controller/log.go` | 让“仅自己”统计按用户 ID 复用用户侧最终请求范围和请求 ID 筛选，避免统计包含其他用户或列表中已隐藏的记录。 |
+| `controller/midjourney.go` | 让“仅自己”绘图接口与“用户侧”复用同一终态查询，同时保持原有响应字段。 |
+| `controller/task.go` | 让“仅自己”任务接口与“用户侧”复用同一终态查询及既有渠道脱敏。 |
 | `model/log.go` | 让完整统计和用户侧统计共享统计查询实现，并由用户侧入口复用最终结果过滤。 |
 | `router/api-router.go` | 在现有日志、绘图和任务路由组注册管理员专属接口。 |
 | `web/src/features/usage-logs/api.ts` | 将现有二态接口选择扩展为三态，并拆出无循环依赖的查询参数模块。 |
 | `web/src/features/usage-logs/components/columns/common-logs-columns.tsx` | 在“用户侧”显示与“全部”一致的用户、渠道列，同时由管理员标志控制详情脱敏。 |
 | `web/src/features/usage-logs/components/columns/drawing-logs-columns.tsx` | 为跨用户绘图日志补充用户列。 |
 | `web/src/features/usage-logs/components/columns/task-logs-columns.tsx` | 将用户列和渠道列的显示能力拆开。 |
-| `web/src/features/usage-logs/components/common-logs-filter-bar.tsx` | 让“用户侧”使用与“全部”一致的用户名和渠道筛选。 |
+| `web/src/features/usage-logs/components/common-logs-filter-bar.tsx` | 让“用户侧”使用与“全部”一致的用户名和渠道筛选，并只提供实际可能返回结果的类型选项。 |
 | `web/src/features/usage-logs/components/common-logs-stats.tsx` | 按完整范围选择统计接口并隔离查询缓存。 |
 | `web/src/features/usage-logs/components/task-logs-filter-bar.tsx` | 让“用户侧”保留与“全部”一致的渠道筛选。 |
 | `web/src/features/usage-logs/components/usage-logs-mobile-card.tsx` | 在移动端跨用户绘图日志中呈现用户字段。 |

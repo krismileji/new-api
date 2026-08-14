@@ -18,8 +18,8 @@ func GetAllUserVisibleMidjourney(c *gin.Context) {
 		EndTimestamp:   c.Query("end_timestamp"),
 	}
 
-	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
-	total := model.CountAllTasks(queryParams)
+	items := model.GetAllUserVisibleMidjourneyTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+	total := model.CountAllUserVisibleMidjourneyTasks(queryParams)
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
 			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId

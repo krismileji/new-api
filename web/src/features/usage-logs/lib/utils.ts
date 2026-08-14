@@ -43,6 +43,7 @@ import type {
   GetTaskLogsParams,
   LogsViewScope,
 } from '../types'
+import { normalizeLogsViewType } from './scope'
 
 export { buildQueryParams } from './query-params'
 
@@ -192,10 +193,11 @@ export function buildApiParams(config: {
   }
 
   // Build base params from search params
+  const normalizedSearchType = normalizeLogsViewType(scope, searchParams.type)
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
-    ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
+    ...(searchParams.type ? { type: processType(normalizedSearchType) } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
     ...(searchParams.group ? { group: String(searchParams.group) } : {}),
@@ -221,7 +223,7 @@ export function buildApiParams(config: {
 
       switch (id) {
         case 'type':
-          params.type = processType(value)
+          params.type = processType(normalizeLogsViewType(scope, value))
           break
         case 'model_name':
           params.model_name = String(value)

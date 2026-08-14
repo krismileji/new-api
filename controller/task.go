@@ -53,8 +53,8 @@ func GetUserTask(c *gin.Context) {
 		EndTimestamp:   endTimestamp,
 	}
 
-	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
-	total := model.TaskCountAllUserTask(userId, queryParams)
+	items := model.TaskGetAllUserVisibleUserTasks(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+	total := model.TaskCountAllUserVisibleUserTasks(userId, queryParams)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)

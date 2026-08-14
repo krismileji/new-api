@@ -16,7 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ENUM,
+  LOG_TYPE_FILTERS,
+} from '../constants'
 import type { LogsViewScope } from '../types'
+
+const USER_VISIBLE_LOG_TYPE_VALUES = new Set<string>([
+  LOG_TYPE_ALL_VALUE,
+  String(LOG_TYPE_ENUM.CONSUME),
+  String(LOG_TYPE_ENUM.ERROR),
+])
 
 export const LOGS_VIEW_SCOPES: readonly LogsViewScope[] = [
   'all',
@@ -33,6 +44,26 @@ export function resolveLogsViewScope(
   canManageScope: boolean
 ): LogsViewScope {
   return canManageScope ? requestedScope : 'self'
+}
+
+export function getLogsViewTypeFilters(scope: LogsViewScope) {
+  if (scope === 'all') return LOG_TYPE_FILTERS
+
+  return LOG_TYPE_FILTERS.filter((type) =>
+    USER_VISIBLE_LOG_TYPE_VALUES.has(type.value)
+  )
+}
+
+export function normalizeLogsViewType(
+  scope: LogsViewScope,
+  value: unknown
+): string {
+  const rawValue = Array.isArray(value) && value.length === 1 ? value[0] : value
+  if (typeof rawValue !== 'string') return LOG_TYPE_ALL_VALUE
+
+  return getLogsViewTypeFilters(scope).some((type) => type.value === rawValue)
+    ? rawValue
+    : LOG_TYPE_ALL_VALUE
 }
 
 export function getLogsViewCapabilities(scope: LogsViewScope) {
