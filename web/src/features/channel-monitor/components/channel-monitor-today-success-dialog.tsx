@@ -22,7 +22,7 @@ import {
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -62,6 +62,10 @@ import type {
 } from '../types'
 import { ChannelMonitorDailyInsightHistory } from './channel-monitor-daily-insight-history'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import {
+  ChannelMonitorSortableTableHead,
+  type ChannelMonitorSortDirection,
+} from './channel-monitor-sortable-table-head'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessAPIKeyTable } from './channel-monitor-success-api-key-table'
 
@@ -90,6 +94,19 @@ type TodaySuccessSummaryProps = {
   cacheWriteRequestCount: number
 }
 
+type TodayChannelSortKey =
+  | 'channel_name'
+  | 'cost_ratio'
+  | 'actual_sample_count'
+  | 'actual_success_rate'
+  | 'cache_hit_rate'
+  | 'cache_write_request_count'
+
+type TodayChannelSort = {
+  key: TodayChannelSortKey
+  direction: ChannelMonitorSortDirection
+} | null
+
 export type ChannelMonitorTodaySuccessDialogContentProps = {
   result: ChannelMonitorTodaySuccessResult | undefined
   channels: readonly ChannelMonitorTodaySuccessChannelMetadata[]
@@ -114,6 +131,74 @@ function getRateClassName(rate: number) {
   if (rate >= 0.9) return 'text-success'
   if (rate >= 0.7) return 'text-warning'
   return 'text-destructive'
+}
+
+function getTodayChannelSortValue(
+  row: {
+    metric: ChannelMonitorTodaySuccessResult['channel_items'][number]
+    channel: ChannelMonitorTodaySuccessChannelMetadata | null
+    cacheWriteRequestCount: number
+  },
+  key: TodayChannelSortKey
+) {
+  if (key === 'channel_name') {
+    return (
+      row.channel?.name ||
+      row.metric.channel_name ||
+      `渠道 #${row.metric.channel_id}`
+    )
+  }
+  if (key === 'cost_ratio') return row.channel?.cost_ratio ?? null
+  if (key === 'actual_success_rate') {
+    return row.metric.actual_sample_count > 0 &&
+      Number.isFinite(row.metric.actual_success_rate)
+      ? row.metric.actual_success_rate
+      : null
+  }
+  if (key === 'cache_hit_rate') {
+    return row.metric.cache_sample_count > 0 &&
+      Number.isFinite(row.metric.cache_hit_rate)
+      ? row.metric.cache_hit_rate
+      : null
+  }
+  if (key === 'actual_sample_count') return row.metric.actual_sample_count
+  return row.cacheWriteRequestCount
+}
+
+function compareTodayChannels(
+  first: Parameters<typeof getTodayChannelSortValue>[0],
+  second: Parameters<typeof getTodayChannelSortValue>[0],
+  sort: Exclude<TodayChannelSort, null>
+) {
+  const firstValue = getTodayChannelSortValue(first, sort.key)
+  const secondValue = getTodayChannelSortValue(second, sort.key)
+  if (typeof firstValue === 'string' && typeof secondValue === 'string') {
+    const result = firstValue.localeCompare(secondValue)
+    if (result !== 0) return sort.direction === 'asc' ? result : -result
+  } else {
+    const firstNumber = Number.isFinite(firstValue) ? Number(firstValue) : null
+    const secondNumber = Number.isFinite(secondValue)
+      ? Number(secondValue)
+      : null
+    if (firstNumber == null && secondNumber != null) return 1
+    if (firstNumber != null && secondNumber == null) return -1
+    if (firstNumber != null && secondNumber != null) {
+      const result = firstNumber - secondNumber
+      if (result !== 0) return sort.direction === 'asc' ? result : -result
+    }
+  }
+  return first.metric.channel_id - second.metric.channel_id
+}
+
+function toggleTodayChannelSort(
+  current: TodayChannelSort,
+  key: TodayChannelSortKey
+): Exclude<TodayChannelSort, null> {
+  return {
+    key,
+    direction:
+      current?.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }
 }
 
 function TodaySuccessSummaryValue(props: TodaySuccessSummaryValueProps) {
@@ -215,6 +300,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
 ) {
   const result = props.result
   const summary = result?.summary
+  const [sort, setSort] = useState<TodayChannelSort>(null)
   const cacheWriteMetrics = useMemo(() => {
     const requestCountByChannelId = new Map<number, number>()
     const items = result?.cache_write_items ?? []
@@ -236,56 +322,59 @@ export function ChannelMonitorTodaySuccessDialogContent(
       props.channels.map((channel) => [channel.id, channel])
     )
 
-    return (result?.channel_items ?? [])
-      .map((metric) => ({
-        metric,
-        channel: channelById.get(metric.channel_id) ?? null,
-        cacheWriteRequestCount:
-          cacheWriteMetrics.requestCountByChannelId.get(metric.channel_id) ?? 0,
-      }))
-      .sort((first, second) => {
-        const firstEnabled = first.channel?.status === CHANNEL_STATUS.ENABLED
-        const secondEnabled = second.channel?.status === CHANNEL_STATUS.ENABLED
-        if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
+    const rows = (result?.channel_items ?? []).map((metric) => ({
+      metric,
+      channel: channelById.get(metric.channel_id) ?? null,
+      cacheWriteRequestCount:
+        cacheWriteMetrics.requestCountByChannelId.get(metric.channel_id) ?? 0,
+    }))
+    return rows.sort((first, second) => {
+      if (sort) return compareTodayChannels(first, second, sort)
+      const firstEnabled = first.channel?.status === CHANNEL_STATUS.ENABLED
+      const secondEnabled = second.channel?.status === CHANNEL_STATUS.ENABLED
+      if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
 
-        const firstRatio =
-          first.channel?.cost_ratio != null &&
-          Number.isFinite(first.channel.cost_ratio)
-            ? first.channel.cost_ratio
-            : null
-        const secondRatio =
-          second.channel?.cost_ratio != null &&
-          Number.isFinite(second.channel.cost_ratio)
-            ? second.channel.cost_ratio
-            : null
-        if (firstRatio == null && secondRatio != null) return 1
-        if (firstRatio != null && secondRatio == null) return -1
-        if (
-          firstRatio != null &&
-          secondRatio != null &&
-          firstRatio !== secondRatio
-        ) {
-          return firstRatio - secondRatio
-        }
+      const firstRatio =
+        first.channel?.cost_ratio != null &&
+        Number.isFinite(first.channel.cost_ratio)
+          ? first.channel.cost_ratio
+          : null
+      const secondRatio =
+        second.channel?.cost_ratio != null &&
+        Number.isFinite(second.channel.cost_ratio)
+          ? second.channel.cost_ratio
+          : null
+      if (firstRatio == null && secondRatio != null) return 1
+      if (firstRatio != null && secondRatio == null) return -1
+      if (
+        firstRatio != null &&
+        secondRatio != null &&
+        firstRatio !== secondRatio
+      ) {
+        return firstRatio - secondRatio
+      }
 
-        const firstName =
-          first.channel?.name ||
-          first.metric.channel_name ||
-          `渠道 #${first.metric.channel_id}`
-        const secondName =
-          second.channel?.name ||
-          second.metric.channel_name ||
-          `渠道 #${second.metric.channel_id}`
-        const nameOrder = firstName.localeCompare(secondName)
-        return nameOrder !== 0
-          ? nameOrder
-          : first.metric.channel_id - second.metric.channel_id
-      })
+      const firstName =
+        first.channel?.name ||
+        first.metric.channel_name ||
+        `渠道 #${first.metric.channel_id}`
+      const secondName =
+        second.channel?.name ||
+        second.metric.channel_name ||
+        `渠道 #${second.metric.channel_id}`
+      const nameOrder = firstName.localeCompare(secondName)
+      return nameOrder !== 0
+        ? nameOrder
+        : first.metric.channel_id - second.metric.channel_id
+    })
   }, [
     cacheWriteMetrics.requestCountByChannelId,
     props.channels,
     result?.channel_items,
+    sort,
   ])
+  const sortDirection = (key: TodayChannelSortKey) =>
+    sort?.key === key ? sort.direction : undefined
 
   if (props.isLoading) {
     return (
@@ -380,27 +469,77 @@ export function ChannelMonitorTodaySuccessDialogContent(
           <Table className='w-full table-fixed'>
             <TableHeader>
               <TableRow>
-                <TableHead className='w-[19%] whitespace-normal'>
-                  渠道
-                </TableHead>
+                <ChannelMonitorSortableTableHead
+                  label='渠道'
+                  className='w-[19%]'
+                  direction={sortDirection('channel_name')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(current, 'channel_name')
+                    )
+                  }
+                />
                 <TableHead className='w-[22%] whitespace-normal'>
                   备注
                 </TableHead>
-                <TableHead className='w-[11%] text-right whitespace-normal'>
-                  成本倍率
-                </TableHead>
-                <TableHead className='w-[11%] text-right whitespace-normal'>
-                  请求数
-                </TableHead>
-                <TableHead className='w-[12%] text-right whitespace-normal'>
-                  成功率
-                </TableHead>
-                <TableHead className='w-[12%] text-right whitespace-normal'>
-                  缓存率
-                </TableHead>
-                <TableHead className='w-[13%] text-right whitespace-normal'>
-                  写入请求数
-                </TableHead>
+                <ChannelMonitorSortableTableHead
+                  label='成本倍率'
+                  align='right'
+                  className='w-[11%]'
+                  direction={sortDirection('cost_ratio')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(current, 'cost_ratio')
+                    )
+                  }
+                />
+                <ChannelMonitorSortableTableHead
+                  label='请求数'
+                  align='right'
+                  className='w-[11%]'
+                  direction={sortDirection('actual_sample_count')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(current, 'actual_sample_count')
+                    )
+                  }
+                />
+                <ChannelMonitorSortableTableHead
+                  label='成功率'
+                  align='right'
+                  className='w-[12%]'
+                  direction={sortDirection('actual_success_rate')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(current, 'actual_success_rate')
+                    )
+                  }
+                />
+                <ChannelMonitorSortableTableHead
+                  label='缓存率'
+                  align='right'
+                  className='w-[12%]'
+                  direction={sortDirection('cache_hit_rate')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(current, 'cache_hit_rate')
+                    )
+                  }
+                />
+                <ChannelMonitorSortableTableHead
+                  label='写入请求数'
+                  align='right'
+                  className='w-[13%]'
+                  direction={sortDirection('cache_write_request_count')}
+                  onSort={() =>
+                    setSort((current) =>
+                      toggleTodayChannelSort(
+                        current,
+                        'cache_write_request_count'
+                      )
+                    )
+                  }
+                />
               </TableRow>
             </TableHeader>
             <TableBody>

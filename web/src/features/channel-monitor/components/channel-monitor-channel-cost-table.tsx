@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { MoneyBag02Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import {
   Empty,
@@ -43,6 +43,10 @@ import {
   formatMonitorRatio,
 } from '../lib/format'
 import type { ChannelMonitorCostChannel } from '../types'
+import {
+  ChannelMonitorSortableTableHead,
+  type ChannelMonitorSortDirection,
+} from './channel-monitor-sortable-table-head'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 
 type ChannelMonitorChannelCostTableProps = {
@@ -50,46 +54,109 @@ type ChannelMonitorChannelCostTableProps = {
   detailDate: string
 }
 
+type ChannelCostSortKey =
+  | 'channel_name'
+  | 'cost_ratio'
+  | 'cost_cny'
+  | 'probe_cost_cny'
+  | 'model_detection_cost_cny'
+  | 'settled_count'
+  | 'unresolved_count'
+  | 'resolution_rate'
+
+type ChannelCostSort = {
+  key: ChannelCostSortKey
+  direction: ChannelMonitorSortDirection
+} | null
+
+function getResolutionRate(item: ChannelMonitorCostChannel) {
+  const total = item.settled_count + item.unresolved_count
+  return total > 0 ? item.settled_count / total : null
+}
+
+function compareChannelCostItems(
+  first: ChannelMonitorCostChannel,
+  second: ChannelMonitorCostChannel,
+  sort: Exclude<ChannelCostSort, null>
+) {
+  if (sort.key === 'channel_name') {
+    const nameOrder = first.channel_name.localeCompare(second.channel_name)
+    if (nameOrder !== 0) {
+      return sort.direction === 'asc' ? nameOrder : -nameOrder
+    }
+    return first.channel_id - second.channel_id
+  }
+
+  const firstValue =
+    sort.key === 'resolution_rate' ? getResolutionRate(first) : first[sort.key]
+  const secondValue =
+    sort.key === 'resolution_rate'
+      ? getResolutionRate(second)
+      : second[sort.key]
+  const firstNumber = Number.isFinite(firstValue) ? Number(firstValue) : null
+  const secondNumber = Number.isFinite(secondValue) ? Number(secondValue) : null
+  if (firstNumber == null && secondNumber != null) return 1
+  if (firstNumber != null && secondNumber == null) return -1
+  if (firstNumber != null && secondNumber != null) {
+    const result = firstNumber - secondNumber
+    if (result !== 0) {
+      return sort.direction === 'asc' ? result : -result
+    }
+  }
+  return first.channel_id - second.channel_id
+}
+
+function toggleChannelCostSort(
+  current: ChannelCostSort,
+  key: ChannelCostSortKey
+): Exclude<ChannelCostSort, null> {
+  return {
+    key,
+    direction:
+      current?.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }
+}
+
 export function ChannelMonitorChannelCostTable(
   props: ChannelMonitorChannelCostTableProps
 ) {
-  const orderedItems = useMemo(
-    () =>
-      [...props.items].sort((first, second) => {
-        const firstEnabled = first.status === CHANNEL_STATUS.ENABLED
-        const secondEnabled = second.status === CHANNEL_STATUS.ENABLED
-        if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
+  const [sort, setSort] = useState<ChannelCostSort>(null)
+  const orderedItems = useMemo(() => {
+    const items = props.items.filter(
+      (item) => item.settled_count > 0 || item.unresolved_count > 0
+    )
+    return items.sort((first, second) => {
+      if (sort) return compareChannelCostItems(first, second, sort)
+      const firstEnabled = first.status === CHANNEL_STATUS.ENABLED
+      const secondEnabled = second.status === CHANNEL_STATUS.ENABLED
+      if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
 
-        const firstRatio =
-          first.cost_ratio != null && Number.isFinite(first.cost_ratio)
-            ? first.cost_ratio
-            : null
-        const secondRatio =
-          second.cost_ratio != null && Number.isFinite(second.cost_ratio)
-            ? second.cost_ratio
-            : null
-        if (firstRatio == null && secondRatio != null) return 1
-        if (firstRatio != null && secondRatio == null) return -1
-        if (
-          firstRatio != null &&
-          secondRatio != null &&
-          firstRatio !== secondRatio
-        ) {
-          return firstRatio - secondRatio
-        }
+      const firstRatio =
+        first.cost_ratio != null && Number.isFinite(first.cost_ratio)
+          ? first.cost_ratio
+          : null
+      const secondRatio =
+        second.cost_ratio != null && Number.isFinite(second.cost_ratio)
+          ? second.cost_ratio
+          : null
+      if (firstRatio == null && secondRatio != null) return 1
+      if (firstRatio != null && secondRatio == null) return -1
+      if (
+        firstRatio != null &&
+        secondRatio != null &&
+        firstRatio !== secondRatio
+      ) {
+        return firstRatio - secondRatio
+      }
 
-        const nameOrder = first.channel_name.localeCompare(second.channel_name)
-        return nameOrder !== 0
-          ? nameOrder
-          : first.channel_id - second.channel_id
-      }),
-    [props.items]
-  )
-  const costItems = orderedItems.filter(
-    (item) => item.settled_count > 0 || item.unresolved_count > 0
-  )
+      const nameOrder = first.channel_name.localeCompare(second.channel_name)
+      return nameOrder !== 0 ? nameOrder : first.channel_id - second.channel_id
+    })
+  }, [props.items, sort])
+  const sortDirection = (key: ChannelCostSortKey) =>
+    sort?.key === key ? sort.direction : undefined
 
-  if (costItems.length === 0) {
+  if (orderedItems.length === 0) {
     return (
       <Empty className='min-h-56 border'>
         <EmptyHeader>
@@ -111,31 +178,80 @@ export function ChannelMonitorChannelCostTable(
           {props.detailDate}
         </span>
       </div>
-      <div className='overflow-auto rounded-md border'>
+      <div className='overflow-hidden rounded-md border'>
         <Table className='min-w-[980px] table-fixed'>
           <TableHeader>
             <TableRow>
-              <TableHead className='w-[18%] whitespace-normal'>渠道</TableHead>
+              <ChannelMonitorSortableTableHead
+                label='渠道'
+                className='w-[18%]'
+                direction={sortDirection('channel_name')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'channel_name')
+                  )
+                }
+              />
               <TableHead className='w-[18%] whitespace-normal'>备注</TableHead>
-              <TableHead className='w-[10%] text-right whitespace-normal'>
-                成本倍率
-              </TableHead>
-              <TableHead className='w-[14%] text-right whitespace-normal'>
-                已结算成本
-              </TableHead>
-              <TableHead className='w-[12%] text-right whitespace-normal'>
-                探测成本
-              </TableHead>
-              <TableHead className='w-[14%] text-right whitespace-normal'>
-                模型检测成本
-              </TableHead>
-              <TableHead className='w-[14%] text-right whitespace-normal'>
-                成本覆盖
-              </TableHead>
+              <ChannelMonitorSortableTableHead
+                label='成本倍率'
+                align='right'
+                className='w-[10%]'
+                direction={sortDirection('cost_ratio')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'cost_ratio')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='已结算成本'
+                align='right'
+                className='w-[14%]'
+                direction={sortDirection('cost_cny')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'cost_cny')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='探测成本'
+                align='right'
+                className='w-[12%]'
+                direction={sortDirection('probe_cost_cny')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'probe_cost_cny')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='模型检测成本'
+                align='right'
+                className='w-[14%]'
+                direction={sortDirection('model_detection_cost_cny')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'model_detection_cost_cny')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='成本覆盖'
+                align='right'
+                className='w-[14%]'
+                direction={sortDirection('resolution_rate')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleChannelCostSort(current, 'resolution_rate')
+                  )
+                }
+              />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {costItems.map((channel) => (
+            {orderedItems.map((channel) => (
               <TableRow key={channel.channel_id}>
                 <TableCell className='min-w-0 whitespace-normal'>
                   <div className='flex min-w-0 flex-col gap-1'>

@@ -87,6 +87,8 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('未解析 2'))
     assert.ok(markup.includes('解析率 81.8%'))
     assert.ok(markup.includes('0%'))
+    assert.ok(markup.includes('按API Key排序'))
+    assert.ok(markup.includes('按成本排序'))
   })
 
   test('explains that API key costs start with newly settled requests', () => {
@@ -128,5 +130,29 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('上游 Key sk-a**********lpha'))
     assert.ok(markup.includes('1 个渠道'))
     assert.ok(markup.includes('渠道三'))
+  })
+
+  test('exposes sorting controls for API key summary metrics', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorAPIKeyCostTable
+        items={[
+          {
+            id: 18,
+            api_key_id: 1,
+            api_key_name: '可排序 Key',
+            api_key: '',
+            cost_cny: 1,
+            settled_count: 1,
+            unresolved_count: 0,
+            channels: [],
+          },
+        ]}
+      />
+    )
+
+    assert.ok(markup.includes('按渠道数排序'))
+    assert.ok(markup.includes('按已结算排序'))
+    assert.ok(markup.includes('按未解析排序'))
+    assert.ok(markup.includes('按解析率排序'))
   })
 })

@@ -181,6 +181,9 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('已结算 0 · 未解析 3'))
     assert.ok(markup.includes('解析率 0%'))
     assert.ok(markup.includes('配置缺失'))
+    assert.ok(markup.includes('按渠道排序'))
+    assert.ok(markup.includes('按已结算成本排序'))
+    assert.ok(markup.includes('按成本覆盖排序'))
   })
 
   test('shows unresolved attempts and resolution rate in the trend view', () => {

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import {
   Empty,
@@ -40,27 +40,108 @@ import {
   formatChannelMonitorResolutionRate,
 } from '../lib/format'
 import type { ChannelMonitorCostAPIKey } from '../types'
+import {
+  ChannelMonitorSortButton,
+  type ChannelMonitorSortDirection,
+} from './channel-monitor-sortable-table-head'
 
 type ChannelMonitorAPIKeyCostTableProps = {
-  items: ChannelMonitorCostAPIKey[]
+  items: readonly ChannelMonitorCostAPIKey[]
+}
+
+type APIKeyCostSortKey =
+  | 'api_key_name'
+  | 'channel_count'
+  | 'settled_count'
+  | 'unresolved_count'
+  | 'resolution_rate'
+  | 'cost_cny'
+
+type APIKeyCostSort = {
+  key: APIKeyCostSortKey
+  direction: ChannelMonitorSortDirection
+}
+
+function getAPIKeyName(item: ChannelMonitorCostAPIKey) {
+  if (item.api_key_name) return item.api_key_name
+  if (item.api_key_id > 0) return `未命名 API Key #${item.api_key_id}`
+  if (item.api_key) return `上游 Key ${item.api_key}`
+  return '未识别 API Key'
+}
+
+function getAPIKeyCostValue(
+  item: ChannelMonitorCostAPIKey & { display_name: string },
+  key: APIKeyCostSortKey
+) {
+  if (key === 'api_key_name') return item.display_name
+  if (key === 'channel_count') return item.channels.length
+  if (key === 'resolution_rate') {
+    const total = item.settled_count + item.unresolved_count
+    return total > 0 ? item.settled_count / total : null
+  }
+  return item[key]
+}
+
+function compareAPIKeyCosts(
+  first: ChannelMonitorCostAPIKey & { display_name: string },
+  second: ChannelMonitorCostAPIKey & { display_name: string },
+  sort: APIKeyCostSort
+) {
+  const firstValue = getAPIKeyCostValue(first, sort.key)
+  const secondValue = getAPIKeyCostValue(second, sort.key)
+  if (typeof firstValue === 'string' && typeof secondValue === 'string') {
+    const result = firstValue.localeCompare(secondValue)
+    if (result !== 0) return sort.direction === 'asc' ? result : -result
+  } else {
+    const firstNumber = Number.isFinite(firstValue) ? Number(firstValue) : null
+    const secondNumber = Number.isFinite(secondValue)
+      ? Number(secondValue)
+      : null
+    if (firstNumber == null && secondNumber != null) return 1
+    if (firstNumber != null && secondNumber == null) return -1
+    if (firstNumber != null && secondNumber != null) {
+      const result = firstNumber - secondNumber
+      if (result !== 0) return sort.direction === 'asc' ? result : -result
+    }
+  }
+  return first.api_key_id - second.api_key_id || first.id - second.id
+}
+
+function toggleAPIKeyCostSort(
+  current: APIKeyCostSort,
+  key: APIKeyCostSortKey
+): APIKeyCostSort {
+  return {
+    key,
+    direction:
+      current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }
 }
 
 export function ChannelMonitorAPIKeyCostTable(
   props: ChannelMonitorAPIKeyCostTableProps
 ) {
+  const [sort, setSort] = useState<APIKeyCostSort>({
+    key: 'api_key_name',
+    direction: 'asc',
+  })
   const costItems = useMemo(
     () =>
       props.items
         .filter((item) => item.settled_count > 0 || item.unresolved_count > 0)
         .map((item) => ({
           ...item,
+          display_name: getAPIKeyName(item),
           channels: item.channels.filter(
             (channel) =>
               channel.settled_count > 0 || channel.unresolved_count > 0
           ),
-        })),
-    [props.items]
+        }))
+        .sort((first, second) => compareAPIKeyCosts(first, second, sort)),
+    [props.items, sort]
   )
+  const sortDirection = (key: APIKeyCostSortKey) =>
+    sort.key === key ? sort.direction : undefined
 
   return (
     <section
@@ -81,134 +162,204 @@ export function ChannelMonitorAPIKeyCostTable(
         </Empty>
       ) : (
         <div className='max-h-[min(30rem,50dvh)] overflow-auto rounded-md border'>
-          <div className='divide-border divide-y'>
-            {costItems.map((item) => {
-              let apiKeyName = item.api_key_name
-              if (!apiKeyName && item.api_key_id > 0) {
-                apiKeyName = `未命名 API Key #${item.api_key_id}`
-              } else if (!apiKeyName && item.api_key) {
-                apiKeyName = `上游 Key ${item.api_key}`
-              } else if (!apiKeyName) {
-                apiKeyName = '未识别 API Key'
-              }
-              return (
-                <details
-                  key={`${item.api_key_id}:${item.id}:${apiKeyName}`}
-                  className='group'
-                >
-                  <summary className='hover:bg-muted/40 flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden'>
-                    <HugeiconsIcon
-                      icon={ArrowRight01Icon}
-                      aria-hidden='true'
-                      className='text-muted-foreground size-4 shrink-0 transition-transform group-open:rotate-90'
-                    />
-                    <span className='min-w-0 flex-1'>
+          <div className='min-w-[760px]'>
+            <div className='bg-muted/30 grid min-h-10 grid-cols-[minmax(15rem,1fr)_5rem_5.5rem_5.5rem_6.5rem_7rem] items-center border-b px-3'>
+              <ChannelMonitorSortButton
+                label='API Key'
+                direction={sortDirection('api_key_name')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'api_key_name')
+                  )
+                }
+              />
+              <ChannelMonitorSortButton
+                label='渠道数'
+                align='right'
+                direction={sortDirection('channel_count')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'channel_count')
+                  )
+                }
+              />
+              <ChannelMonitorSortButton
+                label='已结算'
+                align='right'
+                direction={sortDirection('settled_count')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'settled_count')
+                  )
+                }
+              />
+              <ChannelMonitorSortButton
+                label='未解析'
+                align='right'
+                direction={sortDirection('unresolved_count')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'unresolved_count')
+                  )
+                }
+              />
+              <ChannelMonitorSortButton
+                label='解析率'
+                align='right'
+                direction={sortDirection('resolution_rate')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'resolution_rate')
+                  )
+                }
+              />
+              <ChannelMonitorSortButton
+                label='成本'
+                align='right'
+                direction={sortDirection('cost_cny')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleAPIKeyCostSort(current, 'cost_cny')
+                  )
+                }
+              />
+            </div>
+            <div className='divide-border divide-y'>
+              {costItems.map((item) => {
+                return (
+                  <details
+                    key={`${item.api_key_id}:${item.id}:${item.display_name}`}
+                    className='group'
+                  >
+                    <summary className='hover:bg-muted/40 grid cursor-pointer list-none grid-cols-[minmax(15rem,1fr)_5rem_5.5rem_5.5rem_6.5rem_7rem] items-center gap-0 px-3 py-2.5 [&::-webkit-details-marker]:hidden'>
+                      <span className='flex min-w-0 items-center pl-1'>
+                        <HugeiconsIcon
+                          icon={ArrowRight01Icon}
+                          aria-hidden='true'
+                          className='text-muted-foreground mr-1 size-4 shrink-0 transition-transform group-open:rotate-90'
+                        />
+                        <span className='min-w-0 flex-1'>
+                          <span
+                            className='block truncate font-medium'
+                            title={item.display_name}
+                          >
+                            {item.display_name}
+                          </span>
+                          {item.api_key_id > 0 ? (
+                            <span className='text-muted-foreground block truncate text-xs'>
+                              ID {item.api_key_id}
+                            </span>
+                          ) : null}
+                          {item.api_key ? (
+                            <span
+                              className='text-muted-foreground block truncate font-mono text-xs'
+                              title={item.api_key}
+                            >
+                              上游 Key {item.api_key}
+                            </span>
+                          ) : null}
+                        </span>
+                      </span>
                       <span
-                        className='block truncate font-medium'
-                        title={apiKeyName}
+                        className='text-right font-mono text-xs tabular-nums'
+                        aria-label={`${item.channels.length} 个渠道`}
                       >
-                        {apiKeyName}
+                        {item.channels.length}
                       </span>
-                      {item.api_key_id > 0 ? (
-                        <span className='text-muted-foreground block truncate text-xs'>
-                          ID {item.api_key_id}
-                        </span>
-                      ) : null}
-                      {item.api_key ? (
-                        <span
-                          className='text-muted-foreground block truncate font-mono text-xs'
-                          title={item.api_key}
-                        >
-                          上游 Key {item.api_key}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className='hidden shrink-0 flex-col items-end text-xs sm:flex'>
-                      <span className='text-muted-foreground'>
-                        {item.channels.length} 个渠道
+                      <span className='text-right font-mono text-xs tabular-nums'>
+                        {item.settled_count}
                       </span>
-                      <span className='font-mono tabular-nums'>
-                        已结算 {item.settled_count} · 未解析{' '}
-                        {item.unresolved_count} · 解析率{' '}
+                      <span
+                        className='text-right font-mono text-xs tabular-nums'
+                        aria-label={`未解析 ${item.unresolved_count}`}
+                      >
+                        {item.unresolved_count}
+                      </span>
+                      <span
+                        className='text-right font-mono text-xs tabular-nums'
+                        aria-label={`解析率 ${formatChannelMonitorResolutionRate(item.settled_count, item.unresolved_count)}`}
+                      >
                         {formatChannelMonitorResolutionRate(
                           item.settled_count,
                           item.unresolved_count
                         )}
                       </span>
-                    </span>
-                    <span className='shrink-0 text-right font-mono font-semibold tabular-nums'>
-                      {formatChannelMonitorCost(item.cost_cny)}
-                    </span>
-                  </summary>
-                  <div className='bg-muted/20 border-t px-3 py-2'>
-                    {item.channels.length === 0 ? (
-                      <p className='text-muted-foreground py-2 text-xs'>
-                        暂无渠道明细
-                      </p>
-                    ) : (
-                      <Table className='min-w-[680px] table-fixed'>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className='w-[44%]'>关联渠道</TableHead>
-                            <TableHead className='w-[20%] text-right'>
-                              已结算成本
-                            </TableHead>
-                            <TableHead className='w-[12%] text-right'>
-                              已结算
-                            </TableHead>
-                            <TableHead className='w-[12%] text-right'>
-                              未解析
-                            </TableHead>
-                            <TableHead className='w-[12%] text-right'>
-                              解析率
-                            </TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {item.channels.map((channel) => (
-                            <TableRow key={channel.channel_id}>
-                              <TableCell className='min-w-0'>
-                                <div className='min-w-0'>
-                                  <span
-                                    className='block truncate'
-                                    title={channel.channel_name}
-                                  >
-                                    {channel.channel_name}
-                                  </span>
-                                  {channel.channel_remark ? (
-                                    <span
-                                      className='text-muted-foreground block truncate text-xs'
-                                      title={channel.channel_remark}
-                                    >
-                                      备注：{channel.channel_remark}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </TableCell>
-                              <TableCell className='text-right font-mono tabular-nums'>
-                                {formatChannelMonitorCost(channel.cost_cny)}
-                              </TableCell>
-                              <TableCell className='text-right font-mono tabular-nums'>
-                                {channel.settled_count}
-                              </TableCell>
-                              <TableCell className='text-right font-mono tabular-nums'>
-                                {channel.unresolved_count}
-                              </TableCell>
-                              <TableCell className='text-right font-mono tabular-nums'>
-                                {formatChannelMonitorResolutionRate(
-                                  channel.settled_count,
-                                  channel.unresolved_count
-                                )}
-                              </TableCell>
+                      <span className='text-right font-mono font-semibold tabular-nums'>
+                        {formatChannelMonitorCost(item.cost_cny)}
+                      </span>
+                    </summary>
+                    <div className='bg-muted/20 border-t px-3 py-2'>
+                      {item.channels.length === 0 ? (
+                        <p className='text-muted-foreground py-2 text-xs'>
+                          暂无渠道明细
+                        </p>
+                      ) : (
+                        <Table className='min-w-[680px] table-fixed'>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className='w-[44%]'>
+                                关联渠道
+                              </TableHead>
+                              <TableHead className='w-[20%] text-right'>
+                                已结算成本
+                              </TableHead>
+                              <TableHead className='w-[12%] text-right'>
+                                已结算
+                              </TableHead>
+                              <TableHead className='w-[12%] text-right'>
+                                未解析
+                              </TableHead>
+                              <TableHead className='w-[12%] text-right'>
+                                解析率
+                              </TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </div>
-                </details>
-              )
-            })}
+                          </TableHeader>
+                          <TableBody>
+                            {item.channels.map((channel) => (
+                              <TableRow key={channel.channel_id}>
+                                <TableCell className='min-w-0'>
+                                  <div className='min-w-0'>
+                                    <span
+                                      className='block truncate'
+                                      title={channel.channel_name}
+                                    >
+                                      {channel.channel_name}
+                                    </span>
+                                    {channel.channel_remark ? (
+                                      <span
+                                        className='text-muted-foreground block truncate text-xs'
+                                        title={channel.channel_remark}
+                                      >
+                                        备注：{channel.channel_remark}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </TableCell>
+                                <TableCell className='text-right font-mono tabular-nums'>
+                                  {formatChannelMonitorCost(channel.cost_cny)}
+                                </TableCell>
+                                <TableCell className='text-right font-mono tabular-nums'>
+                                  {channel.settled_count}
+                                </TableCell>
+                                <TableCell className='text-right font-mono tabular-nums'>
+                                  {channel.unresolved_count}
+                                </TableCell>
+                                <TableCell className='text-right font-mono tabular-nums'>
+                                  {formatChannelMonitorResolutionRate(
+                                    channel.settled_count,
+                                    channel.unresolved_count
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </div>
+                  </details>
+                )
+              })}
+            </div>
           </div>
         </div>
       )}

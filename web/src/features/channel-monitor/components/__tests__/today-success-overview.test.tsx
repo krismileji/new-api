@@ -325,6 +325,9 @@ describe('channel monitor today success overview', () => {
     assert.ok((tables[0] ?? '').includes('备注'))
     assert.ok((tables[0] ?? '').includes('成本倍率'))
     assert.ok((tables[0] ?? '').includes('写入请求数'))
+    assert.ok(markup.includes('按成功率排序'))
+    assert.ok(markup.includes('按缓存率排序'))
+    assert.ok(markup.includes('按写入请求数排序'))
     assert.equal(channelCells.length, 21)
 
     assert.ok(channelCells[0]?.includes('渠道三'))

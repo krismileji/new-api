@@ -16,22 +16,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 
 import type { ChannelMonitorSuccessAPIKeyMetric } from '../types'
+import {
+  ChannelMonitorSortableTableHead,
+  type ChannelMonitorSortDirection,
+} from './channel-monitor-sortable-table-head'
 
 type ChannelMonitorSuccessAPIKeyTableProps = {
   items: readonly ChannelMonitorSuccessAPIKeyMetric[]
+}
+
+type SuccessAPIKeySortKey =
+  | 'api_key_name'
+  | 'actual_sample_count'
+  | 'actual_success_rate'
+  | 'cache_hit_rate'
+
+type SuccessAPIKeySort = {
+  key: SuccessAPIKeySortKey
+  direction: ChannelMonitorSortDirection
 }
 
 const percentFormatter = new Intl.NumberFormat(undefined, {
@@ -57,48 +71,95 @@ function getAPIKeyName(item: ChannelMonitorSuccessAPIKeyMetric) {
   return '未识别 API Key'
 }
 
+function getSuccessAPIKeySortValue(
+  item: ChannelMonitorSuccessAPIKeyMetric,
+  key: SuccessAPIKeySortKey
+) {
+  if (key === 'api_key_name') return getAPIKeyName(item)
+  if (key === 'actual_success_rate') {
+    return item.actual_sample_count > 0 &&
+      Number.isFinite(item.actual_success_rate)
+      ? item.actual_success_rate
+      : null
+  }
+  if (key === 'cache_hit_rate') {
+    return item.cache_sample_count > 0 && Number.isFinite(item.cache_hit_rate)
+      ? item.cache_hit_rate
+      : null
+  }
+  return item.actual_sample_count
+}
+
+function compareSuccessAPIKeys(
+  first: ChannelMonitorSuccessAPIKeyMetric,
+  second: ChannelMonitorSuccessAPIKeyMetric,
+  sort: SuccessAPIKeySort
+) {
+  const firstValue = getSuccessAPIKeySortValue(first, sort.key)
+  const secondValue = getSuccessAPIKeySortValue(second, sort.key)
+  if (typeof firstValue === 'string' && typeof secondValue === 'string') {
+    const result = firstValue.localeCompare(secondValue)
+    if (result !== 0) return sort.direction === 'asc' ? result : -result
+  } else {
+    const firstNumber =
+      typeof firstValue === 'number' && Number.isFinite(firstValue)
+        ? firstValue
+        : null
+    const secondNumber =
+      typeof secondValue === 'number' && Number.isFinite(secondValue)
+        ? secondValue
+        : null
+    if (firstNumber == null && secondNumber != null) return 1
+    if (firstNumber != null && secondNumber == null) return -1
+    if (firstNumber != null && secondNumber != null) {
+      const result = firstNumber - secondNumber
+      if (result !== 0) return sort.direction === 'asc' ? result : -result
+    }
+  }
+  if (sort.key === 'actual_success_rate') {
+    const firstCacheRate = getSuccessAPIKeySortValue(first, 'cache_hit_rate')
+    const secondCacheRate = getSuccessAPIKeySortValue(second, 'cache_hit_rate')
+    const firstNumber = typeof firstCacheRate === 'number' ? firstCacheRate : -1
+    const secondNumber =
+      typeof secondCacheRate === 'number' ? secondCacheRate : -1
+    if (firstNumber !== secondNumber) return secondNumber - firstNumber
+    if (first.actual_sample_count !== second.actual_sample_count) {
+      return second.actual_sample_count - first.actual_sample_count
+    }
+  }
+  return (
+    first.api_key_id - second.api_key_id ||
+    getAPIKeyName(first).localeCompare(getAPIKeyName(second))
+  )
+}
+
+function toggleSuccessAPIKeySort(
+  current: SuccessAPIKeySort,
+  key: SuccessAPIKeySortKey
+): SuccessAPIKeySort {
+  return {
+    key,
+    direction:
+      current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }
+}
+
 export function ChannelMonitorSuccessAPIKeyTable(
   props: ChannelMonitorSuccessAPIKeyTableProps
 ) {
+  const [sort, setSort] = useState<SuccessAPIKeySort>({
+    key: 'actual_success_rate',
+    direction: 'desc',
+  })
   const orderedItems = useMemo(
     () =>
-      [...props.items].sort((first, second) => {
-        const firstSuccessRate =
-          first.actual_sample_count > 0 &&
-          Number.isFinite(first.actual_success_rate)
-            ? first.actual_success_rate
-            : -1
-        const secondSuccessRate =
-          second.actual_sample_count > 0 &&
-          Number.isFinite(second.actual_success_rate)
-            ? second.actual_success_rate
-            : -1
-        if (firstSuccessRate !== secondSuccessRate) {
-          return secondSuccessRate - firstSuccessRate
-        }
-
-        const firstCacheRate =
-          first.cache_sample_count > 0 && Number.isFinite(first.cache_hit_rate)
-            ? first.cache_hit_rate
-            : -1
-        const secondCacheRate =
-          second.cache_sample_count > 0 &&
-          Number.isFinite(second.cache_hit_rate)
-            ? second.cache_hit_rate
-            : -1
-        if (firstCacheRate !== secondCacheRate) {
-          return secondCacheRate - firstCacheRate
-        }
-        if (first.actual_sample_count !== second.actual_sample_count) {
-          return second.actual_sample_count - first.actual_sample_count
-        }
-        if (first.api_key_id !== second.api_key_id) {
-          return first.api_key_id - second.api_key_id
-        }
-        return first.api_key_name.localeCompare(second.api_key_name)
-      }),
-    [props.items]
+      [...props.items].sort((first, second) =>
+        compareSuccessAPIKeys(first, second, sort)
+      ),
+    [props.items, sort]
   )
+  const sortDirection = (key: SuccessAPIKeySortKey) =>
+    sort.key === key ? sort.direction : undefined
 
   if (props.items.length === 0) return null
 
@@ -108,14 +169,53 @@ export function ChannelMonitorSuccessAPIKeyTable(
       className='flex shrink-0 flex-col gap-2'
     >
       <h3 className='font-medium'>API Key 明细</h3>
-      <div className='overflow-auto rounded-lg border'>
-        <Table className='min-w-[640px]'>
+      <div className='overflow-hidden rounded-lg border'>
+        <Table className='min-w-[640px] table-fixed'>
           <TableHeader>
             <TableRow>
-              <TableHead>API Key</TableHead>
-              <TableHead className='text-right'>请求数</TableHead>
-              <TableHead className='text-right'>成功率</TableHead>
-              <TableHead className='text-right'>缓存率</TableHead>
+              <ChannelMonitorSortableTableHead
+                label='API Key'
+                className='w-[52%]'
+                direction={sortDirection('api_key_name')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleSuccessAPIKeySort(current, 'api_key_name')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='请求数'
+                align='right'
+                className='w-[16%]'
+                direction={sortDirection('actual_sample_count')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleSuccessAPIKeySort(current, 'actual_sample_count')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='成功率'
+                align='right'
+                className='w-[16%]'
+                direction={sortDirection('actual_success_rate')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleSuccessAPIKeySort(current, 'actual_success_rate')
+                  )
+                }
+              />
+              <ChannelMonitorSortableTableHead
+                label='缓存率'
+                align='right'
+                className='w-[16%]'
+                direction={sortDirection('cache_hit_rate')}
+                onSort={() =>
+                  setSort((current) =>
+                    toggleSuccessAPIKeySort(current, 'cache_hit_rate')
+                  )
+                }
+              />
             </TableRow>
           </TableHeader>
           <TableBody>
