@@ -271,6 +271,30 @@ describe('状态探测卡片', () => {
     assert.doesNotMatch(html, />1\.25 s</)
   })
 
+  test('成本字段增加后状态列表受限且下次执行信息保留独立底栏', () => {
+    const html = renderToStaticMarkup(
+      <ChannelStatusProbeCard
+        channel={createChannel()}
+        serverNow={1_754_000_000}
+        actionPending={false}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onRun={noop}
+        onToggleEnabled={noop}
+      />
+    )
+
+    assert.match(
+      html,
+      /data-slot="card-content" class="[^"]*overflow-hidden[^"]*"/
+    )
+    assert.match(
+      html,
+      /data-slot="card-footer" class="[^"]*min-h-11[^"]*justify-between[^"]*"/
+    )
+    assert.match(html, /下次/)
+  })
+
   test('按配置的数值和单位展示状态条与平均值范围', () => {
     const channel = createChannel()
     if (!channel.config) throw new Error('测试渠道缺少状态探测配置')

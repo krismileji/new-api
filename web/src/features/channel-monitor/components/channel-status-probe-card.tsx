@@ -27,7 +27,7 @@ import { memo } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import {
   Tooltip,
   TooltipContent,
@@ -364,10 +364,10 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
         </div>
       </CardHeader>
 
-      <CardContent className='flex min-h-0 flex-1 px-0 py-0'>
+      <CardContent className='flex min-h-0 flex-1 overflow-hidden px-0 py-0'>
         <button
           type='button'
-          className='focus-visible:ring-ring/50 flex min-h-0 w-full flex-col gap-3 px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset'
+          className='focus-visible:ring-ring/50 flex min-h-0 w-full flex-col gap-3 overflow-hidden px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset'
           onClick={() => props.onOpenHistory(props.channel.id)}
           aria-label={`打开 ${props.channel.name} 状态探测记录`}
         >
@@ -451,28 +451,25 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             displayUnit={displayUnit}
             displayRangeLabel={displayRangeLabelValue}
           />
-
-          <div className='text-muted-foreground flex w-full items-center justify-between gap-2 text-[11px] tabular-nums'>
-            <Badge
-              variant={config?.record_sample ? 'secondary' : 'outline'}
-              aria-label={
-                config?.record_sample
-                  ? '计入智能调度样本'
-                  : '不计入智能调度样本'
-              }
-            >
-              {config?.record_sample ? '计入样本' : '不计入样本'}
-            </Badge>
-            <span>
-              下次{' '}
-              {formatChannelStatusProbeNextRun(
-                config?.next_run_at ?? 0,
-                props.serverNow
-              )}
-            </span>
-          </div>
         </button>
       </CardContent>
+      <CardFooter className='min-h-11 justify-between gap-2 px-3 py-2 text-[11px]'>
+        <Badge
+          variant={config?.record_sample ? 'secondary' : 'outline'}
+          aria-label={
+            config?.record_sample ? '计入智能调度样本' : '不计入智能调度样本'
+          }
+        >
+          {config?.record_sample ? '计入样本' : '不计入样本'}
+        </Badge>
+        <span className='text-muted-foreground shrink-0 tabular-nums'>
+          下次{' '}
+          {formatChannelStatusProbeNextRun(
+            config?.next_run_at ?? 0,
+            props.serverNow
+          )}
+        </span>
+      </CardFooter>
     </Card>
   )
 }, areChannelStatusProbeCardPropsEqual)
