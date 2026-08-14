@@ -104,6 +104,14 @@ describe('模型检测视图骨架', () => {
       <ChannelModelDetectionView
         overview={createOverview()}
         onRefresh={() => {}}
+        filters={{
+          status: 'all',
+          group: '',
+          model: '',
+          search: '',
+          sort: 'ratio_asc',
+          onlyConfigured: false,
+        }}
       />
     )
 
@@ -142,6 +150,26 @@ describe('模型检测视图骨架', () => {
 
   test('默认按成本倍率从低到高排列渠道，并提供反向排序选项', () => {
     const overview = createOverview()
+    overview.channels = overview.channels.map((channel) => ({
+      ...channel,
+      config: {
+        channel_id: channel.id,
+        schedule_enabled: false,
+        revision: 1,
+        created_at: 1,
+        updated_at: 1,
+      },
+      targets: [
+        {
+          target_key: `target-${channel.id}`,
+          request_model: 'gpt-5.6',
+          claimed_model: 'gpt-5.6-sol',
+          enabled: true,
+          position: 0,
+          latest: null,
+        },
+      ],
+    }))
     overview.channels[0] = {
       ...overview.channels[0],
       name: '高倍率渠道',
@@ -187,6 +215,7 @@ describe('模型检测视图骨架', () => {
           model: '',
           search: '',
           sort: 'ratio_desc',
+          onlyConfigured: false,
         }}
       />
     )
@@ -230,6 +259,7 @@ describe('模型检测视图骨架', () => {
             model: '',
             search: '不存在',
             sort: 'latest_desc',
+            onlyConfigured: false,
           }}
         />
       ),

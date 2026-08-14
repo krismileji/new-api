@@ -256,6 +256,12 @@ export function filterChannelModelDetectionChannels(
 ) {
   const search = filters.search.trim().toLocaleLowerCase()
   return channels.filter((channel) => {
+    if (
+      filters.onlyConfigured &&
+      (!channel.config || !channel.targets.some((target) => target.enabled))
+    ) {
+      return false
+    }
     if (!matchesStatus(channel.health_status, filters.status)) return false
     if (filters.group && !channel.groups.includes(filters.group)) return false
     if (

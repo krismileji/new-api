@@ -33,7 +33,8 @@ function channel(
   id: number,
   name: string,
   groups: string[],
-  models: string[]
+  models: string[],
+  configured = true
 ): ChannelModelDetectionChannel {
   return {
     id,
@@ -44,10 +45,29 @@ function channel(
     groups,
     cost_ratio: null,
     supported_models: models,
-    health_status: 'unconfigured',
-    config: null,
+    health_status: configured ? 'pending' : 'unconfigured',
+    config: configured
+      ? {
+          channel_id: id,
+          schedule_enabled: false,
+          revision: 1,
+          created_at: 1,
+          updated_at: 1,
+        }
+      : null,
     active_run: null,
-    targets: [],
+    targets: configured
+      ? [
+          {
+            target_key: `target-${id}`,
+            request_model: models[0],
+            claimed_model: 'gpt-5.6-sol',
+            enabled: true,
+            position: 0,
+            latest: null,
+          },
+        ]
+      : [],
     latest_run_cost: null,
   }
 }
@@ -76,9 +96,9 @@ const overview: ChannelModelDetectionOverview = {
     estimates: {},
   },
   summary: {
-    unconfigured: 2,
+    unconfigured: 1,
     paused: 0,
-    pending: 0,
+    pending: 2,
     running: 0,
     healthy: 0,
     attention: 0,
@@ -95,6 +115,7 @@ const overview: ChannelModelDetectionOverview = {
   channels: [
     channel(1, '默认渠道', ['default'], ['model-a']),
     channel(2, 'VIP 渠道', ['vip'], ['model-b', 'model-c']),
+    channel(3, '未配置渠道', ['default'], ['model-a'], false),
   ],
 }
 
@@ -126,6 +147,16 @@ try {
   await act(async () => {
     root.render(<ChannelModelDetectionView overview={overview} />)
   })
+
+  const onlyConfigured = container.querySelector<HTMLElement>(
+    '[aria-label="仅展示已配置的模型检测卡片"]'
+  )
+  assert.ok(onlyConfigured)
+  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+  assert.equal(container.textContent?.includes('未配置渠道'), false)
+  await act(async () => onlyConfigured.click())
+  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'false')
+  assert.ok(container.textContent?.includes('未配置渠道'))
 
   const groupTrigger = container.querySelector<HTMLButtonElement>(
     '[aria-label="选择模型检测分组"]'

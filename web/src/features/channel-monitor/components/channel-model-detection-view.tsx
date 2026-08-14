@@ -35,6 +35,7 @@ import {
   AlertTitle,
 } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Empty,
   EmptyDescription,
@@ -47,6 +48,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -86,6 +88,7 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
   model: '',
   search: '',
   sort: 'ratio_asc',
+  onlyConfigured: true,
 }
 
 export type ChannelModelDetectionViewProps = {
@@ -432,6 +435,22 @@ export function ChannelModelDetectionView(
           className='flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end'
           data-slot='model-detection-filter-controls'
         >
+          <div className='flex h-9 shrink-0 items-center gap-2 px-1'>
+            <Checkbox
+              id='model-detection-only-configured'
+              checked={filters.onlyConfigured}
+              onCheckedChange={(checked) =>
+                setFilters({ ...filters, onlyConfigured: checked === true })
+              }
+              aria-label='仅展示已配置的模型检测卡片'
+            />
+            <Label
+              htmlFor='model-detection-only-configured'
+              className='text-muted-foreground cursor-pointer text-sm font-normal whitespace-nowrap'
+            >
+              仅展示已配置
+            </Label>
+          </div>
           <Select
             items={groupOptions}
             value={filters.group || null}

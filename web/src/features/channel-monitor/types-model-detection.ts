@@ -292,6 +292,7 @@ export type ChannelModelDetectionFilters = {
   model: string
   search: string
   sort: ChannelModelDetectionSortMode
+  onlyConfigured: boolean
 }
 
 export type ChannelModelDetectionApiResponse<T> = {

@@ -141,6 +141,7 @@ describe('模型检测展示工具', () => {
       model: 'gpt-5.6-terra',
       search: '备用',
       sort: 'latest_desc',
+      onlyConfigured: false,
     })
 
     assert.deepEqual(
@@ -153,8 +154,51 @@ describe('模型检测展示工具', () => {
       model: 'gpt-5.6-sol',
       search: '',
       sort: 'latest_desc',
+      onlyConfigured: false,
     })
     assert.deepEqual(noClaimedModelMatch, [])
+  })
+
+  test('仅查看已配置时要求渠道存在启用的检测目标', () => {
+    const config = {
+      channel_id: 1,
+      schedule_enabled: false,
+      revision: 1,
+      created_at: 1,
+      updated_at: 1,
+    }
+    const channels = [
+      { ...createChannel(1), config },
+      {
+        ...createChannel(2),
+        config: { ...config, channel_id: 2 },
+        targets: [],
+      },
+      { ...createChannel(3), config: null },
+    ]
+    channels[0].targets[0].enabled = true
+
+    const filters = {
+      status: 'all' as const,
+      group: '',
+      model: '',
+      search: '',
+      sort: 'ratio_asc' as const,
+      onlyConfigured: true,
+    }
+    assert.deepEqual(
+      filterChannelModelDetectionChannels(channels, filters).map(
+        (channel) => channel.id
+      ),
+      [1]
+    )
+    assert.deepEqual(
+      filterChannelModelDetectionChannels(channels, {
+        ...filters,
+        onlyConfigured: false,
+      }).map((channel) => channel.id),
+      [1, 2, 3]
+    )
   })
 
   test('成本倍率升降序都将未知倍率置底，并按渠道名称和 ID 稳定排序', () => {
