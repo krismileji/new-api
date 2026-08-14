@@ -858,11 +858,16 @@ export function ChannelMonitor() {
 
   const costOverview = costQuery.data?.data
   const todayProbeCost = costOverview?.today_probe_cost_cny ?? 0
+  const todayModelDetectionCost =
+    costOverview?.today_model_detection_cost_cny ?? 0
   const todayBusinessCost = costOverview
-    ? Math.max(0, costOverview.today_cost_cny - todayProbeCost)
+    ? Math.max(
+        0,
+        costOverview.today_cost_cny - todayProbeCost - todayModelDetectionCost
+      )
     : 0
   let costDescription = costOverview
-    ? `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)} · 昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 近 2 日解析率 ${formatChannelMonitorResolutionRate(
+    ? `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)} · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)} · 昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 近 2 日解析率 ${formatChannelMonitorResolutionRate(
         costOverview.coverage.settled_count,
         costOverview.coverage.unresolved_count
       )}`

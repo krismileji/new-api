@@ -30,6 +30,7 @@ func setupChannelModelDetectionQueryTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelModelDetectionRun{},
 		&model.ChannelModelDetectionExecution{},
 		&model.ChannelModelDetectionCostEvent{},
+		&model.ChannelDailyCost{},
 	))
 	t.Cleanup(func() {
 		sqlDB, closeErr := db.DB()
@@ -93,6 +94,11 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 		UsageAvailable: true, SettledQuota: &settledQuota, CostBasisQuota: &settledQuota, SettledCostNanoCNY: &settledCost,
 		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 101, UpdatedAt: 102,
 	}).Error)
+	require.NoError(t, db.Create(&model.ChannelDailyCost{
+		ChannelId: 101, DayStart: model.ChannelDailyCostDayStart(1_000),
+		CostNanoCNY: settledCost, ModelDetectionCostNanoCNY: settledCost,
+		SettledCount: 1, CreatedAt: 102, UpdatedAt: 102,
+	}).Error)
 
 	var queryCount atomic.Int64
 	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_model_detection_overview", func(*gorm.DB) {
@@ -106,7 +112,7 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NoError(t, err)
 	initialQueryCount := queryCount.Load()
 	assert.Positive(t, initialQueryCount)
-	assert.LessOrEqual(t, initialQueryCount, int64(7))
+	assert.LessOrEqual(t, initialQueryCount, int64(8))
 	assert.Len(t, response.Channels, 3)
 	assert.Equal(t, "http://10.***.***.***:***", response.Settings.DetectorURLMasked)
 	assert.NotContains(t, response.Settings.DetectorURLMasked, "secret")
@@ -117,6 +123,7 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NotNil(t, response.Channels[0].LatestRunCost)
 	require.NotNil(t, response.Channels[0].LatestRunCost.SettledCostCNY)
 	assert.Equal(t, "0.025680000", *response.Channels[0].LatestRunCost.SettledCostCNY)
+	assert.InDelta(t, 0.02568, response.Channels[0].TodayModelDetectionCostCNY, 1e-12)
 
 	encoded, err := common.Marshal(response)
 	require.NoError(t, err)

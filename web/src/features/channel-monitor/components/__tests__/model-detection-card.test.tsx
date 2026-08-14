@@ -118,6 +118,7 @@ function createChannel(
     active_run: null,
     targets: [target],
     latest_run_cost: target.latest.cost,
+    today_model_detection_cost_cny: 0.05136,
   }
 }
 
@@ -156,6 +157,10 @@ describe('模型检测渠道卡片', () => {
     assert.match(html, /申报 Sol/)
     assert.match(html, /手动 · 中档/)
     assert.match(html, /已结算成本 ¥0\.025680000 · 额度 12,840/)
+    assert.match(html, /最近模型检测成本/)
+    assert.match(html, /今日模型检测成本/)
+    assert.match(html, /¥0\.0257/)
+    assert.match(html, /¥0\.0514/)
   })
 
   test('七类聚合状态和离线状态都有文字等价', () => {

@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
+import { formatChannelMonitorCost } from '../lib/format'
 import {
   channelModelDetectionClaimedModelLabel,
   channelModelDetectionCostLines,
@@ -291,6 +292,12 @@ export const ChannelModelDetectionCard = memo(
     const presentation = HEALTH_PRESENTATION[props.channel.health_status]
     const activeRun = props.channel.active_run
     const config = props.channel.config
+    const latestRunCost = props.channel.latest_run_cost
+    const latestModelDetectionCostCNY =
+      latestRunCost?.settled_request_count &&
+      latestRunCost.settled_cost_cny != null
+        ? Number(latestRunCost.settled_cost_cny)
+        : null
     const detectorBlocked =
       props.detectorState === 'offline' ||
       props.detectorState === 'incompatible' ||
@@ -393,7 +400,27 @@ export const ChannelModelDetectionCard = memo(
           </div>
         </CardHeader>
 
-        <CardContent className='flex min-h-0 flex-1 px-0 py-0'>
+        <CardContent className='flex min-h-0 flex-1 flex-col px-0 py-0'>
+          <dl className='grid w-full grid-cols-2 gap-x-4 border-b px-3 py-2'>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-[11px]'>
+                最近模型检测成本
+              </dt>
+              <dd className='mt-0.5 truncate font-mono text-sm font-semibold tabular-nums'>
+                {formatChannelMonitorCost(latestModelDetectionCostCNY)}
+              </dd>
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-[11px]'>
+                今日模型检测成本
+              </dt>
+              <dd className='mt-0.5 truncate font-mono text-sm font-semibold tabular-nums'>
+                {formatChannelMonitorCost(
+                  props.channel.today_model_detection_cost_cny
+                )}
+              </dd>
+            </div>
+          </dl>
           {!config || props.channel.targets.length === 0 ? (
             <div className='flex min-h-0 w-full min-w-0 flex-col gap-3 px-3 py-3'>
               <div

@@ -177,6 +177,12 @@ func TestChannelModelDetectionCostTransportBoundaryAndSettlementAreMonotonic(t *
 	replayedSettlement, err := SettleChannelModelDetectionCostEvent(ctx, db, settlement)
 	require.NoError(t, err)
 	assert.Equal(t, settled.Id, replayedSettlement.Id)
+	var dailyCost model.ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", settledInput.ChannelId).First(&dailyCost).Error)
+	assert.Equal(t, int64(400_000_000), dailyCost.CostNanoCNY)
+	assert.Equal(t, int64(400_000_000), dailyCost.ModelDetectionCostNanoCNY)
+	assert.Equal(t, int64(1), dailyCost.SettledCount)
+	assert.Zero(t, dailyCost.UnresolvedCount)
 
 	settlement.TotalTokens++
 	_, err = SettleChannelModelDetectionCostEvent(ctx, db, settlement)

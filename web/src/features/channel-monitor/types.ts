@@ -230,6 +230,7 @@ export type ChannelMonitorCostDay = {
   start_at: number
   cost_cny: number
   probe_cost_cny?: number
+  model_detection_cost_cny?: number
   settled_count: number
   unresolved_count: number
 }
@@ -242,6 +243,7 @@ export type ChannelMonitorCostChannel = {
   cost_ratio: number | null
   cost_cny: number
   probe_cost_cny?: number
+  model_detection_cost_cny?: number
   settled_count: number
   unresolved_count: number
 }
@@ -281,10 +283,13 @@ export type ChannelMonitorCostOverview = {
   detail_date: string
   today_cost_cny: number
   today_probe_cost_cny?: number
+  today_model_detection_cost_cny?: number
   yesterday_cost_cny: number
   yesterday_probe_cost_cny?: number
+  yesterday_model_detection_cost_cny?: number
   total_cost_cny: number
   total_probe_cost_cny?: number
+  total_model_detection_cost_cny?: number
   coverage: ChannelMonitorCostCoverage
   items: ChannelMonitorCostDay[]
   chart_items: ChannelMonitorCostDay[]

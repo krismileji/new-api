@@ -220,16 +220,19 @@ function CostSummary(props: {
         label='今日已结算成本'
         value={props.overview?.today_cost_cny}
         probeValue={props.overview?.today_probe_cost_cny}
+        modelDetectionValue={props.overview?.today_model_detection_cost_cny}
       />
       <CostSummaryValue
         label='昨日已结算成本'
         value={props.overview?.yesterday_cost_cny}
         probeValue={props.overview?.yesterday_probe_cost_cny}
+        modelDetectionValue={props.overview?.yesterday_model_detection_cost_cny}
       />
       <CostSummaryValue
         label='区间已结算成本'
         value={props.overview?.total_cost_cny}
         probeValue={props.overview?.total_probe_cost_cny}
+        modelDetectionValue={props.overview?.total_model_detection_cost_cny}
       />
     </div>
   )
@@ -239,6 +242,7 @@ function CostSummaryValue(props: {
   label: string
   value: number | undefined
   probeValue: number | undefined
+  modelDetectionValue: number | undefined
 }) {
   return (
     <div className='flex min-w-0 flex-col gap-1'>
@@ -247,7 +251,8 @@ function CostSummaryValue(props: {
         {formatChannelMonitorCost(props.value)}
       </span>
       <span className='text-muted-foreground truncate text-xs'>
-        其中探测 {formatChannelMonitorCost(props.probeValue)}
+        其中探测 {formatChannelMonitorCost(props.probeValue)} · 模型检测{' '}
+        {formatChannelMonitorCost(props.modelDetectionValue)}
       </span>
     </div>
   )
@@ -347,6 +352,7 @@ export function CostHistoryData(props: {
             date: item.date,
             cost: item.cost_cny,
             probeCost: item.probe_cost_cny ?? 0,
+            modelDetectionCost: item.model_detection_cost_cny ?? 0,
             settledCount: item.settled_count,
             unresolvedCount: item.unresolved_count,
             resolutionRate: formatChannelMonitorResolutionRate(
@@ -381,6 +387,11 @@ export function CostHistoryData(props: {
               key: '探测成本',
               value: (datum: { probeCost: number }) =>
                 formatChannelMonitorCost(datum.probeCost),
+            },
+            {
+              key: '模型检测成本',
+              value: (datum: { modelDetectionCost: number }) =>
+                formatChannelMonitorCost(datum.modelDetectionCost),
             },
             {
               key: '已结算请求',
@@ -465,12 +476,13 @@ export function CostHistoryData(props: {
           <section className='flex min-w-0 flex-col gap-2'>
             <h3 className='text-sm font-medium'>按日成本</h3>
             <div className='overflow-auto rounded-md border'>
-              <Table className='min-w-[760px]'>
+              <Table className='min-w-[860px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead>日期</TableHead>
                     <TableHead className='text-right'>已结算成本</TableHead>
                     <TableHead className='text-right'>探测成本</TableHead>
+                    <TableHead className='text-right'>模型检测成本</TableHead>
                     <TableHead className='text-right'>已结算</TableHead>
                     <TableHead className='text-right'>未解析</TableHead>
                     <TableHead className='text-right'>解析率</TableHead>
@@ -492,6 +504,11 @@ export function CostHistoryData(props: {
                         </TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {formatChannelMonitorCost(item.probe_cost_cny)}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {formatChannelMonitorCost(
+                            item.model_detection_cost_cny
+                          )}
                         </TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {item.settled_count}
