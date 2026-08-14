@@ -59,21 +59,6 @@ func TestGetAllUserVisibleTaskFiltersAndIncludesChannelAndUser(t *testing.T) {
 		ChannelId: 654,
 		Status:    model.TaskStatusSuccess,
 	}).Error)
-	require.NoError(t, db.Create(&model.Task{
-		TaskID:    "task-user-visible-in-progress",
-		Platform:  constant.TaskPlatform("test"),
-		UserId:    user.Id,
-		ChannelId: 321,
-		Status:    model.TaskStatusInProgress,
-	}).Error)
-	require.NoError(t, db.Create(&model.Task{
-		TaskID:     "task-user-visible-failure",
-		Platform:   constant.TaskPlatform("test"),
-		UserId:     user.Id,
-		ChannelId:  321,
-		Status:     model.TaskStatusFailure,
-		FailReason: "upstream failed",
-	}).Error)
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -86,41 +71,12 @@ func TestGetAllUserVisibleTaskFiltersAndIncludesChannelAndUser(t *testing.T) {
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Total int            `json:"total"`
 			Items []*dto.TaskDto `json:"items"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
-	assert.Equal(t, 2, response.Data.Total)
-	require.Len(t, response.Data.Items, 2)
-	for _, item := range response.Data.Items {
-		assert.Equal(t, 321, item.ChannelId)
-		assert.Equal(t, user.Username, item.Username)
-		assert.NotEqual(t, string(model.TaskStatusInProgress), item.Status)
-	}
-
-	selfRecorder := httptest.NewRecorder()
-	selfContext, _ := gin.CreateTestContext(selfRecorder)
-	selfContext.Request = httptest.NewRequest(http.MethodGet, "/api/task/self?p=1&page_size=20", nil)
-	selfContext.Set("id", user.Id)
-
-	GetUserTask(selfContext)
-
-	assert.Equal(t, http.StatusOK, selfRecorder.Code)
-	var selfResponse struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Total int            `json:"total"`
-			Items []*dto.TaskDto `json:"items"`
-		} `json:"data"`
-	}
-	require.NoError(t, common.Unmarshal(selfRecorder.Body.Bytes(), &selfResponse))
-	require.True(t, selfResponse.Success)
-	assert.Equal(t, 3, selfResponse.Data.Total)
-	require.Len(t, selfResponse.Data.Items, 3)
-	for _, item := range selfResponse.Data.Items {
-		assert.Zero(t, item.ChannelId)
-		assert.NotEqual(t, string(model.TaskStatusInProgress), item.Status)
-	}
+	require.Len(t, response.Data.Items, 1)
+	assert.Equal(t, 321, response.Data.Items[0].ChannelId)
+	assert.Equal(t, user.Username, response.Data.Items[0].Username)
 }

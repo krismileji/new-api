@@ -167,7 +167,14 @@ func formatUserLogs(logs []*Log, startIdx int) {
 }
 
 func userVisibleLogs(tx *gorm.DB) *gorm.DB {
-	return tx.Where("(logs.is_retry_attempt = ? OR logs.is_retry_attempt IS NULL)", false)
+	tx = tx.Where("(logs.is_retry_attempt = ? OR logs.is_retry_attempt IS NULL)", false)
+	tx = tx.Where("logs.type IN ?", []int{LogTypeConsume, LogTypeError})
+	return tx.Where("(logs.other IS NULL OR (logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ?))",
+		"%\""+ChannelMonitorChannelTestLogKey+"\":true%",
+		"%\""+ChannelMonitorSmartScheduleProbeLogKey+"\":true%",
+		"%\""+ChannelMonitorStatusProbeLogKey+"\":true%",
+		"%\"violation_fee\":true%",
+	)
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {

@@ -33,7 +33,7 @@ import {
   useUsageLogsContext,
 } from './components/usage-logs-provider'
 import { UsageLogsTable } from './components/usage-logs-table'
-import { isLogsViewScope, normalizeLogsViewType } from './lib/scope'
+import { isLogsViewScope } from './lib/scope'
 import {
   isUsageLogsSectionId,
   USAGE_LOGS_DEFAULT_SECTION,
@@ -122,10 +122,6 @@ function UsageLogsContent() {
           page: 1,
           channel: scope === 'self' ? undefined : searchParams.channel,
           username: scope === 'self' ? undefined : searchParams.username,
-          type:
-            activeCategory === 'common'
-              ? [normalizeLogsViewType(scope, searchParams.type)]
-              : undefined,
         },
         replace: true,
       })

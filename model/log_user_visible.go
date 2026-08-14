@@ -25,22 +25,8 @@ type userVisibleLogQueryParams struct {
 	upstreamRequestID string
 }
 
-// userVisibleRequestLogs narrows the user-facing usage-log scope to actual
-// relay outcomes. Administrative records and channel-maintenance probes are
-// useful in the complete administrator view, but are not normal user requests.
-func userVisibleRequestLogs(tx *gorm.DB) *gorm.DB {
-	tx = userVisibleLogs(tx).Where("logs.type IN ?", []int{LogTypeConsume, LogTypeError})
-	maintenanceMarkers := []string{
-		"%\"" + ChannelMonitorChannelTestLogKey + "\":true%",
-		"%\"" + ChannelMonitorSmartScheduleProbeLogKey + "\":true%",
-		"%\"" + ChannelMonitorStatusProbeLogKey + "\":true%",
-		"%\"violation_fee\":true%",
-	}
-	return tx.Where("(logs.other IS NULL OR (logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ?))", maintenanceMarkers[0], maintenanceMarkers[1], maintenanceMarkers[2], maintenanceMarkers[3])
-}
-
 func queryUserVisibleLogs(params userVisibleLogQueryParams) (logs []*Log, total int64, err error) {
-	tx := userVisibleRequestLogs(LOG_DB)
+	tx := userVisibleLogs(LOG_DB)
 	if params.userID != nil {
 		tx = tx.Where("logs.user_id = ?", *params.userID)
 	}
@@ -195,7 +181,7 @@ func sumUsedQuotaFromQuery(base *gorm.DB, logType int, startTimestamp int64, end
 // user-visible log rows before calculating aggregate usage statistics.
 func SumUserVisibleQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, requestID string, upstreamRequestID string) (stat Stat, err error) {
 	return sumUsedQuotaFromQuery(
-		userVisibleRequestLogs(LOG_DB.Table("logs")),
+		userVisibleLogs(LOG_DB.Table("logs")),
 		logType,
 		startTimestamp,
 		endTimestamp,
@@ -203,24 +189,6 @@ func SumUserVisibleQuota(logType int, startTimestamp int64, endTimestamp int64, 
 		username,
 		tokenName,
 		channel,
-		group,
-		requestID,
-		upstreamRequestID,
-	)
-}
-
-// SumUserVisibleQuotaForUser applies the self-list ownership and filters to
-// usage statistics without relying on a mutable username.
-func SumUserVisibleQuotaForUser(userID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, group string, requestID string, upstreamRequestID string) (stat Stat, err error) {
-	return sumUsedQuotaFromQuery(
-		userVisibleRequestLogs(LOG_DB.Table("logs")).Where("logs.user_id = ?", userID),
-		logType,
-		startTimestamp,
-		endTimestamp,
-		modelName,
-		"",
-		tokenName,
-		0,
 		group,
 		requestID,
 		upstreamRequestID,

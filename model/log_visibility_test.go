@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
+func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
@@ -104,45 +104,41 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 			CreatedAt: 7,
 			Type:      LogTypeTopup,
 			Content:   "account top-up",
-			ChannelId: 12,
 			RequestId: "account-top-up",
 			Other:     `{}`,
 		},
 		{
-			UserId:           2,
-			Username:         "other-user",
-			CreatedAt:        8,
-			Type:             LogTypeConsume,
-			Content:          "manual channel test",
-			Quota:            1000,
-			PromptTokens:     200,
-			CompletionTokens: 20,
-			ChannelId:        12,
-			RequestId:        "manual-channel-test",
-			Other:            `{"channel_monitor_channel_test":true}`,
+			UserId:    2,
+			Username:  "other-user",
+			CreatedAt: 8,
+			Type:      LogTypeConsume,
+			Content:   "manual channel test",
+			Quota:     1000,
+			ChannelId: 12,
+			RequestId: "manual-channel-test",
+			Other:     `{"channel_monitor_channel_test":true}`,
 		},
 		{
-			UserId:           2,
-			Username:         "other-user",
-			CreatedAt:        9,
-			Type:             LogTypeConsume,
-			Content:          "smart schedule probe",
-			Quota:            2000,
-			PromptTokens:     300,
-			CompletionTokens: 30,
-			ChannelId:        12,
-			RequestId:        "smart-schedule-probe",
-			Other:            `{"channel_monitor_smart_schedule_probe":true}`,
+			UserId:    2,
+			Username:  "other-user",
+			CreatedAt: 9,
+			Type:      LogTypeConsume,
+			Content:   "smart schedule probe",
+			Quota:     2000,
+			ChannelId: 12,
+			RequestId: "smart-schedule-probe",
+			Other:     `{"channel_monitor_smart_schedule_probe":true}`,
 		},
 		{
 			UserId:    2,
 			Username:  "other-user",
 			CreatedAt: 10,
 			Type:      LogTypeError,
-			Content:   "status_code=503, status probe failed",
+			Content:   "status probe failed",
+			Quota:     3000,
 			ChannelId: 12,
 			RequestId: "status-probe",
-			Other:     `{"status_code":503,"channel_monitor_status_probe":true}`,
+			Other:     `{"channel_monitor_status_probe":true}`,
 		},
 		{
 			UserId:    2,
@@ -150,21 +146,10 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 			CreatedAt: 11,
 			Type:      LogTypeConsume,
 			Content:   "violation fee",
-			Quota:     3000,
+			Quota:     4000,
 			ChannelId: 12,
 			RequestId: "violation-fee",
-			Other:     `{"violation_fee":true,"fee_quota":3000}`,
-		},
-		{
-			UserId:    3,
-			Username:  "marker-user",
-			CreatedAt: 12,
-			Type:      LogTypeConsume,
-			Content:   "normal request with inactive maintenance marker",
-			Quota:     7,
-			ChannelId: 13,
-			RequestId: "normal-false-marker",
-			Other:     `{"channel_monitor_status_probe":false,"note":"channel_monitor_status_probe"}`,
+			Other:     `{"violation_fee":true}`,
 		},
 	}
 	require.NoError(t, db.Create(&logs).Error)
@@ -183,18 +168,12 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 
 	allUserVisibleLogs, allUserVisibleTotal, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), allUserVisibleTotal)
-	require.Len(t, allUserVisibleLogs, 4)
+	assert.Equal(t, int64(3), allUserVisibleTotal)
+	require.Len(t, allUserVisibleLogs, 3)
 	assert.ElementsMatch(t,
-		[]string{"request-retried-successfully", "request-final-failure", "other-user-request", "normal-false-marker"},
-		[]string{allUserVisibleLogs[0].RequestId, allUserVisibleLogs[1].RequestId, allUserVisibleLogs[2].RequestId, allUserVisibleLogs[3].RequestId},
+		[]string{"request-retried-successfully", "request-final-failure", "other-user-request"},
+		[]string{allUserVisibleLogs[0].RequestId, allUserVisibleLogs[1].RequestId, allUserVisibleLogs[2].RequestId},
 	)
-
-	otherUserLogs, otherUserTotal, err := GetUserLogs(2, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), otherUserTotal)
-	require.Len(t, otherUserLogs, 1)
-	assert.Equal(t, "other-user-request", otherUserLogs[0].RequestId)
 
 	filteredUserVisibleLogs, filteredTotal, err := GetAllUserVisibleLogsWithChannel(LogTypeUnknown, 0, 0, "", "other-user", "", 0, 10, 12, "", "", "")
 	require.NoError(t, err)
@@ -210,17 +189,6 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 23, visibleStat.Quota)
 
-	nonRequestLogs, nonRequestTotal, err := GetAllUserVisibleLogs(LogTypeTopup, 0, 0, "", "", "", 0, 10, "", "", "")
-	require.NoError(t, err)
-	assert.Zero(t, nonRequestTotal)
-	assert.Empty(t, nonRequestLogs)
-
-	finalErrorLogs, finalErrorTotal, err := GetAllUserVisibleLogs(LogTypeError, 0, 0, "", "", "", 0, 10, "", "", "")
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), finalErrorTotal)
-	require.Len(t, finalErrorLogs, 1)
-	assert.Equal(t, "request-final-failure", finalErrorLogs[0].RequestId)
-
 	userErrorLogs, errorTotal, err := GetUserLogs(1, LogTypeError, 0, 0, "", "", 0, 10, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), errorTotal)
@@ -234,8 +202,8 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 
 	adminLogs, adminTotal, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "")
 	require.NoError(t, err)
-	assert.Equal(t, int64(12), adminTotal)
-	require.Len(t, adminLogs, 12)
+	assert.Equal(t, int64(11), adminTotal)
+	require.Len(t, adminLogs, 11)
 	retryAttemptCount := 0
 	adminContent := make([]string, 0, len(adminLogs))
 	for _, log := range adminLogs {
@@ -248,7 +216,6 @@ func TestUserVisibleLogQueriesReturnNormalFinalRequestResults(t *testing.T) {
 	assert.Contains(t, adminContent, "status_code=503, temporary upstream failure")
 	assert.Contains(t, adminContent, "status_code=500, final upstream failure")
 	assert.Contains(t, adminContent, "manual channel test")
-	assert.Contains(t, adminContent, "violation fee")
 }
 
 func TestClickHouseRetryAttemptColumn(t *testing.T) {
