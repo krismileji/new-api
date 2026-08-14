@@ -77,7 +77,7 @@ func TestChannelModelDetectionScheduleUsesIANAWallClockAndSkipsCatchUp(t *testin
 	assert.Equal(t, time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC), following)
 }
 
-func TestNextChannelModelDetectionScheduleMinutesUsesWholeMinuteIntervals(t *testing.T) {
+func TestNextChannelModelDetectionScheduleMinutesAlignsToIntervalBoundaries(t *testing.T) {
 	base := time.Date(2026, time.August, 13, 2, 30, 37, 0, time.UTC)
 	scheduled, next, err := NextChannelModelDetectionScheduleMinutes(
 		base, 15, time.Date(2026, time.August, 13, 3, 2, 59, 0, time.UTC),
@@ -89,6 +89,15 @@ func TestNextChannelModelDetectionScheduleMinutesUsesWholeMinuteIntervals(t *tes
 	_, next, err = NextChannelModelDetectionScheduleMinutes(base, 15, base.Add(5*time.Minute))
 	require.NoError(t, err)
 	assert.Equal(t, base.Truncate(time.Minute).Add(15*time.Minute), next)
+
+	scheduled, next, err = NextChannelModelDetectionScheduleMinutes(
+		time.Date(2026, time.August, 13, 10, 23, 0, 0, time.UTC),
+		60,
+		time.Date(2026, time.August, 13, 10, 30, 0, 0, time.UTC),
+	)
+	require.NoError(t, err)
+	assert.True(t, scheduled.IsZero())
+	assert.Equal(t, time.Date(2026, time.August, 13, 11, 0, 0, 0, time.UTC), next)
 
 	_, _, err = NextChannelModelDetectionScheduleMinutes(base, model.ChannelModelDetectionMinIntervalMinutes-1, base)
 	assert.ErrorIs(t, err, ErrChannelModelDetectionScheduleInvalid)
@@ -129,7 +138,7 @@ func TestChannelModelDetectionScheduleCreatesFrozenRunsAndSkipsManualDisabled(t 
 
 func TestChannelModelDetectionScheduleLeaseAndUniqueBatchPreventDuplicateCreation(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
-	now := time.Date(2026, time.August, 13, 2, 30, 0, 0, time.UTC)
+	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
 	seedChannelModelDetectionSchedule(t, db, 201, common.ChannelStatusEnabled, model.ChannelModelDetectionPresetLow, now.Unix())
 
 	results := make(chan ChannelModelDetectionScheduleResult, 2)
@@ -161,7 +170,7 @@ func TestChannelModelDetectionScheduleLeaseAndUniqueBatchPreventDuplicateCreatio
 
 func TestChannelModelDetectionScheduleBacklogAdvancesWithoutCreatingBatch(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
-	now := time.Date(2026, time.August, 13, 2, 30, 0, 0, time.UTC)
+	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
 	global := seedChannelModelDetectionSchedule(t, db, 301, common.ChannelStatusEnabled, model.ChannelModelDetectionPresetMedium, now.Unix())
 	require.NoError(t, db.Create(&model.ChannelModelDetectionRun{
 		ChannelId: 999, ConfigRevision: 1, GlobalConfigRevision: global.Revision,
@@ -207,7 +216,7 @@ func TestChannelModelDetectionScheduleManualPresetIsIndependentAndDoesNotMoveNex
 
 func TestChannelModelDetectionScheduledHighConfirmationGatesBatchCreation(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
-	now := time.Date(2026, time.August, 13, 11, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
 	global := seedChannelModelDetectionSchedule(t, db, 501, common.ChannelStatusEnabled, model.ChannelModelDetectionPresetMedium, now.Unix())
 	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).Where("id = ?", global.Id).
 		Updates(map[string]any{

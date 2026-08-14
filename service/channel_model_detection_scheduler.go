@@ -95,11 +95,30 @@ func NextChannelModelDetectionSchedule(anchor time.Time, intervalHours int, now 
 	return NextChannelModelDetectionScheduleInTimezone(anchor, intervalHours, now, "UTC")
 }
 
+func nextChannelModelDetectionIntervalBoundary(after time.Time, intervalMinutes int) (time.Time, error) {
+	if intervalMinutes < model.ChannelModelDetectionMinIntervalMinutes || intervalMinutes > model.ChannelModelDetectionMaxIntervalMinutes {
+		return time.Time{}, ErrChannelModelDetectionScheduleInvalid
+	}
+	intervalSeconds := int64(intervalMinutes) * int64(time.Minute/time.Second)
+	timestamp := after.UTC().Unix()
+	if timestamp < 0 {
+		return time.Time{}, ErrChannelModelDetectionScheduleInvalid
+	}
+	return time.Unix(timestamp-timestamp%intervalSeconds+intervalSeconds, 0).UTC(), nil
+}
+
 func NextChannelModelDetectionScheduleMinutes(nextRunAt time.Time, intervalMinutes int, now time.Time) (scheduledFor time.Time, next time.Time, err error) {
 	if nextRunAt.IsZero() || intervalMinutes < model.ChannelModelDetectionMinIntervalMinutes || intervalMinutes > model.ChannelModelDetectionMaxIntervalMinutes {
 		return time.Time{}, time.Time{}, ErrChannelModelDetectionScheduleInvalid
 	}
-	nextRunAt = nextRunAt.UTC().Truncate(time.Minute)
+	intervalSeconds := int64(intervalMinutes) * int64(time.Minute/time.Second)
+	nextRunAt = nextRunAt.UTC().Truncate(time.Second)
+	if nextRunAt.Unix()%intervalSeconds != 0 {
+		nextRunAt, err = nextChannelModelDetectionIntervalBoundary(nextRunAt, intervalMinutes)
+		if err != nil {
+			return time.Time{}, time.Time{}, err
+		}
+	}
 	now = now.UTC()
 	if now.Before(nextRunAt) {
 		return time.Time{}, nextRunAt, nil

@@ -224,8 +224,11 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		if !candidate.ScheduleEnabled {
 			candidate.ScheduleAnchorAt = 0
 			candidate.NextBatchAt = 0
-		} else if scheduleChanged || current.NextBatchAt <= 0 {
-			next := now.UTC().Truncate(time.Minute).Add(time.Duration(candidate.IntervalMinutes) * time.Minute)
+		} else if scheduleChanged || current.NextBatchAt <= 0 || current.NextBatchAt%(int64(candidate.IntervalMinutes)*int64(time.Minute/time.Second)) != 0 {
+			next, err := nextChannelModelDetectionIntervalBoundary(now, candidate.IntervalMinutes)
+			if err != nil {
+				return err
+			}
 			candidate.ScheduleAnchorAt = 0
 			candidate.NextBatchAt = next.Unix()
 		}

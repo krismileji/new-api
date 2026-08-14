@@ -294,6 +294,14 @@ type ChannelStatusProbeClaim struct {
 	LeaseToken      string
 }
 
+func nextChannelStatusProbeRunAt(after int64, intervalSeconds int) int64 {
+	interval := int64(intervalSeconds)
+	if after < 0 || interval <= 0 {
+		return 0
+	}
+	return after - after%interval + interval
+}
+
 func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigInput, now int64) (ChannelStatusProbeConfig, error) {
 	modelsJSON, err := common.Marshal(input.Models)
 	if err != nil {
@@ -310,7 +318,7 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 			}
 			nextRunAt := int64(0)
 			if input.Enabled {
-				nextRunAt = now + int64(input.IntervalSeconds) + int64(channelId%11)
+				nextRunAt = nextChannelStatusProbeRunAt(now, input.IntervalSeconds)
 			}
 			saved = ChannelStatusProbeConfig{
 				ChannelId: channelId, Enabled: input.Enabled, ModelsJSON: string(modelsJSON),
@@ -333,8 +341,8 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 			configurationChanged := current.ModelsJSON != string(modelsJSON) || current.IntervalSeconds != input.IntervalSeconds
 			if !input.Enabled {
 				nextRunAt = 0
-			} else if !current.Enabled || configurationChanged || nextRunAt <= 0 {
-				nextRunAt = now + int64(input.IntervalSeconds) + int64(channelId%11)
+			} else if !current.Enabled || configurationChanged || nextRunAt <= 0 || input.IntervalSeconds <= 0 || nextRunAt%int64(input.IntervalSeconds) != 0 {
+				nextRunAt = nextChannelStatusProbeRunAt(now, input.IntervalSeconds)
 			}
 			updates := map[string]any{
 				"enabled": input.Enabled, "models_json": string(modelsJSON),
@@ -470,7 +478,7 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 			"updated_at": now,
 		}
 		if trigger == ChannelStatusProbeTriggerScheduled {
-			claimUpdates["next_run_at"] = candidate.NextRunAt + int64(candidate.IntervalSeconds)
+			claimUpdates["next_run_at"] = nextChannelStatusProbeRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
 		}
 		claimed := claimQuery.Updates(claimUpdates)
 		if claimed.Error != nil {
@@ -501,7 +509,7 @@ func markOverdueChannelStatusProbe(config ChannelStatusProbeConfig, models []str
 		return nil
 	}
 	dueAt := config.NextRunAt
-	nextRunAt := dueAt + int64(config.IntervalSeconds)
+	nextRunAt := nextChannelStatusProbeRunAt(dueAt, config.IntervalSeconds)
 	updated := DB.Model(&ChannelStatusProbeConfig{}).
 		Where("id = ? AND running_run_id = ? AND next_run_at = ?", config.Id, config.RunningRunId, dueAt).
 		Update("next_run_at", nextRunAt)
@@ -552,7 +560,7 @@ func CompleteChannelStatusProbeClaim(claim ChannelStatusProbeClaim, finishedAt i
 			nextRunAt = current.NextRunAt
 		}
 		if nextRunAt <= 0 {
-			nextRunAt = finishedAt + int64(claim.Config.IntervalSeconds)
+			nextRunAt = nextChannelStatusProbeRunAt(finishedAt, claim.Config.IntervalSeconds)
 		}
 		updates["next_run_at"] = nextRunAt
 	} else {

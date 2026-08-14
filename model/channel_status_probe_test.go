@@ -45,7 +45,7 @@ func TestSaveChannelStatusProbeConfigRejectsStaleRevision(t *testing.T) {
 	}, 1_000)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, created.Revision)
-	assert.EqualValues(t, 1_061, created.NextRunAt)
+	assert.EqualValues(t, 1_020, created.NextRunAt)
 	assert.Equal(t, ChannelStatusProbeDefaultDisplayValue, created.DisplayValue)
 	assert.Equal(t, ChannelStatusProbeDefaultDisplayUnit, created.DisplayUnit)
 
@@ -61,6 +61,27 @@ func TestSaveChannelStatusProbeConfigRejectsStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gpt-4.1"}, models)
 	assert.Equal(t, 60, stored.IntervalSeconds)
+}
+
+func TestSaveChannelStatusProbeConfigAlignsAutomaticRunsToIntervalBoundaries(t *testing.T) {
+	setupChannelStatusProbeModelTestDB(t)
+	now := time.Date(2026, time.August, 15, 10, 23, 17, 0, time.UTC)
+	tests := []struct {
+		channelID       int
+		intervalSeconds int
+		expected        time.Time
+	}{
+		{channelID: 1, intervalSeconds: 30, expected: time.Date(2026, time.August, 15, 10, 23, 30, 0, time.UTC)},
+		{channelID: 2, intervalSeconds: 300, expected: time.Date(2026, time.August, 15, 10, 25, 0, 0, time.UTC)},
+		{channelID: 3, intervalSeconds: 3600, expected: time.Date(2026, time.August, 15, 11, 0, 0, 0, time.UTC)},
+	}
+	for _, test := range tests {
+		created, err := SaveChannelStatusProbeConfig(test.channelID, ChannelStatusProbeConfigInput{
+			Enabled: true, Models: []string{"model-a"}, IntervalSeconds: test.intervalSeconds,
+		}, now.Unix())
+		require.NoError(t, err)
+		assert.Equal(t, test.expected.Unix(), created.NextRunAt)
+	}
 }
 
 func TestSaveChannelStatusProbeConfigRemovesOnlyUnconfiguredModelStates(t *testing.T) {
@@ -233,6 +254,26 @@ func TestScheduledStatusProbeMarksOverdueTickWithoutCancelingRunningRequest(t *t
 	require.NoError(t, err)
 	assert.Empty(t, completed.RunningRunId)
 	assert.Equal(t, stillRunning.NextRunAt, completed.NextRunAt)
+}
+
+func TestScheduledStatusProbeRealignsLegacyRunTimeAfterClaim(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	created, err := SaveChannelStatusProbeConfig(10, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-a"}, IntervalSeconds: 60,
+	}, 1_000)
+	require.NoError(t, err)
+	legacyNextRunAt := created.NextRunAt + 1
+	require.NoError(t, db.Model(&ChannelStatusProbeConfig{}).
+		Where("id = ?", created.Id).
+		Update("next_run_at", legacyNextRunAt).Error)
+
+	claims, err := ClaimDueChannelStatusProbes(legacyNextRunAt, 1)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+
+	stored, err := GetChannelStatusProbeConfig(10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1_080, stored.NextRunAt)
 }
 
 func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *testing.T) {

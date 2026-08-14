@@ -86,6 +86,21 @@ func TestUpdateChannelModelDetectionSettingsUsesRevisionAndHighConfirmation(t *t
 	assert.ErrorIs(t, err, ErrChannelModelDetectionSettingsConflict)
 }
 
+func TestUpdateChannelModelDetectionSettingsAlignsNextBatchToIntervalBoundary(t *testing.T) {
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
+	now := time.Date(2026, time.August, 15, 10, 23, 47, 0, time.UTC)
+
+	updated, err := UpdateChannelModelDetectionSettings(context.Background(), db, ChannelModelDetectionSettingsUpdate{
+		ScheduledPreset:  model.ChannelModelDetectionPresetMedium,
+		ScheduleEnabled:  true,
+		IntervalMinutes:  60,
+		ExpectedRevision: seed.Revision,
+	}, now)
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, time.August, 15, 11, 0, 0, 0, time.UTC).Unix(), updated.NextBatchAt)
+}
+
 func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *testing.T) {
 	db := setupChannelModelDetectionSettingsTestDB(t)
 	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
