@@ -331,6 +331,8 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	requestIP := c.ClientIP()
+	other = attachAdminRequestIP(other, requestIP)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -358,7 +360,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		Group:            group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return requestIP
 			}
 			return ""
 		}(),
@@ -396,6 +398,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	requestIP := c.ClientIP()
+	params.Other = attachAdminRequestIP(params.Other, requestIP)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -422,7 +426,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Group:            params.Group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return requestIP
 			}
 			return ""
 		}(),
@@ -602,6 +606,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			logs[i].ChannelName = channelMap[logs[i].ChannelId]
 		}
 	}
+	exposeAdminRequestIPs(logs)
 
 	return logs, total, err
 }
