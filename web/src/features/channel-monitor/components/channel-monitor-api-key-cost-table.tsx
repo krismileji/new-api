@@ -122,8 +122,8 @@ export function ChannelMonitorAPIKeyCostTable(
   props: ChannelMonitorAPIKeyCostTableProps
 ) {
   const [sort, setSort] = useState<APIKeyCostSort>({
-    key: 'api_key_name',
-    direction: 'asc',
+    key: 'cost_cny',
+    direction: 'desc',
   })
   const costItems = useMemo(
     () =>

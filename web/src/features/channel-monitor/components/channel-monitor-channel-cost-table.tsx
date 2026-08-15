@@ -35,7 +35,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import {
   formatChannelMonitorCost,
@@ -67,7 +66,7 @@ type ChannelCostSortKey =
 type ChannelCostSort = {
   key: ChannelCostSortKey
   direction: ChannelMonitorSortDirection
-} | null
+}
 
 function getResolutionRate(item: ChannelMonitorCostChannel) {
   const total = item.settled_count + item.unresolved_count
@@ -77,7 +76,7 @@ function getResolutionRate(item: ChannelMonitorCostChannel) {
 function compareChannelCostItems(
   first: ChannelMonitorCostChannel,
   second: ChannelMonitorCostChannel,
-  sort: Exclude<ChannelCostSort, null>
+  sort: ChannelCostSort
 ) {
   if (sort.key === 'channel_name') {
     const nameOrder = first.channel_name.localeCompare(second.channel_name)
@@ -109,7 +108,7 @@ function compareChannelCostItems(
 function toggleChannelCostSort(
   current: ChannelCostSort,
   key: ChannelCostSortKey
-): Exclude<ChannelCostSort, null> {
+): ChannelCostSort {
   return {
     key,
     direction:
@@ -120,41 +119,20 @@ function toggleChannelCostSort(
 export function ChannelMonitorChannelCostTable(
   props: ChannelMonitorChannelCostTableProps
 ) {
-  const [sort, setSort] = useState<ChannelCostSort>(null)
+  const [sort, setSort] = useState<ChannelCostSort>({
+    key: 'cost_cny',
+    direction: 'desc',
+  })
   const orderedItems = useMemo(() => {
     const items = props.items.filter(
       (item) => item.settled_count > 0 || item.unresolved_count > 0
     )
     return items.sort((first, second) => {
-      if (sort) return compareChannelCostItems(first, second, sort)
-      const firstEnabled = first.status === CHANNEL_STATUS.ENABLED
-      const secondEnabled = second.status === CHANNEL_STATUS.ENABLED
-      if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
-
-      const firstRatio =
-        first.cost_ratio != null && Number.isFinite(first.cost_ratio)
-          ? first.cost_ratio
-          : null
-      const secondRatio =
-        second.cost_ratio != null && Number.isFinite(second.cost_ratio)
-          ? second.cost_ratio
-          : null
-      if (firstRatio == null && secondRatio != null) return 1
-      if (firstRatio != null && secondRatio == null) return -1
-      if (
-        firstRatio != null &&
-        secondRatio != null &&
-        firstRatio !== secondRatio
-      ) {
-        return firstRatio - secondRatio
-      }
-
-      const nameOrder = first.channel_name.localeCompare(second.channel_name)
-      return nameOrder !== 0 ? nameOrder : first.channel_id - second.channel_id
+      return compareChannelCostItems(first, second, sort)
     })
   }, [props.items, sort])
   const sortDirection = (key: ChannelCostSortKey) =>
-    sort?.key === key ? sort.direction : undefined
+    sort.key === key ? sort.direction : undefined
 
   if (orderedItems.length === 0) {
     return (

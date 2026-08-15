@@ -62,7 +62,7 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
       variant='ghost'
       size='sm'
       className={cn(
-        'w-full',
+        'h-auto min-h-7 w-full py-1 whitespace-normal',
         props.align === 'right'
           ? 'justify-end text-right'
           : 'justify-start text-left',
@@ -71,7 +71,7 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
       aria-label={`按${String(props.label)}排序（当前${directionLabel}）`}
       onClick={props.onSort}
     >
-      <span className='min-w-0 truncate'>{props.label}</span>
+      <span className='min-w-0 text-wrap break-words'>{props.label}</span>
       <HugeiconsIcon
         icon={sortIcon}
         className='text-muted-foreground'

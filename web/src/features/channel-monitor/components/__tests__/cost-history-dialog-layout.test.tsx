@@ -212,7 +212,7 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('未解析'))
   })
 
-  test('orders cost channels by enabled status and then ascending ratio', () => {
+  test('orders cost channels by today cost descending by default', () => {
     const overview = createOverview()
     overview.channels = [
       {
@@ -221,7 +221,7 @@ describe('channel monitor cost history dialog layout', () => {
         channel_remark: '禁用备注',
         status: 2,
         cost_ratio: 2,
-        cost_cny: 1,
+        cost_cny: 4,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -231,7 +231,7 @@ describe('channel monitor cost history dialog layout', () => {
         channel_remark: '启用高倍率备注',
         status: 1,
         cost_ratio: 1.5,
-        cost_cny: 1,
+        cost_cny: 3,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -241,7 +241,7 @@ describe('channel monitor cost history dialog layout', () => {
         channel_remark: '启用低倍率备注',
         status: 1,
         cost_ratio: 0.2,
-        cost_cny: 1,
+        cost_cny: 2,
         settled_count: 1,
         unresolved_count: 0,
       },
@@ -265,10 +265,10 @@ describe('channel monitor cost history dialog layout', () => {
     )
 
     const orderedNames = [
-      '启用低倍率',
-      '启用高倍率',
-      '禁用低倍率',
       '禁用高倍率',
+      '启用高倍率',
+      '启用低倍率',
+      '禁用低倍率',
     ]
     let previousIndex = -1
     for (const name of orderedNames) {

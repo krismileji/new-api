@@ -27,6 +27,7 @@ import type {
   ChannelMonitorSuccessSummary,
   ChannelMonitorTodaySuccessResult,
 } from '../../types'
+import { ChannelMonitorSuccessAPIKeyTable } from '../channel-monitor-success-api-key-table'
 import { ChannelMonitorTodaySuccessCard } from '../channel-monitor-today-success-card'
 import { ChannelMonitorTodaySuccessDialogContent } from '../channel-monitor-today-success-dialog'
 
@@ -340,41 +341,45 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('缓存写渠道 -，缓存写请求 -'))
   })
 
-  test('shows channel metadata and orders enabled channels by ascending cost ratio', () => {
+  test('shows channel metadata and orders channels by ascending cost ratio', () => {
     const markup = renderDialogContent()
     const tables = getTables(markup)
     const channelCells = getTableCells(tables[0] ?? '')
 
-    assert.equal(tables.length, 2)
+    assert.equal(tables.length, 1)
+    assert.ok(markup.includes('渠道明细'))
+    assert.ok(markup.includes('API Key 明细'))
     assert.ok((tables[0] ?? '').includes('备注'))
     assert.ok((tables[0] ?? '').includes('成本倍率'))
+    assert.ok((tables[0] ?? '').includes('成功率'))
+    assert.ok((tables[0] ?? '').includes('缓存利用率'))
     assert.ok((tables[0] ?? '').includes('写入请求数'))
     assert.ok(markup.includes('按成功率排序'))
     assert.ok(markup.includes('按缓存利用率排序'))
     assert.ok(markup.includes('按写入请求数排序'))
     assert.equal(channelCells.length, 21)
 
-    assert.ok(channelCells[0]?.includes('渠道三'))
-    assert.ok(channelCells[0]?.includes('ID 9'))
-    assert.ok(channelCells[1]?.includes('低倍率线路'))
-    assert.ok(channelCells[2]?.includes('0.5'))
-    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '0')
+    assert.ok(channelCells[0]?.includes('渠道一'))
+    assert.ok(channelCells[0]?.includes('ID 7'))
+    assert.ok(channelCells[0]?.includes('手动禁用'))
+    assert.ok(channelCells[1]?.includes('主线路'))
+    assert.ok(channelCells[2]?.includes('0.2'))
+    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '4')
 
-    assert.ok(channelCells[7]?.includes('渠道二'))
-    assert.ok(channelCells[7]?.includes('ID 8'))
-    assert.match(channelCells[8] ?? '', />-<\/span><\/td>/)
-    assert.ok(channelCells[9]?.includes('1.5'))
-    assert.ok(channelCells[11]?.includes('100%'))
-    assert.ok(channelCells[12]?.includes('50%'))
-    assert.ok(channelCells[12]?.includes('text-foreground'))
-    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '3')
+    assert.ok(channelCells[7]?.includes('渠道三'))
+    assert.ok(channelCells[7]?.includes('ID 9'))
+    assert.ok(channelCells[8]?.includes('低倍率线路'))
+    assert.ok(channelCells[9]?.includes('0.5'))
+    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '0')
 
-    assert.ok(channelCells[14]?.includes('渠道一'))
-    assert.ok(channelCells[14]?.includes('ID 7'))
-    assert.ok(channelCells[14]?.includes('手动禁用'))
-    assert.ok(channelCells[15]?.includes('主线路'))
-    assert.ok(channelCells[16]?.includes('0.2'))
-    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '4')
+    assert.ok(channelCells[14]?.includes('渠道二'))
+    assert.ok(channelCells[14]?.includes('ID 8'))
+    assert.match(channelCells[15] ?? '', />-<\/span><\/td>/)
+    assert.ok(channelCells[16]?.includes('1.5'))
+    assert.ok(channelCells[18]?.includes('100%'))
+    assert.ok(channelCells[19]?.includes('50%'))
+    assert.ok(channelCells[19]?.includes('text-foreground'))
+    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '3')
   })
 
   test('fits the channel detail table inside the dialog without horizontal scrolling', () => {
@@ -406,10 +411,8 @@ describe('channel monitor today success overview', () => {
       markup,
       /data-slot="today-success-channel-details"[^>]*class="[^"]*shrink-0/
     )
-    assert.match(
-      markup,
-      /data-slot="channel-monitor-success-api-key-details"[^>]*class="[^"]*shrink-0/
-    )
+    assert.ok(markup.includes('role="tablist"'))
+    assert.ok(markup.includes('API Key 明细'))
   })
 
   test('merges cache-write totals and per-channel counts into success details', () => {
@@ -421,11 +424,11 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('缓存写渠道'))
     assert.ok(markup.includes('2 个'))
     assert.ok(markup.includes('7 次'))
-    assert.equal(tables.length, 2)
+    assert.equal(tables.length, 1)
     assert.ok((tables[0] ?? '').includes('写入请求数'))
-    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '0')
-    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '3')
-    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '4')
+    assert.equal(channelCells[6]?.replaceAll(/<[^>]+>/g, ''), '4')
+    assert.equal(channelCells[13]?.replaceAll(/<[^>]+>/g, ''), '0')
+    assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '3')
     assert.equal(markup.includes('缓存写渠道明细'), false)
     assert.equal(markup.includes('today-cache-write-details'), false)
   })
@@ -443,9 +446,11 @@ describe('channel monitor today success overview', () => {
     assert.match(channelCells[20] ?? '', />-<\/td>/)
   })
 
-  test('orders API Keys by success rate then cache utilization descending', () => {
-    const markup = renderDialogContent()
-    const apiKeyCells = getTableCells(getTables(markup)[1] ?? '')
+  test('keeps API Key details available from the separate tab', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSuccessAPIKeyTable items={createResult().api_key_items} />
+    )
+    const apiKeyCells = getTableCells(getTables(markup)[0] ?? '')
 
     assert.equal(apiKeyCells.length, 12)
     assert.ok(apiKeyCells[0]?.includes('高缓存利用率 Key'))

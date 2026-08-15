@@ -49,7 +49,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -105,7 +105,7 @@ type TodayChannelSortKey =
 type TodayChannelSort = {
   key: TodayChannelSortKey
   direction: ChannelMonitorSortDirection
-} | null
+}
 
 export type ChannelMonitorTodaySuccessDialogContentProps = {
   result: ChannelMonitorTodaySuccessResult | undefined
@@ -168,7 +168,7 @@ function getTodayChannelSortValue(
 function compareTodayChannels(
   first: Parameters<typeof getTodayChannelSortValue>[0],
   second: Parameters<typeof getTodayChannelSortValue>[0],
-  sort: Exclude<TodayChannelSort, null>
+  sort: TodayChannelSort
 ) {
   const firstValue = getTodayChannelSortValue(first, sort.key)
   const secondValue = getTodayChannelSortValue(second, sort.key)
@@ -193,7 +193,7 @@ function compareTodayChannels(
 function toggleTodayChannelSort(
   current: TodayChannelSort,
   key: TodayChannelSortKey
-): Exclude<TodayChannelSort, null> {
+): TodayChannelSort {
   return {
     key,
     direction:
@@ -298,7 +298,10 @@ export function ChannelMonitorTodaySuccessDialogContent(
 ) {
   const result = props.result
   const summary = result?.summary
-  const [sort, setSort] = useState<TodayChannelSort>(null)
+  const [sort, setSort] = useState<TodayChannelSort>({
+    key: 'cost_ratio',
+    direction: 'asc',
+  })
   const cacheWriteMetrics = useMemo(() => {
     const requestCountByChannelId = new Map<number, number>()
     const items = result?.cache_write_items ?? []
@@ -327,43 +330,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
         cacheWriteMetrics.requestCountByChannelId.get(metric.channel_id) ?? 0,
     }))
     return rows.sort((first, second) => {
-      if (sort) return compareTodayChannels(first, second, sort)
-      const firstEnabled = first.channel?.status === CHANNEL_STATUS.ENABLED
-      const secondEnabled = second.channel?.status === CHANNEL_STATUS.ENABLED
-      if (firstEnabled !== secondEnabled) return firstEnabled ? -1 : 1
-
-      const firstRatio =
-        first.channel?.cost_ratio != null &&
-        Number.isFinite(first.channel.cost_ratio)
-          ? first.channel.cost_ratio
-          : null
-      const secondRatio =
-        second.channel?.cost_ratio != null &&
-        Number.isFinite(second.channel.cost_ratio)
-          ? second.channel.cost_ratio
-          : null
-      if (firstRatio == null && secondRatio != null) return 1
-      if (firstRatio != null && secondRatio == null) return -1
-      if (
-        firstRatio != null &&
-        secondRatio != null &&
-        firstRatio !== secondRatio
-      ) {
-        return firstRatio - secondRatio
-      }
-
-      const firstName =
-        first.channel?.name ||
-        first.metric.channel_name ||
-        `渠道 #${first.metric.channel_id}`
-      const secondName =
-        second.channel?.name ||
-        second.metric.channel_name ||
-        `渠道 #${second.metric.channel_id}`
-      const nameOrder = firstName.localeCompare(secondName)
-      return nameOrder !== 0
-        ? nameOrder
-        : first.metric.channel_id - second.metric.channel_id
+      return compareTodayChannels(first, second, sort)
     })
   }, [
     cacheWriteMetrics.requestCountByChannelId,
@@ -372,7 +339,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
     sort,
   ])
   const sortDirection = (key: TodayChannelSortKey) =>
-    sort?.key === key ? sort.direction : undefined
+    sort.key === key ? sort.direction : undefined
 
   if (props.isLoading) {
     return (
@@ -458,186 +425,200 @@ export function ChannelMonitorTodaySuccessDialogContent(
         cacheWriteChannelCount={cacheWriteMetrics.channelCount}
         cacheWriteRequestCount={cacheWriteMetrics.requestCount}
       />
-      <div
-        data-slot='today-success-channel-details'
-        className='flex shrink-0 flex-col gap-2'
-      >
-        <h3 className='font-medium'>渠道明细</h3>
-        <div className='rounded-lg border'>
-          <Table className='w-full table-fixed'>
-            <TableHeader>
-              <TableRow>
-                <ChannelMonitorSortableTableHead
-                  label='渠道'
-                  className='w-[19%]'
-                  direction={sortDirection('channel_name')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(current, 'channel_name')
-                    )
-                  }
-                />
-                <TableHead className='w-[22%] whitespace-normal'>
-                  备注
-                </TableHead>
-                <ChannelMonitorSortableTableHead
-                  label='成本倍率'
-                  align='right'
-                  className='w-[11%]'
-                  direction={sortDirection('cost_ratio')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(current, 'cost_ratio')
-                    )
-                  }
-                />
-                <ChannelMonitorSortableTableHead
-                  label='请求数'
-                  align='right'
-                  className='w-[11%]'
-                  direction={sortDirection('actual_sample_count')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(current, 'actual_sample_count')
-                    )
-                  }
-                />
-                <ChannelMonitorSortableTableHead
-                  label='成功率'
-                  align='right'
-                  className='w-[12%]'
-                  direction={sortDirection('actual_success_rate')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(current, 'actual_success_rate')
-                    )
-                  }
-                />
-                <ChannelMonitorSortableTableHead
-                  label='缓存利用率'
-                  align='right'
-                  className='w-[12%]'
-                  direction={sortDirection('cache_utilization_rate')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(current, 'cache_utilization_rate')
-                    )
-                  }
-                />
-                <ChannelMonitorSortableTableHead
-                  label='写入请求数'
-                  align='right'
-                  className='w-[13%]'
-                  direction={sortDirection('cache_write_request_count')}
-                  onSort={() =>
-                    setSort((current) =>
-                      toggleTodayChannelSort(
-                        current,
-                        'cache_write_request_count'
+      <Tabs defaultValue='channels' className='min-h-0 shrink-0'>
+        <TabsList className='grid w-full grid-cols-2 sm:w-fit'>
+          <TabsTrigger value='channels'>渠道明细</TabsTrigger>
+          <TabsTrigger value='api-keys'>API Key 明细</TabsTrigger>
+        </TabsList>
+        <TabsContent
+          value='channels'
+          data-slot='today-success-channel-details'
+          className='mt-2 flex shrink-0 flex-col gap-2'
+        >
+          <h3 className='sr-only'>渠道明细</h3>
+          <div className='rounded-lg border'>
+            <Table className='w-full table-fixed'>
+              <TableHeader>
+                <TableRow>
+                  <ChannelMonitorSortableTableHead
+                    label='渠道'
+                    className='w-[19%]'
+                    direction={sortDirection('channel_name')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(current, 'channel_name')
                       )
-                    )
-                  }
-                />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {channelRows.map((row) => {
-                const item = row.metric
-                const channelName =
-                  row.channel?.name ||
-                  item.channel_name ||
-                  `渠道 #${item.channel_id}`
-                const channelRemark = row.channel
-                  ? row.channel.channel_remark
-                  : item.channel_remark
-                const successRateClassName =
-                  item.actual_sample_count > 0
-                    ? getRateClassName(item.actual_success_rate)
-                    : 'text-muted-foreground'
-                const cacheUtilizationClassName =
-                  item.input_tokens > 0
-                    ? 'text-foreground'
-                    : 'text-muted-foreground'
-                return (
-                  <TableRow key={item.channel_id}>
-                    <TableCell className='min-w-0 whitespace-normal'>
-                      <div className='flex min-w-0 flex-col gap-1'>
-                        <div className='flex min-w-0 flex-wrap items-center gap-2'>
-                          <span className='min-w-0 font-medium break-words'>
-                            {channelName}
+                    }
+                  />
+                  <TableHead className='w-[22%] whitespace-normal'>
+                    备注
+                  </TableHead>
+                  <ChannelMonitorSortableTableHead
+                    label='成本倍率'
+                    align='right'
+                    className='w-[11%]'
+                    direction={sortDirection('cost_ratio')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(current, 'cost_ratio')
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortableTableHead
+                    label='请求数'
+                    align='right'
+                    className='w-[11%]'
+                    direction={sortDirection('actual_sample_count')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(current, 'actual_sample_count')
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortableTableHead
+                    label='成功率'
+                    align='right'
+                    className='w-[12%]'
+                    direction={sortDirection('actual_success_rate')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(current, 'actual_success_rate')
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortableTableHead
+                    label='缓存利用率'
+                    align='right'
+                    className='w-[12%]'
+                    direction={sortDirection('cache_utilization_rate')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(
+                          current,
+                          'cache_utilization_rate'
+                        )
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortableTableHead
+                    label='写入请求数'
+                    align='right'
+                    className='w-[13%]'
+                    direction={sortDirection('cache_write_request_count')}
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleTodayChannelSort(
+                          current,
+                          'cache_write_request_count'
+                        )
+                      )
+                    }
+                  />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {channelRows.map((row) => {
+                  const item = row.metric
+                  const channelName =
+                    row.channel?.name ||
+                    item.channel_name ||
+                    `渠道 #${item.channel_id}`
+                  const channelRemark = row.channel
+                    ? row.channel.channel_remark
+                    : item.channel_remark
+                  const successRateClassName =
+                    item.actual_sample_count > 0
+                      ? getRateClassName(item.actual_success_rate)
+                      : 'text-muted-foreground'
+                  const cacheUtilizationClassName =
+                    item.input_tokens > 0
+                      ? 'text-foreground'
+                      : 'text-muted-foreground'
+                  return (
+                    <TableRow key={item.channel_id}>
+                      <TableCell className='min-w-0 whitespace-normal'>
+                        <div className='flex min-w-0 flex-col gap-1'>
+                          <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                            <span className='min-w-0 font-medium break-words'>
+                              {channelName}
+                            </span>
+                            {row.channel ? (
+                              <ChannelMonitorStatusBadge
+                                status={row.channel.status}
+                                reason={row.channel.status_reason}
+                                className='shrink-0'
+                              />
+                            ) : null}
+                          </div>
+                          <span className='text-muted-foreground text-xs'>
+                            ID {item.channel_id}
                           </span>
-                          {row.channel ? (
-                            <ChannelMonitorStatusBadge
-                              status={row.channel.status}
-                              reason={row.channel.status_reason}
-                              className='shrink-0'
-                            />
-                          ) : null}
                         </div>
-                        <span className='text-muted-foreground text-xs'>
-                          ID {item.channel_id}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className='max-w-72 whitespace-normal'>
-                      {channelRemark ? (
-                        <span
-                          className='text-muted-foreground text-sm break-words'
-                          title={channelRemark}
-                        >
-                          {channelRemark}
-                        </span>
-                      ) : (
-                        <span className='text-muted-foreground'>-</span>
-                      )}
-                    </TableCell>
-                    <TableCell className='text-right font-mono font-medium tabular-nums'>
-                      {formatMonitorRatio(row.channel?.cost_ratio)}
-                    </TableCell>
-                    <TableCell className='text-right font-mono tabular-nums'>
-                      {item.actual_sample_count}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        'text-right font-mono font-semibold tabular-nums',
-                        successRateClassName
-                      )}
-                    >
-                      {formatRate(
-                        item.actual_success_rate,
-                        item.actual_sample_count
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        'text-right font-mono font-semibold tabular-nums',
-                        cacheUtilizationClassName
-                      )}
-                    >
-                      {formatRate(
-                        item.cache_utilization_rate,
-                        item.input_tokens
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        'text-right font-mono font-medium tabular-nums',
-                        !result.cache_write_metrics_available &&
-                          'text-muted-foreground'
-                      )}
-                    >
-                      {result.cache_write_metrics_available
-                        ? row.cacheWriteRequestCount
-                        : '-'}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-      <ChannelMonitorSuccessAPIKeyTable items={result.api_key_items ?? []} />
+                      </TableCell>
+                      <TableCell className='max-w-72 whitespace-normal'>
+                        {channelRemark ? (
+                          <span
+                            className='text-muted-foreground text-sm break-words'
+                            title={channelRemark}
+                          >
+                            {channelRemark}
+                          </span>
+                        ) : (
+                          <span className='text-muted-foreground'>-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className='text-right font-mono font-medium tabular-nums'>
+                        {formatMonitorRatio(row.channel?.cost_ratio)}
+                      </TableCell>
+                      <TableCell className='text-right font-mono tabular-nums'>
+                        {item.actual_sample_count}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          'text-right font-mono font-semibold tabular-nums',
+                          successRateClassName
+                        )}
+                      >
+                        {formatRate(
+                          item.actual_success_rate,
+                          item.actual_sample_count
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          'text-right font-mono font-semibold tabular-nums',
+                          cacheUtilizationClassName
+                        )}
+                      >
+                        {formatRate(
+                          item.cache_utilization_rate,
+                          item.input_tokens
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          'text-right font-mono font-medium tabular-nums',
+                          !result.cache_write_metrics_available &&
+                            'text-muted-foreground'
+                        )}
+                      >
+                        {result.cache_write_metrics_available
+                          ? row.cacheWriteRequestCount
+                          : '-'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+        <TabsContent value='api-keys' className='mt-2 min-h-0'>
+          <ChannelMonitorSuccessAPIKeyTable
+            items={result.api_key_items ?? []}
+          />
+        </TabsContent>
+      </Tabs>
     </TodaySuccessContentLayout>
   )
 }
