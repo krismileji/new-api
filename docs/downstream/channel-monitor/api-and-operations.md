@@ -11,7 +11,7 @@
 | `GET` | `/` | 返回渠道、人工顺序、分组倍率、分组系数和全局设置 |
 | `GET` | `/cost` | 成本统计；`days`、`channel_id`、`summary_only`、`page`、`date=YYYY-MM-DD` |
 | `GET` | `/performance` | 主表性能与成功率；智能调度启用时使用性能窗口，关闭时接受 `minutes=1..1440` |
-| `GET` | `/success/today` | 按日请求、成功率、缓存率和缓存写统计；可选 `days=1..90`、`date=YYYY-MM-DD` |
+| `GET` | `/success/today` | 按日请求、成功率、缓存利用率和缓存写统计；可选 `days=1..90`、`date=YYYY-MM-DD` |
 | `GET` | `/success/detail` | 成功率明细；指定 `channel_id`（可加 `model_name`）或 `group`，二选一 |
 | `GET` | `/tasks` | 任务记录；`kind=ratio|schedule` 和通用分页参数 |
 | `PUT` | `/settings` | 部分更新全局监控和智能调度设置 |
@@ -239,7 +239,9 @@
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
-性能、成功率、缓存率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到 `ChannelMonitorMinuteMetric`。常规任务只回扫最近 2 分钟，启动回扫 5 分钟，整点在时间预算内修复最近 65 分钟；若任务跨过多个分钟，则从上次连续水位补齐缺口后再推进。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和完整智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查；运行时硬保护和自适应备援直接使用请求级观测，不依赖该水位。
+性能、成功率、缓存利用率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到 `ChannelMonitorMinuteMetric`。缓存利用率响应字段为 `cache_read_tokens`、`input_tokens` 和 `cache_utilization_rate`，其中比率等于前两者相除；兼容字段 `cache_hit_count`、`cache_sample_count` 和 `cache_hit_rate` 仍保留请求级命中口径，但不用于页面缓存利用率展示。常规任务只回扫最近 2 分钟，启动回扫 5 分钟，整点在时间预算内修复最近 65 分钟；若任务跨过多个分钟，则从上次连续水位补齐缺口后再推进。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和完整智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查；运行时硬保护和自适应备援直接使用请求级观测，不依赖该水位。
+
+升级已有部署时，首次聚合先重建北京时间当天的缓存利用率，再切换展示；更早的保留数据按每小时分块在后台逐步补齐，并通过独立的缓存利用率版本与覆盖水位避免把旧请求命中数据误当成 token 利用率。新部署从首次分钟聚合开始直接写入新口径。
 
 日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总，并以 `max(窗口起点, observation_since)` 作为实际起点。恢复只推进边界，不删除样本、日志、分钟行或延迟分桶；历史与长期统计不应用该边界。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。保留任务默认按 1000 行一批清理；数据库删除会释放页供后续复用，但 SQLite、MySQL 和 PostgreSQL 都不保证物理文件立即缩小。
 

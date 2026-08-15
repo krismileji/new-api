@@ -66,6 +66,8 @@ func StartChannelMonitorAggregationWorker() {
 					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控分钟聚合失败: %v", err))
 				} else if err := runChannelMonitorAggregationBackfill(ctx, targetEnd); err != nil {
 					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控历史分钟汇总补齐失败: %v", err))
+				} else if err := runChannelMonitorCacheUtilizationBackfill(ctx, targetEnd); err != nil {
+					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控缓存利用率历史补齐失败: %v", err))
 				}
 				return targetEnd
 			}
@@ -103,8 +105,11 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 	if !common.LogConsumeEnabled && !constant.ErrorLogEnabled {
 		return nil
 	}
-
 	start, targetEnd, mode := channelMonitorAggregationWindow(now, startup)
+	if err := upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx, targetEnd); err != nil {
+		return err
+	}
+
 	key := channelMonitorAggregationDatabaseKey{db: model.DB, logDB: model.LOG_DB}
 	start, catchUp, err := channelMonitorAggregationStart(ctx, key, start, targetEnd)
 	if err != nil {
@@ -210,7 +215,11 @@ func EnsureChannelMonitorAggregationFresh(ctx context.Context, now time.Time) er
 			if start < 0 {
 				start = 0
 			}
-			start, catchUp, err := channelMonitorAggregationStart(ctx, key, start, targetEnd)
+			err := upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx, targetEnd)
+			var catchUp bool
+			if err == nil {
+				start, catchUp, err = channelMonitorAggregationStart(ctx, key, start, targetEnd)
+			}
 			if err == nil {
 				channelMonitorAggregationStateMu.RLock()
 				localCompletedThrough = channelMonitorAggregationLocalCompletedThrough[key]
@@ -237,6 +246,26 @@ func EnsureChannelMonitorAggregationFresh(ctx context.Context, now time.Time) er
 		case <-ticker.C:
 		}
 	}
+}
+
+func upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx context.Context, targetEnd int64) error {
+	upgradeStart := model.ChannelDailyCostDayStart(targetEnd)
+	result, upgraded, err := model.UpgradeChannelMonitorCacheUtilizationMetrics(
+		ctx, upgradeStart, targetEnd,
+	)
+	if err != nil {
+		return fmt.Errorf("升级缓存利用率分钟汇总失败: %w", err)
+	}
+	if upgraded {
+		logger.LogInfo(ctx, fmt.Sprintf(
+			"渠道监控缓存利用率升级完成: start=%d end=%d scanned_logs=%d metric_rows=%d",
+			result.StartTimestamp,
+			result.EndTimestamp,
+			result.ScannedLogRows,
+			result.MetricRows,
+		))
+	}
+	return nil
 }
 
 func channelMonitorAggregationStart(
@@ -422,6 +451,103 @@ func runChannelMonitorAggregationBackfill(ctx context.Context, targetEnd int64) 
 				"渠道监控历史分钟汇总补齐完成: covered_from=%d completed_through=%d window_minutes=%d",
 				chunkStart,
 				coverage.CompletedThrough,
+				windowMinutes,
+			))
+			return nil
+		}
+		if completedChunks >= maxChunks || yield <= 0 {
+			continue
+		}
+		timer := time.NewTimer(yield)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-budgetCtx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+}
+
+func runChannelMonitorCacheUtilizationBackfill(ctx context.Context, targetEnd int64) error {
+	if !common.LogConsumeEnabled {
+		return nil
+	}
+	maxChunks, budget, yield := channelMonitorAggregationBackfillLimits()
+	budgetCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	windowMinutes := channelMonitorAggregationBackfillWindowMinutes()
+	desiredStart := targetEnd - int64(windowMinutes*60)
+	if desiredStart < 0 {
+		desiredStart = 0
+	}
+	backfilled := false
+	completedChunks := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-budgetCtx.Done():
+			return nil
+		default:
+		}
+		if completedChunks >= maxChunks {
+			return nil
+		}
+
+		channelMonitorAggregationRunMu.Lock()
+		coverage, err := model.GetChannelMonitorAggregationCoverage(budgetCtx)
+		if err != nil {
+			channelMonitorAggregationRunMu.Unlock()
+			if budgetCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
+			return fmt.Errorf("读取缓存利用率汇总覆盖范围失败: %w", err)
+		}
+		coveredFrom := coverage.CacheUtilizationCoveredFrom
+		if coverage.CacheUtilizationVersion < model.ChannelMonitorCacheUtilizationVersion ||
+			coveredFrom <= 0 || coveredFrom <= desiredStart {
+			channelMonitorAggregationRunMu.Unlock()
+			if backfilled {
+				logger.LogInfo(ctx, fmt.Sprintf(
+					"渠道监控缓存利用率历史补齐完成: covered_from=%d window_minutes=%d",
+					coveredFrom,
+					windowMinutes,
+				))
+			}
+			return nil
+		}
+		chunkStart := coveredFrom - int64(channelMonitorAggregationBackfillChunk/time.Second)
+		if chunkStart < desiredStart {
+			chunkStart = desiredStart
+		}
+		startedAt := time.Now()
+		result, err := model.BackfillChannelMonitorCacheUtilizationRangeWithState(
+			budgetCtx, chunkStart, coveredFrom,
+		)
+		channelMonitorAggregationRunMu.Unlock()
+		if err != nil {
+			if budgetCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
+			return fmt.Errorf(
+				"缓存利用率历史补齐失败: start=%d end=%d scanned_logs=%d metric_rows=%d elapsed_ms=%d: %w",
+				result.StartTimestamp,
+				result.EndTimestamp,
+				result.ScannedLogRows,
+				result.MetricRows,
+				time.Since(startedAt).Milliseconds(),
+				err,
+			)
+		}
+		backfilled = true
+		completedChunks++
+		if chunkStart <= desiredStart {
+			logger.LogInfo(ctx, fmt.Sprintf(
+				"渠道监控缓存利用率历史补齐完成: covered_from=%d window_minutes=%d",
+				chunkStart,
 				windowMinutes,
 			))
 			return nil

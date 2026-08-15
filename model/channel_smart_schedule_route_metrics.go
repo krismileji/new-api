@@ -24,6 +24,9 @@ type ChannelMonitorRoutePerformanceMetric struct {
 	CacheHitCount                 int64                          `json:"cache_hit_count"`
 	CacheSampleCount              int64                          `json:"cache_sample_count"`
 	CacheHitRate                  float64                        `json:"cache_hit_rate"`
+	CacheReadTokens               int64                          `json:"cache_read_tokens"`
+	InputTokens                   int64                          `json:"input_tokens"`
+	CacheUtilizationRate          float64                        `json:"cache_utilization_rate"`
 	LastUsedTime                  int64                          `json:"last_used_time"`
 }
 
@@ -83,6 +86,8 @@ func getChannelMonitorRoutePerformanceMetrics(
 		TPSTotal              float64
 		CacheHitCount         int64
 		CacheSampleCount      int64
+		CacheReadTokens       int64
+		InputTokens           int64
 		LastUsedTime          int64
 	}
 	metricTable := channelMonitorMinuteMetricTable
@@ -98,6 +103,8 @@ func getChannelMonitorRoutePerformanceMetrics(
 				"SUM("+metricTable+".tps_total) AS tps_total, "+
 				"SUM("+metricTable+".cache_hit_count) AS cache_hit_count, "+
 				"SUM("+metricTable+".cache_sample_count) AS cache_sample_count, "+
+				"SUM("+metricTable+".cache_read_tokens) AS cache_read_tokens, "+
+				"SUM("+metricTable+".input_tokens) AS input_tokens, "+
 				"MAX("+metricTable+".last_used_time) AS last_used_time",
 		).
 		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
@@ -134,6 +141,8 @@ func getChannelMonitorRoutePerformanceMetrics(
 			TPSSampleCount:            int(aggregate.TPSSampleCount),
 			CacheHitCount:             max(aggregate.CacheHitCount, 0),
 			CacheSampleCount:          max(aggregate.CacheSampleCount, 0),
+			CacheReadTokens:           max(aggregate.CacheReadTokens, 0),
+			InputTokens:               max(aggregate.InputTokens, 0),
 			LastUsedTime:              aggregate.LastUsedTime,
 			FirstTokenDurationBuckets: []ChannelMonitorDurationBucket{},
 		}
@@ -147,6 +156,9 @@ func getChannelMonitorRoutePerformanceMetrics(
 		}
 		if aggregate.CacheSampleCount > 0 {
 			metric.CacheHitRate = float64(metric.CacheHitCount) / float64(metric.CacheSampleCount)
+		}
+		if aggregate.InputTokens > 0 {
+			metric.CacheUtilizationRate = float64(metric.CacheReadTokens) / float64(metric.InputTokens)
 		}
 		key := channelMonitorRouteMetricKey{
 			channelId: aggregate.ChannelId,

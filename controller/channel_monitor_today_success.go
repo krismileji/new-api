@@ -34,6 +34,9 @@ type channelMonitorDailySuccessChartItem struct {
 	SuccessRate            float64 `json:"success_rate"`
 	CacheSampleCount       int64   `json:"cache_sample_count"`
 	CacheRate              float64 `json:"cache_rate"`
+	CacheReadTokens        int64   `json:"cache_read_tokens"`
+	InputTokens            int64   `json:"input_tokens"`
+	CacheUtilizationRate   float64 `json:"cache_utilization_rate"`
 	CacheWriteChannelCount int     `json:"cache_write_channel_count"`
 	CacheWriteRequestCount int64   `json:"cache_write_request_count"`
 }
@@ -185,6 +188,9 @@ func channelMonitorDailySuccessChartItems(startTimestamp int64, days int, metric
 			SuccessRate:            metric.Summary.ActualSuccessRate,
 			CacheSampleCount:       metric.Summary.CacheSampleCount,
 			CacheRate:              metric.Summary.CacheHitRate,
+			CacheReadTokens:        metric.Summary.CacheReadTokens,
+			InputTokens:            metric.Summary.InputTokens,
+			CacheUtilizationRate:   metric.Summary.CacheUtilization,
 			CacheWriteChannelCount: metric.CacheWriteChannelCount,
 			CacheWriteRequestCount: metric.CacheWriteRequestCount,
 		})

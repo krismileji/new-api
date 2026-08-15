@@ -130,6 +130,122 @@ func TestAggregateChannelMonitorMinuteRangeWithResultReportsWork(t *testing.T) {
 	assert.Equal(t, 1, result.DurationBucketRows)
 }
 
+func TestAggregateChannelMonitorMinuteCalculatesCacheUtilizationFromTokens(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume,
+			PromptTokens: 1000, Other: `{"cache_tokens":1}`,
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume,
+			PromptTokens: 1000, Other: `{"cache_tokens":999}`,
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 63, Type: LogTypeConsume,
+			PromptTokens: 100, Other: `{"usage_semantic":"anthropic","cache_tokens":400,"cache_creation_tokens":500}`,
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 64, Type: LogTypeConsume,
+			PromptTokens: 1000,
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 65, Type: LogTypeConsume,
+			PromptTokens: 9999, Other: `{"input_tokens_total":200,"cache_tokens":300}`,
+		},
+	}).Error)
+
+	aggregateChannelMonitorMinuteTestRange(t, 60, 120)
+
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where(
+		"minute_start = ? AND channel_id = ?", 60, 1,
+	).First(&metric).Error)
+	assert.Equal(t, int64(1600), metric.CacheReadTokens)
+	assert.Equal(t, int64(4200), metric.InputTokens)
+
+	channelMetrics, _, err := GetChannelMonitorSuccessMetrics(context.Background(), 60)
+	require.NoError(t, err)
+	require.Len(t, channelMetrics, 1)
+	assert.Equal(t, int64(1600), channelMetrics[0].CacheReadTokens)
+	assert.Equal(t, int64(4200), channelMetrics[0].InputTokens)
+	assert.InDelta(t, 1600.0/4200.0, channelMetrics[0].CacheUtilization, 0.0001)
+}
+
+func TestUpgradeChannelMonitorCacheUtilizationMetricsRebuildsCurrentDayOnce(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&ChannelMonitorAggregationState{
+		ID:                          channelMonitorAggregationStateID,
+		CoveredFrom:                 60,
+		CompletedThrough:            180,
+		CacheUtilizationVersion:     0,
+		CacheUtilizationCoveredFrom: 0,
+	}).Error)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume,
+		PromptTokens: 1000, Other: `{"cache_tokens":250}`,
+	}).Error)
+
+	result, upgraded, err := UpgradeChannelMonitorCacheUtilizationMetrics(
+		context.Background(), 120, 180,
+	)
+	require.NoError(t, err)
+	require.True(t, upgraded)
+	assert.Equal(t, 1, result.MetricRows)
+
+	var state ChannelMonitorAggregationState
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, ChannelMonitorCacheUtilizationVersion, state.CacheUtilizationVersion)
+	assert.Equal(t, int64(120), state.CacheUtilizationCoveredFrom)
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
+	assert.Equal(t, int64(250), metric.CacheReadTokens)
+	assert.Equal(t, int64(1000), metric.InputTokens)
+
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume,
+		PromptTokens: 1000, Other: `{"cache_tokens":1000}`,
+	}).Error)
+	result, upgraded, err = UpgradeChannelMonitorCacheUtilizationMetrics(
+		context.Background(), 120, 180,
+	)
+	require.NoError(t, err)
+	assert.False(t, upgraded)
+	assert.Zero(t, result.ScannedLogRows)
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
+	assert.Equal(t, int64(250), metric.CacheReadTokens)
+}
+
+func TestBackfillChannelMonitorCacheUtilizationRangeExtendsCacheCoverage(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&ChannelMonitorAggregationState{
+		ID:                          channelMonitorAggregationStateID,
+		CoveredFrom:                 60,
+		CompletedThrough:            180,
+		CacheUtilizationVersion:     ChannelMonitorCacheUtilizationVersion,
+		CacheUtilizationCoveredFrom: 120,
+	}).Error)
+	require.NoError(t, db.Create(&Log{
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume,
+		PromptTokens: 2000, Other: `{"cache_tokens":500}`,
+	}).Error)
+
+	result, err := BackfillChannelMonitorCacheUtilizationRangeWithState(
+		context.Background(), 60, 120,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.MetricRows)
+
+	var state ChannelMonitorAggregationState
+	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
+	assert.Equal(t, int64(60), state.CoveredFrom)
+	assert.Equal(t, int64(60), state.CacheUtilizationCoveredFrom)
+	var metric ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
+	assert.Equal(t, int64(500), metric.CacheReadTokens)
+	assert.Equal(t, int64(2000), metric.InputTokens)
+}
+
 func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	require.NoError(t, db.Create(&Log{
@@ -301,6 +417,8 @@ func TestChannelMonitorMinuteMetricMigrationBackfillsRetryColumns(t *testing.T) 
 	assert.Zero(t, metric.RetryFailureCount)
 	assert.Zero(t, metric.RetryFailureDurationTotalMs)
 	assert.Zero(t, metric.RetryFailureOver60sCount)
+	assert.Zero(t, metric.CacheReadTokens)
+	assert.Zero(t, metric.InputTokens)
 }
 
 func TestAggregateChannelMonitorMinuteBucketsRetryFailureDurations(t *testing.T) {

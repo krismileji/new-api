@@ -32,6 +32,9 @@ const items: ChannelMonitorDailyInsightDay[] = [
     success_rate: 0.9,
     cache_sample_count: 8,
     cache_rate: 0.4,
+    cache_read_tokens: 400,
+    input_tokens: 1_000,
+    cache_utilization_rate: 0.4,
     cache_write_channel_count: 2,
     cache_write_request_count: 3,
   },
@@ -42,6 +45,9 @@ const items: ChannelMonitorDailyInsightDay[] = [
     success_rate: 1,
     cache_sample_count: 10,
     cache_rate: 0.5,
+    cache_read_tokens: 600,
+    input_tokens: 1_200,
+    cache_utilization_rate: 0.5,
     cache_write_channel_count: 1,
     cache_write_request_count: 4,
   },
@@ -63,7 +69,7 @@ describe('channel monitor daily insight history', () => {
     assert.ok(markup.includes('aria-label="请求与缓存统计范围"'))
     assert.ok(markup.includes('aria-label="请求与缓存明细日期"'))
     assert.ok(
-      markup.includes('aria-label="每日成功率、缓存率与缓存写请求组合图"')
+      markup.includes('aria-label="每日成功率、缓存利用率与缓存写请求组合图"')
     )
     assert.equal((markup.match(/role="img"/g) ?? []).length, 1)
     assert.equal(markup.includes('每日缓存写请求柱状图'), false)

@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-test('按 API Key 切换缓存率且保留明细键盘入口', () => {
+test('按 API Key 切换缓存利用率且保留明细键盘入口', () => {
   const fixturePath = fileURLToPath(
     new URL('./today-success-api-key-filter.fixture.tsx', import.meta.url)
   )
@@ -33,6 +33,6 @@ test('按 API Key 切换缓存率且保留明细键盘入口', () => {
   assert.equal(
     execution.status,
     0,
-    execution.stderr || execution.stdout || 'API Key 缓存率筛选交互校验失败'
+    execution.stderr || execution.stdout || 'API Key 缓存利用率筛选交互校验失败'
   )
 })

@@ -27,10 +27,10 @@ type ChannelMonitorSuccessRateValueProps = {
   rate: number | null | undefined
   successCount: number | null | undefined
   sampleCount: number | null | undefined
-  cacheHitRate?: number | null
-  cacheHitCount?: number | null
-  cacheSampleCount?: number | null
-  showCacheRate?: boolean
+  cacheUtilizationRate?: number | null
+  cacheReadTokens?: number | null
+  inputTokens?: number | null
+  showCacheUtilization?: boolean
   available: boolean
   loading: boolean
   error: boolean
@@ -49,7 +49,7 @@ export function ChannelMonitorSuccessRateValue(
   if (props.loading) {
     return (
       <Skeleton
-        className={cn(props.showCacheRate ? 'h-14 w-24' : 'h-9 w-20')}
+        className={cn(props.showCacheUtilization ? 'h-14 w-24' : 'h-9 w-20')}
       />
     )
   }
@@ -75,19 +75,19 @@ export function ChannelMonitorSuccessRateValue(
     rateClassName = 'text-warning'
   }
   const successCount = props.successCount ?? 0
-  const cacheHitCount = props.cacheHitCount ?? 0
-  const cacheSampleCount = props.cacheSampleCount ?? 0
-  const cacheRateAvailable =
-    cacheSampleCount > 0 &&
-    props.cacheHitRate != null &&
-    Number.isFinite(props.cacheHitRate)
-  const cacheRateText = cacheRateAvailable
-    ? percentFormatter.format(props.cacheHitRate ?? 0)
+  const cacheReadTokens = props.cacheReadTokens ?? 0
+  const inputTokens = props.inputTokens ?? 0
+  const cacheUtilizationAvailable =
+    inputTokens > 0 &&
+    props.cacheUtilizationRate != null &&
+    Number.isFinite(props.cacheUtilizationRate)
+  const cacheUtilizationText = cacheUtilizationAvailable
+    ? percentFormatter.format(props.cacheUtilizationRate ?? 0)
     : '-'
-  const cacheDetail = cacheRateAvailable
-    ? `缓存命中 ${cacheHitCount} / ${cacheSampleCount} 次`
-    : '暂无缓存样本'
-  const valueTitle = `${successCount} 次成功 / ${props.sampleCount} 次统计${props.showCacheRate ? `；${cacheDetail}` : ''}`
+  const cacheDetail = cacheUtilizationAvailable
+    ? `缓存读取 ${cacheReadTokens.toLocaleString()} / 输入 ${inputTokens.toLocaleString()} tokens`
+    : '暂无输入 token 数据'
+  const valueTitle = `${successCount} 次成功 / ${props.sampleCount} 次统计${props.showCacheUtilization ? `；${cacheDetail}` : ''}`
   const value = (
     <span
       className='flex min-w-20 flex-col items-start gap-0.5'
@@ -101,12 +101,12 @@ export function ChannelMonitorSuccessRateValue(
       <span className='text-muted-foreground text-xs tabular-nums'>
         {successCount} / {props.sampleCount} 次
       </span>
-      {props.showCacheRate ? (
+      {props.showCacheUtilization ? (
         <span
           className='text-muted-foreground text-xs tabular-nums'
           title={cacheDetail}
         >
-          缓存率 {cacheRateText}
+          缓存利用率 {cacheUtilizationText}
         </span>
       ) : null}
     </span>

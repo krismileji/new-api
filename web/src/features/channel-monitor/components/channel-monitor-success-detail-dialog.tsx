@@ -139,9 +139,9 @@ export function ChannelMonitorSuccessSummaryCards(props: {
   mode: ChannelMonitorSuccessMode
 }) {
   const modeSummary = getModeSummary(props.summary, props.mode)
-  const cacheRateAvailable =
-    props.summary.cache_sample_count > 0 &&
-    Number.isFinite(props.summary.cache_hit_rate)
+  const cacheUtilizationAvailable =
+    props.summary.input_tokens > 0 &&
+    Number.isFinite(props.summary.cache_utilization_rate)
 
   return (
     <div className='grid shrink-0 grid-cols-1 divide-y rounded-lg border sm:grid-cols-4 sm:divide-x sm:divide-y-0'>
@@ -163,14 +163,16 @@ export function ChannelMonitorSuccessSummaryCards(props: {
         valueClassName={getRateClassName(modeSummary.successRate)}
       />
       <SummaryValue
-        label='缓存率'
+        label='缓存利用率'
         value={
-          cacheRateAvailable
-            ? percentFormatter.format(props.summary.cache_hit_rate)
+          cacheUtilizationAvailable
+            ? percentFormatter.format(props.summary.cache_utilization_rate)
             : '-'
         }
         valueClassName={
-          cacheRateAvailable ? 'text-foreground' : 'text-muted-foreground'
+          cacheUtilizationAvailable
+            ? 'text-foreground'
+            : 'text-muted-foreground'
         }
       />
     </div>

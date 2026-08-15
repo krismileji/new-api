@@ -45,6 +45,9 @@ const result: ChannelMonitorTodaySuccessResult = {
     cache_hit_count: 1,
     cache_sample_count: 2,
     cache_hit_rate: 0.5,
+    cache_read_tokens: 50,
+    input_tokens: 100,
+    cache_utilization_rate: 0.5,
   },
   channel_items: [],
   api_key_items: [
@@ -62,6 +65,9 @@ const result: ChannelMonitorTodaySuccessResult = {
       cache_hit_count: 1,
       cache_sample_count: 4,
       cache_hit_rate: 0.25,
+      cache_read_tokens: 25,
+      input_tokens: 100,
+      cache_utilization_rate: 0.25,
     },
   ],
   cache_write_items: [],
@@ -87,15 +93,15 @@ try {
     )
   })
 
-  const cacheRate = container.querySelector<HTMLElement>(
-    '[data-slot="today-cache-rate"]'
+  const cacheUtilization = container.querySelector<HTMLElement>(
+    '[data-slot="today-cache-utilization"]'
   )
   const trigger = container.querySelector<HTMLButtonElement>(
-    '[aria-label="选择缓存率 API Key"]'
+    '[aria-label="选择缓存利用率 API Key"]'
   )
-  assert.ok(cacheRate)
+  assert.ok(cacheUtilization)
   assert.ok(trigger)
-  assert.equal(cacheRate.textContent, '50%')
+  assert.equal(cacheUtilization.textContent, '50%')
   assert.ok(trigger.textContent?.includes('全部 API Key'))
 
   const detailHeader = container.querySelector<HTMLElement>(
@@ -136,9 +142,9 @@ try {
   assert.ok(productionKeyOption)
   await act(async () => productionKeyOption.click())
 
-  assert.equal(cacheRate.textContent, '25%')
+  assert.equal(cacheUtilization.textContent, '25%')
   assert.ok(trigger.textContent?.includes('生产 Key · ID 21'))
-  assert.ok(container.textContent?.includes('4 次缓存样本'))
+  assert.ok(container.textContent?.includes('缓存读取 25 / 输入 100 tokens'))
   assert.equal(detailOpenCount, 2)
 } finally {
   await act(async () => root.unmount())

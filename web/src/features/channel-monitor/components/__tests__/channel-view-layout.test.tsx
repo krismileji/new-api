@@ -481,7 +481,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[6]?.includes('当前/上限'))
   })
 
-  test('shows cache hit rate on the third line of the success rate cell', () => {
+  test('shows cache utilization on the third line of the success rate cell', () => {
     const successByChannel = new Map<number, ChannelMonitorSuccessSummary>([
       [
         7,
@@ -497,6 +497,9 @@ describe('channel monitor channel view timestamps', () => {
           cache_hit_count: 1,
           cache_sample_count: 2,
           cache_hit_rate: 0.5,
+          cache_read_tokens: 50,
+          input_tokens: 100,
+          cache_utilization_rate: 0.5,
         },
       ],
     ])
@@ -510,8 +513,8 @@ describe('channel monitor channel view timestamps', () => {
     )
     const successCell = cells[5] ?? ''
 
-    assert.match(successCell, /90%[\s\S]*9 \/ 10 次[\s\S]*缓存率[\s\S]*50%/)
-    assert.ok(successCell.includes('缓存命中 1 / 2 次'))
+    assert.match(successCell, /90%[\s\S]*9 \/ 10 次[\s\S]*缓存利用率[\s\S]*50%/)
+    assert.ok(successCell.includes('缓存读取 50 / 输入 100 tokens'))
   })
 
   test('shows unlimited concurrency and exposes the edit action', () => {

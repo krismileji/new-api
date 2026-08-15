@@ -256,10 +256,12 @@ export function ChannelMonitorModelPerformanceView(
                       rate={row.successMetric?.actual_success_rate}
                       successCount={row.successMetric?.actual_success_count}
                       sampleCount={row.successMetric?.actual_sample_count}
-                      cacheHitRate={row.successMetric?.cache_hit_rate}
-                      cacheHitCount={row.successMetric?.cache_hit_count}
-                      cacheSampleCount={row.successMetric?.cache_sample_count}
-                      showCacheRate
+                      cacheUtilizationRate={
+                        row.successMetric?.cache_utilization_rate
+                      }
+                      cacheReadTokens={row.successMetric?.cache_read_tokens}
+                      inputTokens={row.successMetric?.input_tokens}
+                      showCacheUtilization
                       available={props.successMetricsAvailable}
                       loading={props.isLoading}
                       error={props.isError}

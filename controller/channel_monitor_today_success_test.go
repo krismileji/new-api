@@ -38,7 +38,7 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	now := common.GetTimestamp()
 	dayStart := model.ChannelDailyCostDayStart(now)
 	logs := []*model.Log{
-		{ChannelId: 7, ModelName: "model-a", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 1, Type: model.LogTypeConsume, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
+		{ChannelId: 7, ModelName: "model-a", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 1, Type: model.LogTypeConsume, PromptTokens: 100, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
 		{ChannelId: 7, ModelName: "model-b", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 2, Type: model.LogTypeError, IsRetryAttempt: true},
 		{ChannelId: 9, ModelName: "deleted-channel", TokenId: 12, TokenName: "备用 Key", CreatedAt: dayStart + 3, Type: model.LogTypeConsume, Other: `{"cache_creation_tokens_5m":64}`},
 		{ChannelId: 7, ModelName: "old", CreatedAt: dayStart - 1, Type: model.LogTypeConsume},
@@ -87,6 +87,9 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	assert.InDelta(t, 2.0/3.0, response.Data.Summary.ActualSuccessRate, 0.0001)
 	assert.Equal(t, int64(1), response.Data.Summary.CacheSampleCount)
 	assert.InDelta(t, 1, response.Data.Summary.CacheHitRate, 0.0001)
+	assert.Equal(t, int64(8), response.Data.Summary.CacheReadTokens)
+	assert.Equal(t, int64(100), response.Data.Summary.InputTokens)
+	assert.InDelta(t, 0.08, response.Data.Summary.CacheUtilization, 0.0001)
 	require.Len(t, response.Data.ChannelItems, 3)
 	assert.Equal(t, 7, response.Data.ChannelItems[0].ChannelId)
 	assert.Equal(t, "渠道七", response.Data.ChannelItems[0].ChannelName)
@@ -135,7 +138,7 @@ func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *
 	todayStart := model.ChannelDailyCostDayStart(now)
 	yesterdayStart := todayStart - channelMonitorCostDaySeconds
 	require.NoError(t, db.Create(&[]*model.Log{
-		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
+		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, PromptTokens: 16, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
 		{ChannelId: 27, ModelName: "today", TokenId: 32, TokenName: "今日 Key", CreatedAt: todayStart + 1, Type: model.LogTypeError},
 	}).Error)
 	require.NoError(t, aggregateChannelMonitorTestLogs(yesterdayStart, now))
@@ -164,6 +167,9 @@ func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *
 	assert.Equal(t, int64(1), response.Data.ChartItems[1].RequestCount)
 	assert.InDelta(t, 1, response.Data.ChartItems[1].SuccessRate, 0.0001)
 	assert.InDelta(t, 1, response.Data.ChartItems[1].CacheRate, 0.0001)
+	assert.Equal(t, int64(8), response.Data.ChartItems[1].CacheReadTokens)
+	assert.Equal(t, int64(16), response.Data.ChartItems[1].InputTokens)
+	assert.InDelta(t, 0.5, response.Data.ChartItems[1].CacheUtilizationRate, 0.0001)
 	assert.Equal(t, int64(1), response.Data.ChartItems[1].CacheWriteRequestCount)
 	assert.Equal(t, 1, response.Data.ChartItems[1].CacheWriteChannelCount)
 	assert.Equal(t, int64(1), response.Data.ChartItems[2].RequestCount)

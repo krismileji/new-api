@@ -238,10 +238,12 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
                       rate={successMetric?.actual_success_rate}
                       successCount={successMetric?.actual_success_count}
                       sampleCount={successMetric?.actual_sample_count}
-                      cacheHitRate={successMetric?.cache_hit_rate}
-                      cacheHitCount={successMetric?.cache_hit_count}
-                      cacheSampleCount={successMetric?.cache_sample_count}
-                      showCacheRate
+                      cacheUtilizationRate={
+                        successMetric?.cache_utilization_rate
+                      }
+                      cacheReadTokens={successMetric?.cache_read_tokens}
+                      inputTokens={successMetric?.input_tokens}
+                      showCacheUtilization
                       available={props.successMetricsAvailable}
                       loading={props.successLoading}
                       error={props.successError}

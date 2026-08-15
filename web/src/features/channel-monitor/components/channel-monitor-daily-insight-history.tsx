@@ -45,7 +45,7 @@ const percentFormatter = new Intl.NumberFormat(undefined, {
 const HISTORY_LABELS = {
   range: '请求与缓存统计范围',
   date: '请求与缓存明细日期',
-  chart: '每日成功率、缓存率与缓存写请求组合图',
+  chart: '每日成功率、缓存利用率与缓存写请求组合图',
 } as const
 
 type ChannelMonitorDailyInsightHistoryProps = {
@@ -84,8 +84,8 @@ export function ChannelMonitorDailyInsightHistory(
             },
             {
               date: item.date,
-              metric: '缓存率',
-              value: item.cache_sample_count > 0 ? item.cache_rate : null,
+              metric: '缓存利用率',
+              value: item.input_tokens > 0 ? item.cache_utilization_rate : null,
               selected: item.date === props.selectedDate,
             },
           ]),
@@ -171,7 +171,7 @@ export function ChannelMonitorDailyInsightHistory(
           seriesId: ['success-cache'],
           min: 0,
           max: 1,
-          title: { visible: true, text: '成功率 / 缓存率' },
+          title: { visible: true, text: '成功率 / 缓存利用率' },
           label: {
             formatMethod: (value: number | string) =>
               percentFormatter.format(Number(value)),

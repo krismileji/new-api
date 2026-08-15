@@ -24,6 +24,9 @@ type ChannelMonitorSuccessSummary struct {
 	CacheHitCount      int64   `json:"cache_hit_count"`
 	CacheSampleCount   int64   `json:"cache_sample_count"`
 	CacheHitRate       float64 `json:"cache_hit_rate"`
+	CacheReadTokens    int64   `json:"cache_read_tokens"`
+	InputTokens        int64   `json:"input_tokens"`
+	CacheUtilization   float64 `json:"cache_utilization_rate"`
 }
 
 type ChannelMonitorSuccessMetric struct {
@@ -79,6 +82,8 @@ type channelMonitorSuccessCounts struct {
 	finalFailure  int64
 	cacheHit      int64
 	cacheSample   int64
+	cacheRead     int64
+	inputTokens   int64
 }
 
 type channelMonitorSuccessRow struct {
@@ -92,6 +97,8 @@ type channelMonitorSuccessRow struct {
 	Count            int64
 	CacheHitCount    int64 `gorm:"column:cache_hit_count"`
 	CacheSampleCount int64 `gorm:"column:cache_sample_count"`
+	CacheReadTokens  int64 `gorm:"column:cache_read_tokens"`
+	InputTokens      int64 `gorm:"column:input_tokens"`
 	CacheWriteCount  int64 `gorm:"column:cache_write_count"`
 }
 
@@ -140,12 +147,22 @@ func getChannelMonitorSuccessRows(ctx context.Context, startTimestamp int64, fil
 	)
 }
 
-func (counts *channelMonitorSuccessCounts) add(logType int, isRetryAttempt bool, count int64, cacheHitCount int64, cacheSampleCount int64) {
+func (counts *channelMonitorSuccessCounts) add(
+	logType int,
+	isRetryAttempt bool,
+	count int64,
+	cacheHitCount int64,
+	cacheSampleCount int64,
+	cacheReadTokens int64,
+	inputTokens int64,
+) {
 	if logType == LogTypeConsume {
 		counts.actualSuccess += count
 		counts.finalSuccess += count
 		counts.cacheHit += cacheHitCount
 		counts.cacheSample += cacheSampleCount
+		counts.cacheRead += cacheReadTokens
+		counts.inputTokens += inputTokens
 		return
 	}
 	counts.actualFailure += count
@@ -166,6 +183,8 @@ func (counts channelMonitorSuccessCounts) summary() ChannelMonitorSuccessSummary
 		FinalSampleCount:   finalSampleCount,
 		CacheHitCount:      counts.cacheHit,
 		CacheSampleCount:   counts.cacheSample,
+		CacheReadTokens:    counts.cacheRead,
+		InputTokens:        counts.inputTokens,
 	}
 	if actualSampleCount > 0 {
 		summary.ActualSuccessRate = float64(counts.actualSuccess) / float64(actualSampleCount)
@@ -175,6 +194,9 @@ func (counts channelMonitorSuccessCounts) summary() ChannelMonitorSuccessSummary
 	}
 	if counts.cacheSample > 0 {
 		summary.CacheHitRate = float64(counts.cacheHit) / float64(counts.cacheSample)
+	}
+	if counts.inputTokens > 0 {
+		summary.CacheUtilization = float64(counts.cacheRead) / float64(counts.inputTokens)
 	}
 	return summary
 }
@@ -203,6 +225,8 @@ func addChannelMonitorSuccessAPIKeyCount(aggregates map[channelMonitorSuccessAPI
 		row.Count,
 		row.CacheHitCount,
 		row.CacheSampleCount,
+		row.CacheReadTokens,
+		row.InputTokens,
 	)
 }
 
@@ -293,7 +317,11 @@ func getChannelMonitorSuccessMetricsWithObservationBoundary(
 				counts = &channelMonitorSuccessCounts{}
 				channelCounts[key] = counts
 			}
-			counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+			counts.add(
+				row.Type, isRetryAttempt, row.Count,
+				row.CacheHitCount, row.CacheSampleCount,
+				row.CacheReadTokens, row.InputTokens,
+			)
 		}
 
 		group := strings.TrimSpace(row.GroupName)
@@ -305,7 +333,11 @@ func getChannelMonitorSuccessMetricsWithObservationBoundary(
 			counts = &channelMonitorSuccessCounts{}
 			groupCounts[group] = counts
 		}
-		counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		counts.add(
+			row.Type, isRetryAttempt, row.Count,
+			row.CacheHitCount, row.CacheSampleCount,
+			row.CacheReadTokens, row.InputTokens,
+		)
 	}
 
 	channelMetrics := make([]ChannelMonitorSuccessMetric, 0, len(channelCounts))
@@ -352,14 +384,22 @@ func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, f
 			continue
 		}
 		isRetryAttempt := row.IsRetryAttempt != nil && *row.IsRetryAttempt
-		totalCounts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		totalCounts.add(
+			row.Type, isRetryAttempt, row.Count,
+			row.CacheHitCount, row.CacheSampleCount,
+			row.CacheReadTokens, row.InputTokens,
+		)
 		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 		counts := channelCounts[row.ChannelId]
 		if counts == nil {
 			counts = &channelMonitorSuccessCounts{}
 			channelCounts[row.ChannelId] = counts
 		}
-		counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		counts.add(
+			row.Type, isRetryAttempt, row.Count,
+			row.CacheHitCount, row.CacheSampleCount,
+			row.CacheReadTokens, row.InputTokens,
+		)
 	}
 
 	channelItems := make([]ChannelMonitorChannelSuccessMetric, 0, len(channelCounts))

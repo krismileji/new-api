@@ -41,7 +41,7 @@ type SuccessAPIKeySortKey =
   | 'api_key_name'
   | 'actual_sample_count'
   | 'actual_success_rate'
-  | 'cache_hit_rate'
+  | 'cache_utilization_rate'
 
 type SuccessAPIKeySort = {
   key: SuccessAPIKeySortKey
@@ -82,9 +82,9 @@ function getSuccessAPIKeySortValue(
       ? item.actual_success_rate
       : null
   }
-  if (key === 'cache_hit_rate') {
-    return item.cache_sample_count > 0 && Number.isFinite(item.cache_hit_rate)
-      ? item.cache_hit_rate
+  if (key === 'cache_utilization_rate') {
+    return item.input_tokens > 0 && Number.isFinite(item.cache_utilization_rate)
+      ? item.cache_utilization_rate
       : null
   }
   return item.actual_sample_count
@@ -117,11 +117,18 @@ function compareSuccessAPIKeys(
     }
   }
   if (sort.key === 'actual_success_rate') {
-    const firstCacheRate = getSuccessAPIKeySortValue(first, 'cache_hit_rate')
-    const secondCacheRate = getSuccessAPIKeySortValue(second, 'cache_hit_rate')
-    const firstNumber = typeof firstCacheRate === 'number' ? firstCacheRate : -1
+    const firstCacheUtilization = getSuccessAPIKeySortValue(
+      first,
+      'cache_utilization_rate'
+    )
+    const secondCacheUtilization = getSuccessAPIKeySortValue(
+      second,
+      'cache_utilization_rate'
+    )
+    const firstNumber =
+      typeof firstCacheUtilization === 'number' ? firstCacheUtilization : -1
     const secondNumber =
-      typeof secondCacheRate === 'number' ? secondCacheRate : -1
+      typeof secondCacheUtilization === 'number' ? secondCacheUtilization : -1
     if (firstNumber !== secondNumber) return secondNumber - firstNumber
     if (first.actual_sample_count !== second.actual_sample_count) {
       return second.actual_sample_count - first.actual_sample_count
@@ -206,13 +213,13 @@ export function ChannelMonitorSuccessAPIKeyTable(
                 }
               />
               <ChannelMonitorSortableTableHead
-                label='缓存率'
+                label='缓存利用率'
                 align='right'
                 className='w-[16%]'
-                direction={sortDirection('cache_hit_rate')}
+                direction={sortDirection('cache_utilization_rate')}
                 onSort={() =>
                   setSort((current) =>
-                    toggleSuccessAPIKeySort(current, 'cache_hit_rate')
+                    toggleSuccessAPIKeySort(current, 'cache_utilization_rate')
                   )
                 }
               />
@@ -224,8 +231,8 @@ export function ChannelMonitorSuccessAPIKeyTable(
                 item.actual_sample_count > 0
                   ? getRateClassName(item.actual_success_rate)
                   : 'text-muted-foreground'
-              const cacheRateClassName =
-                item.cache_sample_count > 0
+              const cacheUtilizationClassName =
+                item.input_tokens > 0
                   ? 'text-foreground'
                   : 'text-muted-foreground'
               return (
@@ -257,10 +264,10 @@ export function ChannelMonitorSuccessAPIKeyTable(
                   <TableCell
                     className={cn(
                       'text-right font-mono font-semibold tabular-nums',
-                      cacheRateClassName
+                      cacheUtilizationClassName
                     )}
                   >
-                    {formatRate(item.cache_hit_rate, item.cache_sample_count)}
+                    {formatRate(item.cache_utilization_rate, item.input_tokens)}
                   </TableCell>
                 </TableRow>
               )

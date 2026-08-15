@@ -54,6 +54,8 @@ type ChannelMonitorMinuteMetric struct {
 	RetryFailureOver60sCount    int64 `gorm:"column:retry_failure_over_60s_count;not null;default:0"`
 	CacheHitCount               int64 `gorm:"not null"`
 	CacheSampleCount            int64 `gorm:"not null"`
+	CacheReadTokens             int64 `gorm:"not null;default:0"`
+	InputTokens                 int64 `gorm:"not null;default:0"`
 	CacheWriteCount             int64 `gorm:"not null"`
 
 	SampleCount           int64   `gorm:"not null"`
@@ -77,6 +79,7 @@ type channelMonitorMinuteLog struct {
 	Type              int
 	IsRetryAttempt    bool
 	IsStream          bool
+	PromptTokens      int
 	CompletionTokens  int
 	UseTime           int
 	Other             string
@@ -94,6 +97,8 @@ type channelMonitorMinuteLogOther struct {
 	CacheCreationTokens   *float64 `json:"cache_creation_tokens"`
 	CacheCreationTokens5m *float64 `json:"cache_creation_tokens_5m"`
 	CacheCreationTokens1h *float64 `json:"cache_creation_tokens_1h"`
+	InputTokensTotal      *float64 `json:"input_tokens_total"`
+	UsageSemantic         string   `json:"usage_semantic"`
 	AttemptDurationMs     *int64   `json:"channel_monitor_attempt_duration_ms"`
 	FinalRetrySummary     bool     `json:"channel_monitor_final_retry_summary"`
 	SmartScheduleProbe    bool     `json:"channel_monitor_smart_schedule_probe"`
@@ -150,6 +155,49 @@ func channelMonitorMinuteNonZero(value *float64) bool {
 	return value != nil && *value != 0
 }
 
+func channelMonitorMinuteTokenCount(value *float64) int64 {
+	if value == nil || *value <= 0 || math.IsNaN(*value) {
+		return 0
+	}
+	if math.IsInf(*value, 1) || *value >= float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(*value)
+}
+
+func channelMonitorMinuteAddTokens(total *int64, value int64) {
+	if value <= 0 {
+		return
+	}
+	if *total > math.MaxInt64-value {
+		*total = math.MaxInt64
+		return
+	}
+	*total += value
+}
+
+func (aggregate *ChannelMonitorMinuteMetric) addCacheUtilization(log channelMonitorMinuteLog, other channelMonitorMinuteLogOther) {
+	cacheReadTokens := channelMonitorMinuteTokenCount(other.CacheTokens)
+	inputTokens := int64(max(log.PromptTokens, 0))
+	if normalizedInputTokens := channelMonitorMinuteTokenCount(other.InputTokensTotal); normalizedInputTokens > 0 {
+		inputTokens = normalizedInputTokens
+	} else if strings.EqualFold(strings.TrimSpace(other.UsageSemantic), "anthropic") {
+		channelMonitorMinuteAddTokens(&inputTokens, cacheReadTokens)
+		cacheWriteTokens := channelMonitorMinuteTokenCount(other.CacheCreationTokens5m)
+		channelMonitorMinuteAddTokens(&cacheWriteTokens, channelMonitorMinuteTokenCount(other.CacheCreationTokens1h))
+		if cacheWriteTokens == 0 {
+			cacheWriteTokens = channelMonitorMinuteTokenCount(other.CacheCreationTokens)
+		}
+		channelMonitorMinuteAddTokens(&inputTokens, cacheWriteTokens)
+	}
+	if inputTokens <= 0 {
+		return
+	}
+	cacheReadTokens = min(cacheReadTokens, inputTokens)
+	channelMonitorMinuteAddTokens(&aggregate.CacheReadTokens, cacheReadTokens)
+	channelMonitorMinuteAddTokens(&aggregate.InputTokens, inputTokens)
+}
+
 func channelMonitorMinuteRateLimited(value any) bool {
 	switch statusCode := value.(type) {
 	case float64:
@@ -194,6 +242,9 @@ func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog)
 	}
 
 	parsedOther, parsed := channelMonitorMinuteOther(log.Other)
+	if log.Type == LogTypeConsume {
+		aggregate.addCacheUtilization(log, parsedOther)
+	}
 	if parsed && parsedOther.CacheTokens != nil {
 		aggregate.CacheSampleCount++
 		if channelMonitorMinuteNonZero(parsedOther.CacheTokens) {
@@ -326,7 +377,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		return []ChannelMonitorMinuteMetric{}, []ChannelMonitorMinuteDurationBucket{}, 0, nil
 	}
 	groupColumn := channelMonitorLogGroupColumn()
-	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, completion_tokens, use_time, other, created_at, request_id"
+	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, prompt_tokens, completion_tokens, use_time, other, created_at, request_id"
 	rows, err := logDB.WithContext(ctx).
 		Model(&Log{}).
 		Select(selectColumns).
@@ -360,6 +411,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 			&log.Type,
 			&log.IsRetryAttempt,
 			&log.IsStream,
+			&log.PromptTokens,
 			&log.CompletionTokens,
 			&log.UseTime,
 			&log.Other,
@@ -583,6 +635,148 @@ func BackfillChannelMonitorMinuteRangeWithState(
 	)
 }
 
+// UpgradeChannelMonitorCacheUtilizationMetrics rebuilds the current Beijing
+// day before switching cache displays from request hit rate to token
+// utilization. Existing deployments keep their older aggregates until the
+// cache-specific backfill replaces them in bounded chunks.
+func UpgradeChannelMonitorCacheUtilizationMetrics(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+) (ChannelMonitorMinuteAggregationResult, bool, error) {
+	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
+	result := ChannelMonitorMinuteAggregationResult{
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+	}
+	if err := ensureChannelMonitorAggregationState(ctx); err != nil {
+		return result, false, err
+	}
+	upgraded := false
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		state, err := lockChannelMonitorAggregationState(tx)
+		if err != nil {
+			return err
+		}
+		if state.CacheUtilizationVersion >= ChannelMonitorCacheUtilizationVersion {
+			return nil
+		}
+		logDB := LOG_DB
+		if LOG_DB == DB {
+			logDB = tx
+		}
+		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+			ctx, logDB, startTimestamp, endTimestamp,
+		)
+		result.ScannedLogRows = scannedLogRows
+		result.MetricRows = len(metrics)
+		result.DurationBucketRows = len(durationBuckets)
+		if err != nil {
+			return err
+		}
+		if err := replaceChannelMonitorMinuteAggregates(
+			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+		); err != nil {
+			return err
+		}
+		if err := tx.Model(&ChannelMonitorAggregationState{}).
+			Where("id = ?", channelMonitorAggregationStateID).
+			Updates(map[string]any{
+				"cache_utilization_version":      ChannelMonitorCacheUtilizationVersion,
+				"cache_utilization_covered_from": startTimestamp,
+				"revision":                       gorm.Expr("revision + ?", 1),
+				"updated_at":                     common.GetTimestamp(),
+			}).Error; err != nil {
+			return err
+		}
+		upgraded = true
+		return nil
+	})
+	if err != nil {
+		return result, false, err
+	}
+	if upgraded {
+		InvalidateChannelMonitorAggregateCaches()
+	}
+	return result, upgraded, nil
+}
+
+// BackfillChannelMonitorCacheUtilizationRangeWithState extends only the cache
+// utilization coverage. The regular aggregate coverage remains valid while
+// legacy cache rows are replaced in the background.
+func BackfillChannelMonitorCacheUtilizationRangeWithState(
+	ctx context.Context,
+	startTimestamp int64,
+	endTimestamp int64,
+) (ChannelMonitorMinuteAggregationResult, error) {
+	startTimestamp, endTimestamp = channelMonitorMinuteRange(startTimestamp, endTimestamp)
+	result := ChannelMonitorMinuteAggregationResult{
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+	}
+	if startTimestamp >= endTimestamp {
+		return result, nil
+	}
+	if err := ensureChannelMonitorAggregationState(ctx); err != nil {
+		return result, err
+	}
+	skipped := false
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		state, err := lockChannelMonitorAggregationState(tx)
+		if err != nil {
+			return err
+		}
+		if state.CacheUtilizationVersion < ChannelMonitorCacheUtilizationVersion ||
+			state.CacheUtilizationCoveredFrom <= 0 {
+			skipped = true
+			return nil
+		}
+		if state.CacheUtilizationCoveredFrom <= startTimestamp {
+			skipped = true
+			return nil
+		}
+		if startTimestamp > state.CacheUtilizationCoveredFrom ||
+			endTimestamp < state.CacheUtilizationCoveredFrom {
+			return fmt.Errorf(
+				"cache utilization backfill range [%d, %d) does not connect to %d",
+				startTimestamp, endTimestamp, state.CacheUtilizationCoveredFrom,
+			)
+		}
+		logDB := LOG_DB
+		if LOG_DB == DB {
+			logDB = tx
+		}
+		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+			ctx, logDB, startTimestamp, endTimestamp,
+		)
+		result.ScannedLogRows = scannedLogRows
+		result.MetricRows = len(metrics)
+		result.DurationBucketRows = len(durationBuckets)
+		if err != nil {
+			return err
+		}
+		if err := replaceChannelMonitorMinuteAggregates(
+			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+		); err != nil {
+			return err
+		}
+		return tx.Model(&ChannelMonitorAggregationState{}).
+			Where("id = ?", channelMonitorAggregationStateID).
+			Updates(map[string]any{
+				"cache_utilization_covered_from": startTimestamp,
+				"revision":                       gorm.Expr("revision + ?", 1),
+				"updated_at":                     common.GetTimestamp(),
+			}).Error
+	})
+	if err != nil {
+		return result, err
+	}
+	if !skipped {
+		InvalidateChannelMonitorAggregateCaches()
+	}
+	return result, nil
+}
+
 func aggregateChannelMonitorMinuteRangeWithState(
 	ctx context.Context,
 	startTimestamp int64,
@@ -734,6 +928,8 @@ type channelMonitorMinuteSuccessAggregateRow struct {
 	FinalFailureCount  int64
 	CacheHitCount      int64
 	CacheSampleCount   int64
+	CacheReadTokens    int64
+	InputTokens        int64
 	CacheWriteCount    int64
 }
 
@@ -796,6 +992,8 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 			"SUM(" + metricTable + ".final_failure_count) AS final_failure_count, " +
 			"SUM(" + metricTable + ".cache_hit_count) AS cache_hit_count, " +
 			"SUM(" + metricTable + ".cache_sample_count) AS cache_sample_count, " +
+			"SUM(" + metricTable + ".cache_read_tokens) AS cache_read_tokens, " +
+			"SUM(" + metricTable + ".input_tokens) AS input_tokens, " +
 			"SUM(" + metricTable + ".cache_write_count) AS cache_write_count"
 	selectColumns := metricTable + ".channel_id AS channel_id, " +
 		metricTable + ".model_name AS model_name, " +
@@ -839,10 +1037,12 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 			finalSuccess:  aggregate.FinalSuccessCount,
 			finalFailure:  aggregate.FinalFailureCount,
 		}
-		cacheHitCount, cacheSampleCount, cacheWriteCount := int64(0), int64(0), int64(0)
+		cacheHitCount, cacheSampleCount, cacheReadTokens, inputTokens, cacheWriteCount := int64(0), int64(0), int64(0), int64(0), int64(0)
 		if includeCacheMetrics {
 			cacheHitCount = aggregate.CacheHitCount
 			cacheSampleCount = aggregate.CacheSampleCount
+			cacheReadTokens = aggregate.CacheReadTokens
+			inputTokens = aggregate.InputTokens
 			cacheWriteCount = aggregate.CacheWriteCount
 		}
 		base := channelMonitorSuccessRow{
@@ -858,6 +1058,8 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 			row.Count = counts.actualSuccess
 			row.CacheHitCount = cacheHitCount
 			row.CacheSampleCount = cacheSampleCount
+			row.CacheReadTokens = cacheReadTokens
+			row.InputTokens = inputTokens
 			row.CacheWriteCount = cacheWriteCount
 			rows = append(rows, row)
 		}
@@ -1068,6 +1270,8 @@ func getChannelMonitorMinuteDailySuccessMetrics(ctx context.Context, startTimest
 		FinalFailureCount  int64
 		CacheHitCount      int64
 		CacheSampleCount   int64
+		CacheReadTokens    int64
+		InputTokens        int64
 		CacheWriteCount    int64
 	}
 	dayBucket := channelMonitorMinuteDayBucketSQL()
@@ -1082,6 +1286,8 @@ func getChannelMonitorMinuteDailySuccessMetrics(ctx context.Context, startTimest
 				"SUM(final_failure_count) AS final_failure_count, "+
 				"SUM(cache_hit_count) AS cache_hit_count, "+
 				"SUM(cache_sample_count) AS cache_sample_count, "+
+				"SUM(cache_read_tokens) AS cache_read_tokens, "+
+				"SUM(input_tokens) AS input_tokens, "+
 				"SUM(cache_write_count) AS cache_write_count",
 		).
 		Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
@@ -1109,6 +1315,8 @@ func getChannelMonitorMinuteDailySuccessMetrics(ctx context.Context, startTimest
 		aggregate.counts.finalFailure += row.FinalFailureCount
 		aggregate.counts.cacheHit += row.CacheHitCount
 		aggregate.counts.cacheSample += row.CacheSampleCount
+		aggregate.counts.cacheRead += row.CacheReadTokens
+		aggregate.counts.inputTokens += row.InputTokens
 		if row.CacheWriteCount > 0 {
 			aggregate.cacheWriteChannels[row.ChannelId] = struct{}{}
 			aggregate.cacheWriteRequests += row.CacheWriteCount
@@ -1151,14 +1359,22 @@ func getChannelMonitorMinuteTodaySuccessMetrics(ctx context.Context, dayStart in
 	cacheWriteCounts := make(map[int]int64)
 	for _, row := range rows {
 		isRetryAttempt := row.IsRetryAttempt != nil && *row.IsRetryAttempt
-		totalCounts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		totalCounts.add(
+			row.Type, isRetryAttempt, row.Count,
+			row.CacheHitCount, row.CacheSampleCount,
+			row.CacheReadTokens, row.InputTokens,
+		)
 		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 		counts := channelCounts[row.ChannelId]
 		if counts == nil {
 			counts = &channelMonitorSuccessCounts{}
 			channelCounts[row.ChannelId] = counts
 		}
-		counts.add(row.Type, isRetryAttempt, row.Count, row.CacheHitCount, row.CacheSampleCount)
+		counts.add(
+			row.Type, isRetryAttempt, row.Count,
+			row.CacheHitCount, row.CacheSampleCount,
+			row.CacheReadTokens, row.InputTokens,
+		)
 		cacheWriteCounts[row.ChannelId] += row.CacheWriteCount
 	}
 

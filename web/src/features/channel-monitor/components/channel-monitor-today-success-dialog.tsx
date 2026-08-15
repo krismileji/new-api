@@ -99,7 +99,7 @@ type TodayChannelSortKey =
   | 'cost_ratio'
   | 'actual_sample_count'
   | 'actual_success_rate'
-  | 'cache_hit_rate'
+  | 'cache_utilization_rate'
   | 'cache_write_request_count'
 
 type TodayChannelSort = {
@@ -155,10 +155,10 @@ function getTodayChannelSortValue(
       ? row.metric.actual_success_rate
       : null
   }
-  if (key === 'cache_hit_rate') {
-    return row.metric.cache_sample_count > 0 &&
-      Number.isFinite(row.metric.cache_hit_rate)
-      ? row.metric.cache_hit_rate
+  if (key === 'cache_utilization_rate') {
+    return row.metric.input_tokens > 0 &&
+      Number.isFinite(row.metric.cache_utilization_rate)
+      ? row.metric.cache_utilization_rate
       : null
   }
   if (key === 'actual_sample_count') return row.metric.actual_sample_count
@@ -227,10 +227,8 @@ function TodaySuccessSummary(props: TodaySuccessSummaryProps) {
     props.summary.actual_sample_count > 0
       ? getRateClassName(props.summary.actual_success_rate)
       : 'text-muted-foreground'
-  const cacheRateClassName =
-    props.summary.cache_sample_count > 0
-      ? 'text-foreground'
-      : 'text-muted-foreground'
+  const cacheUtilizationClassName =
+    props.summary.input_tokens > 0 ? 'text-foreground' : 'text-muted-foreground'
   const cacheWriteValueClassName = props.cacheWriteMetricsAvailable
     ? 'text-foreground'
     : 'text-muted-foreground'
@@ -254,12 +252,12 @@ function TodaySuccessSummary(props: TodaySuccessSummaryProps) {
         valueClassName={successRateClassName}
       />
       <TodaySuccessSummaryValue
-        label='缓存率'
+        label='缓存利用率'
         value={formatRate(
-          props.summary.cache_hit_rate,
-          props.summary.cache_sample_count
+          props.summary.cache_utilization_rate,
+          props.summary.input_tokens
         )}
-        valueClassName={cacheRateClassName}
+        valueClassName={cacheUtilizationClassName}
       />
       <TodaySuccessSummaryValue
         label='缓存写渠道'
@@ -516,13 +514,13 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   }
                 />
                 <ChannelMonitorSortableTableHead
-                  label='缓存率'
+                  label='缓存利用率'
                   align='right'
                   className='w-[12%]'
-                  direction={sortDirection('cache_hit_rate')}
+                  direction={sortDirection('cache_utilization_rate')}
                   onSort={() =>
                     setSort((current) =>
-                      toggleTodayChannelSort(current, 'cache_hit_rate')
+                      toggleTodayChannelSort(current, 'cache_utilization_rate')
                     )
                   }
                 />
@@ -556,8 +554,8 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   item.actual_sample_count > 0
                     ? getRateClassName(item.actual_success_rate)
                     : 'text-muted-foreground'
-                const cacheRateClassName =
-                  item.cache_sample_count > 0
+                const cacheUtilizationClassName =
+                  item.input_tokens > 0
                     ? 'text-foreground'
                     : 'text-muted-foreground'
                 return (
@@ -613,10 +611,13 @@ export function ChannelMonitorTodaySuccessDialogContent(
                     <TableCell
                       className={cn(
                         'text-right font-mono font-semibold tabular-nums',
-                        cacheRateClassName
+                        cacheUtilizationClassName
                       )}
                     >
-                      {formatRate(item.cache_hit_rate, item.cache_sample_count)}
+                      {formatRate(
+                        item.cache_utilization_rate,
+                        item.input_tokens
+                      )}
                     </TableCell>
                     <TableCell
                       className={cn(
@@ -649,7 +650,7 @@ export function ChannelMonitorTodaySuccessDialog(
   const detailLoading =
     insight.query.isLoading ||
     (insight.query.isFetching && result?.detail_date !== insight.selectedDate)
-  let description = `按北京时间统计 ${insight.selectedDate} 的请求与缓存`
+  let description = `按北京时间统计 ${insight.selectedDate} 的请求与缓存利用情况`
   if (result?.generated_at && result.detail_date === insight.selectedDate) {
     description += ` · 更新于 ${formatTimestampToDate(result.generated_at)}`
   }
@@ -662,7 +663,7 @@ export function ChannelMonitorTodaySuccessDialog(
         )}
       >
         <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>成功率、缓存率与缓存写</DialogTitle>
+          <DialogTitle>成功率、缓存利用率与缓存写</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <ChannelMonitorTodaySuccessDialogContent

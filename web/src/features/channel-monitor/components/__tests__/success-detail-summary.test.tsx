@@ -39,12 +39,15 @@ function createSummary(
     cache_hit_count: 1,
     cache_sample_count: 2,
     cache_hit_rate: 0.5,
+    cache_read_tokens: 50,
+    input_tokens: 100,
+    cache_utilization_rate: 0.5,
     ...overrides,
   }
 }
 
 describe('channel monitor success detail summary', () => {
-  test('shows the cache rate beside the success summary cards', () => {
+  test('shows cache utilization beside the success summary cards', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSuccessSummaryCards
         summary={createSummary()}
@@ -53,22 +56,25 @@ describe('channel monitor success detail summary', () => {
     )
 
     assert.ok(markup.includes('sm:grid-cols-4'))
-    assert.match(markup, /真实调用成功率[\s\S]*90%[\s\S]*缓存率[\s\S]*50%/)
+    assert.match(markup, /真实调用成功率[\s\S]*90%[\s\S]*缓存利用率[\s\S]*50%/)
   })
 
-  test('shows a dash when the success detail has no cache samples', () => {
+  test('shows a dash when the success detail has no input tokens', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSuccessSummaryCards
         summary={createSummary({
           cache_hit_count: 0,
           cache_sample_count: 0,
           cache_hit_rate: 0,
+          cache_read_tokens: 0,
+          input_tokens: 0,
+          cache_utilization_rate: 0,
         })}
         mode='actual'
       />
     )
 
-    assert.match(markup, /缓存率<\/span><span[^>]*>\s*-\s*<\/span>/)
-    assert.doesNotMatch(markup, /缓存率[\s\S]*>0%<\/span>/)
+    assert.match(markup, /缓存利用率<\/span><span[^>]*>\s*-\s*<\/span>/)
+    assert.doesNotMatch(markup, /缓存利用率[\s\S]*>0%<\/span>/)
   })
 })

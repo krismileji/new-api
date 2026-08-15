@@ -329,6 +329,9 @@ export type ChannelMonitorSuccessSummary = {
   cache_hit_count: number
   cache_sample_count: number
   cache_hit_rate: number
+  cache_read_tokens: number
+  input_tokens: number
+  cache_utilization_rate: number
 }
 
 export type ChannelMonitorSuccessMetric = ChannelMonitorSuccessSummary & {
@@ -371,6 +374,9 @@ export type ChannelMonitorDailyInsightDay = {
   success_rate: number
   cache_sample_count: number
   cache_rate: number
+  cache_read_tokens: number
+  input_tokens: number
+  cache_utilization_rate: number
   cache_write_channel_count: number
   cache_write_request_count: number
 }
@@ -858,6 +864,9 @@ export type ChannelMonitorSmartScheduleRoutePerformance = {
   cache_hit_count?: number
   cache_sample_count?: number
   cache_hit_rate?: number
+  cache_read_tokens?: number
+  input_tokens?: number
+  cache_utilization_rate?: number
   last_used_time: number
 }
 

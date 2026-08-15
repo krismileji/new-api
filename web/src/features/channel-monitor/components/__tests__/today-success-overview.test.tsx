@@ -47,6 +47,9 @@ function createSummary(
     cache_hit_count: 1,
     cache_sample_count: 2,
     cache_hit_rate: 0.5,
+    cache_read_tokens: 50,
+    input_tokens: 100,
+    cache_utilization_rate: 0.5,
     ...overrides,
   }
 }
@@ -75,6 +78,9 @@ function createResult(
           cache_hit_count: 0,
           cache_sample_count: 0,
           cache_hit_rate: 0,
+          cache_read_tokens: 0,
+          input_tokens: 0,
+          cache_utilization_rate: 0,
         }),
       },
       {
@@ -89,6 +95,9 @@ function createResult(
           cache_hit_count: 1,
           cache_sample_count: 2,
           cache_hit_rate: 0.5,
+          cache_read_tokens: 50,
+          input_tokens: 100,
+          cache_utilization_rate: 0.5,
         }),
       },
       {
@@ -103,6 +112,9 @@ function createResult(
           cache_hit_count: 0,
           cache_sample_count: 0,
           cache_hit_rate: 0,
+          cache_read_tokens: 0,
+          input_tokens: 0,
+          cache_utilization_rate: 0,
         }),
       },
     ],
@@ -118,6 +130,9 @@ function createResult(
           cache_hit_count: 1,
           cache_sample_count: 2,
           cache_hit_rate: 0.5,
+          cache_read_tokens: 50,
+          input_tokens: 100,
+          cache_utilization_rate: 0.5,
         }),
       },
       {
@@ -131,11 +146,14 @@ function createResult(
           cache_hit_count: 0,
           cache_sample_count: 2,
           cache_hit_rate: 0,
+          cache_read_tokens: 0,
+          input_tokens: 100,
+          cache_utilization_rate: 0,
         }),
       },
       {
         api_key_id: 23,
-        api_key_name: '高缓存率 Key',
+        api_key_name: '高缓存利用率 Key',
         ...createSummary({
           actual_success_count: 3,
           actual_failure_count: 0,
@@ -144,6 +162,9 @@ function createResult(
           cache_hit_count: 2,
           cache_sample_count: 2,
           cache_hit_rate: 1,
+          cache_read_tokens: 100,
+          input_tokens: 100,
+          cache_utilization_rate: 1,
         }),
       },
     ],
@@ -235,7 +256,7 @@ describe('channel monitor today success overview', () => {
     assert.match(markup, /^<div\b/)
     assert.ok(markup.includes('role="button"'))
     assert.ok(markup.includes('tabindex="0"'))
-    assert.ok(markup.includes('今日成功率 / 缓存率'))
+    assert.ok(markup.includes('今日成功率 / 缓存利用率'))
     assert.ok(markup.includes('90%'))
     assert.ok(markup.includes('50%'))
     assert.ok(markup.includes('10 次请求'))
@@ -243,12 +264,12 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('2 个'))
     assert.ok(markup.includes('缓存写请求'))
     assert.ok(markup.includes('7 次'))
-    assert.ok(markup.includes('缓存率口径'))
-    assert.ok(markup.includes('选择缓存率 API Key'))
+    assert.ok(markup.includes('缓存利用率口径'))
+    assert.ok(markup.includes('选择缓存利用率 API Key'))
     assert.ok(markup.includes('全部 API Key'))
     assert.ok(
       markup.includes(
-        'aria-label="查看今日成功率、缓存率和缓存写明细，成功率 90%，缓存率 50%，缓存率口径 全部 API Key，缓存写渠道 2 个，缓存写请求 7 次"'
+        'aria-label="查看今日成功率、缓存利用率和缓存写明细，成功率 90%，缓存利用率 50%，缓存利用率口径 全部 API Key，缓存写渠道 2 个，缓存写请求 7 次"'
       )
     )
   })
@@ -266,12 +287,15 @@ describe('channel monitor today success overview', () => {
     assert.match(markup, /role="button" tabindex="0"/)
   })
 
-  test('shows a dash on the card when today has no cache samples', () => {
+  test('shows a dash on the card when today has no input tokens', () => {
     const result = createResult({
       summary: createSummary({
         cache_hit_count: 0,
         cache_sample_count: 0,
         cache_hit_rate: 0,
+        cache_read_tokens: 0,
+        input_tokens: 0,
+        cache_utilization_rate: 0,
       }),
     })
     const markup = renderToStaticMarkup(
@@ -287,7 +311,7 @@ describe('channel monitor today success overview', () => {
     assert.doesNotMatch(markup, />0%<\/span>/)
   })
 
-  test('disables API Key cache-rate filtering when no API Key metrics exist', () => {
+  test('disables API Key cache-utilization filtering when no API Key metrics exist', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorTodaySuccessCard
         result={createResult({ api_key_items: [] })}
@@ -297,7 +321,7 @@ describe('channel monitor today success overview', () => {
       />
     )
 
-    assert.match(markup, /aria-label="选择缓存率 API Key"/)
+    assert.match(markup, /aria-label="选择缓存利用率 API Key"/)
     assert.match(markup, /data-disabled=""[^>]*disabled=""/)
   })
 
@@ -326,7 +350,7 @@ describe('channel monitor today success overview', () => {
     assert.ok((tables[0] ?? '').includes('成本倍率'))
     assert.ok((tables[0] ?? '').includes('写入请求数'))
     assert.ok(markup.includes('按成功率排序'))
-    assert.ok(markup.includes('按缓存率排序'))
+    assert.ok(markup.includes('按缓存利用率排序'))
     assert.ok(markup.includes('按写入请求数排序'))
     assert.equal(channelCells.length, 21)
 
@@ -393,7 +417,7 @@ describe('channel monitor today success overview', () => {
     const tables = getTables(markup)
     const channelCells = getTableCells(tables[0] ?? '')
 
-    assert.match(markup, /缓存率[\s\S]*缓存写渠道[\s\S]*写入请求数/)
+    assert.match(markup, /缓存利用率[\s\S]*缓存写渠道[\s\S]*写入请求数/)
     assert.ok(markup.includes('缓存写渠道'))
     assert.ok(markup.includes('2 个'))
     assert.ok(markup.includes('7 次'))
@@ -419,12 +443,12 @@ describe('channel monitor today success overview', () => {
     assert.match(channelCells[20] ?? '', />-<\/td>/)
   })
 
-  test('orders API Keys by success rate then cache rate descending', () => {
+  test('orders API Keys by success rate then cache utilization descending', () => {
     const markup = renderDialogContent()
     const apiKeyCells = getTableCells(getTables(markup)[1] ?? '')
 
     assert.equal(apiKeyCells.length, 12)
-    assert.ok(apiKeyCells[0]?.includes('高缓存率 Key'))
+    assert.ok(apiKeyCells[0]?.includes('高缓存利用率 Key'))
     assert.ok(apiKeyCells[2]?.includes('100%'))
     assert.ok(apiKeyCells[3]?.includes('100%'))
     assert.ok(apiKeyCells[4]?.includes('高成功率 Key'))

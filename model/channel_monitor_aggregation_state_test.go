@@ -43,6 +43,8 @@ func TestChannelMonitorAggregationStateMigrationBackfillsCoveredFrom(t *testing.
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Zero(t, state.CoveredFrom)
 	assert.Equal(t, int64(300), state.CompletedThrough)
+	assert.Zero(t, state.CacheUtilizationVersion)
+	assert.Zero(t, state.CacheUtilizationCoveredFrom)
 }
 
 func TestAdvanceChannelMonitorAggregationCompletedThroughIsMonotonic(t *testing.T) {
@@ -92,7 +94,11 @@ func TestTrimChannelMonitorAggregationCoverageMovesOnlyTheStart(t *testing.T) {
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	require.NoError(t, db.AutoMigrate(&ChannelMonitorAggregationState{}))
 	require.NoError(t, db.Create(&ChannelMonitorAggregationState{
-		ID: channelMonitorAggregationStateID, CoveredFrom: 60, CompletedThrough: 300,
+		ID:                          channelMonitorAggregationStateID,
+		CoveredFrom:                 60,
+		CompletedThrough:            300,
+		CacheUtilizationVersion:     ChannelMonitorCacheUtilizationVersion,
+		CacheUtilizationCoveredFrom: 60,
 	}).Error)
 	t.Cleanup(func() {
 		DB = originalDB
@@ -106,5 +112,6 @@ func TestTrimChannelMonitorAggregationCoverageMovesOnlyTheStart(t *testing.T) {
 	coverage, err := GetChannelMonitorAggregationCoverage(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(120), coverage.CoveredFrom)
+	assert.Equal(t, int64(120), coverage.CacheUtilizationCoveredFrom)
 	assert.Equal(t, int64(300), coverage.CompletedThrough)
 }

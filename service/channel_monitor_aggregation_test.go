@@ -95,6 +95,80 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	assert.Equal(t, laterNow-laterNow%60, completedThrough)
 }
 
+func TestEnsureChannelMonitorAggregationFreshUpgradesLegacyCacheUtilizationForCurrentDay(t *testing.T) {
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	originalIsMasterNode := common.IsMasterNode
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-cache-upgrade.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	model.LOG_DB = db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.LogConsumeEnabled = true
+	constant.ErrorLogEnabled = true
+	common.IsMasterNode = true
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorAggregationState{},
+		&model.ChannelSmartScheduleRouteState{},
+	))
+	t.Cleanup(func() {
+		key := channelMonitorAggregationDatabaseKey{db: db, logDB: db}
+		channelMonitorAggregationStateMu.Lock()
+		delete(channelMonitorAggregationLocalCompletedThrough, key)
+		channelMonitorAggregationStateMu.Unlock()
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+		common.IsMasterNode = originalIsMasterNode
+		require.NoError(t, sqlDB.Close())
+	})
+
+	beijing := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Date(2026, time.August, 15, 12, 0, 0, 0, beijing).Unix()
+	dayStart := model.ChannelDailyCostDayStart(now)
+	oldMinute := now - int64(2*time.Hour/time.Second)
+	require.NoError(t, model.AdvanceChannelMonitorAggregationCompletedThrough(
+		context.Background(), now-60,
+	))
+	require.NoError(t, db.Model(&model.ChannelMonitorAggregationState{}).
+		Where("completed_through = ?", now-60).
+		Updates(map[string]any{
+			"covered_from":                   dayStart,
+			"cache_utilization_version":      0,
+			"cache_utilization_covered_from": 0,
+		}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		ChannelId: 7, ModelName: "model-a", CreatedAt: oldMinute + 1,
+		Type: model.LogTypeConsume, PromptTokens: 1000, Other: `{"cache_tokens":250}`,
+	}).Error)
+
+	require.NoError(t, EnsureChannelMonitorAggregationFresh(
+		context.Background(), time.Unix(now+20, 0),
+	))
+
+	var metric model.ChannelMonitorMinuteMetric
+	require.NoError(t, db.Where(
+		"minute_start = ? AND channel_id = ?", oldMinute, 7,
+	).First(&metric).Error)
+	assert.Equal(t, int64(250), metric.CacheReadTokens)
+	assert.Equal(t, int64(1000), metric.InputTokens)
+	coverage, err := model.GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, model.ChannelMonitorCacheUtilizationVersion, coverage.CacheUtilizationVersion)
+	assert.Equal(t, dayStart, coverage.CacheUtilizationCoveredFrom)
+}
+
 func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *testing.T) {
 	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_MAX_CHUNKS", "1")
 	t.Setenv("CHANNEL_MONITOR_AGGREGATION_BACKFILL_BUDGET_SECONDS", "10")

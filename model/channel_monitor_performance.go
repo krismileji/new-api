@@ -70,7 +70,7 @@ func GetChannelMonitorStabilityMetric(ctx context.Context, startTimestamp int64,
 		if strings.TrimSpace(row.ModelName) == "" {
 			continue
 		}
-		counts.add(row.Type, row.IsRetryAttempt != nil && *row.IsRetryAttempt, row.Count, 0, 0)
+		counts.add(row.Type, row.IsRetryAttempt != nil && *row.IsRetryAttempt, row.Count, 0, 0, 0, 0)
 	}
 	summary := counts.summary()
 	return ChannelMonitorStabilityMetric{

@@ -117,9 +117,9 @@ export function ChannelMonitorTodaySuccessCard(
     !props.isLoading && !props.isError && metricsAvailable && summary
       ? formatRate(summary.actual_success_rate, summary.actual_sample_count)
       : '-'
-  const cacheRate =
+  const cacheUtilization =
     !props.isLoading && !props.isError && metricsAvailable && cacheMetric
-      ? formatRate(cacheMetric.cache_hit_rate, cacheMetric.cache_sample_count)
+      ? formatRate(cacheMetric.cache_utilization_rate, cacheMetric.input_tokens)
       : '-'
   const cacheWriteMetricsAvailable =
     props.result?.cache_write_metrics_available ?? false
@@ -148,7 +148,7 @@ export function ChannelMonitorTodaySuccessCard(
   } else if (!summary || summary.actual_sample_count === 0) {
     description = '今日暂无请求数据'
   } else {
-    description = `${summary.actual_sample_count} 次请求 · ${cacheMetric?.cache_sample_count ?? 0} 次缓存样本`
+    description = `${summary.actual_sample_count} 次请求 · 缓存读取 ${(cacheMetric?.cache_read_tokens ?? 0).toLocaleString()} / 输入 ${(cacheMetric?.input_tokens ?? 0).toLocaleString()} tokens`
   }
 
   return (
@@ -164,9 +164,9 @@ export function ChannelMonitorTodaySuccessCard(
             props.onOpen()
           }
         }}
-        aria-label={`查看今日成功率、缓存率和缓存写明细，成功率 ${successRate}，缓存率 ${cacheRate}，缓存率口径 ${cacheScopeLabel}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
+        aria-label={`查看今日成功率、缓存利用率和缓存写明细，成功率 ${successRate}，缓存利用率 ${cacheUtilization}，缓存利用率口径 ${cacheScopeLabel}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
       >
-        <CardDescription>今日成功率 / 缓存率</CardDescription>
+        <CardDescription>今日成功率 / 缓存利用率</CardDescription>
         <CardTitle className='text-2xl tabular-nums'>
           {props.isLoading ? (
             <Skeleton className='h-7 w-28' />
@@ -176,7 +176,9 @@ export function ChannelMonitorTodaySuccessCard(
               <span className='text-muted-foreground text-base font-normal'>
                 /
               </span>
-              <span data-slot='today-cache-rate'>{cacheRate}</span>
+              <span data-slot='today-cache-utilization'>
+                {cacheUtilization}
+              </span>
             </span>
           )}
         </CardTitle>
@@ -206,7 +208,7 @@ export function ChannelMonitorTodaySuccessCard(
       <CardContent className='bg-muted/20 mt-auto border-t py-2.5'>
         <div className='flex min-w-0 items-center gap-2'>
           <span className='text-muted-foreground shrink-0 text-xs'>
-            缓存率口径
+            缓存利用率口径
           </span>
           <Select
             items={apiKeyOptions}
@@ -224,7 +226,7 @@ export function ChannelMonitorTodaySuccessCard(
             <SelectTrigger
               size='sm'
               className='min-w-0 flex-1'
-              aria-label='选择缓存率 API Key'
+              aria-label='选择缓存利用率 API Key'
             >
               <SelectValue />
             </SelectTrigger>

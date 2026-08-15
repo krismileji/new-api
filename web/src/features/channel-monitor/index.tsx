@@ -788,6 +788,9 @@ export function ChannelMonitor() {
         cache_hit_count: 0,
         cache_sample_count: 0,
         cache_hit_rate: 0,
+        cache_read_tokens: 0,
+        input_tokens: 0,
+        cache_utilization_rate: 0,
       }
       summary.actual_success_count += metric.actual_success_count
       summary.actual_failure_count += metric.actual_failure_count
@@ -810,6 +813,12 @@ export function ChannelMonitor() {
       summary.cache_hit_rate =
         summary.cache_sample_count > 0
           ? summary.cache_hit_count / summary.cache_sample_count
+          : 0
+      summary.cache_read_tokens += metric.cache_read_tokens ?? 0
+      summary.input_tokens += metric.input_tokens ?? 0
+      summary.cache_utilization_rate =
+        summary.input_tokens > 0
+          ? summary.cache_read_tokens / summary.input_tokens
           : 0
       result.set(metric.channel_id, summary)
     }
