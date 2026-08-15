@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { AxiosAdapter } from 'axios'
+import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
 
 import { api } from '@/lib/api'
 
@@ -258,6 +258,121 @@ try {
     defaultGroupModelOptions.map((option) => option.textContent?.trim()),
     ['全部模型', 'model-a']
   )
+
+  const pauseRequests: AxiosRequestConfig[] = []
+  const finishPauseRequests: Array<() => void> = []
+  api.defaults.adapter = ((config) => {
+    if (config.method === 'put') {
+      pauseRequests.push(config)
+      return new Promise((resolve) => {
+        finishPauseRequests.push(() => {
+          const request = JSON.parse(String(config.data))
+          resolve({
+            config,
+            data: {
+              success: true,
+              message: '',
+              data: {
+                ...overview.data.channels.find(
+                  (channel) =>
+                    channel.id ===
+                    Number(config.url?.match(/channel\/(\d+)/)?.[1])
+                )?.config,
+                enabled: request.enabled,
+                revision: request.revision + 1,
+              },
+            },
+            headers: {},
+            status: 200,
+            statusText: 'OK',
+          })
+        })
+      })
+    }
+    return Promise.resolve({
+      config,
+      data: overview,
+      headers: {},
+      status: 200,
+      statusText: 'OK',
+    })
+  }) as AxiosAdapter
+
+  const pauseAllButton = container.querySelector<HTMLButtonElement>(
+    '[aria-label="暂停所有状态探测"]'
+  )
+  assert.ok(pauseAllButton)
+  assert.equal(pauseAllButton.disabled, false)
+  await act(async () => pauseAllButton.click())
+  assert.equal(pauseRequests.length, 0)
+  assert.match(document.body.textContent ?? '', /暂停全部周期探测？/)
+
+  const confirmPauseButton = [
+    ...document.querySelectorAll<HTMLButtonElement>('button'),
+  ].find((button) => button.textContent?.includes('确认暂停'))
+  assert.ok(confirmPauseButton)
+  await act(async () => {
+    confirmPauseButton.click()
+    await Promise.resolve()
+  })
+  assert.equal(pauseRequests.length, 2)
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const currentPauseAllButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="暂停所有状态探测"]'
+    )
+    if (currentPauseAllButton?.disabled) break
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+  assert.equal(
+    container.querySelector<HTMLButtonElement>(
+      '[aria-label="暂停所有状态探测"]'
+    )?.disabled,
+    true
+  )
+  for (const button of container.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="暂停周期探测"]'
+  )) {
+    assert.equal(button.disabled, true)
+  }
+  assert.deepEqual(
+    pauseRequests.map((request) => ({
+      url: request.url,
+      body: JSON.parse(String(request.data)),
+    })),
+    [
+      {
+        url: '/api/channel_monitor/status/channel/1/config',
+        body: {
+          enabled: false,
+          models: ['model-a'],
+          interval_seconds: 300,
+          display_value: 60,
+          display_unit: 'minute',
+          record_sample: false,
+          revision: 1,
+        },
+      },
+      {
+        url: '/api/channel_monitor/status/channel/2/config',
+        body: {
+          enabled: false,
+          models: ['model-b', 'model-c'],
+          interval_seconds: 300,
+          display_value: 60,
+          display_unit: 'minute',
+          record_sample: false,
+          revision: 1,
+        },
+      },
+    ]
+  )
+
+  await act(async () => {
+    for (const finishRequest of finishPauseRequests) finishRequest()
+    await Promise.resolve()
+  })
 } finally {
   api.defaults.adapter = originalAdapter
   await act(async () => root.unmount())

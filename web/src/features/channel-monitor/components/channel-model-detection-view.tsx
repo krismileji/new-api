@@ -20,6 +20,7 @@ import {
   Alert02Icon,
   CheckmarkCircle02Icon,
   FingerPrintScanIcon,
+  PauseIcon,
   Refresh01Icon,
   Search01Icon,
   Settings02Icon,
@@ -58,6 +59,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
@@ -97,6 +99,9 @@ export type ChannelModelDetectionViewProps = {
   refreshing?: boolean
   error?: string | null
   actionPendingChannelId?: number | null
+  actionPendingAll?: boolean
+  pauseAllPending?: boolean
+  pauseAllDisabled?: boolean
   filters?: ChannelModelDetectionFilters
   onFiltersChange?: (filters: ChannelModelDetectionFilters) => void
   onRefresh?: () => void
@@ -107,6 +112,7 @@ export type ChannelModelDetectionViewProps = {
   onOpenManualRun?: (channel: ChannelModelDetectionChannel) => void
   onCancelRun?: (channel: ChannelModelDetectionChannel) => void
   onToggleSchedule?: (channel: ChannelModelDetectionChannel) => void
+  onPauseAll?: () => void
   settingsSurface?: ReactNode
   channelSurface?: ReactNode
   historySurface?: ReactNode
@@ -303,6 +309,9 @@ export function ChannelModelDetectionView(
     ...availableModels.map((model) => ({ value: model, label: model })),
   ]
   const hasActiveRun = overview.channels.some((channel) => channel.active_run)
+  const scheduledChannelCount = overview.channels.filter(
+    (channel) => channel.config?.schedule_enabled === true
+  ).length
   let channelGridContent: ReactNode
   if (overview.channels.length === 0) {
     channelGridContent = (
@@ -345,7 +354,10 @@ export function ChannelModelDetectionView(
             scheduleEnabled={overview.settings.schedule_enabled}
             nextBatchAt={overview.settings.next_batch_at}
             serverNow={overview.server_now}
-            actionPending={props.actionPendingChannelId === channel.id}
+            actionPending={
+              props.actionPendingAll ||
+              props.actionPendingChannelId === channel.id
+            }
             onOpenHistory={props.onOpenHistory ?? noop}
             onOpenConfig={props.onOpenConfig ?? noop}
             onOpenManualRun={props.onOpenManualRun ?? noop}
@@ -391,17 +403,42 @@ export function ChannelModelDetectionView(
             )}
           </span>
         </div>
-        {props.onOpenSettings && (
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={props.onOpenSettings}
-          >
-            <HugeiconsIcon icon={Settings02Icon} data-icon='inline-start' />
-            统一设置
-          </Button>
-        )}
+        <div className='flex w-full shrink-0 gap-2 sm:w-auto'>
+          {props.onPauseAll && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='flex-1 sm:flex-none'
+              onClick={props.onPauseAll}
+              disabled={
+                scheduledChannelCount === 0 ||
+                props.pauseAllPending ||
+                props.pauseAllDisabled
+              }
+              aria-label='暂停所有模型定时检测'
+            >
+              {props.pauseAllPending ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
+              )}
+              暂停所有
+            </Button>
+          )}
+          {props.onOpenSettings && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='flex-1 sm:flex-none'
+              onClick={props.onOpenSettings}
+            >
+              <HugeiconsIcon icon={Settings02Icon} data-icon='inline-start' />
+              统一设置
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className='flex flex-col items-end gap-2'>

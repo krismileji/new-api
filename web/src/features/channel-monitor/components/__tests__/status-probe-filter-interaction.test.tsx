@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-test('默认隐藏未配置卡片，取消筛选后展示并保持分组和模型选择', () => {
+test('状态监测筛选保持选择，暂停所有时确认并保留渠道配置', () => {
   const fixturePath = fileURLToPath(
     new URL('./status-probe-filter-interaction.fixture.tsx', import.meta.url)
   )

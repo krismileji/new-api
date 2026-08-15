@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Refresh01Icon, Search01Icon } from '@hugeicons/core-free-icons'
+import {
+  PauseIcon,
+  Refresh01Icon,
+  Search01Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   keepPreviousData,
@@ -35,6 +39,16 @@ import {
 } from 'react'
 import { toast } from 'sonner'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -58,6 +72,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 import {
@@ -146,6 +161,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
   const [search, setSearch] = useState('')
   const [configChannelId, setConfigChannelId] = useState<number | null>(null)
   const [historyChannelId, setHistoryChannelId] = useState<number | null>(null)
+  const [pauseAllOpen, setPauseAllOpen] = useState(false)
   const query = useQuery({
     queryKey: ['channel-monitor', 'status-probe', { model: modelFilter }],
     queryFn: () => getChannelStatusProbeOverview(modelFilter),
@@ -160,6 +176,10 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
     refetchIntervalInBackground: false,
   })
   const channels = query.data?.data.channels ?? EMPTY_CHANNELS
+  const enabledChannels = useMemo(
+    () => channels.filter((channel) => channel.config?.enabled === true),
+    [channels]
+  )
   const serverNow = query.data?.data.server_now ?? Math.floor(Date.now() / 1000)
   const groupOptions = useMemo<Array<{ value: string | null; label: string }>>(
     () => [
@@ -263,12 +283,57 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
       })
     },
   })
+  const pauseAllMutation = useMutation({
+    mutationFn: (selectedChannels: ChannelStatusProbeChannel[]) =>
+      Promise.allSettled(
+        selectedChannels.map((channel) => {
+          if (!channel.config) throw new Error('请先配置状态探测')
+          return updateChannelStatusProbeConfig({
+            channelId: channel.id,
+            enabled: false,
+            models: channel.config.models,
+            intervalSeconds: channel.config.interval_seconds,
+            displayValue: channel.config.display_value,
+            displayUnit: channel.config.display_unit,
+            recordSample: channel.config.record_sample,
+            revision: channel.config.revision,
+          })
+        })
+      ),
+    onSuccess: (results) => {
+      const pausedCount = results.filter(
+        (result) => result.status === 'fulfilled'
+      ).length
+      const failedCount = results.length - pausedCount
+      setPauseAllOpen(false)
+      void queryClient.invalidateQueries({
+        queryKey: ['channel-monitor', 'status-probe'],
+      })
+      if (failedCount === 0) {
+        toast.success(`已暂停 ${pausedCount} 个渠道的周期探测`)
+      } else if (pausedCount === 0) {
+        toast.error(`暂停失败，${failedCount} 个渠道未更新，请刷新后重试`)
+      } else {
+        toast.error(
+          `已暂停 ${pausedCount} 个渠道，${failedCount} 个渠道失败，请刷新后重试`
+        )
+      }
+    },
+  })
   let pendingChannelId: number | null | undefined = null
   if (runMutation.isPending) {
     pendingChannelId = runMutation.variables?.id
   } else if (toggleMutation.isPending) {
     pendingChannelId = toggleMutation.variables?.id
   }
+  const allActionsPending = pauseAllMutation.isPending
+  const pauseAllDisabled =
+    enabledChannels.length === 0 ||
+    query.isLoading ||
+    query.isFetching ||
+    runMutation.isPending ||
+    toggleMutation.isPending ||
+    pauseAllMutation.isPending
   let channelGridContent: ReactNode
   if (query.isLoading) {
     channelGridContent = (
@@ -308,7 +373,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
             key={channel.id}
             channel={channel}
             serverNow={serverNow}
-            actionPending={pendingChannelId === channel.id}
+            actionPending={allActionsPending || pendingChannelId === channel.id}
             onOpenHistory={openHistory}
             onOpenConfig={openConfig}
             onRun={runMutation.mutate}
@@ -451,6 +516,21 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
           <Button
             type='button'
             variant='outline'
+            className='w-full sm:w-auto'
+            onClick={() => setPauseAllOpen(true)}
+            disabled={pauseAllDisabled}
+            aria-label='暂停所有状态探测'
+          >
+            {pauseAllMutation.isPending ? (
+              <Spinner data-icon='inline-start' />
+            ) : (
+              <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
+            )}
+            暂停所有
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
             size='icon'
             onClick={() => query.refetch()}
             disabled={query.isFetching}
@@ -465,6 +545,47 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
       </div>
 
       {channelGridContent}
+
+      <AlertDialog
+        open={pauseAllOpen}
+        onOpenChange={(open) => {
+          if (!pauseAllMutation.isPending) setPauseAllOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>暂停全部周期探测？</AlertDialogTitle>
+            <AlertDialogDescription className='space-y-2'>
+              <span className='block'>
+                将暂停全部 {enabledChannels.length}
+                个已启用渠道的周期探测，不受当前筛选条件影响。
+              </span>
+              <span className='block'>
+                当前正在运行或已手动排队的任务不会被取消。
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pauseAllMutation.isPending}>
+              返回
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant='destructive'
+              disabled={
+                enabledChannels.length === 0 || pauseAllMutation.isPending
+              }
+              onClick={() => pauseAllMutation.mutate(enabledChannels)}
+            >
+              {pauseAllMutation.isPending ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
+              )}
+              确认暂停
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {configChannel && (
         <Suspense fallback={null}>
@@ -484,7 +605,9 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
             key={historyChannel.id}
             channel={historyChannel}
             open
-            actionPending={pendingChannelId === historyChannel.id}
+            actionPending={
+              allActionsPending || pendingChannelId === historyChannel.id
+            }
             onOpenChange={(open) => {
               if (!open) setHistoryChannelId(null)
             }}

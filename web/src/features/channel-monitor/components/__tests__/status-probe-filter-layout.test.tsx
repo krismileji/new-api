@@ -138,5 +138,10 @@ describe('状态监测筛选布局', () => {
     assert.ok(search)
     assert.equal(search.getAttribute('placeholder'), '搜索渠道、备注或 ID')
     assert.match(search.parentElement?.className ?? '', /sm:w-72/)
+    const pauseAll = domWindow.document.querySelector(
+      '[aria-label="暂停所有状态探测"]'
+    ) as HTMLButtonElement | null
+    assert.ok(pauseAll)
+    assert.equal(pauseAll.disabled, true)
   })
 })

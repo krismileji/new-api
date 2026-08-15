@@ -266,4 +266,19 @@ describe('模型检测视图骨架', () => {
       /没有匹配的渠道/
     )
   })
+
+  test('没有参加定时检测的渠道时禁用暂停所有按钮', () => {
+    domWindow.document.body.innerHTML = renderToStaticMarkup(
+      <ChannelModelDetectionView
+        overview={createOverview()}
+        onPauseAll={() => {}}
+      />
+    )
+
+    const pauseAll = domWindow.document.querySelector(
+      '[aria-label="暂停所有模型定时检测"]'
+    ) as HTMLButtonElement | null
+    assert.ok(pauseAll)
+    assert.equal(pauseAll.disabled, true)
+  })
 })

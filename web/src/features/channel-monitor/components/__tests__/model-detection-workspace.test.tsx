@@ -427,6 +427,158 @@ describe('模型检测工作区', () => {
     )
   })
 
+  test('暂停所有先确认，仅更新已启用渠道并在部分失败后刷新总览', async () => {
+    const overview = createOverview()
+    overview.channels = [
+      createChannel({
+        config: {
+          channel_id: 801,
+          schedule_enabled: true,
+          revision: 7,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+      createChannel({
+        id: 802,
+        name: '备用渠道',
+        config: {
+          channel_id: 802,
+          schedule_enabled: true,
+          revision: 11,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+        targets: [
+          {
+            target_key: 'disabled-target',
+            request_model: 'gpt-5.6-sol',
+            claimed_model: 'gpt-5.6-sol',
+            enabled: false,
+            position: 0,
+            latest: null,
+          },
+          {
+            target_key: 'enabled-target',
+            request_model: 'gpt-5.6-sol',
+            claimed_model: 'gpt-5.6-sol',
+            enabled: true,
+            position: 1,
+            latest: null,
+          },
+        ],
+      }),
+      createChannel({
+        id: 803,
+        name: '已暂停渠道',
+        config: {
+          channel_id: 803,
+          schedule_enabled: false,
+          revision: 5,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+    ]
+    const requests: AxiosRequestConfig[] = []
+    const settleRequests: Array<() => void> = []
+    api.defaults.adapter = ((config) => {
+      requests.push(config)
+      return new Promise((resolve, reject) => {
+        if (requests.length === 1) {
+          settleRequests.push(() =>
+            resolve({
+              ...success({
+                channel_id: 801,
+                schedule_enabled: false,
+                revision: 8,
+                created_at: 1_775_000_000,
+                updated_at: 1_775_000_100,
+                targets: [],
+              }),
+              config,
+            })
+          )
+          return
+        }
+        settleRequests.push(() => reject(new Error('revision conflict')))
+      })
+    }) as AxiosAdapter
+    await renderWorkspace(overview)
+
+    const pauseAllButton = findButton('暂停所有模型定时检测')
+    assert.equal(pauseAllButton.disabled, false)
+    await act(async () => pauseAllButton.click())
+    assert.equal(requests.length, 0)
+    assert.match(document.body.textContent ?? '', /暂停全部模型定时检测？/)
+
+    const confirmButton = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.includes('确认暂停')
+    )
+    assert.ok(confirmButton)
+    await act(async () => confirmButton.click())
+    await waitForCondition(() => requests.length === 2, '批量暂停请求未发出')
+    assert.equal(pauseAllButton.disabled, true)
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="退出统一定时检测"], [aria-label="参加统一定时检测"]'
+    )) {
+      assert.equal(button.disabled, true)
+    }
+    assert.deepEqual(
+      requests.map((request) => ({
+        url: request.url,
+        body: JSON.parse(String(request.data)),
+      })),
+      [
+        {
+          url: '/api/channel_monitor/model_detection/channel/801/config',
+          body: {
+            schedule_enabled: false,
+            targets: [
+              {
+                target_key: 'target-sol',
+                request_model: 'gpt-5.6-sol',
+                claimed_model: 'gpt-5.6-sol',
+              },
+            ],
+            revision: 7,
+          },
+        },
+        {
+          url: '/api/channel_monitor/model_detection/channel/802/config',
+          body: {
+            schedule_enabled: false,
+            targets: [
+              {
+                target_key: 'enabled-target',
+                request_model: 'gpt-5.6-sol',
+                claimed_model: 'gpt-5.6-sol',
+              },
+            ],
+            revision: 11,
+          },
+        },
+      ]
+    )
+
+    await act(async () => {
+      for (const settleRequest of settleRequests) settleRequest()
+      await Promise.resolve()
+    })
+    await waitForCondition(
+      () => !document.body.textContent?.includes('暂停全部模型定时检测？'),
+      '批量暂停确认未关闭'
+    )
+    assert.equal(
+      renderedWorkspace?.queryClient.getQueryState([
+        'channel-monitor',
+        'model-detection',
+        'overview',
+      ])?.isInvalidated,
+      true
+    )
+  })
+
   test('历史筛选进入真实请求并从轮次打开基础设施详情', async () => {
     const requests: AxiosRequestConfig[] = []
     const run = createRunSummary()

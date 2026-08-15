@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cancel01Icon } from '@hugeicons/core-free-icons'
+import { Cancel01Icon, PauseIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useMemo, useState } from 'react'
@@ -83,6 +83,7 @@ export function ChannelModelDetectionWorkspace(
   const [runChannelId, setRunChannelId] = useState<number | null>(null)
   const [historyChannelId, setHistoryChannelId] = useState<number | null>(null)
   const [cancelChannelId, setCancelChannelId] = useState<number | null>(null)
+  const [pauseAllOpen, setPauseAllOpen] = useState(false)
   const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [historyQueryInput, setHistoryQueryInput] = useState(
     DEFAULT_HISTORY_QUERY
@@ -107,6 +108,13 @@ export function ChannelModelDetectionWorkspace(
   const cancelChannel = cancelChannelId
     ? (channelsById.get(cancelChannelId) ?? null)
     : null
+  const scheduledChannels = useMemo(
+    () =>
+      (props.overview?.channels ?? []).filter(
+        (channel) => channel.config?.schedule_enabled === true
+      ),
+    [props.overview?.channels]
+  )
 
   const refreshOverview = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
@@ -165,6 +173,46 @@ export function ChannelModelDetectionWorkspace(
         : '更新渠道定时检测失败：'
       toast.error(`${prefix}${channelModelDetectionRequestErrorMessage(error)}`)
       refreshOverview()
+    },
+  })
+
+  const pauseAllMutation = useMutation({
+    mutationFn: (channels: ChannelModelDetectionChannel[]) =>
+      Promise.allSettled(
+        channels.map((channel) => {
+          if (!channel.config) {
+            throw new Error('渠道尚未配置模型检测目标')
+          }
+          return updateChannelModelDetectionConfig(channel.id, {
+            schedule_enabled: false,
+            targets: [...channel.targets]
+              .filter((target) => target.enabled)
+              .sort((left, right) => left.position - right.position)
+              .map((target) => ({
+                target_key: target.target_key,
+                request_model: target.request_model,
+                claimed_model: target.claimed_model,
+              })),
+            revision: channel.config.revision,
+          })
+        })
+      ),
+    onSuccess: (results) => {
+      const pausedCount = results.filter(
+        (result) => result.status === 'fulfilled'
+      ).length
+      const failedCount = results.length - pausedCount
+      setPauseAllOpen(false)
+      refreshOverview()
+      if (failedCount === 0) {
+        toast.success(`已暂停 ${pausedCount} 个渠道的模型定时检测`)
+      } else if (pausedCount === 0) {
+        toast.error(`暂停失败，${failedCount} 个渠道未更新，请刷新后重试`)
+      } else {
+        toast.error(
+          `已暂停 ${pausedCount} 个渠道，${failedCount} 个渠道失败，请刷新后重试`
+        )
+      }
     },
   })
 
@@ -260,6 +308,44 @@ export function ChannelModelDetectionWorkspace(
         onRefreshRequested={refreshOverview}
       />
       <AlertDialog
+        open={pauseAllOpen}
+        onOpenChange={(open) => {
+          if (!pauseAllMutation.isPending) setPauseAllOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>暂停全部模型定时检测？</AlertDialogTitle>
+            <AlertDialogDescription className='space-y-2'>
+              <span className='block'>
+                将让全部 {scheduledChannels.length}
+                个已参加统一定时检测的渠道退出定时检测，不受当前筛选条件影响。
+              </span>
+              <span className='block'>已经运行的检测轮次不会被取消。</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pauseAllMutation.isPending}>
+              返回
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant='destructive'
+              disabled={
+                scheduledChannels.length === 0 || pauseAllMutation.isPending
+              }
+              onClick={() => pauseAllMutation.mutate(scheduledChannels)}
+            >
+              {pauseAllMutation.isPending ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
+              )}
+              确认暂停
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
         open={cancelChannelId != null}
         onOpenChange={(open) => {
           if (!open && !cancelMutation.isPending) {
@@ -350,6 +436,10 @@ export function ChannelModelDetectionWorkspace(
     <ChannelModelDetectionView
       {...props}
       actionPendingChannelId={actionPendingChannelId}
+      actionPendingAll={pauseAllMutation.isPending}
+      pauseAllPending={pauseAllMutation.isPending}
+      pauseAllDisabled={scheduleMutation.isPending || cancelMutation.isPending}
+      onPauseAll={() => setPauseAllOpen(true)}
       onOpenSettings={() => setSettingsOpen(true)}
       onOpenHistory={(channel) => {
         setHistoryQueryInput(DEFAULT_HISTORY_QUERY)
