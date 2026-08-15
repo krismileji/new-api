@@ -16,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelprobe"
-	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -276,9 +275,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
 
 		if newAPIError == nil {
-			if !isChannelTestContext(c) {
-				observeChannelSmartScheduleRuntimeRequestSuccess(channel.Id, retryParam.ModelName)
-			}
 			relayInfo.LastError = nil
 			return
 		}
@@ -307,7 +303,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			retryRouting.exclude(channel.Id)
 		}
 		channelError := newRelayChannelError(c, channel)
-		processChannelErrorWithTiming(c, *channelError, newAPIError, shouldRetry, &attemptDuration, false)
+		processChannelErrorWithTiming(
+			c, *channelError, newAPIError, shouldRetry, attemptIndex > 0, &attemptDuration, false,
+		)
 		finalRetryLogPending = shouldRetry
 		if shouldRetry {
 			finalRetryAttemptDuration = attemptDuration
@@ -327,18 +325,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	if newAPIError != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		processChannelErrorWithTiming(c, *finalRetryChannelError,
-			newAPIError, false, &finalRetryAttemptDuration, true)
+			newAPIError, false, false, &finalRetryAttemptDuration, true)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
 		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
-	}
-	if newAPIError != nil {
-		gopool.Go(func() {
-			perfmetrics.RecordRelaySample(relayInfo, false, 0)
-		})
 	}
 }
 
@@ -492,21 +485,34 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool) {
-	processChannelErrorWithTiming(c, channelError, err, isRetryAttempt, nil, false)
+	processChannelErrorWithTiming(c, channelError, err, isRetryAttempt, false, nil, false)
 }
 
-func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, isRetryAttempt bool, attemptDuration *time.Duration, finalRetrySummary bool) {
+func processChannelErrorWithTiming(
+	c *gin.Context,
+	channelError types.ChannelError,
+	err *types.NewAPIError,
+	isRetryAttempt bool,
+	monitorRetryAttempt bool,
+	attemptDuration *time.Duration,
+	finalRetrySummary bool,
+) {
 	// Automatic channel tests are maintenance checks, not production traffic.
 	// They may still auto-disable a channel below, but must never mutate the
 	// smart-schedule runtime state or stability samples.
 	runtimeProtectionEligible := !finalRetrySummary && !isChannelTestContext(c)
-	// Rate-limit cooldown does not depend on a stability sample and should be
-	// applied before the error-log write so concurrent requests stop promptly.
-	if runtimeProtectionEligible && err != nil && err.StatusCode == http.StatusTooManyRequests {
-		protectChannelSmartScheduleRuntimeFailure(
+	if !isChannelTestContext(c) {
+		service.EmitChannelMonitorFailureEvent(
+			c,
 			channelError.ChannelId,
 			c.GetString("original_model"),
 			err,
+			monitorRetryAttempt,
+			finalRetrySummary || !isRetryAttempt,
+			finalRetrySummary,
+			service.WasChannelDailyCostRequestDispatched(c),
+			runtimeProtectionEligible,
+			attemptDuration,
 		)
 	}
 
@@ -584,16 +590,6 @@ func processChannelErrorWithTiming(c *gin.Context, channelError types.ChannelErr
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
-	}
-	// Stability protection records this failure in the per-channel runtime
-	// window immediately, so a burst can trigger protection without waiting for
-	// the minute-level stability aggregation worker.
-	if runtimeProtectionEligible && err != nil && err.StatusCode != http.StatusTooManyRequests {
-		protectChannelSmartScheduleRuntimeFailure(
-			channelError.ChannelId,
-			c.GetString("original_model"),
-			err,
-		)
 	}
 }
 
@@ -807,9 +803,6 @@ func RelayTask(c *gin.Context) {
 		}
 		if taskErr == nil {
 			successfulChannelID = channel.Id
-			if !isChannelTestContext(c) {
-				observeChannelSmartScheduleRuntimeRequestSuccess(channel.Id, retryParam.ModelName)
-			}
 			break
 		}
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
@@ -844,7 +837,10 @@ func RelayTask(c *gin.Context) {
 
 		if !taskErr.LocalError {
 			channelError := newRelayChannelError(c, channel)
-			processChannelErrorWithTiming(c, *channelError, taskErrorForChannelLog(taskErr), shouldRetry, &attemptDuration, false)
+			processChannelErrorWithTiming(
+				c, *channelError, taskErrorForChannelLog(taskErr), shouldRetry,
+				attemptIndex > 0, &attemptDuration, false,
+			)
 			finalRetryLogPending = shouldRetry
 			if shouldRetry {
 				finalRetryAttemptDuration = attemptDuration
@@ -869,7 +865,7 @@ func RelayTask(c *gin.Context) {
 	if taskErr != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		processChannelErrorWithTiming(c, *finalRetryChannelError,
 			taskErrorForChannelLog(taskErr),
-			false, &finalRetryAttemptDuration, true)
+			false, false, &finalRetryAttemptDuration, true)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -883,9 +879,6 @@ func RelayTask(c *gin.Context) {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
-		service.LogTaskConsumption(c, relayInfo)
-		service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
-
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
@@ -900,6 +893,8 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
+		service.LogTaskConsumption(c, relayInfo, task)
+		service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action

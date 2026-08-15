@@ -19,6 +19,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -232,6 +233,11 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	defer service.FinalizeChannelDailyCostAttempt(c, info.ChannelId, false)
 	mjResp, _, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	if err != nil {
+		service.EmitChannelMonitorFailureEvent(
+			c, info.ChannelId, modelName,
+			relaytypes.NewError(err, relaytypes.ErrorCodeDoRequestFailed),
+			false, true, false, true, false, nil,
+		)
 		return &mjResp.Response
 	}
 	defer func() {
@@ -257,6 +263,9 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			model.UpdateUserUsedQuotaAndRequestCount(info.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(info.ChannelId, priceData.Quota)
 			service.RecordPerCallChannelDailyCost(c, info.ChannelId, modelName, priceData)
+			monitorInfo := *info
+			monitorInfo.OriginModelName = modelName
+			service.EmitChannelMonitorSuccessEvent(c, &monitorInfo, service.ChannelMonitorSuccessEventInput{})
 		}
 	}()
 	midjResponse := &mjResp.Response
@@ -541,6 +550,11 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	defer service.FinalizeChannelDailyCostAttempt(c, costChannelID, false)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	if err != nil {
+		service.EmitChannelMonitorFailureEvent(
+			c, costChannelID, modelName,
+			relaytypes.NewError(err, relaytypes.ErrorCodeDoRequestFailed),
+			false, true, false, true, false, nil,
+		)
 		return &midjResponseWithStatus.Response
 	}
 	midjResponse := &midjResponseWithStatus.Response
@@ -567,6 +581,10 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, priceData.Quota)
 			model.UpdateChannelUsedQuota(relayInfo.ChannelId, priceData.Quota)
 			service.RecordPerCallChannelDailyCost(c, c.GetInt("channel_id"), modelName, priceData)
+			monitorInfo := *relayInfo
+			monitorInfo.ChannelId = c.GetInt("channel_id")
+			monitorInfo.OriginModelName = modelName
+			service.EmitChannelMonitorSuccessEvent(c, &monitorInfo, service.ChannelMonitorSuccessEventInput{})
 		}
 	}()
 

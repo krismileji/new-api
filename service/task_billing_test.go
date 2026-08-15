@@ -238,6 +238,50 @@ func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
 	}, priceData.OtherRatios())
 }
 
+func TestTaskChannelCostForQuotaScalesResolvedCost(t *testing.T) {
+	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.ChannelCostNanoCNY = 250
+	task.PrivateData.BillingContext.ChannelCostResolved = true
+
+	cost, ok := taskChannelCostForQuota(task, 100, 40)
+	require.True(t, ok)
+	assert.Equal(t, int64(100), cost)
+
+	cost, ok = taskChannelCostForQuota(task, 100, 120)
+	require.True(t, ok)
+	assert.Equal(t, int64(300), cost)
+}
+
+func TestTaskChannelCostForQuotaSkipsUnresolvedOrInvalidInputs(t *testing.T) {
+	tests := []struct {
+		name        string
+		resolved    bool
+		costNanoCNY int64
+		preConsumed int
+		actual      int
+	}{
+		{name: "nil task"},
+		{name: "unresolved", resolved: false, costNanoCNY: 250, preConsumed: 100, actual: 50},
+		{name: "negative cost", resolved: true, costNanoCNY: -1, preConsumed: 100, actual: 50},
+		{name: "zero pre-consume", resolved: true, costNanoCNY: 250, preConsumed: 0, actual: 50},
+		{name: "negative actual", resolved: true, costNanoCNY: 250, preConsumed: 100, actual: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var task *model.Task
+			if tt.name != "nil task" {
+				task = makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+				task.PrivateData.BillingContext.ChannelCostResolved = tt.resolved
+				task.PrivateData.BillingContext.ChannelCostNanoCNY = tt.costNanoCNY
+			}
+			cost, ok := taskChannelCostForQuota(task, tt.preConsumed, tt.actual)
+			assert.False(t, ok)
+			assert.Zero(t, cost)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------

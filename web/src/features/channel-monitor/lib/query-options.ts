@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { queryOptions } from '@tanstack/react-query'
+import { queryOptions, type QueryClient } from '@tanstack/react-query'
 
 import {
   getChannelMonitorOverview,
@@ -28,9 +28,11 @@ import type {
   ChannelMonitorPerformanceRangeSource,
 } from '../types'
 
-const CHANNEL_MONITOR_PERFORMANCE_STALE_TIME = 60_000
-const CHANNEL_MONITOR_REFETCH_INTERVAL = 60_000
-const CHANNEL_STATUS_PROBE_ACTIVE_REFETCH_INTERVAL = 3_000
+export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
+  refetchInterval: false,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+} as const
 
 export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'channel-monitor',
@@ -46,11 +48,31 @@ export const CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY = [
   'channel-monitor-task-history',
 ] as const
 
+const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_KEYS = [
+  ['channel-monitor'],
+  ['channel-monitor-performance'],
+  ['channel-monitor-smart-schedule-executions'],
+  ['channel-monitor-task-history'],
+  ['channel-monitor-success-detail'],
+  ['channel-monitor-history'],
+  ['channel-monitor-available-groups'],
+] as const
+
+export async function refetchChannelMonitorQueries(queryClient: QueryClient) {
+  await Promise.all(
+    CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_KEYS.map((queryKey) =>
+      queryClient.refetchQueries({ queryKey, type: 'all' })
+    )
+  )
+}
+
 export function getChannelMonitorOverviewQueryOptions() {
   return queryOptions({
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
-    refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
 }
 
@@ -63,8 +85,9 @@ export function getChannelMonitorPerformanceQueryOptions(
     queryKey: ['channel-monitor-performance', source, minutes],
     queryFn: () => getChannelMonitorPerformance(minutes),
     enabled: active,
-    staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
-    refetchInterval: active ? CHANNEL_MONITOR_REFETCH_INTERVAL : false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
 }
 
@@ -79,15 +102,6 @@ export function getChannelStatusProbeHistoryLatestExecutionKey(
   return page === 1 ? latestExecutionId : 0
 }
 
-export function getChannelStatusProbeHistoryRefetchInterval(
-  page: number,
-  probeActive: boolean,
-  visibilityState: DocumentVisibilityState
-) {
-  if (page !== 1 || !probeActive || visibilityState === 'hidden') return false
-  return CHANNEL_STATUS_PROBE_ACTIVE_REFETCH_INTERVAL
-}
-
 export function getChannelMonitorSmartScheduleQueryOptions(
   metrics: boolean = true
 ) {
@@ -97,9 +111,8 @@ export function getChannelMonitorSmartScheduleQueryOptions(
       metrics ? 'metrics' : 'summary',
     ],
     queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
-    staleTime: CHANNEL_MONITOR_PERFORMANCE_STALE_TIME,
-    refetchInterval: CHANNEL_MONITOR_REFETCH_INTERVAL,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: 'always',
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
 }

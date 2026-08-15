@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,11 +14,12 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
-func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
+func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -65,6 +67,16 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
 	RecordPerCallChannelDailyCost(c, info.ChannelId, info.OriginModelName, info.PriceData)
+	costEventId := ""
+	if task != nil && task.PrivateData.BillingContext != nil {
+		costEventId = "task:" + task.TaskID
+		task.PrivateData.BillingContext.ChannelCostEventId = costEventId
+		if settledCost := ChannelDailyCostAttemptSettledCost(c, info.ChannelId); settledCost != nil {
+			task.PrivateData.BillingContext.ChannelCostNanoCNY = *settledCost
+			task.PrivateData.BillingContext.ChannelCostResolved = true
+		}
+	}
+	EmitChannelMonitorSuccessEvent(c, info, ChannelMonitorSuccessEventInput{CostEventId: costEventId})
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +213,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	if err := task.UpdateQuota(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("退款成功但清除 task quota 失败 task %s: %s", task.TaskID, err.Error()))
 	}
+	emitTaskChannelCostCorrection(task, 0)
 	return true
 }
 
@@ -273,6 +286,55 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Other:     other,
 		NodeName:  task.PrivateData.NodeName,
 	})
+	if actualCost, ok := taskChannelCostForQuota(task, preConsumedQuota, actualQuota); ok {
+		emitTaskChannelCostCorrection(task, actualCost)
+	}
+}
+
+func taskChannelCostForQuota(task *model.Task, preConsumedQuota int, actualQuota int) (int64, bool) {
+	if task == nil || actualQuota < 0 || preConsumedQuota <= 0 || task.PrivateData.BillingContext == nil {
+		return 0, false
+	}
+	billingContext := task.PrivateData.BillingContext
+	if !billingContext.ChannelCostResolved || billingContext.ChannelCostNanoCNY < 0 {
+		return 0, false
+	}
+	cost := decimal.NewFromInt(billingContext.ChannelCostNanoCNY).
+		Mul(decimal.NewFromInt(int64(actualQuota))).
+		Div(decimal.NewFromInt(int64(preConsumedQuota))).Round(0)
+	if cost.IsNegative() || cost.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
+		return 0, false
+	}
+	return cost.IntPart(), true
+}
+
+func emitTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
+	if task == nil || task.ChannelId <= 0 || task.PrivateData.BillingContext == nil {
+		return
+	}
+	costEventId := strings.TrimSpace(task.PrivateData.BillingContext.ChannelCostEventId)
+	if costEventId == "" || costNanoCNY < 0 {
+		return
+	}
+	event := model.NewChannelMonitorEvent(
+		task.ChannelId,
+		model.ChannelMonitorEventSourceBusiness,
+		model.ChannelMonitorEventOutcomeSuccess,
+		task.SubmitTime,
+	)
+	event.GroupName = task.Group
+	event.ModelName = taskModelName(task)
+	event.RequestId = task.TaskID
+	event.APIKeyId = task.PrivateData.TokenId
+	event.IsFinalAttempt = true
+	event.RequestDispatched = false
+	event.SchedulingEligible = false
+	event.CostStatus = model.ChannelMonitorEventCostSettled
+	event.SettledCostNanoCNY = costNanoCNY
+	if other, err := common.Marshal(map[string]string{"cost_event_id": costEventId}); err == nil {
+		event.OtherJson = string(other)
+	}
+	EmitChannelMonitorEvent(event)
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

@@ -154,7 +154,6 @@ const settings = {
       adaptive_sampling_min_comparable_channels: 2,
     },
   ],
-  smart_schedule_interval_minutes: 10,
   smart_schedule_performance_window_minutes: 60,
   smart_schedule_stability_window_minutes: 120,
   smart_schedule_rate_limit_cooldown_seconds: 30,

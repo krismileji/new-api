@@ -35,6 +35,17 @@ func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
 	now := common.GetTimestamp()
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 10, now, 1_250_000_000, 1, 1))
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 11, now, 0, 0, 1))
+	settled := model.NewChannelMonitorEvent(10, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	settled.EventId = "overview-settled"
+	settled.RequestDispatched = true
+	settled.IsFinalAttempt = true
+	settled.CostStatus = model.ChannelMonitorEventCostSettled
+	settled.SettledCostNanoCNY = 1_250_000_000
+	unresolved := model.NewChannelMonitorEvent(11, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeFailure, now)
+	unresolved.EventId = "overview-unresolved"
+	unresolved.RequestDispatched = true
+	unresolved.CostStatus = model.ChannelMonitorEventCostUnresolved
+	emitChannelMonitorControllerRealtimeEvents(t, settled, unresolved)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor", nil)
 	GetChannelMonitorOverview(ctx)
@@ -59,8 +70,8 @@ func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
 	}
 	assert.InDelta(t, 1.25, byId[10].TodayCostCNY, 1e-9)
 	assert.True(t, byId[10].TodayCostConfigured)
-	assert.False(t, byId[10].TodayCostComplete)
-	assert.Equal(t, int64(1), byId[10].TodayCostUnresolvedCount)
+	assert.True(t, byId[10].TodayCostComplete)
+	assert.Zero(t, byId[10].TodayCostUnresolvedCount)
 	assert.False(t, byId[11].TodayCostConfigured)
 	assert.False(t, byId[11].TodayCostComplete)
 	assert.Zero(t, byId[12].TodayCostCNY)
@@ -164,7 +175,7 @@ func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t
 
 	assert.Equal(t, detailDate, overview.DetailDate)
 	require.Len(t, overview.ChartItems, 3)
-	assert.InDelta(t, 5, overview.TotalCostCNY, 1e-9)
+	assert.InDelta(t, 2, overview.TotalCostCNY, 1e-9)
 	require.Len(t, overview.Channels, 1)
 	assert.InDelta(t, 2, overview.Channels[0].CostCNY, 1e-9)
 	require.Len(t, overview.APIKeys, 1)
@@ -225,6 +236,13 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 1, now-channelMonitorCostDaySeconds, 2_000_000_000, 1, 0))
 	require.NoError(t, model.AddChannelDailyCostWithProbe(context.Background(), 1, now, 1_000_000_000, 200_000_000, 1, 1))
 	require.NoError(t, model.AddChannelDailyCostWithModelDetection(context.Background(), db, 1, now, 300_000_000, 300_000_000, 1, 0))
+	event := model.NewChannelMonitorEvent(1, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	event.EventId = "summary-realtime-cost"
+	event.RequestDispatched = true
+	event.IsFinalAttempt = true
+	event.CostStatus = model.ChannelMonitorEventCostSettled
+	event.SettledCostNanoCNY = 1_300_000_000
+	emitChannelMonitorControllerRealtimeEvents(t, event)
 
 	var detailQueries atomic.Int64
 	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_channel_monitor_cost_details", func(tx *gorm.DB) {
@@ -248,15 +266,15 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.InDelta(t, 2, response.Data.YesterdayCostCNY, 1e-9)
 	assert.InDelta(t, 1.3, response.Data.TodayCostCNY, 1e-9)
-	assert.InDelta(t, 0.2, response.Data.TodayProbeCostCNY, 1e-9)
-	assert.InDelta(t, 0.3, response.Data.TodayModelDetectionCostCNY, 1e-9)
+	assert.Zero(t, response.Data.TodayProbeCostCNY)
+	assert.Zero(t, response.Data.TodayModelDetectionCostCNY)
 	assert.InDelta(t, 3.3, response.Data.TotalCostCNY, 1e-9)
-	assert.InDelta(t, 0.2, response.Data.TotalProbeCostCNY, 1e-9)
-	assert.InDelta(t, 0.3, response.Data.TotalModelDetectionCostCNY, 1e-9)
+	assert.Zero(t, response.Data.TotalProbeCostCNY)
+	assert.Zero(t, response.Data.TotalModelDetectionCostCNY)
 	assert.Equal(t, 1, response.Data.Coverage.IncludedChannelCount)
-	assert.Equal(t, 1, response.Data.Coverage.UnresolvedChannelCount)
-	assert.Equal(t, int64(3), response.Data.Coverage.SettledCount)
-	assert.Equal(t, int64(1), response.Data.Coverage.UnresolvedCount)
+	assert.Equal(t, 0, response.Data.Coverage.UnresolvedChannelCount)
+	assert.Equal(t, int64(2), response.Data.Coverage.SettledCount)
+	assert.Zero(t, response.Data.Coverage.UnresolvedCount)
 	assert.Empty(t, response.Data.Channels)
 	assert.Empty(t, response.Data.APIKeys)
 	assert.Zero(t, detailQueries.Load())

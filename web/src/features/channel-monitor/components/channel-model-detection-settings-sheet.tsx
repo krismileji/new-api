@@ -87,6 +87,7 @@ import {
   createChannelModelDetectionSettingsUpdateRequest,
   type ChannelModelDetectionSettingsFormValues,
 } from '../lib/model-detection-settings-schema'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type {
   ChannelModelDetectionDetectorService,
   ChannelModelDetectionPreset,
@@ -154,7 +155,7 @@ export function ChannelModelDetectionSettingsSheet(
     queryFn: getChannelModelDetectionSettings,
     enabled: props.open,
     staleTime: 0,
-    refetchOnWindowFocus: false,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
   const settings = query.data
   const detectorURL = form.watch('detectorURL')

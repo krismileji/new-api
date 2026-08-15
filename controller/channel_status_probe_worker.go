@@ -220,7 +220,12 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 				ErrorCode: "test_user_unavailable", ErrorMessage: common.MaskSensitiveInfo(testUserErr.Error()),
 			}
 		} else {
-			outcome = executeChannelStatusProbeModel(ctx, channel, testUserId, modelName)
+			outcome = executeChannelStatusProbeModel(
+				withChannelMonitorSchedulingEligibility(ctx, claim.Config.RecordSample),
+				channel,
+				testUserId,
+				modelName,
+			)
 		}
 		if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
 			return err

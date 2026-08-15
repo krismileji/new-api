@@ -26,24 +26,29 @@ import type {
   ChannelMonitorPerformanceResult,
 } from '../../types'
 import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
   getChannelStatusProbeHistoryLatestExecutionKey,
-  getChannelStatusProbeHistoryRefetchInterval,
   isChannelMonitorPerformanceQueryActive,
+  refetchChannelMonitorQueries,
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
-  test('refreshes overview and performance data every minute', () => {
+  test('keeps overview and performance data manual-refresh only', () => {
     const overviewOptions = getChannelMonitorOverviewQueryOptions()
     const performanceOptions = getChannelMonitorPerformanceQueryOptions(
       15,
       'manual'
     )
 
-    assert.equal(overviewOptions.refetchInterval, 60_000)
-    assert.equal(performanceOptions.refetchInterval, 60_000)
+    assert.equal(overviewOptions.refetchInterval, false)
+    assert.equal(performanceOptions.refetchInterval, false)
+    assert.equal(overviewOptions.refetchOnWindowFocus, false)
+    assert.equal(performanceOptions.refetchOnWindowFocus, false)
+    assert.equal(overviewOptions.refetchOnReconnect, false)
+    assert.equal(performanceOptions.refetchOnReconnect, false)
   })
 
   test('deduplicates fresh reads while preserving an explicit refresh', async () => {
@@ -57,6 +62,11 @@ describe('channel monitor query policy', () => {
           range_minutes: 15,
           range_source: 'manual',
           generated_at: 1,
+          data_cutoff_at: 1,
+          processed_at: 1,
+          event_watermark: 1,
+          queue_depth: 0,
+          realtime_degraded: false,
           metric_coverage: {
             aggregation_enabled: true,
             aggregated_from: 0,
@@ -84,8 +94,8 @@ describe('channel monitor query policy', () => {
 
     await queryClient.refetchQueries({ queryKey: options.queryKey })
     assert.equal(requestCount, 2)
-    assert.equal(options.staleTime, 60_000)
-    assert.equal(options.refetchInterval, 60_000)
+    assert.equal(options.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(options.refetchInterval, false)
   })
 
   test('separates manual and smart schedule results with the same range', () => {
@@ -116,38 +126,69 @@ describe('channel monitor query policy', () => {
     assert.equal(getChannelStatusProbeHistoryLatestExecutionKey(2, 42), 0)
   })
 
-  test('polls active status probe history only on the visible first page', () => {
+  test('shared manual policy disables interval, focus, and reconnect refreshes', () => {
     assert.equal(
-      getChannelStatusProbeHistoryRefetchInterval(1, true, 'visible'),
-      3_000
-    )
-    assert.equal(
-      getChannelStatusProbeHistoryRefetchInterval(2, true, 'visible'),
+      CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.refetchInterval,
       false
     )
     assert.equal(
-      getChannelStatusProbeHistoryRefetchInterval(1, true, 'hidden'),
+      CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.refetchOnWindowFocus,
       false
     )
     assert.equal(
-      getChannelStatusProbeHistoryRefetchInterval(1, false, 'visible'),
+      CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.refetchOnReconnect,
       false
     )
   })
 
-  test('separates lightweight schedule summaries from metric details', () => {
+  test('manual refresh refetches every channel monitor query prefix', async () => {
+    const queryKeys = [
+      ['channel-monitor'],
+      ['channel-monitor-performance'],
+      ['channel-monitor-smart-schedule-executions'],
+      ['channel-monitor-task-history'],
+      ['channel-monitor-success-detail'],
+      ['channel-monitor-history'],
+      ['channel-monitor-available-groups'],
+    ] as const
+    let requestCount = 0
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    await Promise.all(
+      queryKeys.map((queryKey) =>
+        queryClient.fetchQuery({
+          queryKey,
+          queryFn: async () => {
+            requestCount += 1
+            return queryKey[0]
+          },
+        })
+      )
+    )
+
+    await refetchChannelMonitorQueries(queryClient)
+
+    assert.equal(requestCount, queryKeys.length * 2)
+  })
+
+  test('keeps lightweight schedule summaries and metric details manual-refresh only', () => {
     const summary = getChannelMonitorSmartScheduleQueryOptions(false)
     const metrics = getChannelMonitorSmartScheduleQueryOptions(true)
 
     assert.notDeepEqual(summary.queryKey, metrics.queryKey)
-    assert.equal(summary.refetchInterval, 60_000)
-    assert.equal(metrics.refetchInterval, 60_000)
+    assert.equal(summary.refetchInterval, false)
+    assert.equal(metrics.refetchInterval, false)
+    assert.equal(summary.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(metrics.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(summary.refetchOnWindowFocus, false)
+    assert.equal(metrics.refetchOnWindowFocus, false)
   })
 
-  test('revalidates schedule routes after returning from channel configuration', () => {
+  test('does not refresh schedule routes on mount or window focus', () => {
     const options = getChannelMonitorSmartScheduleQueryOptions()
 
-    assert.equal(options.refetchOnMount, 'always')
-    assert.equal(options.refetchOnWindowFocus, 'always')
+    assert.equal(options.refetchOnMount, false)
+    assert.equal(options.refetchOnWindowFocus, false)
   })
 })

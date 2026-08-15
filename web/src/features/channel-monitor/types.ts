@@ -217,7 +217,16 @@ export type ChannelMonitorApplyGroupResult = ChannelMonitorFetchResult & {
   keys_updated: number
 }
 
-export type ChannelMonitorOverview = {
+export type ChannelMonitorRealtimeMetadata = {
+  data_cutoff_at: number
+  processed_at: number
+  event_watermark: number
+  queue_depth: number
+  realtime_degraded: boolean
+}
+
+export type ChannelMonitorOverview = ChannelMonitorRealtimeMetadata & {
+  generated_at: number
   channels: ChannelMonitorItem[]
   channel_order: number[]
   group_ratios: Record<string, number>
@@ -277,7 +286,7 @@ export type ChannelMonitorCostCoverage = {
   unresolved_count: number
 }
 
-export type ChannelMonitorCostOverview = {
+export type ChannelMonitorCostOverview = ChannelMonitorRealtimeMetadata & {
   days: number
   generated_at: number
   detail_date: string
@@ -381,19 +390,20 @@ export type ChannelMonitorDailyInsightDay = {
   cache_write_request_count: number
 }
 
-export type ChannelMonitorTodaySuccessResult = {
-  days: number
-  generated_at: number
-  day_start: number
-  detail_date: string
-  success_metrics_available: boolean
-  cache_write_metrics_available: boolean
-  summary: ChannelMonitorSuccessSummary
-  channel_items: ChannelMonitorTodaySuccessChannelItem[]
-  api_key_items: ChannelMonitorSuccessAPIKeyMetric[]
-  cache_write_items: ChannelMonitorTodayCacheWriteItem[]
-  chart_items: ChannelMonitorDailyInsightDay[]
-}
+export type ChannelMonitorTodaySuccessResult =
+  ChannelMonitorRealtimeMetadata & {
+    days: number
+    generated_at: number
+    day_start: number
+    detail_date: string
+    success_metrics_available: boolean
+    cache_write_metrics_available: boolean
+    summary: ChannelMonitorSuccessSummary
+    channel_items: ChannelMonitorTodaySuccessChannelItem[]
+    api_key_items: ChannelMonitorSuccessAPIKeyMetric[]
+    cache_write_items: ChannelMonitorTodayCacheWriteItem[]
+    chart_items: ChannelMonitorDailyInsightDay[]
+  }
 
 export type ChannelMonitorFailureCategory = {
   channel_id: number
@@ -413,13 +423,14 @@ export type ChannelMonitorSuccessDetail = {
   failure_categories: ChannelMonitorFailureCategory[]
 }
 
-export type ChannelMonitorSuccessDetailResult = {
-  range_minutes: ChannelMonitorPerformanceRangeMinutes
-  generated_at: number
-  success_metrics_available: boolean
-  scope: 'channel' | 'group' | ''
-  detail: ChannelMonitorSuccessDetail
-}
+export type ChannelMonitorSuccessDetailResult =
+  ChannelMonitorRealtimeMetadata & {
+    range_minutes: ChannelMonitorPerformanceRangeMinutes
+    generated_at: number
+    success_metrics_available: boolean
+    scope: 'channel' | 'group' | ''
+    detail: ChannelMonitorSuccessDetail
+  }
 
 export type ChannelMonitorSuccessMode = 'actual' | 'final'
 
@@ -437,7 +448,7 @@ export type ChannelMonitorSuccessDetailTarget =
       groupName: string
     }
 
-export type ChannelMonitorPerformanceResult = {
+export type ChannelMonitorPerformanceResult = ChannelMonitorRealtimeMetadata & {
   range_minutes: ChannelMonitorPerformanceRangeMinutes
   range_source: ChannelMonitorPerformanceRangeSource
   generated_at: number
@@ -581,7 +592,6 @@ export type ChannelMonitorSettings = {
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
-  smart_schedule_interval_minutes: number
   smart_schedule_performance_window_minutes: number
   smart_schedule_stability_window_minutes: number
   smart_schedule_rate_limit_cooldown_seconds: number
@@ -900,22 +910,23 @@ export type ChannelMonitorFailureDurationBucket = {
   count: number
 }
 
-export type ChannelMonitorSmartScheduleRouteResult = {
-  generated_at: number
-  performance_window_minutes: number
-  stability_window_minutes: number
-  sample_scope: 'channel_model'
-  enabled: boolean
-  metrics_included?: boolean
-  metric_coverage?: ChannelMonitorSmartScheduleMetricCoverage | null
-  routes: ChannelMonitorSmartScheduleRoute[]
-  sample_items?: ChannelMonitorSmartScheduleSampleItem[]
-  business_performance_items?: ChannelMonitorSmartScheduleRoutePerformance[]
-  performance_metrics_available?: boolean
-  performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
-  stability_metrics_available: boolean
-  stability_items: ChannelMonitorSmartScheduleRouteStability[]
-}
+export type ChannelMonitorSmartScheduleRouteResult =
+  ChannelMonitorRealtimeMetadata & {
+    generated_at: number
+    performance_window_minutes: number
+    stability_window_minutes: number
+    sample_scope: 'channel_model'
+    enabled: boolean
+    metrics_included?: boolean
+    metric_coverage?: ChannelMonitorSmartScheduleMetricCoverage | null
+    routes: ChannelMonitorSmartScheduleRoute[]
+    sample_items?: ChannelMonitorSmartScheduleSampleItem[]
+    business_performance_items?: ChannelMonitorSmartScheduleRoutePerformance[]
+    performance_metrics_available?: boolean
+    performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
+    stability_metrics_available: boolean
+    stability_items: ChannelMonitorSmartScheduleRouteStability[]
+  }
 
 export type ChannelMonitorSmartScheduleMetricCoverage = {
   aggregation_enabled: boolean

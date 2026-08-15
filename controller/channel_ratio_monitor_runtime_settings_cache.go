@@ -11,7 +11,6 @@ import (
 type channelMonitorRuntimeSettingsRaw struct {
 	enabled           string
 	groupPolicies     string
-	interval          string
 	performanceWindow string
 	stabilityWindow   string
 	rateLimitCooldown string
@@ -31,7 +30,6 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 	raw := channelMonitorRuntimeSettingsRaw{
 		enabled:           common.OptionMap[channelMonitorSmartScheduleEnabledOption],
 		groupPolicies:     common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption],
-		interval:          common.OptionMap[channelMonitorSmartScheduleIntervalOption],
 		performanceWindow: common.OptionMap[channelMonitorSmartSchedulePerformanceWindowOption],
 		stabilityWindow:   common.OptionMap[channelMonitorSmartScheduleStabilityWindowOption],
 		rateLimitCooldown: common.OptionMap[channelMonitorSmartScheduleRateLimitCooldownOption],
@@ -52,10 +50,6 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 	if err != nil {
 		enabled = false
 	}
-	interval, err := strconv.Atoi(raw.interval)
-	if err != nil || interval <= 0 || interval > maxChannelMonitorAutoUpdateIntervalMinutes {
-		interval = defaultChannelMonitorSmartScheduleInterval
-	}
 	performanceWindow, err := strconv.Atoi(raw.performanceWindow)
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(performanceWindow) {
 		performanceWindow = defaultChannelMonitorSmartSchedulePerformanceWindowMinutes
@@ -75,7 +69,6 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 	settings := channelMonitorSettings{
 		SmartScheduleEnabled:                  enabled,
 		SmartScheduleGroupPolicies:            groupPolicies,
-		SmartScheduleIntervalMinutes:          interval,
 		SmartSchedulePerformanceWindowMinutes: performanceWindow,
 		SmartScheduleStabilityWindowMinutes:   stabilityWindow,
 		SmartScheduleRateLimitCooldownSeconds: rateLimitCooldown,

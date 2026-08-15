@@ -56,6 +56,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { getChannelMonitorSuccessDetail } from '../api'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type {
   ChannelMonitorFailureCategory,
   ChannelMonitorItem,
@@ -242,6 +243,7 @@ export function ChannelMonitorSuccessDetailDialog(
         groupName: props.target.groupName,
       })
     },
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
   const detail = query.data?.data.detail
   const modeSummary = detail

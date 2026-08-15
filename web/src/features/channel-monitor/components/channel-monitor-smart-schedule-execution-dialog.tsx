@@ -70,6 +70,7 @@ import {
   getChannelMonitorTasks,
 } from '../api'
 import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
 } from '../lib/query-options'
@@ -89,7 +90,6 @@ import { ChannelMonitorSmartScheduleScoreDetails } from './channel-monitor-smart
 
 const PAGE_SIZE = 20
 const DETAIL_PAGE_SIZE = 50
-const ACTIVE_REFRESH_INTERVAL_MS = 5000
 
 const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
   pending: '待执行',
@@ -284,11 +284,9 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     queryKey: [...CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY, page],
     queryFn: () => getChannelMonitorTasks(page, PAGE_SIZE, 'schedule'),
     enabled: props.active,
-    staleTime: 15 * 1000,
-    refetchInterval: (result) =>
-      result.state.data?.data.items.some(isActiveChannelMonitorTask)
-        ? ACTIVE_REFRESH_INTERVAL_MS
-        : false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const tasks = useMemo(
     () => query.data?.data.items ?? [],
@@ -325,7 +323,16 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
       selectedTask != null &&
       !isActiveChannelMonitorTask(selectedTask),
     staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
+  const refreshExecutionData = async () => {
+    const detailRefresh =
+      selectedTask != null && !isActiveChannelMonitorTask(selectedTask)
+        ? detailQuery.refetch()
+        : Promise.resolve()
+    await Promise.all([query.refetch(), detailRefresh])
+  }
   const detailResult = detailQuery.data?.data
   const adjustments = detailResult?.items ?? []
   const channelNameById = useMemo(
@@ -803,12 +810,14 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
             <Button
               variant='outline'
               size='sm'
-              onClick={() => query.refetch()}
-              disabled={query.isFetching}
+              onClick={() => void refreshExecutionData()}
+              disabled={query.isFetching || detailQuery.isFetching}
             >
               <HugeiconsIcon
                 icon={Refresh01Icon}
-                className={cn(query.isFetching && 'animate-spin')}
+                className={cn(
+                  (query.isFetching || detailQuery.isFetching) && 'animate-spin'
+                )}
                 data-icon='inline-start'
               />
               刷新

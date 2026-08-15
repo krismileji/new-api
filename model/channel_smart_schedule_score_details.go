@@ -115,6 +115,10 @@ type ChannelSmartScheduleScoreDecision struct {
 
 type ChannelSmartScheduleScoreDetails struct {
 	Version               int                                       `json:"version"`
+	WindowStart           int64                                     `json:"window_start"`
+	WindowEnd             int64                                     `json:"window_end"`
+	DataCutoffAt          int64                                     `json:"data_cutoff_at"`
+	EventWatermark        uint64                                    `json:"event_watermark"`
 	Strategy              string                                    `json:"strategy"`
 	MinSamples            int                                       `json:"minimum_samples"`
 	MinComparableChannels int                                       `json:"minimum_comparable_channels"`

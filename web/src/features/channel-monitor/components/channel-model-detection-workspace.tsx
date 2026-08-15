@@ -42,6 +42,7 @@ import {
   updateChannelModelDetectionConfig,
 } from '../lib/model-detection-channel-api'
 import { channelModelDetectionRequestErrorMessage } from '../lib/model-detection-settings-api'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionHistoryQuery,
@@ -140,6 +141,7 @@ export function ChannelModelDetectionWorkspace(
       getChannelModelDetectionRuns(historyChannelId ?? 0, historyQueryInput),
     enabled: historyChannelId != null,
     placeholderData: (previous) => previous,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
 
   const scheduleMutation = useMutation({

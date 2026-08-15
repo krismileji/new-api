@@ -11,6 +11,7 @@ import (
 )
 
 func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBoundaries(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
 	historicalScore := 0.42
 	fastFirstToken := 100.0
 	slowFirstToken := 500.0
@@ -60,28 +61,27 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 			Scoring:    defaultChannelSmartScheduleScoring(),
 		},
 	}
-	performanceItems := []model.ChannelMonitorRoutePerformanceMetric{
-		{ChannelId: 1, GroupName: "vip", ModelName: "model-a", FirstTokenSampleCount: 5, AverageFirstTokenMs: &fastFirstToken},
-		{ChannelId: 2, GroupName: "vip", ModelName: "model-a", FirstTokenSampleCount: 5, AverageFirstTokenMs: &slowFirstToken},
-		{ChannelId: 3, GroupName: "vip", ModelName: "model-a", FirstTokenSampleCount: 1, AverageFirstTokenMs: &insufficientFirstToken},
-		{ChannelId: 4, GroupName: "vip", ModelName: "model-a", FirstTokenSampleCount: 5, AverageFirstTokenMs: &fastFirstToken},
-		{ChannelId: 5, GroupName: "vip", ModelName: "model-a", FirstTokenSampleCount: 5, AverageFirstTokenMs: &fastFirstToken},
+	for channelId, firstTokenMs := range map[int]float64{
+		1: fastFirstToken, 2: slowFirstToken, 3: insufficientFirstToken,
+		4: fastFirstToken, 5: fastFirstToken,
+	} {
+		sampleCount := 5
+		if channelId == 3 {
+			sampleCount = 1
+		}
+		for index := range sampleCount {
+			require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+				channelId, "vip", "model-a", now-int64(sampleCount-index), true,
+				&firstTokenMs, nil, nil, false,
+			))
+		}
 	}
-	sampleCache := &channelSmartScheduleSampleMetricCache{
-		seriesByModel:   map[channelSmartScheduleModelKey]model.ChannelSmartScheduleSampleSeries{},
-		metricsByWindow: map[channelSmartScheduleSampleMetricWindowKey]model.ChannelSmartScheduleSampleMetrics{},
-	}
-
 	channelSmartScheduleApplyCurrentWindowScores(
 		responses,
 		routes,
 		policyByGroup,
-		performanceItems,
-		map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric{},
-		sampleCache,
 		0,
 		now,
-		false,
 	)
 
 	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
@@ -93,9 +93,9 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 	assert.InDelta(t, 1, *fast.CurrentWindowScore, 1e-9)
 	require.NotNil(t, fast.CurrentWindowScoreDetails)
 	assert.Equal(t, 1, fast.CurrentWindowScoreDetails.Decision.ManualPrimaryChannelId)
-	assert.Equal(t, channelSmartScheduleHealthPressure, fast.CurrentWindowScoreDetails.Health.State)
-	assert.True(t, fast.CurrentWindowScoreDetails.Health.Evidence)
-	assert.InDelta(t, 12.5, fast.CurrentWindowScoreDetails.Health.FirstTokenWarningRequestPercent, 1e-9)
+	assert.Equal(t, channelSmartScheduleHealthUnknown, fast.CurrentWindowScoreDetails.Health.State)
+	assert.False(t, fast.CurrentWindowScoreDetails.Health.Evidence)
+	assert.Zero(t, fast.CurrentWindowScoreDetails.Health.FirstTokenWarningRequestPercent)
 	require.NotNil(t, fast.State.LastScheduleScore)
 	assert.InDelta(t, historicalScore, *fast.State.LastScheduleScore, 1e-9)
 	assert.InDelta(t, historicalScore, *routes[0].State.LastScheduleScore, 1e-9)

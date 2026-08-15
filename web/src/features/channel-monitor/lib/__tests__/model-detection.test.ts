@@ -25,8 +25,6 @@ import type {
 } from '../../types-model-detection'
 import {
   channelModelDetectionCostLines,
-  channelModelDetectionPollInterval,
-  channelModelDetectionRunPollInterval,
   filterChannelModelDetectionChannels,
   isChannelModelDetectionRunActive,
   sortChannelModelDetectionChannels,
@@ -100,14 +98,7 @@ describe('模型检测展示工具', () => {
     )
   })
 
-  test('页面不可见时停止轮询且活动任务使用三秒周期', () => {
-    assert.equal(channelModelDetectionPollInterval(false, false), false)
-    assert.equal(channelModelDetectionPollInterval(true, false), false)
-    assert.equal(channelModelDetectionPollInterval(true, true), 3000)
-    assert.equal(channelModelDetectionPollInterval(false, true), 20_000)
-  })
-
-  test('运行详情只在活动状态和页面可见时轮询', () => {
+  test('准确区分活动状态和终态', () => {
     for (const status of [
       'queued',
       'waiting_detector',
@@ -117,8 +108,6 @@ describe('模型检测展示工具', () => {
       'canceling',
     ] as const) {
       assert.equal(isChannelModelDetectionRunActive(status), true)
-      assert.equal(channelModelDetectionRunPollInterval(status, true), 3000)
-      assert.equal(channelModelDetectionRunPollInterval(status, false), false)
     }
 
     for (const status of [
@@ -129,7 +118,6 @@ describe('模型检测展示工具', () => {
       'canceled',
     ] as const) {
       assert.equal(isChannelModelDetectionRunActive(status), false)
-      assert.equal(channelModelDetectionRunPollInterval(status, true), false)
     }
   })
 

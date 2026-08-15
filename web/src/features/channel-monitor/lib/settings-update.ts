@@ -37,7 +37,6 @@ export function createChannelMonitorSettingsUpdatePayload(
         channelMonitorSmartScheduleGroupPoliciesToApi(
           values.smartScheduleGroupPolicies
         ),
-      smart_schedule_interval_minutes: values.smartScheduleIntervalMinutes,
       smart_schedule_performance_window_minutes:
         values.smartSchedulePerformanceWindowMinutes,
       smart_schedule_stability_window_minutes:

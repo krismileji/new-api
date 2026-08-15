@@ -21,6 +21,7 @@ import { useState } from 'react'
 
 import { getChannelMonitorTodaySuccess } from '../api'
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 
 export function useChannelMonitorDailyInsight(open: boolean) {
   const [days, setDays] = useState(30)
@@ -32,6 +33,7 @@ export function useChannelMonitorDailyInsight(open: boolean) {
     queryFn: () => getChannelMonitorTodaySuccess({ days, date: selectedDate }),
     enabled: open,
     staleTime: 30_000,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
 
   const changeDays = (nextDays: number) => {

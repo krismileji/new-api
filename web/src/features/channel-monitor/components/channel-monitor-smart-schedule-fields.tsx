@@ -34,7 +34,6 @@ import {
 import { Switch } from '@/components/ui/switch'
 
 import {
-  MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
@@ -222,47 +221,13 @@ export function ChannelMonitorSmartScheduleFields(
             运行设置
           </h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            控制所有已配置分组的执行频率、统计窗口、429 临时冷却和响应等待时间
+            控制所有已配置分组的统计窗口、429 临时冷却和响应等待时间
           </p>
         </div>
         <div
           data-slot='smart-schedule-runtime-fields'
-          className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-5'
+          className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4'
         >
-          <FormField
-            control={props.form.control}
-            name='smartScheduleIntervalMinutes'
-            render={({ field }) => (
-              <FormItem>
-                <ChannelMonitorSettingLabel
-                  label='调度间隔'
-                  helpKey='interval'
-                />
-                <FormControl>
-                  <InputGroup>
-                    <InputGroupInput
-                      type='number'
-                      min={1}
-                      max={MAX_AUTO_UPDATE_INTERVAL_MINUTES}
-                      step={1}
-                      inputMode='numeric'
-                      value={field.value}
-                      onBlur={field.onBlur}
-                      onChange={field.onChange}
-                      name={field.name}
-                      ref={field.ref}
-                      aria-invalid={Boolean(
-                        props.form.formState.errors.smartScheduleIntervalMinutes
-                      )}
-                    />
-                    <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
-                  </InputGroup>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
           <ChannelMonitorSmartScheduleWindowField
             form={props.form}
             name='smartSchedulePerformanceWindowMinutes'

@@ -43,15 +43,15 @@ function smartScheduleSettingHelp({
   range,
   defaultValue,
   activation = '保存成功后生效',
-  scheduleRelation = '常规评分在下次完整调度使用',
+  scheduleRelation = '相关请求事件投影后异步使用',
   constraints = '无额外组合约束',
 }: SmartScheduleSettingHelpOptions): string {
-  return `${meaning} 单位：${unit}；范围：${range}；默认值：${defaultValue}；生效时机：${activation}；与调度间隔的关系：${scheduleRelation}；组合约束：${constraints}。`
+  return `${meaning} 单位：${unit}；范围：${range}；默认值：${defaultValue}；生效时机：${activation}；更新方式：${scheduleRelation}；组合约束：${constraints}。`
 }
 
-const EVENT_REFRESH = '不等待完整调度间隔，下一次 1 秒池事件刷新使用'
-const NEXT_REQUEST = '不等待完整调度间隔，下一次相关请求使用'
-const NEXT_OBSERVATION = '不等待完整调度间隔，下一条有效观测或 1 秒池刷新使用'
+const EVENT_REFRESH = '相关请求事件投影后异步更新'
+const NEXT_REQUEST = '下一次相关请求使用'
+const NEXT_OBSERVATION = '下一条有效观测投影后异步更新'
 
 const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
   enabled: smartScheduleSettingHelp({
@@ -60,14 +60,6 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '开启或关闭',
     defaultValue: '关闭',
     constraints: '只作用于已配置分组，手动取消参与的渠道不调整',
-  }),
-  interval: smartScheduleSettingHelp({
-    meaning: '定义完整评分、基础排名和基础 P/W 重算频率。',
-    unit: '分钟',
-    range: '1–525600',
-    defaultValue: '10',
-    activation: '保存后从下一个任务周期生效',
-    scheduleRelation: '它本身定义完整调度间隔；运行时软事件仍可在 1 秒刷新',
   }),
   performanceRange: smartScheduleSettingHelp({
     meaning: '设定成本、首字和 TPS 业务评分的历史窗口。',
@@ -105,7 +97,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '选中或不选中',
     defaultValue: '不选中',
     activation: '仅在本次保存后执行一次',
-    scheduleRelation: '保存后立即创建重算任务，不等待下一个完整调度间隔',
+    scheduleRelation: '保存后立即创建重算任务',
     constraints: '不影响未配置分组',
   }),
   group: smartScheduleSettingHelp({
@@ -142,7 +134,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '当前策略模型的任意排列',
     defaultValue: '空（按名称排序）',
     activation: '保存后下次打开或刷新看板生效',
-    scheduleRelation: '纯展示配置，不等待也不触发完整调度',
+    scheduleRelation: '纯展示配置，不触发调度更新',
     constraints: '不改变参与范围、P/W 或流量',
   }),
   sampleMode: smartScheduleSettingHelp({
@@ -195,7 +187,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '1–525600 的整数',
     defaultValue: '10',
     activation: '保存后下一次探测资格检查生效',
-    scheduleRelation: '不等待完整调度间隔，到期即可探测',
+    scheduleRelation: '到期后由探测资格检查执行',
     constraints: 'sample_mode=定时探测或开启降级探测时生效；429 冷却期不发请求',
   }),
   degradedProbe: smartScheduleSettingHelp({
@@ -204,7 +196,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '开启或关闭',
     defaultValue: '关闭',
     activation: '保存后下一次探测资格检查生效',
-    scheduleRelation: '不等待完整调度间隔，连续成功达标即恢复',
+    scheduleRelation: '连续成功事件投影达标后恢复',
     constraints: '需开启稳定性保护，复用探测间隔，429 冷却期禁止探测',
   }),
   stability: smartScheduleSettingHelp({
@@ -235,7 +227,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     unit: '次',
     range: '1–100000 的整数',
     defaultValue: '5',
-    scheduleRelation: '常规评分下次完整调度使用；样本欠账清算在 1 秒刷新使用',
+    scheduleRelation: '新请求和探测样本投影后使用',
     constraints: '硬保护不受此阈值限制',
   }),
   fastFailurePenalty: smartScheduleSettingHelp({
@@ -324,7 +316,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '1–525600 的整数',
     defaultValue: '30',
     activation: '保存后新的降级或失败续期使用',
-    scheduleRelation: '不等待完整调度间隔，到期后由 1 秒刷新进入试放',
+    scheduleRelation: '到期后由下一条相关事件投影进入试放',
     constraints: '到期只进入小流量试放，不代表立即完全恢复',
   }),
   jitter: smartScheduleSettingHelp({

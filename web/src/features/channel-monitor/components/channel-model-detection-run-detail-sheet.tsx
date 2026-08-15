@@ -47,13 +47,13 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import {
   channelModelDetectionPresetLabel,
-  channelModelDetectionRunPollInterval,
   channelModelDetectionRunStatusLabel,
   channelModelDetectionPresetSourceLabel,
   isChannelModelDetectionRunActive,
 } from '../lib/model-detection'
 import { getChannelModelDetectionRun } from '../lib/model-detection-channel-api'
 import { channelModelDetectionRequestErrorMessage } from '../lib/model-detection-settings-api'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type { ChannelModelDetectionRunStatus } from '../types-model-detection'
 import { ChannelModelDetectionReport } from './channel-model-detection-report'
 
@@ -73,12 +73,9 @@ export function ChannelModelDetectionRunDetailSheet(
     queryKey: ['channel-monitor', 'model-detection', 'run', props.runId],
     queryFn: () => getChannelModelDetectionRun(props.runId ?? ''),
     enabled: props.open && Boolean(props.runId),
-    refetchInterval: (currentQuery) =>
-      channelModelDetectionRunPollInterval(
-        currentQuery.state.data?.run.status,
-        document.visibilityState !== 'hidden'
-      ),
-    refetchIntervalInBackground: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const detail = query.data
 

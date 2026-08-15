@@ -284,5 +284,4 @@ func resetChannelMonitorMetricsCache() {
 	channelMonitorMetricsCache.performance = make(map[channelMonitorMetricsCacheKey]channelMonitorPerformanceCacheEntry)
 	channelMonitorMetricsCache.success = make(map[channelMonitorMetricsCacheKey]channelMonitorSuccessCacheEntry)
 	channelMonitorMetricsCache.Unlock()
-	resetChannelMonitorRouteMetricsCache()
 }

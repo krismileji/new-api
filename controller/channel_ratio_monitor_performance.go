@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
@@ -54,48 +53,33 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		return
 	}
 	requestedAt := time.Now()
-	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	generatedAt := requestedAt.Unix()
-	metricCoverage, err := channelMonitorPerformanceMetricCoverage(
-		c.Request.Context(), generatedAt, minutes,
-	)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	metrics, err := model.GetChannelMonitorPerformanceMetricsCached(
-		c.Request.Context(),
-		generatedAt,
-		minutes,
-	)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	successMetricsAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
-	successMetrics := make([]model.ChannelMonitorSuccessMetric, 0)
-	groupSuccessMetrics := make([]model.ChannelMonitorGroupSuccessMetric, 0)
-	if successMetricsAvailable {
-		successMetrics, groupSuccessMetrics, err = model.GetChannelMonitorSuccessMetricsCached(
-			c.Request.Context(),
-			generatedAt,
-			minutes,
-		)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+	requestedWindowStart := generatedAt - int64(minutes*60)
+	view := service.QueryChannelMonitorRealtimePage(requestedWindowStart, generatedAt+1)
+	metrics, successMetrics := channelMonitorRealtimePerformanceMetrics(view)
+	groupSuccessMetrics := channelMonitorRealtimeGroupSuccessMetrics(view)
+	metadata := channelMonitorRealtimePageMetadata(view)
+	metricCoverage := channelMonitorPerformanceMetricCoverageResponse{
+		AggregationEnabled: true,
+		AggregatedFrom:     metadata.WindowStart,
+		AggregatedThrough:  metadata.DataCutoffAt,
+		WindowStart:        view.WindowStart,
+		WindowComplete:     !metadata.RealtimeDegraded && metadata.WindowStart > 0 && metadata.WindowStart <= view.WindowStart,
 	}
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":             minutes,
 		"range_source":              rangeSource,
 		"generated_at":              generatedAt,
+		"window_start":              view.WindowStart,
+		"data_cutoff_at":            metadata.DataCutoffAt,
+		"processed_at":              metadata.ProcessedAt,
+		"projection_started_at":     metadata.ProjectionStartedAt,
+		"event_watermark":           metadata.EventWatermark,
+		"queue_depth":               metadata.QueueDepth,
+		"realtime_degraded":         metadata.RealtimeDegraded,
 		"metric_coverage":           metricCoverage,
 		"items":                     metrics,
-		"success_metrics_available": successMetricsAvailable,
+		"success_metrics_available": true,
 		"success_items":             successMetrics,
 		"group_success_items":       groupSuccessMetrics,
 	})
@@ -109,22 +93,6 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
-	successMetricsAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
-	if !successMetricsAvailable {
-		common.ApiSuccess(c, gin.H{
-			"range_minutes":             minutes,
-			"generated_at":              generatedAt,
-			"success_metrics_available": false,
-			"scope":                     "",
-			"detail": model.ChannelMonitorSuccessDetail{
-				ChannelItems:      make([]model.ChannelMonitorChannelSuccessMetric, 0),
-				APIKeyItems:       make([]model.ChannelMonitorSuccessAPIKeyMetric, 0),
-				FailureCategories: make([]model.ChannelMonitorFailureCategory, 0),
-			},
-		})
-		return
-	}
-
 	rawChannelId := strings.TrimSpace(c.Query("channel_id"))
 	group := strings.TrimSpace(c.Query("group"))
 	if (rawChannelId == "" && group == "") || (rawChannelId != "" && group != "") {
@@ -146,25 +114,24 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 	} else {
 		filter.Group = group
 	}
-	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	detail, err := model.GetChannelMonitorSuccessDetail(
-		c.Request.Context(),
-		generatedAt-int64(minutes*60),
-		filter,
+	requestedWindowStart := generatedAt - int64(minutes*60)
+	detailView := service.QueryChannelMonitorRealtimeSuccessDetail(
+		requestedWindowStart, generatedAt+1, filter,
 	)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
+	queueStats := service.GetChannelMonitorEventQueueStats()
+	projectionStartedAt := service.GetChannelMonitorRealtimeProjectionStartedAt()
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":             minutes,
 		"generated_at":              generatedAt,
+		"window_start":              detailView.WindowStart,
+		"data_cutoff_at":            detailView.DataCutoffAt,
+		"processed_at":              detailView.ProcessedAt,
+		"projection_started_at":     projectionStartedAt,
+		"event_watermark":           detailView.EventWatermark,
+		"queue_depth":               queueStats.QueueDepth,
+		"realtime_degraded":         projectionStartedAt > detailView.WindowStart || queueStats.DroppedEvents > 0 || queueStats.FailedEvents > 0,
 		"success_metrics_available": true,
 		"scope":                     scope,
-		"detail":                    detail,
+		"detail":                    detailView.Detail,
 	})
 }

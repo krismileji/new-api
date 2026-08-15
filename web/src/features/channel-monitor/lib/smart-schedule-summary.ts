@@ -908,11 +908,10 @@ export function summarizeChannelMonitorSmartScheduleOverview(
 
 export function isChannelMonitorSmartScheduleResultStale(
   generatedAt: number,
-  intervalMinutes: number,
   nowSeconds = Date.now() / 1000
 ) {
   if (generatedAt <= 0) return false
-  return nowSeconds - generatedAt > Math.max(120, intervalMinutes * 120)
+  return nowSeconds - generatedAt > 10 * 60
 }
 
 export function formatChannelMonitorSmartSchedulePriorityWeightRange(values: {

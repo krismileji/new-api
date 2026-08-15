@@ -95,7 +95,7 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	assert.Equal(t, laterNow-laterNow%60, completedThrough)
 }
 
-func TestEnsureChannelMonitorAggregationFreshUpgradesLegacyCacheUtilizationForCurrentDay(t *testing.T) {
+func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -153,9 +153,7 @@ func TestEnsureChannelMonitorAggregationFreshUpgradesLegacyCacheUtilizationForCu
 		Type: model.LogTypeConsume, PromptTokens: 1000, Other: `{"cache_tokens":250}`,
 	}).Error)
 
-	require.NoError(t, EnsureChannelMonitorAggregationFresh(
-		context.Background(), time.Unix(now+20, 0),
-	))
+	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now+20, false))
 
 	var metric model.ChannelMonitorMinuteMetric
 	require.NoError(t, db.Where(
@@ -365,113 +363,9 @@ func TestChannelMonitorAggregationReadyEndAllowsCommitDelay(t *testing.T) {
 	minuteStart := time.Unix(int64(10*time.Hour/time.Second), 0)
 	assert.Equal(t, minuteStart.Add(-time.Minute).Unix(), channelMonitorAggregationReadyEnd(minuteStart))
 	assert.Equal(t, minuteStart.Unix(), channelMonitorAggregationReadyEnd(minuteStart.Add(time.Second)))
-	targetEnd, err := channelMonitorAggregationFreshTarget(context.Background(), minuteStart)
-	require.NoError(t, err)
-	assert.Equal(t, minuteStart.Unix(), targetEnd)
 }
 
-func TestEnsureChannelMonitorAggregationFreshRunsOncePerCompletedMinute(t *testing.T) {
-	originalDB := model.DB
-	originalLogDB := model.LOG_DB
-	originalMainDatabaseType := common.MainDatabaseType()
-	originalLogDatabaseType := common.LogDatabaseType()
-	originalLogConsumeEnabled := common.LogConsumeEnabled
-	originalErrorLogEnabled := constant.ErrorLogEnabled
-	originalIsMasterNode := common.IsMasterNode
-
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-freshness.db")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	model.DB = db
-	model.LOG_DB = db
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	common.LogConsumeEnabled = true
-	constant.ErrorLogEnabled = true
-	common.IsMasterNode = true
-	require.NoError(t, db.AutoMigrate(
-		&model.Log{},
-		&model.ChannelMonitorMinuteMetric{},
-		&model.ChannelMonitorAggregationState{},
-	))
-	key := channelMonitorAggregationDatabaseKey{db: db, logDB: db}
-	t.Cleanup(func() {
-		channelMonitorAggregationStateMu.Lock()
-		delete(channelMonitorAggregationLocalCompletedThrough, key)
-		channelMonitorAggregationStateMu.Unlock()
-		model.DB = originalDB
-		model.LOG_DB = originalLogDB
-		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
-		common.LogConsumeEnabled = originalLogConsumeEnabled
-		constant.ErrorLogEnabled = originalErrorLogEnabled
-		common.IsMasterNode = originalIsMasterNode
-		require.NoError(t, sqlDB.Close())
-	})
-
-	now := time.Unix(int64(10*time.Hour/time.Second+17*time.Minute/time.Second), 0).Add(2 * time.Second)
-	firstMinute := channelMonitorAggregationReadyEnd(now) - int64(time.Minute/time.Second)
-	require.NoError(t, db.Create(&model.Log{
-		ChannelId: 1, ModelName: "model-a", CreatedAt: firstMinute + 1, Type: model.LogTypeConsume,
-	}).Error)
-
-	require.NoError(t, EnsureChannelMonitorAggregationFresh(context.Background(), now))
-	var metric model.ChannelMonitorMinuteMetric
-	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", firstMinute, 1).First(&metric).Error)
-	assert.Equal(t, int64(1), metric.ActualSuccessCount)
-
-	require.NoError(t, db.Create(&model.Log{
-		ChannelId: 1, ModelName: "model-a", CreatedAt: firstMinute + 2, Type: model.LogTypeConsume,
-	}).Error)
-	require.NoError(t, EnsureChannelMonitorAggregationFresh(context.Background(), now.Add(20*time.Second)))
-	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", firstMinute, 1).First(&metric).Error)
-	assert.Equal(t, int64(1), metric.ActualSuccessCount)
-
-	nextMinute := now.Add(time.Minute)
-	require.NoError(t, EnsureChannelMonitorAggregationFresh(context.Background(), nextMinute))
-	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", firstMinute, 1).First(&metric).Error)
-	assert.Equal(t, int64(2), metric.ActualSuccessCount)
-	completedThrough, err := model.GetChannelMonitorAggregationCompletedThrough(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, channelMonitorAggregationReadyEnd(nextMinute), completedThrough)
-}
-
-func TestEnsureChannelMonitorAggregationFreshHonorsContextWhileAggregationIsBusy(t *testing.T) {
-	originalLogConsumeEnabled := common.LogConsumeEnabled
-	originalErrorLogEnabled := constant.ErrorLogEnabled
-	originalIsMasterNode := common.IsMasterNode
-	common.LogConsumeEnabled = true
-	constant.ErrorLogEnabled = true
-	common.IsMasterNode = true
-	key := channelMonitorAggregationDatabaseKey{db: model.DB, logDB: model.LOG_DB}
-	channelMonitorAggregationStateMu.Lock()
-	previousCompletedThrough, hadPreviousCompletedThrough := channelMonitorAggregationLocalCompletedThrough[key]
-	delete(channelMonitorAggregationLocalCompletedThrough, key)
-	channelMonitorAggregationStateMu.Unlock()
-	t.Cleanup(func() {
-		common.LogConsumeEnabled = originalLogConsumeEnabled
-		constant.ErrorLogEnabled = originalErrorLogEnabled
-		common.IsMasterNode = originalIsMasterNode
-		channelMonitorAggregationStateMu.Lock()
-		if hadPreviousCompletedThrough {
-			channelMonitorAggregationLocalCompletedThrough[key] = previousCompletedThrough
-		} else {
-			delete(channelMonitorAggregationLocalCompletedThrough, key)
-		}
-		channelMonitorAggregationStateMu.Unlock()
-	})
-
-	channelMonitorAggregationRunMu.Lock()
-	defer channelMonitorAggregationRunMu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	now := time.Unix(int64(10*time.Hour/time.Second+17*time.Minute/time.Second), 0).Add(2 * time.Second)
-
-	err := EnsureChannelMonitorAggregationFresh(ctx, now)
-
-	assert.ErrorIs(t, err, context.Canceled)
-}
-
-func TestEnsureChannelMonitorAggregationFreshInvalidatesCacheAfterSharedAdvance(t *testing.T) {
+func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -542,10 +436,8 @@ func TestEnsureChannelMonitorAggregationFreshInvalidatesCacheAfterSharedAdvance(
 			"latest_first_token_ms": 250,
 		}).Error)
 
-	require.NoError(t, EnsureChannelMonitorAggregationFresh(
-		context.Background(),
-		time.Unix(120, 0).Add(2*time.Second),
-	))
+	_, _, err = channelMonitorAggregationStart(context.Background(), key, 120, 120)
+	require.NoError(t, err)
 	metrics, err = model.GetChannelMonitorPerformanceMetricsCached(context.Background(), 120, 1)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)

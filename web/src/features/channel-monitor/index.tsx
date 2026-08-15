@@ -88,6 +88,7 @@ import { ChannelMonitorModelPerformanceView } from './components/channel-monitor
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
 import { ChannelMonitorPerformanceCoverageAlert } from './components/channel-monitor-performance-coverage-alert'
 import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
+import { ChannelMonitorRealtimeStatus } from './components/channel-monitor-realtime-status'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -110,14 +111,16 @@ import {
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
-import { channelModelDetectionPollInterval } from './lib/model-detection'
 import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
   isChannelMonitorPerformanceQueryActive,
+  refetchChannelMonitorQueries,
 } from './lib/query-options'
+import { mergeChannelMonitorRealtimeMetadata } from './lib/realtime-metadata'
 import {
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
@@ -267,7 +270,6 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   probe_response_output_tokens: DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS,
   smart_schedule_enabled: false,
   smart_schedule_group_policies: [],
-  smart_schedule_interval_minutes: 10,
   smart_schedule_performance_window_minutes: 60,
   smart_schedule_stability_window_minutes: 5,
   smart_schedule_rate_limit_cooldown_seconds:
@@ -398,6 +400,7 @@ export function ChannelMonitor() {
   const [syncingGroup, setSyncingGroup] = useState<GroupMonitorItem | null>(
     null
   )
+  const [manualRefreshPending, setManualRefreshPending] = useState(false)
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
@@ -431,27 +434,32 @@ export function ChannelMonitor() {
     queryKey: ['channel-monitor', 'model-detection', 'overview'],
     queryFn: getChannelModelDetectionOverview,
     enabled: view === 'model-detection',
-    refetchInterval: (currentQuery) =>
-      channelModelDetectionPollInterval(
-        Boolean(
-          currentQuery.state.data?.data.channels.some(
-            (channel) => channel.active_run
-          )
-        ),
-        document.visibilityState !== 'hidden'
-      ),
-    refetchIntervalInBackground: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
-    refetchInterval: 60_000,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
     queryFn: () => getChannelMonitorTodaySuccess(),
-    refetchInterval: 60_000,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
+  const refreshChannelMonitor = async () => {
+    setManualRefreshPending(true)
+    try {
+      await refetchChannelMonitorQueries(queryClient)
+    } finally {
+      setManualRefreshPending(false)
+    }
+  }
   const ratioFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamRatio,
     onError: handleChannelMonitorMutationError,
@@ -638,7 +646,7 @@ export function ChannelMonitor() {
       ? `自动更新：每 ${autoUpdateIntervalMinutes} 分钟 · 失败重试 ${settings.auto_update_retry_count} 次 · 连续失败 ${autoUpdateConsecutiveFailureLimit} 次后停止`
       : '自动更新：已关闭'
   const smartScheduleLabel = settings.smart_schedule_enabled
-    ? `智能调度：每 ${settings.smart_schedule_interval_minutes} 分钟`
+    ? '智能调度：请求事件投影后异步更新'
     : '智能调度：已关闭'
   const performanceRangeMinutes =
     performanceQuery.data?.data.range_minutes ??
@@ -866,6 +874,14 @@ export function ChannelMonitor() {
     : (performanceModelOptions[0]?.value ?? '')
 
   const costOverview = costQuery.data?.data
+  const pageRealtimeMetadata = mergeChannelMonitorRealtimeMetadata([
+    overview,
+    costOverview,
+    todaySuccessQuery.data?.data,
+    performanceQueryActive ? performanceQuery.data?.data : undefined,
+    smartScheduleSummaryResult,
+    view === 'smart-schedule' ? smartScheduleResult : undefined,
+  ])
   const todayProbeCost = costOverview?.today_probe_cost_cny ?? 0
   const todayModelDetectionCost =
     costOverview?.today_model_detection_cost_cny ?? 0
@@ -1377,7 +1393,6 @@ export function ChannelMonitor() {
               channels={channels}
               groupPolicies={settings.smart_schedule_group_policies}
               groupRatios={groupRatios}
-              intervalMinutes={settings.smart_schedule_interval_minutes}
               isLoading={smartScheduleDetailQuery.isLoading}
               isError={smartScheduleDetailQuery.isError}
               selection={{
@@ -1399,7 +1414,12 @@ export function ChannelMonitor() {
   return (
     <>
       <SectionPageLayout>
-        <SectionPageLayout.Title>渠道监控</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          <span className='flex min-w-0 flex-wrap items-center gap-2'>
+            <span className='truncate'>渠道监控</span>
+            <ChannelMonitorRealtimeStatus metadata={pageRealtimeMetadata} />
+          </span>
+        </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           <Tooltip>
             <TooltipTrigger
@@ -1496,19 +1516,9 @@ export function ChannelMonitor() {
                 <Button
                   variant='outline'
                   size='icon'
-                  onClick={() => {
-                    query.refetch()
-                    if (performanceQueryActive) {
-                      performanceQuery.refetch()
-                    }
-                    costQuery.refetch()
-                    todaySuccessQuery.refetch()
-                    smartScheduleSummaryQuery.refetch()
-                    if (view === 'smart-schedule') {
-                      smartScheduleDetailQuery.refetch()
-                    }
-                  }}
+                  onClick={() => void refreshChannelMonitor()}
                   disabled={
+                    manualRefreshPending ||
                     query.isFetching ||
                     performanceQuery.isFetching ||
                     costQuery.isFetching ||
@@ -1519,7 +1529,12 @@ export function ChannelMonitor() {
                   }
                   aria-label='刷新'
                 >
-                  <HugeiconsIcon icon={Refresh01Icon} />
+                  <HugeiconsIcon
+                    icon={Refresh01Icon}
+                    className={
+                      manualRefreshPending ? 'animate-spin' : undefined
+                    }
+                  />
                 </Button>
               }
             />

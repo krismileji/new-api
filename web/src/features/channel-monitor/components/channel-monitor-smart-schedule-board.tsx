@@ -93,6 +93,7 @@ import type {
   ChannelMonitorSmartScheduleRouteStability,
   ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
+import { ChannelMonitorRealtimeStatus } from './channel-monitor-realtime-status'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 import {
   ChannelMonitorSmartSchedulePool,
@@ -107,7 +108,6 @@ type ChannelMonitorSmartScheduleBoardProps = {
   channels: readonly ChannelMonitorItem[]
   groupPolicies: readonly ChannelMonitorSmartScheduleGroupPolicy[]
   groupRatios: Readonly<Record<string, number>>
-  intervalMinutes: number
   isLoading: boolean
   isError: boolean
   onOpenSettings: () => void
@@ -467,8 +467,7 @@ export function ChannelMonitorSmartScheduleBoard(
         })
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
-    props.result?.generated_at ?? 0,
-    props.intervalMinutes
+    props.result?.data_cutoff_at || props.result?.generated_at || 0
   )
   const metricCoverage = props.result?.metric_coverage
   const incompleteMetricWindows: string[] = []
@@ -527,12 +526,15 @@ export function ChannelMonitorSmartScheduleBoard(
                 {props.isError && props.result ? (
                   <Badge variant='destructive'>刷新失败，显示上次结果</Badge>
                 ) : null}
-                {stale ? <Badge variant='warning'>数据可能已过期</Badge> : null}
+                <ChannelMonitorRealtimeStatus metadata={props.result} />
+                {stale ? (
+                  <Badge variant='warning'>手动快照可能已过期</Badge>
+                ) : null}
               </div>
               <div className='text-muted-foreground mt-0.5 text-xs'>
                 {props.result?.generated_at
-                  ? `更新于 ${formatTimestampToDate(props.result.generated_at)} · 每 ${props.intervalMinutes} 分钟调度`
-                  : `每 ${props.intervalMinutes} 分钟调度`}
+                  ? `快照生成于 ${formatTimestampToDate(props.result.generated_at)} · 请求事件投影后异步更新`
+                  : '请求事件投影后异步更新'}
               </div>
             </div>
           </div>

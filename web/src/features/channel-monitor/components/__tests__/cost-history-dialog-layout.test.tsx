@@ -30,6 +30,11 @@ function createOverview(): ChannelMonitorCostOverview {
   return {
     days: 30,
     generated_at: 1_752_777_845,
+    data_cutoff_at: 1_752_777_840,
+    processed_at: 1_752_777_845,
+    event_watermark: 42,
+    queue_depth: 0,
+    realtime_degraded: false,
     today_cost_cny: 1.2,
     today_probe_cost_cny: 0.3,
     today_model_detection_cost_cny: 0.2,

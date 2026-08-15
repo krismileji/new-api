@@ -105,6 +105,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c, _ := gin.CreateTestContext(w)
 	c.Set(channelTestContextKey, true)
 	c.Set(channelTestRequestDispatchedKey, false)
+	applyChannelMonitorSchedulingEligibility(ctx, c)
 
 	testModel = strings.TrimSpace(testModel)
 	if testModel == "" {
@@ -258,6 +259,16 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
 	isStatusProbe := isChannelStatusProbeTest(ctx)
 	isAutomatedProbe := isSmartScheduleProbe || isStatusProbe
+	eventSource := model.ChannelMonitorEventSourceManualTest
+	if isSmartScheduleProbe {
+		eventSource = model.ChannelMonitorEventSourceSmartProbe
+		c.Set(model.ChannelMonitorSmartScheduleProbeLogKey, true)
+	} else if isStatusProbe {
+		eventSource = model.ChannelMonitorEventSourceStatusProbe
+	}
+	defer func() {
+		emitChannelTestMonitorEvent(c, channel.Id, testModel, eventSource, tik, result)
+	}()
 	if isStatusProbe {
 		c.Set(model.ChannelMonitorStatusProbeLogKey, true)
 	}
@@ -1008,6 +1019,7 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
+	requestCtx = withChannelMonitorSchedulingEligibility(requestCtx, recordSample)
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
 	finishedAt := time.Now()
 	durationMs := float64(finishedAt.Sub(tik)) / float64(time.Millisecond)

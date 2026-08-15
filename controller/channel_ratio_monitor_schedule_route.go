@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 type channelSmartScheduleRouteKey struct {
@@ -301,11 +299,6 @@ func runChannelSmartScheduleByRouteOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
-	sampleMetricCache, err := newChannelSmartScheduleSampleMetricCache(selectedRoutes)
-	if err != nil {
-		return result, err
-	}
-
 	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
 	if err != nil {
 		return result, err
@@ -317,111 +310,9 @@ func runChannelSmartScheduleByRouteOnce(
 	groupRatios := economicSnapshot.GroupRatios
 	economicRevision := economicSnapshot.Revision
 
-	needsPerformance := false
-	needsJitterPerformance := false
-	needsStability := false
-	for _, route := range selectedRoutes {
-		policy := policyByGroup[route.Group]
-		needsPerformance = needsPerformance || policy.needsPerformance()
-		needsJitterPerformance = needsJitterPerformance ||
-			(policy.StabilityEnabled && policy.JitterEnabled)
-		// Adaptive sampling uses the same rolling stability aggregates to
-		// measure non-rate-limit error pressure, even when hard stability
-		// protection is disabled for this policy.
-		needsStability = needsStability || policy.StabilityEnabled || policy.AdaptiveSamplingEnabled
-	}
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	stabilityStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
-	performanceByModel := make(map[channelSmartScheduleModelKey]*channelSmartSchedulePerformance)
-	if needsPerformance {
-		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetricsCached(ctx, performanceStart, now)
-		if metricErr != nil {
-			return result, metricErr
-		}
-		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{
-				channelId: metric.ChannelId,
-				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
-			}
-			performanceByModel[key] = channelSmartScheduleSetPerformanceMetric(nil, metric)
-		}
-	}
-	stabilityPerformanceByModel := make(map[channelSmartScheduleModelKey]*channelSmartSchedulePerformance)
-	if needsJitterPerformance {
-		metrics, metricErr := model.GetChannelMonitorRoutePerformanceMetricsCached(ctx, stabilityStart, now)
-		if metricErr != nil {
-			return result, metricErr
-		}
-		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{
-				channelId: metric.ChannelId,
-				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
-			}
-			stabilityPerformanceByModel[key] = channelSmartScheduleSetPerformanceMetric(nil, metric)
-		}
-	}
-	logStabilityAvailable := common.LogConsumeEnabled && constant.ErrorLogEnabled
-	if needsStability && logStabilityAvailable {
-		metrics, metricErr := model.GetChannelMonitorRouteStabilityMetricsCached(ctx, stabilityStart, now)
-		if metricErr != nil {
-			return result, metricErr
-		}
-		for _, metric := range metrics {
-			key := channelSmartScheduleModelKey{
-				channelId: metric.ChannelId,
-				model:     ratio_setting.FormatMatchingModelName(metric.ModelName),
-			}
-			stabilityPerformanceByModel[key] = channelSmartScheduleSetStabilityMetric(
-				stabilityPerformanceByModel[key], metric,
-			)
-		}
-	}
-	probingMetrics, err := loadChannelSmartScheduleProbingMetrics(
-		ctx,
-		selectedRoutes,
-		policyByGroup,
-		stabilityStart,
-		now,
-		needsStability && logStabilityAvailable,
-	)
-	if err != nil {
-		return result, err
-	}
-	adaptiveHealthByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleAdaptiveHealthMetric)
-	if logStabilityAvailable {
-		adaptiveWindows := make([]model.ChannelSmartScheduleAdaptiveHealthMetricWindow, 0)
-		adaptiveWindowRoutes := make([]channelSmartScheduleRouteKey, 0)
-		for _, route := range selectedRoutes {
-			policy := policyByGroup[route.Group]
-			if !policy.AdaptiveSamplingEnabled {
-				continue
-			}
-			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-			adaptiveWindows = append(adaptiveWindows, model.ChannelSmartScheduleAdaptiveHealthMetricWindow{
-				ChannelId:        route.ChannelId,
-				ModelName:        route.Model,
-				StartTimestamp:   now - int64(policy.AdaptiveSamplingWindowSeconds),
-				ObservationSince: route.SharedSamples.ObservationSince,
-				MaxRequests:      policy.AdaptiveSamplingWindowRequests,
-				WarningSeconds:   policy.AdaptiveSamplingFirstTokenWarningSeconds,
-				CriticalSeconds:  policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-			})
-			adaptiveWindowRoutes = append(adaptiveWindowRoutes, key)
-		}
-		adaptiveMetrics, metricErr := model.GetChannelSmartScheduleAdaptiveHealthMetrics(
-			ctx, adaptiveWindows, now+1,
-		)
-		if metricErr != nil {
-			return result, metricErr
-		}
-		for index, metric := range adaptiveMetrics {
-			if index >= len(adaptiveWindowRoutes) {
-				break
-			}
-			adaptiveHealthByRoute[adaptiveWindowRoutes[index]] = metric.Metric
-		}
-	}
 
 	poolCandidates := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	poolRoutes := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRoute)
@@ -436,10 +327,6 @@ func runChannelSmartScheduleByRouteOnce(
 		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
 		manualPrimary := route.State.ManualPrimaryUntil > now
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		modelKey := channelSmartScheduleModelKey{
-			channelId: route.ChannelId,
-			model:     ratio_setting.FormatMatchingModelName(route.Model),
-		}
 		monitor, monitorAvailable := monitorByChannel[route.ChannelId]
 		groupRatio, groupRatioAvailable := groupRatios[route.Group]
 		economics := channelSmartScheduleClassifyEconomics(
@@ -448,6 +335,72 @@ func runChannelSmartScheduleByRouteOnce(
 			groupRatio,
 			groupRatioAvailable,
 		)
+		adaptiveHealthMetric, scoreSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			now-int64(policy.AdaptiveSamplingWindowSeconds),
+			route.SharedSamples.ObservationSince,
+			policy.AdaptiveSamplingWindowRequests,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		performanceMetric, performanceSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			performanceStart,
+			route.SharedSamples.ObservationSince,
+			0,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		routeStabilityWindowStart := stabilityStart
+		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > routeStabilityWindowStart {
+			routeStabilityWindowStart = route.State.StabilitySince
+		}
+		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			routeStabilityWindowStart,
+			route.SharedSamples.ObservationSince,
+			0,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		firstTokenMs, tps := channelSmartScheduleRealtimeAverage(performanceMetric)
+		performance := &channelSmartSchedulePerformance{
+			FirstTokenSampleCount:                int(performanceMetric.FirstTokenCount),
+			FirstTokenDurationSampleCount:        performanceMetric.FirstTokenCount,
+			TPSSampleCount:                       int(performanceMetric.TPSSampleCount),
+			AverageFirstTokenMs:                  firstTokenMs,
+			AverageTPS:                           tps,
+			LastUsedTime:                         max(performanceMetric.LastUsedTime, stabilityMetric.LastUsedTime),
+			StabilitySuccessCount:                stabilityMetric.StabilitySuccessCount,
+			StabilityFailureCount:                stabilityMetric.StabilityFailureCount,
+			StabilityFinalFailureCount:           stabilityMetric.StabilityFinalFailureCount,
+			StabilityRetryFailureCount:           stabilityMetric.StabilityRetryFailureCount,
+			StabilityRetryFailureDurationTotalMs: stabilityMetric.RetryFailureDurationTotalMs,
+			StabilityFailureDurationBuckets: append(
+				[]model.ChannelMonitorFailureDurationBucket(nil),
+				stabilityMetric.RetryFailureDurationBuckets...,
+			),
+			FirstTokenDurationBuckets: append(
+				[]model.ChannelMonitorDurationBucket(nil),
+				performanceMetric.FirstTokenDurationBuckets...,
+			),
+		}
+		if performanceMetric.RequestCount > 0 || stabilityMetric.RequestCount > 0 {
+			performance.SampleGroupCount = 1
+		}
+		performance.Stability, performance.StabilitySampleCount = channelSmartScheduleStabilityScore(
+			performance.StabilitySuccessCount,
+			performance.StabilityFailureCount,
+			performance.StabilityFinalFailureCount,
+			performance.StabilityFailureDurationBuckets,
+			policy,
+		)
+		channelSmartScheduleApplyJitterMeasurement(performance, policy)
+		routeStabilityAvailable := stabilityMetric.RequestCount > 0
 		routeByKey[key] = route
 		scoreDetailsByRoute[key] = channelSmartScheduleNewScoreDetails(
 			channelSmartScheduleCandidate{
@@ -459,9 +412,10 @@ func runChannelSmartScheduleByRouteOnce(
 			policy.Strategy, policy.StabilityEnabled, policy.ApplyMode, policy.MinSamples,
 			forceReset, policy.Scoring,
 		)
-		routeStabilityAvailable := logStabilityAvailable ||
-			policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
-			sampleMetricCache.metrics(modelKey, stabilityStart).SampleCount > 0
+		if performanceSnapshot.EventWatermark > scoreSnapshot.EventWatermark {
+			scoreSnapshot = performanceSnapshot
+		}
+		channelSmartScheduleAttachRealtimeWindow(scoreDetailsByRoute[key], scoreSnapshot)
 		currentPriority := route.Priority
 		currentWeight := route.Weight
 		if route.State.TemporaryTrafficKind != "" && route.State.BaseRank > 0 {
@@ -557,64 +511,6 @@ func runChannelSmartScheduleByRouteOnce(
 			continue
 		}
 
-		businessPerformance := channelSmartScheduleClonePerformance(performanceByModel[modelKey])
-		businessPerformance = channelSmartScheduleMergeSampleMetrics(
-			businessPerformance, sampleMetricCache.metrics(modelKey, performanceStart),
-		)
-		stabilityPerformance := channelSmartScheduleClonePerformance(stabilityPerformanceByModel[modelKey])
-		probeWindowStart := stabilityStart
-		probingWindowReset := policy.StabilityEnabled &&
-			route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
-			route.State.StabilitySince > stabilityStart
-		if probingWindowReset {
-			probeWindowStart = route.State.StabilitySince
-			stabilityPerformance = nil
-		}
-		if probingWindowReset && logStabilityAvailable {
-			windowStart := route.State.StabilitySince - route.State.StabilitySince%60
-			metric := probingMetrics.stabilityByWindow[channelSmartScheduleRouteMetricWindowKey{
-				modelKey: modelKey, windowStart: windowStart,
-			}]
-			stabilityPerformance = channelSmartScheduleSetStabilityMetric(stabilityPerformance, metric)
-		}
-		if probingWindowReset && policy.JitterEnabled {
-			windowStart := route.State.StabilitySince - route.State.StabilitySince%60
-			metric := probingMetrics.performanceByWindow[channelSmartScheduleRouteMetricWindowKey{
-				modelKey: modelKey, windowStart: windowStart,
-			}]
-			stabilityPerformance = channelSmartScheduleSetPerformanceMetric(stabilityPerformance, metric)
-		}
-		stabilityPerformance = channelSmartScheduleMergeSampleMetrics(
-			stabilityPerformance, sampleMetricCache.metrics(modelKey, probeWindowStart),
-		)
-		if probingWindowReset && stabilityPerformance == nil {
-			stabilityPerformance = &channelSmartSchedulePerformance{}
-		}
-		performance := channelSmartScheduleCombineWindowPerformance(businessPerformance, stabilityPerformance)
-		if performance != nil {
-			performance.Stability, performance.StabilitySampleCount = channelSmartScheduleStabilityScore(
-				performance.StabilitySuccessCount,
-				performance.StabilityFailureCount,
-				performance.StabilityFinalFailureCount,
-				performance.StabilityFailureDurationBuckets,
-				policy,
-			)
-			channelSmartScheduleApplyJitterMeasurement(performance, policy)
-		}
-		adaptiveHealthMetric := adaptiveHealthByRoute[key]
-		remainingAdaptiveRequests := channelSmartScheduleRemainingAdaptiveWindowRequests(
-			policy.AdaptiveSamplingWindowRequests, adaptiveHealthMetric.RequestCount,
-		)
-		adaptiveHealthMetric = channelSmartScheduleMergeAdaptiveHealthMetric(
-			adaptiveHealthMetric,
-			sampleMetricCache.adaptiveHealthMetrics(
-				modelKey,
-				now-int64(policy.AdaptiveSamplingWindowSeconds),
-				remainingAdaptiveRequests,
-				policy.AdaptiveSamplingFirstTokenWarningSeconds,
-				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-			),
-		)
 		health := channelSmartScheduleEvaluateHealth(route.State, adaptiveHealthMetric, policy)
 		candidate := channelSmartScheduleCandidate{
 			ChannelId: route.ChannelId, CurrentPriority: currentPriority, CurrentWeight: currentWeight,
@@ -635,18 +531,16 @@ func runChannelSmartScheduleByRouteOnce(
 			GroupRatio: economics.GroupRatio, GrossMargin: economics.GrossMargin,
 			EconomicRole: economics.EconomicRole,
 		}
-		if performance != nil {
-			candidate.SampleGroupCount = performance.SampleGroupCount
-			candidate.FirstTokenMs = performance.AverageFirstTokenMs
-			if policy.JitterEnabled && performance.WinsorizedAverageFirstTokenMs != nil {
-				candidate.FirstTokenMs = performance.WinsorizedAverageFirstTokenMs
-			}
-			candidate.TPS = performance.AverageTPS
-			candidate.FirstTokenSampleCount = performance.FirstTokenSampleCount
-			candidate.TPSSampleCount = performance.TPSSampleCount
-			candidate.Stability = performance.Stability
-			candidate.StabilitySampleCount = performance.StabilitySampleCount
+		candidate.SampleGroupCount = performance.SampleGroupCount
+		candidate.FirstTokenMs = performance.AverageFirstTokenMs
+		if policy.JitterEnabled && performance.WinsorizedAverageFirstTokenMs != nil {
+			candidate.FirstTokenMs = performance.WinsorizedAverageFirstTokenMs
 		}
+		candidate.TPS = performance.AverageTPS
+		candidate.FirstTokenSampleCount = performance.FirstTokenSampleCount
+		candidate.TPSSampleCount = performance.TPSSampleCount
+		candidate.Stability = performance.Stability
+		candidate.StabilitySampleCount = performance.StabilitySampleCount
 		candidate.SampleDebt = channelSmartScheduleCandidateSampleDebt(
 			candidate, policy.Strategy, policy.StabilityEnabled, policy.Scoring, policy.MinSamples,
 		)
@@ -654,6 +548,7 @@ func runChannelSmartScheduleByRouteOnce(
 			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
 			policy.MinSamples, forceReset, policy.Scoring,
 		)
+		channelSmartScheduleAttachRealtimeWindow(scoreDetailsByRoute[key], scoreSnapshot)
 
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing {
 			directActions = append(directActions, channelSmartScheduleRouteDirectAction{
@@ -669,6 +564,7 @@ func runChannelSmartScheduleByRouteOnce(
 			candidate, policy.Strategy, policy.StabilityEnabled, policy.ApplyMode,
 			policy.MinSamples, forceReset, policy.Scoring,
 		)
+		channelSmartScheduleAttachRealtimeWindow(scoreDetailsByRoute[key], scoreSnapshot)
 		candidate.PreviousBaseRank = route.State.BaseRank
 		poolCandidates[poolKey] = append(poolCandidates[poolKey], candidate)
 		if routeKeyByPoolChannel[poolKey] == nil {

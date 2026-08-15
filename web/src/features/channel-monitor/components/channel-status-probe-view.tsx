@@ -81,6 +81,7 @@ import {
   updateChannelStatusProbeConfig,
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import {
   isChannelStatusProbeIssue,
   loadChannelStatusProbeSort,
@@ -166,14 +167,9 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
     queryKey: ['channel-monitor', 'status-probe', { model: modelFilter }],
     queryFn: () => getChannelStatusProbeOverview(modelFilter),
     placeholderData: keepPreviousData,
-    refetchInterval: (currentQuery) => {
-      if (document.visibilityState === 'hidden') return false
-      const hasRunning = currentQuery.state.data?.data.channels.some(
-        (channel) => channel.running || channel.config?.manual_request_id
-      )
-      return hasRunning ? 3000 : 15000
-    },
-    refetchIntervalInBackground: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const channels = query.data?.data.channels ?? EMPTY_CHANNELS
   const enabledChannels = useMemo(

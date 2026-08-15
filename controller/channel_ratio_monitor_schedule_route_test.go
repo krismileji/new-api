@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,28 @@ func TestChannelSmartScheduleRemainingAdaptiveWindowRequestsPreventsCombinedWind
 			))
 		})
 	}
+}
+
+func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(t *testing.T) {
+	generatedAt := common.GetTimestamp() + 2*60*60
+	settings := channelMonitorSettings{
+		SmartSchedulePerformanceWindowMinutes: 60,
+		SmartScheduleStabilityWindowMinutes:   60,
+	}
+	coverageStart := generatedAt - 30*60
+	coverage := channelSmartScheduleRealtimeMetricCoverage(
+		generatedAt,
+		settings,
+		[]service.ChannelMonitorRealtimeSnapshot{{
+			CoverageStart: coverageStart,
+			DataCutoffAt:  generatedAt - 1,
+		}},
+	)
+
+	assert.Equal(t, coverageStart, coverage.AggregatedFrom)
+	assert.Equal(t, generatedAt-1, coverage.AggregatedThrough)
+	assert.False(t, coverage.PerformanceWindowComplete)
+	assert.False(t, coverage.StabilityWindowComplete)
 }
 
 func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) {
@@ -604,13 +627,13 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 		ChannelId: 1305, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
 	}).Error)
 	now := common.GetTimestamp()
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: 1305, Model: "model-a",
 		WindowStart: now - 3600, Time: now - 60, Success: true,
 	})
 	require.NoError(t, err)
 	fastFailureDurationMs := 500.0
-	_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: 1305, Model: "model-a",
 		WindowStart: now - 3600, Time: now - 30, Success: false,
 		DurationMs: &fastFailureDurationMs,
@@ -680,12 +703,12 @@ func TestGetChannelMonitorSmartScheduleRoutesReturnsWindowedSharedSamples(t *tes
 		ChannelId: 1306, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
 	}).Error)
 	now := common.GetTimestamp()
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: 1306, Model: "model-a", WindowStart: now - 3600,
 		Time: now - 120, Success: false, Error: "过期失败",
 	})
 	require.NoError(t, err)
-	_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: 1306, Model: "model-a", WindowStart: now - 3600,
 		Time: now - 5, Success: true,
 	})
@@ -838,15 +861,6 @@ func TestGetChannelMonitorSmartScheduleRoutesDoesNotInitializeOrClearRouteStates
 
 func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
-	originalLogConsumeEnabled := common.LogConsumeEnabled
-	originalErrorLogEnabled := constant.ErrorLogEnabled
-	common.LogConsumeEnabled = true
-	constant.ErrorLogEnabled = true
-	t.Cleanup(func() {
-		common.LogConsumeEnabled = originalLogConsumeEnabled
-		constant.ErrorLogEnabled = originalErrorLogEnabled
-	})
-
 	const exactModel = "gemini-2.5-pro-thinking-2048"
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
@@ -875,16 +889,13 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	}).Error)
 	now := common.GetTimestamp()
 	minuteStart := now - now%60 - 60
-	require.NoError(t, db.Create(&[]model.Log{
-		{
-			CreatedAt: minuteStart + 1, Type: model.LogTypeConsume, ChannelId: 1307,
-			ModelName: exactModel, Group: "vip", IsStream: true, Other: `{"frt":200}`,
-		},
-		{
-			CreatedAt: minuteStart + 2, Type: model.LogTypeConsume, ChannelId: 1307,
-			ModelName: exactModel, Group: "vip", IsStream: true, Other: `{"frt":200}`,
-		},
-	}).Error)
+	firstTokenMs := 200.0
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		1307, "vip", exactModel, minuteStart+1, true, &firstTokenMs, nil, nil, false,
+	))
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		1307, "vip", exactModel, minuteStart+2, true, &firstTokenMs, nil, nil, false,
+	))
 
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, http.MethodGet, "/api/channel_monitor/schedule", nil,
@@ -894,20 +905,30 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			GeneratedAt      int64                                        `json:"generated_at"`
-			MetricCoverage   *channelSmartScheduleMetricCoverageResponse  `json:"metric_coverage"`
-			PerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
-			StabilityItems   []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
+			GeneratedAt         int64                                        `json:"generated_at"`
+			DataCutoffAt        int64                                        `json:"data_cutoff_at"`
+			ProjectionStartedAt int64                                        `json:"projection_started_at"`
+			EventWatermark      uint64                                       `json:"event_watermark"`
+			RealtimeDegraded    bool                                         `json:"realtime_degraded"`
+			MetricCoverage      *channelSmartScheduleMetricCoverageResponse  `json:"metric_coverage"`
+			PerformanceItems    []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
+			StabilityItems      []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	require.NotNil(t, response.Data.MetricCoverage)
-	windowEnd := response.Data.GeneratedAt - response.Data.GeneratedAt%60
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
-	assert.Equal(t, windowEnd, response.Data.MetricCoverage.AggregatedThrough)
-	assert.Equal(t, windowEnd-60*60, response.Data.MetricCoverage.PerformanceWindowStart)
-	assert.Equal(t, windowEnd-60*60, response.Data.MetricCoverage.StabilityWindowStart)
+	assert.Equal(t, minuteStart+2, response.Data.DataCutoffAt)
+	assert.Greater(t, response.Data.ProjectionStartedAt, minuteStart+2)
+	assert.NotZero(t, response.Data.EventWatermark)
+	assert.True(t, response.Data.RealtimeDegraded)
+	assert.Equal(t, response.Data.DataCutoffAt, response.Data.MetricCoverage.AggregatedThrough)
+	assert.Equal(t, response.Data.ProjectionStartedAt, response.Data.MetricCoverage.AggregatedFrom)
+	assert.False(t, response.Data.MetricCoverage.PerformanceWindowComplete)
+	assert.False(t, response.Data.MetricCoverage.StabilityWindowComplete)
+	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.PerformanceWindowStart)
+	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.StabilityWindowStart)
 	require.Len(t, response.Data.PerformanceItems, 1)
 	performance := response.Data.PerformanceItems[0]
 	assert.Equal(t, "vip", performance.GroupName)
@@ -977,7 +998,7 @@ func TestRunChannelSmartScheduleUsesManualSamplesInEverySampleMode(t *testing.T)
 				{channelId: 1312, success: true},
 				{channelId: 1312, success: false},
 			} {
-				_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+				_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 					ChannelId: sample.channelId, Model: "model-a",
 					Source:      model.ChannelSmartScheduleSampleSourceManualTest,
 					WindowStart: now - 60, Time: now - int64(4-index), Success: sample.success,

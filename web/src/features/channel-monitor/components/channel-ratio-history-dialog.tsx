@@ -51,6 +51,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { getChannelMonitorHistory } from '../api'
 import { formatChangePercent, formatMonitorRatio } from '../lib/format'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type { ChannelMonitorItem } from '../types'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
@@ -88,6 +89,7 @@ export function ChannelRatioHistoryPanel(props: ChannelRatioHistoryPanelProps) {
   const query = useQuery({
     queryKey: ['channel-monitor-history', props.channel.id],
     queryFn: () => getChannelMonitorHistory(props.channel.id),
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
   const history = query.data?.data.items ?? []
 

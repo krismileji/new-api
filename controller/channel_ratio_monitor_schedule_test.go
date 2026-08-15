@@ -685,6 +685,15 @@ func TestRunChannelSmartScheduleDoesNotHardDegradeLowStabilityScore(t *testing.T
 		{ChannelId: 32, Group: "vip", ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeConsume},
 		{ChannelId: 32, Group: "vip", ModelName: "model-a", CreatedAt: initialLogTime, Type: model.LogTypeConsume},
 	}).Error)
+	for index := range 2 {
+		timestamp := initialLogTime + int64(index)
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			31, "vip", "model-a", timestamp, false, nil, nil, nil, false,
+		))
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			32, "vip", "model-a", timestamp, true, nil, nil, nil, false,
+		))
+	}
 	require.NoError(t, aggregateChannelMonitorTestLogs(initialMinute, initialMinute+60))
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
@@ -766,6 +775,15 @@ func TestRuntimeRefreshClearsProbeStateAfterSuccessfulNewSamples(t *testing.T) {
 		{ChannelId: 34, Group: "vip", ModelName: "model-a", CreatedAt: probeStartedAt, Type: model.LogTypeConsume},
 		{ChannelId: 34, Group: "vip", ModelName: "model-a", CreatedAt: probeStartedAt, Type: model.LogTypeConsume},
 	}).Error)
+	for index := range 2 {
+		timestamp := probeStartedAt + int64(index)
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			33, "vip", "model-a", timestamp, true, nil, nil, nil, false,
+		))
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			34, "vip", "model-a", timestamp, true, nil, nil, nil, false,
+		))
+	}
 	require.NoError(t, aggregateChannelMonitorTestLogs(probeStartedAt, probeStartedAt+60))
 
 	recoveryStartedAt := common.GetTimestamp()
@@ -832,12 +850,12 @@ func TestFullScheduleDoesNotRecoverDegradedRouteFromProcessLocalSuccesses(t *tes
 	}).Error)
 
 	settings := getChannelMonitorSettings()
-	observeChannelSmartScheduleRuntimeFailure(
+	projectChannelSmartScheduleRuntimeFailureForTest(
 		37, "model-a", now-1, policy.policy().BurstFailureWindowSeconds,
 		settings.SmartScheduleControlRevision,
 	)
-	observeChannelSmartScheduleRuntimeProbeSuccess(37, "model-a")
-	observeChannelSmartScheduleRuntimeProbeSuccess(37, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(37, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(37, "model-a")
 
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -900,7 +918,7 @@ func TestFullScheduleDoesNotRecoverProbingRouteFromProcessLocalSuccesses(t *test
 		StabilitySavedWeight:   restoredWeight,
 	}).Error)
 
-	observeChannelSmartScheduleRuntimeProbeSuccess(36, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(36, "model-a")
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
 	var state model.ChannelSmartScheduleRouteState
@@ -914,7 +932,7 @@ func TestFullScheduleDoesNotRecoverProbingRouteFromProcessLocalSuccesses(t *test
 	assert.Zero(t, *ability.Priority)
 	assert.Equal(t, probeWeight, ability.Weight)
 
-	observeChannelSmartScheduleRuntimeProbeSuccess(36, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(36, "model-a")
 	_, err = runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
 	require.NoError(t, db.Where(
@@ -973,14 +991,14 @@ func TestFullScheduleDoesNotAdvanceRecoveryBoundary(t *testing.T) {
 	}).Error)
 	failureDurationMs := 500.0
 	for index := range 2 {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 38, Model: "model-a", WindowStart: recoveryWindowStart,
 			Time: now - int64(2-index), Success: false, DurationMs: &failureDurationMs,
 		})
 		require.NoError(t, err)
 	}
 
-	observeChannelSmartScheduleRuntimeProbeSuccess(38, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(38, "model-a")
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
 	var state model.ChannelSmartScheduleRouteState
@@ -1066,6 +1084,18 @@ func TestRunChannelSmartSchedulePreservesProbingState(t *testing.T) {
 		})
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	for index := range 7 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			35, "vip", "model-a", probeStartedAt+int64(index), true,
+			nil, nil, nil, false,
+		))
+	}
+	for index, durationMs := range []int64{500, 500, 20_000} {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			35, "vip", "model-a", probeStartedAt+int64(10+index), false,
+			nil, nil, &durationMs, true,
+		))
+	}
 	require.NoError(t, aggregateChannelMonitorTestLogs(probeStartedAt, probeStartedAt+60))
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
@@ -1908,13 +1938,13 @@ func TestRunChannelSmartScheduleManualPrimaryOverridesStabilityDegrade(t *testin
 	windowStart := now - 3600
 	failureDurationMs := 500.0
 	for index := 0; index < 2; index++ {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 66, Model: "model-a",
 			WindowStart: windowStart, Time: now - int64(2-index), Success: false,
 			DurationMs: &failureDurationMs,
 		})
 		require.NoError(t, err)
-		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 67, Model: "model-a",
 			WindowStart: windowStart, Time: now - int64(2-index), Success: true,
 		})
@@ -1986,12 +2016,12 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	now := common.GetTimestamp()
 	failureDurationMs := 500.0
 	for index := 0; index < 2; index++ {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 68, Model: "model-a", WindowStart: now - 3600,
 			Time: now - int64(2-index), Success: false, DurationMs: &failureDurationMs,
 		})
 		require.NoError(t, err)
-		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 69, Model: "model-a", WindowStart: now - 3600,
 			Time: now - int64(2-index), Success: true,
 		})
@@ -2038,8 +2068,8 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	runtimeError := types.NewErrorWithStatusCode(
 		errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503,
 	)
-	protectChannelSmartScheduleRuntimeFailure(68, "model-a", runtimeError)
-	protectChannelSmartScheduleRuntimeFailure(68, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(68, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(68, "model-a", runtimeError)
 
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 68, Group: "vip", Model: "model-a"}).
 		First(&fixedAbility).Error)
@@ -2056,7 +2086,7 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	assert.True(t, fixedState.ManualPrimaryAllowStabilityDegrade)
 	assert.Contains(t, fixedState.LastScheduleError, "短期失败达到保护阈值")
 
-	probeStartedAt := common.GetTimestamp()
+	probeStartedAt := common.GetTimestamp() + 1
 	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).
 		Where("channel_id = ? AND group_name = ? AND model_name = ?", 68, "vip", "model-a").
 		Updates(map[string]any{
@@ -2069,7 +2099,7 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 		Where(&model.Ability{ChannelId: 69, Group: "vip", Model: "model-a"}).
 		Update("enabled", false).Error)
 	for index := 0; index < 2; index++ {
-		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 68, Model: "model-a", WindowStart: now - 3600,
 			Time: probeStartedAt, Success: true, SampleId: fmt.Sprintf("fixed-recovery-%d", index),
 		})
@@ -2501,6 +2531,18 @@ func TestRunChannelSmartScheduleCompletesExplorationBeforeFormalScoring(t *testi
 		{ChannelId: 65, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
 		{ChannelId: 65, Group: "vip", ModelName: "model-a", CreatedAt: logTime, Type: model.LogTypeConsume, IsStream: true, Other: `{"frt":100}`},
 	}).Error)
+	fastFirstTokenMs := 100.0
+	slowFirstTokenMs := 500.0
+	for index := range 2 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			64, "vip", "model-a", logTime+int64(index), true,
+			&slowFirstTokenMs, nil, nil, false,
+		))
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			65, "vip", "model-a", logTime+int64(index), true,
+			&fastFirstTokenMs, nil, nil, false,
+		))
+	}
 	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
 
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
@@ -2582,6 +2624,13 @@ func TestRuntimeRefreshUsesPressureBudgetToSampleUnknownBackup(t *testing.T) {
 		}
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	firstTokenMs := 10_000.0
+	for index := range logs {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			66, "vip", "model-a", completedMinute+int64(index+1), true,
+			&firstTokenMs, nil, nil, false,
+		))
+	}
 	require.NoError(t, aggregateChannelMonitorTestLogs(completedMinute, completedMinute+60))
 
 	_, err := runChannelSmartScheduleOnce(context.Background(), nil, false)

@@ -4,19 +4,16 @@ import (
 	contextpkg "context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 type channelMonitorPerformanceAPIResponse struct {
@@ -25,6 +22,8 @@ type channelMonitorPerformanceAPIResponse struct {
 		RangeMinutes            int                                             `json:"range_minutes"`
 		RangeSource             string                                          `json:"range_source"`
 		GeneratedAt             int64                                           `json:"generated_at"`
+		ProjectionStartedAt     int64                                           `json:"projection_started_at"`
+		RealtimeDegraded        bool                                            `json:"realtime_degraded"`
 		MetricCoverage          channelMonitorPerformanceMetricCoverageResponse `json:"metric_coverage"`
 		Items                   []model.ChannelMonitorPerformanceMetric         `json:"items"`
 		SuccessMetricsAvailable bool                                            `json:"success_metrics_available"`
@@ -34,69 +33,40 @@ type channelMonitorPerformanceAPIResponse struct {
 }
 
 func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
-	originalDB := model.DB
-	originalLogDB := model.LOG_DB
-	originalMainDatabaseType := common.MainDatabaseType()
-	originalLogDatabaseType := common.LogDatabaseType()
-	originalLogConsumeEnabled := common.LogConsumeEnabled
-	originalErrorLogEnabled := constant.ErrorLogEnabled
-	originalIsMasterNode := common.IsMasterNode
-	t.Cleanup(func() {
-		model.DB = originalDB
-		model.LOG_DB = originalLogDB
-		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
-		common.LogConsumeEnabled = originalLogConsumeEnabled
-		constant.ErrorLogEnabled = originalErrorLogEnabled
-		common.IsMasterNode = originalIsMasterNode
-	})
-	common.LogConsumeEnabled = true
-	constant.ErrorLogEnabled = true
-	common.IsMasterNode = true
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "false",
 	})
-
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-api.db")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, sqlDB.Close())
-	})
-	require.NoError(t, db.AutoMigrate(
-		&model.Log{},
-		&model.ChannelMonitorMinuteMetric{},
-		&model.ChannelMonitorAggregationState{},
-		&model.ChannelSmartScheduleModelSampleState{},
-	))
-	model.DB = db
-	model.LOG_DB = db
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	now := time.Now().Unix()
-	logTimestamp := now - 60
-	require.NoError(t, db.Create(&model.Log{
-		ChannelId:        7,
-		ModelName:        "test-model",
-		CreatedAt:        logTimestamp,
-		Type:             model.LogTypeConsume,
-		IsStream:         true,
-		Group:            "vip",
-		CompletionTokens: 120,
-		UseTime:          4,
-		Other:            `{"frt":1500}`,
-	}).Error)
-	require.NoError(t, db.Create(&model.Log{
-		ChannelId:      7,
-		ModelName:      "test-model",
-		CreatedAt:      logTimestamp,
-		Type:           model.LogTypeError,
-		IsRetryAttempt: true,
-		Group:          "vip",
-		Content:        "status_code=503, upstream unavailable",
-		Other:          `{"status_code":503,"error_type":"upstream_error","error_code":"bad_response_status_code"}`,
-	}).Error)
-	_, err = model.AggregateChannelMonitorMinuteRange(contextpkg.Background(), now-1800, now-now%60)
-	require.NoError(t, err)
+	firstToken := 1500.0
+	tPS := 30.0
+	inputTokens := int64(100)
+	cacheReadTokens := int64(20)
+	success := model.NewChannelMonitorEvent(700007, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now-10)
+	success.EventId = "performance-controller-success"
+	success.ModelName = "test-model-realtime"
+	success.GroupName = "vip-realtime"
+	success.RequestDispatched = true
+	success.IsFinalAttempt = true
+	success.FirstTokenMs = &firstToken
+	success.TPS = &tPS
+	success.InputTokens = &inputTokens
+	success.CacheReadTokens = &cacheReadTokens
+	failure := model.NewChannelMonitorEvent(700007, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeFailure, now-5)
+	failure.EventId = "performance-controller-failure"
+	failure.ModelName = "test-model-realtime"
+	failure.GroupName = "vip-realtime"
+	failure.RequestDispatched = true
+	failure.IsRetryAttempt = true
+	failure.APIKeyId = 77
+	failure.APIKeyName = "实时 Key"
+	statusCode := http.StatusServiceUnavailable
+	failure.StatusCode = &statusCode
+	failure.ErrorType = "upstream_error"
+	failure.ErrorCode = "bad_response_status_code"
+	failure.ErrorMessage = "status_code=503, upstream unavailable"
+	require.NotEqual(t, service.ChannelMonitorEventEnqueueInvalid, service.EmitChannelMonitorEvent(success))
+	require.NotEqual(t, service.ChannelMonitorEventEnqueueInvalid, service.EmitChannelMonitorEvent(failure))
+	require.NoError(t, service.FlushChannelMonitorEvents(contextpkg.Background()))
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -111,44 +81,54 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.True(t, response.Success)
 	assert.Equal(t, 30, response.Data.RangeMinutes)
 	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
-	windowEnd := response.Data.GeneratedAt - response.Data.GeneratedAt%60
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
-	assert.Equal(t, windowEnd, response.Data.MetricCoverage.AggregatedThrough)
-	assert.Equal(t, windowEnd-30*60, response.Data.MetricCoverage.WindowStart)
+	assert.NotZero(t, response.Data.ProjectionStartedAt)
+	assert.True(t, response.Data.RealtimeDegraded)
 	assert.False(t, response.Data.MetricCoverage.WindowComplete)
-	require.Len(t, response.Data.Items, 1)
-	assert.Equal(t, 7, response.Data.Items[0].ChannelId)
-	require.NotNil(t, response.Data.Items[0].AverageFirstTokenMs)
-	assert.InDelta(t, 1500, *response.Data.Items[0].AverageFirstTokenMs, 0.001)
-	require.NotNil(t, response.Data.Items[0].AverageTPS)
-	assert.InDelta(t, 30, *response.Data.Items[0].AverageTPS, 0.001)
+	windowStart := (response.Data.GeneratedAt - 30*60) - (response.Data.GeneratedAt-30*60)%60
+	assert.Equal(t, windowStart, response.Data.MetricCoverage.WindowStart)
+	var performanceItem model.ChannelMonitorPerformanceMetric
+	for _, item := range response.Data.Items {
+		if item.ChannelId == 700007 && item.ModelName == "test-model-realtime" {
+			performanceItem = item
+		}
+	}
+	require.NotNil(t, performanceItem.AverageFirstTokenMs)
+	assert.InDelta(t, 1500, *performanceItem.AverageFirstTokenMs, 0.001)
+	require.NotNil(t, performanceItem.AverageTPS)
+	assert.InDelta(t, 30, *performanceItem.AverageTPS, 0.001)
 	assert.True(t, response.Data.SuccessMetricsAvailable)
-	require.Len(t, response.Data.SuccessItems, 1)
-	assert.Equal(t, int64(1), response.Data.SuccessItems[0].ActualSuccessCount)
-	assert.Equal(t, int64(1), response.Data.SuccessItems[0].ActualFailureCount)
-	assert.InDelta(t, 0.5, response.Data.SuccessItems[0].ActualSuccessRate, 0.001)
-	assert.Equal(t, int64(1), response.Data.SuccessItems[0].FinalSampleCount)
-	assert.InDelta(t, 1, response.Data.SuccessItems[0].FinalSuccessRate, 0.001)
-	require.Len(t, response.Data.GroupSuccessItems, 1)
-	assert.Equal(t, "vip", response.Data.GroupSuccessItems[0].Group)
-	assert.InDelta(t, 0.5, response.Data.GroupSuccessItems[0].ActualSuccessRate, 0.001)
-	assert.InDelta(t, 1, response.Data.GroupSuccessItems[0].FinalSuccessRate, 0.001)
+	var successItem model.ChannelMonitorSuccessMetric
+	for _, item := range response.Data.SuccessItems {
+		if item.ChannelId == 700007 && item.ModelName == "test-model-realtime" {
+			successItem = item
+		}
+	}
+	assert.Equal(t, int64(1), successItem.ActualSuccessCount)
+	assert.Equal(t, int64(1), successItem.ActualFailureCount)
+	assert.InDelta(t, 0.5, successItem.ActualSuccessRate, 0.001)
+	assert.Equal(t, int64(1), successItem.FinalSampleCount)
+	assert.InDelta(t, 1, successItem.FinalSuccessRate, 0.001)
 
 	detailRecorder := httptest.NewRecorder()
 	detailContext, _ := gin.CreateTestContext(detailRecorder)
-	detailContext.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/success/detail?minutes=30&channel_id=7&model_name=test-model", nil)
+	detailContext.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/success/detail?minutes=30&channel_id=700007&model_name=test-model-realtime", nil)
 	GetChannelMonitorSuccessDetail(detailContext)
 
 	assert.Equal(t, http.StatusOK, detailRecorder.Code)
 	var detailResponse struct {
 		Success bool `json:"success"`
 		Data    struct {
+			ProjectionStartedAt     int64                             `json:"projection_started_at"`
+			RealtimeDegraded        bool                              `json:"realtime_degraded"`
 			SuccessMetricsAvailable bool                              `json:"success_metrics_available"`
 			Detail                  model.ChannelMonitorSuccessDetail `json:"detail"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse))
 	assert.True(t, detailResponse.Success)
+	assert.NotZero(t, detailResponse.Data.ProjectionStartedAt)
+	assert.True(t, detailResponse.Data.RealtimeDegraded)
 	assert.True(t, detailResponse.Data.SuccessMetricsAvailable)
 	assert.Equal(t, int64(1), detailResponse.Data.Detail.Summary.ActualFailureCount)
 	require.Len(t, detailResponse.Data.Detail.FailureCategories, 1)

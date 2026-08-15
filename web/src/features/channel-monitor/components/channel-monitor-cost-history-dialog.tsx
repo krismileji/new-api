@@ -66,6 +66,7 @@ import {
   formatChannelMonitorCost,
   formatChannelMonitorResolutionRate,
 } from '../lib/format'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type { ChannelMonitorCostOverview } from '../types'
 import { ChannelMonitorAPIKeyCostTable } from './channel-monitor-api-key-cost-table'
 import { ChannelMonitorChannelCostTable } from './channel-monitor-channel-cost-table'
@@ -112,6 +113,7 @@ export function ChannelMonitorCostHistoryDialog(
       ),
     enabled: props.open,
     staleTime: 30_000,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
 
   useEffect(() => {

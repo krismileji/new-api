@@ -29,11 +29,26 @@ import {
   getChannelMonitorSmartScheduleDisplayOptions,
   getChannelMonitorSmartSchedulePoolStatus,
   getChannelMonitorSmartScheduleRouteDisplayStatus,
+  isChannelMonitorSmartScheduleResultStale,
   placeChannelMonitorSmartScheduleRoutes,
   summarizeChannelMonitorSmartScheduleChannel,
   summarizeChannelMonitorSmartScheduleOverview,
   summarizeChannelMonitorSmartSchedulePools,
 } from '../smart-schedule-summary'
+
+test('marks a manual smart schedule snapshot stale after a fixed ten minutes', () => {
+  const generatedAt = 1_700_000_000
+
+  assert.equal(
+    isChannelMonitorSmartScheduleResultStale(generatedAt, generatedAt + 600),
+    false
+  )
+  assert.equal(
+    isChannelMonitorSmartScheduleResultStale(generatedAt, generatedAt + 601),
+    true
+  )
+  assert.equal(isChannelMonitorSmartScheduleResultStale(0, generatedAt), false)
+})
 
 const normalPool = {
   routeCount: 3,

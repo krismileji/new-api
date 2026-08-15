@@ -201,14 +201,6 @@ export function channelModelDetectionCostLines(
   return ['已结算成本 ¥0.000000000']
 }
 
-export function channelModelDetectionPollInterval(
-  hasActiveRun: boolean,
-  pageVisible: boolean
-) {
-  if (!pageVisible) return false
-  return hasActiveRun ? 3000 : 20_000
-}
-
 export function isChannelModelDetectionRunActive(
   status: ChannelModelDetectionRunStatus
 ) {
@@ -220,16 +212,6 @@ export function isChannelModelDetectionRunActive(
     status === 'running' ||
     status === 'canceling'
   )
-}
-
-export function channelModelDetectionRunPollInterval(
-  status: ChannelModelDetectionRunStatus | undefined,
-  pageVisible: boolean
-) {
-  if (!pageVisible || !status || !isChannelModelDetectionRunActive(status)) {
-    return false
-  }
-  return 3000
 }
 
 export function isChannelModelDetectionIssue(

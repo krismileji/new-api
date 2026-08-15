@@ -105,7 +105,6 @@ function SmartScheduleFieldsFixture() {
       relayResponseHeaderTimeoutSeconds: 60,
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
-      smartScheduleIntervalMinutes: 10,
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 120,
       smartScheduleRateLimitCooldownSeconds: 30,
@@ -366,7 +365,8 @@ describe('channel monitor settings dialog', () => {
 
     assert.ok(runtimeSettingsIndex >= 0)
     assert.ok(runtimeSettingsIndex < groupPolicyIndex)
-    assert.ok(markup.includes('控制所有已配置分组的执行频率'))
+    assert.ok(markup.includes('控制所有已配置分组的统计窗口'))
+    assert.equal(markup.includes('执行频率'), false)
     assert.ok(forceResetIndex > groupPolicyIndex)
   })
 
@@ -409,7 +409,6 @@ describe('channel monitor settings dialog', () => {
 
     for (const label of [
       '智能调度',
-      '调度间隔',
       '性能窗口',
       '稳定性评分窗口',
       '429 冷却时间',

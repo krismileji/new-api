@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/bytedance/gopkg/util/gopool"
-	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -25,9 +24,6 @@ const (
 	channelMonitorAggregationRepairTail    = time.Hour + 5*time.Minute
 	channelMonitorAggregationRepairEvery   = time.Hour
 	channelMonitorAggregationBackfillChunk = time.Hour
-	channelMonitorAggregationFreshWait     = 10 * time.Second
-	channelMonitorAggregationFreshPoll     = 250 * time.Millisecond
-	channelMonitorAggregationLockPoll      = 50 * time.Millisecond
 	channelMonitorAggregationRepairReserve = 5 * time.Second
 
 	channelMonitorAggregationBackfillDefaultMaxChunks     = 1
@@ -48,7 +44,6 @@ var (
 	channelMonitorAggregationRunMu                 sync.Mutex
 	channelMonitorAggregationStateMu               sync.RWMutex
 	channelMonitorAggregationLocalCompletedThrough = make(map[channelMonitorAggregationDatabaseKey]int64)
-	channelMonitorAggregationWaitGroup             singleflight.Group
 )
 
 // StartChannelMonitorAggregationWorker refreshes the persisted minute
@@ -143,111 +138,6 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 	)
 }
 
-// EnsureChannelMonitorAggregationFresh prevents monitor and scheduler reads
-// from using an aggregate that misses the latest safely completed minute.
-func EnsureChannelMonitorAggregationFresh(ctx context.Context, now time.Time) error {
-	if !common.LogConsumeEnabled && !constant.ErrorLogEnabled {
-		return nil
-	}
-	targetEnd, err := channelMonitorAggregationFreshTarget(ctx, now)
-	if err != nil {
-		return err
-	}
-	if targetEnd <= 0 {
-		return nil
-	}
-	key := channelMonitorAggregationDatabaseKey{db: model.DB, logDB: model.LOG_DB}
-	if !common.IsMasterNode {
-		channelMonitorAggregationStateMu.RLock()
-		localCompletedThrough := channelMonitorAggregationLocalCompletedThrough[key]
-		channelMonitorAggregationStateMu.RUnlock()
-		if localCompletedThrough >= targetEnd {
-			return nil
-		}
-
-		waitKey := fmt.Sprintf("%p:%p:%d", key.db, key.logDB, targetEnd)
-		resultChannel := channelMonitorAggregationWaitGroup.DoChan(waitKey, func() (any, error) {
-			return waitForChannelMonitorAggregationFresh(context.Background(), targetEnd)
-		})
-		var completedThrough int64
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case result := <-resultChannel:
-			if result.Err != nil {
-				return result.Err
-			}
-			completedThrough = result.Val.(int64)
-		}
-		channelMonitorAggregationStateMu.Lock()
-		if channelMonitorAggregationLocalCompletedThrough[key] < completedThrough {
-			model.InvalidateChannelMonitorAggregateCaches()
-			channelMonitorAggregationLocalCompletedThrough[key] = completedThrough
-		}
-		channelMonitorAggregationStateMu.Unlock()
-		return nil
-	}
-
-	channelMonitorAggregationStateMu.RLock()
-	localCompletedThrough := channelMonitorAggregationLocalCompletedThrough[key]
-	channelMonitorAggregationStateMu.RUnlock()
-	if localCompletedThrough >= targetEnd {
-		return nil
-	}
-	ticker := time.NewTicker(channelMonitorAggregationLockPoll)
-	defer ticker.Stop()
-	for {
-		channelMonitorAggregationStateMu.RLock()
-		localCompletedThrough = channelMonitorAggregationLocalCompletedThrough[key]
-		channelMonitorAggregationStateMu.RUnlock()
-		if localCompletedThrough >= targetEnd {
-			return nil
-		}
-		if channelMonitorAggregationRunMu.TryLock() {
-			channelMonitorAggregationStateMu.RLock()
-			localCompletedThrough = channelMonitorAggregationLocalCompletedThrough[key]
-			channelMonitorAggregationStateMu.RUnlock()
-			if localCompletedThrough >= targetEnd {
-				channelMonitorAggregationRunMu.Unlock()
-				return nil
-			}
-			start := targetEnd - int64(channelMonitorAggregationRecentTail/time.Second)
-			if start < 0 {
-				start = 0
-			}
-			err := upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx, targetEnd)
-			var catchUp bool
-			if err == nil {
-				start, catchUp, err = channelMonitorAggregationStart(ctx, key, start, targetEnd)
-			}
-			if err == nil {
-				channelMonitorAggregationStateMu.RLock()
-				localCompletedThrough = channelMonitorAggregationLocalCompletedThrough[key]
-				channelMonitorAggregationStateMu.RUnlock()
-				if localCompletedThrough >= targetEnd {
-					channelMonitorAggregationRunMu.Unlock()
-					return nil
-				}
-				mode := "on_demand_freshness"
-				if catchUp {
-					mode += "_catch_up"
-				}
-				err = rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true, true)
-			}
-			channelMonitorAggregationRunMu.Unlock()
-			if err != nil {
-				return fmt.Errorf("确保渠道监控使用最新完整分钟失败: %w", err)
-			}
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
 func upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx context.Context, targetEnd int64) error {
 	upgradeStart := model.ChannelDailyCostDayStart(targetEnd)
 	result, upgraded, err := model.UpgradeChannelMonitorCacheUtilizationMetrics(
@@ -295,29 +185,6 @@ func channelMonitorAggregationStart(
 		catchUpStart = 0
 	}
 	return catchUpStart, true, nil
-}
-
-func waitForChannelMonitorAggregationFresh(ctx context.Context, targetEnd int64) (int64, error) {
-	timer := time.NewTimer(channelMonitorAggregationFreshWait)
-	defer timer.Stop()
-	ticker := time.NewTicker(channelMonitorAggregationFreshPoll)
-	defer ticker.Stop()
-	for {
-		completedThrough, err := model.GetChannelMonitorAggregationCompletedThrough(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("读取渠道监控聚合水位失败: %w", err)
-		}
-		if completedThrough >= targetEnd {
-			return completedThrough, nil
-		}
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-timer.C:
-			return 0, fmt.Errorf("等待主节点聚合到 %d 超时", targetEnd)
-		case <-ticker.C:
-		}
-	}
 }
 
 func rebuildChannelMonitorAggregationRange(
@@ -639,21 +506,6 @@ func channelMonitorAggregationRepairWindow(targetEnd int64) (int64, int64, bool)
 func channelMonitorAggregationReadyEnd(now time.Time) int64 {
 	readyAt := now.Add(-channelMonitorAggregationBoundaryDelay).Unix()
 	return readyAt - readyAt%int64(channelMonitorAggregationInterval/time.Second)
-}
-
-func channelMonitorAggregationFreshTarget(ctx context.Context, now time.Time) (int64, error) {
-	minuteEnd := now.Truncate(channelMonitorAggregationInterval)
-	readyAt := minuteEnd.Add(channelMonitorAggregationBoundaryDelay)
-	if now.Before(readyAt) {
-		timer := time.NewTimer(time.Until(readyAt))
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return minuteEnd.Unix(), nil
 }
 
 func nextChannelMonitorAggregationRun(now time.Time) time.Time {

@@ -462,6 +462,7 @@ func SettleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
+	emitChannelModelDetectionMonitorEvent(settled)
 	return settled, nil
 }
 
@@ -506,7 +507,7 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if event.CostRatioCNY == nil || event.QuotaPerUnit == nil {
 		settledQuota := input.SettledQuota
 		costBasisQuota := input.CostBasisQuota
-		return MarkChannelModelDetectionCostEventUnresolved(ctx, useDB, ChannelModelDetectionCostUnresolvedInput{
+		return markChannelModelDetectionCostEventUnresolved(ctx, useDB, ChannelModelDetectionCostUnresolvedInput{
 			CostEventId:           input.CostEventId,
 			UsageSource:           input.UsageSource,
 			UsageAvailable:        input.UsageAvailable,
@@ -525,7 +526,7 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if err != nil {
 		settledQuota := input.SettledQuota
 		costBasisQuota := input.CostBasisQuota
-		return MarkChannelModelDetectionCostEventUnresolved(ctx, useDB, ChannelModelDetectionCostUnresolvedInput{
+		return markChannelModelDetectionCostEventUnresolved(ctx, useDB, ChannelModelDetectionCostUnresolvedInput{
 			CostEventId:           input.CostEventId,
 			UsageSource:           input.UsageSource,
 			UsageAvailable:        input.UsageAvailable,
@@ -603,7 +604,15 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	return settled, nil
 }
 
-func MarkChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostUnresolvedInput) (model.ChannelModelDetectionCostEvent, error) {
+func MarkChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostUnresolvedInput) (result model.ChannelModelDetectionCostEvent, resultErr error) {
+	result, resultErr = markChannelModelDetectionCostEventUnresolved(ctx, tx, input)
+	if resultErr == nil {
+		emitChannelModelDetectionMonitorEvent(result)
+	}
+	return result, resultErr
+}
+
+func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostUnresolvedInput) (result model.ChannelModelDetectionCostEvent, resultErr error) {
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err

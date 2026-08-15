@@ -63,7 +63,10 @@ import { cn } from '@/lib/utils'
 
 import { getChannelMonitorTasks, runChannelMonitorRatioUpdate } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
-import { CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY } from '../lib/query-options'
+import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+} from '../lib/query-options'
 import {
   getLatestCompletedChannelMonitorTaskTime,
   isActiveChannelMonitorTask,
@@ -73,7 +76,6 @@ import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-l
 import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
-const ACTIVE_REFRESH_INTERVAL_MS = 5000
 
 const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
   pending: '待执行',
@@ -481,11 +483,9 @@ export function ChannelMonitorTaskHistoryDialog(
     ],
     queryFn: () => getChannelMonitorTasks(page, TASK_PAGE_SIZE, 'ratio'),
     enabled: props.open,
-    staleTime: 30 * 1000,
-    refetchInterval: (result) =>
-      result.state.data?.data.items.some(isActiveChannelMonitorTask)
-        ? ACTIVE_REFRESH_INTERVAL_MS
-        : false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const tasks = query.data?.data.items ?? []
   const total = query.data?.data.total ?? 0

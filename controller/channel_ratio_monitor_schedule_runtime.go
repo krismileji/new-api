@@ -2,78 +2,26 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
-const channelSmartScheduleRuntimeFailureRedisKeyPrefix = "channelSmartScheduleRuntimeRequests:v2:"
-
 const maxChannelSmartScheduleRuntimeRequestEvents = 1000
 
 const channelSmartScheduleAdaptiveRefreshDelay = time.Second
-
-const channelSmartScheduleRuntimeRequestRedisScript = `
-local now = tonumber(ARGV[1]) or 0
-local retention = tonumber(ARGV[2]) or 0
-local cutoff = now - retention
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', cutoff - 1)
-local watermark = tonumber(redis.call('GET', KEYS[3]) or '0')
-for index = 6, #ARGV, 2 do
-  local timestamp = tonumber(ARGV[index]) or now
-  local local_sequence = tonumber(ARGV[index + 1]) or 0
-  if local_sequence > watermark then
-    local shared_sequence = redis.call('INCR', KEYS[2])
-    local success_member = string.format('%020d:0', shared_sequence)
-    redis.call('ZADD', KEYS[1], timestamp, success_member)
-    watermark = local_sequence
-  end
-end
-if watermark > 0 then
-  redis.call('SET', KEYS[3], watermark)
-  redis.call('EXPIRE', KEYS[3], retention + 60)
-end
-local route_incomplete_until = tonumber(ARGV[4]) or 0
-if route_incomplete_until > now then
-  redis.call('SET', KEYS[4], '1')
-  redis.call('EXPIREAT', KEYS[4], route_incomplete_until)
-end
-local global_incomplete_until = tonumber(ARGV[5]) or 0
-if global_incomplete_until > now then
-  redis.call('SET', KEYS[5], '1')
-  redis.call('EXPIREAT', KEYS[5], global_incomplete_until)
-end
-local sequence = redis.call('INCR', KEYS[2])
-local member = string.format('%020d:%s', sequence, ARGV[3])
-redis.call('ZADD', KEYS[1], now, member)
-local size = tonumber(redis.call('ZCARD', KEYS[1]) or '0')
-if size > 1000 then
-  redis.call('ZREMRANGEBYRANK', KEYS[1], 0, size - 1001)
-end
-redis.call('EXPIRE', KEYS[1], retention + 60)
-redis.call('EXPIRE', KEYS[2], retention + 60)
-local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
-local incomplete = redis.call('EXISTS', KEYS[4]) + redis.call('EXISTS', KEYS[5])
-local response = {incomplete > 0 and '1' or '0'}
-for index = 1, #entries do
-  response[#response + 1] = entries[index]
-end
-return response
-`
 
 type channelSmartScheduleRuntimeRequestEvent struct {
 	Timestamp int64
@@ -86,35 +34,6 @@ type channelSmartScheduleRuntimeHealthSnapshot struct {
 	RequestEvents       []channelSmartScheduleRuntimeRequestEvent
 	WindowComplete      bool
 }
-
-type channelSmartScheduleRuntimeHealthState struct {
-	Revision            string
-	RequestEvents       []channelSmartScheduleRuntimeRequestEvent
-	FailureTimes        []int64
-	ConsecutiveFailures int
-	LastSeen            int64
-}
-
-const channelSmartScheduleRuntimeHealthShardCount = 64
-
-type channelSmartScheduleRuntimeHealthKey struct {
-	channelId int
-	modelName string
-}
-
-type channelSmartScheduleRuntimeHealthShard struct {
-	sync.Mutex
-	database any
-	states   map[channelSmartScheduleRuntimeHealthKey]channelSmartScheduleRuntimeHealthState
-}
-
-var channelSmartScheduleRuntimeHealth [channelSmartScheduleRuntimeHealthShardCount]channelSmartScheduleRuntimeHealthShard
-
-var channelSmartScheduleRuntimeHealthCleanupInterval = time.Duration(
-	channelMonitorRuntimeEnvInt("CHANNEL_MONITOR_RUNTIME_LOCAL_CLEANUP_INTERVAL_SECONDS", 5, 1, 300),
-) * time.Second
-
-var channelSmartScheduleRuntimeHealthCleanupOnce sync.Once
 
 type channelSmartScheduleAdaptiveRefreshEvent struct {
 	database  any
@@ -139,283 +58,8 @@ func init() {
 	)
 }
 
-func channelSmartScheduleRuntimeHealthRouteKey(
-	channelId int,
-	modelName string,
-) channelSmartScheduleRuntimeHealthKey {
-	return channelSmartScheduleRuntimeHealthKey{
-		channelId: channelId,
-		modelName: strings.TrimSpace(modelName),
-	}
-}
-
-func channelSmartScheduleRuntimeHealthShardForKey(
-	key channelSmartScheduleRuntimeHealthKey,
-) *channelSmartScheduleRuntimeHealthShard {
-	hash := uint64(1469598103934665603)
-	hash ^= uint64(uint32(key.channelId))
-	hash *= 1099511628211
-	for index := 0; index < len(key.modelName); index++ {
-		hash ^= uint64(key.modelName[index])
-		hash *= 1099511628211
-	}
-	return &channelSmartScheduleRuntimeHealth[hash%channelSmartScheduleRuntimeHealthShardCount]
-}
-
-func channelSmartScheduleRuntimeFailureRedisKey(channelId int, modelName string, revision string) string {
-	key := fmt.Sprintf("%s\x00%d\x00%s", strings.TrimSpace(revision), channelId, modelName)
-	digest := sha256.Sum256([]byte(key))
-	return fmt.Sprintf("%s%x", channelSmartScheduleRuntimeFailureRedisKeyPrefix, digest)
-}
-
-func channelSmartScheduleRuntimeFailureRedisSequenceKey(key string) string {
-	return key + ":sequence"
-}
-
-func observeChannelSmartScheduleRuntimeFailureRedis(
-	channelId int,
-	modelName string,
-	now int64,
-	retentionSeconds int,
-	failure bool,
-	revision string,
-) ([]channelSmartScheduleRuntimeRequestEvent, bool, error) {
-	if !common.RedisEnabled || common.RDB == nil {
-		return nil, true, nil
-	}
-	queueKey := channelSmartScheduleRuntimeRedisSuccessKey{
-		channelId: channelId, modelName: modelName, revision: revision,
-		retentionSecond: retentionSeconds,
-	}
-	lockIndex := channelSmartScheduleRuntimeRedisRouteLockIndex(queueKey)
-	channelSmartScheduleRuntimeRedisRouteLocks[lockIndex].Lock()
-	defer channelSmartScheduleRuntimeRedisRouteLocks[lockIndex].Unlock()
-	pendingSuccesses, routeIncompleteUntil, globalIncompleteUntil :=
-		takeChannelSmartScheduleRuntimeRedisSuccessesLocked(queueKey, now)
-	ctx, cancel := channelSmartScheduleRuntimeRedisContext()
-	defer cancel()
-	args := make([]any, 0, len(pendingSuccesses)*2+5)
-	requestResult := "0"
-	if failure {
-		requestResult = "1"
-	}
-	args = append(
-		args,
-		now,
-		retentionSeconds,
-		requestResult,
-		routeIncompleteUntil,
-		globalIncompleteUntil,
-	)
-	for _, event := range pendingSuccesses {
-		args = append(args, event.timestamp, event.sequence)
-	}
-	key := channelSmartScheduleRuntimeFailureRedisKey(channelId, modelName, revision)
-	result, err := common.RDB.Eval(
-		ctx,
-		channelSmartScheduleRuntimeRequestRedisScript,
-		[]string{
-			key,
-			channelSmartScheduleRuntimeFailureRedisSequenceKey(key),
-			channelSmartScheduleRuntimeRedisSuccessWatermarkKey(key),
-			channelSmartScheduleRuntimeRedisIncompleteKey(key),
-			channelSmartScheduleRuntimeRedisGlobalIncompleteKey(),
-		},
-		args...,
-	).StringSlice()
-	if err != nil {
-		requeueChannelSmartScheduleRuntimeRedisSuccesses(
-			map[channelSmartScheduleRuntimeRedisSuccessKey][]channelSmartScheduleRuntimeRedisSuccessEvent{
-				queueKey: pendingSuccesses,
-			},
-		)
-		return nil, true, err
-	}
-	channelSmartScheduleRuntimeRedisSuccessQueue.Lock()
-	if channelSmartScheduleRuntimeRedisSuccessQueue.incompleteDirty[queueKey] <= routeIncompleteUntil {
-		delete(channelSmartScheduleRuntimeRedisSuccessQueue.incompleteDirty, queueKey)
-	}
-	if channelSmartScheduleRuntimeRedisSuccessQueue.incompleteAllUntil <= globalIncompleteUntil {
-		channelSmartScheduleRuntimeRedisSuccessQueue.incompleteAllIsDirty = false
-	}
-	channelSmartScheduleRuntimeRedisSuccessQueue.Unlock()
-	if len(result) == 0 {
-		return nil, true, fmt.Errorf("Redis 智能调度请求窗口未返回完整性标记")
-	}
-	if result[0] == "1" {
-		return nil, false, nil
-	}
-	result = result[1:]
-	if len(result)%2 != 0 {
-		return nil, true, fmt.Errorf("Redis 智能调度请求窗口返回了奇数个成员")
-	}
-	events := make([]channelSmartScheduleRuntimeRequestEvent, 0, len(result)/2)
-	for index := 0; index < len(result); index += 2 {
-		member := result[index]
-		timestamp, parseErr := strconv.ParseInt(result[index+1], 10, 64)
-		if parseErr != nil {
-			return nil, true, parseErr
-		}
-		failureEvent := strings.HasSuffix(member, ":1")
-		events = append(events, channelSmartScheduleRuntimeRequestEvent{
-			Timestamp: timestamp,
-			Failure:   failureEvent,
-		})
-	}
-	return events, true, nil
-}
-
-func channelSmartScheduleRuntimeFailureTimes(
-	events []channelSmartScheduleRuntimeRequestEvent,
-) []int64 {
-	times := make([]int64, 0, len(events))
-	for _, event := range events {
-		if event.Failure {
-			times = append(times, event.Timestamp)
-		}
-	}
-	return times
-}
-
-func clearChannelSmartScheduleRuntimeFailureRedis(
-	channelId int,
-	modelName string,
-	recoveryAt int64,
-	revision string,
-) {
-	queueKey := channelSmartScheduleRuntimeRedisSuccessKey{
-		channelId: channelId, modelName: modelName, revision: revision,
-		retentionSecond: maxChannelSmartScheduleRuntimeRetentionSeconds(),
-	}
-	lockIndex := channelSmartScheduleRuntimeRedisRouteLockIndex(queueKey)
-	channelSmartScheduleRuntimeRedisRouteLocks[lockIndex].Lock()
-	defer channelSmartScheduleRuntimeRedisRouteLocks[lockIndex].Unlock()
-	discardChannelSmartScheduleRuntimeRedisSuccessesLocked(
-		channelId, modelName, recoveryAt, revision,
-	)
-	if !common.RedisEnabled || common.RDB == nil {
-		return
-	}
-	ctx, cancel := channelSmartScheduleRuntimeRedisContext()
-	defer cancel()
-	key := channelSmartScheduleRuntimeFailureRedisKey(channelId, modelName, revision)
-	sequenceKey := channelSmartScheduleRuntimeFailureRedisSequenceKey(key)
-	var err error
-	if recoveryAt <= 0 {
-		err = common.RDB.Del(
-			ctx, key, sequenceKey, channelSmartScheduleRuntimeRedisIncompleteKey(key),
-		).Err()
-	} else {
-		err = common.RDB.ZRemRangeByScore(
-			ctx, key, "-inf", strconv.FormatInt(recoveryAt, 10),
-		).Err()
-	}
-	if err != nil {
-		common.SysError("清理 Redis 智能调度保护失败窗口失败: " + err.Error())
-	}
-}
-
-func resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(
-	shard *channelSmartScheduleRuntimeHealthShard,
-) {
-	if shard.database == model.DB {
-		return
-	}
-	shard.database = model.DB
-	shard.states = make(
-		map[channelSmartScheduleRuntimeHealthKey]channelSmartScheduleRuntimeHealthState,
-	)
-}
-
-func cleanupChannelSmartScheduleRuntimeHealthShard(
-	shard *channelSmartScheduleRuntimeHealthShard,
-	now int64,
-) {
-	if shard == nil || now <= 0 {
-		return
-	}
-	cutoff := now - int64(maxChannelSmartScheduleRuntimeRetentionSeconds())
-	shard.Lock()
-	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(shard)
-	for key, state := range shard.states {
-		if state.LastSeen < cutoff {
-			delete(shard.states, key)
-		}
-	}
-	shard.Unlock()
-}
-
-func startChannelSmartScheduleRuntimeHealthCleanupWorker() {
-	if channelSmartScheduleRuntimeHealthCleanupInterval <= 0 {
-		return
-	}
-	channelSmartScheduleRuntimeHealthCleanupOnce.Do(func() {
-		go func() {
-			ticker := time.NewTicker(channelSmartScheduleRuntimeHealthCleanupInterval)
-			defer ticker.Stop()
-			shardIndex := 0
-			for now := range ticker.C {
-				cleanupChannelSmartScheduleRuntimeHealthShard(
-					&channelSmartScheduleRuntimeHealth[shardIndex], now.Unix(),
-				)
-				shardIndex = (shardIndex + 1) % channelSmartScheduleRuntimeHealthShardCount
-			}
-		}()
-	})
-}
-
 func channelSmartScheduleRuntimeHealthModelName(modelName string) string {
 	return ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
-}
-
-func observeChannelSmartScheduleRuntimeRequestSuccess(channelId int, modelName string) {
-	settings := getChannelMonitorRuntimeSettings()
-	if !settings.SmartScheduleEnabled {
-		return
-	}
-	requestModelName := strings.TrimSpace(modelName)
-	if channelId <= 0 || requestModelName == "" {
-		return
-	}
-	if participates, cacheEnabled := model.CachedChannelSmartScheduleRuntimeParticipates(
-		channelId,
-		requestModelName,
-	); cacheEnabled && !participates {
-		return
-	}
-	modelName = channelSmartScheduleRuntimeHealthModelName(requestModelName)
-	if modelName == "" {
-		return
-	}
-	now := common.GetTimestamp()
-	recordChannelSmartScheduleRuntimeSuccessLocal(
-		channelId,
-		modelName,
-		now,
-		settings.SmartScheduleControlRevision,
-	)
-	enqueueChannelSmartScheduleRuntimeRedisSuccess(
-		channelId,
-		modelName,
-		now,
-		maxChannelSmartScheduleRuntimeRetentionSeconds(),
-		settings.SmartScheduleControlRevision,
-	)
-	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
-}
-
-func observeChannelSmartScheduleRuntimeProbeSuccess(channelId int, modelName string) {
-	settings := getChannelMonitorRuntimeSettings()
-	if !settings.SmartScheduleEnabled {
-		return
-	}
-	observeChannelSmartScheduleRuntimeSuccess(
-		channelId,
-		modelName,
-		common.GetTimestamp(),
-		settings.SmartScheduleControlRevision,
-	)
-	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
 }
 
 func channelSmartScheduleProbeRecoveryRequest(
@@ -482,9 +126,6 @@ func applyChannelSmartScheduleProbeRecoveryResult(
 		return
 	}
 	result := request.Result
-	if result.ObservationSince > 0 {
-		clearChannelSmartScheduleRuntimeHealth(channelId, modelName, result.ObservationSince)
-	}
 	if result.RoutingChanged {
 		refreshed := true
 		seen := make(map[channelSmartScheduleRoutePoolKey]struct{}, len(result.Recovered)+len(result.Renewed))
@@ -507,106 +148,6 @@ func applyChannelSmartScheduleProbeRecoveryResult(
 	enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
 }
 
-// clearChannelSmartScheduleRuntimeHealth removes failure samples collected
-// before a route recovered. Failures recorded after recoveryAt are retained so
-// a concurrent request cannot be hidden by the reset.
-func clearChannelSmartScheduleRuntimeHealth(channelId int, modelName string, recoveryAt int64) {
-	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
-	if channelId <= 0 || modelName == "" {
-		return
-	}
-	settings := getChannelMonitorRuntimeSettings()
-	clearChannelSmartScheduleRuntimeFailureRedis(
-		channelId, modelName, recoveryAt, settings.SmartScheduleControlRevision,
-	)
-	key := channelSmartScheduleRuntimeHealthRouteKey(channelId, modelName)
-	shard := channelSmartScheduleRuntimeHealthShardForKey(key)
-	shard.Lock()
-	defer shard.Unlock()
-	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(shard)
-	state, exists := shard.states[key]
-	if !exists {
-		return
-	}
-	if recoveryAt <= 0 {
-		delete(shard.states, key)
-		return
-	}
-	state.RequestEvents = channelSmartScheduleRuntimeEventsFromState(state)
-	retained := state.RequestEvents[:0]
-	for _, event := range state.RequestEvents {
-		if event.Timestamp > recoveryAt {
-			retained = append(retained, event)
-		}
-	}
-	state.RequestEvents = retained
-	state.FailureTimes = channelSmartScheduleRuntimeFailureTimes(state.RequestEvents)
-	state.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(state.RequestEvents)
-	if len(state.RequestEvents) == 0 {
-		delete(shard.states, key)
-		return
-	}
-	shard.states[key] = state
-}
-
-func channelSmartScheduleRuntimeEventsFromState(
-	state channelSmartScheduleRuntimeHealthState,
-) []channelSmartScheduleRuntimeRequestEvent {
-	if len(state.RequestEvents) > 0 {
-		return state.RequestEvents
-	}
-	events := make([]channelSmartScheduleRuntimeRequestEvent, 0, len(state.FailureTimes))
-	for _, timestamp := range state.FailureTimes {
-		events = append(events, channelSmartScheduleRuntimeRequestEvent{
-			Timestamp: timestamp,
-			Failure:   true,
-		})
-	}
-	return events
-}
-
-func pruneChannelSmartScheduleRuntimeRequestEvents(
-	events []channelSmartScheduleRuntimeRequestEvent,
-	cutoff int64,
-) []channelSmartScheduleRuntimeRequestEvent {
-	ordered := true
-	for index := 1; index < len(events); index++ {
-		if events[index-1].Timestamp > events[index].Timestamp {
-			ordered = false
-			break
-		}
-	}
-	if !ordered {
-		sort.SliceStable(events, func(i, j int) bool {
-			return events[i].Timestamp < events[j].Timestamp
-		})
-	}
-	firstRetained := sort.Search(len(events), func(index int) bool {
-		return events[index].Timestamp >= cutoff
-	})
-	retained := events[firstRetained:]
-	if len(retained) > maxChannelSmartScheduleRuntimeRequestEvents {
-		retained = retained[len(retained)-maxChannelSmartScheduleRuntimeRequestEvents:]
-	}
-	return retained
-}
-
-func appendChannelSmartScheduleRuntimeRequestEvent(
-	events []channelSmartScheduleRuntimeRequestEvent,
-	event channelSmartScheduleRuntimeRequestEvent,
-) []channelSmartScheduleRuntimeRequestEvent {
-	if len(events) == 0 || events[len(events)-1].Timestamp <= event.Timestamp {
-		return append(events, event)
-	}
-	insertAt := sort.Search(len(events), func(index int) bool {
-		return events[index].Timestamp > event.Timestamp
-	})
-	events = append(events, channelSmartScheduleRuntimeRequestEvent{})
-	copy(events[insertAt+1:], events[insertAt:])
-	events[insertAt] = event
-	return events
-}
-
 func channelSmartScheduleRuntimeConsecutiveFailures(
 	events []channelSmartScheduleRuntimeRequestEvent,
 ) int {
@@ -618,18 +159,6 @@ func channelSmartScheduleRuntimeConsecutiveFailures(
 		count++
 	}
 	return count
-}
-
-func channelSmartScheduleRuntimeSnapshot(
-	state channelSmartScheduleRuntimeHealthState,
-) channelSmartScheduleRuntimeHealthSnapshot {
-	events := channelSmartScheduleRuntimeEventsFromState(state)
-	return channelSmartScheduleRuntimeHealthSnapshot{
-		ConsecutiveFailures: state.ConsecutiveFailures,
-		FailureTimes:        channelSmartScheduleRuntimeFailureTimes(events),
-		RequestEvents:       append([]channelSmartScheduleRuntimeRequestEvent(nil), events...),
-		WindowComplete:      true,
-	}
 }
 
 func channelSmartScheduleRuntimeFailureCount(
@@ -649,6 +178,18 @@ func channelSmartScheduleRuntimeWindowFailureRate(
 	windowSeconds int,
 	maxRequests int,
 ) (failureCount, requestCount int, events []channelSmartScheduleRuntimeRequestEvent) {
+	return channelSmartScheduleRuntimeWindowFailureRateSince(
+		snapshot, now, windowSeconds, maxRequests, 0,
+	)
+}
+
+func channelSmartScheduleRuntimeWindowFailureRateSince(
+	snapshot channelSmartScheduleRuntimeHealthSnapshot,
+	now int64,
+	windowSeconds int,
+	maxRequests int,
+	observationSince int64,
+) (failureCount, requestCount int, events []channelSmartScheduleRuntimeRequestEvent) {
 	if windowSeconds <= 0 || maxRequests <= 0 {
 		return 0, 0, nil
 	}
@@ -662,7 +203,7 @@ func channelSmartScheduleRuntimeWindowFailureRate(
 			})
 		}
 	}
-	cutoff := now - int64(windowSeconds)
+	cutoff := max(now-int64(windowSeconds), observationSince)
 	filtered := make([]channelSmartScheduleRuntimeRequestEvent, 0, len(allEvents))
 	for _, event := range allEvents {
 		if event.Timestamp >= cutoff && event.Timestamp <= now {
@@ -700,149 +241,6 @@ func channelSmartScheduleRuntimeWindowFailureThresholdReached(
 		failureCount, requestCount
 }
 
-func observeChannelSmartScheduleRuntimeFailure(
-	channelId int,
-	modelName string,
-	now int64,
-	retentionSeconds int,
-	revision string,
-) channelSmartScheduleRuntimeHealthSnapshot {
-	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
-	if channelId <= 0 || modelName == "" {
-		return channelSmartScheduleRuntimeHealthSnapshot{}
-	}
-	if now <= 0 {
-		now = common.GetTimestamp()
-	}
-	if retentionSeconds <= 0 {
-		retentionSeconds = maxChannelMonitorSmartScheduleBurstFailureWindowMinutes * 60
-	}
-	key := channelSmartScheduleRuntimeHealthRouteKey(channelId, modelName)
-	shard := channelSmartScheduleRuntimeHealthShardForKey(key)
-	shard.Lock()
-	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(shard)
-	state := shard.states[key]
-	if state.Revision != revision {
-		state = channelSmartScheduleRuntimeHealthState{Revision: revision}
-	}
-	state.RequestEvents = pruneChannelSmartScheduleRuntimeRequestEvents(
-		channelSmartScheduleRuntimeEventsFromState(state), now-int64(retentionSeconds),
-	)
-	if len(state.RequestEvents) == 0 {
-		state.ConsecutiveFailures = 0
-	}
-	state.RequestEvents = appendChannelSmartScheduleRuntimeRequestEvent(
-		state.RequestEvents,
-		channelSmartScheduleRuntimeRequestEvent{Timestamp: now, Failure: true},
-	)
-	state.FailureTimes = channelSmartScheduleRuntimeFailureTimes(state.RequestEvents)
-	state.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(state.RequestEvents)
-	state.LastSeen = common.GetTimestamp()
-	shard.states[key] = state
-	snapshot := channelSmartScheduleRuntimeSnapshot(state)
-	shard.Unlock()
-	startChannelSmartScheduleRuntimeHealthCleanupWorker()
-
-	sharedEvents, windowComplete, err := observeChannelSmartScheduleRuntimeFailureRedis(
-		channelId, modelName, now, retentionSeconds, true, revision,
-	)
-	if err != nil {
-		common.SysError("同步 Redis 智能调度保护失败窗口失败: " + err.Error())
-		return snapshot
-	}
-	if !windowComplete {
-		snapshot.WindowComplete = false
-		return snapshot
-	}
-	if sharedEvents != nil {
-		snapshot.RequestEvents = sharedEvents
-		snapshot.FailureTimes = channelSmartScheduleRuntimeFailureTimes(sharedEvents)
-		snapshot.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(sharedEvents)
-	}
-	return snapshot
-}
-
-func observeChannelSmartScheduleRuntimeSuccess(
-	channelId int,
-	modelName string,
-	now int64,
-	revision string,
-) channelSmartScheduleRuntimeHealthSnapshot {
-	recordChannelSmartScheduleRuntimeSuccessLocal(channelId, modelName, now, revision)
-	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
-	if channelId <= 0 || modelName == "" {
-		return channelSmartScheduleRuntimeHealthSnapshot{}
-	}
-	if now <= 0 {
-		now = common.GetTimestamp()
-	}
-	localSnapshot := getChannelSmartScheduleRuntimeHealth(
-		channelId,
-		modelName,
-		now,
-		maxChannelSmartScheduleRuntimeRetentionSeconds(),
-		revision,
-	)
-	sharedEvents, windowComplete, err := observeChannelSmartScheduleRuntimeFailureRedis(
-		channelId, modelName, now,
-		maxChannelSmartScheduleRuntimeRetentionSeconds(), false, revision,
-	)
-	if err != nil {
-		common.SysError("同步 Redis 智能调度请求窗口失败: " + err.Error())
-		return localSnapshot
-	}
-	if !windowComplete {
-		localSnapshot.WindowComplete = false
-		return localSnapshot
-	}
-	if sharedEvents != nil {
-		localSnapshot.RequestEvents = sharedEvents
-		localSnapshot.FailureTimes = channelSmartScheduleRuntimeFailureTimes(sharedEvents)
-		localSnapshot.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(sharedEvents)
-	}
-	return localSnapshot
-}
-
-func recordChannelSmartScheduleRuntimeSuccessLocal(
-	channelId int,
-	modelName string,
-	now int64,
-	revision string,
-) {
-	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
-	if channelId <= 0 || modelName == "" {
-		return
-	}
-	if now <= 0 {
-		now = common.GetTimestamp()
-	}
-	key := channelSmartScheduleRuntimeHealthRouteKey(channelId, modelName)
-	shard := channelSmartScheduleRuntimeHealthShardForKey(key)
-	shard.Lock()
-	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(shard)
-	state := shard.states[key]
-	if state.Revision != revision {
-		state = channelSmartScheduleRuntimeHealthState{Revision: revision}
-	}
-	cutoff := now - int64(maxChannelSmartScheduleRuntimeRetentionSeconds())
-	state.RequestEvents = pruneChannelSmartScheduleRuntimeRequestEvents(
-		channelSmartScheduleRuntimeEventsFromState(state), cutoff,
-	)
-	if len(state.RequestEvents) >= maxChannelSmartScheduleRuntimeRequestEvents {
-		state.RequestEvents = state.RequestEvents[len(state.RequestEvents)-maxChannelSmartScheduleRuntimeRequestEvents+1:]
-	}
-	state.RequestEvents = appendChannelSmartScheduleRuntimeRequestEvent(
-		state.RequestEvents,
-		channelSmartScheduleRuntimeRequestEvent{Timestamp: now},
-	)
-	state.FailureTimes = nil
-	state.ConsecutiveFailures = 0
-	state.LastSeen = common.GetTimestamp()
-	shard.states[key] = state
-	shard.Unlock()
-	startChannelSmartScheduleRuntimeHealthCleanupWorker()
-}
-
 func maxChannelSmartScheduleRuntimeRetentionSeconds() int {
 	return maxChannelMonitorSmartScheduleBurstFailureWindowMinutes * 60
 }
@@ -852,7 +250,7 @@ func getChannelSmartScheduleRuntimeHealth(
 	modelName string,
 	now int64,
 	_ int,
-	revision string,
+	_ string,
 ) channelSmartScheduleRuntimeHealthSnapshot {
 	modelName = channelSmartScheduleRuntimeHealthModelName(modelName)
 	if channelId <= 0 || modelName == "" {
@@ -861,30 +259,38 @@ func getChannelSmartScheduleRuntimeHealth(
 	if now <= 0 {
 		now = common.GetTimestamp()
 	}
-	key := channelSmartScheduleRuntimeHealthRouteKey(channelId, modelName)
-	shard := channelSmartScheduleRuntimeHealthShardForKey(key)
-	shard.Lock()
-	defer shard.Unlock()
-	resetChannelSmartScheduleRuntimeHealthIfDatabaseChangedLocked(shard)
-	state := shard.states[key]
-	if state.Revision != revision {
-		return channelSmartScheduleRuntimeHealthSnapshot{}
-	}
-	// The state is shared across groups, so retain the largest supported window;
-	// each policy filters the returned snapshot with its own configured window
-	// and request-count cap.
-	state.RequestEvents = pruneChannelSmartScheduleRuntimeRequestEvents(
-		channelSmartScheduleRuntimeEventsFromState(state),
-		now-int64(maxChannelSmartScheduleRuntimeRetentionSeconds()),
+	windowStart := now - int64(maxChannelSmartScheduleRuntimeRetentionSeconds())
+	events, snapshot := channelSmartScheduleRealtimeEvents(
+		channelId,
+		modelName,
+		windowStart,
+		0,
+		maxChannelSmartScheduleRuntimeRequestEvents,
 	)
-	state.FailureTimes = channelSmartScheduleRuntimeFailureTimes(state.RequestEvents)
-	state.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(state.RequestEvents)
-	if len(state.RequestEvents) == 0 {
-		delete(shard.states, key)
-		return channelSmartScheduleRuntimeHealthSnapshot{}
+	runtimeEvents := make([]channelSmartScheduleRuntimeRequestEvent, 0, len(events))
+	failureTimes := make([]int64, 0, len(events))
+	for _, event := range events {
+		if event.Source != model.ChannelMonitorEventSourceBusiness {
+			continue
+		}
+		failure := event.Outcome == model.ChannelMonitorEventOutcomeFailure
+		if failure && !event.RuntimeProtectionEligible {
+			continue
+		}
+		runtimeEvents = append(runtimeEvents, channelSmartScheduleRuntimeRequestEvent{
+			Timestamp: event.OccurredAt,
+			Failure:   failure,
+		})
+		if failure {
+			failureTimes = append(failureTimes, event.OccurredAt)
+		}
 	}
-	shard.states[key] = state
-	return channelSmartScheduleRuntimeSnapshot(state)
+	return channelSmartScheduleRuntimeHealthSnapshot{
+		ConsecutiveFailures: channelSmartScheduleRuntimeConsecutiveFailures(runtimeEvents),
+		FailureTimes:        failureTimes,
+		RequestEvents:       runtimeEvents,
+		WindowComplete:      snapshot.CoverageStart <= windowStart,
+	}
 }
 
 func isChannelSmartScheduleRuntimeFailure(err *types.NewAPIError) bool {
@@ -913,7 +319,49 @@ func protectChannelSmartScheduleRuntimeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, true)
+}
+
+func protectChannelSmartScheduleProjectedRateLimit(channelId int, modelName string) {
+	err := types.NewErrorWithStatusCode(
+		errors.New("上游触发请求频率限制"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, false)
+}
+
+func protectChannelSmartScheduleProjectedFailure(channelId int, modelName string) {
+	window, available := service.GetChannelMonitorRealtimeWindow(channelId, modelName)
+	if !available {
+		return
+	}
+	for index := len(window.Events) - 1; index >= 0; index-- {
+		event := window.Events[index]
+		if event.Source != model.ChannelMonitorEventSourceBusiness ||
+			!event.RuntimeProtectionEligible || event.FinalRetrySummary ||
+			event.Outcome != model.ChannelMonitorEventOutcomeFailure {
+			continue
+		}
+		statusCode := http.StatusInternalServerError
+		if event.StatusCode != nil {
+			statusCode = *event.StatusCode
+		}
+		if statusCode == http.StatusTooManyRequests {
+			continue
+		}
+		message := strings.TrimSpace(event.ErrorMessage)
+		if message == "" {
+			message = "渠道请求失败"
+		}
+		errorCode := types.ErrorCodeBadResponseStatusCode
+		if strings.TrimSpace(event.ErrorCode) != "" {
+			errorCode = types.ErrorCode(event.ErrorCode)
+		}
+		err := types.NewErrorWithStatusCode(errors.New(message), errorCode, statusCode)
+		protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, false)
+		return
+	}
 }
 
 func protectChannelSmartScheduleScheduledProbeFailure(
@@ -921,7 +369,7 @@ func protectChannelSmartScheduleScheduledProbeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, false)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, false, true)
 }
 
 func protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
@@ -929,7 +377,7 @@ func protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, true)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, true, true)
 }
 
 func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
@@ -937,7 +385,7 @@ func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, true)
+	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, true, true)
 }
 
 // protectChannelSmartScheduleRuntimeFailureWithSource protects every
@@ -951,6 +399,7 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 	err *types.NewAPIError,
 	scheduledProbe bool,
 	probeRecoveryHandled bool,
+	includeCurrentFailure bool,
 ) {
 	if err == nil || types.IsSkipRetryError(err) {
 		return
@@ -1055,42 +504,51 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 		return
 	}
 	now := common.GetTimestamp()
-	// The shared key can serve groups with different windows. Retain the
-	// widest supported window here; each policy applies its own narrower count.
-	health := observeChannelSmartScheduleRuntimeFailure(
+	health := getChannelSmartScheduleRuntimeHealth(
 		channelId,
 		requestModelName,
 		now,
 		maxChannelSmartScheduleRuntimeRetentionSeconds(),
 		settings.SmartScheduleControlRevision,
 	)
+	if includeCurrentFailure {
+		health.RequestEvents = append(health.RequestEvents, channelSmartScheduleRuntimeRequestEvent{
+			Timestamp: now, Failure: true,
+		})
+		health.ConsecutiveFailures = channelSmartScheduleRuntimeConsecutiveFailures(health.RequestEvents)
+	}
 	routingChanged := false
 	protectionApplied := false
 	changedPools := make(map[channelSmartScheduleRoutePoolKey]struct{})
 	for _, matched := range matchingPolicies {
 		policy := matched.configured.policy()
 		windowRequestLimit := policy.BurstFailureWindowRequests
-		windowReached := false
-		failureCount := 0
-		requestCount := 0
-		if health.WindowComplete {
-			if policy.BurstFailureThresholdLegacy > 0 {
-				windowRequestLimit = maxChannelSmartScheduleRuntimeRequestEvents
-			}
-			windowReached, failureCount, requestCount =
-				channelSmartScheduleRuntimeWindowFailureThresholdReached(
-					health,
-					now,
-					policy.BurstFailureWindowSeconds,
-					windowRequestLimit,
-					policy.BurstFailureThresholdPercent,
-				)
-			if policy.BurstFailureThresholdLegacy > 0 {
-				windowReached = failureCount >= policy.BurstFailureThresholdLegacy
-			}
+		if policy.BurstFailureThresholdLegacy > 0 {
+			windowRequestLimit = maxChannelSmartScheduleRuntimeRequestEvents
 		}
-		thresholdReached := health.WindowComplete &&
-			(health.ConsecutiveFailures >= policy.ConsecutiveFailureThreshold || windowReached)
+		windowReached := false
+		failureCount, requestCount, requestEvents := channelSmartScheduleRuntimeWindowFailureRateSince(
+			health,
+			now,
+			policy.BurstFailureWindowSeconds,
+			windowRequestLimit,
+			matched.route.SampleSince,
+		)
+		consecutiveFailures := channelSmartScheduleRuntimeConsecutiveFailures(requestEvents)
+		windowStart := max(
+			now-int64(policy.BurstFailureWindowSeconds),
+			matched.route.SampleSince,
+		)
+		windowComplete := service.GetChannelMonitorRealtimeProjectionStartedAt() <= windowStart ||
+			requestCount >= windowRequestLimit
+		if policy.BurstFailureThresholdLegacy > 0 {
+			windowReached = failureCount >= policy.BurstFailureThresholdLegacy
+		} else if windowComplete && requestCount > 0 && policy.BurstFailureThresholdPercent > 0 {
+			windowReached = float64(failureCount)*100 >=
+				float64(requestCount)*policy.BurstFailureThresholdPercent
+		}
+		thresholdReached := consecutiveFailures >= policy.ConsecutiveFailureThreshold ||
+			windowReached
 		probing := matched.route.StabilityState == model.ChannelSmartScheduleStabilityProbing
 		temporaryTraffic := matched.route.TemporaryTrafficKind != ""
 		degradedProbe := scheduledProbe &&
@@ -1120,12 +578,12 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 			if policy.BurstFailureThresholdLegacy > 0 {
 				reason = fmt.Sprintf(
 					"临时流量渠道突发失败达到保护阈值（连续 %d 次，%d 秒内 %d 次），已停止临时流量并进入稳定性保护",
-					health.ConsecutiveFailures, policy.BurstFailureWindowSeconds, failureCount,
+					consecutiveFailures, policy.BurstFailureWindowSeconds, failureCount,
 				)
 			} else {
 				reason = fmt.Sprintf(
 					"临时流量渠道窗口失败率达到保护阈值（连续 %d 次，最近 %d 分钟内最多 %d 次请求，实际 %d 次中失败 %d 次，失败率 %.1f%%，阈值 %.1f%%），已停止临时流量并进入稳定性保护",
-					health.ConsecutiveFailures, policy.BurstFailureWindowMinutes,
+					consecutiveFailures, policy.BurstFailureWindowMinutes,
 					windowRequestLimit, requestCount, failureCount, failureRatePercent,
 					policy.BurstFailureThresholdPercent,
 				)
@@ -1134,12 +592,12 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 			if policy.BurstFailureThresholdLegacy > 0 {
 				reason = fmt.Sprintf(
 					"渠道短期失败达到保护阈值（连续 %d 次，%d 秒内 %d 次），已进入稳定性保护",
-					health.ConsecutiveFailures, policy.BurstFailureWindowSeconds, failureCount,
+					consecutiveFailures, policy.BurstFailureWindowSeconds, failureCount,
 				)
 			} else {
 				reason = fmt.Sprintf(
 					"渠道窗口失败率达到保护阈值（连续 %d 次，最近 %d 分钟内最多 %d 次请求，实际 %d 次中失败 %d 次，失败率 %.1f%%，阈值 %.1f%%），已进入稳定性保护",
-					health.ConsecutiveFailures, policy.BurstFailureWindowMinutes,
+					consecutiveFailures, policy.BurstFailureWindowMinutes,
 					windowRequestLimit, requestCount, failureCount, failureRatePercent,
 					policy.BurstFailureThresholdPercent,
 				)
@@ -1454,68 +912,7 @@ func refreshChannelSmartScheduleAdaptivePool(
 	adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
 	performanceWindowStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	stabilityWindowStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
-	type metricWindowTarget struct {
-		channelId int
-		kind      uint8
-	}
-	const (
-		adaptiveMetricWindow uint8 = iota
-		performanceMetricWindow
-		stabilityMetricWindow
-	)
-	windows := make([]model.ChannelSmartScheduleAdaptiveHealthMetricWindow, 0, len(routes)*3)
-	windowTargets := make([]metricWindowTarget, 0, len(routes)*3)
-	for _, route := range routes {
-		if !route.State.Participates() {
-			continue
-		}
-		routeStabilityWindowStart := stabilityWindowStart
-		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
-			route.State.StabilitySince > routeStabilityWindowStart {
-			routeStabilityWindowStart = route.State.StabilitySince
-		}
-		for kind, start := range []int64{
-			adaptiveWindowStart, performanceWindowStart, routeStabilityWindowStart,
-		} {
-			maxRequests := 0
-			if kind == int(adaptiveMetricWindow) {
-				maxRequests = policy.AdaptiveSamplingWindowRequests
-			}
-			windows = append(windows, model.ChannelSmartScheduleAdaptiveHealthMetricWindow{
-				ChannelId: route.ChannelId, ModelName: route.Model,
-				StartTimestamp: start, ObservationSince: route.SharedSamples.ObservationSince,
-				MaxRequests:     maxRequests,
-				WarningSeconds:  policy.AdaptiveSamplingFirstTokenWarningSeconds,
-				CriticalSeconds: policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-			})
-			windowTargets = append(windowTargets, metricWindowTarget{
-				channelId: route.ChannelId, kind: uint8(kind),
-			})
-		}
-	}
-	adaptiveProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
-	performanceProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
-	stabilityProductionMetrics := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
-	if common.LogConsumeEnabled || constant.ErrorLogEnabled {
-		results, metricErr := model.GetChannelSmartScheduleAdaptiveHealthMetrics(ctx, windows, now+1)
-		if metricErr != nil {
-			return false, metricErr
-		}
-		for index, result := range results {
-			if index >= len(windowTargets) {
-				break
-			}
-			target := windowTargets[index]
-			switch target.kind {
-			case adaptiveMetricWindow:
-				adaptiveProductionMetrics[target.channelId] = result.Metric
-			case performanceMetricWindow:
-				performanceProductionMetrics[target.channelId] = result.Metric
-			case stabilityMetricWindow:
-				stabilityProductionMetrics[target.channelId] = result.Metric
-			}
-		}
-	}
+	_ = ctx
 	healthByChannel := make(map[int]channelSmartScheduleHealthUpdate, len(routes))
 	metricByChannel := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
 	rollingStabilityByChannel := make(map[int]*channelSmartSchedulePerformance, len(routes))
@@ -1526,47 +923,39 @@ func refreshChannelSmartScheduleAdaptivePool(
 		if !route.State.Participates() {
 			continue
 		}
-		series, seriesErr := route.SharedSamples.SampleSeries()
-		if seriesErr != nil {
-			return false, seriesErr
-		}
-		productionRequestCount := adaptiveProductionMetrics[route.ChannelId].RequestCount
-		remainingAdaptiveRequests := channelSmartScheduleRemainingAdaptiveWindowRequests(
-			policy.AdaptiveSamplingWindowRequests, productionRequestCount,
+		metric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			adaptiveWindowStart,
+			route.SharedSamples.ObservationSince,
+			policy.AdaptiveSamplingWindowRequests,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
-		metric := channelSmartScheduleMergeAdaptiveHealthMetric(
-			adaptiveProductionMetrics[route.ChannelId],
-			series.AdaptiveHealthMetricsSinceWithMaxRequests(
-				adaptiveWindowStart,
-				remainingAdaptiveRequests,
-				policy.AdaptiveSamplingFirstTokenWarningSeconds,
-				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-			),
-		)
-		performanceMetric := channelSmartScheduleMergeAdaptiveHealthMetric(
-			performanceProductionMetrics[route.ChannelId],
-			series.AdaptiveHealthMetricsSince(
-				performanceWindowStart,
-				policy.AdaptiveSamplingFirstTokenWarningSeconds,
-				policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-			),
+		performanceMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			performanceWindowStart,
+			route.SharedSamples.ObservationSince,
+			0,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
 		routeStabilityWindowStart := stabilityWindowStart
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince
 		}
-		sharedStabilityMetric := series.AdaptiveHealthMetricsSince(
+		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
 			routeStabilityWindowStart,
+			route.SharedSamples.ObservationSince,
+			0,
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
-		stabilityMetric := channelSmartScheduleMergeAdaptiveHealthMetric(
-			stabilityProductionMetrics[route.ChannelId],
-			sharedStabilityMetric,
-		)
-		stabilityAvailableByChannel[route.ChannelId] =
-			(common.LogConsumeEnabled && constant.ErrorLogEnabled) || sharedStabilityMetric.RequestCount > 0
+		stabilityAvailableByChannel[route.ChannelId] = stabilityMetric.RequestCount > 0
 		performanceMetric.RequestCount = stabilityMetric.RequestCount
 		performanceMetric.LastUsedTime = max(performanceMetric.LastUsedTime, stabilityMetric.LastUsedTime)
 		metricByChannel[route.ChannelId] = performanceMetric
@@ -2113,9 +1502,6 @@ func refreshChannelSmartScheduleAdaptivePool(
 		routingChanged = routingChanged || outcome.RoutingChanged
 		if outcome.Applied && outcome.ObservationSince > 0 {
 			runtimeRecovered = true
-			clearChannelSmartScheduleRuntimeHealth(
-				outcome.Key.ChannelId, outcome.Key.Model, outcome.ObservationSince,
-			)
 		}
 	}
 	if !conflict && (routingChanged || trafficStateChanged) {

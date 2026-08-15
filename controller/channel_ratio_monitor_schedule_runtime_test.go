@@ -15,35 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func resetChannelSmartScheduleRuntimeHealthForTest() {
-	for index := range channelSmartScheduleRuntimeHealth {
-		shard := &channelSmartScheduleRuntimeHealth[index]
-		shard.Lock()
-		shard.database = model.DB
-		shard.states = make(
-			map[channelSmartScheduleRuntimeHealthKey]channelSmartScheduleRuntimeHealthState,
-		)
-		shard.Unlock()
-	}
-}
-
-func channelSmartScheduleRuntimeHealthStateCountForTest() int {
-	count := 0
-	for index := range channelSmartScheduleRuntimeHealth {
-		shard := &channelSmartScheduleRuntimeHealth[index]
-		shard.Lock()
-		count += len(shard.states)
-		shard.Unlock()
-	}
-	return count
-}
 
 func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
@@ -77,7 +52,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testi
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1501, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1501, "model-a", runtimeError)
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1501, "model-a"))
 
 	var ability model.Ability
@@ -87,7 +62,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testi
 	assert.Equal(t, weight, ability.Weight)
 
 	now := common.GetTimestamp()
-	protectChannelSmartScheduleRuntimeFailure(1501, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1501, "model-a", runtimeError)
 	assert.Greater(t, service.ChannelRateLimitCooldownUntil(1501, "model-a"), now)
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1501, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
@@ -366,7 +341,7 @@ func TestRuntimeRefreshRecoversProbingRouteWithStabilityOnlyPolicy(t *testing.T)
 		StabilitySavedWeight: restoreWeight, StabilityReleaseMaxPromptTokens: 2048,
 	}).Error)
 	for index, sampleTime := range []int64{now - 20, now - 10} {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1622, Model: "model-a", Source: model.ChannelSmartScheduleSampleSourceManualTest,
 			SampleId:    fmt.Sprintf("stability-only-%d", index),
 			WindowStart: now - 60, Time: sampleTime, Success: true,
@@ -449,9 +424,9 @@ func TestProtectChannelSmartScheduleRuntimeFailureUsesConsecutiveThresholdAfterS
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1511, "model-a", runtimeError)
-	observeChannelSmartScheduleRuntimeRequestSuccess(1511, "model-a")
-	protectChannelSmartScheduleRuntimeFailure(1511, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1511, "model-a", runtimeError)
+	projectChannelSmartScheduleRuntimeRequestSuccessForTest(1511, "model-a")
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1511, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1511, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -459,7 +434,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureUsesConsecutiveThresholdAfterS
 	assert.Equal(t, priority, *ability.Priority)
 	assert.Equal(t, weight, ability.Weight)
 
-	protectChannelSmartScheduleRuntimeFailure(1511, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1511, "model-a", runtimeError)
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1511, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
 	assert.Zero(t, *ability.Priority)
@@ -479,10 +454,10 @@ func TestChannelSmartScheduleRuntimeSuccessResetsOnlyConsecutiveFailures(t *test
 		revision  = "runtime-health-success"
 	)
 
-	failure := observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 100, 30, revision)
+	failure := projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 30, revision)
 	assert.Equal(t, 1, failure.ConsecutiveFailures)
 
-	requestSuccess := observeChannelSmartScheduleRuntimeSuccess(
+	requestSuccess := projectChannelSmartScheduleRuntimeSuccessForTest(
 		channelID, "model-a", 101, revision,
 	)
 	assert.Zero(t, requestSuccess.ConsecutiveFailures)
@@ -527,8 +502,8 @@ func TestChannelSmartScheduleRuntimeSuccessEntersFailureRateDenominator(t *testi
 	setupChannelMonitorControllerTestDB(t)
 	const revision = "runtime-health-percentage"
 
-	observeChannelSmartScheduleRuntimeFailure(1602, "model-a", 100, 3600, revision)
-	requestSuccess := observeChannelSmartScheduleRuntimeSuccess(1602, "model-a", 101, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(1602, "model-a", 100, 3600, revision)
+	requestSuccess := projectChannelSmartScheduleRuntimeSuccessForTest(1602, "model-a", 101, revision)
 
 	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
 		requestSuccess, 101, 3600, 100, 50,
@@ -538,41 +513,6 @@ func TestChannelSmartScheduleRuntimeSuccessEntersFailureRateDenominator(t *testi
 	assert.Equal(t, 2, requests)
 }
 
-func TestChannelSmartScheduleRuntimeRequestWindowSharesSuccessAndFailureThroughRedis(t *testing.T) {
-	setupChannelMonitorControllerTestDB(t)
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	originalRedisEnabled := common.RedisEnabled
-	originalRedisClient := common.RDB
-	common.RedisEnabled = true
-	common.RDB = client
-	t.Cleanup(func() {
-		common.RedisEnabled = originalRedisEnabled
-		common.RDB = originalRedisClient
-		require.NoError(t, client.Close())
-	})
-
-	const revision = "runtime-health-redis-percentage"
-	first := observeChannelSmartScheduleRuntimeFailure(1603, "model-a", 100, 3600, revision)
-	assert.Len(t, first.RequestEvents, 1)
-
-	// Drop the process-local state to model a second instance. The success
-	// must still be visible through the shared Redis request stream.
-	resetChannelSmartScheduleRuntimeHealthForTest()
-	shared := observeChannelSmartScheduleRuntimeSuccess(1603, "model-a", 101, revision)
-	assert.Len(t, shared.RequestEvents, 2)
-	assert.Zero(t, shared.ConsecutiveFailures)
-
-	resetChannelSmartScheduleRuntimeHealthForTest()
-	shared = observeChannelSmartScheduleRuntimeFailure(1603, "model-a", 102, 3600, revision)
-	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
-		shared, 102, 3600, 100, 50,
-	)
-	assert.True(t, reached)
-	assert.Equal(t, 2, failures)
-	assert.Equal(t, 3, requests)
-}
-
 func TestChannelSmartScheduleRuntimeHealthKeepsFailuresForLongerConfiguredWindows(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	const (
@@ -580,27 +520,30 @@ func TestChannelSmartScheduleRuntimeHealthKeepsFailuresForLongerConfiguredWindow
 		revision  = "runtime-health-window"
 	)
 
-	observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 100, 300, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 300, revision)
 	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", 200, 30, revision)
 
 	assert.Equal(t, 1, channelSmartScheduleRuntimeFailureCount(snapshot, 200, 300))
 	assert.Zero(t, channelSmartScheduleRuntimeFailureCount(snapshot, 200, 30))
 }
 
-func TestClearChannelSmartScheduleRuntimeHealthDropsRecoveredFailuresAndKeepsLaterFailures(t *testing.T) {
+func TestChannelSmartScheduleRuntimeObservationSinceDropsRecoveredFailures(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	const (
 		channelID = 1594
 		revision  = "runtime-health-recovery"
 	)
 
-	observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 100, 300, revision)
-	observeChannelSmartScheduleRuntimeFailure(channelID, "model-a", 110, 300, revision)
-	clearChannelSmartScheduleRuntimeHealth(channelID, "model-a", 105)
-
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 300, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 110, 300, revision)
 	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", 111, 300, revision)
-	assert.Equal(t, []int64{110}, snapshot.FailureTimes)
-	assert.Equal(t, 1, snapshot.ConsecutiveFailures)
+	assert.Equal(t, []int64{100, 110}, snapshot.FailureTimes)
+	failures, requests, events := channelSmartScheduleRuntimeWindowFailureRateSince(
+		snapshot, 111, 300, maxChannelSmartScheduleRuntimeRequestEvents, 105,
+	)
+	assert.Equal(t, 1, failures)
+	assert.Equal(t, 1, requests)
+	assert.Equal(t, 1, channelSmartScheduleRuntimeConsecutiveFailures(events))
 }
 
 func TestChannelSmartScheduleRuntimeSuccessDoesNotMutatePersistedRecoveryCount(t *testing.T) {
@@ -633,8 +576,8 @@ func TestChannelSmartScheduleRuntimeSuccessDoesNotMutatePersistedRecoveryCount(t
 		ChannelId: 1593, ModelName: "model-a", RecoverySuccessCount: 2,
 	}).Error)
 
-	observeChannelSmartScheduleRuntimeRequestSuccess(1593, "model-a")
-	observeChannelSmartScheduleRuntimeProbeSuccess(1593, "model-a")
+	projectChannelSmartScheduleRuntimeRequestSuccessForTest(1593, "model-a")
+	projectChannelSmartScheduleRuntimeProbeSuccessForTest(1593, "model-a")
 	var sampleState model.ChannelSmartScheduleModelSampleState
 	require.NoError(t, db.Where(
 		"channel_id = ? AND model_name = ?", 1593, "model-a",
@@ -673,153 +616,13 @@ func TestProtectChannelSmartScheduleRuntimeFailureUsesBurstThresholdAcrossSucces
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
 	for range 2 {
-		protectChannelSmartScheduleRuntimeFailure(1512, "model-a", runtimeError)
-		observeChannelSmartScheduleRuntimeRequestSuccess(1512, "model-a")
+		projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1512, "model-a", runtimeError)
+		projectChannelSmartScheduleRuntimeRequestSuccessForTest(1512, "model-a")
 	}
-	protectChannelSmartScheduleRuntimeFailure(1512, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1512, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1512, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Zero(t, *ability.Priority)
-	assert.Zero(t, ability.Weight)
-}
-
-func TestProtectChannelSmartScheduleRuntimeFailureSharesBurstWindowThroughRedis(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	originalRedisEnabled := common.RedisEnabled
-	originalRedisClient := common.RDB
-	common.RedisEnabled = true
-	common.RDB = client
-	t.Cleanup(func() {
-		common.RedisEnabled = originalRedisEnabled
-		common.RDB = originalRedisClient
-		require.NoError(t, client.Close())
-	})
-
-	policy := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyRatio, true,
-		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 100, 80, 30,
-	)
-	consecutiveFailureThreshold := 100
-	burstFailureThreshold := 2
-	policy.ConsecutiveFailureThreshold = &consecutiveFailureThreshold
-	policy.BurstFailureThreshold = &burstFailureThreshold
-	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:       "true",
-		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
-	})
-
-	priority := int64(80)
-	weight := uint(50)
-	require.NoError(t, db.Create(&model.Channel{
-		Id: 1513, Name: "redis burst failures", Status: common.ChannelStatusEnabled,
-		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.Ability{
-		ChannelId: 1513, Group: "vip", Model: "model-a", Enabled: true,
-		Priority: &priority, Weight: weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
-		ChannelId: 1513, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-	}).Error)
-
-	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1513, "model-a", runtimeError)
-	var ability model.Ability
-	require.NoError(t, db.Where(&model.Ability{
-		ChannelId: 1513, Group: "vip", Model: "model-a",
-	}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, priority, *ability.Priority)
-	assert.Equal(t, weight, ability.Weight)
-
-	resetChannelSmartScheduleRuntimeHealthForTest()
-
-	protectChannelSmartScheduleRuntimeFailure(1513, "model-a", runtimeError)
-
-	require.NoError(t, db.Where(&model.Ability{
-		ChannelId: 1513, Group: "vip", Model: "model-a",
-	}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Zero(t, *ability.Priority)
-	assert.Zero(t, ability.Weight)
-}
-
-func TestProtectChannelSmartScheduleRuntimeFailureSkipsIncompleteSharedWindow(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	originalRedisEnabled := common.RedisEnabled
-	originalRedisClient := common.RDB
-	common.RedisEnabled = true
-	common.RDB = client
-	t.Cleanup(func() {
-		resetChannelSmartScheduleRuntimeHealthForTest()
-		resetChannelSmartScheduleRuntimeRedisSuccessQueueForTest()
-		common.RedisEnabled = originalRedisEnabled
-		common.RDB = originalRedisClient
-		require.NoError(t, client.Close())
-	})
-	resetChannelSmartScheduleRuntimeHealthForTest()
-	resetChannelSmartScheduleRuntimeRedisSuccessQueueForTest()
-
-	policy := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategyRatio, true,
-		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
-	)
-	consecutiveFailureThreshold := 1
-	policy.ConsecutiveFailureThreshold = &consecutiveFailureThreshold
-	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:       "true",
-		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
-	})
-
-	priority := int64(80)
-	weight := uint(50)
-	require.NoError(t, db.Create(&model.Channel{
-		Id: 1514, Name: "incomplete redis window", Status: common.ChannelStatusEnabled,
-		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.Ability{
-		ChannelId: 1514, Group: "vip", Model: "model-a", Enabled: true,
-		Priority: &priority, Weight: weight,
-	}).Error)
-	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
-		ChannelId: 1514, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
-	}).Error)
-
-	settings := getChannelMonitorRuntimeSettings()
-	redisKey := channelSmartScheduleRuntimeFailureRedisKey(
-		1514, "model-a", settings.SmartScheduleControlRevision,
-	)
-	require.NoError(t, client.Set(
-		context.Background(), channelSmartScheduleRuntimeRedisIncompleteKey(redisKey), "1", time.Hour,
-	).Err())
-	runtimeError := types.NewErrorWithStatusCode(
-		errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503,
-	)
-
-	protectChannelSmartScheduleRuntimeFailure(1514, "model-a", runtimeError)
-
-	var ability model.Ability
-	require.NoError(t, db.Where(&model.Ability{
-		ChannelId: 1514, Group: "vip", Model: "model-a",
-	}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, priority, *ability.Priority)
-	assert.Equal(t, weight, ability.Weight)
-
-	require.NoError(t, client.Del(
-		context.Background(), channelSmartScheduleRuntimeRedisIncompleteKey(redisKey),
-	).Err())
-	protectChannelSmartScheduleRuntimeFailure(1514, "model-a", runtimeError)
-
-	require.NoError(t, db.Where(&model.Ability{
-		ChannelId: 1514, Group: "vip", Model: "model-a",
-	}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
 	assert.Zero(t, *ability.Priority)
 	assert.Zero(t, ability.Weight)
@@ -871,7 +674,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1510, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1510, "model-a", runtimeError)
 	var state model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
 		ChannelId: 1510, GroupName: "vip", ModelName: "model-a",
@@ -886,7 +689,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 	assert.Zero(t, ability.Weight)
 
 	for index, sampleTime := range []int64{now - 20, now - 10} {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1510, Model: "model-a",
 			Source:      model.ChannelSmartScheduleSampleSourceManualTest,
 			SampleId:    fmt.Sprintf("runtime-probe-sample-%d", index),
@@ -895,7 +698,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 		require.NoError(t, err)
 	}
 
-	protectChannelSmartScheduleRuntimeFailure(1510, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1510, "model-a", runtimeError)
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1510, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
 	assert.Zero(t, *ability.Priority)
@@ -961,7 +764,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1505, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1505, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1505, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -974,19 +777,29 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(
 	c.Set("original_model", "model-a")
 	c.Set("group", "vip")
 	c.Set(common.RequestIdKey, "runtime-live-error-2")
+	service.CaptureChannelDailyCostSnapshot(c, 1505)
+	service.BeginChannelDailyCostAttempt(c, 1505)
+	service.MarkChannelDailyCostRequestDispatched(c)
 	processChannelErrorWithTiming(
 		c,
 		*types.NewChannelError(1505, 1, "runtime live sample gate", false, "", false),
 		runtimeError,
 		false,
+		false,
 		nil,
 		false,
 	)
 
-	require.NoError(t, db.Where(&model.Ability{ChannelId: 1505, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Zero(t, *ability.Priority)
-	assert.Zero(t, ability.Weight)
+	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
+	require.Eventually(t, func() bool {
+		ability = model.Ability{}
+		if err := db.Where(&model.Ability{
+			ChannelId: 1505, Group: "vip", Model: "model-a",
+		}).First(&ability).Error; err != nil || ability.Priority == nil {
+			return false
+		}
+		return *ability.Priority == 0 && ability.Weight == 0
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestProtectChannelSmartScheduleRuntimeFailureMatchesParameterizedModelRouteAndLiveLog(t *testing.T) {
@@ -1027,7 +840,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureMatchesParameterizedModelRoute
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1507, requestModel, runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1507, requestModel, runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{
@@ -1086,7 +899,7 @@ func TestProtectChannelSmartScheduleRuntimeFailurePrefersExactParameterizedRoute
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1509, exactModel, runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1509, exactModel, runtimeError)
 
 	var exactAbility model.Ability
 	require.NoError(t, db.Where(&model.Ability{
@@ -1138,7 +951,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureWaitsForThresholdOnNormalRoute
 		ChannelId: 1506, GroupName: "vip", ModelName: "model-a",
 		ParticipationSet: true, Revision: 1,
 	}).Error)
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: 1506, Model: "model-a",
 		Source:   model.ChannelSmartScheduleSampleSourceManualTest,
 		SampleId: "normal-route-sample", Time: common.GetTimestamp(), Success: true,
@@ -1146,7 +959,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureWaitsForThresholdOnNormalRoute
 	require.NoError(t, err)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1506, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1506, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1506, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -1184,7 +997,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresModelRemovedFromPolicy(
 	}).Error)
 
 	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
-	protectChannelSmartScheduleRuntimeFailure(1508, "model-a", runtimeError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1508, "model-a", runtimeError)
 
 	var ability model.Ability
 	require.NoError(t, db.Where(&model.Ability{ChannelId: 1508, Group: "vip", Model: "model-a"}).First(&ability).Error)
@@ -1232,7 +1045,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureUses429CooldownWithoutStabilit
 
 	rateLimitError := types.NewErrorWithStatusCode(errors.New("上游并发已满"), types.ErrorCodeGetChannelFailed, 429)
 	assert.False(t, isChannelSmartScheduleRuntimeFailure(rateLimitError))
-	protectChannelSmartScheduleRuntimeFailure(1502, "model-a", rateLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1502, "model-a", rateLimitError)
 	assert.Greater(t, service.ChannelRateLimitCooldownUntil(1502, "model-a"), now)
 
 	var ability model.Ability
@@ -1272,7 +1085,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotCoolDownExcludedRoute(t
 	}).Error)
 
 	rateLimitError := types.NewErrorWithStatusCode(errors.New("上游并发已满"), types.ErrorCodeGetChannelFailed, 429)
-	protectChannelSmartScheduleRuntimeFailure(1510, "model-a", rateLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1510, "model-a", rateLimitError)
 
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1510, "model-a"))
 }
@@ -1302,7 +1115,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotCoolDownRouteOutsidePol
 	}).Error)
 
 	rateLimitError := types.NewErrorWithStatusCode(errors.New("上游并发已满"), types.ErrorCodeGetChannelFailed, 429)
-	protectChannelSmartScheduleRuntimeFailure(1511, "model-a", rateLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1511, "model-a", rateLimitError)
 
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1511, "model-a"))
 }
@@ -1321,7 +1134,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureCanDisable429Cooldown(t *testi
 	})
 
 	rateLimitError := types.NewErrorWithStatusCode(errors.New("上游并发已满"), types.ErrorCodeGetChannelFailed, 429)
-	protectChannelSmartScheduleRuntimeFailure(1503, "model-a", rateLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1503, "model-a", rateLimitError)
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1503, "model-a"))
 }
 
@@ -1354,7 +1167,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureRejects429FromStaleConfigurati
 	}).Error)
 
 	rateLimitError := types.NewErrorWithStatusCode(errors.New("上游并发已满"), types.ErrorCodeGetChannelFailed, 429)
-	protectChannelSmartScheduleRuntimeFailure(1506, "model-a", rateLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1506, "model-a", rateLimitError)
 
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1506, "model-a"))
 }
@@ -1378,7 +1191,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresLocalSkipRetry429(t *te
 		429,
 		types.ErrOptionWithSkipRetry(),
 	)
-	protectChannelSmartScheduleRuntimeFailure(1504, "model-a", localLimitError)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1504, "model-a", localLimitError)
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1504, "model-a"))
 }
 
@@ -1480,6 +1293,13 @@ func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *test
 		}
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	firstTokenMs := 10_000.0
+	for index := range logs {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			1601, "vip", "model-a", now-int64(index), true,
+			&firstTokenMs, nil, nil, false,
+		))
+	}
 
 	activeKey := channelMonitorSmartScheduleTaskType
 	runningTask := model.SystemTask{
@@ -1591,7 +1411,16 @@ func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *test
 		ChannelId: 1601, Group: "vip", ModelName: "model-a", Type: model.LogTypeConsume,
 		IsStream: true, Other: `{"frt":100}`, CreatedAt: common.GetTimestamp(),
 	}).Error)
-	observeChannelSmartScheduleRuntimeRequestSuccess(1601, "model-a")
+	service.ResetChannelMonitorRealtimeProjectionsForTest()
+	event := model.NewChannelMonitorEvent(
+		1601, model.ChannelMonitorEventSourceBusiness,
+		model.ChannelMonitorEventOutcomeSuccess, common.GetTimestamp(),
+	)
+	event.ModelName = "model-a"
+	event.RequestDispatched = true
+	event.IsFinalAttempt = true
+	require.Equal(t, service.ChannelMonitorEventEnqueueAccepted, service.EmitChannelMonitorEvent(event))
+	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
 	require.Eventually(t, func() bool {
 		if err := db.Where(&model.Ability{
 			ChannelId: 1601, Group: "vip", Model: "model-a",
@@ -1700,6 +1529,20 @@ func TestAdaptiveRefreshMaturesCandidateSwitchesPrimaryAndContinuesSamplingInSam
 		})
 	}
 	require.NoError(t, db.Create(&logs).Error)
+	primaryFirstTokenMs := 1000.0
+	for index := range 5 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			1611, "vip", "model-a", now-int64(index), true,
+			&primaryFirstTokenMs, nil, nil, false,
+		))
+	}
+	backupFirstTokenMs := 100.0
+	for index := range 2 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			1612, "vip", "model-a", now-int64(index), true,
+			&backupFirstTokenMs, nil, nil, false,
+		))
+	}
 
 	settings := getChannelMonitorSettings()
 	conflict, err := refreshChannelSmartScheduleAdaptivePool(

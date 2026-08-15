@@ -210,8 +210,5 @@ func recordChannelSmartScheduleProbeResult(
 			channel.Id, modelName, result.newAPIError,
 		)
 	}
-	if succeeded {
-		observeChannelSmartScheduleRuntimeProbeSuccess(channel.Id, routeModelName)
-	}
 	return true, "已计入渠道 + 模型共享样本"
 }

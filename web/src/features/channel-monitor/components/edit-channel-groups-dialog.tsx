@@ -50,6 +50,7 @@ import {
   updateMonitoredChannelGroups,
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import {
   createChannelGroupsSchema,
   type ChannelGroupsFormValues,
@@ -73,6 +74,7 @@ export function EditChannelGroupsDialog(props: EditChannelGroupsDialogProps) {
     queryKey: ['channel-monitor-available-groups'],
     queryFn: getChannelMonitorAvailableGroups,
     staleTime: 60 * 1000,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   })
   const groupOptions = useMemo(() => {
     const groups = new Set([

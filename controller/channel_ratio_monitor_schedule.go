@@ -7,7 +7,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -185,21 +184,6 @@ func init() {
 func (channelSmartScheduleTaskHandler) Type() string {
 	return channelMonitorSmartScheduleTaskType
 }
-
-func (channelSmartScheduleTaskHandler) Enabled() bool {
-	settings := getChannelMonitorSettings()
-	return settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0
-}
-
-func (channelSmartScheduleTaskHandler) Interval() time.Duration {
-	minutes := getChannelMonitorSettings().SmartScheduleIntervalMinutes
-	if minutes <= 0 {
-		minutes = defaultChannelMonitorSmartScheduleInterval
-	}
-	return time.Duration(minutes) * time.Minute
-}
-
-func (channelSmartScheduleTaskHandler) NewPayload() any { return nil }
 
 func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	payload := channelSmartScheduleTaskPayload{}
@@ -385,9 +369,6 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 	}
 	if !settings.SmartScheduleEnabled {
 		return result, fmt.Errorf("智能调度已禁用")
-	}
-	if err := service.EnsureChannelMonitorAggregationFresh(ctx, time.Now()); err != nil {
-		return result, err
 	}
 	result, err := runChannelSmartScheduleByRouteOnce(ctx, reportProgress, forceReset, settings, result)
 	result.finalizeAdjustments()

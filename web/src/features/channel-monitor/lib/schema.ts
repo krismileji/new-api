@@ -972,14 +972,6 @@ export function createChannelMonitorSettingsSchema() {
         .array(smartScheduleGroupPolicySchema)
         .max(MAX_SMART_SCHEDULE_GROUP_COUNT, '分组调度策略不能超过 100 个')
         .default([]),
-      smartScheduleIntervalMinutes: z.coerce
-        .number()
-        .int('智能调度间隔必须是整数')
-        .min(1, '智能调度间隔不能小于 1 分钟')
-        .max(
-          MAX_AUTO_UPDATE_INTERVAL_MINUTES,
-          '智能调度间隔不能超过 525600 分钟'
-        ),
       smartSchedulePerformanceWindowMinutes: z.coerce
         .number()
         .int('性能窗口必须是整数')

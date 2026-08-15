@@ -5,20 +5,18 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/service"
 )
 
 func channelSmartScheduleApplyCurrentWindowScores(
 	responses []channelSmartScheduleRouteResponse,
 	routes []model.ChannelSmartScheduleRoute,
 	policyByGroup map[string]channelSmartSchedulePolicy,
-	performanceItems []model.ChannelMonitorRoutePerformanceMetric,
-	stabilityByRoute map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric,
-	sampleMetricCache *channelSmartScheduleSampleMetricCache,
 	stabilityStart int64,
 	now int64,
-	logStabilityAvailable bool,
 ) {
+	settings := getChannelMonitorRuntimeSettings()
+	performanceStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	responseIndexByRoute := make(map[channelSmartScheduleRouteKey]int, len(responses))
 	for index := range responses {
 		response := responses[index]
@@ -28,17 +26,10 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			model:     response.Model,
 		}] = index
 	}
-	performanceByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRoutePerformanceMetric, len(performanceItems))
-	for _, metric := range performanceItems {
-		performanceByRoute[channelSmartScheduleRouteKey{
-			channelId: metric.ChannelId,
-			group:     metric.GroupName,
-			model:     metric.ModelName,
-		}] = metric
-	}
 
 	candidatesByPool := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	routeKeyByPoolChannel := make(map[channelSmartScheduleRoutePoolKey]map[int]channelSmartScheduleRouteKey)
+	snapshotByRoute := make(map[channelSmartScheduleRouteKey]service.ChannelMonitorRealtimeSnapshot)
 	for _, route := range routes {
 		policy, configured := policyByGroup[route.Group]
 		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) ||
@@ -52,56 +43,89 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			model:     route.Model,
 		}
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
-		modelKey := channelSmartScheduleModelKey{
-			channelId: route.ChannelId,
-			model:     ratio_setting.FormatMatchingModelName(route.Model),
-		}
 		currentPriority := route.Priority
 		currentWeight := route.Weight
 		if route.State.TemporaryTrafficKind != "" && route.State.BaseRank > 0 {
 			currentPriority = route.State.BasePriority
 			currentWeight = route.State.BaseWeight
 		}
+		healthMetric, healthSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			now-int64(policy.AdaptiveSamplingWindowSeconds),
+			route.SharedSamples.ObservationSince,
+			policy.AdaptiveSamplingWindowRequests,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		health := channelSmartScheduleEvaluateHealth(route.State, healthMetric, policy)
+		performanceMetric, performanceSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			performanceStart,
+			route.SharedSamples.ObservationSince,
+			0,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+			route.ChannelId,
+			route.Model,
+			stabilityStart,
+			route.SharedSamples.ObservationSince,
+			0,
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		firstTokenMs, tps := channelSmartScheduleRealtimeAverage(performanceMetric)
+		stability, stabilitySampleCount := channelSmartScheduleStabilityScore(
+			stabilityMetric.StabilitySuccessCount,
+			stabilityMetric.StabilityFailureCount,
+			stabilityMetric.StabilityFinalFailureCount,
+			stabilityMetric.RetryFailureDurationBuckets,
+			policy,
+		)
 		candidate := channelSmartScheduleCandidate{
-			ChannelId:            route.ChannelId,
-			CurrentPriority:      currentPriority,
-			CurrentWeight:        currentWeight,
-			Ratio:                route.CostRatio,
-			CostRatio:            route.CostRatio,
-			GroupRatio:           route.GroupRatio,
-			GrossMargin:          route.GrossMargin,
-			EconomicRole:         route.EconomicRole,
-			ManualPrimary:        route.State.ManualPrimaryUntil > now,
-			PreviousBaseRank:     route.State.BaseRank,
-			ManualTargetPriority: currentPriority,
-			HealthState:          route.State.AdaptiveHealthState,
-			HealthPressure:       route.State.AdaptiveHealthPressure,
-			HealthEvidence: policy.MinSamples > 0 &&
-				route.State.AdaptiveHealthSampleCount >= int64(policy.MinSamples),
-			HealthSampleCount:                     route.State.AdaptiveHealthSampleCount,
-			HealthLastSampleAt:                    route.State.AdaptiveHealthLastSampleAt,
-			HealthFirstTokenWarningRequestPercent: route.State.AdaptiveHealthFirstTokenWarningRequestPercent,
+			ChannelId:                             route.ChannelId,
+			CurrentPriority:                       currentPriority,
+			CurrentWeight:                         currentWeight,
+			Ratio:                                 route.CostRatio,
+			CostRatio:                             route.CostRatio,
+			GroupRatio:                            route.GroupRatio,
+			GrossMargin:                           route.GrossMargin,
+			EconomicRole:                          route.EconomicRole,
+			ManualPrimary:                         route.State.ManualPrimaryUntil > now,
+			PreviousBaseRank:                      route.State.BaseRank,
+			ManualTargetPriority:                  currentPriority,
+			HealthState:                           health.State,
+			HealthPressure:                        health.Pressure,
+			HealthErrorPressure:                   health.ErrorPressure,
+			HealthLatencyPressure:                 health.LatencyPressure,
+			HealthEvidence:                        health.Evidence,
+			HealthSampleCount:                     health.SampleCount,
+			HealthLastSampleAt:                    health.LastSampleAt,
+			HealthErrorRequestPercent:             health.ErrorRequestPercent,
+			HealthRiskRequestPercent:              health.RiskRequestPercent,
+			HealthFirstTokenWarningRequestPercent: health.FirstTokenWarningRequestPercent,
+			HealthHealthyRequestPercent:           health.HealthyRequestPercent,
 			HealthWindowMinutes:                   policy.AdaptiveSamplingWindowMinutes,
 			HealthWindowRequests:                  policy.AdaptiveSamplingWindowRequests,
-			StabilityAvailable: logStabilityAvailable ||
-				policy.SampleMode == channelMonitorSmartScheduleSampleProbe ||
-				sampleMetricCache.metrics(modelKey, stabilityStart).SampleCount > 0,
+			StabilityAvailable:                    stabilitySampleCount > 0,
+			FirstTokenMs:                          firstTokenMs,
+			TPS:                                   tps,
+			FirstTokenSampleCount:                 int(performanceMetric.FirstTokenCount),
+			TPSSampleCount:                        int(performanceMetric.TPSSampleCount),
+			Stability:                             stability,
+			StabilitySampleCount:                  stabilitySampleCount,
 		}
-		if performance, exists := performanceByRoute[key]; exists {
-			candidate.SampleGroupCount = performance.GroupCount
-			candidate.FirstTokenMs = performance.AverageFirstTokenMs
-			if policy.JitterEnabled && performance.WinsorizedAverageFirstTokenMs != nil {
-				candidate.FirstTokenMs = performance.WinsorizedAverageFirstTokenMs
-			}
-			candidate.TPS = performance.AverageTPS
-			candidate.FirstTokenSampleCount = performance.FirstTokenSampleCount
-			candidate.TPSSampleCount = performance.TPSSampleCount
+		if performanceMetric.RequestCount > 0 {
+			candidate.SampleGroupCount = 1
 		}
-		if stability, exists := stabilityByRoute[key]; exists {
-			candidate.SampleGroupCount = max(candidate.SampleGroupCount, stability.GroupCount)
-			candidate.Stability = stability.StabilityScore
-			candidate.StabilitySampleCount = stability.SampleCount
+		snapshot := performanceSnapshot
+		if healthSnapshot.EventWatermark > snapshot.EventWatermark {
+			snapshot = healthSnapshot
 		}
+		snapshotByRoute[key] = snapshot
 		candidatesByPool[poolKey] = append(candidatesByPool[poolKey], candidate)
 		if routeKeyByPoolChannel[poolKey] == nil {
 			routeKeyByPoolChannel[poolKey] = make(map[int]channelSmartScheduleRouteKey)
@@ -128,6 +152,8 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			}
 			responses[responseIndex].CurrentWindowScoreDetails = details
 			responses[responseIndex].CurrentWindowScore = channelSmartScheduleCopyFloat(details.FinalScore)
+			snapshot := snapshotByRoute[key]
+			channelSmartScheduleAttachRealtimeWindow(details, snapshot)
 		}
 	}
 }

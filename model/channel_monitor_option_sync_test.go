@@ -12,15 +12,15 @@ import (
 
 func TestUpdateOptionMapFromDatabaseReloadsLatestChannelMonitorValue(t *testing.T) {
 	db := setupChannelMonitorOptionTestDB(t, `{"vip":1}`, `{}`)
-	const key = "ChannelMonitorSmartScheduleIntervalMinutes"
-	require.NoError(t, db.Create(&Option{Key: key, Value: "10"}).Error)
-	require.NoError(t, db.Model(&Option{}).Where(&Option{Key: key}).Update("value", "20").Error)
+	const key = ChannelMonitorSmartSchedulePerformanceWindowOption
+	require.NoError(t, db.Create(&Option{Key: key, Value: "60"}).Error)
+	require.NoError(t, db.Model(&Option{}).Where(&Option{Key: key}).Update("value", "120").Error)
 
-	require.NoError(t, updateOptionMapFromDatabase(key, "10"))
+	require.NoError(t, updateOptionMapFromDatabase(key, "60"))
 	common.OptionMapRWMutex.RLock()
 	value := common.OptionMap[key]
 	common.OptionMapRWMutex.RUnlock()
-	assert.Equal(t, "20", value)
+	assert.Equal(t, "120", value)
 }
 
 func TestUpdateOptionMapFromDatabaseReloadsLatestGroupRatio(t *testing.T) {

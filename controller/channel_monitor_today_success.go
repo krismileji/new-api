@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
@@ -44,6 +43,12 @@ type channelMonitorDailySuccessChartItem struct {
 type channelMonitorTodaySuccessOverview struct {
 	Days                       int                                       `json:"days"`
 	GeneratedAt                int64                                     `json:"generated_at"`
+	DataCutoffAt               int64                                     `json:"data_cutoff_at"`
+	ProcessedAt                int64                                     `json:"processed_at"`
+	ProjectionStartedAt        int64                                     `json:"projection_started_at"`
+	EventWatermark             uint64                                    `json:"event_watermark"`
+	QueueDepth                 int                                       `json:"queue_depth"`
+	RealtimeDegraded           bool                                      `json:"realtime_degraded"`
 	DayStart                   int64                                     `json:"day_start"`
 	DetailDate                 string                                    `json:"detail_date"`
 	SuccessMetricsAvailable    bool                                      `json:"success_metrics_available"`
@@ -80,48 +85,54 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		detailDayStart = parsedDayStart
 	}
 	rangeStart := todayStart - int64(days-1)*channelMonitorCostDaySeconds
-	rangeEnd := todayStart + channelMonitorCostDaySeconds
 	overview := channelMonitorTodaySuccessOverview{
 		Days:                       days,
 		GeneratedAt:                generatedAt,
 		DayStart:                   detailDayStart,
 		DetailDate:                 channelMonitorCostDate(detailDayStart),
-		SuccessMetricsAvailable:    common.LogConsumeEnabled && constant.ErrorLogEnabled,
-		CacheWriteMetricsAvailable: common.LogConsumeEnabled,
+		SuccessMetricsAvailable:    true,
+		CacheWriteMetricsAvailable: true,
 		ChannelItems:               make([]channelMonitorTodaySuccessChannel, 0),
 		APIKeyItems:                make([]model.ChannelMonitorSuccessAPIKeyMetric, 0),
 		CacheWriteItems:            make([]channelMonitorTodayCacheWriteChannel, 0),
 		ChartItems:                 channelMonitorDailySuccessChartItems(rangeStart, days, nil),
 	}
-	if !overview.SuccessMetricsAvailable && !overview.CacheWriteMetricsAvailable {
-		common.ApiSuccess(c, overview)
-		return
-	}
-	if err := service.EnsureChannelMonitorAggregationFresh(c.Request.Context(), requestedAt); err != nil {
-		common.ApiError(c, err)
-		return
-	}
+	todayView := service.QueryChannelMonitorRealtimePage(todayStart, todayStart+channelMonitorCostDaySeconds)
+	metadata := channelMonitorRealtimePageMetadata(todayView)
+	overview.DataCutoffAt = metadata.DataCutoffAt
+	overview.ProcessedAt = metadata.ProcessedAt
+	overview.ProjectionStartedAt = metadata.ProjectionStartedAt
+	overview.EventWatermark = metadata.EventWatermark
+	overview.QueueDepth = metadata.QueueDepth
+	overview.RealtimeDegraded = metadata.RealtimeDegraded
 
-	metrics, err := model.GetChannelMonitorSuccessMetricsForDayCached(c.Request.Context(), detailDayStart)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	dailyMetrics := []model.ChannelMonitorDailySuccessMetric{{
-		DayStart:               detailDayStart,
-		Summary:                metrics.Summary,
-		CacheWriteChannelCount: len(metrics.CacheWriteItems),
-	}}
-	for _, item := range metrics.CacheWriteItems {
-		dailyMetrics[0].CacheWriteRequestCount += item.RequestCount
-	}
-	if days > 1 {
-		dailyMetrics, err = model.GetChannelMonitorDailySuccessMetricsCached(c.Request.Context(), rangeStart, rangeEnd)
+	todayMetrics := channelMonitorRealtimeTodaySuccessMetrics(todayView)
+	metrics := todayMetrics
+	var err error
+	if detailDayStart != todayStart {
+		metrics, err = model.GetChannelMonitorSuccessMetricsForDayCached(c.Request.Context(), detailDayStart)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
+	dailyMetrics := make([]model.ChannelMonitorDailySuccessMetric, 0, days)
+	if days > 1 {
+		dailyMetrics, err = model.GetChannelMonitorDailySuccessMetricsCached(c.Request.Context(), rangeStart, todayStart)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	todayDailyMetric := model.ChannelMonitorDailySuccessMetric{
+		DayStart:               todayStart,
+		Summary:                todayMetrics.Summary,
+		CacheWriteChannelCount: len(todayMetrics.CacheWriteItems),
+	}
+	for _, item := range todayMetrics.CacheWriteItems {
+		todayDailyMetric.CacheWriteRequestCount += item.RequestCount
+	}
+	dailyMetrics = append(dailyMetrics, todayDailyMetric)
 	overview.ChartItems = channelMonitorDailySuccessChartItems(rangeStart, days, dailyMetrics)
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {

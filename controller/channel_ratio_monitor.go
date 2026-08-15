@@ -496,20 +496,12 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		return
 	}
 	todayStart := channelMonitorCostDayStart(common.GetTimestamp())
-	todayCosts, err := model.GetChannelDailyCosts(c.Request.Context(), todayStart, todayStart+channelMonitorCostDaySeconds)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
 
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
-	todayCostByChannel := make(map[int]model.ChannelDailyCost, len(todayCosts))
-	for _, cost := range todayCosts {
-		todayCostByChannel[cost.ChannelId] = cost
-	}
+	todayCostByChannel := channelMonitorRealtimeTodayCosts(0, todayStart)
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
 	channelOrder := getChannelMonitorChannelOrder(channels)
@@ -602,15 +594,23 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		items = append(items, item)
 	}
 
+	realtimeMetadata := channelMonitorRealtimeMetadata(0)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"channels":           items,
-			"channel_order":      channelOrder,
-			"group_ratios":       groupRatios,
-			"group_coefficients": getChannelMonitorGroupCoefficients(),
-			"settings":           getChannelMonitorSettings(),
+			"channels":              items,
+			"generated_at":          common.GetTimestamp(),
+			"data_cutoff_at":        realtimeMetadata.DataCutoffAt,
+			"processed_at":          realtimeMetadata.ProcessedAt,
+			"projection_started_at": realtimeMetadata.ProjectionStartedAt,
+			"event_watermark":       realtimeMetadata.EventWatermark,
+			"queue_depth":           realtimeMetadata.QueueDepth,
+			"realtime_degraded":     realtimeMetadata.RealtimeDegraded,
+			"channel_order":         channelOrder,
+			"group_ratios":          groupRatios,
+			"group_coefficients":    getChannelMonitorGroupCoefficients(),
+			"settings":              getChannelMonitorSettings(),
 		},
 	})
 }

@@ -61,6 +61,11 @@ function createResult(
   return {
     days: 1,
     generated_at: 1_752_777_845,
+    data_cutoff_at: 1_752_777_840,
+    processed_at: 1_752_777_845,
+    event_watermark: 42,
+    queue_depth: 0,
+    realtime_degraded: false,
     day_start: 1_752_681_600,
     detail_date: '2026-07-23',
     success_metrics_available: true,

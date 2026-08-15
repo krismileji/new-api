@@ -42,8 +42,7 @@ func TestChannelSmartScheduleProbeHandlerUsesMinimumGroupInterval(t *testing.T) 
 	offInterval := 1
 	off.ProbeIntervalMinutes = &offInterval
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:  "true",
-		channelMonitorSmartScheduleIntervalOption: "60",
+		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
 			t, fastProbe, slowProbe, off,
 		),
@@ -219,7 +218,7 @@ func TestRunChannelSmartScheduleUsesSharedScheduledSamplesInFormalScoring(t *tes
 		{ChannelId: 1402, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	for _, probeTime := range []int64{now - 60, now - 30} {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1401, Model: "model-a",
 			WindowStart: now - 3600, Time: probeTime, Success: true, FirstTokenMs: &probeFirstToken,
 		})
@@ -238,6 +237,13 @@ func TestRunChannelSmartScheduleUsesSharedScheduledSamplesInFormalScoring(t *tes
 			CompletionTokens: 10, UseTime: 1, Other: `{"frt":100}`,
 		},
 	}).Error)
+	fastFirstToken := 100.0
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		1402, "vip", "model-a", minuteStart+1, true, &fastFirstToken, nil, nil, false,
+	))
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		1402, "vip", "model-a", minuteStart+2, true, &fastFirstToken, nil, nil, false,
+	))
 
 	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
 	require.NoError(t, err)
@@ -301,7 +307,7 @@ func TestRunChannelSmartScheduleSharesSamplesAcrossGroupsWithIndependentStrategi
 	for index := range 2 {
 		fastFirstTokenMs := 100.0
 		fastFirstTokenTPS := 10.0
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1403, Model: "model-a", WindowStart: now - 60,
 			Time: now - int64(2-index), Success: true,
 			FirstTokenMs: &fastFirstTokenMs, TPS: &fastFirstTokenTPS,
@@ -309,7 +315,7 @@ func TestRunChannelSmartScheduleSharesSamplesAcrossGroupsWithIndependentStrategi
 		require.NoError(t, err)
 		highThroughputFirstTokenMs := 500.0
 		highThroughputTPS := 50.0
-		_, err = model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err = saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1404, Model: "model-a", WindowStart: now - 60,
 			Time: now - int64(2-index), Success: true,
 			FirstTokenMs: &highThroughputFirstTokenMs, TPS: &highThroughputTPS,
@@ -395,14 +401,14 @@ func TestRunChannelSmartScheduleUsesProbeStabilityWithoutLogMetrics(t *testing.T
 		{ChannelId: 1412, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 	for index, succeeded := range []bool{true, false} {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1411, Model: "model-a",
 			WindowStart: now - 3600, Time: now - int64(60-index*30), Success: succeeded,
 		})
 		require.NoError(t, err)
 	}
 	for index := range 2 {
-		_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+		_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 			ChannelId: 1412, Model: "model-a",
 			WindowStart: now - 3600, Time: now - int64(60-index*30), Success: true,
 		})
@@ -502,7 +508,7 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	})
 	previousFirstToken := 100.0
 	previousTPS := 10.0
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	_, err := saveChannelSmartScheduleModelSampleForTest(model.ChannelSmartScheduleModelSampleResult{
 		ChannelId: channel.Id, Model: "gpt-3.5-turbo",
 		WindowStart: common.GetTimestamp() - 3600, Time: common.GetTimestamp() - 120,
 		Success: true, FirstTokenMs: &previousFirstToken, TPS: &previousTPS,

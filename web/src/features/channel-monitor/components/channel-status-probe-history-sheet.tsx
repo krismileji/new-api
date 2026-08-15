@@ -63,8 +63,8 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { getChannelStatusProbeExecutions } from '../api'
 import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   getChannelStatusProbeHistoryLatestExecutionKey,
-  getChannelStatusProbeHistoryRefetchInterval,
 } from '../lib/query-options'
 import type {
   ChannelStatusProbeChannel,
@@ -244,13 +244,9 @@ export function ChannelStatusProbeHistorySheet(
         trigger,
       }),
     placeholderData: keepPreviousData,
-    refetchInterval: () =>
-      getChannelStatusProbeHistoryRefetchInterval(
-        page,
-        probeActive,
-        document.visibilityState
-      ),
-    refetchIntervalInBackground: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
   })
   const total = query.data?.data.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -413,6 +409,19 @@ export function ChannelStatusProbeHistorySheet(
             </SelectGroup>
           </SelectContent>
         </Select>
+        <Button
+          type='button'
+          variant='outline'
+          size='icon'
+          onClick={() => void query.refetch()}
+          disabled={query.isFetching}
+          aria-label='刷新状态探测记录'
+        >
+          <HugeiconsIcon
+            icon={Refresh01Icon}
+            className={query.isFetching ? 'animate-spin' : undefined}
+          />
+        </Button>
       </div>
 
       <div className='min-h-0 flex-1 overflow-y-auto'>

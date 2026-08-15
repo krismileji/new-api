@@ -479,18 +479,18 @@ func TestUpdateChannelMonitorSettingsOptionsRejectsStaleSmartScheduleRevision(t 
 	db := setupChannelMonitorOptionTestDB(t, `{"vip":1}`, `{}`)
 	require.NoError(t, db.Create(&[]Option{
 		{Key: ChannelSmartScheduleControlRevisionOption, Value: "revision-current"},
-		{Key: "ChannelMonitorSmartScheduleIntervalMinutes", Value: "10"},
+		{Key: ChannelMonitorSmartSchedulePerformanceWindowOption, Value: "60"},
 	}).Error)
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap[ChannelSmartScheduleControlRevisionOption] = "revision-stale"
-	common.OptionMap["ChannelMonitorSmartScheduleIntervalMinutes"] = "10"
+	common.OptionMap[ChannelMonitorSmartSchedulePerformanceWindowOption] = "60"
 	common.OptionMapRWMutex.Unlock()
 
 	expectedRevision := "revision-stale"
 	routingChanged, err := UpdateChannelMonitorSettingsOptions(
 		map[string]string{
-			ChannelSmartScheduleControlRevisionOption:    "revision-new",
-			"ChannelMonitorSmartScheduleIntervalMinutes": "20",
+			ChannelSmartScheduleControlRevisionOption:          "revision-new",
+			ChannelMonitorSmartSchedulePerformanceWindowOption: "120",
 		},
 		false,
 		&expectedRevision,
@@ -501,27 +501,27 @@ func TestUpdateChannelMonitorSettingsOptionsRejectsStaleSmartScheduleRevision(t 
 	var revision Option
 	require.NoError(t, db.Where("key = ?", ChannelSmartScheduleControlRevisionOption).First(&revision).Error)
 	assert.Equal(t, "revision-current", revision.Value)
-	var interval Option
-	require.NoError(t, db.Where("key = ?", "ChannelMonitorSmartScheduleIntervalMinutes").First(&interval).Error)
-	assert.Equal(t, "10", interval.Value)
+	var performanceWindow Option
+	require.NoError(t, db.Where("key = ?", ChannelMonitorSmartSchedulePerformanceWindowOption).First(&performanceWindow).Error)
+	assert.Equal(t, "60", performanceWindow.Value)
 	common.OptionMapRWMutex.RLock()
 	assert.Equal(t, "revision-current", common.OptionMap[ChannelSmartScheduleControlRevisionOption])
-	assert.Equal(t, "10", common.OptionMap["ChannelMonitorSmartScheduleIntervalMinutes"])
+	assert.Equal(t, "60", common.OptionMap[ChannelMonitorSmartSchedulePerformanceWindowOption])
 	common.OptionMapRWMutex.RUnlock()
 
 	expectedRevision = "revision-current"
 	routingChanged, err = UpdateChannelMonitorSettingsOptions(
 		map[string]string{
-			ChannelSmartScheduleControlRevisionOption:    "revision-new",
-			"ChannelMonitorSmartScheduleIntervalMinutes": "20",
+			ChannelSmartScheduleControlRevisionOption:          "revision-new",
+			ChannelMonitorSmartSchedulePerformanceWindowOption: "120",
 		},
 		false,
 		&expectedRevision,
 	)
 	require.NoError(t, err)
 	assert.False(t, routingChanged)
-	require.NoError(t, db.Where("key = ?", "ChannelMonitorSmartScheduleIntervalMinutes").First(&interval).Error)
-	assert.Equal(t, "20", interval.Value)
+	require.NoError(t, db.Where("key = ?", ChannelMonitorSmartSchedulePerformanceWindowOption).First(&performanceWindow).Error)
+	assert.Equal(t, "120", performanceWindow.Value)
 }
 
 func TestRefreshChannelSmartScheduleOptionsQuotesReservedKeyColumn(t *testing.T) {

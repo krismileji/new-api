@@ -118,6 +118,7 @@ func useChannelMonitorOptionMap(t *testing.T, values map[string]string) {
 
 func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	service.ResetChannelMonitorRealtimeProjectionsForTest()
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -179,6 +180,108 @@ func aggregateChannelMonitorTestLogs(startTimestamp int64, endTimestamp int64) e
 	endTimestamp -= endTimestamp % 60
 	_, err := model.AggregateChannelMonitorMinuteRange(context.Background(), startTimestamp, endTimestamp)
 	return err
+}
+
+func emitChannelMonitorControllerRealtimeEvents(t *testing.T, events ...model.ChannelMonitorEvent) {
+	t.Helper()
+	for _, event := range events {
+		if status := service.EmitChannelMonitorEvent(event); status == service.ChannelMonitorEventEnqueueInvalid {
+			t.Fatalf("invalid channel monitor event %s", event.EventId)
+		}
+	}
+	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
+}
+
+var channelSmartScheduleTestEventSequence atomic.Uint64
+
+func projectChannelSmartScheduleTestEvent(event model.ChannelMonitorEvent) error {
+	event.EventSequence = channelSmartScheduleTestEventSequence.Add(1)
+	return service.ProjectChannelMonitorEventsForTest(event)
+}
+
+func projectChannelSmartScheduleMetricEventForTest(
+	channelId int,
+	group string,
+	modelName string,
+	timestamp int64,
+	success bool,
+	firstTokenMs *float64,
+	tPS *float64,
+	attemptDurationMs *int64,
+	retry bool,
+) error {
+	outcome := model.ChannelMonitorEventOutcomeSuccess
+	if !success {
+		outcome = model.ChannelMonitorEventOutcomeFailure
+	}
+	event := model.NewChannelMonitorEvent(
+		channelId, model.ChannelMonitorEventSourceBusiness, outcome, timestamp,
+	)
+	event.GroupName = group
+	event.ModelName = modelName
+	event.RequestDispatched = true
+	event.IsRetryAttempt = retry
+	event.IsFinalAttempt = !retry
+	event.SchedulingEligible = true
+	if !success {
+		statusCode := http.StatusInternalServerError
+		event.StatusCode = &statusCode
+	}
+	if firstTokenMs != nil {
+		value := *firstTokenMs
+		event.FirstTokenMs = &value
+	}
+	if tPS != nil {
+		value := *tPS
+		event.TPS = &value
+	}
+	if attemptDurationMs != nil {
+		value := *attemptDurationMs
+		event.AttemptDurationMs = &value
+	}
+	return projectChannelSmartScheduleTestEvent(event)
+}
+
+func saveChannelSmartScheduleModelSampleForTest(
+	result model.ChannelSmartScheduleModelSampleResult,
+) (model.ChannelSmartScheduleModelSampleState, error) {
+	state, err := model.SaveChannelSmartScheduleModelSample(result)
+	if err != nil {
+		return state, err
+	}
+	source := model.ChannelMonitorEventSourceSmartProbe
+	switch result.Source {
+	case model.ChannelSmartScheduleSampleSourceManualTest:
+		source = model.ChannelMonitorEventSourceManualTest
+	case model.ChannelSmartScheduleSampleSourceStatusProbe:
+		source = model.ChannelMonitorEventSourceStatusProbe
+	}
+	outcome := model.ChannelMonitorEventOutcomeSuccess
+	if !result.Success {
+		outcome = model.ChannelMonitorEventOutcomeFailure
+	}
+	event := model.NewChannelMonitorEvent(result.ChannelId, source, outcome, result.Time)
+	event.ModelName = result.Model
+	event.RequestId = result.SampleId
+	event.RequestDispatched = true
+	event.IsFinalAttempt = true
+	event.SchedulingEligible = true
+	if result.DurationMs != nil {
+		durationMs := int64(*result.DurationMs)
+		event.AttemptDurationMs = &durationMs
+	}
+	if result.FirstTokenMs != nil {
+		value := *result.FirstTokenMs
+		event.FirstTokenMs = &value
+	}
+	if result.TPS != nil {
+		value := *result.TPS
+		event.TPS = &value
+	}
+	if err := projectChannelSmartScheduleTestEvent(event); err != nil {
+		return state, err
+	}
+	return state, nil
 }
 
 func disableChannelMonitorSSRFProtection(t *testing.T) {
@@ -452,10 +555,9 @@ func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmp
 	assert.Empty(t, getChannelMonitorSettings().EmailNotificationTypes)
 }
 
-func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
+func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleEnabledOption:  "true",
-		channelMonitorSmartScheduleIntervalOption: "25",
+		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
 			channelSmartScheduleTestGroupPolicy(
 				"vip", channelMonitorSmartScheduleStrategyTPS, true,
@@ -466,7 +568,6 @@ func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 
 	settings := getChannelMonitorSettings()
 	assert.True(t, settings.SmartScheduleEnabled)
-	assert.Equal(t, 25, settings.SmartScheduleIntervalMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartSchedulePerformanceWindowMinutes, settings.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleStabilityWindowMinutes, settings.SmartScheduleStabilityWindowMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds, settings.SmartScheduleRateLimitCooldownSeconds)
@@ -474,9 +575,9 @@ func TestChannelSmartScheduleHandlerUsesSavedSwitchAndInterval(t *testing.T) {
 	assert.Equal(t, "vip", settings.SmartScheduleGroupPolicies[0].Group)
 
 	handler := channelSmartScheduleTaskHandler{}
-	assert.True(t, handler.Enabled())
-	assert.Equal(t, 25*time.Minute, handler.Interval())
 	assert.Equal(t, channelMonitorSmartScheduleTaskType, handler.Type())
+	_, scheduled := any(handler).(service.ScheduledSystemTaskHandler)
+	assert.False(t, scheduled)
 }
 
 func TestChannelSmartScheduleSettingsRejectIncompleteStoredPolicies(t *testing.T) {
@@ -488,7 +589,6 @@ func TestChannelSmartScheduleSettingsRejectIncompleteStoredPolicies(t *testing.T
 	settings := getChannelMonitorSettings()
 	assert.False(t, settings.SmartScheduleEnabled)
 	assert.Empty(t, settings.SmartScheduleGroupPolicies)
-	assert.False(t, (channelSmartScheduleTaskHandler{}).Enabled())
 }
 
 func TestChannelSmartScheduleSettingsIgnoreRemovedPrimaryMinimum(t *testing.T) {
@@ -888,7 +988,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 			channelSmartScheduleTestGroupPolicy("vip", channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30),
 			channelSmartScheduleTestGroupPolicy(" vip ", channelMonitorSmartScheduleStrategyRatio, false, channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30),
 		}},
-		{"smart_schedule_interval_minutes": 0},
 		{"smart_schedule_performance_window_minutes": 0},
 		{"smart_schedule_performance_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
 		{"smart_schedule_stability_window_minutes": 0},
@@ -976,7 +1075,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 				"adaptive_sampling_min_comparable_channels":        2,
 			},
 		},
-		"smart_schedule_interval_minutes":            10,
 		"smart_schedule_performance_window_minutes":  360,
 		"smart_schedule_stability_window_minutes":    120,
 		"smart_schedule_rate_limit_cooldown_seconds": 300,
@@ -1109,7 +1207,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 10.0, *groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	require.NotNil(t, groupPolicy.AdaptiveSamplingWindowSeconds)
 	assert.Equal(t, 600, *groupPolicy.AdaptiveSamplingWindowSeconds)
-	assert.Equal(t, 10, response.Data.SmartScheduleIntervalMinutes)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)
 	assert.Equal(t, 300, response.Data.SmartScheduleRateLimitCooldownSeconds)
@@ -1175,9 +1272,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		assert.NotContains(t, recorder.Body.String(), deletedField)
 		assert.NotContains(t, option.Value, deletedField)
 	}
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
-	assert.Equal(t, "10", option.Value)
+	assert.NotContains(t, recorder.Body.String(), "smart_schedule_interval_minutes")
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartSchedulePerformanceWindowOption).First(&option).Error)
 	assert.Equal(t, "360", option.Value)
@@ -1239,8 +1334,8 @@ func TestUpdateChannelMonitorSettingsClears429CooldownOnAnySchedulingRevision(t 
 	assert.NotZero(t, service.ChannelRateLimitCooldownUntil(1902, "model-a"))
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_interval_minutes": 20,
-		"smart_schedule_control_revision": "",
+		"smart_schedule_performance_window_minutes": 120,
+		"smart_schedule_control_revision":           "",
 	})
 	UpdateChannelMonitorSettings(ctx)
 
@@ -1251,17 +1346,17 @@ func TestUpdateChannelMonitorSettingsClears429CooldownOnAnySchedulingRevision(t 
 func TestUpdateChannelMonitorSettingsRejectsStaleSmartScheduleRevision(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
-		channelMonitorSmartScheduleControlRevisionOption: "revision-current",
-		channelMonitorSmartScheduleIntervalOption:        "10",
+		channelMonitorSmartScheduleControlRevisionOption:   "revision-current",
+		channelMonitorSmartSchedulePerformanceWindowOption: "60",
 	})
 	require.NoError(t, db.Create(&[]model.Option{
 		{Key: channelMonitorSmartScheduleControlRevisionOption, Value: "revision-current"},
-		{Key: channelMonitorSmartScheduleIntervalOption, Value: "10"},
+		{Key: channelMonitorSmartSchedulePerformanceWindowOption, Value: "60"},
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_interval_minutes": 20,
-		"smart_schedule_control_revision": "revision-current",
+		"smart_schedule_performance_window_minutes": 120,
+		"smart_schedule_control_revision":           "revision-current",
 	})
 	UpdateChannelMonitorSettings(ctx)
 
@@ -1272,19 +1367,19 @@ func TestUpdateChannelMonitorSettingsRejectsStaleSmartScheduleRevision(t *testin
 	assert.NotEqual(t, "revision-current", firstResponse.Data.SmartScheduleControlRevision)
 
 	var option model.Option
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
-	assert.Equal(t, "20", option.Value)
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartSchedulePerformanceWindowOption).First(&option).Error)
+	assert.Equal(t, "120", option.Value)
 
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_interval_minutes": 30,
-		"smart_schedule_control_revision": "revision-current",
+		"smart_schedule_performance_window_minutes": 240,
+		"smart_schedule_control_revision":           "revision-current",
 	})
 	UpdateChannelMonitorSettings(ctx)
 	assert.Equal(t, http.StatusConflict, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "渠道监控设置已被其他请求修改")
 	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleIntervalOption).First(&option).Error)
-	assert.Equal(t, "20", option.Value)
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartSchedulePerformanceWindowOption).First(&option).Error)
+	assert.Equal(t, "120", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleControlRevisionOption).First(&option).Error)
 	assert.Equal(t, firstResponse.Data.SmartScheduleControlRevision, option.Value)
@@ -1295,7 +1390,7 @@ func TestUpdateChannelMonitorSettingsRequiresSmartScheduleRevision(t *testing.T)
 	useChannelMonitorOptionMap(t, map[string]string{})
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_interval_minutes": 20,
+		"smart_schedule_performance_window_minutes": 120,
 	})
 	UpdateChannelMonitorSettings(ctx)
 
@@ -1322,8 +1417,8 @@ func TestUpdateChannelMonitorSettingsRefreshesStaleInstanceBeforeCurrentRevision
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"smart_schedule_interval_minutes": 20,
-		"smart_schedule_control_revision": "revision-current",
+		"smart_schedule_performance_window_minutes": 120,
+		"smart_schedule_control_revision":           "revision-current",
 	})
 	UpdateChannelMonitorSettings(ctx)
 
@@ -1333,7 +1428,7 @@ func TestUpdateChannelMonitorSettingsRefreshesStaleInstanceBeforeCurrentRevision
 	assert.True(t, response.Data.SmartScheduleEnabled)
 	require.Len(t, response.Data.SmartScheduleGroupPolicies, 1)
 	assert.Equal(t, "vip", response.Data.SmartScheduleGroupPolicies[0].Group)
-	assert.Equal(t, 20, response.Data.SmartScheduleIntervalMinutes)
+	assert.Equal(t, 120, response.Data.SmartSchedulePerformanceWindowMinutes)
 	assert.NotEqual(t, "revision-current", response.Data.SmartScheduleControlRevision)
 }
 
@@ -1462,6 +1557,31 @@ func TestForceResetSmartScheduleQueuesOneTimeTask(t *testing.T) {
 	require.NotNil(t, response.Data.SmartScheduleForceResetTaskCreated)
 	assert.False(t, *response.Data.SmartScheduleForceResetTaskCreated)
 	assert.Equal(t, task.TaskID, response.Data.SmartScheduleForceResetTaskId)
+}
+
+func TestUpdateChannelMonitorSettingsQueuesOneTimeTaskForEventDrivenConfigChange(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"smart_schedule_enabled":          true,
+		"smart_schedule_control_revision": "",
+		"smart_schedule_group_policies": []channelSmartScheduleGroupPolicy{
+			channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategyRatio, false,
+				channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
+			),
+		},
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	task, err := model.GetActiveSystemTask(channelMonitorSmartScheduleTaskType)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+	payload := channelSmartScheduleTaskPayload{}
+	require.NoError(t, task.DecodePayload(&payload))
+	assert.False(t, payload.ForceReset)
 }
 
 func TestRunChannelSmartScheduleRejectsManualRunWhileDisabled(t *testing.T) {

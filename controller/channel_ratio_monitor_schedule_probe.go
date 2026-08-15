@@ -32,10 +32,11 @@ func withChannelSmartScheduleProbeTestContext(ctx context.Context, group string)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, channelSmartScheduleProbeTestContextKey{}, channelSmartScheduleProbeTestOptions{
+	ctx = context.WithValue(ctx, channelSmartScheduleProbeTestContextKey{}, channelSmartScheduleProbeTestOptions{
 		Group:          group,
 		ScheduledProbe: true,
 	})
+	return withChannelMonitorSchedulingEligibility(ctx, true)
 }
 
 func applyChannelSmartScheduleProbeTestContext(source context.Context, target *gin.Context) {
@@ -180,7 +181,7 @@ func (channelSmartScheduleProbeTaskHandler) Interval() time.Duration {
 		}
 	}
 	if minimumMinutes <= 0 {
-		minimumMinutes = defaultChannelMonitorSmartScheduleInterval
+		minimumMinutes = defaultChannelMonitorSmartScheduleProbeInterval
 	}
 	return time.Duration(minimumMinutes) * time.Minute
 }
@@ -476,9 +477,6 @@ func runChannelSmartScheduleProbeOnce(
 					item.requestModel,
 					probeResult.newAPIError,
 				)
-			}
-			if succeeded {
-				observeChannelSmartScheduleRuntimeProbeSuccess(route.ChannelId, item.requestModel)
 			}
 		}
 		if succeeded {

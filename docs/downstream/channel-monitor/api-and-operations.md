@@ -74,7 +74,6 @@
 | `relay_response_header_timeout_seconds` | `RelayResponseHeaderTimeoutSeconds` | `0` | `0..600` 秒，`0` 不限制；流式请求限制首个有效模型事件，非流式请求限制响应头；位于智能调度设置 |
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个完整分组策略；未配置分组不参与调度 |
-| `smart_schedule_interval_minutes` | `ChannelMonitorSmartScheduleIntervalMinutes` | `10` | `1..525600` |
 | `smart_schedule_performance_window_minutes` | `ChannelMonitorSmartSchedulePerformanceWindowMinutes` | `60` | `1..43200` |
 | `smart_schedule_stability_window_minutes` | `ChannelMonitorSmartScheduleStabilityWindowMinutes` | `5` | `1..43200` 分钟；仅用于稳定性软评分，不直接触发硬保护 |
 
@@ -94,7 +93,7 @@
 
 `exploration_max_prompt_tokens` 和 `stability_release_max_prompt_tokens` 的 API 值必须为 `0` 或 `1000` 的整数倍，范围为 `0..1000000 Token`；`0` 表示不做该类路由的上限过滤。当前版本不读取、不迁移旧的非整 K 值，例如旧默认值 `16384` 会被拒绝。
 
-`smart_schedule_interval_minutes` 只控制常规情况下的完整评分、正常选主、基础排名和基础 P/W。样本补充对象切换、稳定性保护、自适应备援、降级定时探测、探测恢复、冷却结束试放以及成功延迟抖动都使用分组策略自己的窗口、请求事件或定时器，不等待完整调度。普通采样、软健康和抖动事件按 `(分组, 模型)` 合并 `1` 秒；429 冷却和稳定性硬保护立即执行。完整调度运行期间到达的软事件在新基础快照提交后重放，不能被完整调度覆盖。
+完整评分、正常选主、基础排名和基础 P/W 不再按分钟周期执行。配置、参与状态、成本等管理变更创建一次完整调度任务，管理员也可手动执行或强制重置；样本补充对象切换、稳定性保护、自适应备援、降级定时探测、探测恢复、冷却结束试放以及成功延迟抖动使用分组策略自己的窗口、请求事件或定时器。普通采样、软健康和抖动事件按 `(分组, 模型)` 合并 `1` 秒；429 冷却和稳定性硬保护立即执行。完整调度运行期间到达的软事件在新基础快照提交后重放，不能被完整调度覆盖。
 
 `GET /schedule` 的 `sample_scope` 固定为 `channel_model`。每条路由的 `state` 是 `(渠道, 分组, 模型)` 独立决策状态，包含 `rolling_stability_*`、`sampling_debt`、`sampling_candidate`、`sampling_order`、`last_sampling_at` 和持久化的 `adaptive_health_first_token_warning_request_percent` 等秒级运行时字段；没有窗口内样本时 `rolling_stability_score` 返回 `null`。`shared_samples` 是 `(渠道, 模型)` 唯一的一份手动测试和定时探测滚动样本，并返回持久化的 `recovery_success_count` 与 `recovery_success_at`；相同渠道模型的多条分组路由返回同一份 `shared_samples`。`performance_items` 按渠道模型返回，不含分组字段，`group_count` 表示窗口内业务样本实际覆盖的分组数；`stability_items` 会按分组模型调度池投影最终判定结果，但底层请求观测仍是共享口径。健康明细返回 `error_request_percent`、`first_token_warning_request_percent`、`risk_request_percent` 和 `healthy_request_percent`：前两项分别解释错误与首字进入信号，风险占比用于看板与执行明细解释，健康占比用于压力状态恢复和备用切换确认，风险占比不再作为统一进入门槛。429 冷却是独立的 `(渠道, 模型)` 避让状态：普通选路优先跳过，但当前分组没有其他可用候选时允许兜底；亲和、手动测试、常规/降级探测和全部采样仍必须跳过，冷却到期由独立秒级检查触发池刷新。
 
@@ -214,7 +213,7 @@
 | 任务类型 | 触发方式 | 说明 |
 | --- | --- | --- |
 | `channel_ratio_monitor` | 设置的更新间隔或手动 API | 更新倍率和余额、执行策略、通知和恢复 |
-| `channel_smart_schedule` | 设置的调度间隔、手动 API 或强制重置 | 执行常规完整评分并应用基础优先级和权重；不承担事件驱动采样、保护或恢复 |
+| `channel_smart_schedule` | 配置/参与状态/成本变更、手动 API 或强制重置 | 按需执行完整评分并应用基础优先级和权重；不承担事件驱动采样、保护或恢复 |
 | `channel_smart_schedule_probe` | 启用定时探测的分组所配置的最短探测间隔 | 为到期文本路由补充流式 Responses 样本；渠道并发已满时跳过 |
 | `channel_monitor_cost_retention` | 默认每天一次 | 分批删除超出各自配置保留期的分钟指标、日成本、执行明细、已结束监控任务和倍率历史 |
 

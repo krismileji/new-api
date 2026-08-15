@@ -77,6 +77,12 @@ type channelMonitorCostCoverage struct {
 type channelMonitorCostOverview struct {
 	Days                           int                         `json:"days"`
 	GeneratedAt                    int64                       `json:"generated_at"`
+	DataCutoffAt                   int64                       `json:"data_cutoff_at"`
+	ProcessedAt                    int64                       `json:"processed_at"`
+	ProjectionStartedAt            int64                       `json:"projection_started_at"`
+	EventWatermark                 uint64                      `json:"event_watermark"`
+	QueueDepth                     int                         `json:"queue_depth"`
+	RealtimeDegraded               bool                        `json:"realtime_degraded"`
 	DetailDate                     string                      `json:"detail_date"`
 	TodayCostCNY                   float64                     `json:"today_cost_cny"`
 	TodayProbeCostCNY              float64                     `json:"today_probe_cost_cny"`
@@ -158,6 +164,12 @@ func GetChannelMonitorCostOverview(c *gin.Context) {
 		overview, err = getChannelMonitorCostOverviewForChannelPageAtDay(c.Request.Context(), days, now, 0, page, channelMonitorCostDatePageSize, detailDayStart)
 	}
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := applyChannelMonitorRealtimeCost(
+		c.Request.Context(), &overview, days, now, channelId, detailDayStart, summaryOnly,
+	); err != nil {
 		common.ApiError(c, err)
 		return
 	}

@@ -23,6 +23,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { formatTimestampToDate } from '@/lib/format'
 
 import type {
   ChannelMonitorItem,
@@ -178,6 +179,11 @@ function createRoute(
 function createResult(): ChannelMonitorSmartScheduleRouteResult {
   return {
     generated_at: 1_752_777_845,
+    data_cutoff_at: 1_752_777_840,
+    processed_at: 1_752_777_845,
+    event_watermark: 42,
+    queue_depth: 6,
+    realtime_degraded: true,
     performance_window_minutes: 60,
     stability_window_minutes: 120,
     sample_scope: 'channel_model',
@@ -467,7 +473,6 @@ function renderBoard(
           ]
         }
         groupRatios={options.groupRatios ?? { default: 1, vip: 0.5 }}
-        intervalMinutes={10}
         isLoading={false}
         isError={options.isError ?? false}
         onOpenHistory={noop}
@@ -484,7 +489,13 @@ describe('channel monitor smart schedule board', () => {
 
     assert.ok(markup.includes('智能调度运行状态'))
     assert.ok(markup.includes('已启用'))
-    assert.ok(markup.includes('每 10 分钟调度'))
+    assert.ok(markup.includes('实时数据已降级'))
+    assert.ok(markup.includes('队列待处理 6'))
+    assert.ok(
+      markup.includes(`数据截至 ${formatTimestampToDate(1_752_777_840)}`)
+    )
+    assert.ok(markup.includes('请求事件投影后异步更新'))
+    assert.equal(markup.includes('分钟调度'), false)
     assert.ok(markup.includes('调度池'))
     assert.ok(markup.includes('参与路由'))
     assert.ok(markup.includes('当前可调度'))

@@ -48,7 +48,6 @@ const (
 	channelMonitorGroupCoefficientsOption                      = model.ChannelMonitorGroupCoefficientsOption
 	channelMonitorChannelOrderOption                           = "ChannelMonitorChannelOrder"
 	channelMonitorSmartScheduleEnabledOption                   = "ChannelMonitorSmartScheduleEnabled"
-	channelMonitorSmartScheduleIntervalOption                  = "ChannelMonitorSmartScheduleIntervalMinutes"
 	channelMonitorSmartSchedulePerformanceWindowOption         = model.ChannelMonitorSmartSchedulePerformanceWindowOption
 	channelMonitorSmartScheduleStabilityWindowOption           = model.ChannelMonitorSmartScheduleStabilityWindowOption
 	channelMonitorSmartScheduleRateLimitCooldownOption         = "ChannelMonitorSmartScheduleRateLimitCooldownSeconds"
@@ -97,7 +96,7 @@ const (
 	defaultChannelMonitorRatioHistoryRetentionDays             = 365
 	defaultChannelMonitorStatusProbeHistoryRetentionDays       = 7
 	defaultChannelMonitorGroupCoefficient                      = 1
-	defaultChannelMonitorSmartScheduleInterval                 = 10
+	defaultChannelMonitorSmartScheduleProbeInterval            = 10
 	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
 	defaultChannelMonitorSmartScheduleStabilityWindowMinutes   = model.ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes
 	defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds = 30
@@ -147,7 +146,6 @@ type channelMonitorSettings struct {
 	RelayHeaderTimeoutSeconds             int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled                  bool                       `json:"smart_schedule_enabled"`
 	SmartScheduleGroupPolicies            smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
-	SmartScheduleIntervalMinutes          int                        `json:"smart_schedule_interval_minutes"`
 	SmartSchedulePerformanceWindowMinutes int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   int                        `json:"smart_schedule_stability_window_minutes"`
 	SmartScheduleRateLimitCooldownSeconds int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
@@ -186,7 +184,6 @@ type channelMonitorSettingsUpdateRequest struct {
 	RelayHeaderTimeoutSeconds             *int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled                  *bool                       `json:"smart_schedule_enabled"`
 	SmartScheduleGroupPolicies            *smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
-	SmartScheduleIntervalMinutes          *int                        `json:"smart_schedule_interval_minutes"`
 	SmartSchedulePerformanceWindowMinutes *int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   *int                        `json:"smart_schedule_stability_window_minutes"`
 	SmartScheduleRateLimitCooldownSeconds *int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
@@ -219,7 +216,6 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleGroupPolicies := common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption]
-	rawSmartScheduleInterval := common.OptionMap[channelMonitorSmartScheduleIntervalOption]
 	rawSmartSchedulePerformanceWindow := common.OptionMap[channelMonitorSmartSchedulePerformanceWindowOption]
 	rawSmartScheduleStabilityWindow := common.OptionMap[channelMonitorSmartScheduleStabilityWindowOption]
 	rawSmartScheduleRateLimitCooldown := common.OptionMap[channelMonitorSmartScheduleRateLimitCooldownOption]
@@ -299,10 +295,6 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil {
 		smartScheduleEnabled = false
 	}
-	smartScheduleInterval, err := strconv.Atoi(rawSmartScheduleInterval)
-	if err != nil || smartScheduleInterval <= 0 || smartScheduleInterval > maxChannelMonitorAutoUpdateIntervalMinutes {
-		smartScheduleInterval = defaultChannelMonitorSmartScheduleInterval
-	}
 	smartSchedulePerformanceWindow, err := strconv.Atoi(rawSmartSchedulePerformanceWindow)
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(smartSchedulePerformanceWindow) {
 		smartSchedulePerformanceWindow = defaultChannelMonitorSmartSchedulePerformanceWindowMinutes
@@ -348,7 +340,6 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		RelayHeaderTimeoutSeconds:             relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:                  smartScheduleEnabled,
 		SmartScheduleGroupPolicies:            smartScheduleGroupPolicies,
-		SmartScheduleIntervalMinutes:          smartScheduleInterval,
 		SmartSchedulePerformanceWindowMinutes: smartSchedulePerformanceWindow,
 		SmartScheduleStabilityWindowMinutes:   smartScheduleStabilityWindow,
 		SmartScheduleRateLimitCooldownSeconds: smartScheduleRateLimitCooldown,
@@ -648,7 +639,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.RelayHeaderTimeoutSeconds == nil &&
 		request.SmartScheduleEnabled == nil &&
 		request.SmartScheduleGroupPolicies == nil &&
-		request.SmartScheduleIntervalMinutes == nil &&
 		request.SmartSchedulePerformanceWindowMinutes == nil &&
 		request.SmartScheduleStabilityWindowMinutes == nil &&
 		request.SmartScheduleRateLimitCooldownSeconds == nil &&
@@ -659,7 +649,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	forceResetSmartSchedule := request.SmartScheduleForceReset != nil && *request.SmartScheduleForceReset
 	smartScheduleSettingsChanged := request.SmartScheduleEnabled != nil ||
 		request.SmartScheduleGroupPolicies != nil ||
-		request.SmartScheduleIntervalMinutes != nil ||
 		request.SmartSchedulePerformanceWindowMinutes != nil ||
 		request.SmartScheduleStabilityWindowMinutes != nil ||
 		request.SmartScheduleRateLimitCooldownSeconds != nil || forceResetSmartSchedule
@@ -954,18 +943,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.SmartScheduleEnabled = *request.SmartScheduleEnabled
 		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
-	if request.SmartScheduleIntervalMinutes != nil && (*request.SmartScheduleIntervalMinutes <= 0 ||
-		*request.SmartScheduleIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "智能调度间隔必须在 1 到 525600 分钟之间",
-		})
-		return
-	}
-	if request.SmartScheduleIntervalMinutes != nil {
-		settings.SmartScheduleIntervalMinutes = *request.SmartScheduleIntervalMinutes
-		values[channelMonitorSmartScheduleIntervalOption] = strconv.Itoa(settings.SmartScheduleIntervalMinutes)
-	}
 	if request.SmartSchedulePerformanceWindowMinutes != nil &&
 		!isChannelMonitorSmartScheduleWindowSupported(*request.SmartSchedulePerformanceWindowMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度性能窗口必须在 1 到 43200 分钟之间"})
@@ -1067,24 +1044,29 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	forceResetTaskCreated := false
 	forceResetTaskId := ""
 	forceResetTaskError := ""
-	if forceResetSmartSchedule && cooldownRevisionError != nil {
+	var scheduleTaskError error
+	scheduleTaskRequested := smartScheduleSettingsChanged && settings.SmartScheduleEnabled
+	if scheduleTaskRequested && cooldownRevisionError != nil && forceResetSmartSchedule {
 		forceResetTaskError = "429 冷却状态同步失败，未创建强制重置任务"
-	} else if forceResetSmartSchedule && !cooldownRevisionApplied {
+	} else if scheduleTaskRequested && !cooldownRevisionApplied && forceResetSmartSchedule {
 		forceResetTaskError = "智能调度配置已被更新的修订覆盖，未创建强制重置任务"
-	} else if forceResetSmartSchedule {
+	} else if scheduleTaskRequested && cooldownRevisionError == nil && cooldownRevisionApplied {
 		task, created, err := service.EnqueueRequiredSystemTask(
 			channelMonitorSmartScheduleTaskType,
-			channelSmartScheduleTaskPayload{ForceReset: true},
+			channelSmartScheduleTaskPayload{ForceReset: forceResetSmartSchedule},
 		)
-		forceResetTaskCreated = created
-		if err != nil {
-			forceResetTaskError = err.Error()
-		} else {
-			forceResetTaskId = task.TaskID
+		scheduleTaskError = err
+		if forceResetSmartSchedule {
+			forceResetTaskCreated = created
+			if err != nil {
+				forceResetTaskError = err.Error()
+			} else {
+				forceResetTaskId = task.TaskID
+			}
+			settings.SmartScheduleForceResetTaskCreated = &forceResetTaskCreated
+			settings.SmartScheduleForceResetTaskId = forceResetTaskId
+			settings.SmartScheduleForceResetTaskError = forceResetTaskError
 		}
-		settings.SmartScheduleForceResetTaskCreated = &forceResetTaskCreated
-		settings.SmartScheduleForceResetTaskId = forceResetTaskId
-		settings.SmartScheduleForceResetTaskError = forceResetTaskError
 	}
 	auditDetails := map[string]interface{}{
 		"auto_update_interval_minutes":               settings.AutoUpdateIntervalMinutes,
@@ -1114,7 +1096,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"probe_response_output_tokens":               settings.ProbeResponseOutputTokens,
 		"smart_schedule_enabled":                     settings.SmartScheduleEnabled,
 		"smart_schedule_group_policies":              settings.SmartScheduleGroupPolicies,
-		"smart_schedule_interval_minutes":            settings.SmartScheduleIntervalMinutes,
 		"smart_schedule_performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
 		"smart_schedule_stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
 		"smart_schedule_rate_limit_cooldown_seconds": settings.SmartScheduleRateLimitCooldownSeconds,
@@ -1126,6 +1107,9 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if cooldownRevisionError != nil {
 		auditDetails["smart_schedule_cooldown_revision_error"] = cooldownRevisionError.Error()
+	}
+	if scheduleTaskError != nil {
+		auditDetails["smart_schedule_task_error"] = scheduleTaskError.Error()
 	}
 	auditDetails["relay_response_header_timeout_seconds"] = settings.RelayHeaderTimeoutSeconds
 	recordManageAudit(c, "channel.monitor_settings_update", auditDetails)
@@ -1140,6 +1124,13 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{
 			"success": false,
 			"message": "设置已保存，但已被更新的智能调度配置覆盖，请刷新后确认",
+		})
+		return
+	}
+	if scheduleTaskError != nil && !forceResetSmartSchedule {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "设置已保存，但智能调度更新任务创建失败，请重试当前设置",
 		})
 		return
 	}

@@ -5,7 +5,21 @@ import (
 	"math"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 )
+
+func channelSmartScheduleAttachRealtimeWindow(
+	details *model.ChannelSmartScheduleScoreDetails,
+	snapshot service.ChannelMonitorRealtimeSnapshot,
+) {
+	if details == nil {
+		return
+	}
+	details.WindowStart = snapshot.WindowStart
+	details.WindowEnd = snapshot.WindowEnd
+	details.DataCutoffAt = snapshot.DataCutoffAt
+	details.EventWatermark = snapshot.EventWatermark
+}
 
 type channelSmartScheduleNormalization struct {
 	ratioMin        float64
