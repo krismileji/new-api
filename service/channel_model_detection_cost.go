@@ -469,6 +469,9 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if err := validateChannelModelDetectionUsage(input.SettledQuota, input.CostBasisQuota, input.InputTokens, input.OutputTokens, input.TotalTokens); err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
+	if input.SettledAt <= 0 {
+		input.SettledAt = common.GetTimestamp()
+	}
 	if input.UsageSource == "" {
 		input.UsageSource = model.ChannelModelDetectionUsageUpstreamAuthoritative
 		input.UsageAvailable = true
@@ -536,9 +539,6 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 			SanitizedErrorMessage: "模型检测成本换算失败",
 			UpdatedAt:             input.SettledAt,
 		})
-	}
-	if input.SettledAt <= 0 {
-		input.SettledAt = common.GetTimestamp()
 	}
 	if event.SettlementStatus == model.ChannelModelDetectionSettlementSettled {
 		if event.UsageSource != input.UsageSource || event.UsageAvailable != input.UsageAvailable ||

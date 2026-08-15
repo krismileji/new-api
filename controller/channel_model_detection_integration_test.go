@@ -311,6 +311,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	assert.Equal(t, model.ChannelModelDetectionSettlementSettled, event.SettlementStatus)
 	require.NotNil(t, event.SettledCostNanoCNY)
 	assert.Positive(t, *event.SettledCostNanoCNY)
+	assert.Positive(t, event.SettledAt)
 
 	detail, err := service.GetChannelModelDetectionRunDetail(context.Background(), db, run.RunId)
 	require.NoError(t, err)
@@ -361,6 +362,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	assert.Equal(t, baselineBoundChannel.UsedQuota, storedBoundChannel.UsedQuota)
 	assert.Equal(t, baselineDailyCost.CostNanoCNY+*event.SettledCostNanoCNY, storedDailyCost.CostNanoCNY)
 	assert.Equal(t, baselineDailyCost.ModelDetectionCostNanoCNY+*event.SettledCostNanoCNY, storedDailyCost.ModelDetectionCostNanoCNY)
+	assert.Equal(t, model.ChannelDailyCostDayStart(event.SettledAt), storedDailyCost.DayStart)
 	assert.Equal(t, baselineDailyCost.SettledCount+1, storedDailyCost.SettledCount)
 	assert.Equal(t, baselineDailyCost.UnresolvedCount, storedDailyCost.UnresolvedCount)
 	assert.Equal(t, event.SettledAt, storedDailyCost.UpdatedAt)

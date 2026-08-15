@@ -191,6 +191,28 @@ func TestChannelModelDetectionCostTransportBoundaryAndSettlementAreMonotonic(t *
 	assert.ErrorIs(t, err, ErrChannelModelDetectionCostConflict)
 }
 
+func TestChannelModelDetectionSettlementDefaultsTimestampBeforeDailyCostWrite(t *testing.T) {
+	db := setupChannelModelDetectionCostTest(t)
+	ctx := context.Background()
+	input := channelModelDetectionCostAttemptForTest("cost-default-settled-at", 1, channelModelDetectionCostSnapshotForTest("0.8", 500_000))
+	_, _, err := PrepareChannelModelDetectionCostEvent(ctx, db, input)
+	require.NoError(t, err)
+	_, err = MarkChannelModelDetectionCostEventDispatched(ctx, db, input.CostEventId, 104)
+	require.NoError(t, err)
+
+	settled, err := SettleChannelModelDetectionCostEvent(ctx, db, ChannelModelDetectionCostSettlementInput{
+		CostEventId: input.CostEventId, SettledQuota: 500_000, CostBasisQuota: 250_000,
+		InputTokens: 10, OutputTokens: 20, TotalTokens: 30,
+	})
+	require.NoError(t, err)
+	assert.Positive(t, settled.SettledAt)
+
+	var dailyCost model.ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", input.ChannelId).First(&dailyCost).Error)
+	assert.Equal(t, model.ChannelDailyCostDayStart(settled.SettledAt), dailyCost.DayStart)
+	assert.Equal(t, settled.SettledAt, dailyCost.UpdatedAt)
+}
+
 func TestChannelModelDetectionCostUnresolvedKeepsKnownEstimateOrNull(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
