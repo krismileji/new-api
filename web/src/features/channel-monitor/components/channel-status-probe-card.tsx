@@ -153,7 +153,7 @@ const ChannelStatusProbeModelStatuses = memo(
             {props.modelStatuses.length} 个模型
           </span>
         </div>
-        <div className='no-scrollbar min-h-0 flex-1 overflow-y-auto pr-1'>
+        <div className='no-scrollbar min-h-10 flex-1 overflow-y-auto pr-1'>
           {props.modelStatuses.length === 0 ? (
             <div className='text-muted-foreground flex h-full min-h-14 items-center justify-center text-xs'>
               尚未配置探测模型
@@ -262,7 +262,7 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
   return (
     <Card
       size='sm'
-      className='hover:ring-foreground/20 h-[25rem] gap-0 rounded-lg py-0 transition-colors [contain-intrinsic-size:400px] [content-visibility:auto]'
+      className='hover:ring-foreground/20 h-[28rem] gap-0 rounded-lg py-0 transition-colors [contain-intrinsic-size:448px] [content-visibility:auto]'
       data-testid='channel-status-probe-card'
     >
       <CardHeader className='grid-cols-[minmax(0,1fr)_auto] gap-3 border-b py-3'>

@@ -82,7 +82,7 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 		ScheduleEnabled: true, IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
 	}).Error)
 	_, firstExecution := seedChannelModelDetectionQueryChannel(t, db, 101, "juice_pass_fingerprint_strong", 100)
-	seedChannelModelDetectionQueryChannel(t, db, 102, "juice_insufficient_fingerprint_unclear", 200)
+	_, secondExecution := seedChannelModelDetectionQueryChannel(t, db, 102, "juice_insufficient_fingerprint_unclear", 200)
 	seedChannelModelDetectionQueryChannel(t, db, 103, "future_detector_outcome", 300)
 
 	settledQuota := int64(4)
@@ -93,7 +93,16 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 		DetectorRequestId: "detector-request", AttemptNo: 1, DispatchState: model.ChannelModelDetectionDispatchDispatched,
 		SettlementStatus: model.ChannelModelDetectionSettlementSettled, UsageSource: model.ChannelModelDetectionUsageUpstreamAuthoritative,
 		UsageAvailable: true, SettledQuota: &settledQuota, CostBasisQuota: &settledQuota, SettledCostNanoCNY: &settledCost,
-		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 101, UpdatedAt: 102,
+		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 101, SettledAt: 102, UpdatedAt: 102,
+	}).Error)
+	unresolvedCost := int64(759_054_000)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionCostEvent{
+		CostEventId: "cost-overview-unresolved", RunId: "run-102", TargetId: secondExecution.TargetId, ExecutionId: secondExecution.Id, ChannelId: 102,
+		RequestModel: secondExecution.RequestModel, ClaimedModel: secondExecution.ClaimedModel, Preset: secondExecution.Preset,
+		DetectorRequestId: "detector-request-unresolved", AttemptNo: 1, DispatchState: model.ChannelModelDetectionDispatchDispatched,
+		SettlementStatus: model.ChannelModelDetectionSettlementUnresolved, UsageSource: model.ChannelModelDetectionUsageLocalEstimate,
+		EstimatedQuota: 1, EstimatedCostNanoCNY: &unresolvedCost,
+		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 201, UpdatedAt: 202,
 	}).Error)
 	require.NoError(t, db.Create(&model.ChannelDailyCost{
 		ChannelId: 101, DayStart: model.ChannelDailyCostDayStart(1_000),
@@ -125,6 +134,13 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NotNil(t, response.Channels[0].LatestRunCost.SettledCostCNY)
 	assert.Equal(t, "0.025680000", *response.Channels[0].LatestRunCost.SettledCostCNY)
 	assert.InDelta(t, 0.02568, response.Channels[0].TodayModelDetectionCostCNY, 1e-12)
+	require.NotNil(t, response.Channels[0].TodayModelDetectionCost)
+	require.NotNil(t, response.Channels[0].TodayModelDetectionCost.SettledCostCNY)
+	assert.Equal(t, "0.025680000", *response.Channels[0].TodayModelDetectionCost.SettledCostCNY)
+	require.NotNil(t, response.Channels[1].TodayModelDetectionCost)
+	require.NotNil(t, response.Channels[1].TodayModelDetectionCost.UnresolvedCostCNY)
+	assert.Equal(t, "0.759054000", *response.Channels[1].TodayModelDetectionCost.UnresolvedCostCNY)
+	assert.EqualValues(t, 1, response.Channels[1].TodayModelDetectionCost.UnresolvedRequestCount)
 
 	encoded, err := common.Marshal(response)
 	require.NoError(t, err)

@@ -120,7 +120,7 @@ function LoadingState() {
       <Skeleton className='h-16 w-full rounded-lg' />
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
         {Array.from({ length: 3 }, (_, index) => (
-          <Skeleton key={index} className='h-[25rem] w-full rounded-lg' />
+          <Skeleton key={index} className='h-[28rem] w-full rounded-lg' />
         ))}
       </div>
     </div>

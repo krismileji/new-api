@@ -210,7 +210,8 @@ describe('状态探测卡片', () => {
       (html.match(/data-slot="status-probe-model"/g) ?? []).length,
       2
     )
-    assert.match(html, /h-\[25rem\]/)
+    assert.match(html, /h-\[28rem\]/)
+    assert.match(html, /class="[^"]*min-h-10[^"]*overflow-y-auto[^"]*"/)
     assert.match(html, /近 60 分钟状态/)
     assert.match(html, /gpt-4.1-mini/)
     assert.match(html, /aria-label="立即检测"/)

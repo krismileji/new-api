@@ -148,6 +148,7 @@ type ChannelModelDetectionChannelResponse struct {
 	ActiveRun                  *ChannelModelDetectionActiveRunResponse     `json:"active_run"`
 	Targets                    []ChannelModelDetectionTargetSummary        `json:"targets"`
 	LatestRunCost              *ChannelModelDetectionCostResponse          `json:"latest_run_cost"`
+	TodayModelDetectionCost    *ChannelModelDetectionCostResponse          `json:"today_model_detection_cost"`
 	TodayModelDetectionCostCNY float64                                     `json:"today_model_detection_cost_cny"`
 }
 
@@ -339,22 +340,23 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	for i := range executionRows {
 		executionIDs = append(executionIDs, executionRows[i].Id)
 	}
+	todayStart := model.ChannelDailyCostDayStart(now)
+	todayCostClause := "((created_at >= ? AND created_at <= ?) OR (settled_at >= ? AND settled_at <= ?))"
 	var costEvents []model.ChannelModelDetectionCostEvent
 	costQuery := db.Model(&model.ChannelModelDetectionCostEvent{})
 	switch {
 	case len(runIDs) > 0 && len(executionIDs) > 0:
-		costQuery = costQuery.Where("run_id IN ? OR execution_id IN ?", runIDs, executionIDs)
+		costQuery = costQuery.Where("(run_id IN ? OR execution_id IN ?) OR "+todayCostClause, runIDs, executionIDs, todayStart, now, todayStart, now)
 	case len(runIDs) > 0:
-		costQuery = costQuery.Where("run_id IN ?", runIDs)
+		costQuery = costQuery.Where("run_id IN ? OR "+todayCostClause, runIDs, todayStart, now, todayStart, now)
 	case len(executionIDs) > 0:
-		costQuery = costQuery.Where("execution_id IN ?", executionIDs)
+		costQuery = costQuery.Where("execution_id IN ? OR "+todayCostClause, executionIDs, todayStart, now, todayStart, now)
 	default:
-		costQuery = costQuery.Where("1 = 0")
+		costQuery = costQuery.Where(todayCostClause, todayStart, now, todayStart, now)
 	}
 	if err := costQuery.Order("id ASC").Find(&costEvents).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
-	todayStart := model.ChannelDailyCostDayStart(now)
 	var todayCosts []model.ChannelDailyCost
 	if err := db.Where("day_start = ?", todayStart).Order("channel_id ASC").Find(&todayCosts).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
@@ -524,6 +526,7 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 }
 
 func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDetectionGlobalConfig, channels []model.Channel, configs []model.ChannelModelDetectionConfig, targets []model.ChannelModelDetectionTarget, runs []model.ChannelModelDetectionRun, executionRows []channelModelDetectionExecutionOverviewRow, costEvents []model.ChannelModelDetectionCostEvent, todayCosts []model.ChannelDailyCost, ratioMonitors []model.ChannelRatioMonitor) (ChannelModelDetectionOverviewResponse, error) {
+	todayStart := model.ChannelDailyCostDayStart(now)
 	configured := global.DetectorURLConfigured()
 	maskedURL := maskChannelModelDetectorURL(global.DetectorURL)
 	response := ChannelModelDetectionOverviewResponse{
@@ -581,10 +584,18 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 	}
 	eventsByRun := make(map[string][]model.ChannelModelDetectionCostEvent)
 	eventsByExecution := make(map[int64][]model.ChannelModelDetectionCostEvent)
+	todayCostEventsByChannel := make(map[int][]model.ChannelModelDetectionCostEvent)
 	for i := range costEvents {
 		event := costEvents[i]
 		eventsByRun[event.RunId] = append(eventsByRun[event.RunId], event)
 		eventsByExecution[event.ExecutionId] = append(eventsByExecution[event.ExecutionId], event)
+		isToday := event.CreatedAt >= todayStart && event.CreatedAt <= now
+		if event.SettlementStatus == model.ChannelModelDetectionSettlementSettled {
+			isToday = event.SettledAt >= todayStart && event.SettledAt <= now
+		}
+		if isToday {
+			todayCostEventsByChannel[event.ChannelId] = append(todayCostEventsByChannel[event.ChannelId], event)
+		}
 	}
 	todayModelDetectionCostByChannel := make(map[int]int64, len(todayCosts))
 	for i := range todayCosts {
@@ -632,6 +643,14 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 		}
 		if costRatio, exists := costRatioByChannel[channel.Id]; exists {
 			item.CostRatio = &costRatio
+		}
+		if todayEvents := todayCostEventsByChannel[channel.Id]; len(todayEvents) > 0 {
+			aggregate, aggregateErr := aggregateChannelModelDetectionCostEventList(todayEvents)
+			if aggregateErr != nil {
+				return ChannelModelDetectionOverviewResponse{}, aggregateErr
+			}
+			cost := channelModelDetectionCostResponse(aggregate)
+			item.TodayModelDetectionCost = &cost
 		}
 		if channel.Remark != nil {
 			item.Remark = *channel.Remark

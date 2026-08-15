@@ -27,7 +27,9 @@ import {
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import type { TFunction } from 'i18next'
 import { memo, type ComponentProps } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -71,6 +73,11 @@ import type {
 } from '../types-model-detection'
 
 type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['variant']>
+
+type ModelDetectionCostSummary = {
+  value: string
+  detail: string | null
+}
 
 const HEALTH_PRESENTATION: Record<
   ChannelModelDetectionHealth,
@@ -127,6 +134,52 @@ const ACTIVE_RUN_LABEL: Partial<
   submission_unknown: '启动待确认',
   running: '检测中',
   canceling: '取消中',
+}
+
+function modelDetectionCostSummary(
+  cost: ChannelModelDetectionChannel['latest_run_cost'],
+  fallbackSettledCostCNY: number | null,
+  t: TFunction
+): ModelDetectionCostSummary {
+  let settledValue: string | null = null
+  if (cost?.settled_request_count && cost.settled_cost_cny != null) {
+    settledValue = formatChannelMonitorCost(Number(cost.settled_cost_cny))
+  } else if (fallbackSettledCostCNY != null && fallbackSettledCostCNY > 0) {
+    settledValue = formatChannelMonitorCost(fallbackSettledCostCNY)
+  }
+
+  let unresolvedValue: string | null = null
+  if (cost?.unresolved_request_count) {
+    unresolvedValue =
+      cost.unresolved_cost_cny == null
+        ? t('Pending verification')
+        : t('Pending verification {{cost}}', {
+            cost: formatChannelMonitorCost(Number(cost.unresolved_cost_cny)),
+          })
+  }
+
+  if (settledValue) {
+    return { value: settledValue, detail: unresolvedValue }
+  }
+  if (unresolvedValue) {
+    const unknownCount = cost?.unresolved_cost_unknown_count ?? 0
+    return {
+      value: unresolvedValue,
+      detail:
+        cost?.unresolved_cost_cny == null && unknownCount > 0
+          ? t('{{count}} requests cannot be estimated yet', {
+              count: unknownCount,
+            })
+          : null,
+    }
+  }
+  if (fallbackSettledCostCNY != null) {
+    return {
+      value: formatChannelMonitorCost(fallbackSettledCostCNY),
+      detail: null,
+    }
+  }
+  return { value: '-', detail: null }
 }
 
 function ModelDetectionActiveRunProgress(props: {
@@ -237,16 +290,21 @@ function ModelDetectionTarget(props: {
         <span className='line-clamp-2 text-pretty'>{presentation.label}</span>
       </div>
 
-      {progress && latest?.status !== 'completed' && (
+      {progress && (
         <div className='flex flex-col gap-1'>
           <div className='text-muted-foreground flex items-center justify-between gap-2 text-[11px] tabular-nums'>
-            <span>{latest.status === 'running' ? '检测进度' : '任务进度'}</span>
+            <span>
+              {latest.status === 'running' || latest.status === 'completed'
+                ? '检测进度'
+                : '任务进度'}
+            </span>
             <span>
               {progress.logical_completed} / {progress.planned}
             </span>
           </div>
           <Progress
             value={progressValue}
+            className='[&_[data-slot=progress-indicator]]:duration-500 [&_[data-slot=progress-track]]:h-2.5 [&_[data-slot=progress-track]]:rounded-sm'
             aria-label={`${props.target.request_model} 检测进度 ${progress.logical_completed} / ${progress.planned}`}
           />
         </div>
@@ -324,15 +382,17 @@ function IconAction(props: {
 
 export const ChannelModelDetectionCard = memo(
   function ChannelModelDetectionCard(props: ChannelModelDetectionCardProps) {
+    const { t } = useTranslation()
     const presentation = HEALTH_PRESENTATION[props.channel.health_status]
     const activeRun = props.channel.active_run
     const config = props.channel.config
     const latestRunCost = props.channel.latest_run_cost
-    const latestModelDetectionCostCNY =
-      latestRunCost?.settled_request_count &&
-      latestRunCost.settled_cost_cny != null
-        ? Number(latestRunCost.settled_cost_cny)
-        : null
+    const latestCostSummary = modelDetectionCostSummary(latestRunCost, null, t)
+    const todayCostSummary = modelDetectionCostSummary(
+      props.channel.today_model_detection_cost ?? null,
+      props.channel.today_model_detection_cost_cny ?? 0,
+      t
+    )
     const detectorBlocked =
       props.detectorState === 'offline' ||
       props.detectorState === 'incompatible' ||
@@ -358,7 +418,7 @@ export const ChannelModelDetectionCard = memo(
     return (
       <Card
         size='sm'
-        className='hover:ring-foreground/20 h-[25rem] min-w-0 gap-0 rounded-lg py-0 transition-colors [contain-intrinsic-size:400px] [content-visibility:auto]'
+        className='hover:ring-foreground/20 h-[28rem] min-w-0 gap-0 rounded-lg py-0 transition-colors [contain-intrinsic-size:448px] [content-visibility:auto]'
         data-testid='channel-model-detection-card'
         data-health={props.channel.health_status}
       >
@@ -449,18 +509,26 @@ export const ChannelModelDetectionCard = memo(
                 最近模型检测成本
               </dt>
               <dd className='mt-0.5 truncate font-mono text-sm font-semibold tabular-nums'>
-                {formatChannelMonitorCost(latestModelDetectionCostCNY)}
+                {latestCostSummary.value}
               </dd>
+              {latestCostSummary.detail && (
+                <div className='text-muted-foreground truncate text-[10px] tabular-nums'>
+                  {latestCostSummary.detail}
+                </div>
+              )}
             </div>
             <div className='min-w-0'>
               <dt className='text-muted-foreground text-[11px]'>
                 今日模型检测成本
               </dt>
               <dd className='mt-0.5 truncate font-mono text-sm font-semibold tabular-nums'>
-                {formatChannelMonitorCost(
-                  props.channel.today_model_detection_cost_cny
-                )}
+                {todayCostSummary.value}
               </dd>
+              {todayCostSummary.detail && (
+                <div className='text-muted-foreground truncate text-[10px] tabular-nums'>
+                  {todayCostSummary.detail}
+                </div>
+              )}
             </div>
           </dl>
           {!config || props.channel.targets.length === 0 ? (

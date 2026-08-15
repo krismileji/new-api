@@ -195,6 +195,7 @@ export type ChannelModelDetectionChannel = {
   active_run: ChannelModelDetectionActiveRun | null
   targets: ChannelModelDetectionTargetSummary[]
   latest_run_cost: ChannelModelDetectionCost | null
+  today_model_detection_cost?: ChannelModelDetectionCost | null
   today_model_detection_cost_cny?: number
 }
 

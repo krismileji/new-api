@@ -28,8 +28,24 @@ import type {
 import { domWindow } from './test-dom'
 
 const { renderToStaticMarkup } = await import('react-dom/server')
+const { createInstance } = await import('i18next')
+const { I18nextProvider } = await import('react-i18next')
 const { ChannelModelDetectionCard } =
   await import('../channel-model-detection-card')
+
+const testI18n = createInstance()
+await testI18n.init({
+  lng: 'zh',
+  resources: {
+    zh: {
+      translation: {
+        '{{count}} requests cannot be estimated yet': '{{count}} 次暂无法估算',
+        'Pending verification': '待核实',
+        'Pending verification {{cost}}': '待核实 {{cost}}',
+      },
+    },
+  },
+})
 
 const noop = () => {}
 
@@ -119,6 +135,10 @@ function createChannel(
     active_run: null,
     targets: [target],
     latest_run_cost: target.latest.cost,
+    today_model_detection_cost: createCost({
+      settled_cost_nano_cny: 51_360_000,
+      settled_cost_cny: '0.051360000',
+    }),
     today_model_detection_cost_cny: 0.05136,
   }
 }
@@ -128,19 +148,21 @@ function renderCard(
   detectorState: 'available' | 'offline' = 'available'
 ) {
   return renderToStaticMarkup(
-    <ChannelModelDetectionCard
-      channel={channel}
-      detectorState={detectorState}
-      scheduledPreset='medium'
-      scheduleEnabled
-      nextBatchAt={1_754_086_400}
-      serverNow={1_754_000_100}
-      onOpenHistory={noop}
-      onOpenConfig={noop}
-      onOpenManualRun={noop}
-      onCancelRun={noop}
-      onToggleSchedule={noop}
-    />
+    <I18nextProvider i18n={testI18n}>
+      <ChannelModelDetectionCard
+        channel={channel}
+        detectorState={detectorState}
+        scheduledPreset='medium'
+        scheduleEnabled
+        nextBatchAt={1_754_086_400}
+        serverNow={1_754_000_100}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onOpenManualRun={noop}
+        onCancelRun={noop}
+        onToggleSchedule={noop}
+      />
+    </I18nextProvider>
   )
 }
 
@@ -148,7 +170,7 @@ describe('模型检测渠道卡片', () => {
   test('固定高度且主体和图标命令均具备键盘入口', () => {
     const html = renderCard(createChannel('healthy'))
 
-    assert.match(html, /h-\[25rem\]/)
+    assert.match(html, /h-\[28rem\]/)
     assert.match(html, /min-w-0/)
     assert.match(html, /overflow-y-auto/)
     assert.match(html, /aria-label="打开 .* 模型检测记录"/)
@@ -162,6 +184,12 @@ describe('模型检测渠道卡片', () => {
     assert.match(html, /今日模型检测成本/)
     assert.match(html, /¥0\.0257/)
     assert.match(html, /¥0\.0514/)
+    assert.match(
+      html,
+      /gpt-5\.6-with-a-very-long-provider-alias.*检测进度 64 \/ 64/
+    )
+    assert.match(html, /data-slot=progress-track\]\]:h-2\.5/)
+    assert.match(html, /data-slot=progress-track\]\]:rounded-sm/)
   })
 
   test('七类聚合状态和离线状态都有文字等价', () => {
@@ -291,5 +319,27 @@ describe('模型检测渠道卡片', () => {
     assert.match(html, /检测器返回了新结论，请升级主系统适配/)
     assert.match(html, /暂无法估算 · 1 次请求/)
     assert.doesNotMatch(html, /已结算成本 ¥0\.000000000/)
+  })
+
+  test('未决成本进入最近与今日摘要但保持待核实语义', () => {
+    const channel = createChannel('healthy')
+    const unresolvedCost = createCost({
+      settled_quota: 0,
+      cost_basis_quota: 0,
+      settled_cost_nano_cny: 0,
+      settled_cost_cny: '0.000000000',
+      settled_request_count: 0,
+      unresolved_cost_nano_cny: 759_054_000,
+      unresolved_cost_cny: '0.759054000',
+      unresolved_request_count: 49,
+      status: 'unresolved',
+    })
+    channel.latest_run_cost = unresolvedCost
+    channel.today_model_detection_cost = unresolvedCost
+
+    const html = renderCard(channel)
+
+    assert.equal((html.match(/待核实 ¥0\.7591/g) ?? []).length, 2)
+    assert.doesNotMatch(html, /最近模型检测成本<\/dt><dd[^>]*>-<\/dd>/)
   })
 })
