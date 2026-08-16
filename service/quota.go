@@ -242,6 +242,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	performanceTiming := BuildRelayPerformanceTiming(
+		relayInfo,
+		RelayPerformanceOutputTokens(usage.OutputTokens, usage.OutputTokenDetails),
+		time.Now(),
+	)
+	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -258,9 +264,10 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Other:            other,
 	})
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:     usage.InputTokens,
-		CompletionTokens: usage.OutputTokens,
-		InputTokens:      usage.InputTokens,
+		PromptTokens:      usage.InputTokens,
+		CompletionTokens:  usage.OutputTokens,
+		InputTokens:       usage.InputTokens,
+		PerformanceTiming: &performanceTiming,
 	})
 }
 
@@ -372,6 +379,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	performanceTiming := BuildRelayPerformanceTiming(
+		relayInfo,
+		RelayPerformanceOutputTokens(usage.CompletionTokens, usage.CompletionTokenDetails),
+		time.Now(),
+	)
+	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -394,11 +407,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		inputTokens = usage.PromptTokens
 	}
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		CacheReadTokens:  cacheReadTokens,
-		CacheWriteTokens: cacheWriteTokens,
-		InputTokens:      inputTokens,
+		PromptTokens:      usage.PromptTokens,
+		CompletionTokens:  usage.CompletionTokens,
+		CacheReadTokens:   cacheReadTokens,
+		CacheWriteTokens:  cacheWriteTokens,
+		InputTokens:       inputTokens,
+		PerformanceTiming: &performanceTiming,
 	})
 }
 

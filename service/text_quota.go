@@ -519,6 +519,16 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	performanceDetails := dto.OutputTokenDetails{}
+	if billingUsage != nil {
+		performanceDetails = billingUsage.CompletionTokenDetails
+	}
+	performanceTiming := BuildRelayPerformanceTiming(
+		relayInfo,
+		RelayPerformanceOutputTokens(summary.CompletionTokens, performanceDetails),
+		time.Now(),
+	)
+	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 
@@ -543,10 +553,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		inputTokens += summary.CacheTokens + cacheWriteTokens
 	}
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:     summary.PromptTokens,
-		CompletionTokens: summary.CompletionTokens,
-		CacheReadTokens:  summary.CacheTokens,
-		CacheWriteTokens: cacheWriteTokens,
-		InputTokens:      inputTokens,
+		PromptTokens:      summary.PromptTokens,
+		CompletionTokens:  summary.CompletionTokens,
+		CacheReadTokens:   summary.CacheTokens,
+		CacheWriteTokens:  cacheWriteTokens,
+		InputTokens:       inputTokens,
+		PerformanceTiming: &performanceTiming,
 	})
 }

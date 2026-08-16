@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -18,12 +17,13 @@ import (
 )
 
 type ChannelMonitorSuccessEventInput struct {
-	PromptTokens     int
-	CompletionTokens int
-	CacheReadTokens  int
-	CacheWriteTokens int
-	InputTokens      int
-	CostEventId      string
+	PromptTokens      int
+	CompletionTokens  int
+	CacheReadTokens   int
+	CacheWriteTokens  int
+	InputTokens       int
+	CostEventId       string
+	PerformanceTiming *RelayPerformanceTiming
 }
 
 func EmitChannelMonitorSuccessEvent(
@@ -36,6 +36,13 @@ func EmitChannelMonitorSuccessEvent(
 	}
 
 	now := time.Now()
+	performanceTiming := input.PerformanceTiming
+	if performanceTiming == nil {
+		value := BuildRelayPerformanceTiming(relayInfo, input.CompletionTokens, now)
+		performanceTiming = &value
+	} else if !performanceTiming.CompletedAt.IsZero() {
+		now = performanceTiming.CompletedAt
+	}
 	source := channelMonitorEventSource(ctx)
 	if relayInfo.IsChannelTest && source != model.ChannelMonitorEventSourceModelDetection {
 		return ChannelMonitorEventPublishStatusInvalid
@@ -72,28 +79,15 @@ func EmitChannelMonitorSuccessEvent(
 		}
 	}
 
-	duration := now.Sub(relayInfo.StartTime)
-	if duration < 0 {
-		duration = 0
-	}
-	durationMs := duration.Milliseconds()
+	durationMs := performanceTiming.AttemptDurationMs
 	event.AttemptDurationMs = &durationMs
-
-	if relayInfo.IsStream && relayInfo.HasSendResponse() {
-		firstTokenMs := float64(relayInfo.FirstResponseTime.Sub(relayInfo.StartTime)) / float64(time.Millisecond)
-		if firstTokenMs >= 0 && !math.IsNaN(firstTokenMs) && !math.IsInf(firstTokenMs, 0) {
-			event.FirstTokenMs = &firstTokenMs
-		}
+	if performanceTiming.FirstTokenMs != nil {
+		value := *performanceTiming.FirstTokenMs
+		event.FirstTokenMs = &value
 	}
-	generationDuration := duration
-	if event.FirstTokenMs != nil {
-		generationDuration = now.Sub(relayInfo.FirstResponseTime)
-	}
-	if input.CompletionTokens > 0 && generationDuration > 0 {
-		tps := float64(input.CompletionTokens) / generationDuration.Seconds()
-		if tps >= 0 && !math.IsNaN(tps) && !math.IsInf(tps, 0) {
-			event.TPS = &tps
-		}
+	if performanceTiming.TokensPerSecond != nil {
+		value := *performanceTiming.TokensPerSecond
+		event.TPS = &value
 	}
 
 	if source != model.ChannelMonitorEventSourceModelDetection {

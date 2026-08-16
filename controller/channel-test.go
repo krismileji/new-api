@@ -565,17 +565,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
-	probeElapsed := time.Since(tik)
-	var firstResponseMilliseconds *float64
-	if info.IsStream && info.HasSendResponse() {
-		value := float64(info.FirstResponseTime.Sub(info.StartTime)) / float64(time.Millisecond)
-		firstResponseMilliseconds = &value
-	}
-	var tokensPerSecond *float64
-	if info.IsStream && usage.CompletionTokens > 0 && probeElapsed > 0 {
-		value := float64(usage.CompletionTokens) / probeElapsed.Seconds()
-		tokensPerSecond = &value
-	}
+	performanceTiming := service.BuildRelayPerformanceTiming(
+		info,
+		service.RelayPerformanceOutputTokens(usage.CompletionTokens, usage.CompletionTokenDetails),
+		time.Now(),
+	)
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	_, pointerUsage := usageA.(*dto.Usage)
 	_, valueUsage := usageA.(dto.Usage)
@@ -584,6 +578,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	consumedTime := time.Since(tik).Seconds()
 	if isAutomatedProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
 		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+		service.AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 		tokenName := "模型测试"
 		content := "模型测试"
 		if isSmartScheduleProbe {
@@ -618,8 +613,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		newAPIError:               nil,
 		requestDispatched:         requestDispatched,
 		originalModelName:         info.OriginModelName,
-		firstResponseMilliseconds: firstResponseMilliseconds,
-		tokensPerSecond:           tokensPerSecond,
+		firstResponseMilliseconds: performanceTiming.FirstTokenMs,
+		tokensPerSecond:           performanceTiming.TokensPerSecond,
 		usageMetrics:              buildChannelTestUsageMetrics(usage, usageIsAuthoritative),
 	}
 }
