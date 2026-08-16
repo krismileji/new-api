@@ -22,10 +22,14 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { formatTimestampToDate } from '@/lib/format'
 
-import type { ChannelMonitorPerformanceMetricCoverage } from '../types'
+import type {
+  ChannelMonitorPerformanceMetricCoverage,
+  ChannelMonitorRealtimeMetadata,
+} from '../types'
 
 type ChannelMonitorPerformanceCoverageAlertProps = {
   coverage?: ChannelMonitorPerformanceMetricCoverage
+  metadata?: ChannelMonitorRealtimeMetadata
   rangeLabel: string
 }
 
@@ -44,14 +48,114 @@ export function ChannelMonitorPerformanceCoverageAlert(
     props.coverage.aggregated_through > 0
       ? formatTimestampToDate(props.coverage.aggregated_through)
       : '尚未建立'
+  const reasons = props.metadata?.degraded_reasons ?? []
+  const issueDescriptions: string[] = []
+
+  for (const reason of reasons) {
+    switch (reason) {
+      case 'redis_unavailable':
+        issueDescriptions.push(
+          'Redis 不可用或状态检查失败，无法确认实时事件处理进度。'
+        )
+        break
+      case 'consumer_stopped':
+        issueDescriptions.push('Redis 消费者心跳已失效，实时事件当前无人处理。')
+        break
+      case 'consumer_group_missing':
+        issueDescriptions.push(
+          'Redis Stream 消费组尚未建立，实时事件无法进入分钟汇总。'
+        )
+        break
+      case 'event_backlog': {
+        const pendingCount = props.metadata?.pending_count ?? 0
+        const oldestPendingAt = props.metadata?.oldest_pending_at ?? 0
+        const consumerLagSeconds = props.metadata?.consumer_lag_seconds ?? 0
+        let description = 'Redis Stream 存在尚未处理完成的事件'
+        if (pendingCount > 0) {
+          description += `，其中 ${pendingCount} 条已交付但尚未确认`
+        }
+        if (oldestPendingAt > 0) {
+          description += `；最早一条产生于 ${formatTimestampToDate(oldestPendingAt)}`
+        }
+        if (consumerLagSeconds > 0) {
+          description += `，当前延迟 ${consumerLagSeconds} 秒`
+        }
+        issueDescriptions.push(`${description}。`)
+        break
+      }
+      case 'publisher_unavailable':
+        issueDescriptions.push(
+          '最近一次实时事件发布失败，且之后尚无成功发布记录。'
+        )
+        break
+      case 'marker_release_failure':
+        issueDescriptions.push(
+          '聚合副作用标记释放失败，事件重试流程可能受到影响。'
+        )
+        break
+      case 'stream_trim_failure':
+        issueDescriptions.push(
+          'Redis Stream 裁剪失败，实时统计链路仍被标记为异常。'
+        )
+        break
+      default:
+        issueDescriptions.push(`未识别的实时链路降级原因：${reason}。`)
+    }
+  }
+
+  if (reasons.length === 0) {
+    const redisAvailable =
+      props.metadata?.redis_available ??
+      props.metadata?.redis_status !== 'unavailable'
+    if (!redisAvailable) {
+      issueDescriptions.push(
+        'Redis 不可用或状态检查失败，无法确认实时事件处理进度。'
+      )
+    }
+    if (props.metadata?.redis_consumer_running === false) {
+      issueDescriptions.push('Redis 消费者心跳已失效，实时事件当前无人处理。')
+    }
+    if (
+      (props.metadata?.pending_count ?? props.metadata?.queue_depth ?? 0) > 0 ||
+      (props.metadata?.oldest_pending_at ?? 0) > 0
+    ) {
+      issueDescriptions.push(
+        `Redis Stream 存在尚未处理完成的事件，当前延迟 ${props.metadata?.consumer_lag_seconds ?? 0} 秒。`
+      )
+    }
+    if (props.metadata?.marker_release_failure_active) {
+      issueDescriptions.push(
+        '聚合副作用标记释放失败，事件重试流程可能受到影响。'
+      )
+    }
+    if (props.metadata?.stream_trim_failure_active) {
+      issueDescriptions.push(
+        'Redis Stream 裁剪失败，实时统计链路仍被标记为异常。'
+      )
+    }
+  }
+
+  if (issueDescriptions.length === 0) {
+    issueDescriptions.push(
+      '实时统计链路已被标记为降级，但接口未返回具体故障原因，请查看服务端日志。'
+    )
+  }
 
   return (
     <Alert>
       <HugeiconsIcon icon={Alert02Icon} aria-hidden='true' />
       <AlertTitle>{props.rangeLabel}统计窗口数据尚未覆盖完整</AlertTitle>
-      <AlertDescription>
-        当前分钟汇总覆盖从 {coveredFrom} 到 {coveredThrough}
-        ，当前请求数、成功率和性能数据可能偏低。
+      <AlertDescription className='flex flex-col gap-1.5'>
+        <span>
+          当前分钟汇总覆盖从 {coveredFrom} 到 {coveredThrough}
+          ，当前请求数、成功率和性能数据可能偏低。
+        </span>
+        <span>具体原因：</span>
+        <ul className='list-disc pl-5'>
+          {issueDescriptions.map((description) => (
+            <li key={description}>{description}</li>
+          ))}
+        </ul>
       </AlertDescription>
     </Alert>
   )

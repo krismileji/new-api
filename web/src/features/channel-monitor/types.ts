@@ -236,8 +236,18 @@ export type ChannelMonitorRealtimeMetadata = {
   marker_release_failure_active?: boolean
   stream_trim_failure_count?: number
   stream_trim_failure_active?: boolean
+  degraded_reasons?: ChannelMonitorRealtimeDegradedReason[]
   realtime_degraded: boolean
 }
+
+export type ChannelMonitorRealtimeDegradedReason =
+  | 'redis_unavailable'
+  | 'consumer_stopped'
+  | 'consumer_group_missing'
+  | 'event_backlog'
+  | 'publisher_unavailable'
+  | 'marker_release_failure'
+  | 'stream_trim_failure'
 
 export type ChannelMonitorOverview = ChannelMonitorRealtimeMetadata & {
   generated_at: number

@@ -1241,6 +1241,7 @@ export function ChannelMonitor() {
           view !== 'model-detection' ? (
             <ChannelMonitorPerformanceCoverageAlert
               coverage={performanceQuery.data?.data.metric_coverage}
+              metadata={performanceQuery.data?.data}
               rangeLabel={performanceRangeLabel}
             />
           ) : null}

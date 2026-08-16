@@ -42,6 +42,39 @@ describe('channel monitor performance coverage alert', () => {
 
     assert.ok(markup.includes('近60分钟统计窗口数据尚未覆盖完整'))
     assert.ok(markup.includes('当前请求数、成功率和性能数据可能偏低'))
+    assert.ok(markup.includes('接口未返回具体故障原因'))
+  })
+
+  test('lists every reported degradation reason with backlog details', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorPerformanceCoverageAlert
+        coverage={incompleteCoverage}
+        metadata={{
+          data_cutoff_at: 1_752_777_800,
+          processed_at: 1_752_777_810,
+          event_watermark: 42,
+          queue_depth: 3,
+          redis_status: 'available',
+          redis_available: true,
+          redis_consumer_running: true,
+          pending_count: 3,
+          oldest_pending_at: 1_752_777_755,
+          consumer_lag_seconds: 45,
+          degraded_reasons: [
+            'event_backlog',
+            'publisher_unavailable',
+            'marker_release_failure',
+          ],
+          realtime_degraded: true,
+        }}
+        rangeLabel='近60分钟'
+      />
+    )
+
+    assert.ok(markup.includes('其中 3 条已交付但尚未确认'))
+    assert.ok(markup.includes('当前延迟 45 秒'))
+    assert.ok(markup.includes('最近一次实时事件发布失败'))
+    assert.ok(markup.includes('聚合副作用标记释放失败'))
   })
 
   test('stays hidden after the requested window is fully covered', () => {

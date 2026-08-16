@@ -63,6 +63,7 @@ func TestChannelMonitorRedisRealtimeStatusReportsPendingAndRecovers(t *testing.T
 	assert.Equal(t, int64(1750000050), status.LastProcessedAt)
 	assert.Equal(t, int64(3), status.RetryCount)
 	assert.Equal(t, int64(2), status.TakeoverCount)
+	assert.Equal(t, []string{ChannelMonitorRedisDegradedReasonEventBacklog}, status.DegradedReasons)
 	assert.True(t, status.RealtimeDegraded)
 
 	require.NoError(t, client.XAck(
@@ -75,6 +76,7 @@ func TestChannelMonitorRedisRealtimeStatusReportsPendingAndRecovers(t *testing.T
 	assert.Zero(t, undelivered.PendingCount)
 	assert.Equal(t, int64(1750000060), undelivered.OldestPendingAt)
 	assert.Equal(t, int64(60), undelivered.ConsumerLagSeconds)
+	assert.Equal(t, []string{ChannelMonitorRedisDegradedReasonEventBacklog}, undelivered.DegradedReasons)
 	assert.True(t, undelivered.RealtimeDegraded)
 	messages, err := client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    ChannelMonitorRedisConsumerGroup,
@@ -103,16 +105,39 @@ func TestChannelMonitorRedisRealtimeStatusReportsPendingAndRecovers(t *testing.T
 	assert.Equal(t, int64(0), recovered.PendingCount)
 	assert.Equal(t, int64(0), recovered.OldestPendingAt)
 	assert.Equal(t, int64(0), recovered.ConsumerLagSeconds)
+	assert.Empty(t, recovered.DegradedReasons)
 	assert.False(t, recovered.RealtimeDegraded)
 
 	require.NoError(t, client.Del(ctx, ChannelMonitorRedisConsumerHeartbeatKey).Err())
-	assert.True(t, getChannelMonitorRedisRealtimeStatus(ctx, client, time.Unix(1750000120, 0)).RealtimeDegraded)
+	stopped := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Unix(1750000120, 0))
+	assert.Equal(t, []string{ChannelMonitorRedisDegradedReasonConsumerStopped}, stopped.DegradedReasons)
+	assert.True(t, stopped.RealtimeDegraded)
 
 	server.Close()
 	failed := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Unix(1750000120, 0))
 	assert.Equal(t, ChannelMonitorRedisStatusUnavailable, failed.RedisStatus)
 	assert.False(t, failed.RedisAvailable)
+	assert.Equal(t, []string{ChannelMonitorRedisDegradedReasonRedisUnavailable}, failed.DegradedReasons)
 	assert.True(t, failed.RealtimeDegraded)
+}
+
+func TestChannelMonitorRedisRealtimeStatusReportsEveryStartupFailure(t *testing.T) {
+	useChannelMonitorEventPublishStatsIsolation(t)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	require.NoError(t, client.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: ChannelMonitorRedisEventStream,
+		Values: map[string]interface{}{"event": "startup"},
+	}).Err())
+
+	status := getChannelMonitorRedisRealtimeStatus(context.Background(), client, time.Now())
+
+	assert.Equal(t, []string{
+		ChannelMonitorRedisDegradedReasonConsumerStopped,
+		ChannelMonitorRedisDegradedReasonConsumerGroupMissing,
+	}, status.DegradedReasons)
+	assert.True(t, status.RealtimeDegraded)
 }
 
 type failingChannelMonitorEventAppender struct{}
@@ -149,7 +174,9 @@ func TestChannelMonitorRedisRealtimeStatusKeepsPublisherFailureDegradedUntilPubl
 	)
 	require.Error(t, err)
 	assert.Equal(t, ChannelMonitorEventPublishStatusUnavailable, status)
-	assert.True(t, getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now()).RealtimeDegraded)
+	degraded := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now())
+	assert.Equal(t, []string{ChannelMonitorRedisDegradedReasonPublisherUnavailable}, degraded.DegradedReasons)
+	assert.True(t, degraded.RealtimeDegraded)
 	assert.True(t, getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now()).RealtimeDegraded)
 
 	status, err = publishChannelMonitorEvent(
@@ -177,6 +204,7 @@ func TestChannelMonitorRedisRealtimeStatusKeepsPublisherFailureDegradedUntilPubl
 	).Err())
 
 	recovered := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now())
+	assert.Empty(t, recovered.DegradedReasons)
 	assert.False(t, recovered.RealtimeDegraded)
 }
 
@@ -208,6 +236,10 @@ func TestChannelMonitorRedisRealtimeStatusReportsOperationalFaultsUntilRecovery(
 	assert.True(t, failed.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), failed.StreamTrimFailureCount)
 	assert.True(t, failed.StreamTrimFailureActive)
+	assert.Equal(t, []string{
+		ChannelMonitorRedisDegradedReasonMarkerReleaseFailure,
+		ChannelMonitorRedisDegradedReasonStreamTrimFailure,
+	}, failed.DegradedReasons)
 	assert.True(t, failed.RealtimeDegraded)
 
 	require.NoError(t, client.HSet(
@@ -223,6 +255,7 @@ func TestChannelMonitorRedisRealtimeStatusReportsOperationalFaultsUntilRecovery(
 	assert.False(t, recovered.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), recovered.StreamTrimFailureCount)
 	assert.False(t, recovered.StreamTrimFailureActive)
+	assert.Empty(t, recovered.DegradedReasons)
 	assert.False(t, recovered.RealtimeDegraded)
 }
 

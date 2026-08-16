@@ -61,6 +61,7 @@ func TestChannelMonitorRealtimeMetadataUsesRedisObservability(t *testing.T) {
 	assert.False(t, metadata.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), metadata.StreamTrimFailureCount)
 	assert.False(t, metadata.StreamTrimFailureActive)
+	assert.Empty(t, metadata.DegradedReasons)
 	assert.False(t, metadata.RealtimeDegraded)
 
 	require.NoError(t, client.HSet(
@@ -71,5 +72,6 @@ func TestChannelMonitorRealtimeMetadataUsesRedisObservability(t *testing.T) {
 	).Err())
 	degraded := channelMonitorRealtimeMetadata(0)
 	assert.True(t, degraded.MarkerReleaseFailureActive)
+	assert.Equal(t, []string{service.ChannelMonitorRedisDegradedReasonMarkerReleaseFailure}, degraded.DegradedReasons)
 	assert.True(t, degraded.RealtimeDegraded)
 }

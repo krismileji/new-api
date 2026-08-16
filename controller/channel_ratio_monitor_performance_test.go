@@ -21,6 +21,7 @@ type channelMonitorPerformanceAPIResponse struct {
 		RangeSource             string                                          `json:"range_source"`
 		GeneratedAt             int64                                           `json:"generated_at"`
 		ProjectionStartedAt     int64                                           `json:"projection_started_at"`
+		DegradedReasons         []string                                        `json:"degraded_reasons"`
 		RealtimeDegraded        bool                                            `json:"realtime_degraded"`
 		MetricCoverage          channelMonitorPerformanceMetricCoverageResponse `json:"metric_coverage"`
 		Items                   []model.ChannelMonitorPerformanceMetric         `json:"items"`
@@ -81,6 +82,8 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
 	assert.Zero(t, response.Data.ProjectionStartedAt)
+	require.NotNil(t, response.Data.DegradedReasons)
+	assert.Empty(t, response.Data.DegradedReasons)
 	assert.False(t, response.Data.RealtimeDegraded)
 	assert.True(t, response.Data.MetricCoverage.WindowComplete)
 	windowStart := (response.Data.GeneratedAt - 30*60) - (response.Data.GeneratedAt-30*60)%60
