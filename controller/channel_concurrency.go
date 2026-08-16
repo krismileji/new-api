@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type channelConcurrencyLimitUpdateRequest struct {
@@ -48,16 +49,23 @@ func UpdateChannelMonitorConcurrencyLimit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "渠道并发限制必须在 0 到 100000 之间"})
 		return
 	}
-
-	monitor, err := service.SaveChannelConcurrencyLimit(c.Request.Context(), channelID, *request.ConcurrencyLimit)
-	if monitor.ConcurrencyRevision > 0 {
-		recordManageAudit(c, "channel.monitor_concurrency_limit_update", map[string]interface{}{
-			"id": channelID, "concurrency_limit": monitor.ConcurrencyLimit,
-		})
+	currentLimit := 0
+	currentMonitor, currentErr := model.GetChannelRatioMonitor(channelID)
+	if currentErr == nil {
+		currentLimit = currentMonitor.ConcurrencyLimit
+	} else if !errors.Is(currentErr, gorm.ErrRecordNotFound) {
+		common.ApiError(c, currentErr)
+		return
 	}
+	monitor, err := service.SaveChannelConcurrencyLimit(c.Request.Context(), channelID, *request.ConcurrencyLimit)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if currentLimit != monitor.ConcurrencyLimit {
+		recordManageAudit(c, "channel.monitor_concurrency_limit_update", map[string]interface{}{
+			"id": channelID, "concurrency_limit": monitor.ConcurrencyLimit,
+		})
 	}
 	common.ApiSuccess(c, gin.H{
 		"concurrency_limit": monitor.ConcurrencyLimit,

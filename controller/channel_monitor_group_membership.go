@@ -52,16 +52,16 @@ func UpdateChannelMonitorGroupChannels(c *gin.Context) {
 	if len(result.AddedChannelIds) > 0 || len(result.RemovedChannelIds) > 0 {
 		model.InitChannelCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_group_channels_update", map[string]interface{}{
+			"group":               result.Group,
+			"channel_count":       len(result.ChannelIds),
+			"channel_ids":         result.ChannelIds,
+			"added_count":         len(result.AddedChannelIds),
+			"added_channel_ids":   result.AddedChannelIds,
+			"removed_count":       len(result.RemovedChannelIds),
+			"removed_channel_ids": result.RemovedChannelIds,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_group_channels_update", map[string]interface{}{
-		"group":               result.Group,
-		"channel_count":       len(result.ChannelIds),
-		"channel_ids":         result.ChannelIds,
-		"added_count":         len(result.AddedChannelIds),
-		"added_channel_ids":   result.AddedChannelIds,
-		"removed_count":       len(result.RemovedChannelIds),
-		"removed_channel_ids": result.RemovedChannelIds,
-	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

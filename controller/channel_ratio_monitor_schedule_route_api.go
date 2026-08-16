@@ -310,14 +310,15 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 			taskResponse = task.ToResponse()
 		}
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
-		"id": channelId, "group": group, "model": modelName,
-		"duration_minutes":             *request.DurationMinutes,
-		"allow_stability_degrade":      allowStabilityDegrade,
-		"confirm_stability_override":   request.ConfirmStabilityOverride,
-		"stability_protection_cleared": result.StabilityProtectionCleared,
-		"manual_primary_until":         result.State.ManualPrimaryUntil,
-	})
+	if *request.DurationMinutes > 0 || result.RoutingChanged || result.StabilityProtectionCleared {
+		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
+			"id": channelId, "group": group, "model": modelName,
+			"duration_minutes":             *request.DurationMinutes,
+			"allow_stability_degrade":      allowStabilityDegrade,
+			"stability_protection_cleared": result.StabilityProtectionCleared,
+			"manual_primary_until":         result.State.ManualPrimaryUntil,
+		})
+	}
 	common.ApiSuccess(c, gin.H{
 		"channel_id":                   channelId,
 		"group":                        group,
@@ -361,10 +362,10 @@ func UpdateChannelMonitorSmartScheduleRouteConfig(c *gin.Context) {
 	model.InitChannelCache()
 	if routingChanged {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_smart_schedule_route_config_update", map[string]interface{}{
+			"id": channelId, "group": group, "model": modelName, "excluded": *request.Excluded,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_route_config_update", map[string]interface{}{
-		"id": channelId, "group": group, "model": modelName, "excluded": *request.Excluded,
-	})
 	common.ApiSuccess(c, gin.H{
 		"channel_id": channelId,
 		"group":      group,
@@ -403,11 +404,11 @@ func UpdateChannelMonitorSmartScheduleChannelConfig(c *gin.Context) {
 	model.InitChannelCache()
 	if result.Updated > 0 {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_smart_schedule_channel_config_update", map[string]interface{}{
+			"id": channelId, "excluded": *request.Excluded,
+			"total": result.Total, "updated": result.Updated,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_channel_config_update", map[string]interface{}{
-		"id": channelId, "excluded": *request.Excluded,
-		"total": result.Total, "updated": result.Updated,
-	})
 	common.ApiSuccess(c, result)
 }
 
@@ -440,12 +441,12 @@ func ClearChannelMonitorSmartScheduleRouteStability(c *gin.Context) {
 	}
 	if result.Cleared {
 		model.InitChannelCache()
+		recordManageAudit(c, "channel.monitor_smart_schedule_route_stability_clear", map[string]interface{}{
+			"id": channelId, "group": group, "model": modelName,
+			"previous_state": result.PreviousState,
+			"priority":       result.Priority, "weight": result.Weight,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_route_stability_clear", map[string]interface{}{
-		"id": channelId, "group": group, "model": modelName,
-		"previous_state": result.PreviousState, "cleared": result.Cleared,
-		"priority": result.Priority, "weight": result.Weight,
-	})
 	common.ApiSuccess(c, gin.H{
 		"cleared":        result.Cleared,
 		"previous_state": result.PreviousState,
@@ -479,12 +480,12 @@ func ClearChannelMonitorSmartScheduleRouteExploration(c *gin.Context) {
 	}
 	if result.Cleared {
 		model.InitChannelCache()
+		recordManageAudit(c, "channel.monitor_smart_schedule_route_exploration_clear", map[string]interface{}{
+			"id": channelId, "group": group, "model": modelName,
+			"previous_kind": result.PreviousKind,
+			"priority":      result.Priority, "weight": result.Weight,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_route_exploration_clear", map[string]interface{}{
-		"id": channelId, "group": group, "model": modelName,
-		"previous_kind": result.PreviousKind, "cleared": result.Cleared,
-		"priority": result.Priority, "weight": result.Weight,
-	})
 	common.ApiSuccess(c, gin.H{
 		"cleared":       result.Cleared,
 		"previous_kind": result.PreviousKind,

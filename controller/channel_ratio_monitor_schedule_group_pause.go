@@ -54,14 +54,13 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 	if result.Changed {
 		model.InitChannelCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_smart_schedule_group_pause_update", map[string]interface{}{
+			"id": channelId, "group": group, "model": modelName,
+			"duration_minutes": *request.DurationMinutes,
+			"paused_until":     result.PausedUntil,
+			"affected_routes":  result.AffectedRoutes,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_group_pause_update", map[string]interface{}{
-		"id": channelId, "group": group, "model": modelName,
-		"duration_minutes": *request.DurationMinutes,
-		"paused_until":     result.PausedUntil,
-		"affected_routes":  result.AffectedRoutes,
-		"changed":          result.Changed,
-	})
 	common.ApiSuccess(c, gin.H{
 		"channel_id":       channelId,
 		"group":            group,

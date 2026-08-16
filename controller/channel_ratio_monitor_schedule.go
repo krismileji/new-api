@@ -340,10 +340,6 @@ func RunChannelMonitorSmartSchedule(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "channel.monitor_smart_schedule_run", map[string]interface{}{
-		"created": created,
-		"task_id": task.TaskID,
-	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

@@ -1176,12 +1176,16 @@ func UpdateChannelStatus(c *gin.Context) {
 	if changed {
 		model.InitChannelCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		statusLabel := "禁用"
+		if req.Status == common.ChannelStatusEnabled {
+			statusLabel = "启用"
+		}
+		recordManageAudit(c, "channel.status_changed", map[string]interface{}{
+			"id": id, "status": req.Status, "status_label": statusLabel,
+		})
+	} else {
+		markAuditLogged(c)
 	}
-	recordManageAudit(c, "channel.status_update", map[string]interface{}{
-		"id":      id,
-		"status":  req.Status,
-		"changed": changed,
-	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1204,12 +1208,17 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	if changedCount > 0 {
 		model.InitChannelCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		statusLabel := "禁用"
+		if req.Status == common.ChannelStatusEnabled {
+			statusLabel = "启用"
+		}
+		recordManageAudit(c, "channel.status_changed_batch", map[string]interface{}{
+			"count": changedCount, "total": len(req.Ids),
+			"status": req.Status, "status_label": statusLabel,
+		})
+	} else {
+		markAuditLogged(c)
 	}
-	recordManageAudit(c, "channel.status_update_batch", map[string]interface{}{
-		"count":  changedCount,
-		"total":  len(req.Ids),
-		"status": req.Status,
-	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

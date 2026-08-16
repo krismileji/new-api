@@ -467,28 +467,57 @@ const AUDIT_TEMPLATES: Record<string, string> = {
 // 渠道监控是内部自定义功能，操作日志固定使用中文，不跟随系统语言切换。
 const CHANNEL_MONITOR_AUDIT_TEMPLATES: Record<string, string> = {
   'channel.status_update': '已将渠道 {{id}} 的状态更新为 {{status}}',
+  'channel.status_update_batch': '已将 {{count}} 个渠道的状态更新为 {{status}}',
+  'channel.status_changed': '已{{status_label}}渠道 {{id}}',
+  'channel.status_changed_batch': '已{{status_label}} {{count}} 个渠道',
+  'channel.monitor_concurrency_limit_update':
+    '已将渠道 {{id}} 的并发限制更新为 {{concurrency_limit}}（0 表示不限制）',
   'channel.monitor_smart_schedule_config_update':
-    '已更新渠道 {{id}} 的智能调度设置',
+    '已将渠道 {{id}} 在分组 {{group}}、模型 {{model}} 的主渠道固定时间更新为 {{duration_minutes}} 分钟',
   'channel.monitor_smart_schedule_stability_clear':
     '已手动解除渠道 {{id}} 的稳定性保护，恢复优先级 {{priority}}、权重 {{weight}}',
+  'channel.monitor_smart_schedule_channel_config_update':
+    '已更新渠道 {{id}} 的智能调度参与设置（影响 {{updated}} 条路由）',
+  'channel.monitor_smart_schedule_route_config_update':
+    '已更新渠道 {{id}} 在分组 {{group}}、模型 {{model}} 的智能调度参与设置',
+  'channel.monitor_smart_schedule_group_pause_update':
+    '已将渠道 {{id}} 在分组 {{group}}、模型 {{model}} 的流量暂停时间更新为 {{duration_minutes}} 分钟',
+  'channel.monitor_smart_schedule_route_stability_clear':
+    '已解除渠道 {{id}} 在分组 {{group}}、模型 {{model}} 的稳定性保护，恢复优先级 {{priority}}、权重 {{weight}}',
+  'channel.monitor_smart_schedule_route_exploration_clear':
+    '已解除渠道 {{id}} 在分组 {{group}}、模型 {{model}} 的临时探索状态，恢复优先级 {{priority}}、权重 {{weight}}',
   'channel.monitor_group_ratio_sync':
-    '已根据上游倍率 {{upstream_ratio}} 和系数 {{coefficient}}，将分组 {{group}} 的倍率更新为 {{ratio}}',
+    '已根据成本倍率 {{cost_ratio}}（上游倍率 {{upstream_ratio}} × 换算系数 {{conversion_factor}}）和分组系数 {{coefficient}}，将分组 {{group}} 的倍率更新为 {{ratio}}',
   'channel.monitor_group_ratio_update':
     '已将分组 {{group}} 的倍率更新为 {{ratio}}',
+  'channel.monitor_group_channels_update':
+    '已更新分组 {{group}} 的关联渠道（新增 {{added_count}} 个，移除 {{removed_count}} 个）',
   'channel.monitor_ratio_update': '已将渠道 {{id}} 的倍率更新为 {{ratio}}',
   'channel.monitor_ratio_update_run': '已启动上游倍率更新任务 {{task_id}}',
   'channel.monitor_upstream_config_update':
-    '已更新渠道 {{id}} 的上游配置（{{upstream_type}}）',
+    '已更新渠道 {{id}} 的上游配置（{{upstream_type_label}}，成本换算：{{cost_conversion}}，换算系数 {{conversion_factor}}）',
   'channel.monitor_upstream_ratio_fetch':
-    '已获取渠道 {{id}} 的上游倍率 {{ratio}}',
+    '已获取渠道 {{id}} 的上游倍率 {{ratio}}，换算后成本倍率 {{cost_ratio}}（系数 {{conversion_factor}}）',
   'channel.monitor_upstream_balance_fetch':
     '已获取渠道 {{id}} 的上游余额 {{balance}}',
   'channel.monitor_upstream_group_apply':
-    '已将上游分组 {{group}} 应用于渠道 {{id}}（已更新 {{keys_updated}} 个令牌，倍率 {{ratio}}）',
+    '已将上游分组 {{group}} 应用于渠道 {{id}}（已更新 {{keys_updated}} 个令牌，上游倍率 {{ratio}}，成本倍率 {{cost_ratio}}）',
   'channel.monitor_smart_schedule_run': '已启动智能调度任务 {{task_id}}',
   'channel.monitor_order_update':
     '已更新 {{channel_count}} 个监控渠道的自定义顺序',
   'channel.monitor_settings_update': '已更新渠道监控设置',
+  'channel.monitor_settings_changed':
+    '已更新渠道监控设置（自动倍率更新间隔 {{auto_update_interval_minutes}} 分钟，智能调度：{{smart_schedule_status}}，邮件通知：{{email_notification_status}}，本地探针：{{probe_response_status}}）',
+  'channel.status_probe_config_update':
+    '已更新渠道 {{channel_id}} 的状态探测配置（启用：{{enabled}}，间隔 {{interval_seconds}} 秒）',
+  'channel.status_probe_config_changed':
+    '已更新渠道 {{channel_id}} 的状态探测配置（{{status}}，{{model_count}} 个模型，间隔 {{interval_seconds}} 秒）',
+  'channel.status_probe_run':
+    '已请求立即探测渠道 {{channel_id}}（请求 {{manual_request_id}}）',
+  'channel.model_detection_settings_update':
+    '已更新模型检测设置（定时检测：{{schedule_status}}，预设：{{scheduled_preset}}，间隔 {{interval_minutes}} 分钟）',
+  'channel.model_detection_config_update':
+    '已更新渠道 {{channel_id}} 的模型检测配置（定时检测：{{schedule_status}}，{{target_count}} 个目标）',
 }
 
 /**

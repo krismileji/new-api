@@ -251,10 +251,6 @@ func RunChannelMonitorRatioUpdate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "channel.monitor_ratio_update_run", map[string]interface{}{
-		"created": created,
-		"task_id": task.TaskID,
-	})
 	common.ApiSuccess(c, gin.H{
 		"created": created,
 		"task":    task.ToResponse(),

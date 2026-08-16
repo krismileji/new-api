@@ -675,10 +675,15 @@ func UpdateChannelStatusProbeConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "channel.status_probe_config_update", map[string]any{
+	probeStatus := "关闭"
+	if *request.Enabled {
+		probeStatus = "开启"
+	}
+	recordManageAudit(c, "channel.status_probe_config_changed", map[string]any{
 		"channel_id": channelId, "enabled": *request.Enabled, "models": models,
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
-		"display_unit":  *request.DisplayUnit,
+		"display_unit": *request.DisplayUnit, "model_count": len(models),
+		"status":        probeStatus,
 		"record_sample": *request.RecordSample,
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
@@ -712,7 +717,6 @@ func RunChannelStatusProbeNow(c *gin.Context) {
 	}
 	invalidateChannelStatusProbeOverviewCache()
 	wakeChannelStatusProbeWorker()
-	recordManageAudit(c, "channel.status_probe_run", map[string]any{"channel_id": channelId, "manual_request_id": requestId})
 	c.JSON(http.StatusAccepted, gin.H{
 		"success": true, "message": "", "data": gin.H{"manual_request_id": requestId},
 	})

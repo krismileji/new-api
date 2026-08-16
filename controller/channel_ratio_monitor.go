@@ -725,12 +725,12 @@ func SyncChannelMonitorGroupRatio(c *gin.Context) {
 	}
 	if groupsUpdated > 0 {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_group_ratio_sync", map[string]interface{}{
+			"group": request.Group, "upstream_ratio": highestUpstreamRatio,
+			"conversion_factor": highestConversionFactor, "cost_ratio": highestCostRatio,
+			"coefficient": *request.Coefficient, "ratio": targetRatio,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_group_ratio_sync", map[string]interface{}{
-		"group": request.Group, "upstream_ratio": highestUpstreamRatio,
-		"conversion_factor": highestConversionFactor, "cost_ratio": highestCostRatio,
-		"coefficient": *request.Coefficient, "ratio": targetRatio,
-	})
 	common.ApiSuccess(c, gin.H{
 		"group": request.Group, "upstream_ratio": highestUpstreamRatio,
 		"conversion_factor": highestConversionFactor, "cost_ratio": highestCostRatio,
@@ -782,9 +782,11 @@ func UpdateChannelMonitorRatio(c *gin.Context) {
 		return
 	}
 	_ = requestChannelSmartScheduleRun(c.Request.Context())
-	recordManageAudit(c, "channel.monitor_ratio_update", map[string]interface{}{
-		"id": channelId, "ratio": *request.Ratio, "changed": changed,
-	})
+	if created || changed {
+		recordManageAudit(c, "channel.monitor_ratio_update", map[string]interface{}{
+			"id": channelId, "ratio": *request.Ratio, "created": created,
+		})
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -1637,12 +1639,6 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		common.ApiError(c, fmt.Errorf("上游倍率已更新，但分组策略执行失败: %w", err))
 		return
 	}
-	recordManageAudit(c, "channel.monitor_upstream_ratio_fetch", map[string]interface{}{
-		"id": channelId, "upstream_type": monitor.UpstreamType, "group": monitor.UpstreamGroup,
-		"ratio": outcome.Result.Ratio, "cost_ratio": outcome.Result.CostRatio,
-		"conversion_factor": outcome.Result.ConversionFactor, "changed": outcome.Changed,
-		"balance_auto_disabled": balanceAutoDisabled,
-	})
 	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -1748,10 +1744,6 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 			return
 		}
 	}
-	recordManageAudit(c, "channel.monitor_upstream_balance_fetch", map[string]interface{}{
-		"id": channelId, "upstream_type": monitor.UpstreamType, "balance": *result.Amount,
-		"balance_auto_disabled": balanceAutoDisabled, "ratio_refreshed": ratioRefreshed,
-	})
 	common.ApiSuccess(c, result)
 }
 
@@ -1924,11 +1916,11 @@ func UpdateChannelMonitorGroupRatio(c *gin.Context) {
 	}
 	if groupsUpdated > 0 {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
+		recordManageAudit(c, "channel.monitor_group_ratio_update", map[string]interface{}{
+			"group": request.Group,
+			"ratio": *request.Ratio,
+		})
 	}
-	recordManageAudit(c, "channel.monitor_group_ratio_update", map[string]interface{}{
-		"group": request.Group,
-		"ratio": *request.Ratio,
-	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

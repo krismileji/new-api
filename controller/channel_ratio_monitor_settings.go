@@ -782,9 +782,6 @@ func UpdateChannelMonitorChannelOrder(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "channel.monitor_order_update", map[string]interface{}{
-		"channel_count": len(channelOrder),
-	})
 	common.ApiSuccess(c, gin.H{"channel_order": channelOrder})
 }
 
@@ -1476,7 +1473,19 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		auditDetails["smart_schedule_task_error"] = scheduleTaskError.Error()
 	}
 	auditDetails["relay_response_header_timeout_seconds"] = settings.RelayHeaderTimeoutSeconds
-	recordManageAudit(c, "channel.monitor_settings_update", auditDetails)
+	auditDetails["smart_schedule_status"] = "关闭"
+	if settings.SmartScheduleEnabled {
+		auditDetails["smart_schedule_status"] = "开启"
+	}
+	auditDetails["email_notification_status"] = "关闭"
+	if settings.EmailNotificationEnabled {
+		auditDetails["email_notification_status"] = "开启"
+	}
+	auditDetails["probe_response_status"] = "关闭"
+	if settings.ProbeResponseEnabled {
+		auditDetails["probe_response_status"] = "开启"
+	}
+	recordManageAudit(c, "channel.monitor_settings_changed", auditDetails)
 	if cooldownRevisionError != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,

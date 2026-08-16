@@ -67,6 +67,16 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 		}
 		return
 	}
+	scheduleStatus := "关闭"
+	if response.ScheduleEnabled {
+		scheduleStatus = "开启"
+	}
+	recordManageAudit(c, "channel.model_detection_settings_update", map[string]interface{}{
+		"schedule_status":     scheduleStatus,
+		"scheduled_preset":    response.ScheduledPreset,
+		"interval_minutes":    response.IntervalMinutes,
+		"detector_configured": response.DetectorURLConfigured,
+	})
 	common.ApiSuccess(c, response)
 }
 
