@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 )
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
@@ -66,15 +64,27 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
-	RecordPerCallChannelDailyCost(c, info.ChannelId, info.OriginModelName, info.PriceData)
 	costEventId := ""
 	if task != nil && task.PrivateData.BillingContext != nil {
 		costEventId = "task:" + task.TaskID
 		task.PrivateData.BillingContext.ChannelCostEventId = costEventId
-		if settledCost := ChannelDailyCostAttemptSettledCost(c, info.ChannelId); settledCost != nil {
-			task.PrivateData.BillingContext.ChannelCostNanoCNY = *settledCost
+		settledCost, resolved, err := RecordTaskChannelDailyCost(
+			c,
+			info.ChannelId,
+			task.SubmitTime,
+			costEventId,
+			int64(info.PriceData.Quota),
+			info.OriginModelName,
+			info.PriceData,
+		)
+		if err != nil {
+			logger.LogError(c, fmt.Sprintf("持久化任务渠道成本失败 task %s: %s", task.TaskID, err.Error()))
+		} else if resolved {
+			task.PrivateData.BillingContext.ChannelCostNanoCNY = settledCost
 			task.PrivateData.BillingContext.ChannelCostResolved = true
 		}
+	} else {
+		RecordPerCallChannelDailyCost(c, info.ChannelId, info.OriginModelName, info.PriceData)
 	}
 	EmitChannelMonitorSuccessEvent(c, info, ChannelMonitorSuccessEventInput{CostEventId: costEventId})
 }
@@ -179,6 +189,7 @@ func taskModelName(task *model.Task) string {
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
 	quota := task.Quota
 	if quota == 0 {
+		correctTaskChannelCostToValue(ctx, task, 0)
 		return true
 	}
 
@@ -213,7 +224,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	if err := task.UpdateQuota(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("退款成功但清除 task quota 失败 task %s: %s", task.TaskID, err.Error()))
 	}
-	emitTaskChannelCostCorrection(task, 0)
+	correctTaskChannelCostToValue(ctx, task, 0)
 	return true
 }
 
@@ -231,6 +242,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
+		correctTaskChannelCostForQuota(ctx, task, actualQuota)
 		return
 	}
 
@@ -286,29 +298,42 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Other:     other,
 		NodeName:  task.PrivateData.NodeName,
 	})
-	if actualCost, ok := taskChannelCostForQuota(task, preConsumedQuota, actualQuota); ok {
-		emitTaskChannelCostCorrection(task, actualCost)
-	}
+	correctTaskChannelCostForQuota(ctx, task, actualQuota)
 }
 
-func taskChannelCostForQuota(task *model.Task, preConsumedQuota int, actualQuota int) (int64, bool) {
-	if task == nil || actualQuota < 0 || preConsumedQuota <= 0 || task.PrivateData.BillingContext == nil {
-		return 0, false
+func correctTaskChannelCostToValue(ctx context.Context, task *model.Task, costNanoCNY int64) {
+	if task == nil || task.PrivateData.BillingContext == nil || costNanoCNY < 0 {
+		return
 	}
-	billingContext := task.PrivateData.BillingContext
-	if !billingContext.ChannelCostResolved || billingContext.ChannelCostNanoCNY < 0 {
-		return 0, false
+	costEventId := strings.TrimSpace(task.PrivateData.BillingContext.ChannelCostEventId)
+	if costEventId == "" {
+		return
 	}
-	cost := decimal.NewFromInt(billingContext.ChannelCostNanoCNY).
-		Mul(decimal.NewFromInt(int64(actualQuota))).
-		Div(decimal.NewFromInt(int64(preConsumedQuota))).Round(0)
-	if cost.IsNegative() || cost.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
-		return 0, false
+	storedCost, err := model.SetChannelTaskCostEventCost(ctx, costEventId, costNanoCNY, common.GetTimestamp())
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("持久化任务渠道成本更正失败 task %s: %s", task.TaskID, err.Error()))
+		return
 	}
-	return cost.IntPart(), true
+	publishTaskChannelCostCorrection(task, storedCost)
 }
 
-func emitTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
+func correctTaskChannelCostForQuota(ctx context.Context, task *model.Task, actualQuota int) {
+	if task == nil || task.PrivateData.BillingContext == nil || actualQuota < 0 {
+		return
+	}
+	costEventId := strings.TrimSpace(task.PrivateData.BillingContext.ChannelCostEventId)
+	if costEventId == "" {
+		return
+	}
+	storedCost, err := model.SetChannelTaskCostEventQuota(ctx, costEventId, int64(actualQuota), common.GetTimestamp())
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("持久化任务渠道成本重算失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	publishTaskChannelCostCorrection(task, storedCost)
+}
+
+func publishTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
 	if task == nil || task.ChannelId <= 0 || task.PrivateData.BillingContext == nil {
 		return
 	}

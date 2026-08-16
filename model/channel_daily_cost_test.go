@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -95,6 +96,57 @@ func TestGetChannelDailyCostDayTotalsAggregatesOnlyRequestedRange(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, pageTotals, 1)
 	assert.Equal(t, dayOne, pageTotals[0].DayStart)
+}
+
+func TestChannelDailyCostRejectsCumulativeOverflowWithoutChangingStoredTotal(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-overflow.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	occurredAt := int64(1_750_000_000)
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, occurredAt, math.MaxInt64, 1, 0))
+
+	err = AddChannelDailyCost(context.Background(), 1, occurredAt+1, 1, 1, 0)
+	require.ErrorContains(t, err, "超过 int64 范围")
+
+	var stored ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", 1).First(&stored).Error)
+	assert.Equal(t, int64(math.MaxInt64), stored.CostNanoCNY)
+	assert.Equal(t, int64(1), stored.SettledCount)
+}
+
+func TestGetChannelDailyCostDayTotalsRejectsCrossChannelOverflow(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-total-overflow.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	occurredAt := int64(1_750_000_000)
+	require.NoError(t, AddChannelDailyCost(context.Background(), 1, occurredAt, math.MaxInt64, 1, 0))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 2, occurredAt, 1, 1, 0))
+
+	_, err = GetChannelDailyCostDayTotals(
+		context.Background(),
+		ChannelDailyCostDayStart(occurredAt),
+		ChannelDailyCostDayStart(occurredAt)+channelDailyCostDaySeconds,
+		0,
+	)
+	require.ErrorContains(t, err, "超过 int64 范围")
 }
 
 func TestGetChannelDailyCostDeltaSubtractsSameDayBaseline(t *testing.T) {

@@ -67,6 +67,7 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			wantRequestCount: 1,
 			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
 			wantSettlement:   model.ChannelModelDetectionSettlementUnresolved,
+			wantDailyCost:    1,
 		},
 		{
 			name:             "invalid upstream url never crosses transport",
@@ -151,10 +152,17 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			if test.wantDailyCost > 0 {
 				var dailyCost model.ChannelDailyCost
 				require.NoError(t, db.Where("channel_id = ?", channelID).First(&dailyCost).Error)
-				assert.Positive(t, dailyCost.CostNanoCNY)
-				assert.Equal(t, dailyCost.CostNanoCNY, dailyCost.ModelDetectionCostNanoCNY)
-				assert.Equal(t, int64(1), dailyCost.SettledCount)
-				assert.Zero(t, dailyCost.UnresolvedCount)
+				if test.wantSettlement == model.ChannelModelDetectionSettlementSettled {
+					assert.Positive(t, dailyCost.CostNanoCNY)
+					assert.Equal(t, dailyCost.CostNanoCNY, dailyCost.ModelDetectionCostNanoCNY)
+					assert.Equal(t, int64(1), dailyCost.SettledCount)
+					assert.Zero(t, dailyCost.UnresolvedCount)
+				} else {
+					assert.Zero(t, dailyCost.CostNanoCNY)
+					assert.Zero(t, dailyCost.ModelDetectionCostNanoCNY)
+					assert.Zero(t, dailyCost.SettledCount)
+					assert.Equal(t, int64(1), dailyCost.UnresolvedCount)
+				}
 			}
 		})
 	}

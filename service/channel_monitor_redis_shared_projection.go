@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -1095,49 +1096,49 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) addAggregate(scope
 	}
 	switch scope {
 	case channelMonitorRedisSharedScopePerformance:
-		mergeChannelMonitorRedisSharedAggregate(&accumulator.performance, aggregate)
+		return mergeChannelMonitorRedisSharedAggregate(&accumulator.performance, aggregate)
 	case channelMonitorRedisSharedScopeGlobal:
-		mergeChannelMonitorRedisSharedAggregate(&accumulator.summary, aggregate)
+		return mergeChannelMonitorRedisSharedAggregate(&accumulator.summary, aggregate)
 	case channelMonitorRedisSharedScopeChannel:
 		id, err := strconv.Atoi(identity)
 		if err != nil {
 			return err
 		}
-		mergeChannelMonitorRedisSharedAggregateMap(accumulator.channels, id, aggregate)
+		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.channels, id, aggregate)
 	case channelMonitorRedisSharedScopeModel, channelMonitorRedisSharedScopeGroup:
 		name, err := channelMonitorRedisSharedDimensionDecode(identity)
 		if err != nil {
 			return err
 		}
 		if scope == channelMonitorRedisSharedScopeModel {
-			mergeChannelMonitorRedisSharedAggregateMap(accumulator.models, name, aggregate)
+			return mergeChannelMonitorRedisSharedAggregateMap(accumulator.models, name, aggregate)
 		} else {
-			mergeChannelMonitorRedisSharedAggregateMap(accumulator.groups, name, aggregate)
+			return mergeChannelMonitorRedisSharedAggregateMap(accumulator.groups, name, aggregate)
 		}
 	case channelMonitorRedisSharedScopeAPIKey:
 		id, err := strconv.Atoi(identity)
 		if err != nil {
 			return err
 		}
-		mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeys, id, aggregate)
+		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeys, id, aggregate)
 	case channelMonitorRedisSharedScopeRoute:
 		channelID, modelName, err := channelMonitorRedisSharedParseRouteIdentity(identity)
 		if err != nil {
 			return err
 		}
-		mergeChannelMonitorRedisSharedAggregateMap(accumulator.routes, channelMonitorRedisSharedRouteKey{channelID, modelName}, aggregate)
+		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.routes, channelMonitorRedisSharedRouteKey{channelID, modelName}, aggregate)
 	case channelMonitorRedisSharedScopeGroupRoute:
 		groupName, channelID, err := channelMonitorRedisSharedParseGroupChannelIdentity(identity)
 		if err != nil {
 			return err
 		}
-		mergeChannelMonitorRedisSharedAggregateMap(accumulator.groupChannels, channelMonitorRedisSharedGroupChannelKey{groupName, channelID}, aggregate)
+		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.groupChannels, channelMonitorRedisSharedGroupChannelKey{groupName, channelID}, aggregate)
 	case channelMonitorRedisSharedScopeAPIKeyRoute:
 		apiKeyID, channelID, modelName, groupName, err := channelMonitorRedisSharedParseAPIKeyScopeIdentity(identity)
 		if err != nil {
 			return err
 		}
-		mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeyScopes, channelMonitorRedisSharedAPIKeyScopeKey{apiKeyID, channelID, modelName, groupName}, aggregate)
+		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeyScopes, channelMonitorRedisSharedAPIKeyScopeKey{apiKeyID, channelID, modelName, groupName}, aggregate)
 	}
 	return nil
 }
@@ -1203,13 +1204,47 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) apply(view *Channe
 	view.APIKeys = accumulator.apiKeys
 }
 
-func mergeChannelMonitorRedisSharedAggregateMap[K comparable](items map[K]ChannelMonitorRedisSharedAggregate, key K, source ChannelMonitorRedisSharedAggregate) {
+func mergeChannelMonitorRedisSharedAggregateMap[K comparable](items map[K]ChannelMonitorRedisSharedAggregate, key K, source ChannelMonitorRedisSharedAggregate) error {
 	target := items[key]
-	mergeChannelMonitorRedisSharedAggregate(&target, source)
+	if err := mergeChannelMonitorRedisSharedAggregate(&target, source); err != nil {
+		return err
+	}
 	items[key] = target
+	return nil
 }
 
-func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAggregate, source ChannelMonitorRedisSharedAggregate) {
+func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAggregate, source ChannelMonitorRedisSharedAggregate) error {
+	for _, value := range []struct {
+		target *int64
+		delta  int64
+	}{
+		{&target.EventCount, source.EventCount},
+		{&target.BusinessRequestCount, source.BusinessRequestCount},
+		{&target.ActualSuccessCount, source.ActualSuccessCount},
+		{&target.ActualFailureCount, source.ActualFailureCount},
+		{&target.FinalSuccessCount, source.FinalSuccessCount},
+		{&target.FinalFailureCount, source.FinalFailureCount},
+		{&target.FirstTokenSampleCount, source.FirstTokenSampleCount},
+		{&target.AttemptDurationSampleCount, source.AttemptDurationSampleCount},
+		{&target.AttemptDurationTotalMs, source.AttemptDurationTotalMs},
+		{&target.TPSSampleCount, source.TPSSampleCount},
+		{&target.CacheSampleCount, source.CacheSampleCount},
+		{&target.CacheHitCount, source.CacheHitCount},
+		{&target.CacheReadTokens, source.CacheReadTokens},
+		{&target.CacheWriteRequestCount, source.CacheWriteRequestCount},
+		{&target.CacheWriteTokens, source.CacheWriteTokens},
+		{&target.InputTokens, source.InputTokens},
+		{&target.SettledCostNanoCNY, source.SettledCostNanoCNY},
+		{&target.SettledRequestCount, source.SettledRequestCount},
+		{&target.UnresolvedCostNanoCNY, source.UnresolvedCostNanoCNY},
+		{&target.UnresolvedRequestCount, source.UnresolvedRequestCount},
+		{&target.ProbeSettledCostNanoCNY, source.ProbeSettledCostNanoCNY},
+		{&target.ModelDetectionSettledCostNanoCNY, source.ModelDetectionSettledCostNanoCNY},
+	} {
+		if _, err := channelMonitorRedisSharedCheckedAddInt64(*value.target, value.delta); err != nil {
+			return err
+		}
+	}
 	target.EventCount += source.EventCount
 	target.BusinessRequestCount += source.BusinessRequestCount
 	target.ActualSuccessCount += source.ActualSuccessCount
@@ -1256,6 +1291,14 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 		target.latestTPSAt = source.latestTPSAt
 		target.latestTPSSequence = source.latestTPSSequence
 	}
+	return nil
+}
+
+func channelMonitorRedisSharedCheckedAddInt64(left int64, right int64) (int64, error) {
+	if right > 0 && left > math.MaxInt64-right || right < 0 && left < math.MinInt64-right {
+		return 0, errors.New("渠道监控 Redis 汇总超过 int64 范围")
+	}
+	return left + right, nil
 }
 
 func finalizeChannelMonitorRedisSharedView(view *ChannelMonitorRedisSharedProjectionView, accumulator *channelMonitorRedisSharedQueryAccumulator) {

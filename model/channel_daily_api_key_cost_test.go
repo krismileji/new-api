@@ -214,7 +214,7 @@ func TestAddChannelDailyCostBatchAtomicallyAddsTotalsAndAPIKeyDetails(t *testing
 	assert.Equal(t, total.UnresolvedCount, details[0].UnresolvedCount+details[1].UnresolvedCount)
 }
 
-func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDaysInTheDatabase(t *testing.T) {
+func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDays(t *testing.T) {
 	originalDB := DB
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-totals.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -244,4 +244,64 @@ func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDaysInTheDatab
 	assert.Equal(t, int64(350), totals[0].CostNanoCNY)
 	assert.Equal(t, int64(3), totals[0].SettledCount)
 	assert.Equal(t, int64(1), totals[0].UnresolvedCount)
+}
+
+func TestAddChannelDailyAPIKeyCostRejectsOverflow(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-overflow.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	when := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	fingerprint, display := ChannelDailyCostAPIKeyIdentityForToken(11, "sk-overflow")
+	require.NoError(t, db.Create(&ChannelDailyAPIKeyCost{
+		ChannelId: 1, DayStart: ChannelDailyCostDayStart(when), APIKeyId: 11,
+		KeyFingerprint: fingerprint, KeyDisplay: display,
+		CostNanoCNY: math.MaxInt64, SettledCount: math.MaxInt64,
+		CreatedAt: when, UpdatedAt: when,
+	}).Error)
+
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return addChannelDailyAPIKeyCost(tx, 1, when, 1, 1, 0, 11, "生产 Key", fingerprint, display)
+	})
+	require.Error(t, err)
+
+	var stored ChannelDailyAPIKeyCost
+	require.NoError(t, db.First(&stored).Error)
+	assert.Equal(t, int64(math.MaxInt64), stored.CostNanoCNY)
+	assert.Equal(t, int64(math.MaxInt64), stored.SettledCount)
+}
+
+func TestGetChannelDailyAPIKeyCostTotalsForChannelRejectsOverflow(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-total-overflow.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayOne := time.Date(2026, 7, 20, 4, 0, 0, 0, time.UTC).Unix()
+	dayTwo := dayOne + channelDailyCostDaySeconds
+	fingerprint, display := ChannelDailyCostAPIKeyIdentityForToken(11, "sk-total-overflow")
+	require.NoError(t, db.Create(&[]ChannelDailyAPIKeyCost{
+		{ChannelId: 1, DayStart: dayOne, APIKeyId: 11, APIKeyName: "生产 Key", KeyFingerprint: fingerprint, KeyDisplay: display, CostNanoCNY: math.MaxInt64, SettledCount: 1, CreatedAt: dayOne, UpdatedAt: dayOne},
+		{ChannelId: 1, DayStart: dayTwo, APIKeyId: 11, APIKeyName: "生产 Key", KeyFingerprint: fingerprint, KeyDisplay: display, CostNanoCNY: 1, SettledCount: 1, CreatedAt: dayTwo, UpdatedAt: dayTwo},
+	}).Error)
+
+	_, err = GetChannelDailyAPIKeyCostTotalsForChannel(
+		context.Background(), dayOne, dayTwo+channelDailyCostDaySeconds, 1,
+	)
+	require.Error(t, err)
 }

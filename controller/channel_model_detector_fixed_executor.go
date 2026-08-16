@@ -136,6 +136,9 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 
 	snapshot, snapshotErr := service.CaptureChannelModelDetectionCostSnapshot(channel.Id)
+	if snapshotErr == nil {
+		snapshot, snapshotErr = service.AlignChannelModelDetectionCostSnapshot(info, snapshot)
+	}
 	if snapshotErr != nil {
 		snapshot = service.ChannelModelDetectionCostSnapshot{}
 	}
@@ -315,7 +318,7 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		}
 		return result, nil
 	}
-	quota := service.CalculateChannelModelDetectionQuota(c, info, usage)
+	quota := service.CalculateChannelModelDetectionQuotaWithSnapshot(c, info, usage, snapshot)
 	if !quota.Reliable || quota.Usage.InputTokens != authoritativeUsage.InputTokens || quota.Usage.OutputTokens != authoritativeUsage.OutputTokens || quota.Usage.TotalTokens != authoritativeUsage.TotalTokens {
 		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
 			CostEventId:           prepared.CostEventId,

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -49,6 +51,9 @@ func TestMain(m *testing.M) {
 		&model.UserSubscription{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
+		&model.ChannelDailyCost{},
+		&model.ChannelDailyAPIKeyCost{},
+		&model.ChannelTaskCostEvent{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -72,6 +77,9 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM channel_task_cost_events")
+		model.DB.Exec("DELETE FROM channel_daily_api_key_costs")
+		model.DB.Exec("DELETE FROM channel_daily_costs")
 	})
 }
 
@@ -117,15 +125,16 @@ func seedChannel(t *testing.T, id int) {
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
 	return &model.Task{
-		TaskID:    "task_" + time.Now().Format("150405.000"),
-		UserId:    userId,
-		ChannelId: channelId,
-		Quota:     quota,
-		Status:    model.TaskStatus(model.TaskStatusInProgress),
-		Group:     "default",
-		Data:      json.RawMessage(`{}`),
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
+		TaskID:     "task_" + time.Now().Format("150405.000"),
+		UserId:     userId,
+		ChannelId:  channelId,
+		Quota:      quota,
+		Status:     model.TaskStatus(model.TaskStatusInProgress),
+		Group:      "default",
+		Data:       json.RawMessage(`{}`),
+		CreatedAt:  time.Now().Unix(),
+		UpdatedAt:  time.Now().Unix(),
+		SubmitTime: time.Now().Unix(),
 		Properties: model.Properties{
 			OriginModelName: "test-model",
 		},
@@ -238,48 +247,98 @@ func TestTaskBillingContextPriceDataFiltersMultiplier(t *testing.T) {
 	}, priceData.OtherRatios())
 }
 
-func TestTaskChannelCostForQuotaScalesResolvedCost(t *testing.T) {
-	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
-	task.PrivateData.BillingContext.ChannelCostNanoCNY = 250
-	task.PrivateData.BillingContext.ChannelCostResolved = true
+func TestRecordTaskChannelDailyCostRegistersInitialCostExactlyOnce(t *testing.T) {
+	truncate(t)
+	const channelID = 8
+	const submittedAt = int64(1_776_211_200)
+	const costEventID = "task:initial-cost"
 
-	cost, ok := taskChannelCostForQuota(task, 100, 40)
-	require.True(t, ok)
-	assert.Equal(t, int64(100), cost)
+	ctx, _ := gin.CreateTestContext(nil)
+	BeginChannelDailyCostAttempt(ctx, channelID)
+	ctx.Set(channelDailyCostSnapshotContextKey, channelDailyCostSnapshot{
+		ChannelId:    channelID,
+		CostRatioCNY: 4,
+		QuotaPerUnit: 500_000,
+		Configured:   true,
+	})
+	priceData := types.PriceData{ModelPrice: 0.02, UsePrice: true, Quota: 10_000}
 
-	cost, ok = taskChannelCostForQuota(task, 100, 120)
-	require.True(t, ok)
-	assert.Equal(t, int64(300), cost)
+	firstCost, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, costEventID, int64(priceData.Quota), "test-model", priceData)
+	require.NoError(t, err)
+	require.True(t, resolved)
+	assert.Equal(t, int64(80_000_000), firstCost)
+	secondCost, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, costEventID, int64(priceData.Quota), "test-model", priceData)
+	require.NoError(t, err)
+	require.True(t, resolved)
+	assert.Equal(t, firstCost, secondCost)
+
+	settledCost := ChannelDailyCostAttemptSettledCost(ctx, channelID)
+	require.NotNil(t, settledCost)
+	assert.Equal(t, firstCost, *settledCost)
+	var total model.ChannelDailyCost
+	require.NoError(t, model.DB.First(&total).Error)
+	assert.Equal(t, model.ChannelDailyCostDayStart(submittedAt), total.DayStart)
+	assert.Equal(t, firstCost, total.CostNanoCNY)
+	assert.Equal(t, int64(1), total.SettledCount)
+	var event model.ChannelTaskCostEvent
+	require.NoError(t, model.DB.First(&event).Error)
+	assert.Equal(t, costEventID, event.CostEventId)
+	assert.Equal(t, firstCost, event.CostNanoCNY)
 }
 
-func TestTaskChannelCostForQuotaSkipsUnresolvedOrInvalidInputs(t *testing.T) {
-	tests := []struct {
-		name        string
-		resolved    bool
-		costNanoCNY int64
-		preConsumed int
-		actual      int
-	}{
-		{name: "nil task"},
-		{name: "unresolved", resolved: false, costNanoCNY: 250, preConsumed: 100, actual: 50},
-		{name: "negative cost", resolved: true, costNanoCNY: -1, preConsumed: 100, actual: 50},
-		{name: "zero pre-consume", resolved: true, costNanoCNY: 250, preConsumed: 0, actual: 50},
-		{name: "negative actual", resolved: true, costNanoCNY: 250, preConsumed: 100, actual: -1},
-	}
+func TestTaskInitialCostPersistenceFailureEmitsUnresolvedSuccess(t *testing.T) {
+	truncate(t)
+	_, client := useChannelMonitorPublisherRedis(t)
+	require.NoError(t, model.DB.Migrator().DropTable(&model.ChannelTaskCostEvent{}))
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.AutoMigrate(&model.ChannelTaskCostEvent{}))
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var task *model.Task
-			if tt.name != "nil task" {
-				task = makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
-				task.PrivateData.BillingContext.ChannelCostResolved = tt.resolved
-				task.PrivateData.BillingContext.ChannelCostNanoCNY = tt.costNanoCNY
-			}
-			cost, ok := taskChannelCostForQuota(task, tt.preConsumed, tt.actual)
-			assert.False(t, ok)
-			assert.Zero(t, cost)
-		})
+	const channelID = 9
+	const submittedAt = int64(1_776_211_200)
+	ctx, _ := gin.CreateTestContext(nil)
+	BeginChannelDailyCostAttempt(ctx, channelID)
+	ctx.Set(channelDailyCostSnapshotContextKey, channelDailyCostSnapshot{
+		ChannelId:    channelID,
+		CostRatioCNY: 4,
+		QuotaPerUnit: 500_000,
+		Configured:   true,
+	})
+	priceData := types.PriceData{ModelPrice: 0.02, UsePrice: true, Quota: 10_000}
+	_, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, "task:persistence-failure", int64(priceData.Quota), "test-model", priceData)
+	require.Error(t, err)
+	assert.False(t, resolved)
+	assert.Nil(t, ChannelDailyCostAttemptSettledCost(ctx, channelID))
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "test-model",
+		StartTime:       time.Unix(submittedAt, 0),
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
 	}
+	status := EmitChannelMonitorSuccessEvent(ctx, info, ChannelMonitorSuccessEventInput{CostEventId: "task:persistence-failure"})
+	require.Equal(t, ChannelMonitorEventPublishStatusPublished, status)
+	messages, err := client.XRange(context.Background(), ChannelMonitorRedisEventStream, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	event, err := model.UnmarshalChannelMonitorEvent([]byte(fmt.Sprint(messages[0].Values[ChannelMonitorRedisEventFieldPayload])))
+	require.NoError(t, err)
+	assert.Equal(t, model.ChannelMonitorEventCostUnresolved, event.CostStatus)
+	assert.Zero(t, event.SettledCostNanoCNY)
+}
+
+func TestTaskCostPersistenceFailureDoesNotPublishRedisOnlyCorrection(t *testing.T) {
+	truncate(t)
+	_, client := useChannelMonitorPublisherRedis(t)
+	task := makeTask(1, 10, 500, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_missing_cost_state"
+	task.PrivateData.BillingContext.ChannelCostEventId = "task:" + task.TaskID
+
+	correctTaskChannelCostToValue(context.Background(), task, 0)
+	correctTaskChannelCostForQuota(context.Background(), task, 250)
+
+	exists, err := client.Exists(context.Background(), ChannelMonitorRedisEventStream).Result()
+	require.NoError(t, err)
+	assert.Zero(t, exists)
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +525,53 @@ func TestRefundTaskQuota_FundingFailureKeepsPendingMarker(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
+func TestRefundTaskQuotaPersistsIdempotentChannelCostCorrection(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 6, 6, 6
+	const preConsumed = 1000
+	seedUser(t, userID, 5000)
+	seedToken(t, tokenID, userID, "sk-task-refund", 5000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_persistent_refund"
+	task.SubmitTime = time.Date(2026, 8, 15, 4, 0, 0, 0, time.UTC).Unix()
+	task.PrivateData.BillingContext.ChannelCostEventId = "task:" + task.TaskID
+	task.PrivateData.BillingContext.ChannelCostNanoCNY = 600
+	task.PrivateData.BillingContext.ChannelCostResolved = true
+	require.NoError(t, model.DB.Create(task).Error)
+	fingerprint, display := model.ChannelDailyCostAPIKeyIdentityForToken(tokenID, "sk-upstream-task")
+	_, err := model.RegisterChannelTaskCostEvent(ctx, model.ChannelTaskCostEventInput{
+		CostEventId:    task.PrivateData.BillingContext.ChannelCostEventId,
+		ChannelId:      channelID,
+		OccurredAt:     task.SubmitTime,
+		APIKeyId:       tokenID,
+		APIKeyName:     "任务退款 Key",
+		KeyFingerprint: fingerprint,
+		KeyDisplay:     display,
+		InitialQuota:   preConsumed,
+		CostNanoCNY:    600,
+	})
+	require.NoError(t, err)
+
+	assert.True(t, RefundTaskQuota(ctx, task, "upstream failed"))
+	assert.True(t, RefundTaskQuota(ctx, task, "replayed refund"))
+
+	var total model.ChannelDailyCost
+	require.NoError(t, model.DB.First(&total).Error)
+	assert.Equal(t, model.ChannelDailyCostDayStart(task.SubmitTime), total.DayStart)
+	assert.Zero(t, total.CostNanoCNY)
+	assert.Equal(t, int64(1), total.SettledCount)
+	var keyCost model.ChannelDailyAPIKeyCost
+	require.NoError(t, model.DB.First(&keyCost).Error)
+	assert.Zero(t, keyCost.CostNanoCNY)
+	assert.Equal(t, int64(1), keyCost.SettledCount)
+	var event model.ChannelTaskCostEvent
+	require.NoError(t, model.DB.First(&event).Error)
+	assert.Zero(t, event.CostNanoCNY)
+}
+
 // ===========================================================================
 // RecalculateTaskQuota tests
 // ===========================================================================
@@ -554,6 +660,80 @@ func TestRecalculate_ZeroDelta(t *testing.T) {
 
 	// No log created (delta is zero)
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestRecalculateZeroDeltaRetriesPersistentChannelCostCorrection(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, channelID = 15, 15
+	seedUser(t, userID, 10000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 500, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_zero_delta_cost_retry"
+	task.SubmitTime = time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC).Unix()
+	task.PrivateData.BillingContext.ChannelCostEventId = "task:" + task.TaskID
+	_, err := model.RegisterChannelTaskCostEvent(ctx, model.ChannelTaskCostEventInput{
+		CostEventId:  task.PrivateData.BillingContext.ChannelCostEventId,
+		ChannelId:    channelID,
+		OccurredAt:   task.SubmitTime,
+		InitialQuota: 1000,
+		CostNanoCNY:  600,
+	})
+	require.NoError(t, err)
+
+	RecalculateTaskQuota(ctx, task, 500, "retry cost persistence")
+
+	assert.Equal(t, 10000, getUserQuota(t, userID))
+	assert.Equal(t, int64(0), countLogs(t))
+	var total model.ChannelDailyCost
+	require.NoError(t, model.DB.First(&total).Error)
+	assert.Equal(t, int64(300), total.CostNanoCNY)
+	var event model.ChannelTaskCostEvent
+	require.NoError(t, model.DB.First(&event).Error)
+	assert.Equal(t, int64(300), event.CostNanoCNY)
+}
+
+func TestRecalculateTaskQuotaPersistsAbsoluteChannelCostOnOriginalDay(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 16, 16, 16
+	const initialQuota = 1000
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-task-recalculate", 10000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, initialQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_persistent_recalculate"
+	task.SubmitTime = time.Date(2026, 8, 14, 4, 0, 0, 0, time.UTC).Unix()
+	task.PrivateData.BillingContext.ChannelCostEventId = "task:" + task.TaskID
+	task.PrivateData.BillingContext.ChannelCostNanoCNY = 600
+	task.PrivateData.BillingContext.ChannelCostResolved = true
+	require.NoError(t, model.DB.Create(task).Error)
+	_, err := model.RegisterChannelTaskCostEvent(ctx, model.ChannelTaskCostEventInput{
+		CostEventId:  task.PrivateData.BillingContext.ChannelCostEventId,
+		ChannelId:    channelID,
+		OccurredAt:   task.SubmitTime,
+		APIKeyId:     tokenID,
+		InitialQuota: initialQuota,
+		CostNanoCNY:  600,
+	})
+	require.NoError(t, err)
+
+	RecalculateTaskQuota(ctx, task, 250, "first correction")
+	RecalculateTaskQuota(ctx, task, 500, "second correction")
+	RecalculateTaskQuota(ctx, task, 500, "replayed correction")
+
+	var total model.ChannelDailyCost
+	require.NoError(t, model.DB.First(&total).Error)
+	assert.Equal(t, model.ChannelDailyCostDayStart(task.SubmitTime), total.DayStart)
+	assert.Equal(t, int64(300), total.CostNanoCNY)
+	assert.Equal(t, int64(1), total.SettledCount)
+	var event model.ChannelTaskCostEvent
+	require.NoError(t, model.DB.First(&event).Error)
+	assert.Equal(t, int64(300), event.CostNanoCNY)
+	assert.Equal(t, int64(600), event.InitialCostNanoCNY)
+	assert.Equal(t, int64(initialQuota), event.InitialQuota)
 }
 
 func TestRecalculate_ActualQuotaZero(t *testing.T) {

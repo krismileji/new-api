@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
+func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	require.NoError(t, db.Create(&[]model.Channel{
@@ -40,7 +41,7 @@ func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
 	settled.RequestDispatched = true
 	settled.IsFinalAttempt = true
 	settled.CostStatus = model.ChannelMonitorEventCostSettled
-	settled.SettledCostNanoCNY = 1_250_000_000
+	settled.SettledCostNanoCNY = 9_000_000_000
 	unresolved := model.NewChannelMonitorEvent(11, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeFailure, now)
 	unresolved.EventId = "overview-unresolved"
 	unresolved.RequestDispatched = true
@@ -70,8 +71,8 @@ func TestGetChannelMonitorOverviewIncludesTodayCostState(t *testing.T) {
 	}
 	assert.InDelta(t, 1.25, byId[10].TodayCostCNY, 1e-9)
 	assert.True(t, byId[10].TodayCostConfigured)
-	assert.True(t, byId[10].TodayCostComplete)
-	assert.Zero(t, byId[10].TodayCostUnresolvedCount)
+	assert.False(t, byId[10].TodayCostComplete)
+	assert.Equal(t, int64(1), byId[10].TodayCostUnresolvedCount)
 	assert.False(t, byId[11].TodayCostConfigured)
 	assert.False(t, byId[11].TodayCostComplete)
 	assert.Zero(t, byId[12].TodayCostCNY)
@@ -138,6 +139,18 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	assert.Equal(t, int64(1), overview.Channels[2].SettledCount)
 }
 
+func TestGetChannelMonitorCostSummaryRejectsCrossChannelOverflow(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	require.NoError(t, db.Create(&[]model.ChannelDailyCost{
+		{ChannelId: 1, DayStart: channelMonitorCostDayStart(now), CostNanoCNY: math.MaxInt64, SettledCount: 1, CreatedAt: now, UpdatedAt: now},
+		{ChannelId: 2, DayStart: channelMonitorCostDayStart(now), CostNanoCNY: 1, SettledCount: 1, CreatedAt: now, UpdatedAt: now},
+	}).Error)
+
+	_, err := getChannelMonitorCostSummary(context.Background(), 1, now, 0)
+	require.ErrorContains(t, err, "超过 int64 范围")
+}
+
 func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.Create(&model.Channel{
@@ -175,7 +188,9 @@ func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t
 
 	assert.Equal(t, detailDate, overview.DetailDate)
 	require.Len(t, overview.ChartItems, 3)
-	assert.InDelta(t, 2, overview.TotalCostCNY, 1e-9)
+	assert.InDelta(t, 5, overview.TotalCostCNY, 1e-9)
+	assert.InDelta(t, 2, overview.YesterdayCostCNY, 1e-9)
+	assert.InDelta(t, 3, overview.TodayCostCNY, 1e-9)
 	require.Len(t, overview.Channels, 1)
 	assert.InDelta(t, 2, overview.Channels[0].CostCNY, 1e-9)
 	require.Len(t, overview.APIKeys, 1)
@@ -266,36 +281,179 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.InDelta(t, 2, response.Data.YesterdayCostCNY, 1e-9)
 	assert.InDelta(t, 1.3, response.Data.TodayCostCNY, 1e-9)
-	assert.Zero(t, response.Data.TodayProbeCostCNY)
-	assert.Zero(t, response.Data.TodayModelDetectionCostCNY)
+	assert.InDelta(t, 0.2, response.Data.TodayProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.3, response.Data.TodayModelDetectionCostCNY, 1e-9)
 	assert.InDelta(t, 3.3, response.Data.TotalCostCNY, 1e-9)
-	assert.Zero(t, response.Data.TotalProbeCostCNY)
-	assert.Zero(t, response.Data.TotalModelDetectionCostCNY)
+	assert.InDelta(t, 0.2, response.Data.TotalProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.3, response.Data.TotalModelDetectionCostCNY, 1e-9)
 	assert.Equal(t, 1, response.Data.Coverage.IncludedChannelCount)
-	assert.Equal(t, 0, response.Data.Coverage.UnresolvedChannelCount)
-	assert.Equal(t, int64(2), response.Data.Coverage.SettledCount)
-	assert.Zero(t, response.Data.Coverage.UnresolvedCount)
+	assert.Equal(t, 1, response.Data.Coverage.UnresolvedChannelCount)
+	assert.Equal(t, int64(3), response.Data.Coverage.SettledCount)
+	assert.Equal(t, int64(1), response.Data.Coverage.UnresolvedCount)
 	assert.Empty(t, response.Data.Channels)
 	assert.Empty(t, response.Data.APIKeys)
 	assert.Zero(t, detailQueries.Load())
 }
 
-func TestChannelMonitorRealtimeCostAPIKeysSerializeEmptyChannelsAsArray(t *testing.T) {
-	items := channelMonitorRealtimeCostAPIKeys(service.ChannelMonitorRealtimePageView{
-		APIKeys: []service.ChannelMonitorRealtimePageAggregate{{
-			APIKeyId:            101,
-			APIKeyName:          "生产 Key",
-			SettledCostNanoCNY:  1_000_000_000,
-			SettledRequestCount: 1,
-		}},
-	})
+func TestApplyChannelMonitorRealtimeCostPreservesPersistedLedger(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	todayStart := channelMonitorCostDayStart(now)
+	realtime := model.NewChannelMonitorEvent(62, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	realtime.EventId = "cost-ledger-must-not-be-overwritten"
+	realtime.RequestDispatched = true
+	realtime.IsFinalAttempt = true
+	realtime.CostStatus = model.ChannelMonitorEventCostSettled
+	realtime.SettledCostNanoCNY = 9_000_000_000
+	realtime.APIKeyId = 602
+	realtime.APIKeyName = "其他渠道 Key"
+	emitChannelMonitorControllerRealtimeEvents(t, realtime)
 
-	require.Len(t, items, 1)
-	assert.NotNil(t, items[0].Channels)
-	assert.Empty(t, items[0].Channels)
-	encoded, err := common.Marshal(items)
-	require.NoError(t, err)
-	assert.Contains(t, string(encoded), `"channels":[]`)
+	persistedDay := channelMonitorCostDay{
+		Date: channelMonitorCostDate(todayStart), StartAt: todayStart,
+		CostCNY: 2, ProbeCostCNY: 0.25, ModelDetectionCostCNY: 0.5,
+		SettledCount: 3, UnresolvedCount: 1,
+	}
+	overview := channelMonitorCostOverview{
+		TodayCostCNY: 2, TodayProbeCostCNY: 0.25, TodayModelDetectionCostCNY: 0.5,
+		TotalCostCNY: 2, TotalProbeCostCNY: 0.25, TotalModelDetectionCostCNY: 0.5,
+		Coverage: channelMonitorCostCoverage{
+			IncludedChannelCount: 1, UnresolvedChannelCount: 1,
+			MissingCostConfigChannelCount: 4, FreeGroupChannelCount: 5,
+			SettledCount: 3, UnresolvedCount: 1,
+		},
+		Items:      []channelMonitorCostDay{persistedDay},
+		ChartItems: []channelMonitorCostDay{persistedDay},
+		Channels: []channelMonitorCostChannel{{
+			ChannelId: 61, ChannelName: "账本渠道", CostCNY: 2,
+			ProbeCostCNY: 0.25, ModelDetectionCostCNY: 0.5,
+			SettledCount: 3, UnresolvedCount: 1,
+		}},
+		APIKeys: []channelMonitorCostAPIKey{{
+			APIKeyId: 601, APIKeyName: "账本 Key", CostCNY: 2,
+			SettledCount: 3, UnresolvedCount: 1,
+			Channels: []channelMonitorCostAPIKeyChannel{{
+				ChannelId: 61, ChannelName: "账本渠道", CostCNY: 2,
+				SettledCount: 3, UnresolvedCount: 1,
+			}},
+		}},
+	}
+	require.NoError(t, applyChannelMonitorRealtimeCost(
+		context.Background(), &overview, 1, now, 61, todayStart, false,
+	))
+
+	assert.Equal(t, 2.0, overview.TodayCostCNY)
+	assert.Equal(t, 0.25, overview.TodayProbeCostCNY)
+	assert.Equal(t, 0.5, overview.TodayModelDetectionCostCNY)
+	assert.Equal(t, 2.0, overview.TotalCostCNY)
+	assert.Equal(t, 0.25, overview.TotalProbeCostCNY)
+	assert.Equal(t, 0.5, overview.TotalModelDetectionCostCNY)
+	assert.Equal(t, channelMonitorCostCoverage{
+		IncludedChannelCount: 1, UnresolvedChannelCount: 1,
+		MissingCostConfigChannelCount: 4, FreeGroupChannelCount: 5,
+		SettledCount: 3, UnresolvedCount: 1,
+	}, overview.Coverage)
+	require.Len(t, overview.Items, 1)
+	assert.Equal(t, persistedDay, overview.Items[0])
+	require.Len(t, overview.ChartItems, 1)
+	assert.Equal(t, persistedDay, overview.ChartItems[0])
+	require.Len(t, overview.Channels, 1)
+	assert.Equal(t, 61, overview.Channels[0].ChannelId)
+	assert.Equal(t, 2.0, overview.Channels[0].CostCNY)
+	require.Len(t, overview.APIKeys, 1)
+	assert.Equal(t, 601, overview.APIKeys[0].APIKeyId)
+	assert.Equal(t, 2.0, overview.APIKeys[0].CostCNY)
+	require.Len(t, overview.APIKeys[0].Channels, 1)
+	assert.Equal(t, 61, overview.APIKeys[0].Channels[0].ChannelId)
+}
+
+func TestGetChannelMonitorCostOverviewChannelFilterUsesPersistedAPIKeyCosts(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 61, Name: "目标渠道", Key: "target-channel-key"},
+		{Id: 62, Name: "其他渠道", Key: "other-channel-key"},
+	}).Error)
+	now := common.GetTimestamp()
+	fingerprint, display := model.ChannelDailyCostAPIKeyIdentityForToken(601, "target-channel-key")
+	require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+		context.Background(), 61, now, 2_000_000_000, 1, 0,
+		601, "目标 Key", fingerprint, display,
+	))
+	realtime := model.NewChannelMonitorEvent(62, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	realtime.EventId = "other-channel-realtime-cost"
+	realtime.RequestDispatched = true
+	realtime.IsFinalAttempt = true
+	realtime.CostStatus = model.ChannelMonitorEventCostSettled
+	realtime.SettledCostNanoCNY = 9_000_000_000
+	realtime.APIKeyId = 602
+	realtime.APIKeyName = "其他渠道 Key"
+	emitChannelMonitorControllerRealtimeEvents(t, realtime)
+
+	date := channelMonitorCostDate(channelMonitorCostDayStart(now))
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, "GET", "/api/channel_monitor/cost?days=1&channel_id=61&date="+date, nil,
+	)
+	GetChannelMonitorCostOverview(ctx)
+	require.Equal(t, 200, recorder.Code)
+	var response struct {
+		Data channelMonitorCostOverview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+
+	assert.InDelta(t, 2, response.Data.TodayCostCNY, 1e-9)
+	assert.InDelta(t, 2, response.Data.TotalCostCNY, 1e-9)
+	require.Len(t, response.Data.Channels, 1)
+	assert.Equal(t, 61, response.Data.Channels[0].ChannelId)
+	require.Len(t, response.Data.APIKeys, 1)
+	assert.Equal(t, 601, response.Data.APIKeys[0].APIKeyId)
+	assert.InDelta(t, 2, response.Data.APIKeys[0].CostCNY, 1e-9)
+	require.Len(t, response.Data.APIKeys[0].Channels, 1)
+	assert.Equal(t, 61, response.Data.APIKeys[0].Channels[0].ChannelId)
+	assert.InDelta(t, 2, response.Data.APIKeys[0].Channels[0].CostCNY, 1e-9)
+	assert.Equal(t, 1, response.Data.Coverage.MissingCostConfigChannelCount)
+}
+
+func TestGetChannelMonitorCostOverviewAccumulatesAPIKeyCostsAcrossDays(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 71, Name: "跨日渠道", Key: "multi-day-key"}).Error)
+	now := common.GetTimestamp()
+	todayStart := channelMonitorCostDayStart(now)
+	yesterdayStart := todayStart - channelMonitorCostDaySeconds
+	fingerprint, display := model.ChannelDailyCostAPIKeyIdentityForToken(701, "multi-day-key")
+	require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+		context.Background(), 71, yesterdayStart+60, 2_000_000_000, 1, 0,
+		701, "跨日 Key", fingerprint, display,
+	))
+	require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+		context.Background(), 71, todayStart+60, 3_000_000_000, 1, 0,
+		701, "跨日 Key", fingerprint, display,
+	))
+	realtime := model.NewChannelMonitorEvent(71, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, todayStart+60)
+	realtime.EventId = "multi-day-today-realtime-cost"
+	realtime.RequestDispatched = true
+	realtime.IsFinalAttempt = true
+	realtime.CostStatus = model.ChannelMonitorEventCostSettled
+	realtime.SettledCostNanoCNY = 3_000_000_000
+	realtime.APIKeyId = 701
+	realtime.APIKeyName = "跨日 Key"
+	emitChannelMonitorControllerRealtimeEvents(t, realtime)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=2", nil)
+	GetChannelMonitorCostOverview(ctx)
+	require.Equal(t, 200, recorder.Code)
+	var response struct {
+		Data channelMonitorCostOverview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+
+	require.Len(t, response.Data.APIKeys, 1)
+	assert.Equal(t, 701, response.Data.APIKeys[0].APIKeyId)
+	assert.InDelta(t, 5, response.Data.APIKeys[0].CostCNY, 1e-9)
+	assert.Equal(t, int64(2), response.Data.APIKeys[0].SettledCount)
+	require.Len(t, response.Data.APIKeys[0].Channels, 1)
+	assert.Equal(t, 71, response.Data.APIKeys[0].Channels[0].ChannelId)
+	assert.InDelta(t, 5, response.Data.APIKeys[0].Channels[0].CostCNY, 1e-9)
+	assert.Equal(t, int64(2), response.Data.APIKeys[0].Channels[0].SettledCount)
 }
 
 func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(t *testing.T) {
@@ -386,6 +544,25 @@ func TestGetChannelMonitorCostOverviewKeepsUnattributedChannelsVisible(t *testin
 	require.Len(t, legacy.Channels, 1)
 	assert.Equal(t, 32, legacy.Channels[0].ChannelId)
 	assert.Equal(t, "后台测试", legacy.Channels[0].ChannelRemark)
+}
+
+func TestGetChannelMonitorCostOverviewRejectsAPIKeyAttributionAboveChannelTotal(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	dayStart := channelMonitorCostDayStart(now)
+	fingerprint, display := model.ChannelDailyCostAPIKeyIdentityForToken(91, "sk-inconsistent")
+	require.NoError(t, db.Create(&model.ChannelDailyCost{
+		ChannelId: 91, DayStart: dayStart, CostNanoCNY: 100, SettledCount: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelDailyAPIKeyCost{
+		ChannelId: 91, DayStart: dayStart, APIKeyId: 91, APIKeyName: "异常 Key",
+		KeyFingerprint: fingerprint, KeyDisplay: display,
+		CostNanoCNY: 101, SettledCount: 1, CreatedAt: now, UpdatedAt: now,
+	}).Error)
+
+	_, err := getChannelMonitorCostOverview(context.Background(), 1, now)
+	require.ErrorContains(t, err, "API Key 成本归属超过渠道总额")
 }
 
 func TestGetChannelMonitorCostOverviewRejectsInvalidDays(t *testing.T) {

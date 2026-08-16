@@ -931,6 +931,19 @@ type ChannelModelDetectionCostEvent struct {
 	UpdatedAt              int64   `json:"updated_at" gorm:"bigint;not null"`
 }
 
+// GetChannelModelDetectionCostEventForUpdate reads one cost event while
+// holding its row lock until the caller's transaction finishes.
+func GetChannelModelDetectionCostEventForUpdate(tx *gorm.DB, costEventId string) (ChannelModelDetectionCostEvent, error) {
+	if tx == nil {
+		return ChannelModelDetectionCostEvent{}, errors.New("模型检测成本数据库不可用")
+	}
+	var event ChannelModelDetectionCostEvent
+	if err := lockForUpdate(tx).Where("cost_event_id = ?", costEventId).First(&event).Error; err != nil {
+		return ChannelModelDetectionCostEvent{}, err
+	}
+	return event, nil
+}
+
 func (event *ChannelModelDetectionCostEvent) BeforeCreate(_ *gorm.DB) error {
 	if event.CostEventId == "" {
 		event.CostEventId = common.GetUUID()

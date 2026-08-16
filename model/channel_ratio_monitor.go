@@ -294,6 +294,7 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			monitor.BalanceAlertNotified = false
 		}
 		if costConversionChanged {
+			monitor.PreviousRatio = nil
 			if err := economicRevision.bump(tx); err != nil {
 				return err
 			}

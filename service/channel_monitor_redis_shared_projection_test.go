@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -100,6 +101,57 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	require.NoError(t, err)
 	assert.NotEmpty(t, minuteValues)
 	assert.Equal(t, event.APIKeyName, minuteValues[channelMonitorRedisSharedScopeAPIKey+":42:"+channelMonitorRedisSharedMetricAPIKeyName])
+}
+
+func TestMergeChannelMonitorRedisSharedAggregateRejectsInt64Overflow(t *testing.T) {
+	tests := []struct {
+		name   string
+		target ChannelMonitorRedisSharedAggregate
+		source ChannelMonitorRedisSharedAggregate
+		value  func(ChannelMonitorRedisSharedAggregate) int64
+	}{
+		{
+			name:   "settled cost",
+			target: ChannelMonitorRedisSharedAggregate{SettledCostNanoCNY: math.MaxInt64},
+			source: ChannelMonitorRedisSharedAggregate{SettledCostNanoCNY: 1},
+			value:  func(item ChannelMonitorRedisSharedAggregate) int64 { return item.SettledCostNanoCNY },
+		},
+		{
+			name:   "event count",
+			target: ChannelMonitorRedisSharedAggregate{EventCount: math.MaxInt64},
+			source: ChannelMonitorRedisSharedAggregate{EventCount: 1},
+			value:  func(item ChannelMonitorRedisSharedAggregate) int64 { return item.EventCount },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := mergeChannelMonitorRedisSharedAggregate(&test.target, test.source)
+			require.ErrorContains(t, err, "超过 int64 范围")
+			assert.Equal(t, int64(math.MaxInt64), test.value(test.target))
+		})
+	}
+}
+
+func TestChannelMonitorRedisSharedSuccessSummaryRejectsCombinedCountOverflow(t *testing.T) {
+	_, err := channelMonitorRedisSharedSuccessSummary(ChannelMonitorRedisSharedAggregate{
+		ActualSuccessCount: math.MaxInt64,
+		ActualFailureCount: 1,
+	})
+	require.ErrorContains(t, err, "超过 int64 范围")
+}
+
+func TestChannelMonitorRedisSharedCountToIntRejectsInvalidValues(t *testing.T) {
+	_, err := channelMonitorRedisSharedCountToInt(-1)
+	require.ErrorContains(t, err, "不能为负数")
+
+	maximum := int64(math.MaxInt64)
+	value, err := channelMonitorRedisSharedCountToInt(maximum)
+	if int64(int(maximum)) == maximum {
+		require.NoError(t, err)
+		assert.Equal(t, int64(math.MaxInt64), int64(value))
+	} else {
+		require.ErrorContains(t, err, "超过 int 范围")
+	}
 }
 
 func TestChannelMonitorRedisSharedProjectionUsesEventIDForReplayIdempotency(t *testing.T) {

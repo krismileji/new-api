@@ -365,6 +365,47 @@ func TestChannelRatioMonitorRejectsResultsFromStaleUpstreamConfig(t *testing.T) 
 	assert.Equal(t, 0.8, stored.Ratio)
 }
 
+func TestSaveChannelRatioUpstreamConfigClearsPreviousRatioWhenCostConversionChanges(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 11)
+	previousRatio := 0.8
+	originalConversion := `{"mode":"recharge","paid_cny":100,"credited_usd":200}`
+	require.NoError(t, DB.Create(&ChannelRatioMonitor{
+		ChannelId:        11,
+		Ratio:            1,
+		PreviousRatio:    &previousRatio,
+		UpdatedTime:      1,
+		UpstreamType:     "new_api",
+		UpstreamBaseURL:  "https://upstream.example",
+		UpstreamAuthType: "public",
+		CostConversion:   originalConversion,
+		UpstreamRevision: 1,
+	}).Error)
+
+	monitor, err := SaveChannelRatioUpstreamConfig(
+		11, "new_api", "https://upstream.example", "", "public", 0, "",
+		ChannelRatioUpstreamOptions{
+			RatioSyncEnabled:   true,
+			BalanceSyncEnabled: true,
+			CostConversion:     originalConversion,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, monitor.PreviousRatio)
+	assert.Equal(t, previousRatio, *monitor.PreviousRatio)
+
+	monitor, err = SaveChannelRatioUpstreamConfig(
+		11, "new_api", "https://upstream.example", "", "public", 0, "",
+		ChannelRatioUpstreamOptions{
+			RatioSyncEnabled:   true,
+			BalanceSyncEnabled: true,
+			CostConversion:     `{"mode":"none"}`,
+		},
+	)
+	require.NoError(t, err)
+	assert.Nil(t, monitor.PreviousRatio)
+}
+
 func TestChannelRatioMonitorRevisionGuardDoesNotRecreateDeletedZeroRevisionConfig(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -7,7 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -55,6 +60,80 @@ func channelModelDetectionCostAttemptForTest(eventId string, attemptNo int, snap
 		Snapshot:          snapshot,
 		CreatedAt:         100,
 	}
+}
+
+func TestChannelModelDetectionQuotaUsesAuthoritativePreGroupCostBasis(t *testing.T) {
+	ctx := newChannelDailyCostTestContext()
+
+	ordinary := CalculateChannelModelDetectionQuota(ctx, &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			ModelRatio:      2,
+			CompletionRatio: 4,
+			CacheRatio:      0.1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 3},
+		},
+	}, &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+		TotalTokens:      110,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 50,
+		},
+	})
+	require.True(t, ordinary.Reliable)
+	assert.Equal(t, int64(570), ordinary.SettledQuota)
+	assert.Equal(t, int64(190), ordinary.CostBasisQuota)
+
+	tieredExpr := `tier("base", p * 2000)`
+	tiered := CalculateChannelModelDetectionQuota(ctx, &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 3},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:  "tiered_expr",
+			ExprString:   tieredExpr,
+			ExprHash:     billingexpr.ExprHashString(tieredExpr),
+			GroupRatio:   3,
+			QuotaPerUnit: common.QuotaPerUnit,
+			ExprVersion:  1,
+		},
+		BillingRequestInput: &billingexpr.RequestInput{},
+	}, &dto.Usage{PromptTokens: 100, TotalTokens: 100})
+	require.True(t, tiered.Reliable)
+	assert.Equal(t, int64(300_000), tiered.SettledQuota)
+	assert.Equal(t, int64(100_000), tiered.CostBasisQuota)
+}
+
+func TestChannelModelDetectionQuotaKeepsFrozenQuotaPerUnit(t *testing.T) {
+	ctx := newChannelDailyCostTestContext()
+	quotaPerUnit := int64(500_000)
+	snapshot := ChannelModelDetectionCostSnapshot{QuotaPerUnit: &quotaPerUnit}
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1_000_000
+	t.Cleanup(func() { common.QuotaPerUnit = originalQuotaPerUnit })
+
+	result := CalculateChannelModelDetectionQuotaWithSnapshot(ctx, &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			ModelPrice:     0.01,
+			UsePrice:       true,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}, &dto.Usage{}, snapshot)
+
+	require.True(t, result.Reliable)
+	assert.Equal(t, int64(5_000), result.SettledQuota)
+	assert.Equal(t, int64(5_000), result.CostBasisQuota)
+}
+
+func TestAlignChannelModelDetectionCostSnapshotUsesTieredBillingQuotaUnit(t *testing.T) {
+	costQuotaPerUnit := int64(1_000_000)
+	snapshot, err := AlignChannelModelDetectionCostSnapshot(&relaycommon.RelayInfo{
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{QuotaPerUnit: 500_000},
+	}, ChannelModelDetectionCostSnapshot{QuotaPerUnit: &costQuotaPerUnit})
+
+	require.NoError(t, err)
+	require.NotNil(t, snapshot.QuotaPerUnit)
+	assert.Equal(t, int64(500_000), *snapshot.QuotaPerUnit)
 }
 
 func TestChannelModelDetectionCostConversionUsesDecimalRoundingAndRejectsInvalidValues(t *testing.T) {
@@ -191,7 +270,7 @@ func TestChannelModelDetectionCostTransportBoundaryAndSettlementAreMonotonic(t *
 	assert.ErrorIs(t, err, ErrChannelModelDetectionCostConflict)
 }
 
-func TestChannelModelDetectionSettlementDefaultsTimestampBeforeDailyCostWrite(t *testing.T) {
+func TestChannelModelDetectionSettlementUsesOriginalDayAndDefaultsSettlementTimestamp(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
 	input := channelModelDetectionCostAttemptForTest("cost-default-settled-at", 1, channelModelDetectionCostSnapshotForTest("0.8", 500_000))
@@ -209,8 +288,8 @@ func TestChannelModelDetectionSettlementDefaultsTimestampBeforeDailyCostWrite(t 
 
 	var dailyCost model.ChannelDailyCost
 	require.NoError(t, db.Where("channel_id = ?", input.ChannelId).First(&dailyCost).Error)
-	assert.Equal(t, model.ChannelDailyCostDayStart(settled.SettledAt), dailyCost.DayStart)
-	assert.Equal(t, settled.SettledAt, dailyCost.UpdatedAt)
+	assert.Equal(t, model.ChannelDailyCostDayStart(input.CreatedAt), dailyCost.DayStart)
+	assert.Equal(t, input.CreatedAt, dailyCost.UpdatedAt)
 }
 
 func TestChannelModelDetectionCostUnresolvedKeepsKnownEstimateOrNull(t *testing.T) {
@@ -450,7 +529,7 @@ func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDail
 	assert.Equal(t, int64(400_000_000), dailyCosts[0].CostNanoCNY)
 	assert.Equal(t, int64(400_000_000), dailyCosts[0].ModelDetectionCostNanoCNY)
 	assert.Equal(t, int64(1), dailyCosts[0].SettledCount)
-	assert.Zero(t, dailyCosts[0].UnresolvedCount)
+	assert.Equal(t, int64(1), dailyCosts[0].UnresolvedCount)
 }
 
 func TestChannelModelDetectionCostAggregationRejectsOverflow(t *testing.T) {

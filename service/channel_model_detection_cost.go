@@ -251,6 +251,9 @@ func PrepareChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inp
 	if err := validateChannelModelDetectionCostAttemptInput(input); err != nil {
 		return model.ChannelModelDetectionCostEvent{}, false, err
 	}
+	if input.CreatedAt <= 0 {
+		input.CreatedAt = common.GetTimestamp()
+	}
 	snapshot, err := normalizeChannelModelDetectionCostSnapshot(input.Snapshot)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, false, err
@@ -490,7 +493,7 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if input.CostEventId == "" || len(input.CostEventId) > 64 || len(input.UpstreamRequestId) > 128 {
 		return model.ChannelModelDetectionCostEvent{}, model.ErrChannelModelDetectionInvalidCost
 	}
-	event, err := getChannelModelDetectionCostEvent(useDB, input.CostEventId)
+	event, err := model.GetChannelModelDetectionCostEventForUpdate(useDB, input.CostEventId)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
@@ -555,8 +558,9 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if !channelModelDetectionUsageFactsCompatible(event, input.UsageSource, input.UsageAvailable, input.InputTokens, input.OutputTokens, input.TotalTokens, &input.SettledQuota, &input.CostBasisQuota) {
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
+	previousSettlementStatus := event.SettlementStatus
 	updated := useDB.Model(&model.ChannelModelDetectionCostEvent{}).
-		Where("cost_event_id = ? AND dispatch_state = ? AND settlement_status IN ?", input.CostEventId, model.ChannelModelDetectionDispatchDispatched, []string{model.ChannelModelDetectionSettlementPending, model.ChannelModelDetectionSettlementUnresolved}).
+		Where("cost_event_id = ? AND dispatch_state = ? AND settlement_status = ?", input.CostEventId, model.ChannelModelDetectionDispatchDispatched, previousSettlementStatus).
 		Updates(map[string]any{
 			"settlement_status":     model.ChannelModelDetectionSettlementSettled,
 			"usage_source":          input.UsageSource,
@@ -598,14 +602,26 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 	if settled.SettlementStatus != model.ChannelModelDetectionSettlementSettled {
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
-	if err := model.AddChannelDailyCostWithModelDetection(ctx, useDB, settled.ChannelId, settled.SettledAt, costNanoCNY, costNanoCNY, 1, 0); err != nil {
+	if previousSettlementStatus == model.ChannelModelDetectionSettlementUnresolved {
+		if err := model.SettleUnresolvedChannelDailyModelDetectionCost(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY); err != nil {
+			return model.ChannelModelDetectionCostEvent{}, err
+		}
+	} else if err := model.AddChannelDailyCostWithModelDetection(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY, costNanoCNY, 1, 0); err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
 	return settled, nil
 }
 
 func MarkChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostUnresolvedInput) (result model.ChannelModelDetectionCostEvent, resultErr error) {
-	result, resultErr = markChannelModelDetectionCostEventUnresolved(ctx, tx, input)
+	useDB, err := channelModelDetectionCostDB(ctx, tx)
+	if err != nil {
+		return model.ChannelModelDetectionCostEvent{}, err
+	}
+	resultErr = useDB.Transaction(func(transaction *gorm.DB) error {
+		var transactionErr error
+		result, transactionErr = markChannelModelDetectionCostEventUnresolved(ctx, transaction, input)
+		return transactionErr
+	})
 	if resultErr == nil {
 		emitChannelModelDetectionMonitorEvent(result)
 	}
@@ -631,7 +647,7 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 	if err := validateChannelModelDetectionUsageTokens(input.InputTokens, input.OutputTokens, input.TotalTokens); err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
-	event, err := getChannelModelDetectionCostEvent(useDB, input.CostEventId)
+	event, err := model.GetChannelModelDetectionCostEventForUpdate(useDB, input.CostEventId)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
@@ -700,8 +716,9 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 	if input.CostBasisQuota != nil {
 		values["cost_basis_quota"] = *input.CostBasisQuota
 	}
+	previousSettlementStatus := event.SettlementStatus
 	updated := useDB.Model(&model.ChannelModelDetectionCostEvent{}).
-		Where("cost_event_id = ? AND dispatch_state = ? AND settlement_status IN ?", input.CostEventId, model.ChannelModelDetectionDispatchDispatched, []string{model.ChannelModelDetectionSettlementPending, model.ChannelModelDetectionSettlementUnresolved}).
+		Where("cost_event_id = ? AND dispatch_state = ? AND settlement_status = ?", input.CostEventId, model.ChannelModelDetectionDispatchDispatched, previousSettlementStatus).
 		Updates(values)
 	if updated.Error != nil {
 		return model.ChannelModelDetectionCostEvent{}, updated.Error
@@ -724,6 +741,11 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 	}
 	if unresolved.SettlementStatus != model.ChannelModelDetectionSettlementUnresolved {
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
+	}
+	if previousSettlementStatus == model.ChannelModelDetectionSettlementPending {
+		if err := model.AddChannelDailyCostWithModelDetection(ctx, useDB, unresolved.ChannelId, unresolved.CreatedAt, 0, 0, 0, 1); err != nil {
+			return model.ChannelModelDetectionCostEvent{}, err
+		}
 	}
 	return unresolved, nil
 }

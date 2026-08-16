@@ -144,8 +144,12 @@ func mergeToolSurchargeItems(items []ToolSurchargeItem) []ToolSurchargeItem {
 }
 
 func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) decimal.Decimal {
+	return calculateTextToolCallSurchargeWithQuotaPerUnit(ctx, relayInfo, summary, common.QuotaPerUnit)
+}
+
+func calculateTextToolCallSurchargeWithQuotaPerUnit(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary, quotaPerUnit float64) decimal.Decimal {
 	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
-	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	dQuotaPerUnit := decimal.NewFromFloat(quotaPerUnit)
 
 	var items []ToolSurchargeItem
 
@@ -227,6 +231,10 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 // effectiveBillingUsage; PostTextConsumeQuota performs that remap once and shares
 // the result with tiered billing, affinity observation and logging.
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
+	return calculateTextQuotaSummaryWithQuotaPerUnit(ctx, relayInfo, usage, common.QuotaPerUnit)
+}
+
+func calculateTextQuotaSummaryWithQuotaPerUnit(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, quotaPerUnit float64) textQuotaSummary {
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
 		TokenName:            ctx.GetString("token_name"),
@@ -293,10 +301,10 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	dCacheCreationRatio := decimal.NewFromFloat(summary.CacheCreationRatio)
 	dCacheCreationRatio5m := decimal.NewFromFloat(summary.CacheCreationRatio5m)
 	dCacheCreationRatio1h := decimal.NewFromFloat(summary.CacheCreationRatio1h)
-	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	dQuotaPerUnit := decimal.NewFromFloat(quotaPerUnit)
 
 	ratio := dModelRatio.Mul(dGroupRatio)
-	summary.ToolCallSurchargeQuota = calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
+	summary.ToolCallSurchargeQuota = calculateTextToolCallSurchargeWithQuotaPerUnit(ctx, relayInfo, &summary, quotaPerUnit)
 
 	var audioInputQuota decimal.Decimal
 	if !relayInfo.PriceData.UsePrice {

@@ -52,6 +52,7 @@ type channelDailyCostAttemptState struct {
 	mu                 sync.Mutex
 	ChannelId          int
 	Dispatched         bool
+	Recording          bool
 	Recorded           bool
 	SettledCostNanoCNY *int64
 }
@@ -147,13 +148,16 @@ func FinalizeChannelDailyCostAttempt(ctx *gin.Context, channelId int, requestDis
 	if requestDispatched {
 		state.Dispatched = true
 	}
-	if !state.Dispatched || state.Recorded {
+	if !state.Dispatched || state.Recording || state.Recorded {
 		state.mu.Unlock()
 		return
 	}
-	state.Recorded = true
+	state.Recording = true
 	state.mu.Unlock()
 	recordChannelDailyCostUnresolved(ctx, channelId)
+	state.mu.Lock()
+	state.Recording = false
+	state.mu.Unlock()
 }
 
 func markChannelDailyCostAttemptRecorded(ctx *gin.Context, channelId int) {
@@ -303,7 +307,12 @@ func loadChannelDailyCostSnapshotFromCache(channelId int, version uint64) (chann
 	if entry.Version != version || !time.Now().Before(entry.ExpiresAt) {
 		return channelDailyCostSnapshot{}, false
 	}
-	return entry.Snapshot, true
+	snapshot := entry.Snapshot
+	snapshot.QuotaPerUnit = common.QuotaPerUnit
+	if math.IsNaN(snapshot.QuotaPerUnit) || math.IsInf(snapshot.QuotaPerUnit, 0) || snapshot.QuotaPerUnit <= 0 {
+		return channelDailyCostSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 func storeChannelDailyCostSnapshot(channelId int, version *atomic.Uint64, loadVersion uint64, snapshot channelDailyCostSnapshot) {
@@ -385,36 +394,40 @@ func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bo
 
 func recordChannelDailyCostWithSnapshot(ctx *gin.Context, snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) {
 	snapshot = channelDailyCostSnapshotWithCurrentKey(ctx, snapshot)
-	if !snapshot.Configured {
+	costNanoCNY, ok := calculateChannelDailyCost(snapshot, quotaBeforeGroup)
+	if !ok {
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return
 	}
-	if math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
-		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
-		return
-	}
+	recordChannelDailyCostEvent(ctx, snapshot, costNanoCNY, 1, 0)
+}
 
+func calculateChannelDailyCost(snapshot channelDailyCostSnapshot, quotaBeforeGroup float64) (int64, bool) {
+	if !snapshot.Configured || math.IsNaN(snapshot.QuotaPerUnit) || math.IsInf(snapshot.QuotaPerUnit, 0) || snapshot.QuotaPerUnit <= 0 ||
+		math.IsNaN(quotaBeforeGroup) || math.IsInf(quotaBeforeGroup, 0) || quotaBeforeGroup < 0 {
+		return 0, false
+	}
 	costNano := decimal.NewFromFloat(quotaBeforeGroup).
 		Div(decimal.NewFromFloat(snapshot.QuotaPerUnit)).
 		Mul(decimal.NewFromFloat(snapshot.CostRatioCNY)).
 		Mul(decimal.NewFromInt(model.ChannelDailyCostNanoPerCNY)).
 		Round(0)
 	if costNano.IsNegative() || costNano.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
-		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
-		return
+		return 0, false
 	}
-	recordChannelDailyCostEvent(ctx, snapshot, costNano.IntPart(), 1, 0)
+	return costNano.IntPart(), true
 }
 
-func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnapshot, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) {
+func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnapshot, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) bool {
 	if snapshot.ChannelId <= 0 {
-		return
+		return false
 	}
+	isStatusProbe := ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey)
 	probeCostNanoCNY := int64(0)
-	if ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey) && settledDelta > 0 {
+	if isStatusProbe && settledDelta > 0 {
 		probeCostNanoCNY = costNanoCNY
 	}
-	enqueueChannelDailyCost(model.ChannelDailyCostDelta{
+	delta := model.ChannelDailyCostDelta{
 		ChannelId:        snapshot.ChannelId,
 		OccurredAt:       common.GetTimestamp(),
 		CostNanoCNY:      costNanoCNY,
@@ -425,17 +438,30 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		APIKeyName:       snapshot.APIKeyName,
 		KeyFingerprint:   snapshot.KeyFingerprint,
 		KeyDisplay:       snapshot.KeyDisplay,
-	})
+	}
+	var persisted bool
+	if isStatusProbe {
+		persisted = writeChannelDailyCostSynchronously(delta)
+	} else {
+		persisted = enqueueChannelDailyCost(delta)
+	}
+	if !persisted {
+		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败，本次请求未标记为已记录", snapshot.ChannelId))
+		return false
+	}
 	if settledDelta > 0 {
 		setChannelDailyCostAttemptSettledCost(ctx, snapshot.ChannelId, costNanoCNY)
 	}
 	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
+	return true
 }
 
 func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, billingUsage *dto.Usage, originUsage *dto.Usage, summary textQuotaSummary, tieredBillingApplied bool, tieredResult *billingexpr.TieredResult) {
 	if relayInfo == nil {
 		return
 	}
+	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
+	quotaPerUnit := snapshot.QuotaPerUnit
 	if tieredBillingApplied {
 		if !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
@@ -445,14 +471,18 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
+		if tieredSnapshot := relayInfo.TieredBillingSnapshot; tieredSnapshot != nil {
+			quotaPerUnit = tieredSnapshot.QuotaPerUnit
+			snapshot.QuotaPerUnit = quotaPerUnit
+		}
 		quotaBeforeGroup := tieredResult.ActualQuotaBeforeGroup
 		copiedInfo := *relayInfo
 		copiedInfo.PriceData = relayInfo.PriceData
 		copiedInfo.PriceData.GroupRatioInfo.GroupRatio = 1
 		copiedInfo.QuotaClamp = nil
-		baseSummary := calculateTextQuotaSummary(ctx, &copiedInfo, billingUsage)
+		baseSummary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copiedInfo, billingUsage, quotaPerUnit)
 		quotaBeforeGroup += baseSummary.ToolCallSurchargeQuota.InexactFloat64()
-		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, quotaBeforeGroup)
+		recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup)
 		return
 	}
 	if !relayInfo.PriceData.UsePrice && !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
@@ -468,18 +498,19 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	copiedInfo.PriceData = relayInfo.PriceData
 	copiedInfo.PriceData.GroupRatioInfo.GroupRatio = 1
 	copiedInfo.QuotaClamp = nil
-	baseSummary := calculateTextQuotaSummary(ctx, &copiedInfo, billingUsage)
+	baseSummary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copiedInfo, billingUsage, quotaPerUnit)
 	if copiedInfo.QuotaClamp != nil {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
-	recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, float64(baseSummary.Quota))
+	recordChannelDailyCostWithSnapshot(ctx, snapshot, float64(baseSummary.Quota))
 }
 
 func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, quotaInfo QuotaInfo, totalTokens int, authoritativeUsage bool, tieredBillingApplied bool, tieredResult *billingexpr.TieredResult) {
 	if relayInfo == nil {
 		return
 	}
+	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
 	if tieredBillingApplied {
 		if !authoritativeUsage {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
@@ -489,7 +520,10 @@ func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayI
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
-		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, tieredResult.ActualQuotaBeforeGroup)
+		if tieredSnapshot := relayInfo.TieredBillingSnapshot; tieredSnapshot != nil {
+			snapshot.QuotaPerUnit = tieredSnapshot.QuotaPerUnit
+		}
+		recordChannelDailyCostWithSnapshot(ctx, snapshot, tieredResult.ActualQuotaBeforeGroup)
 		return
 	}
 	if !quotaInfo.UsePrice && !authoritativeUsage {
@@ -501,16 +535,43 @@ func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayI
 		return
 	}
 	quotaInfo.GroupRatio = 1
-	quotaBeforeGroup, clamp := calculateAudioQuota(quotaInfo)
+	var quotaBeforeGroup int
+	var clamp *common.QuotaClamp
+	if quotaInfo.UsePrice {
+		quotaBeforeGroup, clamp = common.QuotaFromDecimalChecked(
+			decimal.NewFromFloat(quotaInfo.ModelPrice).Mul(decimal.NewFromFloat(snapshot.QuotaPerUnit)),
+		)
+	} else {
+		quotaBeforeGroup, clamp = calculateAudioQuota(quotaInfo)
+	}
 	if clamp != nil {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
-	recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, float64(quotaBeforeGroup))
+	recordChannelDailyCostWithSnapshot(ctx, snapshot, float64(quotaBeforeGroup))
 }
 
-func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, quota int, tieredResult *billingexpr.TieredResult, usage *dto.Usage, authoritativeUsage bool) {
+func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, _ int, _ *billingexpr.TieredResult, usage *dto.Usage, authoritativeUsage bool) {
 	if relayInfo == nil {
+		return
+	}
+	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
+	quotaPerUnit := snapshot.QuotaPerUnit
+	if relayInfo.TieredBillingSnapshot != nil {
+		quotaPerUnit = relayInfo.TieredBillingSnapshot.QuotaPerUnit
+		snapshot.QuotaPerUnit = quotaPerUnit
+	}
+	billingUsage := effectiveBillingUsage(usage)
+	copiedInfo := *relayInfo
+	copiedInfo.PriceData = relayInfo.PriceData
+	copiedInfo.PriceData.GroupRatioInfo.GroupRatio = 1
+	copiedInfo.QuotaClamp = nil
+	baseSummary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copiedInfo, billingUsage, quotaPerUnit)
+	if copiedInfo.QuotaClamp != nil {
+		if relayInfo.QuotaClamp == nil {
+			relayInfo.QuotaClamp = copiedInfo.QuotaClamp
+		}
+		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
 	if relayInfo.TieredBillingSnapshot != nil {
@@ -518,18 +579,36 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
-		if tieredResult == nil {
+		usedVars := billingexpr.UsedVars(relayInfo.TieredBillingSnapshot.ExprString)
+		ok, _, tieredResult := TryTieredSettle(
+			relayInfo,
+			BuildTieredTokenParams(billingUsage, baseSummary.IsClaudeUsageSemantic, usedVars),
+		)
+		if !ok || tieredResult == nil ||
+			math.IsNaN(tieredResult.ActualQuotaBeforeGroup) ||
+			math.IsInf(tieredResult.ActualQuotaBeforeGroup, 0) ||
+			tieredResult.ActualQuotaBeforeGroup < 0 {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
-		recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, tieredResult.ActualQuotaBeforeGroup)
+		quotaBeforeGroup := decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).Add(baseSummary.ToolCallSurchargeQuota)
+		if _, clamp := common.QuotaFromDecimalChecked(quotaBeforeGroup); clamp != nil {
+			noteQuotaClamp(relayInfo, clamp)
+			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+			return
+		}
+		recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup.InexactFloat64())
 		return
 	}
 	if !relayInfo.PriceData.UsePrice && (!authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage)) {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
-	recordChannelDailyCostFromQuota(ctx, relayInfo.ChannelId, float64(quota))
+	if !relayInfo.PriceData.UsePrice && (billingUsage == nil || !baseSummary.hasBillableUsage()) {
+		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
+		return
+	}
+	recordChannelDailyCostWithSnapshot(ctx, snapshot, float64(baseSummary.Quota))
 }
 
 // RecordPerCallChannelDailyCost records successful task and Midjourney calls.
@@ -543,4 +622,41 @@ func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName st
 		quotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(quotaBeforeGroup)
 	}
 	recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup)
+}
+
+// RecordTaskChannelDailyCost synchronously registers an asynchronous task's
+// initial cost so later refunds and recalculations can correct the original
+// submission day without racing the generic daily-cost batcher.
+func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int64, costEventId string, initialQuota int64, modelName string, priceData types.PriceData) (int64, bool, error) {
+	snapshot := channelDailyCostSnapshotWithCurrentKey(ctx, channelDailyCostSnapshotFromContext(ctx, channelId))
+	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
+	if !priceData.UsePrice {
+		quotaBeforeGroup = priceData.ModelRatio / 2 * snapshot.QuotaPerUnit
+	}
+	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+		quotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(quotaBeforeGroup)
+	}
+	costNanoCNY, resolved := calculateChannelDailyCost(snapshot, quotaBeforeGroup)
+	if !resolved {
+		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
+		return 0, false, nil
+	}
+
+	storedCost, err := model.RegisterChannelTaskCostEvent(channelMonitorPublishContext(ctx), model.ChannelTaskCostEventInput{
+		CostEventId:    costEventId,
+		ChannelId:      snapshot.ChannelId,
+		OccurredAt:     occurredAt,
+		APIKeyId:       snapshot.APIKeyId,
+		APIKeyName:     snapshot.APIKeyName,
+		KeyFingerprint: snapshot.KeyFingerprint,
+		KeyDisplay:     snapshot.KeyDisplay,
+		InitialQuota:   initialQuota,
+		CostNanoCNY:    costNanoCNY,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	setChannelDailyCostAttemptSettledCost(ctx, snapshot.ChannelId, storedCost)
+	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
+	return storedCost, true, nil
 }

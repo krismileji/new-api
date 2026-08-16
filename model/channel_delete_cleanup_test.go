@@ -49,6 +49,12 @@ func seedChannelDeleteCleanupData(t *testing.T, db *gorm.DB, channelId int, stat
 		ChannelId: channelId, DayStart: 1, KeyFingerprint: "key", KeyDisplay: "key",
 		CreatedAt: 1, UpdatedAt: 1,
 	}).Error)
+	require.NoError(t, db.Create(&ChannelTaskCostEvent{
+		CostEventId: fmt.Sprintf("task:delete-cleanup-%d", channelId),
+		ChannelId:   channelId, DayStart: 1, OccurredAt: 1,
+		InitialQuota: 1, InitialCostNanoCNY: 1, CostNanoCNY: 1,
+		CreatedAt: 1, UpdatedAt: 1,
+	}).Error)
 	require.NoError(t, db.Create(&ChannelMonitorMinuteRouteMetric{
 		MinuteStart: 60, ChannelId: channelId, ModelKey: "model", GroupKey: "group", APIKeyKey: "key",
 		ModelName: "model-a", GroupName: "vip",
@@ -125,6 +131,7 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelRatioHistory{},
 				&ChannelDailyCost{},
 				&ChannelDailyAPIKeyCost{},
+				&ChannelTaskCostEvent{},
 				&ChannelMonitorMinuteRouteMetric{},
 				&ChannelMonitorMinuteAPIKeyMetric{},
 				&ChannelMonitorMinuteDurationBucket{},
@@ -161,6 +168,7 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelRatioHistory{},
 				&ChannelDailyCost{},
 				&ChannelDailyAPIKeyCost{},
+				&ChannelTaskCostEvent{},
 			}
 			for _, channelId := range []int{1801, 1802, 1803} {
 				wantCount := int64(1)

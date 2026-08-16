@@ -2060,6 +2060,18 @@ func TestSaveChannelMonitorUpstreamConfigAppliesCostConversion(t *testing.T) {
 	assert.InDelta(t, 0.4, *overviewResponse.Data.Channels[0].CostRatio, 1e-9)
 	assert.InDelta(t, 0.5, *overviewResponse.Data.Channels[0].ConversionFactor, 1e-9)
 
+	_, _, _, err = model.UpdateChannelRatioMonitorFromUpstream(15, 1.0, "second fetch", 1, "root")
+	require.NoError(t, err)
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &overviewResponse))
+	require.Len(t, overviewResponse.Data.Channels, 1)
+	require.NotNil(t, overviewResponse.Data.Channels[0].PreviousRatio)
+	require.NotNil(t, overviewResponse.Data.Channels[0].PreviousCostRatio)
+	assert.InDelta(t, 0.8, *overviewResponse.Data.Channels[0].PreviousRatio, 1e-9)
+	assert.InDelta(t, 0.4, *overviewResponse.Data.Channels[0].PreviousCostRatio, 1e-9)
+
 	delete(request, "cost_conversion")
 	request["group"] = "standard"
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/15/upstream", request)
@@ -2082,6 +2094,14 @@ func TestSaveChannelMonitorUpstreamConfigAppliesCostConversion(t *testing.T) {
 	storedConversion, err = service.ParseChannelMonitorCostConversion(monitor.CostConversion)
 	require.NoError(t, err)
 	assert.Equal(t, service.ChannelMonitorCostConversionNone, storedConversion.Mode)
+	assert.Nil(t, monitor.PreviousRatio)
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &overviewResponse))
+	require.Len(t, overviewResponse.Data.Channels, 1)
+	assert.Nil(t, overviewResponse.Data.Channels[0].PreviousRatio)
+	assert.Nil(t, overviewResponse.Data.Channels[0].PreviousCostRatio)
 
 	request["cost_conversion"] = map[string]any{
 		"mode":         service.ChannelMonitorCostConversionRecharge,

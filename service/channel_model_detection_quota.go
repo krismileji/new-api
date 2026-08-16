@@ -29,6 +29,26 @@ type ChannelModelDetectionQuotaResult struct {
 	Reliable       bool
 }
 
+// AlignChannelModelDetectionCostSnapshot makes the event use the same quota
+// unit already frozen by tiered billing. This prevents a concurrent settings
+// update from mixing two quota units within one attempt.
+func AlignChannelModelDetectionCostSnapshot(info *relaycommon.RelayInfo, snapshot ChannelModelDetectionCostSnapshot) (ChannelModelDetectionCostSnapshot, error) {
+	if info == nil || info.TieredBillingSnapshot == nil {
+		return snapshot, nil
+	}
+	quotaPerUnit := info.TieredBillingSnapshot.QuotaPerUnit
+	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return ChannelModelDetectionCostSnapshot{}, model.ErrChannelModelDetectionInvalidCost
+	}
+	quotaPerUnitDecimal := decimal.NewFromFloat(quotaPerUnit)
+	if !quotaPerUnitDecimal.Equal(quotaPerUnitDecimal.Truncate(0)) || quotaPerUnitDecimal.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
+		return ChannelModelDetectionCostSnapshot{}, model.ErrChannelModelDetectionInvalidCost
+	}
+	value := quotaPerUnitDecimal.IntPart()
+	snapshot.QuotaPerUnit = &value
+	return snapshot, nil
+}
+
 // EstimateChannelModelDetectionQuota calculates a conservative pre-group
 // estimate for model detection only. It never writes channel daily costs.
 func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens int, snapshot ChannelModelDetectionCostSnapshot) (int64, bool) {
@@ -54,7 +74,21 @@ func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens i
 // CalculateChannelModelDetectionQuota reuses the normal text settlement math
 // while deliberately omitting all account mutation and aggregate cost writes.
 func CalculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) ChannelModelDetectionQuotaResult {
+	return calculateChannelModelDetectionQuota(ctx, info, usage, common.QuotaPerUnit)
+}
+
+func CalculateChannelModelDetectionQuotaWithSnapshot(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, snapshot ChannelModelDetectionCostSnapshot) ChannelModelDetectionQuotaResult {
+	if snapshot.QuotaPerUnit == nil || *snapshot.QuotaPerUnit <= 0 {
+		return ChannelModelDetectionQuotaResult{}
+	}
+	return calculateChannelModelDetectionQuota(ctx, info, usage, float64(*snapshot.QuotaPerUnit))
+}
+
+func calculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, quotaPerUnit float64) ChannelModelDetectionQuotaResult {
 	if ctx == nil || info == nil || usage == nil || !channelDailyCostUsageIsAuthoritative(ctx, usage) {
+		return ChannelModelDetectionQuotaResult{}
+	}
+	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
 		return ChannelModelDetectionQuotaResult{}
 	}
 	billingUsage := effectiveBillingUsage(usage)
@@ -63,7 +97,7 @@ func CalculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.Rel
 		return ChannelModelDetectionQuotaResult{}
 	}
 
-	summary := calculateTextQuotaSummary(ctx, info, billingUsage)
+	summary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, info, billingUsage, quotaPerUnit)
 	settledQuota := summary.Quota
 	costBasisQuota := int64(0)
 
@@ -79,7 +113,7 @@ func CalculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.Rel
 		copiedInfo.PriceData = info.PriceData
 		copiedInfo.PriceData.GroupRatioInfo.GroupRatio = 1
 		copiedInfo.QuotaClamp = nil
-		baseSummary := calculateTextQuotaSummary(ctx, &copiedInfo, billingUsage)
+		baseSummary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copiedInfo, billingUsage, quotaPerUnit)
 		basis, clamp := common.QuotaFromDecimalChecked(
 			decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).Add(baseSummary.ToolCallSurchargeQuota),
 		)
@@ -92,7 +126,7 @@ func CalculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.Rel
 		copiedInfo.PriceData = info.PriceData
 		copiedInfo.PriceData.GroupRatioInfo.GroupRatio = 1
 		copiedInfo.QuotaClamp = nil
-		baseSummary := calculateTextQuotaSummary(ctx, &copiedInfo, billingUsage)
+		baseSummary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copiedInfo, billingUsage, quotaPerUnit)
 		if copiedInfo.QuotaClamp != nil || baseSummary.Quota < 0 {
 			return ChannelModelDetectionQuotaResult{Usage: normalizedUsage}
 		}

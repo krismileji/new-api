@@ -22,6 +22,7 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&ChannelDailyCost{},
 		&ChannelDailyAPIKeyCost{},
+		&ChannelTaskCostEvent{},
 		&ChannelMonitorMinuteRouteMetric{},
 		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
@@ -43,6 +44,10 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 		{ChannelId: 1, DayStart: cutoff - 1, KeyFingerprint: "old-a", KeyDisplay: "old", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 		{ChannelId: 2, DayStart: cutoff - 2, KeyFingerprint: "old-b", KeyDisplay: "old", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 		{ChannelId: 3, DayStart: cutoff, KeyFingerprint: "keep", KeyDisplay: "keep", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelTaskCostEvent{
+		{CostEventId: "task:expired", ChannelId: 1, DayStart: cutoff - 1, OccurredAt: cutoff - 1, InitialQuota: 10, InitialCostNanoCNY: 100, CostNanoCNY: 100, CreatedAt: 1, UpdatedAt: 1},
+		{CostEventId: "task:keep", ChannelId: 2, DayStart: cutoff, OccurredAt: cutoff, InitialQuota: 10, InitialCostNanoCNY: 100, CostNanoCNY: 100, CreatedAt: 1, UpdatedAt: 1},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
 		{MinuteStart: minuteCutoff - 1, ChannelId: 1, ModelKey: "expired", GroupKey: "expired", APIKeyKey: "expired"},
@@ -71,6 +76,7 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	assert.True(t, result.Incomplete)
 	assert.Zero(t, result.ChannelRowsDeleted)
 	assert.Zero(t, result.APIKeyRowsDeleted)
+	assert.Zero(t, result.TaskCostEventRowsDeleted)
 	assert.Zero(t, result.MinuteRowsDeleted)
 	assert.Zero(t, result.DurationBucketRowsDeleted)
 	var beforeResume int64
@@ -84,6 +90,7 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	assert.False(t, result.Incomplete)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)
 	assert.Equal(t, int64(2), result.APIKeyRowsDeleted)
+	assert.Equal(t, int64(1), result.TaskCostEventRowsDeleted)
 	assert.Equal(t, int64(2), result.MinuteRowsDeleted)
 	assert.Equal(t, int64(1), result.DurationBucketRowsDeleted)
 
@@ -96,6 +103,11 @@ func TestDeleteChannelMonitorCostsBeforeRemovesOnlyExpiredRows(t *testing.T) {
 	require.NoError(t, db.Find(&apiKeyRows).Error)
 	require.Len(t, apiKeyRows, 1)
 	assert.Equal(t, 3, apiKeyRows[0].ChannelId)
+
+	var taskCostEvents []ChannelTaskCostEvent
+	require.NoError(t, db.Find(&taskCostEvents).Error)
+	require.Len(t, taskCostEvents, 1)
+	assert.Equal(t, "task:keep", taskCostEvents[0].CostEventId)
 
 	var minuteRows []ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Order("minute_start ASC").Find(&minuteRows).Error)
@@ -138,6 +150,7 @@ func TestDeleteChannelMonitorCostsBeforeUsesIndependentMetricCutoffs(t *testing.
 	require.NoError(t, db.AutoMigrate(
 		&ChannelDailyCost{},
 		&ChannelDailyAPIKeyCost{},
+		&ChannelTaskCostEvent{},
 		&ChannelMonitorMinuteRouteMetric{},
 		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
@@ -162,6 +175,10 @@ func TestDeleteChannelMonitorCostsBeforeUsesIndependentMetricCutoffs(t *testing.
 		{ChannelId: 1, DayStart: costCutoff - 1, KeyFingerprint: "old", KeyDisplay: "old", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 		{ChannelId: 2, DayStart: costCutoff, KeyFingerprint: "keep", KeyDisplay: "keep", SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
 	}).Error)
+	require.NoError(t, db.Create(&[]ChannelTaskCostEvent{
+		{CostEventId: "task:old", ChannelId: 1, DayStart: costCutoff - 1, OccurredAt: costCutoff - 1, InitialQuota: 10, InitialCostNanoCNY: 100, CostNanoCNY: 100, CreatedAt: 1, UpdatedAt: 1},
+		{CostEventId: "task:current", ChannelId: 2, DayStart: costCutoff, OccurredAt: costCutoff, InitialQuota: 10, InitialCostNanoCNY: 100, CostNanoCNY: 100, CreatedAt: 1, UpdatedAt: 1},
+	}).Error)
 	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
 		{MinuteStart: routeCutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", APIKeyKey: "old"},
 		{MinuteStart: routeCutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", APIKeyKey: "keep"},
@@ -184,6 +201,7 @@ func TestDeleteChannelMonitorCostsBeforeUsesIndependentMetricCutoffs(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)
 	assert.Equal(t, int64(1), result.APIKeyRowsDeleted)
+	assert.Equal(t, int64(1), result.TaskCostEventRowsDeleted)
 	assert.Equal(t, int64(1), result.RouteMetricRowsDeleted)
 	assert.Equal(t, int64(1), result.APIKeyMetricRowsDeleted)
 	assert.Equal(t, int64(2), result.MinuteRowsDeleted)

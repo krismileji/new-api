@@ -33,6 +33,16 @@ type channelDailyCostBatcherConfig struct {
 
 type channelDailyCostBatchWriter func(context.Context, []model.ChannelDailyCostDelta) error
 
+type channelDailyCostEnqueueResult int
+
+const (
+	channelDailyCostEnqueueAccepted channelDailyCostEnqueueResult = iota
+	channelDailyCostEnqueueInvalid
+	channelDailyCostEnqueueStopped
+	channelDailyCostEnqueueFull
+	channelDailyCostEnqueueOverflow
+)
+
 type channelDailyCostAggregateKey struct {
 	ChannelId      int
 	DayStart       int64
@@ -43,13 +53,11 @@ type channelDailyCostBatcher struct {
 	config channelDailyCostBatcherConfig
 	write  channelDailyCostBatchWriter
 
-	mu            sync.Mutex
-	pending       map[channelDailyCostAggregateKey]model.ChannelDailyCostDelta
-	droppedEvents int64
-	reportedDrops int64
-	lastDropLog   time.Time
-	lastErrorLog  time.Time
-	stopped       bool
+	mu           sync.Mutex
+	pending      map[channelDailyCostAggregateKey]model.ChannelDailyCostDelta
+	retryBatch   []model.ChannelDailyCostDelta
+	lastErrorLog time.Time
+	stopped      bool
 
 	flushMu  sync.Mutex
 	wake     chan struct{}
@@ -106,8 +114,12 @@ func newChannelDailyCostBatcher(config channelDailyCostBatcherConfig, write chan
 }
 
 func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) bool {
-	if delta.ChannelId <= 0 || delta.CostNanoCNY < 0 || delta.ProbeCostNanoCNY < 0 || delta.ProbeCostNanoCNY > delta.CostNanoCNY || delta.SettledDelta < 0 || delta.UnresolvedDelta < 0 || (delta.SettledDelta == 0 && delta.UnresolvedDelta == 0) {
-		return false
+	return b.enqueueResult(delta) == channelDailyCostEnqueueAccepted
+}
+
+func (b *channelDailyCostBatcher) enqueueResult(delta model.ChannelDailyCostDelta) channelDailyCostEnqueueResult {
+	if !channelDailyCostDeltaIsValid(delta) {
+		return channelDailyCostEnqueueInvalid
 	}
 	key := channelDailyCostAggregateKey{
 		ChannelId:      delta.ChannelId,
@@ -118,14 +130,12 @@ func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) boo
 	b.mu.Lock()
 	if b.stopped {
 		b.mu.Unlock()
-		return false
+		return channelDailyCostEnqueueStopped
 	}
 	if current, exists := b.pending[key]; exists {
 		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
-			b.addDroppedEventsLocked(delta)
 			b.mu.Unlock()
-			b.signal()
-			return false
+			return channelDailyCostEnqueueOverflow
 		}
 		current.CostNanoCNY += delta.CostNanoCNY
 		current.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
@@ -143,15 +153,12 @@ func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) boo
 		if shouldFlush {
 			b.signal()
 		}
-		return true
+		return channelDailyCostEnqueueAccepted
 	}
 	if len(b.pending) >= b.config.MaxPending {
-		// A new high-cardinality key is dropped under sustained database
-		// pressure. Existing keys can still aggregate without growing memory.
-		b.addDroppedEventsLocked(delta)
 		b.mu.Unlock()
 		b.signal()
-		return false
+		return channelDailyCostEnqueueFull
 	}
 	b.pending[key] = delta
 	shouldFlush := len(b.pending) >= b.config.MaxBatchSize
@@ -159,7 +166,17 @@ func (b *channelDailyCostBatcher) enqueue(delta model.ChannelDailyCostDelta) boo
 	if shouldFlush {
 		b.signal()
 	}
-	return true
+	return channelDailyCostEnqueueAccepted
+}
+
+func channelDailyCostDeltaIsValid(delta model.ChannelDailyCostDelta) bool {
+	return delta.ChannelId > 0 &&
+		delta.CostNanoCNY >= 0 &&
+		delta.ProbeCostNanoCNY >= 0 &&
+		delta.ProbeCostNanoCNY <= delta.CostNanoCNY &&
+		delta.SettledDelta >= 0 &&
+		delta.UnresolvedDelta >= 0 &&
+		(delta.SettledDelta > 0 || delta.UnresolvedDelta > 0)
 }
 
 func (b *channelDailyCostBatcher) signal() {
@@ -180,7 +197,6 @@ func (b *channelDailyCostBatcher) run() {
 			if err != nil {
 				b.reportFlushError(err)
 			}
-			b.reportDroppedEvents()
 			if err == nil {
 				b.signalIfPending()
 			}
@@ -189,7 +205,6 @@ func (b *channelDailyCostBatcher) run() {
 			if err != nil {
 				b.reportFlushError(err)
 			}
-			b.reportDroppedEvents()
 			if err == nil {
 				b.signalIfPending()
 			}
@@ -231,52 +246,19 @@ func (b *channelDailyCostBatcher) flushAll() error {
 func (b *channelDailyCostBatcher) requeueBatch(batch []model.ChannelDailyCostDelta) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, delta := range batch {
-		key := channelDailyCostAggregateKey{
-			ChannelId:      delta.ChannelId,
-			DayStart:       model.ChannelDailyCostDayStart(delta.OccurredAt),
-			KeyFingerprint: delta.KeyFingerprint,
-		}
-		current, exists := b.pending[key]
-		if !exists {
-			b.pending[key] = delta
-			continue
-		}
-		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
-			b.addDroppedEventsLocked(delta)
-			continue
-		}
-		current.CostNanoCNY += delta.CostNanoCNY
-		current.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
-		current.SettledDelta += delta.SettledDelta
-		current.UnresolvedDelta += delta.UnresolvedDelta
-		if delta.OccurredAt >= current.OccurredAt {
-			current.OccurredAt = delta.OccurredAt
-			current.APIKeyId = delta.APIKeyId
-			current.APIKeyName = delta.APIKeyName
-			current.KeyDisplay = delta.KeyDisplay
-		}
-		b.pending[key] = current
-	}
-}
-
-func (b *channelDailyCostBatcher) addDroppedEventsLocked(delta model.ChannelDailyCostDelta) {
-	dropped := delta.SettledDelta
-	if dropped > math.MaxInt64-delta.UnresolvedDelta {
-		dropped = math.MaxInt64
-	} else {
-		dropped += delta.UnresolvedDelta
-	}
-	if b.droppedEvents > math.MaxInt64-dropped {
-		b.droppedEvents = math.MaxInt64
-		return
-	}
-	b.droppedEvents += dropped
+	// Keep a failed database batch intact. Merging it back into newer pending
+	// events can overflow an aggregate and silently discard the older charge.
+	b.retryBatch = batch
 }
 
 func (b *channelDailyCostBatcher) takeBatch() []model.ChannelDailyCostDelta {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if len(b.retryBatch) > 0 {
+		batch := b.retryBatch
+		b.retryBatch = nil
+		return batch
+	}
 	limit := min(len(b.pending), b.config.MaxBatchSize)
 	if limit == 0 {
 		return nil
@@ -290,6 +272,18 @@ func (b *channelDailyCostBatcher) takeBatch() []model.ChannelDailyCostDelta {
 		}
 	}
 	return batch
+}
+
+func (b *channelDailyCostBatcher) writeSynchronously(delta model.ChannelDailyCostDelta) error {
+	b.mu.Lock()
+	stopped := b.stopped
+	b.mu.Unlock()
+	if stopped {
+		return errors.New("渠道每日成本批处理器已停止")
+	}
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+	return b.writeWithRetry([]model.ChannelDailyCostDelta{delta})
 }
 
 func (b *channelDailyCostBatcher) writeWithRetry(batch []model.ChannelDailyCostDelta) error {
@@ -321,25 +315,11 @@ func (b *channelDailyCostBatcher) writeWithRetry(batch []model.ChannelDailyCostD
 
 func (b *channelDailyCostBatcher) signalIfPending() {
 	b.mu.Lock()
-	hasPending := len(b.pending) > 0
+	hasPending := len(b.retryBatch) > 0 || len(b.pending) > 0
 	b.mu.Unlock()
 	if hasPending {
 		b.signal()
 	}
-}
-
-func (b *channelDailyCostBatcher) reportDroppedEvents() {
-	b.mu.Lock()
-	dropped := b.droppedEvents - b.reportedDrops
-	now := time.Now()
-	if dropped <= 0 || (!b.lastDropLog.IsZero() && now.Sub(b.lastDropLog) < time.Minute) {
-		b.mu.Unlock()
-		return
-	}
-	b.reportedDrops = b.droppedEvents
-	b.lastDropLog = now
-	b.mu.Unlock()
-	logger.LogError(context.Background(), fmt.Sprintf("渠道每日成本缓冲区已丢弃 %d 个事件", dropped))
 }
 
 func (b *channelDailyCostBatcher) reportFlushError(err error) {
@@ -357,13 +337,7 @@ func (b *channelDailyCostBatcher) reportFlushError(err error) {
 func (b *channelDailyCostBatcher) pendingCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return len(b.pending)
-}
-
-func (b *channelDailyCostBatcher) droppedCount() int64 {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.droppedEvents
+	return len(b.retryBatch) + len(b.pending)
 }
 
 func (b *channelDailyCostBatcher) stop() {
@@ -382,11 +356,29 @@ var (
 )
 
 func enqueueChannelDailyCost(delta model.ChannelDailyCostDelta) bool {
+	if !channelDailyCostDeltaIsValid(delta) {
+		return false
+	}
 	channelDailyCostBatcherMu.RLock()
 	batcher := dailyCostBatcher
-	accepted := batcher.enqueue(delta)
+	result := batcher.enqueueResult(delta)
+	accepted := result == channelDailyCostEnqueueAccepted
+	if result == channelDailyCostEnqueueFull {
+		accepted = batcher.writeSynchronously(delta) == nil
+	}
 	channelDailyCostBatcherMu.RUnlock()
 	return accepted
+}
+
+func writeChannelDailyCostSynchronously(delta model.ChannelDailyCostDelta) bool {
+	if !channelDailyCostDeltaIsValid(delta) {
+		return false
+	}
+	channelDailyCostBatcherMu.RLock()
+	batcher := dailyCostBatcher
+	err := batcher.writeSynchronously(delta)
+	channelDailyCostBatcherMu.RUnlock()
+	return err == nil
 }
 
 func resetChannelDailyCostBatcherForTest(config channelDailyCostBatcherConfig, write channelDailyCostBatchWriter) {

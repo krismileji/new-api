@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
@@ -142,7 +143,7 @@ func TestChannelDailyCostAttributesStatusProbeAndExposesSettledAttemptCost(t *te
 	settledCostNanoCNY := ChannelDailyCostAttemptSettledCost(ctx, 8)
 	require.NotNil(t, settledCostNanoCNY)
 	assert.Equal(t, int64(2_500_000_000), *settledCostNanoCNY)
-	flushChannelDailyCostEvents(t)
+	assert.Zero(t, pendingChannelDailyCostEventsForTest())
 
 	var cost model.ChannelDailyCost
 	require.NoError(t, db.First(&cost, "channel_id = ?", 8).Error)
@@ -283,6 +284,201 @@ func TestChannelDailyCostSettlesFixedPriceAudioWithoutTokens(t *testing.T) {
 	assert.Zero(t, cost.UnresolvedCount)
 }
 
+func TestTextChannelDailyCostKeepsFrozenQuotaPerUnit(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	for _, channelId := range []int{27, 28, 29, 30} {
+		createChannelDailyCostMonitor(t, db, channelId, 0.5)
+	}
+
+	fixedContext := newChannelDailyCostTestContext()
+	toolContext := newChannelDailyCostTestContext()
+	geminiContext := newChannelDailyCostTestContext()
+	tieredContext := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(fixedContext, 27)
+	CaptureChannelDailyCostSnapshot(toolContext, 28)
+	CaptureChannelDailyCostSnapshot(geminiContext, 29)
+	CaptureChannelDailyCostSnapshot(tieredContext, 30)
+
+	common.QuotaPerUnit = 1_000_000
+
+	fixedInfo := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 27},
+		OriginModelName: "fixed-price-model",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			UsePrice:       true,
+			ModelPrice:     0.02,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	fixedUsage := &dto.Usage{BillingUsage: &dto.BillingUsage{Estimated: true}}
+	recordTextChannelDailyCost(
+		fixedContext,
+		fixedInfo,
+		fixedUsage,
+		fixedUsage,
+		calculateTextQuotaSummary(fixedContext, fixedInfo, fixedUsage),
+		false,
+		nil,
+	)
+
+	toolInfo := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 28},
+		OriginModelName: "test-model",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				dto.BuildInToolWebSearchPreview: {
+					ToolName:  dto.BuildInToolWebSearchPreview,
+					CallCount: 1,
+				},
+			},
+		},
+	}
+	toolUsage := &dto.Usage{}
+	recordTextChannelDailyCost(
+		toolContext,
+		toolInfo,
+		toolUsage,
+		toolUsage,
+		calculateTextQuotaSummary(toolContext, toolInfo, toolUsage),
+		false,
+		nil,
+	)
+
+	geminiInfo := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 29},
+		OriginModelName: "gemini-2.5-flash",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	geminiUsage := &dto.Usage{
+		PromptTokens: 1_000_000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			AudioTokens: 1_000_000,
+		},
+	}
+	recordTextChannelDailyCost(
+		geminiContext,
+		geminiInfo,
+		geminiUsage,
+		geminiUsage,
+		calculateTextQuotaSummary(geminiContext, geminiInfo, geminiUsage),
+		false,
+		nil,
+	)
+
+	tieredInfo := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 30},
+		OriginModelName: "test-model",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{QuotaPerUnit: 250_000},
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				dto.BuildInToolWebSearchPreview: {
+					ToolName:  dto.BuildInToolWebSearchPreview,
+					CallCount: 1,
+				},
+			},
+		},
+	}
+	tieredUsage := &dto.Usage{PromptTokens: 1}
+	recordTextChannelDailyCost(
+		tieredContext,
+		tieredInfo,
+		tieredUsage,
+		tieredUsage,
+		calculateTextQuotaSummary(tieredContext, tieredInfo, tieredUsage),
+		true,
+		&billingexpr.TieredResult{ActualQuotaBeforeGroup: 2_500},
+	)
+	flushChannelDailyCostEvents(t)
+
+	expectedCosts := map[int]int64{
+		27: 50_000_000,
+		28: 25_000_000,
+		29: 2_500_000_000,
+		30: 50_000_000,
+	}
+	for channelId, expectedCost := range expectedCosts {
+		var cost model.ChannelDailyCost
+		require.NoError(t, db.First(&cost, "channel_id = ?", channelId).Error)
+		assert.Equal(t, expectedCost, cost.CostNanoCNY, "channel %d", channelId)
+		assert.Equal(t, int64(1), cost.SettledCount, "channel %d", channelId)
+		assert.Zero(t, cost.UnresolvedCount, "channel %d", channelId)
+	}
+}
+
+func TestAudioChannelDailyCostKeepsFrozenQuotaPerUnit(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 31, 0.5)
+	createChannelDailyCostMonitor(t, db, 32, 0.5)
+	createChannelDailyCostMonitor(t, db, 33, 0.5)
+
+	fixedContext := newChannelDailyCostTestContext()
+	tieredContext := newChannelDailyCostTestContext()
+	tokenContext := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(fixedContext, 31)
+	CaptureChannelDailyCostSnapshot(tieredContext, 32)
+	CaptureChannelDailyCostSnapshot(tokenContext, 33)
+	common.QuotaPerUnit = 1_000_000
+
+	recordAudioChannelDailyCost(fixedContext, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 31},
+	}, QuotaInfo{
+		UsePrice:   true,
+		ModelPrice: 0.03,
+		GroupRatio: 1,
+	}, 0, false, false, nil)
+
+	recordAudioChannelDailyCost(tieredContext, &relaycommon.RelayInfo{
+		ChannelMeta:           &relaycommon.ChannelMeta{ChannelId: 32},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{QuotaPerUnit: 250_000},
+	}, QuotaInfo{}, 1, true, true, &billingexpr.TieredResult{ActualQuotaBeforeGroup: 2_500})
+
+	recordAudioChannelDailyCost(tokenContext, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 33},
+	}, QuotaInfo{
+		ModelName:  "test-model",
+		ModelRatio: 2,
+		GroupRatio: 1,
+		InputDetails: TokenDetails{
+			TextTokens:  100,
+			AudioTokens: 50,
+		},
+		OutputDetails: TokenDetails{
+			TextTokens:  20,
+			AudioTokens: 10,
+		},
+	}, 180, true, false, nil)
+	flushChannelDailyCostEvents(t)
+
+	var fixedCost model.ChannelDailyCost
+	require.NoError(t, db.First(&fixedCost, "channel_id = ?", 31).Error)
+	assert.Equal(t, int64(75_000_000), fixedCost.CostNanoCNY)
+	assert.Equal(t, int64(1), fixedCost.SettledCount)
+
+	var tieredCost model.ChannelDailyCost
+	require.NoError(t, db.First(&tieredCost, "channel_id = ?", 32).Error)
+	assert.Equal(t, int64(25_000_000), tieredCost.CostNanoCNY)
+	assert.Equal(t, int64(1), tieredCost.SettledCount)
+
+	var tokenCost model.ChannelDailyCost
+	require.NoError(t, db.First(&tokenCost, "channel_id = ?", 33).Error)
+	assert.Equal(t, int64(1_800_000), tokenCost.CostNanoCNY)
+	assert.Equal(t, int64(1), tokenCost.SettledCount)
+}
+
 func TestChannelDailyCostAttemptOnlyRecordsDispatchedUnsettledRequests(t *testing.T) {
 	db := setupChannelDailyCostServiceTest(t)
 	createChannelDailyCostMonitor(t, db, 18, 0.2)
@@ -335,12 +531,18 @@ func TestChannelDailyCostTracksUnconfiguredChannelsAndTieredSettlements(t *testi
 	createChannelDailyCostMonitor(t, db, 4, 0.2)
 	tiered := newChannelDailyCostTestContext()
 	CaptureChannelDailyCostSnapshot(tiered, 4)
+	tieredExpr := `tier("base", p * 5000)`
 	RecordChannelTestDailyCost(tiered, &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 4},
 		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
-			BillingMode: "tiered_expr",
+			BillingMode:  "tiered_expr",
+			ExprString:   tieredExpr,
+			ExprHash:     billingexpr.ExprHashString(tieredExpr),
+			GroupRatio:   1,
+			QuotaPerUnit: common.QuotaPerUnit,
+			ExprVersion:  1,
 		},
-	}, 0, &billingexpr.TieredResult{ActualQuotaBeforeGroup: 2_500}, &dto.Usage{TotalTokens: 1}, true)
+	}, 0, &billingexpr.TieredResult{ActualQuotaBeforeGroup: 2_500}, &dto.Usage{PromptTokens: 1, TotalTokens: 1}, true)
 	flushChannelDailyCostEvents(t)
 
 	var unconfigured model.ChannelDailyCost
@@ -353,6 +555,226 @@ func TestChannelDailyCostTracksUnconfiguredChannelsAndTieredSettlements(t *testi
 	require.NoError(t, db.First(&settled, "channel_id = ?", 4).Error)
 	assert.Equal(t, int64(5_000_000), settled.CostNanoCNY)
 	assert.Equal(t, int64(1), settled.SettledCount)
+}
+
+func TestChannelTestDailyCostUsesFullPreGroupSettlementMath(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 20, 0.5)
+	createChannelDailyCostMonitor(t, db, 21, 0.5)
+
+	tokenPriced := newChannelDailyCostTestContext()
+	tokenPriced.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	CaptureChannelDailyCostSnapshot(tokenPriced, 20)
+	RecordChannelTestDailyCost(tokenPriced, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 20},
+		PriceData: types.PriceData{
+			ModelRatio:      2,
+			CompletionRatio: 4,
+			CacheRatio:      0.1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 3},
+		},
+	}, 999_999, nil, &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+		TotalTokens:      110,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 50,
+		},
+	}, true)
+
+	fixedPriceData := types.PriceData{
+		ModelPrice:     0.01,
+		UsePrice:       true,
+		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 7},
+	}
+	fixedPriceData.AddOtherRatio("n", 3)
+	fixedPrice := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(fixedPrice, 21)
+	RecordChannelTestDailyCost(fixedPrice, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 21},
+		PriceData:   fixedPriceData,
+	}, 1, nil, &dto.Usage{}, false)
+	flushChannelDailyCostEvents(t)
+
+	var tokenPricedCost model.ChannelDailyCost
+	require.NoError(t, db.First(&tokenPricedCost, "channel_id = ?", 20).Error)
+	assert.Equal(t, int64(950_000), tokenPricedCost.CostNanoCNY)
+	assert.Equal(t, tokenPricedCost.CostNanoCNY, tokenPricedCost.ProbeCostNanoCNY)
+	assert.Equal(t, int64(1), tokenPricedCost.SettledCount)
+	assert.Zero(t, tokenPricedCost.UnresolvedCount)
+
+	var fixedPriceCost model.ChannelDailyCost
+	require.NoError(t, db.First(&fixedPriceCost, "channel_id = ?", 21).Error)
+	assert.Equal(t, int64(75_000_000), fixedPriceCost.CostNanoCNY)
+	assert.Equal(t, int64(1), fixedPriceCost.SettledCount)
+	assert.Zero(t, fixedPriceCost.UnresolvedCount)
+}
+
+func TestChannelTestDailyCostKeepsRequestQuotaPerUnit(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 26, 0.5)
+	ctx := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(ctx, 26)
+
+	common.QuotaPerUnit = 1_000_000
+	RecordChannelTestDailyCost(ctx, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 26},
+		PriceData: types.PriceData{
+			ModelPrice:     0.01,
+			UsePrice:       true,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}, 0, nil, &dto.Usage{}, false)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 26).Error)
+	assert.Equal(t, int64(25_000_000), cost.CostNanoCNY)
+}
+
+func TestChannelTestDailyCostUsesEffectiveMultimodalBillingUsage(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 22, 0.5)
+
+	priceData := types.PriceData{
+		ModelRatio:      2,
+		CompletionRatio: 4,
+		CacheRatio:      0.1,
+		ImageRatio:      0.5,
+		GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 7},
+	}
+	priceData.AddOtherRatio("batch", 3)
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	CaptureChannelDailyCostSnapshot(ctx, 22)
+	RecordChannelTestDailyCost(ctx, &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 22},
+		OriginModelName: "gemini-2.5-flash",
+		PriceData:       priceData,
+	}, 0, nil, &dto.Usage{
+		PromptTokens:     9_999,
+		CompletionTokens: 9_999,
+		BillingUsage: dto.NewGeminiChatBillingUsage(&dto.GeminiUsageMetadata{
+			PromptTokenCount:        100,
+			CandidatesTokenCount:    10,
+			TotalTokenCount:         110,
+			CachedContentTokenCount: 20,
+			PromptTokensDetails: []dto.GeminiPromptTokensDetails{
+				{Modality: "TEXT", TokenCount: 60},
+				{Modality: "IMAGE", TokenCount: 30},
+				{Modality: "AUDIO", TokenCount: 10},
+			},
+		}),
+	}, true)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 22).Error)
+	assert.Equal(t, int64(2_985_000), cost.CostNanoCNY)
+	assert.Equal(t, cost.CostNanoCNY, cost.ProbeCostNanoCNY)
+	assert.Equal(t, int64(1), cost.SettledCount)
+	assert.Zero(t, cost.UnresolvedCount)
+}
+
+func TestChannelTestDailyCostTieredSettlementIncludesToolSurchargeBeforeGroup(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 23, 0.5)
+
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	CaptureChannelDailyCostSnapshot(ctx, 23)
+	expr := `tier("base", p * 2)`
+	RecordChannelTestDailyCost(ctx, &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 23},
+		OriginModelName: "test-model",
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 4},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:  "tiered_expr",
+			ExprString:   expr,
+			ExprHash:     billingexpr.ExprHashString(expr),
+			GroupRatio:   4,
+			QuotaPerUnit: common.QuotaPerUnit,
+			ExprVersion:  1,
+		},
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				dto.BuildInToolWebSearch: {
+					ToolName:  dto.BuildInToolWebSearch,
+					CallCount: 1,
+				},
+			},
+		},
+	}, 0, nil, &dto.Usage{PromptTokens: 1_000, TotalTokens: 1_000}, true)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 23).Error)
+	assert.Equal(t, int64(30_000_000), cost.CostNanoCNY)
+	assert.Equal(t, cost.CostNanoCNY, cost.ProbeCostNanoCNY)
+	assert.Equal(t, int64(1), cost.SettledCount)
+	assert.Zero(t, cost.UnresolvedCount)
+}
+
+func TestChannelTestDailyCostLeavesSaturatedTieredSettlementUnresolved(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 24, 0.5)
+
+	ctx := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(ctx, 24)
+	expr := `tier("base", p * 10000000000)`
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 24},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:  "tiered_expr",
+			ExprString:   expr,
+			ExprHash:     billingexpr.ExprHashString(expr),
+			GroupRatio:   1,
+			QuotaPerUnit: common.QuotaPerUnit,
+			ExprVersion:  1,
+		},
+	}
+	RecordChannelTestDailyCost(ctx, info, 0, nil, &dto.Usage{PromptTokens: 1, TotalTokens: 1}, true)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 24).Error)
+	assert.Zero(t, cost.CostNanoCNY)
+	assert.Zero(t, cost.SettledCount)
+	assert.Equal(t, int64(1), cost.UnresolvedCount)
+	require.NotNil(t, info.QuotaClamp)
+	assert.Equal(t, common.QuotaClampOverflow, info.QuotaClamp.Kind)
+}
+
+func TestChannelTestDailyCostIgnoresTieredGroupRatioSaturation(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 25, 0.5)
+
+	ctx := newChannelDailyCostTestContext()
+	CaptureChannelDailyCostSnapshot(ctx, 25)
+	expr := `tier("base", p * 2)`
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 25},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode:  "tiered_expr",
+			ExprString:   expr,
+			ExprHash:     billingexpr.ExprHashString(expr),
+			GroupRatio:   float64(common.MaxQuota),
+			QuotaPerUnit: common.QuotaPerUnit,
+			ExprVersion:  1,
+		},
+	}
+	RecordChannelTestDailyCost(ctx, info, 0, nil, &dto.Usage{PromptTokens: 1_000, TotalTokens: 1_000}, true)
+	flushChannelDailyCostEvents(t)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 25).Error)
+	assert.Equal(t, int64(5_000_000), cost.CostNanoCNY)
+	assert.Equal(t, int64(1), cost.SettledCount)
+	assert.Zero(t, cost.UnresolvedCount)
+	require.NotNil(t, info.QuotaClamp)
+	assert.Equal(t, common.QuotaClampOverflow, info.QuotaClamp.Kind)
 }
 
 func TestChannelDailyCostSnapshotCoalescesConcurrentCacheMisses(t *testing.T) {
@@ -385,6 +807,21 @@ func TestChannelDailyCostSnapshotCoalescesConcurrentCacheMisses(t *testing.T) {
 	close(start)
 	waitGroup.Wait()
 	assert.Equal(t, int64(1), queryCount.Load())
+}
+
+func TestChannelDailyCostCachedRatioUsesCurrentQuotaPerUnit(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 22, 0.5)
+
+	first, err := getChannelDailyCostSnapshot(22)
+	require.NoError(t, err)
+	assert.Equal(t, float64(500_000), first.QuotaPerUnit)
+
+	common.QuotaPerUnit = 750_000
+	second, err := getChannelDailyCostSnapshot(22)
+	require.NoError(t, err)
+	assert.Equal(t, float64(750_000), second.QuotaPerUnit)
+	assert.Equal(t, first.CostRatioCNY, second.CostRatioCNY)
 }
 
 func TestChannelDailyCostSnapshotReturnsAFallbackWhenConfigurationParsingFails(t *testing.T) {
@@ -568,7 +1005,137 @@ func TestChannelDailyCostBatcherIsBoundedAndKeepsAggregatingExistingKeys(t *test
 	assert.Equal(t, int64(3), written[0].SettledDelta)
 	assert.Equal(t, int64(15), written[0].CostNanoCNY)
 	assert.Equal(t, int64(5), written[0].ProbeCostNanoCNY)
-	assert.Equal(t, int64(1), batcher.droppedCount())
+}
+
+func TestChannelDailyCostFallsBackToSynchronousWriteWhenBufferIsFull(t *testing.T) {
+	var written []model.ChannelDailyCostDelta
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    1,
+		MaxBatchSize:  2,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(_ context.Context, deltas []model.ChannelDailyCostDelta) error {
+		written = append(written, deltas...)
+		return nil
+	})
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
+	})
+
+	require.True(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, CostNanoCNY: 10, SettledDelta: 1}))
+	require.True(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{ChannelId: 2, OccurredAt: 100, CostNanoCNY: 20, SettledDelta: 1}))
+
+	require.Len(t, written, 1)
+	assert.Equal(t, 2, written[0].ChannelId)
+	assert.Equal(t, int64(20), written[0].CostNanoCNY)
+	assert.Equal(t, 1, pendingChannelDailyCostEventsForTest())
+	require.NoError(t, flushChannelDailyCostEventsForTest())
+	require.Len(t, written, 2)
+	assert.Equal(t, 1, written[1].ChannelId)
+}
+
+func TestChannelDailyCostSynchronousFallbackFailureDoesNotMarkAttemptRecorded(t *testing.T) {
+	attempts := 0
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    1,
+		MaxBatchSize:  2,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(_ context.Context, _ []model.ChannelDailyCostDelta) error {
+		attempts++
+		return errors.New("database unavailable")
+	})
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
+	})
+
+	require.True(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, SettledDelta: 1}))
+	ctx := newChannelDailyCostTestContext()
+	BeginChannelDailyCostAttempt(ctx, 2)
+	MarkChannelDailyCostRequestDispatched(ctx)
+	ctx.Set(channelDailyCostSnapshotContextKey, channelDailyCostSnapshot{ChannelId: 2})
+
+	assert.False(t, recordChannelDailyCostEvent(ctx, channelDailyCostSnapshot{ChannelId: 2}, 25, 1, 0))
+	stateValue, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	require.True(t, exists)
+	state, ok := stateValue.(*channelDailyCostAttemptState)
+	require.True(t, ok)
+	state.mu.Lock()
+	assert.False(t, state.Recorded)
+	assert.False(t, state.Recording)
+	state.mu.Unlock()
+	assert.Nil(t, ChannelDailyCostAttemptSettledCost(ctx, 2))
+
+	FinalizeChannelDailyCostAttempt(ctx, 2, false)
+	FinalizeChannelDailyCostAttempt(ctx, 2, false)
+	assert.Equal(t, 3, attempts)
+	state.mu.Lock()
+	assert.False(t, state.Recorded)
+	assert.False(t, state.Recording)
+	state.mu.Unlock()
+}
+
+func TestChannelDailyCostRejectsInvalidEventWithoutSynchronousWrite(t *testing.T) {
+	writes := 0
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    1,
+		MaxBatchSize:  1,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(_ context.Context, _ []model.ChannelDailyCostDelta) error {
+		writes++
+		return nil
+	})
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
+	})
+
+	assert.False(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100}))
+	assert.Zero(t, writes)
+	assert.Zero(t, pendingChannelDailyCostEventsForTest())
+}
+
+func TestChannelDailyCostRejectsOverflowingAggregateWithoutMarkingItRecorded(t *testing.T) {
+	var written []model.ChannelDailyCostDelta
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    2,
+		MaxBatchSize:  2,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(_ context.Context, deltas []model.ChannelDailyCostDelta) error {
+		written = append(written, deltas...)
+		return nil
+	})
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
+	})
+
+	now := common.GetTimestamp()
+	require.True(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: now, CostNanoCNY: math.MaxInt64, SettledDelta: 1}))
+	ctx := newChannelDailyCostTestContext()
+	BeginChannelDailyCostAttempt(ctx, 1)
+	MarkChannelDailyCostRequestDispatched(ctx)
+	assert.False(t, recordChannelDailyCostEvent(ctx, channelDailyCostSnapshot{ChannelId: 1}, 1, 1, 0))
+
+	assert.Empty(t, written)
+	stateValue, exists := ctx.Get(channelDailyCostAttemptContextKey)
+	require.True(t, exists)
+	state, ok := stateValue.(*channelDailyCostAttemptState)
+	require.True(t, ok)
+	state.mu.Lock()
+	assert.False(t, state.Recorded)
+	state.mu.Unlock()
+	require.NoError(t, flushChannelDailyCostEventsForTest())
+	require.Len(t, written, 1)
+	assert.Equal(t, int64(math.MaxInt64), written[0].CostNanoCNY)
 }
 
 func TestChannelDailyCostBatcherRetriesAFlushWithoutDuplicatingTheBatch(t *testing.T) {
@@ -620,11 +1187,41 @@ func TestChannelDailyCostBatcherRetainsAFailedBatchForLaterRetry(t *testing.T) {
 	require.Error(t, batcher.flushAll())
 	assert.Equal(t, 2, attempts)
 	assert.Equal(t, 1, batcher.pendingCount())
-	assert.Zero(t, batcher.droppedCount())
 	require.NoError(t, batcher.flushAll())
 	assert.Equal(t, 3, attempts)
 	require.Len(t, written, 1)
 	assert.Equal(t, int64(2), written[0].SettledDelta)
 	assert.Equal(t, int64(1), written[0].UnresolvedDelta)
 	assert.Equal(t, int64(30), written[0].ProbeCostNanoCNY)
+}
+
+func TestChannelDailyCostBatcherKeepsFailedBatchSeparateFromNewOverflowingAggregate(t *testing.T) {
+	attempts := 0
+	var batcher *channelDailyCostBatcher
+	var written []model.ChannelDailyCostDelta
+	batcher = newChannelDailyCostBatcher(channelDailyCostBatcherConfig{
+		MaxPending:    2,
+		MaxBatchSize:  1,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(_ context.Context, deltas []model.ChannelDailyCostDelta) error {
+		attempts++
+		if attempts == 1 {
+			require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 101, CostNanoCNY: 1, SettledDelta: 1}))
+			return errors.New("database unavailable")
+		}
+		written = append(written, deltas...)
+		return nil
+	})
+	t.Cleanup(batcher.stop)
+
+	require.True(t, batcher.enqueue(model.ChannelDailyCostDelta{ChannelId: 1, OccurredAt: 100, CostNanoCNY: math.MaxInt64, SettledDelta: 1}))
+	require.Error(t, batcher.flushAll())
+	assert.Equal(t, 2, batcher.pendingCount())
+	require.NoError(t, batcher.flushAll())
+	require.Len(t, written, 2)
+	assert.Equal(t, int64(math.MaxInt64), written[0].CostNanoCNY)
+	assert.Equal(t, int64(1), written[1].CostNanoCNY)
 }

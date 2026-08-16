@@ -12,7 +12,6 @@ import (
 	"unicode"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ChannelDailyAPIKeyCost stores the daily settled cost attributed to one
@@ -257,18 +256,75 @@ func addChannelDailyAPIKeyCost(tx *gorm.DB, channelId int, occurredAt int64, cos
 		CreatedAt:       occurredAt,
 		UpdatedAt:       occurredAt,
 	}
-	return tx.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "channel_id"}, {Name: "day_start"}, {Name: "key_fingerprint"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{
-			"api_key_id":       apiKeyId,
-			"api_key_name":     apiKeyName,
-			"key_display":      keyDisplay,
+	updated, err := updateChannelDailyAPIKeyCostIfWithinBounds(
+		tx, record, costNanoCNY, settledDelta, unresolvedDelta,
+	)
+	if err != nil || updated {
+		return err
+	}
+
+	var existingId int64
+	err = tx.Model(&ChannelDailyAPIKeyCost{}).
+		Select("id").
+		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", channelId, record.DayStart, keyFingerprint).
+		Take(&existingId).Error
+	if err == nil {
+		return errors.New("渠道 API Key 日成本累计超过 int64 范围")
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	const savepoint = "channel_daily_api_key_cost_insert"
+	if err := tx.SavePoint(savepoint).Error; err != nil {
+		return err
+	}
+	createErr := tx.Create(&record).Error
+	if createErr == nil {
+		return nil
+	}
+	if err := tx.RollbackTo(savepoint).Error; err != nil {
+		return err
+	}
+
+	updated, err = updateChannelDailyAPIKeyCostIfWithinBounds(
+		tx, record, costNanoCNY, settledDelta, unresolvedDelta,
+	)
+	if err != nil || updated {
+		return err
+	}
+	err = tx.Model(&ChannelDailyAPIKeyCost{}).
+		Select("id").
+		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", channelId, record.DayStart, keyFingerprint).
+		Take(&existingId).Error
+	if err == nil {
+		return errors.New("渠道 API Key 日成本累计超过 int64 范围")
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return createErr
+}
+
+func updateChannelDailyAPIKeyCostIfWithinBounds(tx *gorm.DB, record ChannelDailyAPIKeyCost, costNanoCNY int64, settledDelta int64, unresolvedDelta int64) (bool, error) {
+	update := tx.Model(&ChannelDailyAPIKeyCost{}).
+		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", record.ChannelId, record.DayStart, record.KeyFingerprint).
+		Where("cost_nano_cny <= ?", math.MaxInt64-costNanoCNY).
+		Where("settled_count <= ?", math.MaxInt64-settledDelta).
+		Where("unresolved_count <= ?", math.MaxInt64-unresolvedDelta).
+		Updates(map[string]interface{}{
+			"api_key_id":       record.APIKeyId,
+			"api_key_name":     record.APIKeyName,
+			"key_display":      record.KeyDisplay,
 			"cost_nano_cny":    gorm.Expr("cost_nano_cny + ?", costNanoCNY),
 			"settled_count":    gorm.Expr("settled_count + ?", settledDelta),
 			"unresolved_count": gorm.Expr("unresolved_count + ?", unresolvedDelta),
-			"updated_at":       occurredAt,
-		}),
-	}).Create(&record).Error
+			"updated_at":       record.UpdatedAt,
+		})
+	if update.Error != nil {
+		return false, update.Error
+	}
+	return update.RowsAffected == 1, nil
 }
 
 func GetChannelDailyAPIKeyCosts(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelDailyAPIKeyCost, error) {
@@ -279,28 +335,62 @@ func GetChannelDailyAPIKeyCostsForChannel(ctx context.Context, startTimestamp in
 	return getChannelDailyAPIKeyCosts(ctx, startTimestamp, endTimestamp, channelId)
 }
 
-// GetChannelDailyAPIKeyCostTotalsForChannel aggregates the requested range in
-// the database so overview pages do not load one row per API Key and day.
+// GetChannelDailyAPIKeyCostTotalsForChannel aggregates the requested range
+// with checked arithmetic so no database-specific SUM behavior can wrap a
+// monetary or count total.
 func GetChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyAPIKeyCost, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyAPIKeyCost{}, nil
 	}
-	query := DB.WithContext(ctx).
-		Model(&ChannelDailyAPIKeyCost{}).
-		Select("MIN(id) AS id, channel_id, api_key_id, api_key_name, key_fingerprint, key_display, SUM(cost_nano_cny) AS cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
-		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp)
-	if channelId > 0 {
-		query = query.Where("channel_id = ?", channelId)
-	}
-	var costs []ChannelDailyAPIKeyCost
-	err := query.
-		Group("channel_id, api_key_id, api_key_name, key_fingerprint, key_display").
-		Order("channel_id ASC, api_key_id ASC, key_fingerprint ASC").
-		Find(&costs).Error
+	rows, err := getChannelDailyAPIKeyCosts(ctx, startTimestamp, endTimestamp, channelId)
 	if err != nil {
 		return nil, err
 	}
-	return resolveChannelDailyAPIKeyCostNames(ctx, costs)
+	type aggregateKey struct {
+		ChannelId      int
+		APIKeyId       int
+		APIKeyName     string
+		KeyFingerprint string
+		KeyDisplay     string
+	}
+	totals := make(map[aggregateKey]*ChannelDailyAPIKeyCost)
+	for _, row := range rows {
+		key := aggregateKey{
+			ChannelId: row.ChannelId, APIKeyId: row.APIKeyId, APIKeyName: row.APIKeyName,
+			KeyFingerprint: row.KeyFingerprint, KeyDisplay: row.KeyDisplay,
+		}
+		total := totals[key]
+		if total == nil {
+			copy := row
+			totals[key] = &copy
+			continue
+		}
+		if row.CostNanoCNY < 0 || total.CostNanoCNY > math.MaxInt64-row.CostNanoCNY ||
+			row.SettledCount < 0 || total.SettledCount > math.MaxInt64-row.SettledCount ||
+			row.UnresolvedCount < 0 || total.UnresolvedCount > math.MaxInt64-row.UnresolvedCount {
+			return nil, errors.New("渠道 API Key 成本汇总超过 int64 范围")
+		}
+		total.CostNanoCNY += row.CostNanoCNY
+		total.SettledCount += row.SettledCount
+		total.UnresolvedCount += row.UnresolvedCount
+		if row.Id < total.Id {
+			total.Id = row.Id
+		}
+	}
+	costs := make([]ChannelDailyAPIKeyCost, 0, len(totals))
+	for _, total := range totals {
+		costs = append(costs, *total)
+	}
+	sort.Slice(costs, func(i, j int) bool {
+		if costs[i].ChannelId != costs[j].ChannelId {
+			return costs[i].ChannelId < costs[j].ChannelId
+		}
+		if costs[i].APIKeyId != costs[j].APIKeyId {
+			return costs[i].APIKeyId < costs[j].APIKeyId
+		}
+		return costs[i].KeyFingerprint < costs[j].KeyFingerprint
+	})
+	return costs, nil
 }
 
 func getChannelDailyAPIKeyCosts(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyAPIKeyCost, error) {

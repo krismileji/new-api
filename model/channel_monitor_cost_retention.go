@@ -8,6 +8,7 @@ import (
 type ChannelMonitorCostRetentionResult struct {
 	ChannelRowsDeleted        int64 `json:"channel_rows_deleted"`
 	APIKeyRowsDeleted         int64 `json:"api_key_rows_deleted"`
+	TaskCostEventRowsDeleted  int64 `json:"task_cost_event_rows_deleted"`
 	RouteMetricRowsDeleted    int64 `json:"route_metric_rows_deleted"`
 	APIKeyMetricRowsDeleted   int64 `json:"api_key_metric_rows_deleted"`
 	MinuteRowsDeleted         int64 `json:"minute_rows_deleted"`
@@ -40,7 +41,7 @@ func DeleteChannelMonitorCostsBefore(
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
 	}
 
-	durationBudget := budget.Slice(6)
+	durationBudget := budget.Slice(7)
 	if DB.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		for {
 			if durationBudget.Exhausted() {
@@ -96,14 +97,14 @@ func DeleteChannelMonitorCostsBefore(
 		}
 		return nil
 	}
-	routeMetricBudget := budget.Slice(5)
+	routeMetricBudget := budget.Slice(6)
 	if err := deleteMetricRows(
 		&ChannelMonitorMinuteRouteMetric{}, routeMetricCutoff, routeMetricBudget,
 		&result.RouteMetricRowsDeleted,
 	); err != nil {
 		return result, err
 	}
-	apiKeyMetricBudget := budget.Slice(4)
+	apiKeyMetricBudget := budget.Slice(5)
 	if err := deleteMetricRows(
 		&ChannelMonitorMinuteAPIKeyMetric{}, apiKeyMetricCutoff, apiKeyMetricBudget,
 		&result.APIKeyMetricRowsDeleted,
@@ -116,6 +117,33 @@ func DeleteChannelMonitorCostsBefore(
 	}
 	if result.MinuteRowsDeleted > 0 || result.DurationBucketRowsDeleted > 0 {
 		InvalidateChannelMonitorAggregateCaches()
+	}
+
+	taskCostEventBudget := budget.Slice(3)
+	if DB.Migrator().HasTable(&ChannelTaskCostEvent{}) {
+		for {
+			if taskCostEventBudget.Exhausted() {
+				result.Incomplete = true
+				break
+			}
+			var ids []int64
+			if err := DB.WithContext(ctx).
+				Model(&ChannelTaskCostEvent{}).
+				Where("day_start < ?", costCutoff).
+				Order("day_start ASC, id ASC").
+				Limit(batchSize).
+				Pluck("id", &ids).Error; err != nil {
+				return result, err
+			}
+			if len(ids) == 0 {
+				break
+			}
+			deleted := DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ChannelTaskCostEvent{})
+			if deleted.Error != nil {
+				return result, deleted.Error
+			}
+			result.TaskCostEventRowsDeleted += deleted.RowsAffected
+		}
 	}
 
 	apiKeyBudget := budget.Slice(2)

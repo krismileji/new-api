@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -208,11 +210,20 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 			total = &model.ChannelDailyCostDayTotal{DayStart: row.DayStart}
 			totalsByDay[row.DayStart] = total
 		}
-		total.CostNanoCNY += row.CostNanoCNY
-		total.ProbeCostNanoCNY += row.ProbeCostNanoCNY
-		total.ModelDetectionCostNanoCNY += row.ModelDetectionCostNanoCNY
-		total.SettledCount += row.SettledCount
-		total.UnresolvedCount += row.UnresolvedCount
+		for _, value := range []struct {
+			target *int64
+			delta  int64
+		}{
+			{&total.CostNanoCNY, row.CostNanoCNY},
+			{&total.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&total.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
+			{&total.SettledCount, row.SettledCount},
+			{&total.UnresolvedCount, row.UnresolvedCount},
+		} {
+			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
+				return channelMonitorCostOverview{}, err
+			}
+		}
 		if row.SettledCount > 0 {
 			includedChannels[row.ChannelId] = struct{}{}
 		}
@@ -226,28 +237,47 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 		totals = append(totals, *total)
 	}
 	items := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, totals)
+	var totalCostNanoCNY int64
+	var totalProbeCostNanoCNY int64
+	var totalModelDetectionCostNanoCNY int64
+	var settledCount int64
+	var unresolvedCount int64
+	for _, total := range totals {
+		for _, value := range []struct {
+			target *int64
+			delta  int64
+		}{
+			{&totalCostNanoCNY, total.CostNanoCNY},
+			{&totalProbeCostNanoCNY, total.ProbeCostNanoCNY},
+			{&totalModelDetectionCostNanoCNY, total.ModelDetectionCostNanoCNY},
+			{&settledCount, total.SettledCount},
+			{&unresolvedCount, total.UnresolvedCount},
+		} {
+			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
+				return channelMonitorCostOverview{}, err
+			}
+		}
+	}
 	overview := channelMonitorCostOverview{
-		Days:          days,
-		GeneratedAt:   now,
-		Items:         items,
-		ChartItems:    items,
-		ItemTotal:     days,
-		ItemPage:      1,
-		ItemPageSize:  days,
-		ItemPageCount: 1,
-		Channels:      make([]channelMonitorCostChannel, 0),
-		APIKeys:       make([]channelMonitorCostAPIKey, 0),
+		Days:                       days,
+		GeneratedAt:                now,
+		TotalCostCNY:               channelMonitorCostCNY(totalCostNanoCNY),
+		TotalProbeCostCNY:          channelMonitorCostCNY(totalProbeCostNanoCNY),
+		TotalModelDetectionCostCNY: channelMonitorCostCNY(totalModelDetectionCostNanoCNY),
+		Items:                      items,
+		ChartItems:                 items,
+		ItemTotal:                  days,
+		ItemPage:                   1,
+		ItemPageSize:               days,
+		ItemPageCount:              1,
+		Channels:                   make([]channelMonitorCostChannel, 0),
+		APIKeys:                    make([]channelMonitorCostAPIKey, 0),
 		Coverage: channelMonitorCostCoverage{
 			IncludedChannelCount:   len(includedChannels),
 			UnresolvedChannelCount: len(unresolvedChannels),
+			SettledCount:           settledCount,
+			UnresolvedCount:        unresolvedCount,
 		},
-	}
-	for _, item := range items {
-		overview.TotalCostCNY += item.CostCNY
-		overview.TotalProbeCostCNY += item.ProbeCostCNY
-		overview.TotalModelDetectionCostCNY += item.ModelDetectionCostCNY
-		overview.Coverage.SettledCount += item.SettledCount
-		overview.Coverage.UnresolvedCount += item.UnresolvedCount
 	}
 	if len(items) > 0 {
 		overview.TodayCostCNY = items[len(items)-1].CostCNY
@@ -337,9 +367,6 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		CostNanoCNY               int64
 		ProbeCostNanoCNY          int64
 		ModelDetectionCostNanoCNY int64
-		CostCNY                   float64
-		ProbeCostCNY              float64
-		ModelDetectionCostCNY     float64
 		SettledCount              int64
 		UnresolvedCount           int64
 	}
@@ -350,8 +377,12 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	var settledCount int64
 	var unresolvedCount int64
 	for _, row := range rows {
-		settledCount += row.SettledCount
-		unresolvedCount += row.UnresolvedCount
+		if err := channelMonitorAddNonNegativeInt64(&settledCount, row.SettledCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&unresolvedCount, row.UnresolvedCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 		if row.SettledCount > 0 {
 			includedChannels[row.ChannelId] = struct{}{}
 		}
@@ -366,20 +397,25 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		if detailDayStart > 0 && row.DayStart != detailDayStart {
 			continue
 		}
-		costCNY := channelMonitorCostCNY(row.CostNanoCNY)
 		summary := channelCosts[row.ChannelId]
 		if summary == nil {
 			summary = &channelCostSummary{}
 			channelCosts[row.ChannelId] = summary
 		}
-		summary.CostNanoCNY += row.CostNanoCNY
-		summary.ProbeCostNanoCNY += row.ProbeCostNanoCNY
-		summary.ModelDetectionCostNanoCNY += row.ModelDetectionCostNanoCNY
-		summary.CostCNY += costCNY
-		summary.ProbeCostCNY += channelMonitorCostCNY(row.ProbeCostNanoCNY)
-		summary.ModelDetectionCostCNY += channelMonitorCostCNY(row.ModelDetectionCostNanoCNY)
-		summary.SettledCount += row.SettledCount
-		summary.UnresolvedCount += row.UnresolvedCount
+		for _, value := range []struct {
+			target *int64
+			delta  int64
+		}{
+			{&summary.CostNanoCNY, row.CostNanoCNY},
+			{&summary.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&summary.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
+			{&summary.SettledCount, row.SettledCount},
+			{&summary.UnresolvedCount, row.UnresolvedCount},
+		} {
+			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
+				return channelMonitorCostOverview{}, err
+			}
+		}
 	}
 
 	chartRows, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
@@ -387,13 +423,22 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		return channelMonitorCostOverview{}, err
 	}
 	chartItems := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, chartRows)
-	totalCostCNY := 0.0
-	totalProbeCostCNY := 0.0
-	totalModelDetectionCostCNY := 0.0
-	for _, item := range chartItems {
-		totalCostCNY += item.CostCNY
-		totalProbeCostCNY += item.ProbeCostCNY
-		totalModelDetectionCostCNY += item.ModelDetectionCostCNY
+	var totalCostNanoCNY int64
+	var totalProbeCostNanoCNY int64
+	var totalModelDetectionCostNanoCNY int64
+	for _, row := range chartRows {
+		for _, value := range []struct {
+			target *int64
+			delta  int64
+		}{
+			{&totalCostNanoCNY, row.CostNanoCNY},
+			{&totalProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&totalModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
+		} {
+			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
+				return channelMonitorCostOverview{}, err
+			}
+		}
 	}
 
 	costChannels := make([]channelMonitorCostChannel, 0, len(channelCosts))
@@ -412,9 +457,9 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			ChannelRemark:         channelRemarks[channelId],
 			Status:                channelStatuses[channelId],
 			CostRatio:             costRatio,
-			CostCNY:               summary.CostCNY,
-			ProbeCostCNY:          summary.ProbeCostCNY,
-			ModelDetectionCostCNY: summary.ModelDetectionCostCNY,
+			CostCNY:               channelMonitorCostCNY(summary.CostNanoCNY),
+			ProbeCostCNY:          channelMonitorCostCNY(summary.ProbeCostNanoCNY),
+			ModelDetectionCostCNY: channelMonitorCostCNY(summary.ModelDetectionCostNanoCNY),
 			SettledCount:          summary.SettledCount,
 			UnresolvedCount:       summary.UnresolvedCount,
 		})
@@ -447,7 +492,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	type apiKeyChannelSummary struct {
 		ChannelName     string
 		ChannelRemark   string
-		CostCNY         float64
+		CostNanoCNY     int64
 		SettledCount    int64
 		UnresolvedCount int64
 	}
@@ -456,7 +501,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		APIKeyId        int
 		APIKeyName      string
 		KeyDisplay      string
-		CostCNY         float64
+		CostNanoCNY     int64
 		SettledCount    int64
 		UnresolvedCount int64
 		Channels        map[int]*apiKeyChannelSummary
@@ -488,9 +533,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			summary.APIKeyName = row.APIKeyName
 		}
 		summary.KeyDisplay = row.KeyDisplay
-		summary.CostCNY += channelMonitorCostCNY(row.CostNanoCNY)
-		summary.SettledCount += row.SettledCount
-		summary.UnresolvedCount += row.UnresolvedCount
+		if err := channelMonitorAddNonNegativeInt64(&summary.CostNanoCNY, row.CostNanoCNY); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&summary.SettledCount, row.SettledCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&summary.UnresolvedCount, row.UnresolvedCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 		channelSummary := summary.Channels[row.ChannelId]
 		if channelSummary == nil {
 			channelName := channelNames[row.ChannelId]
@@ -503,17 +554,29 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			}
 			summary.Channels[row.ChannelId] = channelSummary
 		}
-		channelSummary.CostCNY += channelMonitorCostCNY(row.CostNanoCNY)
-		channelSummary.SettledCount += row.SettledCount
-		channelSummary.UnresolvedCount += row.UnresolvedCount
+		if err := channelMonitorAddNonNegativeInt64(&channelSummary.CostNanoCNY, row.CostNanoCNY); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelSummary.SettledCount, row.SettledCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelSummary.UnresolvedCount, row.UnresolvedCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 		channelTotal := apiKeyChannelTotals[row.ChannelId]
 		if channelTotal == nil {
 			channelTotal = &apiKeyChannelTotal{}
 			apiKeyChannelTotals[row.ChannelId] = channelTotal
 		}
-		channelTotal.CostNanoCNY += row.CostNanoCNY
-		channelTotal.SettledCount += row.SettledCount
-		channelTotal.UnresolvedCount += row.UnresolvedCount
+		if err := channelMonitorAddNonNegativeInt64(&channelTotal.CostNanoCNY, row.CostNanoCNY); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelTotal.SettledCount, row.SettledCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelTotal.UnresolvedCount, row.UnresolvedCount); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 	}
 
 	// Older daily totals and admin channel-test requests may not have an
@@ -531,17 +594,11 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		unattributedCost := channelSummary.CostNanoCNY - attributedCost
 		unattributedSettled := channelSummary.SettledCount - attributedSettled
 		unattributedUnresolved := channelSummary.UnresolvedCount - attributedUnresolved
+		if unattributedCost < 0 || unattributedSettled < 0 || unattributedUnresolved < 0 {
+			return channelMonitorCostOverview{}, errors.New("渠道监控 API Key 成本归属超过渠道总额")
+		}
 		if unattributedCost <= 0 && unattributedSettled <= 0 && unattributedUnresolved <= 0 {
 			continue
-		}
-		if unattributedCost < 0 {
-			unattributedCost = 0
-		}
-		if unattributedSettled < 0 {
-			unattributedSettled = 0
-		}
-		if unattributedUnresolved < 0 {
-			unattributedUnresolved = 0
 		}
 		summary := apiKeyCosts[unattributedKey]
 		if summary == nil {
@@ -551,9 +608,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			}
 			apiKeyCosts[unattributedKey] = summary
 		}
-		summary.CostCNY += channelMonitorCostCNY(unattributedCost)
-		summary.SettledCount += unattributedSettled
-		summary.UnresolvedCount += unattributedUnresolved
+		if err := channelMonitorAddNonNegativeInt64(&summary.CostNanoCNY, unattributedCost); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&summary.SettledCount, unattributedSettled); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&summary.UnresolvedCount, unattributedUnresolved); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 		channelName := channelNames[channelId]
 		if channelName == "" {
 			channelName = "已删除渠道"
@@ -566,9 +629,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			}
 			summary.Channels[channelId] = channelDetail
 		}
-		channelDetail.CostCNY += channelMonitorCostCNY(unattributedCost)
-		channelDetail.SettledCount += unattributedSettled
-		channelDetail.UnresolvedCount += unattributedUnresolved
+		if err := channelMonitorAddNonNegativeInt64(&channelDetail.CostNanoCNY, unattributedCost); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelDetail.SettledCount, unattributedSettled); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
+		if err := channelMonitorAddNonNegativeInt64(&channelDetail.UnresolvedCount, unattributedUnresolved); err != nil {
+			return channelMonitorCostOverview{}, err
+		}
 	}
 
 	costAPIKeys := make([]channelMonitorCostAPIKey, 0, len(apiKeyCosts))
@@ -590,7 +659,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 				ChannelId:       channelId,
 				ChannelName:     channelSummary.ChannelName,
 				ChannelRemark:   channelSummary.ChannelRemark,
-				CostCNY:         channelSummary.CostCNY,
+				CostCNY:         channelMonitorCostCNY(channelSummary.CostNanoCNY),
 				SettledCount:    channelSummary.SettledCount,
 				UnresolvedCount: channelSummary.UnresolvedCount,
 			})
@@ -606,7 +675,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			APIKeyId:        summary.APIKeyId,
 			APIKeyName:      apiKeyName,
 			APIKey:          summary.KeyDisplay,
-			CostCNY:         summary.CostCNY,
+			CostCNY:         channelMonitorCostCNY(summary.CostNanoCNY),
 			SettledCount:    summary.SettledCount,
 			UnresolvedCount: summary.UnresolvedCount,
 			Channels:        channelsByCost,
@@ -646,9 +715,9 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	overview := channelMonitorCostOverview{
 		Days:                       days,
 		GeneratedAt:                now,
-		TotalCostCNY:               totalCostCNY,
-		TotalProbeCostCNY:          totalProbeCostCNY,
-		TotalModelDetectionCostCNY: totalModelDetectionCostCNY,
+		TotalCostCNY:               channelMonitorCostCNY(totalCostNanoCNY),
+		TotalProbeCostCNY:          channelMonitorCostCNY(totalProbeCostNanoCNY),
+		TotalModelDetectionCostCNY: channelMonitorCostCNY(totalModelDetectionCostNanoCNY),
 		Coverage: channelMonitorCostCoverage{
 			IncludedChannelCount:          len(includedChannels),
 			UnresolvedChannelCount:        len(unresolvedChannels),
@@ -727,4 +796,12 @@ func channelMonitorCostDateStart(date string) (int64, error) {
 
 func channelMonitorCostCNY(costNanoCNY int64) float64 {
 	return float64(costNanoCNY) / float64(model.ChannelDailyCostNanoPerCNY)
+}
+
+func channelMonitorAddNonNegativeInt64(target *int64, delta int64) error {
+	if delta < 0 || *target < 0 || *target > math.MaxInt64-delta {
+		return errors.New("渠道监控成本汇总超过 int64 范围")
+	}
+	*target += delta
+	return nil
 }
