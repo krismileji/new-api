@@ -26,7 +26,9 @@ import type {
   ChannelMonitorPerformanceResult,
 } from '../../types'
 import {
+  CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS,
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  getChannelMonitorActiveRefetchInterval,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
@@ -36,6 +38,14 @@ import {
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
+  test('polls active operations and stops after they become terminal', () => {
+    assert.equal(
+      getChannelMonitorActiveRefetchInterval(true),
+      CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS
+    )
+    assert.equal(getChannelMonitorActiveRefetchInterval(false), false)
+  })
+
   test('keeps overview and performance data manual-refresh only', () => {
     const overviewOptions = getChannelMonitorOverviewQueryOptions()
     const performanceOptions = getChannelMonitorPerformanceQueryOptions(

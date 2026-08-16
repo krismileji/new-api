@@ -34,6 +34,12 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
   refetchOnReconnect: false,
 } as const
 
+export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 3000
+
+export function getChannelMonitorActiveRefetchInterval(active: boolean) {
+  return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
+}
+
 export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'channel-monitor',
   'smart-schedule',

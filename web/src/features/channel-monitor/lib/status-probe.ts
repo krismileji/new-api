@@ -135,3 +135,7 @@ export function isChannelStatusProbeIssue(health: ChannelStatusProbeHealth) {
     health === 'unhealthy' || health === 'rate_limited' || health === 'partial'
   )
 }
+
+export function isChannelStatusProbeActive(channel: ChannelStatusProbeChannel) {
+  return channel.running || Boolean(channel.config?.manual_request_id)
+}

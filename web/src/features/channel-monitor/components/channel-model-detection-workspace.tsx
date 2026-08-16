@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
 
+import { isChannelModelDetectionRunActive } from '../lib/model-detection'
 import {
   cancelChannelModelDetectionRun,
   getChannelModelDetectionRuns,
@@ -42,7 +43,10 @@ import {
   updateChannelModelDetectionConfig,
 } from '../lib/model-detection-channel-api'
 import { channelModelDetectionRequestErrorMessage } from '../lib/model-detection-settings-api'
-import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
+import {
+  CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  getChannelMonitorActiveRefetchInterval,
+} from '../lib/query-options'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionHistoryQuery,
@@ -141,7 +145,15 @@ export function ChannelModelDetectionWorkspace(
       getChannelModelDetectionRuns(historyChannelId ?? 0, historyQueryInput),
     enabled: historyChannelId != null,
     placeholderData: (previous) => previous,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
+    refetchInterval: (currentQuery) =>
+      getChannelMonitorActiveRefetchInterval(
+        currentQuery.state.data?.items.some((run) =>
+          isChannelModelDetectionRunActive(run.status)
+        ) ?? false
+      ),
   })
 
   const scheduleMutation = useMutation({

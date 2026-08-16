@@ -22,6 +22,7 @@ import { describe, test } from 'node:test'
 import type { ChannelStatusProbeChannel } from '../../types'
 import {
   DEFAULT_CHANNEL_STATUS_PROBE_SORT,
+  isChannelStatusProbeActive,
   matchesChannelStatusProbeGroup,
   matchesChannelStatusProbeSearch,
   sortChannelStatusProbeChannels,
@@ -181,6 +182,25 @@ describe('状态探测排序', () => {
       ),
       [2, 1]
     )
+  })
+})
+
+describe('状态探测活动状态', () => {
+  test('执行中和手动排队中的渠道需要继续刷新', () => {
+    const running = createChannel(1, '执行中', 1)
+    running.running = true
+    const queued = withProbeData(createChannel(2, '排队中', 1), 60, 0, 0, 0)
+    assert.ok(queued.config)
+    queued.config.manual_request_id = 'manual-2'
+
+    assert.equal(isChannelStatusProbeActive(running), true)
+    assert.equal(isChannelStatusProbeActive(queued), true)
+  })
+
+  test('空闲渠道不需要继续刷新', () => {
+    const idle = withProbeData(createChannel(1, '空闲', 1), 60, 0, 0, 0)
+
+    assert.equal(isChannelStatusProbeActive(idle), false)
   })
 })
 

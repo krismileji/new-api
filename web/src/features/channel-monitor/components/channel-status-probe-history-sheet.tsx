@@ -64,8 +64,10 @@ import { formatTimestampToDate } from '@/lib/format'
 import { getChannelStatusProbeExecutions } from '../api'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  getChannelMonitorActiveRefetchInterval,
   getChannelStatusProbeHistoryLatestExecutionKey,
 } from '../lib/query-options'
+import { isChannelStatusProbeActive } from '../lib/status-probe'
 import type {
   ChannelStatusProbeChannel,
   ChannelStatusProbeExecution,
@@ -220,8 +222,7 @@ export function ChannelStatusProbeHistorySheet(
   const [result, setResult] = useState<'' | ChannelStatusProbeResult>('')
   const [trigger, setTrigger] = useState<'' | ChannelStatusProbeTrigger>('')
   const pageSize = 20
-  const probeActive =
-    props.channel.running || Boolean(props.channel.config?.manual_request_id)
+  const probeActive = isChannelStatusProbeActive(props.channel)
   const query = useQuery({
     queryKey: [
       'channel-monitor',
@@ -244,9 +245,10 @@ export function ChannelStatusProbeHistorySheet(
         trigger,
       }),
     placeholderData: keepPreviousData,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: () => probeActive,
+    refetchInterval: () => getChannelMonitorActiveRefetchInterval(probeActive),
   })
   const total = query.data?.data.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))

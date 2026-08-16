@@ -111,9 +111,11 @@ import {
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
+import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
+  getChannelMonitorActiveRefetchInterval,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
@@ -454,9 +456,19 @@ export function ChannelMonitor() {
     queryKey: ['channel-monitor', 'model-detection', 'overview'],
     queryFn: getChannelModelDetectionOverview,
     enabled: view === 'model-detection',
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
+    refetchInterval: (currentQuery) =>
+      getChannelMonitorActiveRefetchInterval(
+        currentQuery.state.data?.data.channels.some((channel) => {
+          const activeRun = channel.active_run
+          return (
+            activeRun != null &&
+            isChannelModelDetectionRunActive(activeRun.status)
+          )
+        }) ?? false
+      ),
   })
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
