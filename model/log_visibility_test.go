@@ -13,11 +13,15 @@ import (
 )
 
 func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
+	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	t.Cleanup(func() {
+		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 	})
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "logs.db")), &gorm.Config{})
@@ -28,8 +32,12 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Exec("CREATE TABLE channels (id INTEGER PRIMARY KEY, name TEXT NOT NULL)").Error)
+	require.NoError(t, db.Exec("INSERT INTO channels (id, name) VALUES (?, ?)", 12, "private-channel").Error)
+	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	common.MemoryCacheEnabled = false
 
 	logs := []*Log{
 		{
@@ -174,17 +182,37 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 		[]string{"request-retried-successfully", "request-final-failure", "other-user-request"},
 		[]string{allUserVisibleLogs[0].RequestId, allUserVisibleLogs[1].RequestId, allUserVisibleLogs[2].RequestId},
 	)
+	var adminVisibleError *Log
+	for _, log := range allUserVisibleLogs {
+		if log.RequestId == "request-final-failure" {
+			adminVisibleError = log
+			break
+		}
+	}
+	require.NotNil(t, adminVisibleError)
+	assert.Equal(t, "status_code=500, final upstream failure", adminVisibleError.Content)
 
 	filteredUserVisibleLogs, filteredTotal, err := GetAllUserVisibleLogsWithChannel(LogTypeUnknown, 0, 0, "", "other-user", "", 0, 10, 12, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), filteredTotal)
 	require.Len(t, filteredUserVisibleLogs, 1)
 	assert.Equal(t, "other-user-request", filteredUserVisibleLogs[0].RequestId)
-	assert.Empty(t, filteredUserVisibleLogs[0].ChannelName)
+	assert.Equal(t, "private-channel", filteredUserVisibleLogs[0].ChannelName)
 	other, err := common.StrToMap(filteredUserVisibleLogs[0].Other)
 	require.NoError(t, err)
-	assert.NotContains(t, other, "admin_info")
-	assert.NotContains(t, other, "audit_info")
+	assert.Contains(t, other, "admin_info")
+	assert.Contains(t, other, "audit_info")
+
+	otherUserLogs, otherUserTotal, err := GetUserLogs(2, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), otherUserTotal)
+	require.Len(t, otherUserLogs, 1)
+	assert.Empty(t, otherUserLogs[0].ChannelName)
+	otherUserLogInfo, err := common.StrToMap(otherUserLogs[0].Other)
+	require.NoError(t, err)
+	assert.NotContains(t, otherUserLogInfo, "admin_info")
+	assert.NotContains(t, otherUserLogInfo, "audit_info")
+
 	visibleStat, err := SumUserVisibleQuota(LogTypeUnknown, 0, 0, "", "", "", 12, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, 23, visibleStat.Quota)

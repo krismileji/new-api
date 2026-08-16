@@ -12,6 +12,7 @@ import (
 type userVisibleLogQueryParams struct {
 	userID            *int
 	exposeRequestIP   bool
+	formatForUser     bool
 	logType           int
 	startTimestamp    int64
 	endTimestamp      int64
@@ -78,7 +79,13 @@ func queryUserVisibleLogs(params userVisibleLogQueryParams) (logs []*Log, total 
 	if params.exposeRequestIP {
 		exposeAdminRequestIPs(logs)
 	}
-	formatUserLogs(logs, params.startIdx)
+	if params.formatForUser {
+		formatUserLogs(logs, params.startIdx)
+		return logs, total, nil
+	}
+	if err = hydrateLogChannelNames(logs); err != nil {
+		return logs, total, err
+	}
 	return logs, total, nil
 }
 
@@ -100,7 +107,8 @@ func GetAllUserVisibleLogs(logType int, startTimestamp int64, endTimestamp int64
 }
 
 // GetAllUserVisibleLogsWithChannel queries all users while applying the
-// user-visible projection and an optional channel filter.
+// user-visible row filter and an optional channel filter. The administrator
+// endpoint keeps the complete log fields.
 func GetAllUserVisibleLogsWithChannel(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestID string, upstreamRequestID string) (logs []*Log, total int64, err error) {
 	return queryUserVisibleLogs(userVisibleLogQueryParams{
 		exposeRequestIP:   true,
