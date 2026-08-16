@@ -462,9 +462,17 @@ describe('模型检测统一设置 Sheet', () => {
     await act(async () => testButton.click())
     await act(async () =>
       waitForCondition(
-        () => document.body.textContent?.includes('连接正常') === true,
+        () =>
+          document.body.textContent?.includes('连接正常，地址尚未保存') ===
+          true,
         'connection result was not shown'
       )
+    )
+    assert.equal(
+      document.body.textContent?.includes(
+        '点击“保存设置”后，模型检测才会使用该地址'
+      ),
+      true
     )
     assert.deepEqual(tested, [
       {
@@ -472,6 +480,23 @@ describe('模型检测统一设置 Sheet', () => {
         data: { detector_url: 'http://10.0.0.9:8000' },
       },
     ])
+  })
+
+  test('未配置检测器时明确显示地址尚未保存', async () => {
+    apiClient.get = async () =>
+      success(
+        settings({
+          detector_url_configured: false,
+          detector_url: '',
+          detector_url_masked: '',
+        })
+      )
+
+    await renderSettingsSheet()
+    await waitForLoadedSettings()
+
+    assert.equal(document.body.textContent?.includes('尚未保存地址'), true)
+    assert.equal(document.body.textContent?.includes('无需重新测试'), false)
   })
 
   test('待切换地址优先回显并可直接测试，连接失败会展示检测器状态', async () => {

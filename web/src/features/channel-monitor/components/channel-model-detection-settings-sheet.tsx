@@ -177,6 +177,37 @@ export function ChannelModelDetectionSettingsSheet(
   const displayUnit = form.watch('displayUnit')
   const displayLimit = CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS[displayUnit]
   const requiresHighConfirmation = scheduleEnabled && scheduledPreset === 'high'
+  const normalizedDetectorURL = detectorURL.trim()
+  const savedDetectorURL = (
+    settings?.pending_detector_url ||
+    settings?.detector_url ||
+    ''
+  ).trim()
+  const testedAddressNeedsSave =
+    connectionResult !== null &&
+    normalizedDetectorURL !== '' &&
+    normalizedDetectorURL !== savedDetectorURL
+  const successfulTestNeedsSave =
+    testedAddressNeedsSave &&
+    (connectionResult?.state === 'available' ||
+      connectionResult?.state === 'degraded')
+
+  let detectorConfigurationStatus = '尚未保存地址'
+  if (settings?.pending_detector_url_configured) {
+    detectorConfigurationStatus = '待切换地址已保存'
+  } else if (settings?.detector_url_configured) {
+    detectorConfigurationStatus = settings.connection_test_required
+      ? '地址已保存，需测试连接'
+      : '地址已保存'
+  }
+
+  let connectionResultTitle = ''
+  if (connectionResult) {
+    connectionResultTitle = detectorStateLabel(connectionResult)
+    if (successfulTestNeedsSave) {
+      connectionResultTitle += '，地址尚未保存'
+    }
+  }
 
   useEffect(() => {
     if (!props.open) {
@@ -343,12 +374,8 @@ export function ChannelModelDetectionSettingsSheet(
                 />
               ) : null}
               <SettingSummary
-                label='连接验证'
-                value={
-                  settings.connection_test_required
-                    ? '地址已变更，需重新测试'
-                    : '无需重新测试'
-                }
+                label='配置状态'
+                value={detectorConfigurationStatus}
               />
             </div>
 
@@ -450,11 +477,18 @@ export function ChannelModelDetectionSettingsSheet(
                 }
               >
                 <HugeiconsIcon icon={TestTube01Icon} />
-                <AlertTitle>{detectorStateLabel(connectionResult)}</AlertTitle>
-                <AlertDescription>
-                  {connectionResult.compatibility_message ||
-                    connectionResult.last_error ||
-                    `已检查 ${Object.keys(connectionResult.estimates).length} 个档位`}
+                <AlertTitle>{connectionResultTitle}</AlertTitle>
+                <AlertDescription className='flex flex-col gap-1'>
+                  <span>
+                    {connectionResult.compatibility_message ||
+                      connectionResult.last_error ||
+                      `已检查 ${Object.keys(connectionResult.estimates).length} 个档位`}
+                  </span>
+                  {successfulTestNeedsSave ? (
+                    <span>
+                      本次只测试了输入地址；点击“保存设置”后，模型检测才会使用该地址。
+                    </span>
+                  ) : null}
                 </AlertDescription>
               </Alert>
             ) : null}
