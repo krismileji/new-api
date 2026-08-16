@@ -6,10 +6,25 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelSmartScheduleRouteResponsesExposeActiveRateLimitCooldown(t *testing.T) {
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	now := common.GetTimestamp()
+	service.StartChannelRateLimitCooldown(11, "model-a", 60)
+
+	responses := channelSmartScheduleRouteResponses([]model.ChannelSmartScheduleRoute{
+		{ChannelId: 11, Group: "vip", Model: "model-*"},
+	})
+
+	require.Len(t, responses, 1)
+	assert.Greater(t, responses[0].RateLimitCooldownUntil, now)
+}
 
 func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBoundaries(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)

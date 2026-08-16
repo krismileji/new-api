@@ -121,6 +121,7 @@ export type ChannelMonitorSmartScheduleRouteRole =
   | 'primary'
   | 'candidate'
   | 'backup'
+  | 'rate_limited'
   | 'paused'
   | 'excluded'
   | 'unavailable'
@@ -151,17 +152,18 @@ const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
   ChannelMonitorSmartScheduleRouteDisplayStatus,
   number
 > = {
-  paused: 0,
-  degraded: 1,
-  probing: 2,
-  insufficient_samples: 3,
-  adaptive_sampling: 4,
-  failed: 5,
-  primary: 6,
-  candidate: 7,
-  backup: 8,
-  unavailable: 9,
-  excluded: 10,
+  rate_limited: 0,
+  paused: 1,
+  degraded: 2,
+  probing: 3,
+  insufficient_samples: 4,
+  adaptive_sampling: 5,
+  failed: 6,
+  primary: 7,
+  candidate: 8,
+  backup: 9,
+  unavailable: 10,
+  excluded: 11,
 }
 
 const EMPTY_GROUP_RATIOS: Readonly<Record<string, number>> = {}
@@ -204,6 +206,13 @@ export function channelMonitorSmartScheduleRouteIsTrafficPaused(
   nowSeconds = Date.now() / 1000
 ) {
   return (route.traffic_paused_until ?? 0) > nowSeconds
+}
+
+export function channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(
+  route: ChannelMonitorSmartScheduleRoute,
+  nowSeconds = Date.now() / 1000
+) {
+  return (route.rate_limit_cooldown_until ?? 0) > nowSeconds
 }
 
 export function channelMonitorSmartScheduleRouteIsActive(
@@ -400,7 +409,14 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
     }
   }
 
-  const routableRoutes = routes.filter(channelMonitorSmartScheduleRouteIsActive)
+  const activeRoutes = routes.filter(channelMonitorSmartScheduleRouteIsActive)
+  const routesOutsideRateLimitCooldown = activeRoutes.filter(
+    (route) => !channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
+  )
+  const routableRoutes =
+    routesOutsideRateLimitCooldown.length > 0
+      ? routesOutsideRateLimitCooldown
+      : activeRoutes
   const actualHighestPriority = routableRoutes.reduce<number | null>(
     (current, route) =>
       current == null ? route.priority : Math.max(current, route.priority),
@@ -515,6 +531,10 @@ export function placeChannelMonitorSmartScheduleRoutes(
         route.enabled && route.channel_status === CHANNEL_STATUS.ENABLED
       const paused =
         configured && channelMonitorSmartScheduleRouteIsTrafficPaused(route)
+      const rateLimited =
+        configured &&
+        !paused &&
+        channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
       const isActualTopLayer = actualTopLayerChannelIdSet.has(route.channel_id)
       if (!channelMonitorSmartScheduleRouteParticipates(route)) {
         role = 'excluded'
@@ -524,6 +544,11 @@ export function placeChannelMonitorSmartScheduleRoutes(
       } else if (paused) {
         role = 'paused'
         estimatedShare = 0
+      } else if (rateLimited) {
+        role = 'rate_limited'
+        estimatedShare = isActualTopLayer
+          ? (shares.get(route.channel_id) ?? 0)
+          : 0
       } else if (isActualTopLayer) {
         estimatedShare = shares.get(route.channel_id) ?? 0
         role =
@@ -556,6 +581,9 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
     return 'unavailable'
   }
   if (channelMonitorSmartScheduleRouteIsTrafficPaused(route)) return 'paused'
+  if (channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)) {
+    return 'rate_limited'
+  }
   if (route.state.stability_state === 'degraded') return 'degraded'
   if (route.state.stability_state === 'probing') return 'probing'
   if (route.state.temporary_traffic_kind === 'insufficient_samples') {

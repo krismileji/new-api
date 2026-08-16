@@ -151,6 +151,7 @@ const ATTENTION_STATUSES =
     'insufficient_samples',
     'adaptive_sampling',
     'failed',
+    'rate_limited',
     'paused',
     'unavailable',
   ])

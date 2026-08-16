@@ -365,6 +365,51 @@ describe('smart schedule route placement', () => {
     assert.deepEqual(summary.actualTopLayerChannelIds, [2])
   })
 
+  test('moves expected traffic away from a rate-limited route while another route is available', () => {
+    const rateLimited = createRoute(1, 'vip', 'model-a', 100, 80)
+    rateLimited.rate_limit_cooldown_until = 4_102_444_800
+    const active = createRoute(2, 'vip', 'model-a', 90, 20)
+
+    const placements = placeChannelMonitorSmartScheduleRoutes([
+      rateLimited,
+      active,
+    ])
+    const rateLimitedPlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(rateLimited)
+    )
+    const activePlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(active)
+    )
+
+    assert.equal(rateLimitedPlacement?.role, 'rate_limited')
+    assert.equal(rateLimitedPlacement?.estimatedShare, 0)
+    assert.equal(rateLimitedPlacement?.isActualTopLayer, false)
+    assert.equal(
+      getChannelMonitorSmartScheduleRouteDisplayStatus(
+        rateLimited,
+        rateLimitedPlacement
+      ),
+      'rate_limited'
+    )
+    assert.equal(activePlacement?.role, 'primary')
+    assert.equal(activePlacement?.estimatedShare, 1)
+    assert.equal(activePlacement?.actualHighestPriority, 90)
+  })
+
+  test('keeps a rate-limited route as the estimated final fallback when it is the only route', () => {
+    const rateLimited = createRoute(1, 'vip', 'model-a', 100, 80)
+    rateLimited.rate_limit_cooldown_until = 4_102_444_800
+
+    const placement = placeChannelMonitorSmartScheduleRoutes([rateLimited]).get(
+      channelMonitorSmartScheduleRouteKey(rateLimited)
+    )
+
+    assert.equal(placement?.role, 'rate_limited')
+    assert.equal(placement?.estimatedShare, 1)
+    assert.equal(placement?.isActualPrimary, true)
+    assert.equal(placement?.isActualTopLayer, true)
+  })
+
   test('excludes nonparticipating routing from the actual highest layer', () => {
     const uninitialized = createRoute(1, 'vip', 'model-a', 100, 100)
     uninitialized.state.participation_set = false

@@ -189,6 +189,44 @@ describe('smart schedule route protection state', () => {
     assert.equal(markup.includes('不可调度'), false)
   })
 
+  test('shows whether a rate-limited route is bypassed or used as the final fallback', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    route.rate_limit_cooldown_until = 4_102_444_800
+    const bypassedMarkup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteStatus
+        route={route}
+        placement={undefined}
+        onClearProtection={() => {}}
+      />
+    )
+    const fallbackMarkup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteStatus
+        route={route}
+        placement={{
+          role: 'rate_limited',
+          estimatedShare: 1,
+          topPriority: 100,
+          candidateCount: 1,
+          actualPrimaryChannelId: route.channel_id,
+          scoringWinnerChannelId: 0,
+          actualHighestPriority: 100,
+          actualTopLayerChannelIds: [route.channel_id],
+          isActualPrimary: true,
+          isScoringWinner: false,
+          isActualTopLayer: true,
+        }}
+        onClearProtection={() => {}}
+      />
+    )
+
+    assert.ok(bypassedMarkup.includes('429 冷却'))
+    assert.equal(bypassedMarkup.includes('兜底中'), false)
+    assert.ok(fallbackMarkup.includes('429 冷却 · 兜底中'))
+    assert.equal(fallbackMarkup.includes('>稳定性降级</'), false)
+  })
+
   test('keeps exploration clearing available while the channel is disabled', () => {
     const route = createProtectedRoute('degraded')
     route.state.stability_state = ''

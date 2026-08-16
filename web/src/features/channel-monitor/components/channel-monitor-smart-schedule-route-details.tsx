@@ -97,6 +97,13 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   if (status === 'paused') {
     return <Badge variant='warning'>流量已暂停</Badge>
   }
+  if (status === 'rate_limited') {
+    return (
+      <Badge variant='warning'>
+        {props.placement?.estimatedShare ? '429 冷却 · 兜底中' : '429 冷却'}
+      </Badge>
+    )
+  }
   if (
     props.route.state.stability_state !== '' ||
     props.route.state.temporary_traffic_kind === 'insufficient_samples' ||

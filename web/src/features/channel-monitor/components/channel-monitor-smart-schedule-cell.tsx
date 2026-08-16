@@ -44,6 +44,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteIsAvailable,
+  channelMonitorSmartScheduleRouteIsRateLimitCoolingDown,
   channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
 } from '../lib/smart-schedule-summary'
@@ -104,8 +105,16 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     route.channel_status === CHANNEL_STATUS.ENABLED &&
     route.enabled &&
     channelMonitorSmartScheduleRouteIsTrafficPaused(route, now)
+  const rateLimitCoolingDown =
+    participates &&
+    route.channel_status === CHANNEL_STATUS.ENABLED &&
+    route.enabled &&
+    !trafficPaused &&
+    channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route, now)
   const available =
-    participates && channelMonitorSmartScheduleRouteIsAvailable(route)
+    participates &&
+    channelMonitorSmartScheduleRouteIsAvailable(route) &&
+    !rateLimitCoolingDown
   let unavailableClearProtectionLabel: string | undefined
   if (participates && route.state.stability_state === 'degraded') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
@@ -217,6 +226,12 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       label: '流量已暂停',
       variant: 'warning',
     })
+  } else if (rateLimitCoolingDown) {
+    statuses.push({
+      key: 'rate-limit-cooldown',
+      label: '429 冷却',
+      variant: 'warning',
+    })
   } else if (route.state.last_schedule_status === 'failed') {
     statuses.push({ key: 'failed', label: '调度失败', variant: 'destructive' })
   }
@@ -233,6 +248,12 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     details.push({
       label: '暂停至',
       value: formatTimestampToDate(route.traffic_paused_until ?? 0),
+    })
+  }
+  if (rateLimitCoolingDown) {
+    details.push({
+      label: '429 冷却至',
+      value: formatTimestampToDate(route.rate_limit_cooldown_until ?? 0),
     })
   }
   if (breakEvenFallback) {

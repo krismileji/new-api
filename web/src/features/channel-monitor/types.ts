@@ -862,6 +862,7 @@ export type ChannelMonitorSmartScheduleRoute = {
   priority: number
   weight: number
   traffic_paused_until?: number
+  rate_limit_cooldown_until?: number
   cost_ratio?: number | null
   group_ratio?: number | null
   gross_margin?: number | null
