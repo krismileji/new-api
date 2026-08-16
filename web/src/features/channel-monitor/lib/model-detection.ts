@@ -21,6 +21,7 @@ import type {
   ChannelModelDetectionCost,
   ChannelModelDetectionFilters,
   ChannelModelDetectionHealth,
+  ChannelModelDetectionExecutionStatus,
   ChannelModelDetectionKnownOutcomeCode,
   ChannelModelDetectionOutcomeCode,
   ChannelModelDetectionPreset,
@@ -28,6 +29,14 @@ import type {
   ChannelModelDetectionRunStatus,
   ChannelModelDetectionStatusFilter,
 } from '../types-model-detection'
+
+export type ChannelModelDetectionResultTone =
+  | 'running'
+  | 'success'
+  | 'attention'
+  | 'unhealthy'
+  | 'failed'
+  | 'inactive'
 
 export const CHANNEL_MODEL_DETECTION_ENDPOINTS = {
   overview: '/api/channel_monitor/model_detection',
@@ -97,6 +106,100 @@ export function isKnownChannelModelDetectionOutcome(
   return KNOWN_OUTCOME_CODES.has(
     outcome as ChannelModelDetectionKnownOutcomeCode
   )
+}
+
+export function isChannelModelDetectionStrongFingerprintConflict(input: {
+  claimedModel: string
+  outcomeCode: ChannelModelDetectionOutcomeCode | ''
+  fingerprintModel?: string
+  fingerprintClaimMismatch?: boolean
+}) {
+  if (input.outcomeCode !== 'juice_pass_fingerprint_strong') return false
+  if (input.fingerprintClaimMismatch === true) return true
+  const claimedModel = input.claimedModel.trim().toLocaleLowerCase()
+  const fingerprintModel = input.fingerprintModel?.trim().toLocaleLowerCase()
+  return Boolean(
+    claimedModel && fingerprintModel && claimedModel !== fingerprintModel
+  )
+}
+
+export function channelModelDetectionResultTone(input: {
+  claimedModel: string
+  status: ChannelModelDetectionExecutionStatus
+  outcomeCode: ChannelModelDetectionOutcomeCode | ''
+  fingerprintModel?: string
+  fingerprintClaimMismatch?: boolean
+}): ChannelModelDetectionResultTone {
+  if (
+    input.status === 'pending' ||
+    input.status === 'submitting' ||
+    input.status === 'running'
+  ) {
+    return 'running'
+  }
+  if (input.status === 'failed') return 'failed'
+  if (input.status === 'canceled' || input.status === 'skipped') {
+    return 'inactive'
+  }
+  if (
+    isChannelModelDetectionStrongFingerprintConflict({
+      claimedModel: input.claimedModel,
+      outcomeCode: input.outcomeCode,
+      fingerprintModel: input.fingerprintModel,
+      fingerprintClaimMismatch: input.fingerprintClaimMismatch,
+    })
+  ) {
+    return 'unhealthy'
+  }
+  if (
+    input.outcomeCode === 'juice_mismatch_fingerprint_strong' ||
+    input.outcomeCode === 'juice_mismatch_fingerprint_unclear' ||
+    input.outcomeCode === 'possible_non_gpt'
+  ) {
+    return 'unhealthy'
+  }
+  if (
+    input.outcomeCode === 'juice_pass_fingerprint_strong' ||
+    input.outcomeCode === 'juice_pass_fingerprint_unclear'
+  ) {
+    return 'success'
+  }
+  return 'attention'
+}
+
+export function channelModelDetectionResultLabel(input: {
+  status: ChannelModelDetectionExecutionStatus
+  outcomeCode: ChannelModelDetectionOutcomeCode | ''
+  title?: string
+}) {
+  if (input.status === 'pending') return '待执行'
+  if (input.status === 'submitting') return '提交中'
+  if (input.status === 'running') return '检测中'
+  if (input.status === 'failed') return '执行失败'
+  if (input.status === 'canceled') return '已取消'
+  if (input.status === 'skipped') return '已跳过'
+  if (input.title?.trim()) return input.title.trim()
+  if (input.outcomeCode === 'juice_pass_fingerprint_strong') {
+    return 'Juice 通过；指纹明确'
+  }
+  if (input.outcomeCode === 'juice_pass_fingerprint_unclear') {
+    return 'Juice 通过；指纹不明确'
+  }
+  if (input.outcomeCode === 'juice_mismatch_fingerprint_strong') {
+    return 'Juice 不匹配；指纹明确'
+  }
+  if (input.outcomeCode === 'juice_mismatch_fingerprint_unclear') {
+    return 'Juice 不匹配；指纹不明确'
+  }
+  if (input.outcomeCode === 'juice_insufficient_fingerprint_strong') {
+    return 'Juice 证据不足；指纹明确'
+  }
+  if (input.outcomeCode === 'juice_insufficient_fingerprint_unclear') {
+    return 'Juice 证据不足；指纹不明确'
+  }
+  if (input.outcomeCode === 'possible_non_gpt') return '可能不是 GPT'
+  if (input.outcomeCode) return `未知结论：${input.outcomeCode}`
+  return '检测完成但未返回结论'
 }
 
 export function channelModelDetectionPresetLabel(

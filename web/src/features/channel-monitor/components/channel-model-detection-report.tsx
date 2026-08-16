@@ -45,6 +45,7 @@ import {
   channelModelDetectionClaimedModelLabel,
   channelModelDetectionPresetLabel,
   channelModelDetectionPresetSourceLabel,
+  isChannelModelDetectionStrongFingerprintConflict,
   isKnownChannelModelDetectionOutcome,
 } from '../lib/model-detection'
 import type {
@@ -143,6 +144,16 @@ const OUTCOME_PRESENTATIONS: Record<
     variant: 'destructive',
     icon: Alert02Icon,
   },
+}
+
+const FINGERPRINT_CONFLICT_PRESENTATION: OutcomePresentation = {
+  level: 'anomaly',
+  label: '模型异常',
+  title: '行为指纹与申报型号冲突',
+  description:
+    '行为指纹与申报型号冲突：检测器原始结论标记为 Juice 通过，但指纹强烈指向其他型号；系统已按冲突证据归类为模型异常。',
+  variant: 'destructive',
+  icon: Alert02Icon,
 }
 
 const EXECUTION_STATUS: Record<
@@ -298,7 +309,9 @@ function reportArray(report: Record<string, unknown>, key: string) {
 }
 
 function outcomePresentation(
-  execution: ChannelModelDetectionExecutionDetail
+  execution: ChannelModelDetectionExecutionDetail,
+  fingerprintModel: string,
+  fingerprintClaimMismatch: boolean
 ): OutcomePresentation {
   const outcome = execution.outcome_code
   if (!outcome) {
@@ -321,6 +334,16 @@ function outcomePresentation(
       variant: 'warning',
       icon: InformationCircleIcon,
     }
+  }
+  if (
+    isChannelModelDetectionStrongFingerprintConflict({
+      claimedModel: execution.claimed_model,
+      outcomeCode: outcome,
+      fingerprintModel,
+      fingerprintClaimMismatch,
+    })
+  ) {
+    return FINGERPRINT_CONFLICT_PRESENTATION
   }
   return OUTCOME_PRESENTATIONS[outcome]
 }
@@ -487,7 +510,9 @@ function EvidenceSummary(props: {
   const trustScope = stringValue(props.report.trust_scope)
   const mismatch = props.report.fingerprint_claim_mismatch
   let mismatchLabel = '未提供'
-  if (typeof mismatch === 'boolean') {
+  if (props.execution.fingerprint_claim_mismatch === true) {
+    mismatchLabel = '是'
+  } else if (typeof mismatch === 'boolean') {
     mismatchLabel = mismatch ? '是' : '否'
   }
 
@@ -875,7 +900,16 @@ function ExecutionReport(props: {
   const execution = props.execution
   const sanitizedReport = redactReportSecrets(execution.report)
   const report = reportRoot(sanitizedReport)
-  const presentation = outcomePresentation(execution)
+  const fingerprintModel =
+    execution.fingerprint_model || stringValue(report.fingerprint_model)
+  const reportMismatch = report.fingerprint_claim_mismatch
+  const fingerprintClaimMismatch =
+    execution.fingerprint_claim_mismatch === true || reportMismatch === true
+  const presentation = outcomePresentation(
+    execution,
+    fingerprintModel,
+    fingerprintClaimMismatch
+  )
   const status = EXECUTION_STATUS[execution.status]
 
   return (

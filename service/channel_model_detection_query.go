@@ -17,6 +17,13 @@ const (
 	ChannelModelDetectionHistoryDefaultPageSize = 20
 	ChannelModelDetectionHistoryMaxPageSize     = 100
 
+	channelModelDetectionBucketResultSuccess   = "success"
+	channelModelDetectionBucketResultAttention = "attention"
+	channelModelDetectionBucketResultUnhealthy = "unhealthy"
+	channelModelDetectionBucketResultFailed    = "failed"
+	channelModelDetectionBucketResultRunning   = "running"
+	channelModelDetectionBucketResultInactive  = "inactive"
+
 	channelModelDetectionHealthUnconfigured        = "unconfigured"
 	channelModelDetectionHealthPaused              = "paused"
 	channelModelDetectionHealthPending             = "pending"
@@ -87,22 +94,38 @@ type ChannelModelDetectionProgressResponse struct {
 }
 
 type ChannelModelDetectionExecutionSummary struct {
-	RunID        string                                `json:"run_id"`
-	TargetKey    string                                `json:"target_key"`
-	Status       string                                `json:"status"`
-	RequestModel string                                `json:"request_model"`
-	ClaimedModel string                                `json:"claimed_model"`
-	OutcomeCode  string                                `json:"outcome_code"`
-	TitleCN      string                                `json:"title_cn"`
-	SubtitleCN   string                                `json:"subtitle_cn"`
-	Preset       string                                `json:"preset"`
-	PresetSource string                                `json:"preset_source"`
-	Trigger      string                                `json:"trigger"`
-	Progress     ChannelModelDetectionProgressResponse `json:"progress"`
-	Cost         ChannelModelDetectionCostResponse     `json:"cost"`
-	StartedAt    int64                                 `json:"started_at"`
-	FinishedAt   int64                                 `json:"finished_at"`
-	UpdatedAt    int64                                 `json:"updated_at"`
+	RunID                    string                                `json:"run_id"`
+	TargetKey                string                                `json:"target_key"`
+	Status                   string                                `json:"status"`
+	RequestModel             string                                `json:"request_model"`
+	ClaimedModel             string                                `json:"claimed_model"`
+	OutcomeCode              string                                `json:"outcome_code"`
+	TitleCN                  string                                `json:"title_cn"`
+	SubtitleCN               string                                `json:"subtitle_cn"`
+	JuiceVerdictState        string                                `json:"juice_verdict_state"`
+	FingerprintVerdictState  string                                `json:"fingerprint_verdict_state"`
+	FingerprintModel         string                                `json:"fingerprint_model"`
+	FingerprintClaimMismatch bool                                  `json:"fingerprint_claim_mismatch"`
+	Preset                   string                                `json:"preset"`
+	PresetSource             string                                `json:"preset_source"`
+	Trigger                  string                                `json:"trigger"`
+	Progress                 ChannelModelDetectionProgressResponse `json:"progress"`
+	Cost                     ChannelModelDetectionCostResponse     `json:"cost"`
+	StartedAt                int64                                 `json:"started_at"`
+	FinishedAt               int64                                 `json:"finished_at"`
+	UpdatedAt                int64                                 `json:"updated_at"`
+}
+
+type ChannelModelDetectionResultBucket struct {
+	StartedAt      int64  `json:"started_at"`
+	Result         string `json:"result"`
+	DetectionCount int    `json:"detection_count"`
+	Success        int    `json:"success"`
+	Attention      int    `json:"attention"`
+	Unhealthy      int    `json:"unhealthy"`
+	Failed         int    `json:"failed"`
+	Running        int    `json:"running"`
+	Inactive       int    `json:"inactive"`
 }
 
 type ChannelModelDetectionTargetSummary struct {
@@ -112,6 +135,7 @@ type ChannelModelDetectionTargetSummary struct {
 	Enabled      bool                                   `json:"enabled"`
 	Position     int                                    `json:"position"`
 	Latest       *ChannelModelDetectionExecutionSummary `json:"latest"`
+	RecentWindow []ChannelModelDetectionResultBucket    `json:"recent_window"`
 }
 
 type ChannelModelDetectionChannelConfigResponse struct {
@@ -180,6 +204,8 @@ type ChannelModelDetectionSettingsSummary struct {
 	ScheduledPreset       string `json:"scheduled_preset"`
 	ScheduleEnabled       bool   `json:"schedule_enabled"`
 	IntervalMinutes       int    `json:"interval_minutes"`
+	DisplayValue          int    `json:"display_value"`
+	DisplayUnit           string `json:"display_unit"`
 	IntervalHours         int    `json:"-"`
 	ScheduleTime          string `json:"-"`
 	Timezone              string `json:"-"`
@@ -239,26 +265,23 @@ type ChannelModelDetectionRunHistoryResponse struct {
 
 type ChannelModelDetectionExecutionDetail struct {
 	ChannelModelDetectionExecutionSummary
-	OfficialSessionID       string `json:"official_session_id"`
-	Official                bool   `json:"official"`
-	ConfigHash              string `json:"config_hash"`
-	SchemaVersion           int    `json:"schema_version"`
-	ScoringVersion          string `json:"scoring_version"`
-	BaselineID              string `json:"baseline_id"`
-	BaselineSHA256          string `json:"baseline_sha256"`
-	BuildHash               string `json:"build_hash"`
-	JuiceVerdictState       string `json:"juice_verdict_state"`
-	FingerprintVerdictState string `json:"fingerprint_verdict_state"`
-	FingerprintModel        string `json:"fingerprint_model"`
-	UsageAvailable          bool   `json:"usage_available"`
-	InputTokens             int64  `json:"input_tokens"`
-	OutputTokens            int64  `json:"output_tokens"`
-	TotalTokens             int64  `json:"total_tokens"`
-	ReportSHA256            string `json:"report_sha256"`
-	FinalErrorCode          string `json:"final_error_code"`
-	ErrorCode               string `json:"error_code"`
-	ErrorMessage            string `json:"error_message"`
-	Report                  any    `json:"report"`
+	OfficialSessionID string `json:"official_session_id"`
+	Official          bool   `json:"official"`
+	ConfigHash        string `json:"config_hash"`
+	SchemaVersion     int    `json:"schema_version"`
+	ScoringVersion    string `json:"scoring_version"`
+	BaselineID        string `json:"baseline_id"`
+	BaselineSHA256    string `json:"baseline_sha256"`
+	BuildHash         string `json:"build_hash"`
+	UsageAvailable    bool   `json:"usage_available"`
+	InputTokens       int64  `json:"input_tokens"`
+	OutputTokens      int64  `json:"output_tokens"`
+	TotalTokens       int64  `json:"total_tokens"`
+	ReportSHA256      string `json:"report_sha256"`
+	FinalErrorCode    string `json:"final_error_code"`
+	ErrorCode         string `json:"error_code"`
+	ErrorMessage      string `json:"error_message"`
+	Report            any    `json:"report"`
 }
 
 type ChannelModelDetectionRunDetailResponse struct {
@@ -291,6 +314,10 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
 	applyChannelModelDetectionGlobalDefaults(&global)
+	displayValue, displayUnit := global.EffectiveDisplay()
+	bucketSeconds := model.ChannelModelDetectionDisplayBucketSeconds(displayUnit)
+	currentBucket := model.ChannelModelDetectionDisplayBucketStart(now, displayUnit)
+	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
 
 	var configs []model.ChannelModelDetectionConfig
 	if err := db.Order("channel_id ASC").Find(&configs).Error; err != nil {
@@ -322,13 +349,14 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	executionTable := db.NamingStrategy.TableName("ChannelModelDetectionExecution")
 	targetTable := db.NamingStrategy.TableName("ChannelModelDetectionTarget")
 	var executionRows []channelModelDetectionExecutionOverviewRow
-	latestExecutionClause := "NOT EXISTS (SELECT 1 FROM " + executionTable + " AS newer_execution WHERE newer_execution.target_key = detection_execution.target_key AND (newer_execution.created_at > detection_execution.created_at OR (newer_execution.created_at = detection_execution.created_at AND newer_execution.id > detection_execution.id)))"
-	currentTargetClause := "EXISTS (SELECT 1 FROM " + targetTable + " AS current_target WHERE current_target.target_key = detection_execution.target_key)"
-	if err := db.Table(executionTable + " AS detection_execution").
+	latestExecutionClause := "NOT EXISTS (SELECT 1 FROM " + executionTable + " AS newer_execution WHERE newer_execution.target_id = detection_execution.target_id AND (newer_execution.created_at > detection_execution.created_at OR (newer_execution.created_at = detection_execution.created_at AND newer_execution.id > detection_execution.id)))"
+	currentTargetClause := "EXISTS (SELECT 1 FROM " + targetTable + " AS current_target WHERE current_target.id = detection_execution.target_id)"
+	executionTimestamp := "(CASE WHEN detection_execution.started_at > 0 THEN detection_execution.started_at ELSE detection_execution.created_at END)"
+	if err := db.Table(executionTable+" AS detection_execution").
 		Select("detection_execution.*, detection_run.trigger AS run_trigger, detection_run.preset_source AS run_preset_source").
-		Joins("JOIN " + runTable + " AS detection_run ON detection_run.run_id = detection_execution.run_id").
-		Where(currentTargetClause).Where(latestExecutionClause).
-		Order("detection_execution.target_key ASC").Scan(&executionRows).Error; err != nil {
+		Joins("JOIN "+runTable+" AS detection_run ON detection_run.run_id = detection_execution.run_id").
+		Where(currentTargetClause).Where("("+executionTimestamp+" BETWEEN ? AND ?) OR "+latestExecutionClause, minimumBucket, now).
+		Order("detection_execution.target_id ASC, detection_execution.created_at ASC, detection_execution.id ASC").Scan(&executionRows).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
 
@@ -336,9 +364,17 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	for i := range runs {
 		runIDs = append(runIDs, runs[i].RunId)
 	}
-	executionIDs := make([]int64, 0, len(executionRows))
+	latestExecutionByTarget := make(map[int64]model.ChannelModelDetectionExecution, len(targets))
 	for i := range executionRows {
-		executionIDs = append(executionIDs, executionRows[i].Id)
+		execution := executionRows[i].ChannelModelDetectionExecution
+		latest, exists := latestExecutionByTarget[execution.TargetId]
+		if !exists || execution.CreatedAt > latest.CreatedAt || execution.CreatedAt == latest.CreatedAt && execution.Id > latest.Id {
+			latestExecutionByTarget[execution.TargetId] = execution
+		}
+	}
+	executionIDs := make([]int64, 0, len(latestExecutionByTarget))
+	for _, execution := range latestExecutionByTarget {
+		executionIDs = append(executionIDs, execution.Id)
 	}
 	todayStart := model.ChannelDailyCostDayStart(now)
 	todayCostClause := "((created_at >= ? AND created_at <= ?) OR (settled_at >= ? AND settled_at <= ?))"
@@ -515,9 +551,8 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 			Official:                              execution.Official, ConfigHash: execution.ConfigHash,
 			SchemaVersion: execution.SchemaVersion, ScoringVersion: execution.ScoringVersion,
 			BaselineID: execution.BaselineId, BaselineSHA256: execution.BaselineSHA256, BuildHash: execution.BuildHash,
-			JuiceVerdictState: execution.JuiceVerdictState, FingerprintVerdictState: execution.FingerprintVerdictState,
-			FingerprintModel: execution.FingerprintModel, UsageAvailable: execution.UsageAvailable,
-			InputTokens: execution.InputTokens, OutputTokens: execution.OutputTokens, TotalTokens: execution.TotalTokens,
+			UsageAvailable: execution.UsageAvailable,
+			InputTokens:    execution.InputTokens, OutputTokens: execution.OutputTokens, TotalTokens: execution.TotalTokens,
 			ReportSHA256: execution.ReportSHA256, FinalErrorCode: execution.FinalErrorCode,
 			ErrorCode: execution.ErrorCode, ErrorMessage: execution.ErrorMessage, Report: report,
 		})
@@ -529,12 +564,14 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 	todayStart := model.ChannelDailyCostDayStart(now)
 	configured := global.DetectorURLConfigured()
 	maskedURL := maskChannelModelDetectorURL(global.DetectorURL)
+	displayValue, displayUnit := global.EffectiveDisplay()
 	response := ChannelModelDetectionOverviewResponse{
 		ServerNow: now,
 		Settings: ChannelModelDetectionSettingsSummary{
 			DetectorURLConfigured: configured, DetectorURLMasked: maskedURL,
 			ScheduledPreset: global.ScheduledPreset, ScheduleEnabled: global.ScheduleEnabled,
 			IntervalMinutes: global.EffectiveIntervalMinutes(), IntervalHours: global.IntervalHours, ScheduleTime: global.ScheduleTime, Timezone: global.Timezone,
+			DisplayValue: displayValue, DisplayUnit: displayUnit,
 			NextBatchAt: global.NextBatchAt, Revision: global.Revision,
 		},
 		Detector: ChannelModelDetectionDetectorResponse{
@@ -578,9 +615,9 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			}
 		}
 	}
-	latestExecutionByTarget := make(map[string]channelModelDetectionExecutionOverviewRow, len(executionRows))
+	executionsByTarget := make(map[string][]channelModelDetectionExecutionOverviewRow, len(targets))
 	for i := range executionRows {
-		latestExecutionByTarget[executionRows[i].TargetKey] = executionRows[i]
+		executionsByTarget[executionRows[i].TargetKey] = append(executionsByTarget[executionRows[i].TargetKey], executionRows[i])
 	}
 	eventsByRun := make(map[string][]model.ChannelModelDetectionCostEvent)
 	eventsByExecution := make(map[int64][]model.ChannelModelDetectionCostEvent)
@@ -687,7 +724,7 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			target := channelTargets[j]
 			targetItem := ChannelModelDetectionTargetSummary{
 				TargetKey: target.TargetKey, RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel,
-				Enabled: target.Enabled, Position: target.Position,
+				Enabled: target.Enabled, Position: target.Position, RecentWindow: []ChannelModelDetectionResultBucket{},
 			}
 			if target.Enabled {
 				modelSet[target.RequestModel] = struct{}{}
@@ -695,7 +732,10 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 					modelsByGroupSet[group][target.RequestModel] = struct{}{}
 				}
 			}
-			if executionRow, ok := latestExecutionByTarget[target.TargetKey]; ok {
+			targetExecutions := executionsByTarget[target.TargetKey]
+			targetItem.RecentWindow = channelModelDetectionResultBuckets(now, displayValue, displayUnit, targetExecutions)
+			if len(targetExecutions) > 0 {
+				executionRow := targetExecutions[len(targetExecutions)-1]
 				aggregate, aggregateErr := aggregateChannelModelDetectionCostForExecution(executionRow.ChannelModelDetectionExecution, eventsByExecution[executionRow.Id])
 				if aggregateErr != nil {
 					return ChannelModelDetectionOverviewResponse{}, aggregateErr
@@ -885,6 +925,7 @@ func channelModelDetectionRunProgress(run model.ChannelModelDetectionRun) Channe
 }
 
 func channelModelDetectionExecutionSummary(execution model.ChannelModelDetectionExecution, trigger string, presetSource string, aggregate ChannelModelDetectionCostAggregate) ChannelModelDetectionExecutionSummary {
+	evidence := channelModelDetectionExecutionEvidence(execution)
 	successful := int64(0)
 	errorsCount := int64(0)
 	cancelled := int64(0)
@@ -900,6 +941,8 @@ func channelModelDetectionExecutionSummary(execution model.ChannelModelDetection
 		RunID: execution.RunId, TargetKey: execution.TargetKey, Status: execution.Status,
 		RequestModel: execution.RequestModel, ClaimedModel: execution.ClaimedModel,
 		OutcomeCode: execution.OutcomeCode, TitleCN: execution.TitleCN, SubtitleCN: execution.SubtitleCN,
+		JuiceVerdictState: evidence.JuiceVerdictState, FingerprintVerdictState: evidence.FingerprintVerdictState,
+		FingerprintModel: evidence.FingerprintModel, FingerprintClaimMismatch: evidence.FingerprintClaimMismatch,
 		Preset: execution.Preset, PresetSource: presetSource, Trigger: trigger,
 		Progress: ChannelModelDetectionProgressResponse{
 			Planned: execution.PlannedLogicalRequests, LogicalCompleted: execution.CompletedLogicalRequests,
@@ -909,6 +952,143 @@ func channelModelDetectionExecutionSummary(execution model.ChannelModelDetection
 		Cost: channelModelDetectionCostResponse(aggregate), StartedAt: execution.StartedAt,
 		FinishedAt: execution.FinishedAt, UpdatedAt: execution.UpdatedAt,
 	}
+}
+
+func channelModelDetectionResultBuckets(
+	now int64,
+	displayValue int,
+	displayUnit string,
+	executions []channelModelDetectionExecutionOverviewRow,
+) []ChannelModelDetectionResultBucket {
+	displayValue, displayUnit = model.NormalizeChannelModelDetectionDisplay(displayValue, displayUnit)
+	bucketSeconds := model.ChannelModelDetectionDisplayBucketSeconds(displayUnit)
+	currentBucket := model.ChannelModelDetectionDisplayBucketStart(now, displayUnit)
+	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
+	buckets := make([]ChannelModelDetectionResultBucket, displayValue)
+	indices := make(map[int64]int, displayValue)
+	for index := range buckets {
+		startedAt := minimumBucket + int64(index)*bucketSeconds
+		buckets[index].StartedAt = startedAt
+		indices[startedAt] = index
+	}
+	for _, row := range executions {
+		timestamp := row.StartedAt
+		if timestamp <= 0 {
+			timestamp = row.CreatedAt
+		}
+		startedAt := model.ChannelModelDetectionDisplayBucketStart(timestamp, displayUnit)
+		index, ok := indices[startedAt]
+		if !ok {
+			continue
+		}
+		bucket := &buckets[index]
+		bucket.DetectionCount++
+		classification := channelModelDetectionBucketClassification(row.ChannelModelDetectionExecution)
+		switch classification {
+		case channelModelDetectionBucketResultSuccess:
+			bucket.Success++
+		case channelModelDetectionBucketResultAttention:
+			bucket.Attention++
+		case channelModelDetectionBucketResultUnhealthy:
+			bucket.Unhealthy++
+		case channelModelDetectionBucketResultFailed:
+			bucket.Failed++
+		case channelModelDetectionBucketResultRunning:
+			bucket.Running++
+		case channelModelDetectionBucketResultInactive:
+			bucket.Inactive++
+		}
+		bucket.Result = channelModelDetectionBucketResult(bucket)
+	}
+	return buckets
+}
+
+func channelModelDetectionBucketClassification(execution model.ChannelModelDetectionExecution) string {
+	switch execution.Status {
+	case model.ChannelModelDetectionExecutionStatusPending,
+		model.ChannelModelDetectionExecutionStatusSubmitting,
+		model.ChannelModelDetectionExecutionStatusRunning:
+		return channelModelDetectionBucketResultRunning
+	case model.ChannelModelDetectionExecutionStatusFailed:
+		return channelModelDetectionBucketResultFailed
+	case model.ChannelModelDetectionExecutionStatusCanceled,
+		model.ChannelModelDetectionExecutionStatusSkipped:
+		return channelModelDetectionBucketResultInactive
+	}
+	if channelModelDetectionExecutionEvidence(execution).FingerprintClaimMismatch {
+		return channelModelDetectionBucketResultUnhealthy
+	}
+	switch execution.OutcomeCode {
+	case "juice_mismatch_fingerprint_strong", "juice_mismatch_fingerprint_unclear", "possible_non_gpt":
+		return channelModelDetectionBucketResultUnhealthy
+	case "juice_pass_fingerprint_strong", "juice_pass_fingerprint_unclear":
+		return channelModelDetectionBucketResultSuccess
+	case "juice_insufficient_fingerprint_strong", "juice_insufficient_fingerprint_unclear":
+		return channelModelDetectionBucketResultAttention
+	default:
+		return channelModelDetectionBucketResultAttention
+	}
+}
+
+func channelModelDetectionBucketResult(bucket *ChannelModelDetectionResultBucket) string {
+	switch {
+	case bucket.Unhealthy > 0:
+		return channelModelDetectionBucketResultUnhealthy
+	case bucket.Failed > 0:
+		return channelModelDetectionBucketResultFailed
+	case bucket.Attention > 0:
+		return channelModelDetectionBucketResultAttention
+	case bucket.Running > 0:
+		return channelModelDetectionBucketResultRunning
+	case bucket.Success > 0:
+		return channelModelDetectionBucketResultSuccess
+	case bucket.Inactive > 0:
+		return channelModelDetectionBucketResultInactive
+	default:
+		return ""
+	}
+}
+
+type channelModelDetectionExecutionEvidenceSummary struct {
+	JuiceVerdictState        string
+	FingerprintVerdictState  string
+	FingerprintModel         string
+	FingerprintClaimMismatch bool
+}
+
+func channelModelDetectionExecutionEvidence(execution model.ChannelModelDetectionExecution) channelModelDetectionExecutionEvidenceSummary {
+	evidence := channelModelDetectionExecutionEvidenceSummary{
+		JuiceVerdictState:       strings.TrimSpace(execution.JuiceVerdictState),
+		FingerprintVerdictState: strings.TrimSpace(execution.FingerprintVerdictState),
+		FingerprintModel:        strings.TrimSpace(execution.FingerprintModel),
+	}
+	explicitMismatch := false
+	if execution.OutcomeCode == "juice_pass_fingerprint_strong" && strings.TrimSpace(execution.ReportJSON) != "" &&
+		(evidence.JuiceVerdictState == "" || evidence.FingerprintVerdictState == "" || evidence.FingerprintModel == "") {
+		var report struct {
+			JuiceVerdictState        string `json:"juice_verdict_state"`
+			FingerprintVerdictState  string `json:"fingerprint_verdict_state"`
+			FingerprintModel         string `json:"fingerprint_model"`
+			FingerprintClaimMismatch *bool  `json:"fingerprint_claim_mismatch"`
+		}
+		if common.UnmarshalJsonStr(execution.ReportJSON, &report) == nil {
+			if evidence.JuiceVerdictState == "" {
+				evidence.JuiceVerdictState = strings.TrimSpace(report.JuiceVerdictState)
+			}
+			if evidence.FingerprintVerdictState == "" {
+				evidence.FingerprintVerdictState = strings.TrimSpace(report.FingerprintVerdictState)
+			}
+			if evidence.FingerprintModel == "" {
+				evidence.FingerprintModel = strings.TrimSpace(report.FingerprintModel)
+			}
+			explicitMismatch = report.FingerprintClaimMismatch != nil && *report.FingerprintClaimMismatch
+		}
+	}
+	evidence.FingerprintClaimMismatch = explicitMismatch ||
+		execution.OutcomeCode == "juice_pass_fingerprint_strong" &&
+			evidence.FingerprintModel != "" && execution.ClaimedModel != "" &&
+			!strings.EqualFold(evidence.FingerprintModel, execution.ClaimedModel)
+	return evidence
 }
 
 func channelModelDetectionChannelHealth(now int64, global model.ChannelModelDetectionGlobalConfig, detectorConfigured bool, hasConfig bool, hasActiveRun bool, targets []ChannelModelDetectionTargetSummary) string {
@@ -941,6 +1121,9 @@ func channelModelDetectionChannelHealth(now int64, global model.ChannelModelDete
 		}
 		if latest.UpdatedAt > latestAt {
 			latestAt = latest.UpdatedAt
+		}
+		if latest.FingerprintClaimMismatch {
+			return channelModelDetectionHealthUnhealthy
 		}
 		switch latest.OutcomeCode {
 		case "juice_mismatch_fingerprint_strong", "juice_mismatch_fingerprint_unclear", "possible_non_gpt":
@@ -977,6 +1160,10 @@ func applyChannelModelDetectionGlobalDefaults(config *model.ChannelModelDetectio
 	}
 	if config.IntervalMinutes <= 0 {
 		config.IntervalMinutes = config.EffectiveIntervalMinutes()
+	}
+	if config.DisplayValue == 0 && strings.TrimSpace(config.DisplayUnit) == "" {
+		config.DisplayValue = model.ChannelModelDetectionDefaultDisplayValue
+		config.DisplayUnit = model.ChannelModelDetectionDefaultDisplayUnit
 	}
 }
 

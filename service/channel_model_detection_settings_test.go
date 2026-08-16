@@ -95,10 +95,26 @@ func TestUpdateChannelModelDetectionSettingsAlignsNextBatchToIntervalBoundary(t 
 		ScheduledPreset:  model.ChannelModelDetectionPresetMedium,
 		ScheduleEnabled:  true,
 		IntervalMinutes:  60,
+		DisplayValue:     12,
+		DisplayUnit:      model.ChannelModelDetectionDisplayUnitHour,
 		ExpectedRevision: seed.Revision,
 	}, now)
 	require.NoError(t, err)
 	assert.Equal(t, time.Date(2026, time.August, 15, 11, 0, 0, 0, time.UTC).Unix(), updated.NextBatchAt)
+	assert.Equal(t, 12, updated.DisplayValue)
+	assert.Equal(t, model.ChannelModelDetectionDisplayUnitHour, updated.DisplayUnit)
+}
+
+func TestUpdateChannelModelDetectionSettingsRejectsInvalidDisplayRange(t *testing.T) {
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
+
+	_, err := UpdateChannelModelDetectionSettings(context.Background(), db, ChannelModelDetectionSettingsUpdate{
+		ScheduledPreset: model.ChannelModelDetectionPresetMedium, IntervalMinutes: 60,
+		DisplayValue: 31, DisplayUnit: model.ChannelModelDetectionDisplayUnitDay,
+		ExpectedRevision: seed.Revision,
+	}, time.Unix(1_700_000_000, 0).UTC())
+	assert.ErrorIs(t, err, model.ErrChannelModelDetectionInvalidDisplay)
 }
 
 func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *testing.T) {

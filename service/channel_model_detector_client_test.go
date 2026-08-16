@@ -130,7 +130,10 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 				"schema_version": 3, "scoring_version": "score-v3", "session_id": "official-session", "config_hash": "hash-low",
 				"baseline_id": "baseline", "baseline_sha256": "baseline-sha", "build_hash": "build-sha", "official": true,
 				"candidate_configuration_without_key": map[string]any{"model": "gpt-5.6-sol"},
-				"outcome_code":                        "juice_pass_fingerprint_strong", "overall_verdict": "通过", "future_report": map[string]any{"proof": 1},
+				"outcome_code":                        "juice_pass_fingerprint_strong", "overall_verdict": "通过",
+				"juice_verdict_state": "pass", "fingerprint_verdict_state": "strong_match",
+				"fingerprint_model": "gpt-5.6-luna", "fingerprint_claim_mismatch": true,
+				"future_report": map[string]any{"proof": 1},
 			})
 		case channelModelDetectorStopPath:
 			assert.Equal(t, http.MethodPost, request.Method)
@@ -191,6 +194,11 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 	assert.Equal(t, "baseline-sha", report.BaselineSHA256)
 	assert.Equal(t, "build-sha", report.BuildHash)
 	assert.Equal(t, "gpt-5.6-sol", report.ClaimedModel)
+	assert.Equal(t, "pass", report.JuiceVerdictState)
+	assert.Equal(t, "strong_match", report.FingerprintVerdictState)
+	assert.Equal(t, "gpt-5.6-luna", report.FingerprintModel)
+	require.NotNil(t, report.FingerprintClaimMismatch)
+	assert.True(t, *report.FingerprintClaimMismatch)
 	assert.Contains(t, report.Raw, "future_report")
 	serializedReport, err := common.Marshal(report)
 	require.NoError(t, err)

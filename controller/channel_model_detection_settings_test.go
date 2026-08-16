@@ -51,6 +51,8 @@ func TestChannelModelDetectionSettingsAPIShowsConfiguredURLAndReturnsRevisionCon
 	require.Equal(t, http.StatusOK, getRecorder.Code)
 	assert.Contains(t, getRecorder.Body.String(), `"detector_url":"http://127.0.0.1:18080/private"`)
 	assert.Contains(t, getRecorder.Body.String(), `"detector_url_masked":"http://127.0.0.1:18080/private"`)
+	assert.Contains(t, getRecorder.Body.String(), `"display_value":30`)
+	assert.Contains(t, getRecorder.Body.String(), `"display_unit":"day"`)
 
 	putContext, putRecorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/model_detection/settings", map[string]any{
 		"scheduled_preset": "medium", "schedule_enabled": false, "interval_hours": 24,
@@ -78,6 +80,10 @@ func TestChannelModelDetectionSettingsAPIRejectsAmbiguousAddressAndUnconfirmedHi
 		{
 			"scheduled_preset": "high", "schedule_enabled": true, "interval_hours": 24,
 			"schedule_time": "02:30", "timezone": "Asia/Shanghai", "revision": 1,
+		},
+		{
+			"scheduled_preset": "medium", "schedule_enabled": false, "interval_hours": 24,
+			"display_value": 31, "display_unit": "day", "revision": 1,
 		},
 	} {
 		context, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/model_detection/settings", request)

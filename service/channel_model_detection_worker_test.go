@@ -263,6 +263,8 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	report := ChannelModelDetectorReportResponse{
 		SessionID: "owned-session", ConfigHash: "report-hash", OutcomeCode: "juice_pass_fingerprint_strong",
 		OverallVerdict: "通过", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+		JuiceVerdictState: "pass", FingerprintVerdictState: "strong_match",
+		FingerprintModel: model.ChannelModelDetectionClaimedModelLuna,
 	}
 	schemaVersion := int64(3)
 	report.SchemaVersion = &schemaVersion
@@ -284,6 +286,11 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	assert.Equal(t, int64(52), storedRun.HTTPAttempts)
 	assert.Equal(t, int64(3), storedRun.RetryCount)
 	assert.Positive(t, storedRun.FinishedAt)
+	var storedExecution model.ChannelModelDetectionExecution
+	require.NoError(t, db.Where("id = ?", execution.Id).First(&storedExecution).Error)
+	assert.Equal(t, "pass", storedExecution.JuiceVerdictState)
+	assert.Equal(t, "strong_match", storedExecution.FingerprintVerdictState)
+	assert.Equal(t, model.ChannelModelDetectionClaimedModelLuna, storedExecution.FingerprintModel)
 	var config model.ChannelModelDetectionConfig
 	require.NoError(t, db.Where("channel_id = ?", run.ChannelId).First(&config).Error)
 	assert.Empty(t, config.RunningRunId)

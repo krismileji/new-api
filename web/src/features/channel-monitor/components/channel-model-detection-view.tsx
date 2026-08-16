@@ -352,6 +352,8 @@ export function ChannelModelDetectionView(
             detectorState={overview.detector.state}
             scheduledPreset={overview.settings.scheduled_preset}
             scheduleEnabled={overview.settings.schedule_enabled}
+            displayValue={overview.settings.display_value}
+            displayUnit={overview.settings.display_unit}
             nextBatchAt={overview.settings.next_batch_at}
             serverNow={overview.server_now}
             actionPending={

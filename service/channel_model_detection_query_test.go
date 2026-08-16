@@ -157,6 +157,133 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	assert.Equal(t, initialQueryCount, queryCount.Load())
 }
 
+func TestChannelModelDetectionOverviewTreatsStrongFingerprintConflictAsUnhealthy(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+	}).Error)
+	_, execution := seedChannelModelDetectionQueryChannel(t, db, 111, "juice_pass_fingerprint_strong", 100)
+	require.NoError(t, execution.SetReport(map[string]any{
+		"claimed_model":              model.ChannelModelDetectionClaimedModelSol,
+		"outcome_code":               "juice_pass_fingerprint_strong",
+		"fingerprint_verdict_state":  "strong_match",
+		"fingerprint_model":          model.ChannelModelDetectionClaimedModelLuna,
+		"fingerprint_claim_mismatch": true,
+	}))
+	require.NoError(t, db.Model(&execution).Update("report_json", execution.ReportJSON).Error)
+
+	response, err := GetChannelModelDetectionOverview(context.Background(), db, 1_000)
+	require.NoError(t, err)
+	require.Len(t, response.Channels, 1)
+	assert.Equal(t, channelModelDetectionHealthUnhealthy, response.Channels[0].HealthStatus)
+	require.Len(t, response.Channels[0].Targets, 1)
+	require.NotNil(t, response.Channels[0].Targets[0].Latest)
+	assert.Equal(t, model.ChannelModelDetectionClaimedModelLuna, response.Channels[0].Targets[0].Latest.FingerprintModel)
+	assert.True(t, response.Channels[0].Targets[0].Latest.FingerprintClaimMismatch)
+}
+
+func TestChannelModelDetectionOverviewBuildsConfiguredDisplayBuckets(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalHours: 24, DisplayValue: 4, DisplayUnit: model.ChannelModelDetectionDisplayUnitMinute,
+		ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+	}).Error)
+	_, initialExecution := seedChannelModelDetectionQueryChannel(t, db, 115, "juice_pass_fingerprint_strong", 700)
+
+	tests := []struct {
+		sequence  int
+		startedAt int64
+		status    string
+		outcome   string
+		title     string
+		conflict  bool
+	}{
+		{sequence: 1, startedAt: 790, status: model.ChannelModelDetectionExecutionStatusCompleted, outcome: "juice_pass_fingerprint_strong", title: "Juice 通过；指纹强烈指向 Sol"},
+		{sequence: 2, startedAt: 850, status: model.ChannelModelDetectionExecutionStatusCompleted, outcome: "juice_pass_fingerprint_strong", title: "Juice 通过；指纹强烈指向 Luna", conflict: true},
+		{sequence: 3, startedAt: 870, status: model.ChannelModelDetectionExecutionStatusFailed, title: "执行失败"},
+		{sequence: 4, startedAt: 905, status: model.ChannelModelDetectionExecutionStatusCompleted, outcome: "juice_insufficient_fingerprint_unclear", title: "证据不足；指纹不明确"},
+	}
+	for _, test := range tests {
+		run := model.ChannelModelDetectionRun{
+			RunId: fmt.Sprintf("run-115-window-%02d", test.sequence), ChannelId: 115,
+			ConfigRevision: 1, GlobalConfigRevision: 1,
+			Trigger: model.ChannelModelDetectionTriggerScheduled, Preset: model.ChannelModelDetectionPresetMedium,
+			PresetSource: model.ChannelModelDetectionPresetSourceScheduledDefault,
+			Status:       model.ChannelModelDetectionRunStatusCompleted,
+			TargetCount:  1, CompletedTargetCount: 1, PlannedLogicalRequests: 3, CompletedLogicalRequests: 3,
+			QueuedAt: test.startedAt - 1, StartedAt: test.startedAt, FinishedAt: test.startedAt + 2,
+			UpdatedAt: test.startedAt + 2, CreatedAt: test.startedAt - 1,
+		}
+		require.NoError(t, db.Create(&run).Error)
+		execution := model.ChannelModelDetectionExecution{
+			RunId: run.RunId, TargetKey: initialExecution.TargetKey, TargetId: initialExecution.TargetId, ChannelId: 115,
+			RequestModel: initialExecution.RequestModel, ClaimedModel: initialExecution.ClaimedModel,
+			Preset: run.Preset, Status: test.status, OutcomeCode: test.outcome, TitleCN: test.title,
+			PlannedLogicalRequests: 3, CompletedLogicalRequests: 3,
+			StartedAt: test.startedAt, FinishedAt: test.startedAt + 2,
+			CreatedAt: test.startedAt - 1, UpdatedAt: test.startedAt + 2,
+		}
+		if test.conflict {
+			require.NoError(t, execution.SetReport(map[string]any{
+				"claimed_model":              model.ChannelModelDetectionClaimedModelSol,
+				"outcome_code":               "juice_pass_fingerprint_strong",
+				"fingerprint_verdict_state":  "strong_match",
+				"fingerprint_model":          model.ChannelModelDetectionClaimedModelLuna,
+				"fingerprint_claim_mismatch": true,
+			}))
+		}
+		require.NoError(t, db.Create(&execution).Error)
+	}
+
+	response, err := GetChannelModelDetectionOverview(context.Background(), db, 1_000)
+	require.NoError(t, err)
+	require.Len(t, response.Channels, 1)
+	require.Len(t, response.Channels[0].Targets, 1)
+	target := response.Channels[0].Targets[0]
+	require.Len(t, target.RecentWindow, 4)
+	assert.Equal(t, []int64{780, 840, 900, 960}, []int64{
+		target.RecentWindow[0].StartedAt, target.RecentWindow[1].StartedAt,
+		target.RecentWindow[2].StartedAt, target.RecentWindow[3].StartedAt,
+	})
+	assert.Equal(t, channelModelDetectionBucketResultSuccess, target.RecentWindow[0].Result)
+	assert.Equal(t, channelModelDetectionBucketResultUnhealthy, target.RecentWindow[1].Result)
+	assert.Equal(t, 2, target.RecentWindow[1].DetectionCount)
+	assert.Equal(t, 1, target.RecentWindow[1].Unhealthy)
+	assert.Equal(t, 1, target.RecentWindow[1].Failed)
+	assert.Equal(t, channelModelDetectionBucketResultAttention, target.RecentWindow[2].Result)
+	assert.Empty(t, target.RecentWindow[3].Result)
+	assert.Zero(t, target.RecentWindow[3].DetectionCount)
+	require.NotNil(t, target.Latest)
+	assert.Equal(t, "run-115-window-04", target.Latest.RunID)
+	assert.Equal(t, 4, response.Settings.DisplayValue)
+	assert.Equal(t, model.ChannelModelDetectionDisplayUnitMinute, response.Settings.DisplayUnit)
+}
+
+func TestChannelModelDetectionOverviewKeepsLatestExecutionOutsideDisplayWindow(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalHours: 24, DisplayValue: 2, DisplayUnit: model.ChannelModelDetectionDisplayUnitMinute,
+		ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+	}).Error)
+	run, _ := seedChannelModelDetectionQueryChannel(t, db, 116, "juice_pass_fingerprint_strong", 700)
+
+	response, err := GetChannelModelDetectionOverview(context.Background(), db, 1_000)
+	require.NoError(t, err)
+	require.Len(t, response.Channels, 1)
+	require.Len(t, response.Channels[0].Targets, 1)
+	target := response.Channels[0].Targets[0]
+	require.Len(t, target.RecentWindow, 2)
+	assert.Equal(t, []int64{900, 960}, []int64{target.RecentWindow[0].StartedAt, target.RecentWindow[1].StartedAt})
+	assert.Zero(t, target.RecentWindow[0].DetectionCount)
+	assert.Zero(t, target.RecentWindow[1].DetectionCount)
+	require.NotNil(t, target.Latest)
+	assert.Equal(t, run.RunId, target.Latest.RunID)
+	assert.Equal(t, "juice_pass_fingerprint_strong", target.Latest.OutcomeCode)
+}
+
 func TestChannelModelDetectionOverviewIncludesSupportedModelsBeforeTargetsAreConfigured(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
 	channels := []model.Channel{

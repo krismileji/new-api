@@ -19,6 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 
 export type ChannelModelDetectionPreset = 'low' | 'medium' | 'high'
 
+export type ChannelModelDetectionDisplayUnit = 'minute' | 'hour' | 'day'
+
+export type ChannelModelDetectionBucketResult =
+  | ''
+  | 'success'
+  | 'attention'
+  | 'unhealthy'
+  | 'failed'
+  | 'running'
+  | 'inactive'
+
 export type ChannelModelDetectionTrigger = 'scheduled' | 'manual'
 
 export type ChannelModelDetectionPresetSource =
@@ -129,6 +140,10 @@ export type ChannelModelDetectionExecutionSummary = {
   outcome_code: ChannelModelDetectionOutcomeCode | ''
   title_cn: string
   subtitle_cn: string
+  juice_verdict_state?: string
+  fingerprint_verdict_state?: string
+  fingerprint_model?: string
+  fingerprint_claim_mismatch?: boolean
   preset: ChannelModelDetectionPreset
   preset_source: ChannelModelDetectionPresetSource
   trigger: ChannelModelDetectionTrigger
@@ -139,6 +154,18 @@ export type ChannelModelDetectionExecutionSummary = {
   updated_at: number
 }
 
+export type ChannelModelDetectionResultBucket = {
+  started_at: number
+  result: ChannelModelDetectionBucketResult
+  detection_count: number
+  success: number
+  attention: number
+  unhealthy: number
+  failed: number
+  running: number
+  inactive: number
+}
+
 export type ChannelModelDetectionTargetSummary = {
   target_key: string
   request_model: string
@@ -146,6 +173,7 @@ export type ChannelModelDetectionTargetSummary = {
   enabled: boolean
   position: number
   latest: ChannelModelDetectionExecutionSummary | null
+  recent_window: ChannelModelDetectionResultBucket[]
 }
 
 export type ChannelModelDetectionChannelConfig = {
@@ -229,6 +257,8 @@ export type ChannelModelDetectionSettingsSummary = {
   scheduled_preset: ChannelModelDetectionPreset
   schedule_enabled: boolean
   interval_minutes: number
+  display_value: number
+  display_unit: ChannelModelDetectionDisplayUnit
   interval_hours?: number
   schedule_time?: string
   timezone?: string
@@ -247,6 +277,8 @@ export type ChannelModelDetectionSettings = {
   scheduled_preset: ChannelModelDetectionPreset
   schedule_enabled: boolean
   interval_minutes: number
+  display_value: number
+  display_unit: ChannelModelDetectionDisplayUnit
   interval_hours?: number
   schedule_time?: string
   timezone?: string
@@ -310,6 +342,8 @@ export type ChannelModelDetectionSettingsUpdateRequest = {
   confirm_high_cost: boolean
   schedule_enabled: boolean
   interval_minutes: number
+  display_value: number
+  display_unit: ChannelModelDetectionDisplayUnit
   revision: number
 }
 
@@ -395,9 +429,6 @@ export type ChannelModelDetectionExecutionDetail =
     baseline_id: string
     baseline_sha256: string
     build_hash: string
-    juice_verdict_state: string
-    fingerprint_verdict_state: string
-    fingerprint_model: string
     usage_available: boolean
     input_tokens: number
     output_tokens: number

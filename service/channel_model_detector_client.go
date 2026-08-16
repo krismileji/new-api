@@ -232,18 +232,22 @@ type ChannelModelDetectorStatusResponse struct {
 // ChannelModelDetectorReportResponse keeps the full report while exposing the
 // stable identity fields required by the normalized application contract.
 type ChannelModelDetectorReportResponse struct {
-	SessionID      string `json:"session_id"`
-	SchemaVersion  *int64 `json:"schema_version"`
-	ScoringVersion string `json:"scoring_version"`
-	ConfigHash     string `json:"config_hash"`
-	BaselineID     string `json:"baseline_id"`
-	BaselineSHA256 string `json:"baseline_sha256"`
-	BuildHash      string `json:"build_hash"`
-	Official       *bool  `json:"official"`
-	ClaimedModel   string `json:"claimed_model"`
-	OverallVerdict string `json:"overall_verdict"`
-	OutcomeCode    string `json:"outcome_code"`
-	Candidate      struct {
+	SessionID                string `json:"session_id"`
+	SchemaVersion            *int64 `json:"schema_version"`
+	ScoringVersion           string `json:"scoring_version"`
+	ConfigHash               string `json:"config_hash"`
+	BaselineID               string `json:"baseline_id"`
+	BaselineSHA256           string `json:"baseline_sha256"`
+	BuildHash                string `json:"build_hash"`
+	Official                 *bool  `json:"official"`
+	ClaimedModel             string `json:"claimed_model"`
+	OverallVerdict           string `json:"overall_verdict"`
+	OutcomeCode              string `json:"outcome_code"`
+	JuiceVerdictState        string `json:"juice_verdict_state"`
+	FingerprintVerdictState  string `json:"fingerprint_verdict_state"`
+	FingerprintModel         string `json:"fingerprint_model"`
+	FingerprintClaimMismatch *bool  `json:"fingerprint_claim_mismatch"`
+	Candidate                struct {
 		BaseURL string `json:"base_url"`
 		Model   string `json:"model"`
 	} `json:"candidate_configuration_without_key"`

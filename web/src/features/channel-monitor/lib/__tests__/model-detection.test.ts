@@ -22,9 +22,13 @@ import { describe, test } from 'node:test'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
+  ChannelModelDetectionExecutionStatus,
+  ChannelModelDetectionOutcomeCode,
 } from '../../types-model-detection'
 import {
   channelModelDetectionCostLines,
+  channelModelDetectionResultLabel,
+  channelModelDetectionResultTone,
   filterChannelModelDetectionChannels,
   isChannelModelDetectionRunActive,
   sortChannelModelDetectionChannels,
@@ -73,6 +77,7 @@ function createChannel(id: number): ChannelModelDetectionChannel {
         enabled: true,
         position: 0,
         latest: null,
+        recent_window: [],
       },
     ],
     latest_run_cost: null,
@@ -80,6 +85,74 @@ function createChannel(id: number): ChannelModelDetectionChannel {
 }
 
 describe('模型检测展示工具', () => {
+  test('完整区分检测结论、执行状态和强指纹冲突', () => {
+    const outcomes: Array<
+      [
+        ChannelModelDetectionOutcomeCode | '',
+        'success' | 'attention' | 'unhealthy',
+      ]
+    > = [
+      ['juice_pass_fingerprint_strong', 'success'],
+      ['juice_pass_fingerprint_unclear', 'success'],
+      ['juice_mismatch_fingerprint_strong', 'unhealthy'],
+      ['juice_mismatch_fingerprint_unclear', 'unhealthy'],
+      ['juice_insufficient_fingerprint_strong', 'attention'],
+      ['juice_insufficient_fingerprint_unclear', 'attention'],
+      ['possible_non_gpt', 'unhealthy'],
+      ['future_detector_outcome', 'attention'],
+      ['', 'attention'],
+    ]
+    for (const [outcomeCode, expected] of outcomes) {
+      assert.equal(
+        channelModelDetectionResultTone({
+          claimedModel: 'gpt-5.6-sol',
+          status: 'completed',
+          outcomeCode,
+        }),
+        expected
+      )
+    }
+
+    const statuses: Array<
+      [
+        ChannelModelDetectionExecutionStatus,
+        'running' | 'failed' | 'inactive',
+        string,
+      ]
+    > = [
+      ['pending', 'running', '待执行'],
+      ['submitting', 'running', '提交中'],
+      ['running', 'running', '检测中'],
+      ['failed', 'failed', '执行失败'],
+      ['canceled', 'inactive', '已取消'],
+      ['skipped', 'inactive', '已跳过'],
+    ]
+    for (const [status, expectedTone, expectedLabel] of statuses) {
+      assert.equal(
+        channelModelDetectionResultTone({
+          claimedModel: 'gpt-5.6-sol',
+          status,
+          outcomeCode: '',
+        }),
+        expectedTone
+      )
+      assert.equal(
+        channelModelDetectionResultLabel({ status, outcomeCode: '' }),
+        expectedLabel
+      )
+    }
+
+    assert.equal(
+      channelModelDetectionResultTone({
+        claimedModel: 'gpt-5.6-sol',
+        status: 'completed',
+        outcomeCode: 'juice_pass_fingerprint_strong',
+        fingerprintModel: 'gpt-5.6-luna',
+      }),
+      'unhealthy'
+    )
+  })
+
   test('未知成本保持未知语义而不是格式化为免费', () => {
     const lines = channelModelDetectionCostLines(
       createCost({

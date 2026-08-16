@@ -30,6 +30,8 @@ type ChannelModelDetectionSettingsUpdate struct {
 	ConfirmHighCost  bool
 	ScheduleEnabled  bool
 	IntervalMinutes  int
+	DisplayValue     int
+	DisplayUnit      string
 	// Legacy fields are accepted by internal callers while they migrate to
 	// minute-based scheduling.
 	IntervalHours    int
@@ -49,6 +51,8 @@ type ChannelModelDetectionSettingsResponse struct {
 	ScheduledPreset              string `json:"scheduled_preset"`
 	ScheduleEnabled              bool   `json:"schedule_enabled"`
 	IntervalMinutes              int    `json:"interval_minutes"`
+	DisplayValue                 int    `json:"display_value"`
+	DisplayUnit                  string `json:"display_unit"`
 	IntervalHours                int    `json:"-"`
 	ScheduleTime                 string `json:"-"`
 	Timezone                     string `json:"-"`
@@ -180,6 +184,15 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		if candidate.IntervalMinutes < model.ChannelModelDetectionMinIntervalMinutes || candidate.IntervalMinutes > model.ChannelModelDetectionMaxIntervalMinutes {
 			return model.ErrChannelModelDetectionInvalidSchedule
 		}
+		if input.DisplayValue == 0 && strings.TrimSpace(input.DisplayUnit) == "" {
+			candidate.DisplayValue, candidate.DisplayUnit = current.EffectiveDisplay()
+		} else {
+			candidate.DisplayValue = input.DisplayValue
+			candidate.DisplayUnit = strings.TrimSpace(input.DisplayUnit)
+			if !model.IsChannelModelDetectionDisplayAllowed(candidate.DisplayValue, candidate.DisplayUnit) {
+				return model.ErrChannelModelDetectionInvalidDisplay
+			}
+		}
 		candidate.IntervalHours = 0
 		if candidate.IntervalMinutes%60 == 0 {
 			candidate.IntervalHours = candidate.IntervalMinutes / 60
@@ -240,6 +253,7 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 			"detector_url": candidate.DetectorURL, "pending_detector_url": candidate.PendingDetectorURL,
 			"scheduled_preset": candidate.ScheduledPreset, "schedule_enabled": candidate.ScheduleEnabled,
 			"interval_minutes": candidate.IntervalMinutes, "interval_hours": candidate.IntervalHours,
+			"display_value": candidate.DisplayValue, "display_unit": candidate.DisplayUnit,
 			"schedule_time": "", "timezone": "", "schedule_anchor_at": int64(0), "next_batch_at": candidate.NextBatchAt,
 			"scheduled_high_confirmed_revision": candidate.ScheduledHighConfirmedRevision,
 			"revision":                          candidate.Revision, "lease_token": "", "lease_until": int64(0), "updated_at": candidate.UpdatedAt,
@@ -473,6 +487,7 @@ func channelModelDetectionDefaultGlobalConfig(now time.Time) model.ChannelModelD
 	config := model.ChannelModelDetectionGlobalConfig{
 		Id: model.ChannelModelDetectionConfigID, DetectorURL: strings.TrimSpace(os.Getenv("GPT56_DETECTOR_URL")),
 		ScheduledPreset: model.ChannelModelDetectionPresetMedium, IntervalMinutes: model.ChannelModelDetectionDefaultIntervalMinutes,
+		DisplayValue: model.ChannelModelDetectionDefaultDisplayValue, DisplayUnit: model.ChannelModelDetectionDefaultDisplayUnit,
 		Revision: 1, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	}
 	if config.DetectorURL != "" {
@@ -486,11 +501,12 @@ func channelModelDetectionDefaultGlobalConfig(now time.Time) model.ChannelModelD
 }
 
 func channelModelDetectionSettingsResponse(config model.ChannelModelDetectionGlobalConfig, connectionTestRequired bool) ChannelModelDetectionSettingsResponse {
+	displayValue, displayUnit := config.EffectiveDisplay()
 	return ChannelModelDetectionSettingsResponse{
 		DetectorURLConfigured: strings.TrimSpace(config.DetectorURL) != "", DetectorURL: strings.TrimSpace(config.DetectorURL), DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
 		PendingDetectorURLConfigured: strings.TrimSpace(config.PendingDetectorURL) != "", PendingDetectorURL: strings.TrimSpace(config.PendingDetectorURL), PendingDetectorURLMasked: MaskChannelModelDetectorURL(config.PendingDetectorURL),
 		DetectorURLSwitchPending: strings.TrimSpace(config.PendingDetectorURL) != "",
-		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(),
+		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(), DisplayValue: displayValue, DisplayUnit: displayUnit,
 		IntervalHours: config.IntervalHours, ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
 		NextBatchAt: config.NextBatchAt, Revision: config.Revision, ConnectionTestRequired: connectionTestRequired,
 		CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt,

@@ -80,6 +80,7 @@ import {
   updateChannelModelDetectionSettings,
 } from '../lib/model-detection-settings-api'
 import {
+  CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS,
   CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES,
   CHANNEL_MODEL_DETECTION_SETTINGS_QUERY_KEY,
   channelModelDetectionSettingsSchema,
@@ -90,6 +91,7 @@ import {
 import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type {
   ChannelModelDetectionDetectorService,
+  ChannelModelDetectionDisplayUnit,
   ChannelModelDetectionPreset,
   ChannelModelDetectionSettings,
 } from '../types-model-detection'
@@ -102,6 +104,15 @@ const PRESET_OPTIONS = [
   value: ChannelModelDetectionPreset
   label: string
   description: string
+}>
+
+const DISPLAY_UNIT_OPTIONS = [
+  { value: 'minute', label: '分钟' },
+  { value: 'hour', label: '小时' },
+  { value: 'day', label: '天' },
+] as const satisfies ReadonlyArray<{
+  value: ChannelModelDetectionDisplayUnit
+  label: string
 }>
 
 export type ChannelModelDetectionSettingsSheetProps = {
@@ -162,6 +173,9 @@ export function ChannelModelDetectionSettingsSheet(
   const clearDetectorURL = form.watch('clearDetectorURL')
   const scheduleEnabled = form.watch('scheduleEnabled')
   const scheduledPreset = form.watch('scheduledPreset')
+  const displayValue = form.watch('displayValue')
+  const displayUnit = form.watch('displayUnit')
+  const displayLimit = CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS[displayUnit]
   const requiresHighConfirmation = scheduleEnabled && scheduledPreset === 'high'
 
   useEffect(() => {
@@ -608,6 +622,83 @@ export function ChannelModelDetectionSettingsSheet(
 
           <SideDrawerSection>
             <SideDrawerSectionHeader
+              title='结果展示'
+              description='分钟、小时或天'
+              icon={<HugeiconsIcon icon={Settings02Icon} />}
+              iconTone='info'
+            />
+            <FormField
+              control={form.control}
+              name='displayValue'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>模型检测展示范围</FormLabel>
+                  <FormDescription>
+                    分钟最多 60、小时最多 24、天最多 30
+                  </FormDescription>
+                  <FormControl>
+                    <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                      <Input
+                        type='number'
+                        min={1}
+                        max={displayLimit}
+                        step={1}
+                        value={Number.isFinite(field.value) ? field.value : ''}
+                        disabled={controlsDisabled}
+                        className='w-28 font-mono tabular-nums'
+                        aria-label='模型检测展示范围数值'
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                      <FormField
+                        control={form.control}
+                        name='displayUnit'
+                        render={({ field: unitField }) => (
+                          <ToggleGroup
+                            value={[unitField.value]}
+                            onValueChange={(values) => {
+                              const selected = values[0] as
+                                | ChannelModelDetectionDisplayUnit
+                                | undefined
+                              if (!selected) return
+                              unitField.onChange(selected)
+                              const nextLimit =
+                                CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS[selected]
+                              if (displayValue > nextLimit) {
+                                form.setValue('displayValue', nextLimit, {
+                                  shouldDirty: true,
+                                  shouldValidate: true,
+                                })
+                              }
+                            }}
+                            variant='outline'
+                            spacing={0}
+                            disabled={controlsDisabled}
+                            aria-label='模型检测展示范围单位'
+                          >
+                            {DISPLAY_UNIT_OPTIONS.map((option) => (
+                              <ToggleGroupItem
+                                key={option.value}
+                                value={option.value}
+                                aria-label={`模型检测展示范围单位：${option.label}`}
+                              >
+                                {option.label}
+                              </ToggleGroupItem>
+                            ))}
+                          </ToggleGroup>
+                        )}
+                      />
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </SideDrawerSection>
+
+          <SideDrawerSection>
+            <SideDrawerSectionHeader
               title='当前计划摘要'
               icon={<HugeiconsIcon icon={Settings02Icon} />}
               iconTone='neutral'
@@ -630,6 +721,10 @@ export function ChannelModelDetectionSettingsSheet(
                     ? `每 ${settings.interval_minutes / 60} 小时`
                     : `每 ${settings.interval_minutes} 分钟`
                 }
+              />
+              <SettingSummary
+                label='展示范围'
+                value={`近 ${settings.display_value} ${DISPLAY_UNIT_OPTIONS.find((option) => option.value === settings.display_unit)?.label ?? '天'}`}
               />
               <SettingSummary
                 label='下一批次'

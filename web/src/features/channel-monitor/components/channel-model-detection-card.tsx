@@ -52,6 +52,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { formatChannelMonitorCost } from '../lib/format'
@@ -60,15 +61,19 @@ import {
   channelModelDetectionCostLines,
   channelModelDetectionPresetLabel,
   channelModelDetectionPresetSourceLabel,
+  channelModelDetectionResultLabel,
+  channelModelDetectionResultTone,
   formatChannelModelDetectionRelativeTime,
   isKnownChannelModelDetectionOutcome,
 } from '../lib/model-detection'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionDetectorState,
+  ChannelModelDetectionDisplayUnit,
   ChannelModelDetectionHealth,
   ChannelModelDetectionPreset,
   ChannelModelDetectionRunStatus,
+  ChannelModelDetectionResultBucket,
   ChannelModelDetectionTargetSummary,
 } from '../types-model-detection'
 
@@ -115,6 +120,8 @@ export type ChannelModelDetectionCardProps = {
   detectorState: ChannelModelDetectionDetectorState
   scheduledPreset: ChannelModelDetectionPreset
   scheduleEnabled: boolean
+  displayValue: number
+  displayUnit: ChannelModelDetectionDisplayUnit
   nextBatchAt: number
   serverNow: number
   actionPending?: boolean
@@ -134,6 +141,22 @@ const ACTIVE_RUN_LABEL: Partial<
   submission_unknown: '启动待确认',
   running: '检测中',
   canceling: '取消中',
+}
+
+const RESULT_BUCKET_COLOR = {
+  '': 'bg-muted/60',
+  running: 'bg-primary',
+  success: 'bg-success',
+  attention: 'bg-warning',
+  unhealthy: 'bg-destructive',
+  failed: 'bg-warning/70',
+  inactive: 'bg-muted-foreground/70',
+} as const
+
+const DISPLAY_UNIT_LABEL: Record<ChannelModelDetectionDisplayUnit, string> = {
+  minute: '分钟',
+  hour: '小时',
+  day: '天',
 }
 
 function modelDetectionCostSummary(
@@ -214,13 +237,38 @@ function ModelDetectionActiveRunProgress(props: {
 }
 
 function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
-  const outcome = target.latest?.outcome_code ?? ''
-  if (!outcome) {
+  const latest = target.latest
+  if (!latest) {
     return {
       label: '等待首次检测',
       icon: Clock01Icon,
       tone: 'text-muted-foreground',
     }
+  }
+  const outcome = latest.outcome_code
+  const label = channelModelDetectionResultLabel({
+    status: latest.status,
+    outcomeCode: outcome,
+    title: latest.title_cn,
+  })
+  const resultTone = channelModelDetectionResultTone({
+    claimedModel: target.claimed_model,
+    status: latest.status,
+    outcomeCode: outcome,
+    fingerprintModel: latest.fingerprint_model,
+    fingerprintClaimMismatch: latest.fingerprint_claim_mismatch,
+  })
+  if (resultTone === 'running') {
+    return { label, icon: Clock01Icon, tone: 'text-primary' }
+  }
+  if (resultTone === 'failed') {
+    return { label, icon: Cancel01Icon, tone: 'text-warning' }
+  }
+  if (resultTone === 'inactive') {
+    return { label, icon: Cancel01Icon, tone: 'text-muted-foreground' }
+  }
+  if (!outcome) {
+    return { label, icon: Alert02Icon, tone: 'text-warning' }
   }
   if (!isKnownChannelModelDetectionOutcome(outcome)) {
     return {
@@ -229,26 +277,32 @@ function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
       tone: 'text-warning',
     }
   }
-  const label = target.latest?.title_cn || outcome
-  if (
-    outcome === 'juice_mismatch_fingerprint_strong' ||
-    outcome === 'juice_mismatch_fingerprint_unclear' ||
-    outcome === 'possible_non_gpt'
-  ) {
+  if (resultTone === 'unhealthy') {
     return { label, icon: Alert02Icon, tone: 'text-destructive' }
   }
-  if (
-    outcome === 'juice_insufficient_fingerprint_strong' ||
-    outcome === 'juice_insufficient_fingerprint_unclear'
-  ) {
+  if (resultTone === 'attention') {
     return { label, icon: Alert02Icon, tone: 'text-warning' }
   }
   return { label, icon: CheckmarkCircle02Icon, tone: 'text-success' }
 }
 
+function modelDetectionBucketTooltip(
+  bucket: ChannelModelDetectionResultBucket,
+  displayUnit: ChannelModelDetectionDisplayUnit
+) {
+  const timestamp = formatTimestampToDate(bucket.started_at)
+  let time = timestamp.slice(11, 16)
+  if (displayUnit === 'day') time = timestamp.slice(0, 10)
+  if (displayUnit === 'hour') time = timestamp.slice(5, 13)
+  if (!bucket.result) return `${time} · 无检测`
+  return `${time} · 正常 ${bucket.success} · 关注 ${bucket.attention} · 异常 ${bucket.unhealthy} · 执行失败 ${bucket.failed} · 进行中 ${bucket.running} · 跳过 ${bucket.inactive}`
+}
+
 function ModelDetectionTarget(props: {
   target: ChannelModelDetectionTargetSummary
   serverNow: number
+  displayValue: number
+  displayUnit: ChannelModelDetectionDisplayUnit
 }) {
   const presentation = outcomePresentation(props.target)
   const latest = props.target.latest
@@ -257,6 +311,8 @@ function ModelDetectionTarget(props: {
   const progressValue = progress?.planned
     ? Math.min(100, (progress.logical_completed / progress.planned) * 100)
     : 0
+  const recentWindow = props.target.recent_window
+  const displayRange = `近 ${props.displayValue} ${DISPLAY_UNIT_LABEL[props.displayUnit]}`
 
   return (
     <article
@@ -288,6 +344,42 @@ function ModelDetectionTarget(props: {
           aria-hidden='true'
         />
         <span className='line-clamp-2 text-pretty'>{presentation.label}</span>
+      </div>
+
+      <div className='flex min-w-0 flex-col gap-1'>
+        <div className='text-muted-foreground flex items-center justify-between gap-2 text-[11px]'>
+          <span>{displayRange}检测</span>
+          <span className='tabular-nums'>{recentWindow.length} 个时间格</span>
+        </div>
+        <div
+          className='grid h-2.5 min-w-0 gap-px overflow-hidden rounded-sm'
+          style={{
+            gridTemplateColumns: `repeat(${recentWindow.length}, minmax(0, 1fr))`,
+          }}
+          aria-label={`${props.target.request_model} ${displayRange}模型检测结果`}
+          data-window-buckets={recentWindow.length}
+          data-model-detection-window-value={props.displayValue}
+          data-model-detection-window-unit={props.displayUnit}
+        >
+          {recentWindow.map((bucket) => {
+            const tooltip = modelDetectionBucketTooltip(
+              bucket,
+              props.displayUnit
+            )
+            return (
+              <span
+                key={bucket.started_at}
+                className={cn(
+                  'h-2.5 min-w-0',
+                  RESULT_BUCKET_COLOR[bucket.result]
+                )}
+                title={tooltip}
+                aria-label={tooltip}
+                data-slot='model-detection-bucket'
+              />
+            )
+          })}
+        </div>
       </div>
 
       {progress && (
@@ -591,6 +683,8 @@ export const ChannelModelDetectionCard = memo(
                       key={target.target_key}
                       target={target}
                       serverNow={props.serverNow}
+                      displayValue={props.displayValue}
+                      displayUnit={props.displayUnit}
                     />
                   ))}
                 </div>

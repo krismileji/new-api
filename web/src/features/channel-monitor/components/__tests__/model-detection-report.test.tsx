@@ -103,6 +103,7 @@ function createExecution(
     juice_verdict_state: 'pass',
     fingerprint_verdict_state: 'strong_match',
     fingerprint_model: 'gpt-5.6-sol',
+    fingerprint_claim_mismatch: false,
     usage_available: true,
     input_tokens: 120_000,
     output_tokens: 8_000,
@@ -262,6 +263,28 @@ describe('模型检测目标报告', () => {
     assert.equal(node.dataset.outcomeLevel, 'normal')
     assert.match(node.textContent ?? '', /低档检测出现此结果属于预期/)
     assert.doesNotMatch(node.textContent ?? '', /模型异常/)
+  })
+
+  test('Juice 通过但强指向其他型号时覆盖为模型异常', async () => {
+    await renderReport([
+      createExecution({
+        target_key: 'pass-fingerprint-conflict',
+        title_cn: 'Juice 通过；指纹强烈指向 Luna',
+        fingerprint_verdict_state: 'strong_match',
+        fingerprint_model: 'gpt-5.6-luna',
+        report: {
+          fingerprint_verdict_state: 'strong_match',
+          fingerprint_model: 'gpt-5.6-luna',
+          fingerprint_claim_mismatch: true,
+        },
+      }),
+    ])
+
+    const node = executionNode('pass-fingerprint-conflict')
+    assert.equal(node.dataset.outcomeLevel, 'anomaly')
+    assert.match(node.textContent ?? '', /模型异常/)
+    assert.match(node.textContent ?? '', /强烈指向 Luna/)
+    assert.match(node.textContent ?? '', /行为指纹与申报型号冲突/)
   })
 
   test('未知 outcome 原样显示并要求升级主系统适配', async () => {

@@ -584,6 +584,9 @@ func (worker *ChannelModelDetectionWorker) completeChannelModelDetectionExecutio
 	updates["status"] = model.ChannelModelDetectionExecutionStatusCompleted
 	updates["outcome_code"] = report.OutcomeCode
 	updates["title_cn"] = report.OverallVerdict
+	updates["juice_verdict_state"] = report.JuiceVerdictState
+	updates["fingerprint_verdict_state"] = report.FingerprintVerdictState
+	updates["fingerprint_model"] = report.FingerprintModel
 	updates["official"] = boolValue(report.Official)
 	updates["schema_version"] = valueOrZero(report.SchemaVersion)
 	updates["scoring_version"] = report.ScoringVersion

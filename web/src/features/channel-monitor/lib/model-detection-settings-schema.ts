@@ -19,11 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import type {
+  ChannelModelDetectionDisplayUnit,
   ChannelModelDetectionSettings,
   ChannelModelDetectionSettingsUpdateRequest,
 } from '../types-model-detection'
 
 export const CHANNEL_MODEL_DETECTION_MAX_INTERVAL_MINUTES = 525600
+export const CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS = {
+  minute: 60,
+  hour: 24,
+  day: 30,
+} as const satisfies Record<ChannelModelDetectionDisplayUnit, number>
 
 const detectorURLSchema = z
   .string()
@@ -69,6 +75,11 @@ export const channelModelDetectionSettingsSchema = z
       .int('检测周期必须是整数')
       .min(1, '检测周期不能小于 1'),
     intervalUnit: z.enum(['minute', 'hour']),
+    displayValue: z
+      .number()
+      .int('展示范围必须是整数')
+      .min(1, '展示范围不能小于 1'),
+    displayUnit: z.enum(['minute', 'hour', 'day']),
     confirmHighCost: z.boolean(),
     revision: z.number().int().positive(),
   })
@@ -88,6 +99,16 @@ export const channelModelDetectionSettingsSchema = z
         code: 'custom',
         path: ['intervalValue'],
         message: '检测周期不能超过 525600 分钟',
+      })
+    }
+    if (
+      value.displayValue >
+      CHANNEL_MODEL_DETECTION_DISPLAY_LIMITS[value.displayUnit]
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['displayValue'],
+        message: '分钟最多 60、小时最多 24、天最多 30',
       })
     }
     if (
@@ -121,6 +142,8 @@ export const CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES: ChannelModelDetectio
     scheduleEnabled: false,
     intervalValue: 24,
     intervalUnit: 'hour',
+    displayValue: 30,
+    displayUnit: 'day',
     confirmHighCost: false,
     revision: 1,
   }
@@ -141,6 +164,8 @@ export function channelModelDetectionSettingsToFormValues(
     scheduleEnabled: settings.schedule_enabled,
     intervalValue: useHours ? intervalMinutes / 60 : intervalMinutes,
     intervalUnit: useHours ? 'hour' : 'minute',
+    displayValue: settings.display_value,
+    displayUnit: settings.display_unit,
     confirmHighCost: false,
     revision: settings.revision,
   }
@@ -162,6 +187,8 @@ export function createChannelModelDetectionSettingsUpdateRequest(
         : false,
     schedule_enabled: values.scheduleEnabled,
     interval_minutes: intervalMinutes,
+    display_value: values.displayValue,
+    display_unit: values.displayUnit,
     revision: values.revision,
   }
 }

@@ -65,6 +65,8 @@ function createOverview(): ChannelModelDetectionOverview {
       scheduled_preset: 'medium',
       schedule_enabled: true,
       interval_minutes: 1440,
+      display_value: 30,
+      display_unit: 'day',
       next_batch_at: 1_754_086_400,
       revision: 1,
     },
@@ -167,6 +169,7 @@ describe('模型检测视图骨架', () => {
           enabled: true,
           position: 0,
           latest: null,
+          recent_window: [],
         },
       ],
     }))

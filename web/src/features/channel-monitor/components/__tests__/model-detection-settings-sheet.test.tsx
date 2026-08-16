@@ -85,6 +85,8 @@ function settings(overrides: Record<string, unknown> = {}) {
     scheduled_preset: 'medium',
     schedule_enabled: true,
     interval_minutes: 1440,
+    display_value: 30,
+    display_unit: 'day',
     schedule_anchor_at: 1_775_000_000,
     next_batch_at: 1_775_086_400,
     revision: 7,
@@ -264,6 +266,8 @@ describe('模型检测统一设置规则', () => {
           scheduledPreset: 'medium',
           scheduleEnabled: true,
           ...interval,
+          displayValue: 30,
+          displayUnit: 'day',
           confirmHighCost: false,
           revision: 1,
         }).success,
@@ -275,6 +279,9 @@ describe('模型检测统一设置规则', () => {
       { intervalValue: 0 },
       { intervalValue: 1.5 },
       { intervalValue: 8761, intervalUnit: 'hour' },
+      { displayValue: 61, displayUnit: 'minute' },
+      { displayValue: 25, displayUnit: 'hour' },
+      { displayValue: 31, displayUnit: 'day' },
       { detectorURL: 'ftp://10.0.0.8:8000' },
       {
         detectorURL: 'http://10.0.0.8:8000',
@@ -296,6 +303,8 @@ describe('模型检测统一设置规则', () => {
           scheduleEnabled: true,
           intervalValue: 24,
           intervalUnit: 'hour',
+          displayValue: 30,
+          displayUnit: 'day',
           confirmHighCost: false,
           revision: 1,
           ...invalid,
@@ -312,6 +321,8 @@ describe('模型检测统一设置规则', () => {
         scheduleEnabled: false,
         intervalValue: 24,
         intervalUnit: 'hour',
+        displayValue: 30,
+        displayUnit: 'day',
         confirmHighCost: false,
         revision: 1,
       }).success,
@@ -327,6 +338,8 @@ describe('模型检测统一设置规则', () => {
       scheduleEnabled: true,
       intervalValue: 90,
       intervalUnit: 'minute',
+      displayValue: 24,
+      displayUnit: 'hour',
       confirmHighCost: true,
       revision: 7,
     })
@@ -340,11 +353,15 @@ describe('模型检测统一设置规则', () => {
       scheduleEnabled: true,
       intervalValue: 48,
       intervalUnit: 'hour',
+      displayValue: 12,
+      displayUnit: 'hour',
       confirmHighCost: true,
       revision: 8,
     })
     assert.equal(high.detector_url, 'http://10.0.0.9:8000')
     assert.equal(high.interval_minutes, 2880)
+    assert.equal(high.display_value, 12)
+    assert.equal(high.display_unit, 'hour')
     assert.equal(high.confirm_high_cost, true)
   })
 })
@@ -373,6 +390,13 @@ describe('模型检测统一设置 Sheet', () => {
       document.body.textContent?.includes('http://10.0.0.8:8000/private'),
       true
     )
+    const displayInput = document.querySelector<HTMLInputElement>(
+      'input[aria-label="模型检测展示范围数值"]'
+    )
+    assert.ok(displayInput)
+    assert.equal(displayInput.value, '30')
+    await changeInput(displayInput, '12')
+    await act(async () => getControl('模型检测展示范围单位：小时').click())
 
     await submitForm()
     await act(async () =>
@@ -383,6 +407,8 @@ describe('模型检测统一设置 Sheet', () => {
     )
     assert.equal(updates[0]?.detector_url, 'http://10.0.0.8:8000/private')
     assert.equal(updates[0]?.revision, 7)
+    assert.equal(updates[0]?.display_value, 12)
+    assert.equal(updates[0]?.display_unit, 'hour')
     await act(async () =>
       waitForCondition(
         () => getSaveButton().disabled && addressInput.disabled,

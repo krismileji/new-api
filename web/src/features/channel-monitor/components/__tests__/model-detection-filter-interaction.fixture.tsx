@@ -65,6 +65,7 @@ function channel(
             enabled: true,
             position: 0,
             latest: null,
+            recent_window: [],
           },
         ]
       : [],
@@ -80,6 +81,8 @@ const overview: ChannelModelDetectionOverview = {
     scheduled_preset: 'medium',
     schedule_enabled: false,
     interval_minutes: 1440,
+    display_value: 30,
+    display_unit: 'day',
     next_batch_at: 0,
     revision: 1,
   },

@@ -20,6 +20,8 @@ type channelModelDetectionSettingsUpdateRequest struct {
 	ConfirmHighCost  bool    `json:"confirm_high_cost"`
 	ScheduleEnabled  bool    `json:"schedule_enabled"`
 	IntervalMinutes  int     `json:"interval_minutes"`
+	DisplayValue     int     `json:"display_value"`
+	DisplayUnit      string  `json:"display_unit"`
 	// Legacy request fields are accepted for one release so old clients can
 	// still save settings while the UI migrates to minute intervals.
 	IntervalHours int    `json:"interval_hours"`
@@ -51,6 +53,7 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 		DetectorURL: request.DetectorURL, ClearDetectorURL: request.ClearDetectorURL,
 		ScheduledPreset: request.ScheduledPreset, ConfirmHighCost: request.ConfirmHighCost,
 		ScheduleEnabled: request.ScheduleEnabled, IntervalMinutes: request.IntervalMinutes, IntervalHours: request.IntervalHours,
+		DisplayValue: request.DisplayValue, DisplayUnit: request.DisplayUnit,
 		ScheduleTime: request.ScheduleTime, Timezone: request.Timezone, ExpectedRevision: request.Revision,
 	}, time.Now().UTC())
 	if err != nil {

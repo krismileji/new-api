@@ -84,6 +84,74 @@ function createChannel(
     claimed_model: 'gpt-5.6-sol' as const,
     enabled: true,
     position: 0,
+    recent_window: [
+      {
+        started_at: 1_753_999_680,
+        result: 'success' as const,
+        detection_count: 1,
+        success: 1,
+        attention: 0,
+        unhealthy: 0,
+        failed: 0,
+        running: 0,
+        inactive: 0,
+      },
+      {
+        started_at: 1_753_999_740,
+        result: 'unhealthy' as const,
+        detection_count: 1,
+        success: 0,
+        attention: 0,
+        unhealthy: 1,
+        failed: 0,
+        running: 0,
+        inactive: 0,
+      },
+      {
+        started_at: 1_753_999_800,
+        result: 'attention' as const,
+        detection_count: 1,
+        success: 0,
+        attention: 1,
+        unhealthy: 0,
+        failed: 0,
+        running: 0,
+        inactive: 0,
+      },
+      {
+        started_at: 1_753_999_860,
+        result: 'failed' as const,
+        detection_count: 1,
+        success: 0,
+        attention: 0,
+        unhealthy: 0,
+        failed: 1,
+        running: 0,
+        inactive: 0,
+      },
+      {
+        started_at: 1_753_999_920,
+        result: 'inactive' as const,
+        detection_count: 1,
+        success: 0,
+        attention: 0,
+        unhealthy: 0,
+        failed: 0,
+        running: 0,
+        inactive: 1,
+      },
+      {
+        started_at: 1_753_999_980,
+        result: '' as const,
+        detection_count: 0,
+        success: 0,
+        attention: 0,
+        unhealthy: 0,
+        failed: 0,
+        running: 0,
+        inactive: 0,
+      },
+    ],
     latest: {
       run_id: 'run-1',
       target_key: 'target-sol',
@@ -154,6 +222,8 @@ function renderCard(
         detectorState={detectorState}
         scheduledPreset='medium'
         scheduleEnabled
+        displayValue={6}
+        displayUnit='minute'
         nextBatchAt={1_754_086_400}
         serverNow={1_754_000_100}
         onOpenHistory={noop}
@@ -283,6 +353,75 @@ describe('模型检测渠道卡片', () => {
       domWindow.document.body.textContent ?? '',
       /检测到异常证据/
     )
+  })
+
+  test('Juice 通过但强指向其他型号时按模型异常展示', () => {
+    const channel = createChannel('healthy')
+    const latest = channel.targets[0]?.latest
+    if (!latest) throw new Error('测试目标缺少最新执行')
+    Object.assign(latest, {
+      title_cn: 'Juice 通过；指纹强烈指向 Luna',
+      fingerprint_verdict_state: 'strong_match',
+      fingerprint_model: 'gpt-5.6-luna',
+      fingerprint_claim_mismatch: true,
+    })
+
+    domWindow.document.body.innerHTML = renderCard(channel)
+    const target = domWindow.document.querySelector(
+      '[data-slot="model-detection-target"]'
+    )
+    assert.ok(target)
+    const outcome = target.children.item(1)
+    assert.ok(outcome)
+    assert.match(outcome.className, /text-destructive/)
+    assert.doesNotMatch(outcome.className, /text-success/)
+    assert.match(outcome.textContent ?? '', /强烈指向 Luna/)
+  })
+
+  test('每个目标按配置的时间范围渲染状态格并区分结果语义', () => {
+    domWindow.document.body.innerHTML = renderCard(createChannel('healthy'))
+    const buckets = [
+      ...domWindow.document.querySelectorAll(
+        '[data-slot="model-detection-bucket"]'
+      ),
+    ]
+
+    assert.equal(buckets.length, 6)
+    assert.equal(
+      buckets.filter((bucket) =>
+        bucket.getAttribute('aria-label')?.includes('无检测')
+      ).length,
+      1
+    )
+
+    const success = buckets.find((bucket) =>
+      bucket.className.includes('bg-success')
+    )
+    const conflict = buckets.find((bucket) =>
+      bucket.className.includes('bg-destructive')
+    )
+    const attention = buckets.find(
+      (bucket) =>
+        bucket.className.includes('bg-warning') &&
+        !bucket.className.includes('bg-warning/70')
+    )
+    const failed = buckets.find((bucket) =>
+      bucket.className.includes('bg-warning/70')
+    )
+    const canceled = buckets.find((bucket) =>
+      bucket.className.includes('bg-muted-foreground/70')
+    )
+
+    assert.match(success?.className ?? '', /bg-success/)
+    assert.match(conflict?.className ?? '', /bg-destructive/)
+    assert.match(attention?.className ?? '', /bg-warning/)
+    assert.match(failed?.className ?? '', /bg-warning\/70/)
+    assert.match(canceled?.className ?? '', /bg-muted-foreground\/70/)
+    assert.match(
+      domWindow.document.body.innerHTML,
+      /aria-label=".*近 6 分钟模型检测结果"/
+    )
+    assert.match(domWindow.document.body.innerHTML, /正常 1 · 关注 0 · 异常 0/)
   })
 
   test('未配置卡片提供单一配置命令且不嵌套按钮', () => {

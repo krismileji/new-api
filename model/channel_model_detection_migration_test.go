@@ -85,11 +85,16 @@ func TestChannelModelDetectionMinuteIntervalMigrationPreservesLegacyRows(t *test
 
 	require.NoError(t, db.AutoMigrate(&ChannelModelDetectionGlobalConfig{}))
 	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "interval_minutes"))
+	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "display_value"))
+	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "display_unit"))
 
 	var migrated ChannelModelDetectionGlobalConfig
 	require.NoError(t, db.First(&migrated, 1).Error)
 	assert.Zero(t, migrated.IntervalMinutes)
 	assert.Equal(t, 360, migrated.EffectiveIntervalMinutes())
+	displayValue, displayUnit := migrated.EffectiveDisplay()
+	assert.Equal(t, ChannelModelDetectionDefaultDisplayValue, displayValue)
+	assert.Equal(t, ChannelModelDetectionDefaultDisplayUnit, displayUnit)
 }
 
 func TestChannelModelDetectionSchemaMigrationSQLite(t *testing.T) {

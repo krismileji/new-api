@@ -71,9 +71,14 @@ const (
 	ChannelModelDetectionClaimedModelTerra = "gpt-5.6-terra"
 	ChannelModelDetectionClaimedModelLuna  = "gpt-5.6-luna"
 
-	ChannelModelDetectionDefaultIntervalMinutes     = 24 * 60
-	ChannelModelDetectionMinIntervalMinutes         = 1
-	ChannelModelDetectionMaxIntervalMinutes         = 525600
+	ChannelModelDetectionDefaultIntervalMinutes = 24 * 60
+	ChannelModelDetectionMinIntervalMinutes     = 1
+	ChannelModelDetectionMaxIntervalMinutes     = 525600
+	ChannelModelDetectionDisplayUnitMinute      = ChannelStatusProbeDisplayUnitMinute
+	ChannelModelDetectionDisplayUnitHour        = ChannelStatusProbeDisplayUnitHour
+	ChannelModelDetectionDisplayUnitDay         = ChannelStatusProbeDisplayUnitDay
+	ChannelModelDetectionDefaultDisplayValue    = 30
+	ChannelModelDetectionDefaultDisplayUnit     = ChannelModelDetectionDisplayUnitDay
 	// Legacy values are kept for database compatibility with pre-minute rows.
 	ChannelModelDetectionDefaultIntervalHours       = 24
 	ChannelModelDetectionDefaultScheduleTime        = "02:30"
@@ -92,6 +97,7 @@ var (
 	ErrChannelModelDetectionInvalidTrigger           = errors.New("模型检测触发方式无效")
 	ErrChannelModelDetectionInvalidClaimedModel      = errors.New("模型检测申报型号无效")
 	ErrChannelModelDetectionInvalidSchedule          = errors.New("模型检测定时配置无效")
+	ErrChannelModelDetectionInvalidDisplay           = errors.New("模型检测展示范围必须为 1 到 60 分钟、1 到 24 小时或 1 到 30 天")
 	ErrChannelModelDetectionScheduledHighUnconfirmed = errors.New("定时高档模型检测需要确认本次统一设置的成本风险")
 	ErrChannelModelDetectionInvalidCost              = errors.New("模型检测成本字段无效")
 )
@@ -118,6 +124,29 @@ func IsChannelModelDetectionClaimedModel(value string) bool {
 
 func IsChannelModelDetectionTrigger(value string) bool {
 	return value == ChannelModelDetectionTriggerScheduled || value == ChannelModelDetectionTriggerManual
+}
+
+func ChannelModelDetectionDisplayLimit(unit string) int {
+	return ChannelStatusProbeDisplayLimit(unit)
+}
+
+func IsChannelModelDetectionDisplayAllowed(value int, unit string) bool {
+	return IsChannelStatusProbeDisplayAllowed(value, unit)
+}
+
+func NormalizeChannelModelDetectionDisplay(value int, unit string) (int, string) {
+	if IsChannelModelDetectionDisplayAllowed(value, unit) {
+		return value, unit
+	}
+	return ChannelModelDetectionDefaultDisplayValue, ChannelModelDetectionDefaultDisplayUnit
+}
+
+func ChannelModelDetectionDisplayBucketSeconds(unit string) int64 {
+	return ChannelStatusProbeDisplayBucketSeconds(unit)
+}
+
+func ChannelModelDetectionDisplayBucketStart(timestamp int64, unit string) int64 {
+	return ChannelStatusProbeDisplayBucketStart(timestamp, unit)
 }
 
 func IsChannelModelDetectionDispatchState(value string) bool {
@@ -180,14 +209,16 @@ func decodeChannelModelDetectionJSON(data string, value any) error {
 // ChannelModelDetectionGlobalConfig stores the single global scheduling row.
 // Detector/session credentials intentionally have no field in this model.
 type ChannelModelDetectionGlobalConfig struct {
-	Id                             int64  `json:"id" gorm:"primaryKey"`
-	DetectorURL                    string `json:"-" gorm:"type:varchar(1024)"`
-	ScheduledPreset                string `json:"scheduled_preset" gorm:"type:varchar(16);not null"`
-	ScheduleEnabled                bool   `json:"schedule_enabled" gorm:"not null"`
+	Id              int64  `json:"id" gorm:"primaryKey"`
+	DetectorURL     string `json:"-" gorm:"type:varchar(1024)"`
+	ScheduledPreset string `json:"scheduled_preset" gorm:"type:varchar(16);not null"`
+	ScheduleEnabled bool   `json:"schedule_enabled" gorm:"not null"`
 	// A zero value is a migration sentinel for rows created before minute
 	// intervals existed; EffectiveIntervalMinutes falls back to IntervalHours
 	// until the row is next saved.
-	IntervalMinutes                int    `json:"interval_minutes" gorm:"not null;default:0"`
+	IntervalMinutes int    `json:"interval_minutes" gorm:"not null;default:0"`
+	DisplayValue    int    `json:"display_value"`
+	DisplayUnit     string `json:"display_unit" gorm:"type:varchar(16)"`
 	// Deprecated scheduling columns remain mapped so existing installations can
 	// migrate without a destructive schema change. Runtime scheduling uses the
 	// minute interval above and ignores wall-clock/timezone values.
@@ -224,6 +255,10 @@ func (c *ChannelModelDetectionGlobalConfig) BeforeCreate(_ *gorm.DB) error {
 	if c.IntervalHours == 0 && c.IntervalMinutes%60 == 0 {
 		c.IntervalHours = c.IntervalMinutes / 60
 	}
+	if c.DisplayValue == 0 && strings.TrimSpace(c.DisplayUnit) == "" {
+		c.DisplayValue = ChannelModelDetectionDefaultDisplayValue
+		c.DisplayUnit = ChannelModelDetectionDefaultDisplayUnit
+	}
 	if c.ScheduleTime == "" {
 		c.ScheduleTime = ChannelModelDetectionDefaultScheduleTime
 	}
@@ -254,6 +289,9 @@ func (c ChannelModelDetectionGlobalConfig) Validate() error {
 	if intervalMinutes < ChannelModelDetectionMinIntervalMinutes || intervalMinutes > ChannelModelDetectionMaxIntervalMinutes {
 		return ErrChannelModelDetectionInvalidSchedule
 	}
+	if (c.DisplayValue != 0 || strings.TrimSpace(c.DisplayUnit) != "") && !IsChannelModelDetectionDisplayAllowed(c.DisplayValue, c.DisplayUnit) {
+		return ErrChannelModelDetectionInvalidDisplay
+	}
 	highScheduleEnabled := c.ScheduleEnabled && c.ScheduledPreset == ChannelModelDetectionPresetHigh
 	if highScheduleEnabled && c.ScheduledHighConfirmedRevision != c.Revision {
 		return ErrChannelModelDetectionScheduledHighUnconfirmed
@@ -272,6 +310,10 @@ func (c ChannelModelDetectionGlobalConfig) EffectiveIntervalMinutes() int {
 		return c.IntervalHours * 60
 	}
 	return ChannelModelDetectionDefaultIntervalMinutes
+}
+
+func (c ChannelModelDetectionGlobalConfig) EffectiveDisplay() (int, string) {
+	return NormalizeChannelModelDetectionDisplay(c.DisplayValue, c.DisplayUnit)
 }
 
 // ApplyScheduledHighCostConfirmation consumes the command-only confirmation

@@ -98,6 +98,7 @@ function channel(
         enabled: true,
         position: 0,
         latest: null,
+        recent_window: [],
       },
     ],
     latest_run_cost: null,
