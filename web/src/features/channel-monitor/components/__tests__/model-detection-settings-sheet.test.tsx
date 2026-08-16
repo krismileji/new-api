@@ -499,6 +499,66 @@ describe('模型检测统一设置 Sheet', () => {
     assert.equal(document.body.textContent?.includes('无需重新测试'), false)
   })
 
+  test('保存新地址后使用已保存配置重新检查并刷新连接状态', async () => {
+    const tested: Array<{ url: string; data: unknown }> = []
+    apiClient.get = async () =>
+      success(
+        settings({
+          detector_url_configured: false,
+          detector_url: '',
+          detector_url_masked: '',
+        })
+      )
+    apiClient.post = async (url, data) => {
+      tested.push({ url, data })
+      return success(detectorService())
+    }
+    apiClient.put = async () =>
+      success(
+        settings({
+          detector_url_configured: true,
+          detector_url: 'http://10.0.0.9:8000',
+          detector_url_masked: 'http://10.0.0.9:8000',
+          connection_test_required: true,
+          revision: 8,
+        })
+      )
+
+    await renderSettingsSheet()
+    await waitForLoadedSettings()
+    await changeInput(getNewDetectorURLInput(), 'http://10.0.0.9:8000')
+    await act(async () => findButton('测试连接', true).click())
+    await act(async () =>
+      waitForCondition(
+        () => tested.length === 1,
+        'unsaved detector address was not tested'
+      )
+    )
+
+    await submitForm()
+    await act(async () =>
+      waitForCondition(
+        () => tested.length === 2,
+        'saved detector address was not checked again'
+      )
+    )
+
+    assert.deepEqual(tested, [
+      {
+        url: CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest,
+        data: { detector_url: 'http://10.0.0.9:8000' },
+      },
+      {
+        url: CHANNEL_MODEL_DETECTION_ENDPOINTS.serviceTest,
+        data: undefined,
+      },
+    ])
+    assert.equal(
+      document.body.textContent?.includes('连接正常，地址尚未保存'),
+      false
+    )
+  })
+
   test('待切换地址优先回显并可直接测试，连接失败会展示检测器状态', async () => {
     const tested: Array<{ url: string; data: unknown }> = []
     apiClient.get = async () =>

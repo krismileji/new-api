@@ -488,8 +488,7 @@ export const ChannelModelDetectionCard = memo(
     const detectorBlocked =
       props.detectorState === 'offline' ||
       props.detectorState === 'incompatible' ||
-      props.detectorState === 'unconfigured' ||
-      props.detectorState === 'unknown'
+      props.detectorState === 'unconfigured'
     let runLabel = '选择档位并立即检测'
     if (detectorBlocked) {
       runLabel = '检测器当前不可用'

@@ -119,7 +119,30 @@ func TestUpdateChannelModelDetectionSettingsRejectsInvalidDisplayRange(t *testin
 
 func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *testing.T) {
 	db := setupChannelModelDetectionSettingsTestDB(t)
-	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case channelModelDetectorBootstrapPath:
+			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
+			_, _ = writer.Write([]byte(`{"session_token":"active-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+		case channelModelDetectorEstimatePath:
+			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
+		case channelModelDetectorStatusPath:
+			_, _ = writer.Write([]byte(`{"status":"idle"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	seed := seedChannelModelDetectionSettings(t, db, server.URL)
+	checked, err := TestChannelModelDetectionService(
+		context.Background(), db, time.Unix(1_699_999_900, 0).UTC(),
+		ChannelModelDetectorClientOptions{HTTPClient: server.Client()},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "available", checked.State)
 	run := model.ChannelModelDetectionRun{RunId: "settings-active-run", ChannelId: 7, Trigger: model.ChannelModelDetectionTriggerManual, Preset: model.ChannelModelDetectionPresetLow, PresetSource: model.ChannelModelDetectionPresetSourceManualSelected, Status: model.ChannelModelDetectionRunStatusRunning}
 	require.NoError(t, db.Create(&run).Error)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionExecution{RunId: run.RunId, TargetKey: "settings-target", TargetId: 1, ChannelId: 7, RequestModel: "gpt-5.6-sol", ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Preset: run.Preset, Status: model.ChannelModelDetectionExecutionStatusRunning, OfficialSessionId: "official-session"}).Error)
@@ -130,15 +153,16 @@ func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *t
 	}, time.Unix(1_700_000_000, 0).UTC())
 	require.NoError(t, err)
 	assert.True(t, updated.ConnectionTestRequired)
-	assert.Equal(t, "http://127.0.0.1:18080", updated.DetectorURL)
-	assert.Equal(t, "http://127.0.0.1:18080", updated.DetectorURLMasked)
+	assert.Equal(t, server.URL, updated.DetectorURL)
+	assert.Equal(t, server.URL, updated.DetectorURLMasked)
 	assert.True(t, updated.PendingDetectorURLConfigured)
 	assert.Equal(t, "http://127.0.0.1:18081", updated.PendingDetectorURL)
 	assert.Equal(t, "http://127.0.0.1:18081", updated.PendingDetectorURLMasked)
 	var stored model.ChannelModelDetectionGlobalConfig
 	require.NoError(t, db.First(&stored, model.ChannelModelDetectionConfigID).Error)
-	assert.Equal(t, "http://127.0.0.1:18080", stored.DetectorURL)
+	assert.Equal(t, server.URL, stored.DetectorURL)
 	assert.Equal(t, "http://127.0.0.1:18081", stored.PendingDetectorURL)
+	assert.Equal(t, "available", ChannelModelDetectionServiceSnapshot(server.URL).State)
 }
 
 func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T) {

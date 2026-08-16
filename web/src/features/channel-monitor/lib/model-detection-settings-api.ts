@@ -118,10 +118,10 @@ export async function updateChannelModelDetectionSettings(
   }
 }
 
-export async function testChannelModelDetectionService(detectorURL: string) {
-  const request: ChannelModelDetectionServiceTestRequest = {
-    detector_url: detectorURL.trim(),
-  }
+export async function testChannelModelDetectionService(detectorURL?: string) {
+  const normalizedURL = detectorURL?.trim()
+  const request: ChannelModelDetectionServiceTestRequest | undefined =
+    normalizedURL ? { detector_url: normalizedURL } : undefined
   try {
     const response = await api.post<
       ChannelModelDetectionApiResponse<ChannelModelDetectionDetectorService>

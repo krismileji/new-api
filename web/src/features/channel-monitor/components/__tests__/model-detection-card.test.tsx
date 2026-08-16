@@ -22,6 +22,7 @@ import { describe, test } from 'node:test'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
+  ChannelModelDetectionDetectorState,
   ChannelModelDetectionHealth,
   ChannelModelDetectionOutcomeCode,
 } from '../../types-model-detection'
@@ -213,7 +214,7 @@ function createChannel(
 
 function renderCard(
   channel: ChannelModelDetectionChannel,
-  detectorState: 'available' | 'offline' = 'available'
+  detectorState: ChannelModelDetectionDetectorState = 'available'
 ) {
   return renderToStaticMarkup(
     <I18nextProvider i18n={testI18n}>
@@ -282,6 +283,10 @@ describe('模型检测渠道卡片', () => {
     assert.match(unhealthyOffline, /检测器不可用/)
     assert.match(unhealthyOffline, /aria-label="检测器当前不可用"/)
     assert.match(unhealthyOffline, /disabled=""/)
+
+    const unchecked = renderCard(createChannel('healthy'), 'unknown')
+    assert.doesNotMatch(unchecked, /检测器不可用/)
+    assert.doesNotMatch(unchecked, /aria-label="检测器当前不可用"/)
   })
 
   test('基础设施活动状态保留独立文字且不会归类为模型异常', () => {

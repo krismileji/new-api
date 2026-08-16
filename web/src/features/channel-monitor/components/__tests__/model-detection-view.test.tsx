@@ -236,6 +236,14 @@ describe('模型检测视图骨架', () => {
     assert.match(offlineHtml, /连接被拒绝/)
     assert.match(offlineHtml, /data-detector-state="offline"/)
 
+    const unchecked = createOverview()
+    unchecked.detector.state = 'unknown'
+    const uncheckedHtml = renderToStaticMarkup(
+      <ChannelModelDetectionView overview={unchecked} />
+    )
+    assert.match(uncheckedHtml, /官方检测器尚未检查/)
+    assert.doesNotMatch(uncheckedHtml, /检测器不可用/)
+
     assert.match(
       renderToStaticMarkup(<ChannelModelDetectionView loading />),
       /正在加载模型检测数据/

@@ -20,6 +20,7 @@ import {
   Alert02Icon,
   CheckmarkCircle02Icon,
   FingerPrintScanIcon,
+  InformationCircleIcon,
   PauseIcon,
   Refresh01Icon,
   Search01Icon,
@@ -166,9 +167,9 @@ function DetectorStatus(
     title = '尚未配置官方检测器地址'
     description = '配置独立部署的检测器地址后才能开始检测'
   } else if (detector.state === 'unknown') {
-    icon = Alert02Icon
-    title = '官方检测器状态未知'
-    description = '尚未取得可靠的健康检查结果'
+    icon = InformationCircleIcon
+    title = '官方检测器尚未检查'
+    description = '已保存检测器地址，尚未取得健康检查结果'
   }
 
   return (

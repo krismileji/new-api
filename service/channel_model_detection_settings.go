@@ -144,6 +144,7 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 
 	var saved model.ChannelModelDetectionGlobalConfig
 	addressChanged := false
+	activeDetectorChanged := false
 	err := db.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
 		var current model.ChannelModelDetectionGlobalConfig
 		if err := transaction.Where("id = ?", model.ChannelModelDetectionConfigID).First(&current).Error; err != nil {
@@ -155,6 +156,7 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 		if current.Revision != input.ExpectedRevision {
 			return ErrChannelModelDetectionSettingsConflict
 		}
+		previousDetectorURL := current.DetectorURL
 		// A previous address can remain pending while the official session
 		// finishes. Promote it before applying this command once no active
 		// execution still owns the detector session.
@@ -231,6 +233,7 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 				candidate.PendingDetectorURL = ""
 			}
 		}
+		activeDetectorChanged = candidate.DetectorURL != previousDetectorURL
 
 		scheduleChanged := candidate.ScheduleEnabled != current.ScheduleEnabled ||
 			candidate.IntervalMinutes != current.EffectiveIntervalMinutes()
@@ -272,10 +275,10 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 	if err != nil {
 		return ChannelModelDetectionSettingsResponse{}, err
 	}
-	if addressChanged {
+	if activeDetectorChanged {
 		ResetChannelModelDetectionServiceCache()
 	}
-	response := channelModelDetectionSettingsResponse(saved, addressChanged)
+	response := channelModelDetectionSettingsResponse(saved, addressChanged || activeDetectorChanged)
 	return response, nil
 }
 

@@ -222,6 +222,32 @@ export function ChannelModelDetectionSettingsSheet(
     setConnectionResult(null)
   }, [form, props.open, settings])
 
+  const savedServiceTestMutation = useMutation({
+    mutationFn: (_saved: ChannelModelDetectionSettings) =>
+      testChannelModelDetectionService(),
+    onSuccess: (service, saved) => {
+      setConnectionResult(service)
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor', 'model-detection', 'overview'],
+      })
+      if (service.state === 'available') {
+        toast.success('模型检测统一设置已保存，检测器连接正常')
+      } else {
+        toast.success('模型检测统一设置已保存，检测器连接检查完成')
+      }
+      props.onSaved?.(saved)
+    },
+    onError: (error, saved) => {
+      setConnectionResult(channelModelDetectionServiceFromError(error))
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor', 'model-detection', 'overview'],
+      })
+      toast.error(
+        `模型检测统一设置已保存，但检测器连接检查失败：${channelModelDetectionRequestErrorMessage(error)}`
+      )
+      props.onSaved?.(saved)
+    },
+  })
   const saveMutation = useMutation({
     mutationFn: updateChannelModelDetectionSettings,
     onSuccess: (saved) => {
@@ -229,12 +255,20 @@ export function ChannelModelDetectionSettingsSheet(
         CHANNEL_MODEL_DETECTION_SETTINGS_QUERY_KEY,
         saved
       )
-      queryClient.invalidateQueries({
-        queryKey: ['channel-monitor', 'model-detection', 'overview'],
-      })
       form.reset(channelModelDetectionSettingsToFormValues(saved))
       setConflictMessage('')
       setConnectionResult(null)
+      if (
+        saved.connection_test_required &&
+        saved.detector_url_configured &&
+        !saved.detector_url_switch_pending
+      ) {
+        savedServiceTestMutation.mutate(saved)
+        return
+      }
+      queryClient.invalidateQueries({
+        queryKey: ['channel-monitor', 'model-detection', 'overview'],
+      })
       toast.success('模型检测统一设置已保存')
       props.onSaved?.(saved)
     },
@@ -261,7 +295,10 @@ export function ChannelModelDetectionSettingsSheet(
     },
   })
 
-  const pending = saveMutation.isPending || testMutation.isPending
+  const pending =
+    saveMutation.isPending ||
+    savedServiceTestMutation.isPending ||
+    testMutation.isPending
   const controlsDisabled = pending || query.isFetching
 
   async function refreshSettings() {
@@ -785,7 +822,7 @@ export function ChannelModelDetectionSettingsSheet(
   }
 
   let saveStartIcon = null
-  if (saveMutation.isPending) {
+  if (saveMutation.isPending || savedServiceTestMutation.isPending) {
     saveStartIcon = <Spinner data-icon='inline-start' />
   } else if (clearDetectorURL) {
     saveStartIcon = (
@@ -834,7 +871,7 @@ export function ChannelModelDetectionSettingsSheet(
             }
           >
             {saveStartIcon}
-            保存设置
+            {savedServiceTestMutation.isPending ? '验证检测器' : '保存设置'}
           </Button>
         </SheetFooter>
       </SheetContent>
