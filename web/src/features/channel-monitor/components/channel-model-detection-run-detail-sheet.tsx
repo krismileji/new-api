@@ -57,6 +57,8 @@ import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-optio
 import type { ChannelModelDetectionRunStatus } from '../types-model-detection'
 import { ChannelModelDetectionReport } from './channel-model-detection-report'
 
+const ACTIVE_RUN_REFETCH_INTERVAL_MS = 3000
+
 export type ChannelModelDetectionRunDetailSheetProps = {
   runId: string | null
   open: boolean
@@ -73,9 +75,15 @@ export function ChannelModelDetectionRunDetailSheet(
     queryKey: ['channel-monitor', 'model-detection', 'run', props.runId],
     queryFn: () => getChannelModelDetectionRun(props.runId ?? ''),
     enabled: props.open && Boolean(props.runId),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
+    refetchInterval: (currentQuery) => {
+      const status = currentQuery.state.data?.run.status
+      return props.open && status && isChannelModelDetectionRunActive(status)
+        ? ACTIVE_RUN_REFETCH_INTERVAL_MS
+        : false
+    },
   })
   const detail = query.data
 

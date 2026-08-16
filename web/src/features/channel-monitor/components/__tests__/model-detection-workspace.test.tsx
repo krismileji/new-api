@@ -647,6 +647,81 @@ describe('模型检测工作区', () => {
     assert.doesNotMatch(detailSheet.textContent ?? '', /检测到异常证据/)
   })
 
+  test('重新打开轮次详情时刷新缓存的排队状态', async () => {
+    const requests: AxiosRequestConfig[] = []
+    const queuedRun = createRunSummary({
+      status: 'queued',
+      started_at: 0,
+      finished_at: 0,
+      updated_at: 1_775_000_000,
+      error_code: '',
+      error_message: '',
+    })
+    const completedRun = createRunSummary({
+      status: 'completed',
+      completed_target_count: 1,
+      progress: {
+        planned: 64,
+        logical_completed: 64,
+        successful: 64,
+        errors: 0,
+        cancelled: 0,
+        http_attempts: 64,
+        retries: 0,
+      },
+      started_at: 1_775_000_005,
+      finished_at: 1_775_000_020,
+      updated_at: 1_775_000_020,
+      error_code: '',
+      error_message: '',
+    })
+    api.defaults.adapter = (async (config) => {
+      requests.push(config)
+      if (config.url?.endsWith('/runs/run-history-1')) {
+        return {
+          ...success({ run: completedRun, executions: [] }),
+          config,
+        }
+      }
+      return {
+        ...success({
+          page: 1,
+          page_size: 20,
+          total: 1,
+          items: [completedRun],
+        }),
+        config,
+      }
+    }) as AxiosAdapter
+    await renderWorkspace()
+
+    renderedWorkspace?.queryClient.setQueryData(
+      ['channel-monitor', 'model-detection', 'run', queuedRun.run_id],
+      { run: queuedRun, executions: [] }
+    )
+    await act(async () => findButton('查看 生产渠道 的模型检测记录').click())
+    await waitForCondition(
+      () => document.body.textContent?.includes('run-history-1') === true,
+      '历史轮次未加载'
+    )
+
+    await act(async () => findButton('查看轮次 run-history-1 详情').click())
+    await waitForCondition(
+      () =>
+        document
+          .querySelector('[data-slot="model-detection-run-detail"]')
+          ?.getAttribute('data-run-status') === 'completed',
+      '缓存的排队状态未刷新'
+    )
+
+    assert.equal(
+      requests.filter((request) => request.url?.endsWith('/runs/run-history-1'))
+        .length,
+      1
+    )
+    assert.match(document.body.textContent ?? '', /已完成/)
+  })
+
   test('取消先确认且请求期间锁定操作，成功后刷新总览', async () => {
     const requests: AxiosRequestConfig[] = []
     let finishCancel: (() => void) | null = null
