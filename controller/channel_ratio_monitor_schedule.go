@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -36,7 +37,94 @@ const (
 type channelSmartScheduleTaskHandler struct{}
 
 type channelSmartScheduleTaskPayload struct {
-	ForceReset bool `json:"force_reset,omitempty"`
+	ForceReset       bool     `json:"force_reset,omitempty"`
+	TriggerSource    string   `json:"trigger_source,omitempty"`
+	TriggerCount     int      `json:"trigger_count,omitempty"`
+	FirstRequestedAt int64    `json:"first_requested_at,omitempty"`
+	LastRequestedAt  int64    `json:"last_requested_at,omitempty"`
+	DirtyReasons     []string `json:"dirty_reasons,omitempty"`
+}
+
+const channelSmartScheduleTriggerFallback = "channel_monitor.unspecified"
+
+func newChannelSmartScheduleTaskPayload(source string, dirtyReasons ...string) channelSmartScheduleTaskPayload {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = channelSmartScheduleTriggerFallback
+	}
+	reasons := normalizeChannelSmartScheduleDirtyReasons(dirtyReasons...)
+	if len(reasons) == 0 {
+		reasons = []string{"unspecified"}
+	}
+	now := common.GetTimestamp()
+	return channelSmartScheduleTaskPayload{
+		TriggerSource:    source,
+		TriggerCount:     1,
+		FirstRequestedAt: now,
+		LastRequestedAt:  now,
+		DirtyReasons:     reasons,
+	}
+}
+
+func normalizeChannelSmartScheduleDirtyReasons(reasons ...string) []string {
+	seen := make(map[string]struct{}, len(reasons))
+	result := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		if _, exists := seen[reason]; exists {
+			continue
+		}
+		seen[reason] = struct{}{}
+		result = append(result, reason)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// MergeRequiredSystemTaskPayload is called by the required-task enqueue path
+// while a pending smart-schedule task is locked. It only aggregates trigger
+// attribution; scheduling decisions continue to use ForceReset and the normal
+// task runner inputs.
+func (payload channelSmartScheduleTaskPayload) MergeRequiredSystemTaskPayload(existing string) (string, error) {
+	merged := payload
+	var previous channelSmartScheduleTaskPayload
+	if strings.TrimSpace(existing) != "" {
+		if err := common.UnmarshalJsonStr(existing, &previous); err != nil {
+			return "", err
+		}
+	}
+	if previous.TriggerCount < 0 {
+		previous.TriggerCount = 0
+	}
+	if merged.TriggerCount <= 0 {
+		merged.TriggerCount = 1
+	}
+	previous.ForceReset = previous.ForceReset || merged.ForceReset
+	if previous.TriggerSource == "" {
+		previous.TriggerSource = merged.TriggerSource
+	}
+	if previous.TriggerSource == "" {
+		previous.TriggerSource = channelSmartScheduleTriggerFallback
+	}
+	previous.TriggerCount += merged.TriggerCount
+	if previous.FirstRequestedAt <= 0 || (merged.FirstRequestedAt > 0 && merged.FirstRequestedAt < previous.FirstRequestedAt) {
+		previous.FirstRequestedAt = merged.FirstRequestedAt
+	}
+	if merged.LastRequestedAt > previous.LastRequestedAt {
+		previous.LastRequestedAt = merged.LastRequestedAt
+	}
+	previous.DirtyReasons = normalizeChannelSmartScheduleDirtyReasons(append(previous.DirtyReasons, merged.DirtyReasons...)...)
+	if len(previous.DirtyReasons) == 0 {
+		previous.DirtyReasons = []string{"unspecified"}
+	}
+	encoded, err := common.Marshal(previous)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 type channelSmartSchedulePerformance struct {
@@ -246,7 +334,8 @@ func RunChannelMonitorSmartSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度已禁用"})
 		return
 	}
-	task, created, err := service.EnqueueSystemTask(channelMonitorSmartScheduleTaskType, nil)
+	payload := newChannelSmartScheduleTaskPayload("manual_run", "manual_request")
+	task, created, err := service.EnqueueSystemTask(channelMonitorSmartScheduleTaskType, payload)
 	if err != nil {
 		common.ApiError(c, err)
 		return

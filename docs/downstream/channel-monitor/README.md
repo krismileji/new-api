@@ -11,6 +11,10 @@
 - [测试与并发限制](testing-and-concurrency.md)：单次、批量、并发循环测试及渠道并发租约。
 - [本地探针响应](probe-response.md)：单轮 `hi` 探针的本地拦截、协议响应和计费边界。
 - [API 与运维](api-and-operations.md)：接口清单、系统选项、环境变量、数据和任务。
+- [MySQL 停机清理](mysql-stop-cleanup-runbook.md)：停机切换时清理旧渠道监控表、任务和配置，并核对共享数据不受影响。
+- [Redis 清理与命名](redis-cleanup-runbook.md)：按 `channel_monitor:v1:` 精确白名单清理 Stream、消费组和共享投影。
+- [快照容量与数据库矩阵](snapshot-capacity-database-matrix.md)：任务级 gzip 快照容量、内存和三数据库读写清理验收。
+- [冷启动完整验收](cold-start-verification.md)：空库迁移、Redis 消费组、完整调度、分钟聚合和清理任务验收。
 
 ## 能力边界
 

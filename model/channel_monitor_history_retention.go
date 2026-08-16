@@ -67,6 +67,46 @@ func DeleteChannelMonitorHistoryBefore(
 
 	db := DB.WithContext(ctx)
 	detailTableExists := db.Migrator().HasTable(&ChannelSmartScheduleExecutionDetail{})
+	terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
+	// Snapshots belonging to active tasks or each task type's newest terminal
+	// tasks are retained even when their timestamp is older than the detail
+	// cutoff. This keeps the execution-history guards effective after the
+	// detail table becomes one row per task.
+	protectedDetailTaskIDs := make(map[string]struct{})
+	if detailTableExists && db.Migrator().HasTable(&SystemTask{}) {
+		var activeTaskIDs []string
+		if err := db.Model(&SystemTask{}).
+			Where("type IN ?", normalizedTaskTypes).
+			Where("status IN ?", []SystemTaskStatus{SystemTaskStatusPending, SystemTaskStatusRunning}).
+			Pluck("task_id", &activeTaskIDs).Error; err != nil {
+			return result, err
+		}
+		for _, taskID := range activeTaskIDs {
+			if taskID != "" {
+				protectedDetailTaskIDs[taskID] = struct{}{}
+			}
+		}
+		for _, taskType := range normalizedTaskTypes {
+			var latestTaskIDs []string
+			if err := db.Model(&SystemTask{}).
+				Where("type = ?", taskType).
+				Where("status IN ?", terminalStatuses).
+				Order("id DESC").
+				Limit(keepLatestTasks).
+				Pluck("task_id", &latestTaskIDs).Error; err != nil {
+				return result, err
+			}
+			for _, taskID := range latestTaskIDs {
+				if taskID != "" {
+					protectedDetailTaskIDs[taskID] = struct{}{}
+				}
+			}
+		}
+	}
+	protectedDetailTaskIDList := make([]string, 0, len(protectedDetailTaskIDs))
+	for taskID := range protectedDetailTaskIDs {
+		protectedDetailTaskIDList = append(protectedDetailTaskIDList, taskID)
+	}
 	detailBudget := budget.Slice(3)
 	if detailTableExists {
 		for {
@@ -75,9 +115,12 @@ func DeleteChannelMonitorHistoryBefore(
 				break
 			}
 			var ids []int64
-			if err := db.Model(&ChannelSmartScheduleExecutionDetail{}).
-				Where("created_at < ?", cutoffs.ExecutionDetail).
-				Order("created_at ASC, id ASC").
+			query := db.Model(&ChannelSmartScheduleExecutionDetail{}).
+				Where("created_at < ?", cutoffs.ExecutionDetail)
+			if len(protectedDetailTaskIDList) > 0 {
+				query = query.Where("task_id NOT IN ?", protectedDetailTaskIDList)
+			}
+			if err := query.Order("created_at ASC, id ASC").
 				Limit(batchSize).
 				Pluck("id", &ids).Error; err != nil {
 				return result, err
@@ -109,6 +152,7 @@ func DeleteChannelMonitorHistoryBefore(
 				var ids []int64
 				if err := db.Model(&SystemTask{}).
 					Where("type = ?", taskType).
+					Where("status IN ?", terminalStatuses).
 					Order("id DESC").
 					Limit(keepLatestTasks).
 					Pluck("id", &ids).Error; err != nil {
@@ -118,7 +162,6 @@ func DeleteChannelMonitorHistoryBefore(
 			}
 
 			if prepared {
-				terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
 				for {
 					if taskBudget.Exhausted() {
 						result.Incomplete = true

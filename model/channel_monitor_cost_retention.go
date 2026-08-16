@@ -8,15 +8,21 @@ import (
 type ChannelMonitorCostRetentionResult struct {
 	ChannelRowsDeleted        int64 `json:"channel_rows_deleted"`
 	APIKeyRowsDeleted         int64 `json:"api_key_rows_deleted"`
+	RouteMetricRowsDeleted    int64 `json:"route_metric_rows_deleted"`
+	APIKeyMetricRowsDeleted   int64 `json:"api_key_metric_rows_deleted"`
 	MinuteRowsDeleted         int64 `json:"minute_rows_deleted"`
 	DurationBucketRowsDeleted int64 `json:"duration_bucket_rows_deleted"`
 	Incomplete                bool  `json:"-"`
 }
 
+// DeleteChannelMonitorCostsBefore deletes each metric table
+// against its own cutoff. Route metrics and duration buckets share the route
+// cutoff because both feed smart-schedule performance queries.
 func DeleteChannelMonitorCostsBefore(
 	ctx context.Context,
 	costCutoff int64,
-	minuteCutoff int64,
+	routeMetricCutoff int64,
+	apiKeyMetricCutoff int64,
 	batchSize int,
 	budget ChannelMonitorCleanupBudget,
 ) (ChannelMonitorCostRetentionResult, error) {
@@ -24,14 +30,17 @@ func DeleteChannelMonitorCostsBefore(
 	if costCutoff <= 0 {
 		return result, errors.New("channel monitor cost cutoff must be positive")
 	}
-	if minuteCutoff <= 0 {
-		return result, errors.New("channel monitor minute cutoff must be positive")
+	if routeMetricCutoff <= 0 {
+		return result, errors.New("channel monitor route metric cutoff must be positive")
+	}
+	if apiKeyMetricCutoff <= 0 {
+		return result, errors.New("channel monitor API Key metric cutoff must be positive")
 	}
 	if batchSize <= 0 {
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
 	}
 
-	durationBudget := budget.Slice(4)
+	durationBudget := budget.Slice(6)
 	if DB.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		for {
 			if durationBudget.Exhausted() {
@@ -41,7 +50,7 @@ func DeleteChannelMonitorCostsBefore(
 			var ids []int64
 			if err := DB.WithContext(ctx).
 				Model(&ChannelMonitorMinuteDurationBucket{}).
-				Where("minute_start < ?", minuteCutoff).
+				Where("minute_start < ?", routeMetricCutoff).
 				Order("minute_start ASC, id ASC").
 				Limit(batchSize).
 				Pluck("id", &ids).Error; err != nil {
@@ -58,31 +67,51 @@ func DeleteChannelMonitorCostsBefore(
 		}
 	}
 
-	minuteBudget := budget.Slice(3)
-	for {
-		if minuteBudget.Exhausted() {
-			result.Incomplete = true
-			break
+	deleteMetricRows := func(table any, cutoff int64, metricBudget ChannelMonitorCleanupBudget, rowsDeleted *int64) error {
+		if !DB.Migrator().HasTable(table) {
+			return nil
 		}
-		var ids []int64
-		if err := DB.WithContext(ctx).
-			Model(&ChannelMonitorMinuteMetric{}).
-			Where("minute_start < ?", minuteCutoff).
-			Order("minute_start ASC, id ASC").
-			Limit(batchSize).
-			Pluck("id", &ids).Error; err != nil {
-			return result, err
+		for {
+			if metricBudget.Exhausted() {
+				result.Incomplete = true
+				break
+			}
+			var ids []int64
+			if err := DB.WithContext(ctx).
+				Model(table).
+				Where("minute_start < ?", cutoff).
+				Order("minute_start ASC, id ASC").
+				Limit(batchSize).
+				Pluck("id", &ids).Error; err != nil {
+				return err
+			}
+			if len(ids) == 0 {
+				break
+			}
+			deleted := DB.WithContext(ctx).Where("id IN ?", ids).Delete(table)
+			if deleted.Error != nil {
+				return deleted.Error
+			}
+			*rowsDeleted += deleted.RowsAffected
 		}
-		if len(ids) == 0 {
-			break
-		}
-		deleted := DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ChannelMonitorMinuteMetric{})
-		if deleted.Error != nil {
-			return result, deleted.Error
-		}
-		result.MinuteRowsDeleted += deleted.RowsAffected
+		return nil
 	}
-	if err := TrimChannelMonitorAggregationCoverage(ctx, minuteCutoff); err != nil {
+	routeMetricBudget := budget.Slice(5)
+	if err := deleteMetricRows(
+		&ChannelMonitorMinuteRouteMetric{}, routeMetricCutoff, routeMetricBudget,
+		&result.RouteMetricRowsDeleted,
+	); err != nil {
+		return result, err
+	}
+	apiKeyMetricBudget := budget.Slice(4)
+	if err := deleteMetricRows(
+		&ChannelMonitorMinuteAPIKeyMetric{}, apiKeyMetricCutoff, apiKeyMetricBudget,
+		&result.APIKeyMetricRowsDeleted,
+	); err != nil {
+		return result, err
+	}
+	result.MinuteRowsDeleted = result.RouteMetricRowsDeleted + result.APIKeyMetricRowsDeleted
+	if err := TrimChannelMonitorAggregationCoverage(ctx, routeMetricCutoff); err != nil {
 		return result, err
 	}
 	if result.MinuteRowsDeleted > 0 || result.DurationBucketRowsDeleted > 0 {

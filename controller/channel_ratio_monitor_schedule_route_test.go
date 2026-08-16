@@ -48,7 +48,7 @@ func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(
 	coverage := channelSmartScheduleRealtimeMetricCoverage(
 		generatedAt,
 		settings,
-		[]service.ChannelMonitorRealtimeSnapshot{{
+		[]service.ChannelMonitorRedisRouteHealthSnapshot{{
 			CoverageStart: coverageStart,
 			DataCutoffAt:  generatedAt - 1,
 		}},
@@ -542,7 +542,7 @@ func TestRunChannelSmartScheduleByRouteUsesOnlyExplicitGroupPolicies(t *testing.
 	}).Error)
 	minuteStart := common.GetTimestamp()
 	minuteStart = minuteStart - minuteStart%60 - 60
-	require.NoError(t, db.Create(&[]model.ChannelMonitorMinuteMetric{
+	require.NoError(t, db.Create(&[]model.ChannelMonitorMinuteRouteMetric{
 		{
 			MinuteStart: minuteStart, ChannelId: 1301, ModelKey: "model-b", GroupKey: "gold",
 			APIKeyKey: "all", ModelName: "model-b", GroupName: "gold",
@@ -643,17 +643,21 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, http.MethodGet, "/api/channel_monitor/schedule", nil,
 	)
+	expectedSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	GetChannelMonitorSmartScheduleRoutes(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			StabilityMetricsAvailable bool                                       `json:"stability_metrics_available"`
-			StabilityItems            []model.ChannelMonitorRouteStabilityMetric `json:"stability_items"`
+			StabilityMetricsAvailable bool                                              `json:"stability_metrics_available"`
+			StabilityItems            []model.ChannelMonitorRouteStabilityMetric        `json:"stability_items"`
+			ExecutionSnapshotMetrics  *model.ChannelSmartScheduleExecutionDetailMetrics `json:"execution_snapshot_metrics"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
+	require.NotNil(t, response.Data.ExecutionSnapshotMetrics)
+	assert.Equal(t, expectedSnapshotMetrics, *response.Data.ExecutionSnapshotMetrics)
 	assert.True(t, response.Data.StabilityMetricsAvailable)
 	require.Len(t, response.Data.StabilityItems, 1)
 	metric := response.Data.StabilityItems[0]
@@ -782,21 +786,25 @@ func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, http.MethodGet, "/api/channel_monitor/schedule?metrics=false", nil,
 	)
+	expectedSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	GetChannelMonitorSmartScheduleRoutes(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			MetricsIncluded  bool                                         `json:"metrics_included"`
-			Routes           []channelSmartScheduleRouteResponse          `json:"routes"`
-			SampleItems      []channelSmartScheduleSampleItem             `json:"sample_items"`
-			PerformanceItems []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
-			StabilityItems   []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
+			MetricsIncluded          bool                                              `json:"metrics_included"`
+			Routes                   []channelSmartScheduleRouteResponse               `json:"routes"`
+			SampleItems              []channelSmartScheduleSampleItem                  `json:"sample_items"`
+			PerformanceItems         []model.ChannelMonitorRoutePerformanceMetric      `json:"performance_items"`
+			StabilityItems           []model.ChannelMonitorRouteStabilityMetric        `json:"stability_items"`
+			ExecutionSnapshotMetrics *model.ChannelSmartScheduleExecutionDetailMetrics `json:"execution_snapshot_metrics"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	assert.False(t, response.Data.MetricsIncluded)
+	require.NotNil(t, response.Data.ExecutionSnapshotMetrics)
+	assert.Equal(t, expectedSnapshotMetrics, *response.Data.ExecutionSnapshotMetrics)
 	require.Len(t, response.Data.Routes, 1)
 	assert.Equal(t, "model-a", response.Data.Routes[0].SampleModel)
 	assert.Empty(t, response.Data.SampleItems)
@@ -920,13 +928,13 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	require.NotNil(t, response.Data.MetricCoverage)
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
 	assert.Equal(t, minuteStart+2, response.Data.DataCutoffAt)
-	assert.Greater(t, response.Data.ProjectionStartedAt, minuteStart+2)
+	assert.Zero(t, response.Data.ProjectionStartedAt)
 	assert.NotZero(t, response.Data.EventWatermark)
-	assert.True(t, response.Data.RealtimeDegraded)
+	assert.False(t, response.Data.RealtimeDegraded)
 	assert.Equal(t, response.Data.DataCutoffAt, response.Data.MetricCoverage.AggregatedThrough)
-	assert.Equal(t, response.Data.ProjectionStartedAt, response.Data.MetricCoverage.AggregatedFrom)
-	assert.False(t, response.Data.MetricCoverage.PerformanceWindowComplete)
-	assert.False(t, response.Data.MetricCoverage.StabilityWindowComplete)
+	assert.Greater(t, response.Data.MetricCoverage.AggregatedFrom, int64(0))
+	assert.True(t, response.Data.MetricCoverage.PerformanceWindowComplete)
+	assert.True(t, response.Data.MetricCoverage.StabilityWindowComplete)
 	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.PerformanceWindowStart)
 	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.StabilityWindowStart)
 	require.Len(t, response.Data.PerformanceItems, 1)

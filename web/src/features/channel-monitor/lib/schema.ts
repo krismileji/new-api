@@ -52,12 +52,30 @@ export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 2
 export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
-export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 120
-export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 14
+export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 30
+export const DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS = 30
+export const DEFAULT_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 3
 export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
 export const MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 7
+export const MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 7
+export const MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 180
+export const DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 30
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED = true
+export const MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE = 1
+export const MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE = 10_000
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE = 1_000
+export const MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS = 1
+export const MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS = 300
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS = 10
+export const MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS = 15
+export const MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS = 3_600
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS = 60
+export const MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES = 60
+export const MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES = 10_080
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES = 1_440
 export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const MAX_ERROR_MESSAGE_MAPPING_ENTRIES = 100
 export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
@@ -841,6 +859,30 @@ export function createChannelMonitorSettingsSchema() {
           MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
           '成本数据保留天数不能超过 3650 天'
         ),
+      routeMetricRetentionDays: z.coerce
+        .number()
+        .int('路由分钟指标保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '路由分钟指标保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '路由分钟指标保留天数不能超过 3650 天'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS),
+      apiKeyMetricRetentionDays: z.coerce
+        .number()
+        .int('API Key 分钟指标保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          'API Key 分钟指标保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          'API Key 分钟指标保留天数不能超过 3650 天'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS),
       executionDetailRetentionDays: z.coerce
         .number()
         .int('调度执行明细保留天数必须是整数')
@@ -885,6 +927,69 @@ export function createChannelMonitorSettingsSchema() {
           MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
           '状态探测执行记录保留天数不能超过 90 天'
         ),
+      modelDetectionRetentionDays: z.coerce
+        .number()
+        .int('模型检测历史保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+          '模型检测历史保留天数不能小于 7 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+          '模型检测历史保留天数不能超过 180 天'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS),
+      cleanupEnabled: z
+        .boolean()
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED),
+      cleanupBatchSize: z.coerce
+        .number()
+        .int('清理批次大小必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+          '清理批次大小不能小于 1 条'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+          '清理批次大小不能超过 10000 条'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE),
+      cleanupBudgetSeconds: z.coerce
+        .number()
+        .int('单轮清理预算必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+          '单轮清理预算不能小于 1 秒'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+          '单轮清理预算不能超过 300 秒'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS),
+      cleanupContinuationSeconds: z.coerce
+        .number()
+        .int('清理续跑间隔必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+          '清理续跑间隔不能小于 15 秒'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+          '清理续跑间隔不能超过 3600 秒'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS),
+      cleanupIntervalMinutes: z.coerce
+        .number()
+        .int('清理周期必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+          '清理周期不能小于 60 分钟'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+          '清理周期不能超过 10080 分钟'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES),
       emailNotificationEnabled: z.boolean(),
       emailNotificationTypes: z
         .array(

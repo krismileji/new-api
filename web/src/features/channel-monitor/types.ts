@@ -222,6 +222,20 @@ export type ChannelMonitorRealtimeMetadata = {
   processed_at: number
   event_watermark: number
   queue_depth: number
+  redis_status?: 'available' | 'unavailable'
+  redis_available?: boolean
+  redis_consumer_running?: boolean
+  pending_count?: number
+  oldest_pending_at?: number
+  consumer_lag_seconds?: number
+  last_published_at?: number
+  last_processed_at?: number
+  retry_count?: number
+  takeover_count?: number
+  marker_release_failure_count?: number
+  marker_release_failure_active?: boolean
+  stream_trim_failure_count?: number
+  stream_trim_failure_active?: boolean
   realtime_degraded: boolean
 }
 
@@ -572,10 +586,18 @@ export type ChannelMonitorSettings = {
   auto_enable_on_cost_ratio_recovery: boolean
   auto_enable_on_balance_recovery: boolean
   cost_retention_days: number
-  execution_detail_retention_days?: number
-  task_retention_days?: number
-  ratio_history_retention_days?: number
-  status_probe_history_retention_days?: number
+  route_metric_retention_days: number
+  api_key_metric_retention_days: number
+  execution_detail_retention_days: number
+  task_retention_days: number
+  ratio_history_retention_days: number
+  status_probe_history_retention_days: number
+  model_detection_retention_days: number
+  cleanup_enabled: boolean
+  cleanup_batch_size: number
+  cleanup_budget_seconds: number
+  cleanup_continuation_seconds: number
+  cleanup_interval_minutes: number
   email_notification_enabled: boolean
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]

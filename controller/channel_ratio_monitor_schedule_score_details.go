@@ -10,7 +10,7 @@ import (
 
 func channelSmartScheduleAttachRealtimeWindow(
 	details *model.ChannelSmartScheduleScoreDetails,
-	snapshot service.ChannelMonitorRealtimeSnapshot,
+	snapshot service.ChannelMonitorRedisRouteHealthSnapshot,
 ) {
 	if details == nil {
 		return

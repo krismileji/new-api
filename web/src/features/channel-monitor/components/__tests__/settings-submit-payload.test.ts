@@ -20,7 +20,41 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
+import type { ChannelMonitorSettings } from '../../types'
 import { createChannelMonitorSettingsUpdatePayload } from '../../lib/settings-update'
+
+type OptionalKeys<T> = {
+  [K in keyof T]-?: {} extends Pick<T, K> ? K : never
+}[keyof T]
+
+type StorageSettingKeys =
+  | 'cost_retention_days'
+  | 'route_metric_retention_days'
+  | 'api_key_metric_retention_days'
+  | 'execution_detail_retention_days'
+  | 'task_retention_days'
+  | 'ratio_history_retention_days'
+  | 'status_probe_history_retention_days'
+  | 'model_detection_retention_days'
+  | 'cleanup_enabled'
+  | 'cleanup_batch_size'
+  | 'cleanup_budget_seconds'
+  | 'cleanup_continuation_seconds'
+  | 'cleanup_interval_minutes'
+
+type StorageSettingsAreRequired = Exclude<
+  StorageSettingKeys,
+  keyof ChannelMonitorSettings
+> extends never
+  ? Extract<
+      OptionalKeys<ChannelMonitorSettings>,
+      StorageSettingKeys
+    > extends never
+    ? true
+    : false
+  : false
+
+const storageSettingsAreRequired: StorageSettingsAreRequired = true
 
 const formValues = {
   autoUpdateIntervalMinutes: 15,
@@ -31,10 +65,18 @@ const formValues = {
   autoEnableOnCostRatioRecovery: true,
   autoEnableOnBalanceRecovery: false,
   costRetentionDays: 90,
+  routeMetricRetentionDays: 30,
+  apiKeyMetricRetentionDays: 7,
   executionDetailRetentionDays: 14,
   taskRetentionDays: 90,
   ratioHistoryRetentionDays: 365,
   statusProbeHistoryRetentionDays: 7,
+  modelDetectionRetentionDays: 30,
+  cleanupEnabled: false,
+  cleanupBatchSize: 2500,
+  cleanupBudgetSeconds: 45,
+  cleanupContinuationSeconds: 90,
+  cleanupIntervalMinutes: 360,
   emailNotificationEnabled: true,
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
@@ -118,6 +160,10 @@ const formValues = {
 } as ChannelMonitorSettingsFormValues
 
 describe('channel monitor settings submit payload', () => {
+  test('requires every retention and cleanup field in the API contract', () => {
+    assert.equal(storageSettingsAreRequired, true)
+  })
+
   test('schedule mode submits only explicit policies and global runtime fields', () => {
     const payload = createChannelMonitorSettingsUpdatePayload(
       'schedule',
@@ -304,17 +350,24 @@ describe('channel monitor settings submit payload', () => {
     )
 
     assert.deepEqual(Object.keys(payload).sort(), [
+      'api_key_metric_retention_days',
       'auto_disable_on_update_failure',
       'auto_enable_on_balance_recovery',
       'auto_enable_on_cost_ratio_recovery',
       'auto_update_consecutive_failure_limit',
       'auto_update_interval_minutes',
       'auto_update_retry_count',
+      'cleanup_batch_size',
+      'cleanup_budget_seconds',
+      'cleanup_continuation_seconds',
+      'cleanup_enabled',
+      'cleanup_interval_minutes',
       'cost_retention_days',
       'email_notification_enabled',
       'email_notification_types',
       'error_message_mapping',
       'execution_detail_retention_days',
+      'model_detection_retention_days',
       'notification_email',
       'probe_response_cache_write_tokens',
       'probe_response_cached_tokens',
@@ -326,15 +379,24 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_output_tokens',
       'probe_response_text',
       'ratio_history_retention_days',
+      'route_metric_retention_days',
       'status_probe_history_retention_days',
       'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
     assert.equal(payload.execution_detail_retention_days, 14)
+    assert.equal(payload.route_metric_retention_days, 30)
+    assert.equal(payload.api_key_metric_retention_days, 7)
     assert.equal(payload.task_retention_days, 90)
     assert.equal(payload.ratio_history_retention_days, 365)
     assert.equal(payload.status_probe_history_retention_days, 7)
+    assert.equal(payload.model_detection_retention_days, 30)
+    assert.equal(payload.cleanup_enabled, false)
+    assert.equal(payload.cleanup_batch_size, 2500)
+    assert.equal(payload.cleanup_budget_seconds, 45)
+    assert.equal(payload.cleanup_continuation_seconds, 90)
+    assert.equal(payload.cleanup_interval_minutes, 360)
     assert.deepEqual(payload.email_notification_types, [
       'balance_warning',
       'task_failed',

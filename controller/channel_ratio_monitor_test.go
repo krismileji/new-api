@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
@@ -118,19 +119,22 @@ func useChannelMonitorOptionMap(t *testing.T, values map[string]string) {
 
 func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	service.ResetChannelMonitorRealtimeProjectionsForTest()
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogDatabaseType := common.LogDatabaseType()
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
 	originalIsMasterNode := common.IsMasterNode
 
 	gin.SetMode(gin.TestMode)
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.MemoryCacheEnabled = false
-	common.RedisEnabled = false
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	common.RedisEnabled = true
+	common.RDB = redisClient
 	common.IsMasterNode = true
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -153,21 +157,30 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ChannelRatioHistory{},
 		&model.ChannelDailyCost{},
 		&model.ChannelDailyAPIKeyCost{},
-		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorRedisEffectState{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
 	))
+	redisRuntime, err := service.StartChannelMonitorRedisRuntime()
+	require.NoError(t, err)
 	require.NoError(t, service.ReloadChannelConcurrencyLimits(context.Background()))
 
 	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
+		require.NoError(t, redisRuntime.Stop(stopCtx))
+		stopCancel()
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
 		common.IsMasterNode = originalIsMasterNode
 		service.ResetChannelDailyCostSnapshotCache()
+		require.NoError(t, redisClient.Close())
 		sqlDB, sqlErr := db.DB()
 		if sqlErr == nil {
 			require.NoError(t, sqlDB.Close())
@@ -185,18 +198,23 @@ func aggregateChannelMonitorTestLogs(startTimestamp int64, endTimestamp int64) e
 func emitChannelMonitorControllerRealtimeEvents(t *testing.T, events ...model.ChannelMonitorEvent) {
 	t.Helper()
 	for _, event := range events {
-		if status := service.EmitChannelMonitorEvent(event); status == service.ChannelMonitorEventEnqueueInvalid {
-			t.Fatalf("invalid channel monitor event %s", event.EventId)
-		}
+		require.NoError(t, projectChannelSmartScheduleTestEvent(event))
 	}
-	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
 }
 
 var channelSmartScheduleTestEventSequence atomic.Uint64
 
 func projectChannelSmartScheduleTestEvent(event model.ChannelMonitorEvent) error {
 	event.EventSequence = channelSmartScheduleTestEventSequence.Add(1)
-	return service.ProjectChannelMonitorEventsForTest(event)
+	routeProjection, err := service.NewChannelMonitorRedisRouteHealthProjectionForClient(common.RDB)
+	if err != nil {
+		return err
+	}
+	if err := routeProjection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}); err != nil {
+		return err
+	}
+	return service.NewChannelMonitorRedisSharedProjectionWithClient(common.RDB).
+		HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event})
 }
 
 func projectChannelSmartScheduleMetricEventForTest(
@@ -1433,16 +1451,22 @@ func TestUpdateChannelMonitorSettingsRefreshesStaleInstanceBeforeCurrentRevision
 }
 
 func TestForceResetSmartScheduleDoesNotQueueTaskWhenCooldownSyncFails(t *testing.T) {
-	setupChannelMonitorControllerTestDB(t)
+	db := setupChannelMonitorControllerTestDB(t)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyRatio, false,
 		channelMonitorSmartScheduleApplyWeight, []string{}, 5, 80, 30,
 	)
+	serializedPolicies := channelSmartScheduleTestGroupPoliciesJSON(t, policy)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:         "true",
-		channelMonitorSmartScheduleGroupPoliciesOption:   channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+		channelMonitorSmartScheduleGroupPoliciesOption:   serializedPolicies,
 		channelMonitorSmartScheduleControlRevisionOption: "revision-current",
 	})
+	require.NoError(t, db.Create(&[]model.Option{
+		{Key: channelMonitorSmartScheduleEnabledOption, Value: "true"},
+		{Key: channelMonitorSmartScheduleGroupPoliciesOption, Value: serializedPolicies},
+		{Key: channelMonitorSmartScheduleControlRevisionOption, Value: "revision-current"},
+	}).Error)
 
 	originalRedisEnabled := common.RedisEnabled
 	originalRedisClient := common.RDB

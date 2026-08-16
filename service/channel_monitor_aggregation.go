@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -19,12 +20,11 @@ import (
 const (
 	channelMonitorAggregationInterval      = time.Minute
 	channelMonitorAggregationBoundaryDelay = time.Second
-	channelMonitorAggregationRecentTail    = 2 * time.Minute
+	channelMonitorAggregationNormalTail    = time.Minute
 	channelMonitorAggregationStartupTail   = 5 * time.Minute
-	channelMonitorAggregationRepairTail    = time.Hour + 5*time.Minute
-	channelMonitorAggregationRepairEvery   = time.Hour
 	channelMonitorAggregationBackfillChunk = time.Hour
-	channelMonitorAggregationRepairReserve = 5 * time.Second
+	channelMonitorDirtyRepairBatchSize     = 20
+	channelMonitorDirtyRepairLease         = 2 * time.Minute
 
 	channelMonitorAggregationBackfillDefaultMaxChunks     = 1
 	channelMonitorAggregationBackfillMaxChunks            = 24
@@ -113,29 +113,12 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 	if catchUp {
 		mode += "_catch_up"
 	}
-	if err := rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true, true); err != nil {
-		return err
+	if start < targetEnd {
+		if err := rebuildChannelMonitorAggregationRange(ctx, key, start, targetEnd, mode, true, true); err != nil {
+			return err
+		}
 	}
-	repairStart, repairEnd, repair := channelMonitorAggregationRepairWindow(targetEnd)
-	if startup || !repair {
-		return nil
-	}
-	repairDeadline := nextChannelMonitorAggregationRun(time.Now()).Add(-channelMonitorAggregationRepairReserve)
-	if !repairDeadline.After(time.Now()) {
-		logger.LogDebug(ctx, "渠道监控整点修复因接近下一分钟而跳过")
-		return nil
-	}
-	repairCtx, cancel := context.WithDeadline(ctx, repairDeadline)
-	defer cancel()
-	return rebuildChannelMonitorAggregationRange(
-		repairCtx,
-		key,
-		repairStart,
-		repairEnd,
-		"hourly_repair",
-		false,
-		false,
-	)
+	return repairChannelMonitorDirtyMinutes(ctx, key, targetEnd)
 }
 
 func upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx context.Context, targetEnd int64) error {
@@ -148,11 +131,13 @@ func upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx context.Context, tar
 	}
 	if upgraded {
 		logger.LogInfo(ctx, fmt.Sprintf(
-			"渠道监控缓存利用率升级完成: start=%d end=%d scanned_logs=%d metric_rows=%d",
+			"渠道监控缓存利用率升级完成: start=%d end=%d scanned_logs=%d route_metric_rows=%d api_key_metric_rows=%d generated_rows=%d",
 			result.StartTimestamp,
 			result.EndTimestamp,
 			result.ScannedLogRows,
 			result.MetricRows,
+			result.APIKeyMetricRows,
+			result.GeneratedRows(),
 		))
 	}
 	return nil
@@ -177,14 +162,56 @@ func channelMonitorAggregationStart(
 	if observedSharedAdvance {
 		model.InvalidateChannelMonitorAggregateCaches()
 	}
-	if completedThrough <= 0 || completedThrough >= start || completedThrough >= targetEnd {
+	if completedThrough <= 0 {
 		return start, false, nil
 	}
-	catchUpStart := completedThrough - int64(channelMonitorAggregationRecentTail/time.Second)
-	if catchUpStart < 0 {
-		catchUpStart = 0
+	if completedThrough >= targetEnd {
+		return targetEnd, false, nil
 	}
-	return catchUpStart, true, nil
+	return completedThrough, completedThrough < start, nil
+}
+
+func repairChannelMonitorDirtyMinutes(
+	ctx context.Context,
+	key channelMonitorAggregationDatabaseKey,
+	targetEnd int64,
+) error {
+	claimer := fmt.Sprintf("%s:%s", common.NodeName, common.GetRandomString(8))
+	claims, err := model.ClaimChannelMonitorDirtyMinutes(
+		ctx,
+		channelMonitorDirtyRepairBatchSize,
+		claimer,
+		common.GetTimestamp()+int64(channelMonitorDirtyRepairLease/time.Second),
+	)
+	if err != nil {
+		return fmt.Errorf("领取渠道监控脏分钟失败: %w", err)
+	}
+	for index, claim := range claims {
+		if claim.MinuteStart >= targetEnd {
+			if err := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:]); err != nil {
+				return fmt.Errorf("释放未完成的渠道监控脏分钟失败: %w", err)
+			}
+			return nil
+		}
+		minuteEnd := claim.MinuteStart + int64(channelMonitorAggregationInterval/time.Second)
+		if err := rebuildChannelMonitorAggregationRange(
+			ctx,
+			key,
+			claim.MinuteStart,
+			minuteEnd,
+			"dirty_minute_repair",
+			false,
+			false,
+		); err != nil {
+			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
+			return errors.Join(err, releaseErr)
+		}
+		if err := model.CompleteChannelMonitorDirtyMinutes(ctx, claimer, []model.ChannelMonitorDirtyMinute{claim}); err != nil {
+			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
+			return errors.Join(fmt.Errorf("完成渠道监控脏分钟失败: %w", err), releaseErr)
+		}
+	}
+	return nil
 }
 
 func rebuildChannelMonitorAggregationRange(
@@ -207,13 +234,15 @@ func rebuildChannelMonitorAggregationRange(
 	elapsed := time.Since(startedAt)
 	if err != nil {
 		return fmt.Errorf(
-			"重建失败: mode=%s start=%d end=%d scanned_logs=%d metric_rows=%d duration_bucket_rows=%d elapsed_ms=%d: %w",
+			"重建失败: mode=%s start=%d end=%d scanned_logs=%d route_metric_rows=%d api_key_metric_rows=%d duration_bucket_rows=%d generated_rows=%d elapsed_ms=%d: %w",
 			mode,
 			result.StartTimestamp,
 			result.EndTimestamp,
 			result.ScannedLogRows,
 			result.MetricRows,
+			result.APIKeyMetricRows,
 			result.DurationBucketRows,
+			result.GeneratedRows(),
 			elapsed.Milliseconds(),
 			err,
 		)
@@ -227,17 +256,18 @@ func rebuildChannelMonitorAggregationRange(
 		channelMonitorAggregationStateMu.Unlock()
 	}
 	message := fmt.Sprintf(
-		"渠道监控分钟聚合完成: mode=%s start=%d end=%d scanned_logs=%d metric_rows=%d duration_bucket_rows=%d generated_rows=%d elapsed_ms=%d",
+		"渠道监控分钟聚合完成: mode=%s start=%d end=%d scanned_logs=%d route_metric_rows=%d api_key_metric_rows=%d duration_bucket_rows=%d generated_rows=%d elapsed_ms=%d",
 		mode,
 		result.StartTimestamp,
 		result.EndTimestamp,
 		result.ScannedLogRows,
 		result.MetricRows,
+		result.APIKeyMetricRows,
 		result.DurationBucketRows,
-		result.MetricRows+result.DurationBucketRows,
+		result.GeneratedRows(),
 		elapsed.Milliseconds(),
 	)
-	if mode == "startup_repair" || mode == "hourly_repair" {
+	if mode == "startup_repair" || mode == "dirty_minute_repair" {
 		logger.LogInfo(ctx, message)
 	} else {
 		logger.LogDebug(ctx, message)
@@ -400,11 +430,13 @@ func runChannelMonitorCacheUtilizationBackfill(ctx context.Context, targetEnd in
 				return nil
 			}
 			return fmt.Errorf(
-				"缓存利用率历史补齐失败: start=%d end=%d scanned_logs=%d metric_rows=%d elapsed_ms=%d: %w",
+				"缓存利用率历史补齐失败: start=%d end=%d scanned_logs=%d route_metric_rows=%d api_key_metric_rows=%d generated_rows=%d elapsed_ms=%d: %w",
 				result.StartTimestamp,
 				result.EndTimestamp,
 				result.ScannedLogRows,
 				result.MetricRows,
+				result.APIKeyMetricRows,
+				result.GeneratedRows(),
 				time.Since(startedAt).Milliseconds(),
 				err,
 			)
@@ -479,7 +511,7 @@ func channelMonitorAggregationBackfillWindowMinutes() int {
 
 func channelMonitorAggregationWindow(now int64, startup bool) (int64, int64, string) {
 	targetEnd := now - now%int64(channelMonitorAggregationInterval/time.Second)
-	tail := channelMonitorAggregationRecentTail
+	tail := channelMonitorAggregationNormalTail
 	mode := "minute"
 	if startup {
 		tail = channelMonitorAggregationStartupTail
@@ -490,17 +522,6 @@ func channelMonitorAggregationWindow(now int64, startup bool) (int64, int64, str
 		start = 0
 	}
 	return start, targetEnd, mode
-}
-
-func channelMonitorAggregationRepairWindow(targetEnd int64) (int64, int64, bool) {
-	if targetEnd <= 0 || targetEnd%int64(channelMonitorAggregationRepairEvery/time.Second) != 0 {
-		return 0, 0, false
-	}
-	start := targetEnd - int64(channelMonitorAggregationRepairTail/time.Second)
-	if start < 0 {
-		start = 0
-	}
-	return start, targetEnd, true
 }
 
 func channelMonitorAggregationReadyEnd(now time.Time) int64 {

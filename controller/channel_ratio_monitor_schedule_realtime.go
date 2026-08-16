@@ -1,159 +1,55 @@
 package controller
 
 import (
+	"context"
 	"math"
-	"net/http"
 	"sort"
-	"strings"
-	"sync"
-	"time"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
-const channelSmartScheduleProjectedEventDelay = 50 * time.Millisecond
-
-type channelSmartScheduleProjectedRouteKey struct {
-	channelId int
-	modelName string
-}
-
-type channelSmartScheduleProjectedRouteFlags struct {
-	protect     bool
-	rateLimited bool
-}
-
-var channelSmartScheduleProjectedEvents = struct {
-	sync.Mutex
-	pending map[channelSmartScheduleProjectedRouteKey]channelSmartScheduleProjectedRouteFlags
-	running bool
-}{
-	pending: make(map[channelSmartScheduleProjectedRouteKey]channelSmartScheduleProjectedRouteFlags),
-}
-
-func init() {
-	service.RegisterChannelMonitorEventProjectedHandler(handleChannelSmartScheduleProjectedEvents)
-}
-
-func handleChannelSmartScheduleProjectedEvents(events []model.ChannelMonitorEvent) {
-	affected := make(map[channelSmartScheduleProjectedRouteKey]channelSmartScheduleProjectedRouteFlags)
-	for _, event := range events {
-		if !channelSmartScheduleEventAffectsScheduling(event) {
-			continue
-		}
-		modelName := ratio_setting.FormatMatchingModelName(strings.TrimSpace(event.ModelName))
-		if event.ChannelId <= 0 || modelName == "" {
-			continue
-		}
-		key := channelSmartScheduleProjectedRouteKey{channelId: event.ChannelId, modelName: modelName}
-		flags := affected[key]
-		if event.Source == model.ChannelMonitorEventSourceBusiness &&
-			event.RuntimeProtectionEligible && event.RequestDispatched &&
-			event.Outcome == model.ChannelMonitorEventOutcomeFailure && !event.FinalRetrySummary {
-			if event.StatusCode != nil && *event.StatusCode == http.StatusTooManyRequests {
-				flags.rateLimited = true
-			} else {
-				flags.protect = true
-			}
-		}
-		affected[key] = flags
-	}
-	if len(affected) == 0 {
-		return
-	}
-
-	channelSmartScheduleProjectedEvents.Lock()
-	for key, flags := range affected {
-		current := channelSmartScheduleProjectedEvents.pending[key]
-		current.protect = current.protect || flags.protect
-		current.rateLimited = current.rateLimited || flags.rateLimited
-		channelSmartScheduleProjectedEvents.pending[key] = current
-	}
-	if channelSmartScheduleProjectedEvents.running {
-		channelSmartScheduleProjectedEvents.Unlock()
-		return
-	}
-	channelSmartScheduleProjectedEvents.running = true
-	channelSmartScheduleProjectedEvents.Unlock()
-	go runChannelSmartScheduleProjectedEventWorker()
-}
-
-func runChannelSmartScheduleProjectedEventWorker() {
-	timer := time.NewTimer(channelSmartScheduleProjectedEventDelay)
-	defer timer.Stop()
-	<-timer.C
-
-	channelSmartScheduleProjectedEvents.Lock()
-	pending := channelSmartScheduleProjectedEvents.pending
-	channelSmartScheduleProjectedEvents.pending = make(
-		map[channelSmartScheduleProjectedRouteKey]channelSmartScheduleProjectedRouteFlags,
-	)
-	channelSmartScheduleProjectedEvents.running = false
-	channelSmartScheduleProjectedEvents.Unlock()
-
-	keys := make([]channelSmartScheduleProjectedRouteKey, 0, len(pending))
-	for key := range pending {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i int, j int) bool {
-		if keys[i].modelName != keys[j].modelName {
-			return keys[i].modelName < keys[j].modelName
-		}
-		return keys[i].channelId < keys[j].channelId
-	})
-	for _, key := range keys {
-		flags := pending[key]
-		if flags.rateLimited {
-			protectChannelSmartScheduleProjectedRateLimit(key.channelId, key.modelName)
-		}
-		if flags.protect {
-			protectChannelSmartScheduleProjectedFailure(key.channelId, key.modelName)
-		}
-		enqueueChannelSmartScheduleAdaptiveRefresh(key.channelId, key.modelName)
-	}
-}
-
-func channelSmartScheduleEventAffectsScheduling(event model.ChannelMonitorEvent) bool {
-	return event.SchedulingEligible
-}
-
 func channelSmartScheduleRealtimeEvents(
+	ctx context.Context,
 	channelId int,
 	modelName string,
 	windowStart int64,
 	observationSince int64,
 	maxRequests int,
-) ([]model.ChannelMonitorEvent, service.ChannelMonitorRealtimeSnapshot) {
-	window, available := service.GetChannelMonitorRealtimeWindow(channelId, modelName)
+) ([]model.ChannelMonitorEvent, service.ChannelMonitorRedisRouteHealthSnapshot, error) {
+	window, available, err := service.GetChannelMonitorRedisRouteHealthWindow(ctx, channelId, modelName)
+	if err != nil {
+		return nil, service.ChannelMonitorRedisRouteHealthSnapshot{}, err
+	}
 	if !available {
-		return nil, service.ChannelMonitorRealtimeSnapshot{
-			CoverageStart: service.GetChannelMonitorRealtimeProjectionCoverageStart(),
-		}
+		return nil, service.ChannelMonitorRedisRouteHealthSnapshot{
+			CoverageStart: service.ChannelMonitorRedisRouteHealthCoverageStart(),
+		}, nil
 	}
 	windowStart = max(windowStart, observationSince)
-	events := make([]model.ChannelMonitorEvent, 0, len(window.Events))
-	for _, event := range window.Events {
-		if event.OccurredAt < windowStart || !channelSmartScheduleEventAffectsScheduling(event) ||
-			!event.RequestDispatched || event.FinalRetrySummary ||
-			event.Outcome == model.ChannelMonitorEventOutcomeCanceled ||
-			event.Outcome == model.ChannelMonitorEventOutcomeUnresolved {
-			continue
-		}
-		if event.StatusCode != nil && *event.StatusCode == http.StatusTooManyRequests {
-			continue
-		}
-		events = append(events, event)
-	}
+	events := channelSmartScheduleRedisWindowEvents(
+		window, channelId, modelName, windowStart, 0, maxRequests, 0,
+	)
+	return events, window.Snapshot, nil
+}
+
+func channelSmartScheduleEventsForWindow(
+	events []model.ChannelMonitorEvent,
+	windowStart int64,
+	maxRequests int,
+) []model.ChannelMonitorEvent {
+	first := sort.Search(len(events), func(index int) bool {
+		return events[index].OccurredAt >= windowStart
+	})
+	events = events[first:]
 	if maxRequests > 0 && len(events) > maxRequests {
 		events = events[len(events)-maxRequests:]
 	}
-	return events, window.Snapshot
+	return events
 }
 
 func channelSmartScheduleRealtimeAdaptiveMetric(
+	ctx context.Context,
 	channelId int,
 	modelName string,
 	windowStart int64,
@@ -161,13 +57,16 @@ func channelSmartScheduleRealtimeAdaptiveMetric(
 	maxRequests int,
 	warningSeconds float64,
 	criticalSeconds float64,
-) (model.ChannelSmartScheduleAdaptiveHealthMetric, service.ChannelMonitorRealtimeSnapshot) {
-	events, snapshot := channelSmartScheduleRealtimeEvents(
-		channelId, modelName, windowStart, observationSince, maxRequests,
+) (model.ChannelSmartScheduleAdaptiveHealthMetric, service.ChannelMonitorRedisRouteHealthSnapshot, error) {
+	events, snapshot, err := channelSmartScheduleRealtimeEvents(
+		ctx, channelId, modelName, windowStart, observationSince, maxRequests,
 	)
+	if err != nil {
+		return model.ChannelSmartScheduleAdaptiveHealthMetric{}, snapshot, err
+	}
 	return channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
 		events, warningSeconds, criticalSeconds,
-	), snapshot
+	), snapshot, nil
 }
 
 func channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
@@ -289,14 +188,4 @@ func channelSmartScheduleRealtimeAverage(metric model.ChannelSmartScheduleAdapti
 		tps = &value
 	}
 	return firstTokenMs, tps
-}
-
-func resetChannelSmartScheduleProjectedEventsForTest() {
-	channelSmartScheduleProjectedEvents.Lock()
-	channelSmartScheduleProjectedEvents.pending = make(
-		map[channelSmartScheduleProjectedRouteKey]channelSmartScheduleProjectedRouteFlags,
-	)
-	channelSmartScheduleProjectedEvents.running = false
-	channelSmartScheduleProjectedEvents.Unlock()
-	_ = common.GetTimestamp()
 }

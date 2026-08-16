@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -420,7 +421,6 @@ func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *te
 	skipContext.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", channel.Id)}}
 	skipContext.Set("id", user.Id)
 	TestChannel(skipContext)
-	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
 
 	assert.Equal(t, http.StatusOK, skipRecorder.Code)
 	var skipResponse struct {
@@ -440,17 +440,17 @@ func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *te
 	assert.Equal(t, int64(1), state.SampleCount)
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
 	assert.Equal(t, int64(2), consumeLogCount)
-	window, available := service.GetChannelMonitorRealtimeWindow(channel.Id, "model-a")
-	require.True(t, available)
-	require.GreaterOrEqual(t, len(window.Events), 2)
-	assert.True(t, window.Events[len(window.Events)-2].SchedulingEligible)
-	assert.False(t, window.Events[len(window.Events)-1].SchedulingEligible)
+	require.Eventually(t, func() bool {
+		window, available, windowErr := service.GetChannelMonitorRedisRouteHealthWindow(context.Background(), channel.Id, "model-a")
+		return windowErr == nil && available && len(window.Samples) == 1 &&
+			window.Samples[0].SchedulingEligible
+	}, time.Second, 10*time.Millisecond)
 
 	now := common.GetTimestamp()
 	_, err := model.AggregateChannelMonitorMinuteRange(context.Background(), now-120, now+120)
 	require.NoError(t, err)
 	var minuteMetricCount int64
-	require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&minuteMetricCount).Error)
+	require.NoError(t, db.Model(&model.ChannelMonitorMinuteRouteMetric{}).Count(&minuteMetricCount).Error)
 	assert.Zero(t, minuteMetricCount)
 }
 

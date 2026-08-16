@@ -149,6 +149,11 @@ func main() {
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
 	controller.RegisterScheduledSystemTasks()
+	channelMonitorRedisRuntime, err := service.StartChannelMonitorRedisRuntime()
+	if err != nil {
+		common.FatalLog("failed to start channel monitor Redis runtime: " + err.Error())
+		return
+	}
 	service.StartSystemTaskRunner()
 	service.StartChannelMonitorAggregationWorker()
 
@@ -231,6 +236,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
+	}
+	if err := channelMonitorRedisRuntime.Stop(ctx); err != nil {
+		common.SysError(fmt.Sprintf("failed to stop channel monitor Redis runtime: %v", err))
 	}
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {

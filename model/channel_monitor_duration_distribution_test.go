@@ -72,13 +72,15 @@ func TestAggregateChannelMonitorMinuteFirstTokenBucketsShareChannelModelAcrossGr
 func TestChannelMonitorRoutePerformanceMetricSeparatesHistoricalAndDistributionSamples(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	minuteStart := int64(120)
-	require.NoError(t, db.Create(&ChannelMonitorMinuteMetric{
-		MinuteStart: minuteStart, ChannelId: 9, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "all",
+	modelKey := channelMonitorMinuteDimensionKey("model-a")
+	groupKey := channelMonitorMinuteDimensionKey("vip")
+	require.NoError(t, db.Create(&ChannelMonitorMinuteRouteMetric{
+		MinuteStart: minuteStart, ChannelId: 9, ModelKey: modelKey, GroupKey: groupKey, APIKeyKey: "all",
 		ModelName: "model-a", GroupName: "vip", SampleCount: 1000,
 		FirstTokenSampleCount: 1000, FirstTokenTotalMs: 300_000, LastUsedTime: minuteStart,
 	}).Error)
 	require.NoError(t, db.Create(&ChannelMonitorMinuteDurationBucket{
-		MinuteStart: minuteStart, ChannelId: 9, ModelKey: "model-a", GroupKey: "vip",
+		MinuteStart: minuteStart, ChannelId: 9, ModelKey: modelKey, GroupKey: groupKey,
 		ModelName: "model-a", GroupName: "vip", BucketIndex: channelMonitorDurationBucketIndex(300),
 		Count: 1, TotalMs: 300,
 	}).Error)

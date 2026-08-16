@@ -18,12 +18,7 @@ func projectChannelSmartScheduleRuntimeEventForTest(
 	if failure {
 		outcome = model.ChannelMonitorEventOutcomeFailure
 	}
-	event := model.NewChannelMonitorEvent(
-		channelId,
-		model.ChannelMonitorEventSourceBusiness,
-		outcome,
-		timestamp,
-	)
+	event := model.NewChannelMonitorEvent(channelId, model.ChannelMonitorEventSourceBusiness, outcome, timestamp)
 	event.ModelName = modelName
 	event.RequestDispatched = true
 	event.IsFinalAttempt = true
@@ -57,20 +52,22 @@ func projectAndProtectChannelSmartScheduleRuntimeFailureForTest(
 		statusCode := err.StatusCode
 		event.StatusCode = &statusCode
 		_ = projectChannelSmartScheduleTestEvent(event)
-		protectChannelSmartScheduleProjectedRateLimit(channelId, modelName)
+		_ = applyChannelSmartScheduleRuntimeFailureWithSource(
+			channelId, modelName, err, false, false, false, nil, true, 0, 0,
+		)
 		return
 	}
 	if !isChannelSmartScheduleRuntimeFailure(err) {
 		return
 	}
 	projectChannelSmartScheduleRuntimeEventForTest(channelId, modelName, now, true)
-	protectChannelSmartScheduleProjectedFailure(channelId, modelName)
+	_ = applyChannelSmartScheduleRuntimeFailureWithSource(
+		channelId, modelName, err, false, false, false, nil, true, 0, 0,
+	)
 }
 
 func projectChannelSmartScheduleRuntimeRequestSuccessForTest(channelId int, modelName string) {
-	projectChannelSmartScheduleRuntimeEventForTest(
-		channelId, modelName, time.Now().Unix(), false,
-	)
+	projectChannelSmartScheduleRuntimeEventForTest(channelId, modelName, time.Now().Unix(), false)
 }
 
 func projectChannelSmartScheduleRuntimeProbeSuccessForTest(channelId int, modelName string) {
@@ -85,9 +82,7 @@ func projectChannelSmartScheduleRuntimeFailureForTest(
 	revision string,
 ) channelSmartScheduleRuntimeHealthSnapshot {
 	projectChannelSmartScheduleRuntimeEventForTest(channelId, modelName, now, true)
-	return getChannelSmartScheduleRuntimeHealth(
-		channelId, modelName, now, retentionSeconds, revision,
-	)
+	return getChannelSmartScheduleRuntimeHealth(channelId, modelName, now, retentionSeconds, revision)
 }
 
 func projectChannelSmartScheduleRuntimeSuccessForTest(

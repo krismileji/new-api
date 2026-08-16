@@ -204,7 +204,7 @@ func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalida
 	var blocked atomic.Bool
 	const callbackName = "test:block_stale_channel_monitor_cache_query"
 	require.NoError(t, db.Callback().Row().After("gorm:row").Register(callbackName, func(tx *gorm.DB) {
-		if tx.Statement == nil || tx.Statement.Table != "channel_monitor_minute_metrics" ||
+		if tx.Statement == nil || tx.Statement.Table != channelMonitorMinuteRouteMetricTable ||
 			!blocked.CompareAndSwap(false, true) {
 			return
 		}
@@ -361,7 +361,8 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 	})
 	require.NoError(t, secondDB.AutoMigrate(
 		&Log{},
-		&ChannelMonitorMinuteMetric{},
+		&ChannelMonitorMinuteRouteMetric{},
+		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelSmartScheduleModelSampleState{},
 	))
 	DB = secondDB

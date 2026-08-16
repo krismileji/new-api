@@ -16,27 +16,26 @@ import (
 	"gorm.io/gorm"
 )
 
-const channelMonitorMinuteSeconds = int64(60)
+const (
+	channelMonitorMinuteSeconds              = int64(60)
+	channelMonitorMinuteRetryLookupBatchSize = 500
+)
 
 const (
 	ChannelMonitorSmartScheduleProbeLogKey = "channel_monitor_smart_schedule_probe"
 	ChannelMonitorChannelTestLogKey        = "channel_monitor_channel_test"
 )
 
-// ChannelMonitorMinuteMetric stores one minute of channel-monitor metrics for
-// one channel/model/group/API-key combination. It is deliberately kept in the
-// primary database so the dashboard does not rescan the log database.
-type ChannelMonitorMinuteMetric struct {
+// ChannelMonitorMinuteRouteMetric stores one minute of channel-monitor metrics
+// for one channel/model/group combination in the primary database.
+type ChannelMonitorMinuteRouteMetric struct {
 	Id          int64  `gorm:"primaryKey"`
-	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_dimensions;index:idx_channel_monitor_minute_start"`
-	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_dimensions;index:idx_channel_monitor_minute_channel"`
-	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	APIKeyKey   string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
+	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:3;index:idx_cm_route_channel_window,priority:2;index:idx_cm_route_group_window,priority:2"`
+	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:1;index:idx_cm_route_channel_window,priority:1;index:idx_cm_route_group_window,priority:3"`
+	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:2;index:idx_cm_route_channel_window,priority:3;index:idx_cm_route_group_window,priority:4"`
+	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:4;index:idx_cm_route_channel_window,priority:4;index:idx_cm_route_group_window,priority:1"`
 	ModelName   string `gorm:"size:255;not null"`
 	GroupName   string `gorm:"size:255;not null"`
-	APIKeyId    int    `gorm:"not null"`
-	APIKeyName  string `gorm:"size:255;not null"`
 
 	ActualSuccessCount          int64 `gorm:"not null"`
 	ActualFailureCount          int64 `gorm:"not null"`
@@ -66,8 +65,55 @@ type ChannelMonitorMinuteMetric struct {
 	TPSSampleCount        int64   `gorm:"not null"`
 	TPSTotal              float64 `gorm:"not null"`
 	LatestTPS             *float64
-	LatestTPSAt           int64 `gorm:"not null"`
-	LastUsedTime          int64 `gorm:"not null"`
+	LatestTPSAt           int64  `gorm:"not null"`
+	LastUsedTime          int64  `gorm:"not null"`
+	APIKeyKey             string `gorm:"-" json:"-"`
+	APIKeyId              int    `gorm:"-" json:"-"`
+	APIKeyName            string `gorm:"-" json:"-"`
+}
+
+// ChannelMonitorMinuteAPIKeyMetric stores minute-level success/failure/cache
+// detail at API-key grain. Route performance fields intentionally do not
+// exist here.
+type ChannelMonitorMinuteAPIKeyMetric struct {
+	Id          int64  `gorm:"primaryKey"`
+	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:3;index:idx_cm_api_channel_window,priority:2;index:idx_cm_api_group_window,priority:2"`
+	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:1;index:idx_cm_api_channel_window,priority:1;index:idx_cm_api_group_window,priority:3"`
+	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:2;index:idx_cm_api_channel_window,priority:3;index:idx_cm_api_group_window,priority:4"`
+	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:4;index:idx_cm_api_channel_window,priority:4;index:idx_cm_api_group_window,priority:1"`
+	APIKeyKey   string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:5;index:idx_cm_api_channel_window,priority:5;index:idx_cm_api_group_window,priority:5"`
+	ModelName   string `gorm:"size:255;not null"`
+	GroupName   string `gorm:"size:255;not null"`
+	APIKeyId    int    `gorm:"not null"`
+	APIKeyName  string `gorm:"size:255;not null"`
+
+	ActualSuccessCount          int64 `gorm:"not null"`
+	ActualFailureCount          int64 `gorm:"not null"`
+	FinalSuccessCount           int64 `gorm:"not null"`
+	FinalFailureCount           int64 `gorm:"not null"`
+	RateLimitActualFailureCount int64 `gorm:"not null;default:0"`
+	RateLimitFinalFailureCount  int64 `gorm:"not null;default:0"`
+	RetryFailureCount           int64 `gorm:"not null;default:0"`
+	RetryFailureDurationTotalMs int64 `gorm:"not null;default:0"`
+	RetryFailureUnder1sCount    int64 `gorm:"column:retry_failure_under_1s_count;not null;default:0"`
+	RetryFailure1To3sCount      int64 `gorm:"column:retry_failure_1_to_3s_count;not null;default:0"`
+	RetryFailure3To10sCount     int64 `gorm:"column:retry_failure_3_to_10s_count;not null;default:0"`
+	RetryFailure10To30sCount    int64 `gorm:"column:retry_failure_10_to_30s_count;not null;default:0"`
+	RetryFailure30To60sCount    int64 `gorm:"column:retry_failure_30_to_60s_count;not null;default:0"`
+	RetryFailureOver60sCount    int64 `gorm:"column:retry_failure_over_60s_count;not null;default:0"`
+	CacheHitCount               int64 `gorm:"not null"`
+	CacheSampleCount            int64 `gorm:"not null"`
+	CacheReadTokens             int64 `gorm:"not null;default:0"`
+	InputTokens                 int64 `gorm:"not null;default:0"`
+	CacheWriteCount             int64 `gorm:"not null"`
+}
+
+func (ChannelMonitorMinuteRouteMetric) TableName() string {
+	return channelMonitorMinuteRouteMetricTable
+}
+
+func (ChannelMonitorMinuteAPIKeyMetric) TableName() string {
+	return channelMonitorMinuteAPIKeyMetricTable
 }
 
 type channelMonitorMinuteLog struct {
@@ -115,6 +161,13 @@ type channelMonitorMinuteAggregateKey struct {
 	APIKeyKey   string
 }
 
+type channelMonitorMinuteRouteAggregateKey struct {
+	MinuteStart int64
+	ChannelId   int
+	ModelKey    string
+	GroupKey    string
+}
+
 func channelMonitorMinuteStart(timestamp int64) int64 {
 	return timestamp - timestamp%channelMonitorMinuteSeconds
 }
@@ -151,6 +204,21 @@ func channelMonitorMinuteOther(other string) (channelMonitorMinuteLogOther, bool
 	return parsed, true
 }
 
+func channelMonitorMinuteAttemptDurationMs(useTime int, other channelMonitorMinuteLogOther, parsed bool) int64 {
+	durationMs := int64(useTime)
+	if durationMs < 0 {
+		durationMs = 0
+	} else if durationMs > math.MaxInt64/1000 {
+		durationMs = math.MaxInt64
+	} else {
+		durationMs *= 1000
+	}
+	if parsed && other.AttemptDurationMs != nil && *other.AttemptDurationMs >= 0 {
+		return *other.AttemptDurationMs
+	}
+	return durationMs
+}
+
 func channelMonitorMinuteNonZero(value *float64) bool {
 	return value != nil && *value != 0
 }
@@ -176,7 +244,7 @@ func channelMonitorMinuteAddTokens(total *int64, value int64) {
 	*total += value
 }
 
-func (aggregate *ChannelMonitorMinuteMetric) addCacheUtilization(log channelMonitorMinuteLog, other channelMonitorMinuteLogOther) {
+func (aggregate *ChannelMonitorMinuteRouteMetric) addCacheUtilization(log channelMonitorMinuteLog, other channelMonitorMinuteLogOther) {
 	cacheReadTokens := channelMonitorMinuteTokenCount(other.CacheTokens)
 	inputTokens := int64(max(log.PromptTokens, 0))
 	if normalizedInputTokens := channelMonitorMinuteTokenCount(other.InputTokensTotal); normalizedInputTokens > 0 {
@@ -213,7 +281,7 @@ func channelMonitorMinuteRateLimited(value any) bool {
 	return false
 }
 
-func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog) {
+func (aggregate *ChannelMonitorMinuteRouteMetric) addLog(log channelMonitorMinuteLog) {
 	if log.Type == LogTypeConsume {
 		aggregate.ActualSuccessCount++
 		aggregate.FinalSuccessCount++
@@ -304,7 +372,7 @@ func (aggregate *ChannelMonitorMinuteMetric) addLog(log channelMonitorMinuteLog)
 	}
 }
 
-func (aggregate *ChannelMonitorMinuteMetric) addRetryFailureDuration(durationMs int64) {
+func (aggregate *ChannelMonitorMinuteRouteMetric) addRetryFailureDuration(durationMs int64) {
 	if durationMs < 0 {
 		durationMs = 0
 	}
@@ -330,7 +398,7 @@ func (aggregate *ChannelMonitorMinuteMetric) addRetryFailureDuration(durationMs 
 	}
 }
 
-func (aggregate *ChannelMonitorMinuteMetric) removeRetryFailureDuration(durationMs int64) {
+func (aggregate *ChannelMonitorMinuteRouteMetric) removeRetryFailureDuration(durationMs int64) {
 	if aggregate.RetryFailureCount <= 0 {
 		return
 	}
@@ -359,11 +427,79 @@ func (aggregate *ChannelMonitorMinuteMetric) removeRetryFailureDuration(duration
 	}
 }
 
+// addLog mirrors route counters into the API-key detail row while deliberately
+// dropping route performance fields.
+func (aggregate *ChannelMonitorMinuteAPIKeyMetric) addLog(log channelMonitorMinuteLog) {
+	route := ChannelMonitorMinuteRouteMetric{}
+	route.ActualSuccessCount = aggregate.ActualSuccessCount
+	route.ActualFailureCount = aggregate.ActualFailureCount
+	route.FinalSuccessCount = aggregate.FinalSuccessCount
+	route.FinalFailureCount = aggregate.FinalFailureCount
+	route.RateLimitActualFailureCount = aggregate.RateLimitActualFailureCount
+	route.RateLimitFinalFailureCount = aggregate.RateLimitFinalFailureCount
+	route.RetryFailureCount = aggregate.RetryFailureCount
+	route.RetryFailureDurationTotalMs = aggregate.RetryFailureDurationTotalMs
+	route.RetryFailureUnder1sCount = aggregate.RetryFailureUnder1sCount
+	route.RetryFailure1To3sCount = aggregate.RetryFailure1To3sCount
+	route.RetryFailure3To10sCount = aggregate.RetryFailure3To10sCount
+	route.RetryFailure10To30sCount = aggregate.RetryFailure10To30sCount
+	route.RetryFailure30To60sCount = aggregate.RetryFailure30To60sCount
+	route.RetryFailureOver60sCount = aggregate.RetryFailureOver60sCount
+	route.CacheHitCount = aggregate.CacheHitCount
+	route.CacheSampleCount = aggregate.CacheSampleCount
+	route.CacheReadTokens = aggregate.CacheReadTokens
+	route.InputTokens = aggregate.InputTokens
+	route.CacheWriteCount = aggregate.CacheWriteCount
+	route.addLog(log)
+	aggregate.ActualSuccessCount = route.ActualSuccessCount
+	aggregate.ActualFailureCount = route.ActualFailureCount
+	aggregate.FinalSuccessCount = route.FinalSuccessCount
+	aggregate.FinalFailureCount = route.FinalFailureCount
+	aggregate.RateLimitActualFailureCount = route.RateLimitActualFailureCount
+	aggregate.RateLimitFinalFailureCount = route.RateLimitFinalFailureCount
+	aggregate.RetryFailureCount = route.RetryFailureCount
+	aggregate.RetryFailureDurationTotalMs = route.RetryFailureDurationTotalMs
+	aggregate.RetryFailureUnder1sCount = route.RetryFailureUnder1sCount
+	aggregate.RetryFailure1To3sCount = route.RetryFailure1To3sCount
+	aggregate.RetryFailure3To10sCount = route.RetryFailure3To10sCount
+	aggregate.RetryFailure10To30sCount = route.RetryFailure10To30sCount
+	aggregate.RetryFailure30To60sCount = route.RetryFailure30To60sCount
+	aggregate.RetryFailureOver60sCount = route.RetryFailureOver60sCount
+	aggregate.CacheHitCount = route.CacheHitCount
+	aggregate.CacheSampleCount = route.CacheSampleCount
+	aggregate.CacheReadTokens = route.CacheReadTokens
+	aggregate.InputTokens = route.InputTokens
+	aggregate.CacheWriteCount = route.CacheWriteCount
+}
+
+func (aggregate *ChannelMonitorMinuteAPIKeyMetric) removeRetryFailureDuration(durationMs int64) {
+	route := ChannelMonitorMinuteRouteMetric{
+		RetryFailureCount:           aggregate.RetryFailureCount,
+		RetryFailureDurationTotalMs: aggregate.RetryFailureDurationTotalMs,
+		RetryFailureUnder1sCount:    aggregate.RetryFailureUnder1sCount,
+		RetryFailure1To3sCount:      aggregate.RetryFailure1To3sCount,
+		RetryFailure3To10sCount:     aggregate.RetryFailure3To10sCount,
+		RetryFailure10To30sCount:    aggregate.RetryFailure10To30sCount,
+		RetryFailure30To60sCount:    aggregate.RetryFailure30To60sCount,
+		RetryFailureOver60sCount:    aggregate.RetryFailureOver60sCount,
+	}
+	route.removeRetryFailureDuration(durationMs)
+	aggregate.RetryFailureCount = route.RetryFailureCount
+	aggregate.RetryFailureDurationTotalMs = route.RetryFailureDurationTotalMs
+	aggregate.RetryFailureUnder1sCount = route.RetryFailureUnder1sCount
+	aggregate.RetryFailure1To3sCount = route.RetryFailure1To3sCount
+	aggregate.RetryFailure3To10sCount = route.RetryFailure3To10sCount
+	aggregate.RetryFailure10To30sCount = route.RetryFailure10To30sCount
+	aggregate.RetryFailure30To60sCount = route.RetryFailure30To60sCount
+	aggregate.RetryFailureOver60sCount = route.RetryFailureOver60sCount
+}
+
 func aggregateChannelMonitorMinuteLogs(
 	ctx context.Context,
 	startTimestamp int64,
 	endTimestamp int64,
-) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
+
+) ([]ChannelMonitorMinuteRouteMetric, []ChannelMonitorMinuteAPIKeyMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
 	return aggregateChannelMonitorMinuteLogsFromDatabase(ctx, LOG_DB, startTimestamp, endTimestamp)
 }
 
@@ -372,9 +508,10 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 	logDB *gorm.DB,
 	startTimestamp int64,
 	endTimestamp int64,
-) ([]ChannelMonitorMinuteMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
+
+) ([]ChannelMonitorMinuteRouteMetric, []ChannelMonitorMinuteAPIKeyMetric, []ChannelMonitorMinuteDurationBucket, int, error) {
 	if startTimestamp >= endTimestamp {
-		return []ChannelMonitorMinuteMetric{}, []ChannelMonitorMinuteDurationBucket{}, 0, nil
+		return []ChannelMonitorMinuteRouteMetric{}, []ChannelMonitorMinuteAPIKeyMetric{}, []ChannelMonitorMinuteDurationBucket{}, 0, nil
 	}
 	groupColumn := channelMonitorLogGroupColumn()
 	selectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, is_stream, prompt_tokens, completion_tokens, use_time, other, created_at, request_id"
@@ -387,19 +524,32 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		Order("created_at ASC").
 		Rows()
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
 	}
 	defer rows.Close()
 
 	scannedLogRows := 0
-	aggregates := make(map[channelMonitorMinuteAggregateKey]*ChannelMonitorMinuteMetric)
+	routeAggregates := make(map[channelMonitorMinuteRouteAggregateKey]*ChannelMonitorMinuteRouteMetric)
+	apiKeyAggregates := make(map[channelMonitorMinuteAggregateKey]*ChannelMonitorMinuteAPIKeyMetric)
 	durationBuckets := make(map[channelMonitorMinuteDurationBucketKey]*ChannelMonitorMinuteDurationBucket)
-	type pendingRetry struct {
-		aggregate  *ChannelMonitorMinuteMetric
+	type retryMatchKey struct {
+		requestId  string
+		channelId  int
+		modelKey   string
+		groupKey   string
+		apiKeyKey  string
 		durationMs int64
 	}
-	retriesByRequest := make(map[string][]pendingRetry)
-	finalSummariesByRequest := make(map[string][]pendingRetry)
+	type pendingRetry struct {
+		route     *ChannelMonitorMinuteRouteMetric
+		apiKey    *ChannelMonitorMinuteAPIKeyMetric
+		createdAt int64
+	}
+	retriesByKey := make(map[retryMatchKey][]pendingRetry)
+	finalSummaryCountsByKey := make(map[retryMatchKey]int)
+	targetRetryKeys := make(map[retryMatchKey]struct{})
+	targetRetryRequestIds := make(map[string]struct{})
+	retryKeys := make([]retryMatchKey, 0)
 	for rows.Next() {
 		var log channelMonitorMinuteLog
 		if err := rows.Scan(
@@ -418,25 +568,15 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 			&log.CreatedAt,
 			&log.RequestId,
 		); err != nil {
-			return nil, nil, scannedLogRows, err
+			return nil, nil, nil, scannedLogRows, err
 		}
 		scannedLogRows++
 		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
 		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
 			continue
 		}
-		durationMs := int64(log.UseTime)
-		if durationMs < 0 {
-			durationMs = 0
-		} else if durationMs > math.MaxInt64/1000 {
-			durationMs = math.MaxInt64
-		} else {
-			durationMs *= 1000
-		}
+		durationMs := channelMonitorMinuteAttemptDurationMs(log.UseTime, parsedOther, parsed)
 		if parsed {
-			if parsedOther.AttemptDurationMs != nil && *parsedOther.AttemptDurationMs >= 0 {
-				durationMs = *parsedOther.AttemptDurationMs
-			}
 			log.FinalRetrySummary = parsedOther.FinalRetrySummary
 			log.RateLimited = channelMonitorMinuteRateLimited(parsedOther.StatusCode)
 		}
@@ -446,38 +586,57 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		apiKeyName := channelMonitorMinuteMetricNames(log.TokenName, 255)
 		modelKey := channelMonitorMinuteDimensionKey(modelName)
 		groupKey := channelMonitorMinuteDimensionKey(groupName)
-		apiKeyKey := channelMonitorMinuteDimensionKey(channelMonitorMinuteAPIKeyIdentity(log.TokenId, apiKeyName))
-		key := channelMonitorMinuteAggregateKey{
+		apiKeyDimensionKey := channelMonitorMinuteDimensionKey(channelMonitorMinuteAPIKeyIdentity(log.TokenId, apiKeyName))
+		routeKey := channelMonitorMinuteRouteAggregateKey{
 			MinuteStart: channelMonitorMinuteStart(log.CreatedAt),
 			ChannelId:   log.ChannelId,
 			ModelKey:    modelKey,
 			GroupKey:    groupKey,
-			APIKeyKey:   apiKeyKey,
 		}
-		aggregate := aggregates[key]
-		if aggregate == nil {
-			aggregate = &ChannelMonitorMinuteMetric{
-				MinuteStart: key.MinuteStart,
+		apiAggregateKey := channelMonitorMinuteAggregateKey{
+			MinuteStart: routeKey.MinuteStart,
+			ChannelId:   routeKey.ChannelId,
+			ModelKey:    routeKey.ModelKey,
+			GroupKey:    routeKey.GroupKey,
+			APIKeyKey:   apiKeyDimensionKey,
+		}
+		routeAggregate := routeAggregates[routeKey]
+		if routeAggregate == nil {
+			routeAggregate = &ChannelMonitorMinuteRouteMetric{
+				MinuteStart: routeKey.MinuteStart,
 				ChannelId:   log.ChannelId,
 				ModelKey:    modelKey,
 				GroupKey:    groupKey,
-				APIKeyKey:   apiKeyKey,
+				ModelName:   modelName,
+				GroupName:   groupName,
+			}
+			routeAggregates[routeKey] = routeAggregate
+		}
+		apiAggregate := apiKeyAggregates[apiAggregateKey]
+		if apiAggregate == nil {
+			apiAggregate = &ChannelMonitorMinuteAPIKeyMetric{
+				MinuteStart: routeKey.MinuteStart,
+				ChannelId:   log.ChannelId,
+				ModelKey:    modelKey,
+				GroupKey:    groupKey,
+				APIKeyKey:   apiKeyDimensionKey,
 				ModelName:   modelName,
 				GroupName:   groupName,
 				APIKeyId:    log.TokenId,
 				APIKeyName:  apiKeyName,
 			}
-			aggregates[key] = aggregate
-		} else if aggregate.APIKeyName == "" {
-			aggregate.APIKeyName = apiKeyName
+			apiKeyAggregates[apiAggregateKey] = apiAggregate
+		} else if apiAggregate.APIKeyName == "" {
+			apiAggregate.APIKeyName = apiKeyName
 		}
-		aggregate.addLog(log)
+		routeAggregate.addLog(log)
+		apiAggregate.addLog(log)
 		if log.Type == LogTypeConsume && log.IsStream && modelName != "" && parsed &&
 			parsedOther.FirstResponseTime != nil && *parsedOther.FirstResponseTime > 0 &&
 			!math.IsNaN(*parsedOther.FirstResponseTime) && !math.IsInf(*parsedOther.FirstResponseTime, 0) {
 			bucketIndex := channelMonitorDurationBucketIndex(*parsedOther.FirstResponseTime)
 			bucketKey := channelMonitorMinuteDurationBucketKey{
-				MinuteStart: key.MinuteStart,
+				MinuteStart: routeKey.MinuteStart,
 				ChannelId:   log.ChannelId,
 				ModelKey:    modelKey,
 				GroupKey:    groupKey,
@@ -486,7 +645,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 			bucket := durationBuckets[bucketKey]
 			if bucket == nil {
 				bucket = &ChannelMonitorMinuteDurationBucket{
-					MinuteStart: key.MinuteStart,
+					MinuteStart: routeKey.MinuteStart,
 					ChannelId:   log.ChannelId,
 					ModelKey:    modelKey,
 					GroupKey:    groupKey,
@@ -502,56 +661,116 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		if log.Type != LogTypeError || log.RequestId == "" || log.RateLimited {
 			continue
 		}
+		retryKey := retryMatchKey{
+			requestId:  log.RequestId,
+			channelId:  log.ChannelId,
+			modelKey:   modelKey,
+			groupKey:   groupKey,
+			apiKeyKey:  apiKeyDimensionKey,
+			durationMs: durationMs,
+		}
 		if log.FinalRetrySummary {
-			finalSummariesByRequest[log.RequestId] = append(
-				finalSummariesByRequest[log.RequestId],
-				pendingRetry{aggregate: aggregate, durationMs: durationMs},
-			)
+			finalSummaryCountsByKey[retryKey]++
 			continue
 		}
 		if log.IsRetryAttempt {
-			retriesByRequest[log.RequestId] = append(
-				retriesByRequest[log.RequestId],
-				pendingRetry{aggregate: aggregate, durationMs: durationMs},
-			)
+			retriesByKey[retryKey] = append(retriesByKey[retryKey], pendingRetry{
+				route: routeAggregate, apiKey: apiAggregate, createdAt: log.CreatedAt,
+			})
+			if _, exists := targetRetryKeys[retryKey]; !exists {
+				targetRetryKeys[retryKey] = struct{}{}
+				targetRetryRequestIds[log.RequestId] = struct{}{}
+				retryKeys = append(retryKeys, retryKey)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, scannedLogRows, err
+		return nil, nil, nil, scannedLogRows, err
 	}
-	for requestId, summaries := range finalSummariesByRequest {
-		retries := retriesByRequest[requestId]
-		for _, summary := range summaries {
-			matchedIndex := -1
-			for index := len(retries) - 1; index >= 0; index-- {
-				retry := retries[index]
-				if retry.durationMs != summary.durationMs ||
-					retry.aggregate.ChannelId != summary.aggregate.ChannelId ||
-					retry.aggregate.ModelKey != summary.aggregate.ModelKey ||
-					retry.aggregate.GroupKey != summary.aggregate.GroupKey ||
-					retry.aggregate.APIKeyKey != summary.aggregate.APIKeyKey {
-					continue
-				}
-				matchedIndex = index
-				break
-			}
-			if matchedIndex < 0 {
+	requestIds := make([]string, 0, len(targetRetryRequestIds))
+	for requestId := range targetRetryRequestIds {
+		requestIds = append(requestIds, requestId)
+	}
+	sort.Strings(requestIds)
+	outsideSelectColumns := "channel_id, model_name, " + groupColumn + " AS group_name, token_id, token_name, type, is_retry_attempt, use_time, other, created_at, request_id"
+	for start := 0; start < len(requestIds); start += channelMonitorMinuteRetryLookupBatchSize {
+		end := min(start+channelMonitorMinuteRetryLookupBatchSize, len(requestIds))
+		var outsideLogs []channelMonitorMinuteLog
+		if err := logDB.WithContext(ctx).
+			Model(&Log{}).
+			Select(outsideSelectColumns).
+			Where("type = ?", LogTypeError).
+			Where("channel_id > ?", 0).
+			Where("request_id IN ?", requestIds[start:end]).
+			Where("created_at < ? OR created_at >= ?", startTimestamp, endTimestamp).
+			Order("created_at ASC").
+			Find(&outsideLogs).Error; err != nil {
+			return nil, nil, nil, scannedLogRows, err
+		}
+		scannedLogRows += len(outsideLogs)
+		for _, log := range outsideLogs {
+			parsedOther, parsed := channelMonitorMinuteOther(log.Other)
+			if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
 				continue
 			}
-			retries[matchedIndex].aggregate.removeRetryFailureDuration(retries[matchedIndex].durationMs)
-			retries = append(retries[:matchedIndex], retries[matchedIndex+1:]...)
+			durationMs := channelMonitorMinuteAttemptDurationMs(log.UseTime, parsedOther, parsed)
+			modelName := channelMonitorMinuteMetricNames(channelSmartScheduleModelName(log.ModelName), 255)
+			groupName := channelMonitorMinuteMetricNames(log.GroupName, 255)
+			apiKeyName := channelMonitorMinuteMetricNames(log.TokenName, 255)
+			retryKey := retryMatchKey{
+				requestId:  log.RequestId,
+				channelId:  log.ChannelId,
+				modelKey:   channelMonitorMinuteDimensionKey(modelName),
+				groupKey:   channelMonitorMinuteDimensionKey(groupName),
+				apiKeyKey:  channelMonitorMinuteDimensionKey(channelMonitorMinuteAPIKeyIdentity(log.TokenId, apiKeyName)),
+				durationMs: durationMs,
+			}
+			if _, exists := targetRetryKeys[retryKey]; !exists || parsed && channelMonitorMinuteRateLimited(parsedOther.StatusCode) {
+				continue
+			}
+			if parsed && parsedOther.FinalRetrySummary {
+				finalSummaryCountsByKey[retryKey]++
+				continue
+			}
+			if log.IsRetryAttempt {
+				retriesByKey[retryKey] = append(retriesByKey[retryKey], pendingRetry{
+					createdAt: log.CreatedAt,
+				})
+			}
+		}
+	}
+	for _, retryKey := range retryKeys {
+		retries := retriesByKey[retryKey]
+		summaryCount := finalSummaryCountsByKey[retryKey]
+		if summaryCount == 0 {
+			continue
+		}
+		sort.SliceStable(retries, func(i int, j int) bool {
+			return retries[i].createdAt < retries[j].createdAt
+		})
+		matchedStart := max(len(retries)-summaryCount, 0)
+		for _, retry := range retries[matchedStart:] {
+			if retry.route == nil {
+				continue
+			}
+			retry.route.removeRetryFailureDuration(retryKey.durationMs)
+			retry.apiKey.removeRetryFailureDuration(retryKey.durationMs)
 		}
 	}
 
-	metrics := make([]ChannelMonitorMinuteMetric, 0, len(aggregates))
-	for _, aggregate := range aggregates {
+	metrics := make([]ChannelMonitorMinuteRouteMetric, 0, len(routeAggregates))
+	for _, aggregate := range routeAggregates {
 		metrics = append(metrics, *aggregate)
+	}
+	apiKeyMetrics := make([]ChannelMonitorMinuteAPIKeyMetric, 0, len(apiKeyAggregates))
+	for _, aggregate := range apiKeyAggregates {
+		apiKeyMetrics = append(apiKeyMetrics, *aggregate)
 	}
 	buckets := make([]ChannelMonitorMinuteDurationBucket, 0, len(durationBuckets))
 	for _, bucket := range durationBuckets {
 		buckets = append(buckets, *bucket)
 	}
-	return metrics, buckets, scannedLogRows, nil
+	return metrics, apiKeyMetrics, buckets, scannedLogRows, nil
 }
 
 // ChannelMonitorMinuteAggregationResult describes the work performed while
@@ -561,7 +780,12 @@ type ChannelMonitorMinuteAggregationResult struct {
 	EndTimestamp       int64
 	ScannedLogRows     int
 	MetricRows         int
+	APIKeyMetricRows   int
 	DurationBucketRows int
+}
+
+func (result ChannelMonitorMinuteAggregationResult) GeneratedRows() int {
+	return result.MetricRows + result.APIKeyMetricRows + result.DurationBucketRows
 }
 
 // AggregateChannelMonitorMinuteRange replaces the selected minute range with
@@ -590,16 +814,17 @@ func AggregateChannelMonitorMinuteRangeWithResult(
 	if startTimestamp >= endTimestamp {
 		return result, nil
 	}
-	metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
+	metrics, apiKeyMetrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogs(ctx, startTimestamp, endTimestamp)
 	result.ScannedLogRows = scannedLogRows
 	result.MetricRows = len(metrics)
+	result.APIKeyMetricRows = len(apiKeyMetrics)
 	result.DurationBucketRows = len(durationBuckets)
 	if err != nil {
 		return result, err
 	}
 	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return replaceChannelMonitorMinuteAggregates(
-			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+			tx, startTimestamp, endTimestamp, metrics, apiKeyMetrics, durationBuckets,
 		)
 	})
 	if err != nil {
@@ -665,17 +890,18 @@ func UpgradeChannelMonitorCacheUtilizationMetrics(
 		if LOG_DB == DB {
 			logDB = tx
 		}
-		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+		metrics, apiKeyMetrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
 			ctx, logDB, startTimestamp, endTimestamp,
 		)
 		result.ScannedLogRows = scannedLogRows
 		result.MetricRows = len(metrics)
+		result.APIKeyMetricRows = len(apiKeyMetrics)
 		result.DurationBucketRows = len(durationBuckets)
 		if err != nil {
 			return err
 		}
 		if err := replaceChannelMonitorMinuteAggregates(
-			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+			tx, startTimestamp, endTimestamp, metrics, apiKeyMetrics, durationBuckets,
 		); err != nil {
 			return err
 		}
@@ -746,17 +972,18 @@ func BackfillChannelMonitorCacheUtilizationRangeWithState(
 		if LOG_DB == DB {
 			logDB = tx
 		}
-		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+		metrics, apiKeyMetrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
 			ctx, logDB, startTimestamp, endTimestamp,
 		)
 		result.ScannedLogRows = scannedLogRows
 		result.MetricRows = len(metrics)
+		result.APIKeyMetricRows = len(apiKeyMetrics)
 		result.DurationBucketRows = len(durationBuckets)
 		if err != nil {
 			return err
 		}
 		if err := replaceChannelMonitorMinuteAggregates(
-			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+			tx, startTimestamp, endTimestamp, metrics, apiKeyMetrics, durationBuckets,
 		); err != nil {
 			return err
 		}
@@ -852,17 +1079,18 @@ func aggregateChannelMonitorMinuteRangeFromObservation(
 		if LOG_DB == DB {
 			logDB = tx
 		}
-		metrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
+		metrics, apiKeyMetrics, durationBuckets, scannedLogRows, err := aggregateChannelMonitorMinuteLogsFromDatabase(
 			ctx, logDB, startTimestamp, endTimestamp,
 		)
 		result.ScannedLogRows = scannedLogRows
 		result.MetricRows = len(metrics)
+		result.APIKeyMetricRows = len(apiKeyMetrics)
 		result.DurationBucketRows = len(durationBuckets)
 		if err != nil {
 			return err
 		}
 		if err := replaceChannelMonitorMinuteAggregates(
-			tx, startTimestamp, endTimestamp, metrics, durationBuckets,
+			tx, startTimestamp, endTimestamp, metrics, apiKeyMetrics, durationBuckets,
 		); err != nil {
 			return err
 		}
@@ -884,26 +1112,35 @@ func replaceChannelMonitorMinuteAggregates(
 	tx *gorm.DB,
 	startTimestamp int64,
 	endTimestamp int64,
-	metrics []ChannelMonitorMinuteMetric,
+	metrics []ChannelMonitorMinuteRouteMetric,
+	apiKeyMetrics []ChannelMonitorMinuteAPIKeyMetric,
 	durationBuckets []ChannelMonitorMinuteDurationBucket,
 ) error {
-	hasDurationBuckets := tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{})
-	if hasDurationBuckets {
+	if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
+		Delete(&ChannelMonitorMinuteRouteMetric{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
+		Delete(&ChannelMonitorMinuteAPIKeyMetric{}).Error; err != nil {
+		return err
+	}
+	if tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
 			Delete(&ChannelMonitorMinuteDurationBucket{}).Error; err != nil {
 			return err
 		}
-	}
-	if err := tx.Where("minute_start >= ? AND minute_start < ?", startTimestamp, endTimestamp).
-		Delete(&ChannelMonitorMinuteMetric{}).Error; err != nil {
-		return err
 	}
 	if len(metrics) > 0 {
 		if err := tx.CreateInBatches(metrics, 500).Error; err != nil {
 			return err
 		}
 	}
-	if hasDurationBuckets && len(durationBuckets) > 0 {
+	if len(apiKeyMetrics) > 0 {
+		if err := tx.CreateInBatches(apiKeyMetrics, 500).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) && len(durationBuckets) > 0 {
 		return tx.CreateInBatches(durationBuckets, 500).Error
 	}
 	return nil
@@ -984,7 +1221,12 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 	if startTimestamp >= endTimestamp {
 		return []channelMonitorSuccessRow{}, nil
 	}
-	metricTable := channelMonitorMinuteMetricTable
+	metricTable := channelMonitorMinuteRouteMetricTable
+	metricModel := any(&ChannelMonitorMinuteRouteMetric{})
+	if includeAPIKeyMetrics {
+		metricTable = channelMonitorMinuteAPIKeyMetricTable
+		metricModel = &ChannelMonitorMinuteAPIKeyMetric{}
+	}
 	sumColumns :=
 		"SUM(" + metricTable + ".actual_success_count) AS actual_success_count, " +
 			"SUM(" + metricTable + ".actual_failure_count) AS actual_failure_count, " +
@@ -996,20 +1238,20 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 			"SUM(" + metricTable + ".input_tokens) AS input_tokens, " +
 			"SUM(" + metricTable + ".cache_write_count) AS cache_write_count"
 	selectColumns := metricTable + ".channel_id AS channel_id, " +
-		metricTable + ".model_name AS model_name, " +
-		metricTable + ".group_name AS group_name, " + sumColumns
-	groupColumns := metricTable + ".channel_id, " + metricTable + ".model_name, " + metricTable + ".group_name"
+		"MIN(" + metricTable + ".model_name) AS model_name, " +
+		"MIN(" + metricTable + ".group_name) AS group_name, " + sumColumns
+	groupColumns := metricTable + ".channel_id, " + metricTable + ".model_key, " + metricTable + ".group_key"
 	if includeAPIKeyMetrics {
 		selectColumns = metricTable + ".channel_id AS channel_id, " +
-			metricTable + ".model_name AS model_name, " +
-			metricTable + ".group_name AS group_name, " +
+			"MIN(" + metricTable + ".model_name) AS model_name, " +
+			"MIN(" + metricTable + ".group_name) AS group_name, " +
 			metricTable + ".api_key_id AS api_key_id, " +
 			metricTable + ".api_key_name AS api_key_name, " +
 			metricTable + ".api_key_key AS api_key_key, " + sumColumns
 		groupColumns += ", " + metricTable + ".api_key_id, " + metricTable + ".api_key_name, " + metricTable + ".api_key_key"
 	}
 	query := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(metricModel).
 		Select(selectColumns).
 		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp)
 	if applyObservationBoundary {
@@ -1019,10 +1261,10 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
-		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_key = ?", channelMonitorMinuteDimensionKey(filter.ModelName))
 	}
 	if filter.Group != "" {
-		query = query.Where(metricTable+".group_name = ?", filter.Group)
+		query = query.Where(metricTable+".group_key = ?", channelMonitorMinuteDimensionKey(filter.Group))
 	}
 	var aggregates []channelMonitorMinuteSuccessAggregateRow
 	if err := query.Group(groupColumns).Scan(&aggregates).Error; err != nil {
@@ -1084,7 +1326,7 @@ func getChannelMonitorMinuteSuccessRowsWithObservationBoundary(
 
 type channelMonitorMinutePerformanceKey struct {
 	channelId int
-	modelName string
+	modelKey  string
 }
 
 type channelMonitorMinuteLatestPerformanceValue struct {
@@ -1099,11 +1341,11 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 	timeColumn string,
 	applyObservationBoundary bool,
 ) (map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue, error) {
-	metricTable := channelMonitorMinuteMetricTable
+	metricTable := channelMonitorMinuteRouteMetricTable
 	query := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
-			metricTable+".channel_id, "+metricTable+".model_name, "+
+			metricTable+".channel_id, "+metricTable+".model_key, "+
 				metricTable+"."+valueColumn+", "+metricTable+"."+timeColumn,
 		).
 		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
@@ -1112,7 +1354,7 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 		query = applyChannelMonitorObservationBoundary(query, metricTable)
 	}
 	rows, err := query.
-		Order(metricTable + ".channel_id ASC, " + metricTable + ".model_name ASC, " + metricTable + "." + timeColumn + " DESC").
+		Order(metricTable + ".channel_id ASC, " + metricTable + ".model_key ASC, " + metricTable + "." + timeColumn + " DESC").
 		Rows()
 	if err != nil {
 		return nil, err
@@ -1122,13 +1364,13 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 	values := make(map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue)
 	for rows.Next() {
 		var channelId int
-		var modelName string
+		var modelKey string
 		var value sql.NullFloat64
 		var occurredAt int64
-		if err := rows.Scan(&channelId, &modelName, &value, &occurredAt); err != nil {
+		if err := rows.Scan(&channelId, &modelKey, &value, &occurredAt); err != nil {
 			return nil, err
 		}
-		key := channelMonitorMinutePerformanceKey{channelId: channelId, modelName: modelName}
+		key := channelMonitorMinutePerformanceKey{channelId: channelId, modelKey: modelKey}
 		if _, exists := values[key]; exists || !value.Valid {
 			continue
 		}
@@ -1161,6 +1403,7 @@ func getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
 	}
 	type performanceAggregate struct {
 		ChannelId             int
+		ModelKey              string
 		ModelName             string
 		SampleCount           int64
 		FirstTokenSampleCount int64
@@ -1169,12 +1412,13 @@ func getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
 		TPSTotal              float64
 		LastUsedTime          int64
 	}
-	metricTable := channelMonitorMinuteMetricTable
+	metricTable := channelMonitorMinuteRouteMetricTable
 	var aggregates []performanceAggregate
 	query := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
-			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_key AS model_key, "+
+				"MIN("+metricTable+".model_name) AS model_name, "+
 				"SUM("+metricTable+".sample_count) AS sample_count, "+
 				"SUM("+metricTable+".first_token_sample_count) AS first_token_sample_count, "+
 				"SUM("+metricTable+".tps_sample_count) AS tps_sample_count, "+
@@ -1188,7 +1432,7 @@ func getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
 		query = applyChannelMonitorObservationBoundary(query, metricTable)
 	}
 	err := query.
-		Group(metricTable + ".channel_id, " + metricTable + ".model_name").
+		Group(metricTable + ".channel_id, " + metricTable + ".model_key").
 		Scan(&aggregates).Error
 	if err != nil {
 		return nil, err
@@ -1224,7 +1468,7 @@ func getChannelMonitorMinutePerformanceMetricsWithObservationBoundary(
 			value := aggregate.TPSTotal / float64(aggregate.TPSSampleCount)
 			metric.AverageTPS = &value
 		}
-		key := channelMonitorMinutePerformanceKey{channelId: aggregate.ChannelId, modelName: aggregate.ModelName}
+		key := channelMonitorMinutePerformanceKey{channelId: aggregate.ChannelId, modelKey: aggregate.ModelKey}
 		if latest, exists := latestFirstTokens[key]; exists {
 			value := latest.value
 			metric.LatestFirstTokenMs = &value
@@ -1277,7 +1521,7 @@ func getChannelMonitorMinuteDailySuccessMetrics(ctx context.Context, startTimest
 	dayBucket := channelMonitorMinuteDayBucketSQL()
 	var rows []dailyRow
 	err := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
 			dayBucket+" AS day_bucket, channel_id, "+
 				"SUM(actual_success_count) AS actual_success_count, "+
@@ -1342,7 +1586,18 @@ func getChannelMonitorMinuteTodaySuccessMetrics(ctx context.Context, dayStart in
 	if ChannelDailyCostDayStart(generatedAt) == dayStart && generatedAt < dayEnd {
 		dayEnd = generatedAt
 	}
-	rows, err := getChannelMonitorMinuteSuccessRows(
+	routeRows, err := getChannelMonitorMinuteSuccessRows(
+		ctx,
+		dayStart,
+		dayEnd,
+		ChannelMonitorSuccessFilter{},
+		true,
+		false,
+	)
+	if err != nil {
+		return ChannelMonitorTodaySuccessMetrics{}, err
+	}
+	apiKeyRows, err := getChannelMonitorMinuteSuccessRows(
 		ctx,
 		dayStart,
 		dayEnd,
@@ -1357,14 +1612,13 @@ func getChannelMonitorMinuteTodaySuccessMetrics(ctx context.Context, dayStart in
 	channelCounts := make(map[int]*channelMonitorSuccessCounts)
 	apiKeyCounts := make(map[channelMonitorSuccessAPIKeyKey]*channelMonitorSuccessAPIKeyAggregate)
 	cacheWriteCounts := make(map[int]int64)
-	for _, row := range rows {
+	for _, row := range routeRows {
 		isRetryAttempt := row.IsRetryAttempt != nil && *row.IsRetryAttempt
 		totalCounts.add(
 			row.Type, isRetryAttempt, row.Count,
 			row.CacheHitCount, row.CacheSampleCount,
 			row.CacheReadTokens, row.InputTokens,
 		)
-		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 		counts := channelCounts[row.ChannelId]
 		if counts == nil {
 			counts = &channelMonitorSuccessCounts{}
@@ -1376,6 +1630,9 @@ func getChannelMonitorMinuteTodaySuccessMetrics(ctx context.Context, dayStart in
 			row.CacheReadTokens, row.InputTokens,
 		)
 		cacheWriteCounts[row.ChannelId] += row.CacheWriteCount
+	}
+	for _, row := range apiKeyRows {
+		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 	}
 
 	channelItems := make([]ChannelMonitorChannelSuccessMetric, 0, len(channelCounts))

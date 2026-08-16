@@ -13,24 +13,12 @@ import (
 )
 
 const (
-	channelMonitorCostRetentionTaskType       = "channel_monitor_cost_retention"
-	channelMonitorCostRetentionDefaultBatch   = 1000
-	channelMonitorCostRetentionMaxBatch       = 10000
-	channelMonitorCostRetentionDefaultMinutes = 24 * 60
-	channelMonitorTaskRetentionKeepLatest     = 100
-	channelMonitorCleanupDefaultBudgetSeconds = 10
-	channelMonitorCleanupMaxBudgetSeconds     = 300
-	channelMonitorCleanupContinuationDefault  = 60
-	channelMonitorCleanupContinuationMin      = 15
-	channelMonitorCleanupContinuationMax      = 3600
+	channelMonitorCostRetentionTaskType   = "channel_monitor_cost_retention"
+	channelMonitorTaskRetentionKeepLatest = 100
 )
 
-var channelMonitorCleanupContinuationScheduler = func(delay time.Duration) {
-	time.AfterFunc(delay, func() {
-		if _, _, err := service.EnqueueSystemTask(channelMonitorCostRetentionTaskType, nil); err != nil {
-			common.SysError("续排渠道监控清理任务失败: " + err.Error())
-		}
-	})
+var channelMonitorCleanupContinuationScheduler = func(delay time.Duration, callback func()) {
+	time.AfterFunc(delay, callback)
 }
 
 type channelMonitorCostRetentionTaskHandler struct{}
@@ -39,6 +27,10 @@ type channelMonitorCostRetentionTaskResult struct {
 	RetentionDays                   int   `json:"retention_days"`
 	Cutoff                          int64 `json:"cutoff"`
 	MinuteCutoff                    int64 `json:"minute_cutoff"`
+	RouteMetricRetentionDays        int   `json:"route_metric_retention_days"`
+	RouteMetricCutoff               int64 `json:"route_metric_cutoff"`
+	APIKeyMetricRetentionDays       int   `json:"api_key_metric_retention_days"`
+	APIKeyMetricCutoff              int64 `json:"api_key_metric_cutoff"`
 	ProtectedWindowMinutes          int   `json:"protected_window_minutes"`
 	ExecutionDetailRetentionDays    int   `json:"execution_detail_retention_days"`
 	ExecutionDetailCutoff           int64 `json:"execution_detail_cutoff"`
@@ -57,6 +49,14 @@ type channelMonitorCostRetentionTaskResult struct {
 	model.ChannelModelDetectionRetentionResult
 }
 
+type channelMonitorCleanupSettings struct {
+	Enabled             bool
+	BatchSize           int
+	BudgetSeconds       int
+	ContinuationSeconds int
+	IntervalMinutes     int
+}
+
 func init() {
 	service.RegisterSystemTaskHandler(channelMonitorCostRetentionTaskHandler{})
 }
@@ -66,32 +66,111 @@ func (channelMonitorCostRetentionTaskHandler) Type() string {
 }
 
 func (channelMonitorCostRetentionTaskHandler) Enabled() bool {
-	return common.GetEnvOrDefaultBool("CHANNEL_MONITOR_COST_RETENTION_ENABLED", true)
+	settings, err := loadChannelMonitorCleanupSettings(context.Background())
+	if err != nil {
+		common.SysError("读取渠道监控清理配置失败: " + err.Error())
+		return false
+	}
+	return settings.Enabled
 }
 
 func (channelMonitorCostRetentionTaskHandler) Interval() time.Duration {
-	minutes := common.GetEnvOrDefault("CHANNEL_MONITOR_COST_RETENTION_INTERVAL_MINUTES", channelMonitorCostRetentionDefaultMinutes)
-	if minutes < 60 {
-		minutes = channelMonitorCostRetentionDefaultMinutes
+	settings, err := loadChannelMonitorCleanupSettings(context.Background())
+	if err != nil {
+		common.SysError("读取渠道监控清理周期失败: " + err.Error())
+		return time.Duration(defaultChannelMonitorCleanupIntervalMinutes) * time.Minute
 	}
-	return time.Duration(minutes) * time.Minute
+	return time.Duration(settings.IntervalMinutes) * time.Minute
 }
 
 func (channelMonitorCostRetentionTaskHandler) NewPayload() any { return nil }
 
-func channelMonitorCleanupContinuationDelay() time.Duration {
-	seconds := common.GetEnvOrDefault(
-		"CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS",
-		channelMonitorCleanupContinuationDefault,
-	)
-	if seconds < channelMonitorCleanupContinuationMin || seconds > channelMonitorCleanupContinuationMax {
-		seconds = channelMonitorCleanupContinuationDefault
+func scheduleChannelMonitorCleanupContinuation() {
+	settings, err := loadChannelMonitorCleanupSettings(context.Background())
+	if err != nil {
+		common.SysError("读取渠道监控清理续跑配置失败: " + err.Error())
+		return
 	}
-	return time.Duration(seconds) * time.Second
+	if !settings.Enabled {
+		return
+	}
+	channelMonitorCleanupContinuationScheduler(
+		time.Duration(settings.ContinuationSeconds)*time.Second,
+		func() {
+			latest, err := loadChannelMonitorCleanupSettings(context.Background())
+			if err != nil {
+				common.SysError("续排渠道监控清理任务前读取配置失败: " + err.Error())
+				return
+			}
+			if !latest.Enabled {
+				return
+			}
+			if _, _, err := service.EnqueueSystemTask(channelMonitorCostRetentionTaskType, nil); err != nil {
+				common.SysError("续排渠道监控清理任务失败: " + err.Error())
+			}
+		},
+	)
 }
 
-func scheduleChannelMonitorCleanupContinuation() {
-	channelMonitorCleanupContinuationScheduler(channelMonitorCleanupContinuationDelay())
+func loadChannelMonitorCleanupSettings(ctx context.Context) (channelMonitorCleanupSettings, error) {
+	settings := channelMonitorCleanupSettings{
+		Enabled:             defaultChannelMonitorCleanupEnabled,
+		BatchSize:           defaultChannelMonitorCleanupBatchSize,
+		BudgetSeconds:       defaultChannelMonitorCleanupBudgetSeconds,
+		ContinuationSeconds: defaultChannelMonitorCleanupContinuationSeconds,
+		IntervalMinutes:     defaultChannelMonitorCleanupIntervalMinutes,
+	}
+	var options []model.Option
+	keys := []string{
+		channelMonitorCleanupEnabledOption,
+		channelMonitorCleanupBatchSizeOption,
+		channelMonitorCleanupBudgetSecondsOption,
+		channelMonitorCleanupContinuationSecondsOption,
+		channelMonitorCleanupIntervalMinutesOption,
+	}
+	if err := model.DB.WithContext(ctx).
+		Select("key", "value").
+		Where(map[string]any{"key": keys}).
+		Find(&options).Error; err != nil {
+		return channelMonitorCleanupSettings{}, fmt.Errorf("读取渠道监控清理配置失败: %w", err)
+	}
+	for _, option := range options {
+		switch option.Key {
+		case channelMonitorCleanupEnabledOption:
+			enabled, err := strconv.ParseBool(option.Value)
+			if err != nil {
+				return channelMonitorCleanupSettings{}, fmt.Errorf("渠道监控清理配置 %s 无效", option.Key)
+			}
+			settings.Enabled = enabled
+		case channelMonitorCleanupBatchSizeOption:
+			batchSize, err := strconv.Atoi(option.Value)
+			if err != nil || batchSize < minChannelMonitorCleanupBatchSize || batchSize > maxChannelMonitorCleanupBatchSize {
+				return channelMonitorCleanupSettings{}, fmt.Errorf("渠道监控清理配置 %s 无效", option.Key)
+			}
+			settings.BatchSize = batchSize
+		case channelMonitorCleanupBudgetSecondsOption:
+			budgetSeconds, err := strconv.Atoi(option.Value)
+			if err != nil || budgetSeconds < minChannelMonitorCleanupBudgetSeconds || budgetSeconds > maxChannelMonitorCleanupBudgetSeconds {
+				return channelMonitorCleanupSettings{}, fmt.Errorf("渠道监控清理配置 %s 无效", option.Key)
+			}
+			settings.BudgetSeconds = budgetSeconds
+		case channelMonitorCleanupContinuationSecondsOption:
+			continuationSeconds, err := strconv.Atoi(option.Value)
+			if err != nil || continuationSeconds < minChannelMonitorCleanupContinuationSeconds ||
+				continuationSeconds > maxChannelMonitorCleanupContinuationSeconds {
+				return channelMonitorCleanupSettings{}, fmt.Errorf("渠道监控清理配置 %s 无效", option.Key)
+			}
+			settings.ContinuationSeconds = continuationSeconds
+		case channelMonitorCleanupIntervalMinutesOption:
+			intervalMinutes, err := strconv.Atoi(option.Value)
+			if err != nil || intervalMinutes < minChannelMonitorCleanupIntervalMinutes ||
+				intervalMinutes > maxChannelMonitorCleanupIntervalMinutes {
+				return channelMonitorCleanupSettings{}, fmt.Errorf("渠道监控清理配置 %s 无效", option.Key)
+			}
+			settings.IntervalMinutes = intervalMinutes
+		}
+	}
+	return settings, nil
 }
 
 func channelMonitorCostRetentionCutoff(now int64, days int) int64 {
@@ -103,34 +182,29 @@ func channelMonitorHistoryRetentionCutoff(now int64, days int) int64 {
 	return now - int64(days)*channelMonitorCostDaySeconds
 }
 
-func channelModelDetectionRetentionDays() int {
-	days := common.GetEnvOrDefault(
-		"CHANNEL_MODEL_DETECTION_RETENTION_DAYS",
-		model.ChannelModelDetectionDefaultRetentionDays,
-	)
-	if days < model.ChannelModelDetectionMinRetentionDays || days > model.ChannelModelDetectionMaxRetentionDays {
-		return model.ChannelModelDetectionDefaultRetentionDays
-	}
-	return days
-}
-
 func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSettings, error) {
 	settings := channelMonitorSettings{
 		CostRetentionDays:                     defaultChannelMonitorCostRetentionDays,
+		RouteMetricRetentionDays:              defaultChannelMonitorRouteMetricRetentionDays,
+		APIKeyMetricRetentionDays:             defaultChannelMonitorAPIKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          defaultChannelMonitorExecutionDetailRetentionDays,
 		TaskRetentionDays:                     defaultChannelMonitorTaskRetentionDays,
 		RatioHistoryRetentionDays:             defaultChannelMonitorRatioHistoryRetentionDays,
 		StatusProbeHistoryRetentionDays:       defaultChannelMonitorStatusProbeHistoryRetentionDays,
+		ModelDetectionRetentionDays:           model.ChannelModelDetectionDefaultRetentionDays,
 		SmartSchedulePerformanceWindowMinutes: defaultChannelMonitorSmartSchedulePerformanceWindowMinutes,
 		SmartScheduleStabilityWindowMinutes:   defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
 	}
 	var options []model.Option
 	retentionOptionKeys := []string{
 		channelMonitorCostRetentionDaysOption,
+		channelMonitorRouteMetricRetentionDaysOption,
+		channelMonitorAPIKeyMetricRetentionDaysOption,
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
 		channelMonitorRatioHistoryRetentionDaysOption,
 		channelMonitorStatusProbeHistoryRetentionDaysOption,
+		channelMonitorModelDetectionRetentionDaysOption,
 		channelMonitorSmartSchedulePerformanceWindowOption,
 		channelMonitorSmartScheduleStabilityWindowOption,
 	}
@@ -148,6 +222,18 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.CostRetentionDays = days
+		case channelMonitorRouteMetricRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.RouteMetricRetentionDays = days
+		case channelMonitorAPIKeyMetricRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.APIKeyMetricRetentionDays = days
 		case channelMonitorExecutionDetailRetentionDaysOption:
 			days, err := strconv.Atoi(option.Value)
 			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
@@ -173,6 +259,13 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.StatusProbeHistoryRetentionDays = days
+		case channelMonitorModelDetectionRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < model.ChannelModelDetectionMinRetentionDays ||
+				days > model.ChannelModelDetectionMaxRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.ModelDetectionRetentionDays = days
 		case channelMonitorSmartSchedulePerformanceWindowOption:
 			minutes, err := strconv.Atoi(option.Value)
 			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
@@ -204,43 +297,48 @@ func channelMonitorMinuteRetentionCutoff(
 }
 
 func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	cleanupSettings, err := loadChannelMonitorCleanupSettings(ctx)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, channelMonitorCostRetentionTaskResult{}, err)
+		return
+	}
+	if !cleanupSettings.Enabled {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, channelMonitorCostRetentionTaskResult{}, nil)
+		return
+	}
 	settings, err := loadChannelMonitorRetentionSettings(ctx)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, channelMonitorCostRetentionTaskResult{}, err)
 		return
 	}
-	batchSize := common.GetEnvOrDefault("CHANNEL_MONITOR_COST_RETENTION_BATCH_SIZE", channelMonitorCostRetentionDefaultBatch)
-	if batchSize <= 0 || batchSize > channelMonitorCostRetentionMaxBatch {
-		batchSize = channelMonitorCostRetentionDefaultBatch
-	}
-	budgetSeconds := common.GetEnvOrDefault(
-		"CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS",
-		channelMonitorCleanupDefaultBudgetSeconds,
-	)
-	if budgetSeconds <= 0 || budgetSeconds > channelMonitorCleanupMaxBudgetSeconds {
-		budgetSeconds = channelMonitorCleanupDefaultBudgetSeconds
-	}
-	cleanupBudget := model.NewChannelMonitorCleanupBudget(time.Duration(budgetSeconds) * time.Second)
+	batchSize := cleanupSettings.BatchSize
+	cleanupBudget := model.NewChannelMonitorCleanupBudget(time.Duration(cleanupSettings.BudgetSeconds) * time.Second)
 	now := common.GetTimestamp()
 	costCutoff := channelMonitorCostRetentionCutoff(now, settings.CostRetentionDays)
-	minuteCutoff, protectedWindowMinutes := channelMonitorMinuteRetentionCutoff(
+	routeMetricConfiguredCutoff := channelMonitorHistoryRetentionCutoff(now, settings.RouteMetricRetentionDays)
+	routeMetricCutoff, protectedWindowMinutes := channelMonitorMinuteRetentionCutoff(
 		now,
-		costCutoff,
+		routeMetricConfiguredCutoff,
 		settings.SmartSchedulePerformanceWindowMinutes,
 		settings.SmartScheduleStabilityWindowMinutes,
 	)
+	apiKeyMetricCutoff := channelMonitorHistoryRetentionCutoff(now, settings.APIKeyMetricRetentionDays)
 	historyCutoffs := model.ChannelMonitorHistoryRetentionCutoffs{
 		ExecutionDetail: channelMonitorHistoryRetentionCutoff(now, settings.ExecutionDetailRetentionDays),
 		Task:            channelMonitorHistoryRetentionCutoff(now, settings.TaskRetentionDays),
 		RatioHistory:    channelMonitorHistoryRetentionCutoff(now, settings.RatioHistoryRetentionDays),
 	}
 	statusProbeHistoryCutoff := channelMonitorHistoryRetentionCutoff(now, settings.StatusProbeHistoryRetentionDays)
-	modelDetectionRetentionDays := channelModelDetectionRetentionDays()
+	modelDetectionRetentionDays := settings.ModelDetectionRetentionDays
 	modelDetectionCutoff := channelMonitorHistoryRetentionCutoff(now, modelDetectionRetentionDays)
 	result := channelMonitorCostRetentionTaskResult{
 		RetentionDays:                   settings.CostRetentionDays,
 		Cutoff:                          costCutoff,
-		MinuteCutoff:                    minuteCutoff,
+		MinuteCutoff:                    routeMetricCutoff,
+		RouteMetricRetentionDays:        settings.RouteMetricRetentionDays,
+		RouteMetricCutoff:               routeMetricCutoff,
+		APIKeyMetricRetentionDays:       settings.APIKeyMetricRetentionDays,
+		APIKeyMetricCutoff:              apiKeyMetricCutoff,
 		ProtectedWindowMinutes:          protectedWindowMinutes,
 		ExecutionDetailRetentionDays:    settings.ExecutionDetailRetentionDays,
 		ExecutionDetailCutoff:           historyCutoffs.ExecutionDetail,
@@ -298,7 +396,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 	}
 	result.BudgetExhausted = result.BudgetExhausted || statusProbeBudget.Exhausted()
 	costDeleted, err := model.DeleteChannelMonitorCostsBefore(
-		ctx, costCutoff, minuteCutoff, batchSize, cleanupBudget.Slice(1),
+		ctx, costCutoff, routeMetricCutoff, apiKeyMetricCutoff, batchSize, cleanupBudget.Slice(1),
 	)
 	result.ChannelMonitorCostRetentionResult = costDeleted
 	if err != nil {

@@ -54,10 +54,19 @@
 | `auto_disable_on_update_failure` | `ChannelMonitorAutoDisableOnUpdateFailure` | `false` | 布尔值 |
 | `auto_enable_on_cost_ratio_recovery` | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `false` | 布尔值 |
 | `auto_enable_on_balance_recovery` | `ChannelMonitorAutoEnableOnBalanceRecovery` | `false` | 布尔值 |
-| `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `120` | `1..3650`；日成本、分钟指标和延迟分桶共用此保留期 |
-| `execution_detail_retention_days` | `ChannelMonitorExecutionDetailRetentionDays` | `14` | `1..3650` |
+| `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `30` | `1..3650`；渠道和 API Key 日成本保留期 |
+| `route_metric_retention_days` | `ChannelMonitorRouteMetricRetentionDays` | `30` | `1..3650`；路由分钟指标和延迟分桶保留期，受智能调度最长窗口保护 |
+| `api_key_metric_retention_days` | `ChannelMonitorApiKeyMetricRetentionDays` | `7` | `1..3650`；API Key 分钟指标保留期 |
+| `execution_detail_retention_days` | `ChannelMonitorExecutionDetailRetentionDays` | `3` | `1..3650` |
 | `task_retention_days` | `ChannelMonitorTaskRetentionDays` | `90` | `1..3650`，且不能短于调度执行明细保留期 |
 | `ratio_history_retention_days` | `ChannelMonitorRatioHistoryRetentionDays` | `365` | `1..3650` |
+| `status_probe_history_retention_days` | `ChannelMonitorStatusProbeHistoryRetentionDays` | `7` | `1..90` |
+| `model_detection_retention_days` | `ChannelMonitorModelDetectionRetentionDays` | `30` | `7..180` |
+| `cleanup_enabled` | `ChannelMonitorCleanupEnabled` | `true` | 布尔值；关闭后不创建或续排清理任务，已排队任务直接结束 |
+| `cleanup_batch_size` | `ChannelMonitorCleanupBatchSize` | `1000` | `1..10000`；单条删除语句的最大记录数 |
+| `cleanup_budget_seconds` | `ChannelMonitorCleanupBudgetSeconds` | `10` | `1..300` 秒；单轮清理任务时间预算 |
+| `cleanup_continuation_seconds` | `ChannelMonitorCleanupContinuationSeconds` | `60` | `15..3600` 秒；预算耗尽后的续跑等待时间 |
+| `cleanup_interval_minutes` | `ChannelMonitorCleanupIntervalMinutes` | `1440` | `60..10080` 分钟；周期清理间隔 |
 | `email_notification_enabled` | `ChannelMonitorEmailNotificationEnabled` | `false` | 布尔值 |
 | `notification_email` | `ChannelMonitorNotificationEmail` | 空 | 有效邮箱，最长 254 字符 |
 | `email_notification_types` | `ChannelMonitorEmailNotificationTypes` | 六类全选 | `ratio_change`、`balance_warning`、`channel_disabled`、`group_membership_removed`、`upstream_sync_failed`、`task_failed`；开启邮件通知时至少选择一类 |
@@ -232,15 +241,28 @@
 - `ChannelSmartScheduleModelSampleState`：每个渠道、模型唯一的一份手动测试和定时探测滚动样本，以及稳定性恢复后的共享 `observation_since`。
 - `ChannelSmartScheduleExecutionDetail`：按任务和路由保存智能调度执行时的评分与调整解释。
 - `ChannelMonitorAggregationState`：保存所有节点共享的最新完整分钟水位，聚合数据与水位在同一事务提交。
-- `ChannelMonitorMinuteMetric`：按分钟和渠道、模型、分组、API Key 维度保存性能与成功率指标。
+- `ChannelMonitorMinuteRouteMetric`：按分钟和渠道、模型、分组维度保存路由性能、时延和成功率指标。
+- `ChannelMonitorMinuteAPIKeyMetric`：按分钟和渠道、模型、分组、API Key 维度保存成功、失败、缓存等明细统计，不重复保存路由性能字段。
 - `ChannelMonitorMinuteDurationBucket`：按分钟保存首字延迟分布，供异常抖动判断和稳健延迟评分使用。
+- `ChannelMonitorDirtyMinute`：记录迟到日志和跨分钟重试造成的脏分钟，供小批修复 worker 增量重建。
+- `ChannelMonitorRedisEffectState`：保存 Redis 实时链路触发完整调度等外部副作用的事件水位，避免重复执行。
 - `ChannelRatioHistory`：倍率实际变化的前后值、备注、时间和操作人。
 - `ChannelDailyCost`：按北京时间日期和渠道聚合的成本。
 - `ChannelDailyAPIKeyCost`：按日期、渠道和 Key 指纹聚合的成本归因。
 
-性能、成功率、缓存利用率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到 `ChannelMonitorMinuteMetric`。缓存利用率响应字段为 `cache_read_tokens`、`input_tokens` 和 `cache_utilization_rate`，其中比率等于前两者相除；兼容字段 `cache_hit_count`、`cache_sample_count` 和 `cache_hit_rate` 仍保留请求级命中口径，但不用于页面缓存利用率展示。常规任务只回扫最近 2 分钟，启动回扫 5 分钟，整点在时间预算内修复最近 65 分钟；若任务跨过多个分钟，则从上次连续水位补齐缺口后再推进。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和完整智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查；运行时硬保护和自适应备援直接使用请求级观测，不依赖该水位。
+Redis 实时链路统一使用版本前缀 `channel_monitor:v1`，上线清理只允许删除该前缀下的键：
 
-升级已有部署时，首次聚合先重建北京时间当天的缓存利用率，再切换展示；更早的保留数据按每小时分块在后台逐步补齐，并通过独立的缓存利用率版本与覆盖水位避免把旧请求命中数据误当成 token 利用率。新部署从首次分钟聚合开始直接写入新口径。
+- Stream：`channel_monitor:v1:events`；消费组：`channel_monitor:v1:aggregators`；消费者键：`channel_monitor:v1:consumer:*`。
+- 聚合租约、心跳和观测：`channel_monitor:v1:aggregator:lease`、`channel_monitor:v1:consumer:heartbeat`、`channel_monitor:v1:observability`。
+- 路由健康窗口及索引：`channel_monitor:v1:projection:route:*`，每路由保留最近 60 分钟且最多 1,000 个样本。
+- 看板和成本投影：`channel_monitor:v1:projection:dashboard:*`、`channel_monitor:v1:projection:cost:*`。
+- 幂等和副作用标记：`channel_monitor:v1:projection:dedup:*`、`channel_monitor:v1:projection:shared:event:*`、`channel_monitor:v1:projection:runtime:event:*`、`channel_monitor:v1:projection:schedule:event:*`。
+
+Redis `6.2+` 和 `XAUTOCLAIM` 是渠道监控启动条件。Redis 重启后运行时会重建消费组并接管 pending 事件；不使用本地队列或本地投影降级。
+
+性能、成功率、缓存利用率和缓存写请求由后台在每个自然分钟结束后 1 秒从日志聚合到路由分钟表和 API Key 分钟表。缓存利用率响应字段为 `cache_read_tokens`、`input_tokens` 和 `cache_utilization_rate`，其中比率等于前两者相除；兼容字段 `cache_hit_count`、`cache_sample_count` 和 `cache_hit_rate` 仍保留请求级命中口径，但不用于页面缓存利用率展示。常规任务只聚合 `completed_through` 之后的新完整分钟；启动或中断后从持久化水位连续补齐缺口。迟到日志和跨分钟重试写入脏分钟标记，worker 小批领取并只替换对应一分钟，成功后删除标记，失败释放租约并保留标记，不再周期性回扫最近 2 分钟或整点重建 65 分钟。`/performance`、`/success/today`、`/success/detail`、`/schedule` 和完整智能调度评分读取前都会确认同一最新完整分钟水位，分钟首秒内的请求最多等待到第 1 秒。普通模型中继请求不执行聚合或水位检查；运行时硬保护和自适应备援直接使用请求级观测，不依赖该水位。实时健康事件通过带版本前缀 `channel_monitor:v1` 的 Redis Stream、消费组和共享投影处理；应用启动时强制检查 Redis Streams/`XAUTOCLAIM`，Redis 不可用时不进入本地降级路径。
+
+升级采用停机一次性切换：按上线 Runbook 清理旧渠道监控表、相关任务和配置，不读取、回填或迁移旧执行明细和旧分钟指标；应用启动后从当前时间开始写入新的路由/API Key 分钟表。新部署和升级部署都直接使用新的 token 利用率口径。
 
 日志和分钟行保留真实分组；智能调度读取首字、TPS、稳定性和首字分布时再按渠道模型跨分组汇总，并以 `max(窗口起点, observation_since)` 作为实际起点。恢复只推进边界，不删除样本、日志、分钟行或延迟分桶；历史与长期统计不应用该边界。分组关联继续写回渠道原有的分组字段，分组倍率和全局设置继续使用系统 Option。保留任务默认按 1000 行一批清理；数据库删除会释放页供后续复用，但 SQLite、MySQL 和 PostgreSQL 都不保证物理文件立即缩小。
 

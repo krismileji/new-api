@@ -82,6 +82,20 @@ type channelMonitorCostOverview struct {
 	ProjectionStartedAt            int64                       `json:"projection_started_at"`
 	EventWatermark                 uint64                      `json:"event_watermark"`
 	QueueDepth                     int                         `json:"queue_depth"`
+	RedisStatus                    string                      `json:"redis_status"`
+	RedisAvailable                 bool                        `json:"redis_available"`
+	RedisConsumerRunning           bool                        `json:"redis_consumer_running"`
+	PendingCount                   int64                       `json:"pending_count"`
+	OldestPendingAt                int64                       `json:"oldest_pending_at"`
+	ConsumerLagSeconds             int64                       `json:"consumer_lag_seconds"`
+	LastPublishedAt                int64                       `json:"last_published_at"`
+	LastProcessedAt                int64                       `json:"last_processed_at"`
+	RetryCount                     int64                       `json:"retry_count"`
+	TakeoverCount                  int64                       `json:"takeover_count"`
+	MarkerReleaseFailureCount      int64                       `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive     bool                        `json:"marker_release_failure_active"`
+	StreamTrimFailureCount         int64                       `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive        bool                        `json:"stream_trim_failure_active"`
 	RealtimeDegraded               bool                        `json:"realtime_degraded"`
 	DetailDate                     string                      `json:"detail_date"`
 	TodayCostCNY                   float64                     `json:"today_cost_cny"`

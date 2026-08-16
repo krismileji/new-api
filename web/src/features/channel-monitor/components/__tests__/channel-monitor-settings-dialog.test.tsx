@@ -42,11 +42,19 @@ import { ChannelMonitorSmartScheduleGroupPolicyFields } from '../channel-monitor
 function CostRetentionFieldFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
-      costRetentionDays: 120,
-      executionDetailRetentionDays: 14,
+      costRetentionDays: 30,
+      routeMetricRetentionDays: 30,
+      apiKeyMetricRetentionDays: 7,
+      executionDetailRetentionDays: 3,
       taskRetentionDays: 90,
       ratioHistoryRetentionDays: 365,
       statusProbeHistoryRetentionDays: 7,
+      modelDetectionRetentionDays: 30,
+      cleanupEnabled: true,
+      cleanupBatchSize: 1000,
+      cleanupBudgetSeconds: 10,
+      cleanupContinuationSeconds: 60,
+      cleanupIntervalMinutes: 1440,
     },
   })
   return (
@@ -272,14 +280,19 @@ describe('channel monitor settings dialog', () => {
   test('shows persisted retention settings with bounded numeric inputs', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
 
-    assert.ok(markup.includes('成本与指标保留天数'))
+    assert.ok(markup.includes('日成本保留天数'))
+    assert.ok(markup.includes('路由分钟指标保留天数'))
+    assert.ok(markup.includes('API Key 分钟指标保留天数'))
     assert.ok(markup.includes('调度执行明细保留天数'))
     assert.ok(markup.includes('监控任务保留天数'))
     assert.ok(markup.includes('倍率历史保留天数'))
     assert.ok(markup.includes('状态探测记录保留天数'))
+    assert.ok(markup.includes('模型检测历史保留天数'))
     for (const [name, value] of [
-      ['costRetentionDays', '120'],
-      ['executionDetailRetentionDays', '14'],
+      ['costRetentionDays', '30'],
+      ['routeMetricRetentionDays', '30'],
+      ['apiKeyMetricRetentionDays', '7'],
+      ['executionDetailRetentionDays', '3'],
       ['taskRetentionDays', '90'],
       ['ratioHistoryRetentionDays', '365'],
     ]) {
@@ -300,9 +313,34 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="statusProbeHistoryRetentionDays")(?=[^>]*min="1")(?=[^>]*max="90")(?=[^>]*value="7")[^>]*>/
     )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="modelDetectionRetentionDays")(?=[^>]*min="7")(?=[^>]*max="180")(?=[^>]*value="30")[^>]*>/
+    )
     assert.ok(markup.includes('不能短于调度执行明细'))
     assert.ok(markup.includes('各类始终保留最近 100 条'))
+    assert.ok(markup.includes('按配置周期分批清理到期数据'))
     assert.ok(markup.includes('删除后不可恢复'))
+    assert.ok(markup.includes('启用自动清理'))
+    assert.ok(markup.includes('aria-label="启用自动清理"'))
+    assert.ok(markup.includes('data-checked'))
+    assert.ok(markup.includes('高级清理设置'))
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="cleanupBatchSize")(?=[^>]*min="1")(?=[^>]*max="10000")(?=[^>]*value="1000")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="cleanupBudgetSeconds")(?=[^>]*min="1")(?=[^>]*max="300")(?=[^>]*value="10")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="cleanupContinuationSeconds")(?=[^>]*min="15")(?=[^>]*max="3600")(?=[^>]*value="60")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="cleanupIntervalMinutes")(?=[^>]*min="60")(?=[^>]*max="10080")(?=[^>]*value="1440")[^>]*>/
+    )
   })
 
   test('shows the enabled local probe response contract', () => {

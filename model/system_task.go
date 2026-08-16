@@ -28,10 +28,10 @@ const (
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
 
 type SystemTask struct {
-	ID        int64            `json:"id" gorm:"primary_key"`
+	ID        int64            `json:"id" gorm:"primary_key;index:idx_system_tasks_type_status_id,priority:3"`
 	TaskID    string           `json:"task_id" gorm:"type:varchar(64);uniqueIndex"`
-	Type      string           `json:"type" gorm:"type:varchar(64);index"`
-	Status    SystemTaskStatus `json:"status" gorm:"type:varchar(32);index"`
+	Type      string           `json:"type" gorm:"type:varchar(64);index;index:idx_system_tasks_type_status_id,priority:1"`
+	Status    SystemTaskStatus `json:"status" gorm:"type:varchar(32);index;index:idx_system_tasks_type_status_id,priority:2"`
 	ActiveKey *string          `json:"active_key,omitempty" gorm:"type:varchar(64);uniqueIndex"`
 	Payload   string           `json:"payload" gorm:"type:text"`
 	State     string           `json:"state" gorm:"type:text"`

@@ -37,6 +37,7 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
+	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	includeMetrics := true
 	if rawMetrics, configured := c.GetQuery("metrics"); configured {
 		parsed, err := strconv.ParseBool(rawMetrics)
@@ -102,6 +103,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			"performance_items":             []model.ChannelMonitorRoutePerformanceMetric{},
 			"stability_metrics_available":   false,
 			"stability_items":               []model.ChannelMonitorRouteStabilityMetric{},
+			"execution_snapshot_metrics":    executionSnapshotMetrics,
 		})
 		return
 	}
@@ -128,14 +130,18 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	performanceByRoute := make([]model.ChannelMonitorRoutePerformanceMetric, 0, len(selectedRoutes))
 	stabilityByRoute := make(map[channelSmartScheduleRouteKey]model.ChannelMonitorRouteStabilityMetric)
 	sampleItems := make([]channelSmartScheduleSampleItem, 0, len(selectedRoutes))
-	snapshots := make([]service.ChannelMonitorRealtimeSnapshot, 0, len(selectedRoutes))
-	combinedSnapshot := service.ChannelMonitorRealtimeSnapshot{}
+	snapshots := make([]service.ChannelMonitorRedisRouteHealthSnapshot, 0, len(selectedRoutes))
+	combinedSnapshot := service.ChannelMonitorRedisRouteHealthSnapshot{}
 	for _, route := range selectedRoutes {
 		policy := policyByGroup[route.Group]
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		view := channelSmartScheduleRealtimeRouteMetricView(
-			route, policy, performanceStart, stabilityStart,
+		view, err := channelSmartScheduleRealtimeRouteMetricView(
+			c.Request.Context(), route, policy, performanceStart, stabilityStart,
 		)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		if view.performance != nil {
 			performanceByRoute = append(performanceByRoute, *view.performance)
 		}
@@ -185,15 +191,19 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		return businessPerformanceByRoute[i].ChannelId < businessPerformanceByRoute[j].ChannelId
 	})
-	channelSmartScheduleApplyCurrentWindowScores(
+	if err := channelSmartScheduleApplyCurrentWindowScores(
+		c.Request.Context(),
 		responseRoutes,
 		selectedRoutes,
 		policyByGroup,
 		stabilityStart,
 		generatedAt,
-	)
-	queueStats := service.GetChannelMonitorEventQueueStats()
-	projectionStartedAt := service.GetChannelMonitorRealtimeProjectionStartedAt()
+	); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(c.Request.Context())
+	projectionStartedAt := int64(0)
 	windowIncomplete := !metricCoverage.PerformanceWindowComplete || !metricCoverage.StabilityWindowComplete
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                  generatedAt,
@@ -203,8 +213,22 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"processed_at":                  combinedSnapshot.ProcessedAt,
 		"projection_started_at":         projectionStartedAt,
 		"event_watermark":               combinedSnapshot.EventWatermark,
-		"queue_depth":                   queueStats.QueueDepth,
-		"realtime_degraded":             windowIncomplete || queueStats.DroppedEvents > 0 || queueStats.FailedEvents > 0,
+		"queue_depth":                   redisStatus.PendingCount,
+		"redis_status":                  redisStatus.RedisStatus,
+		"redis_available":               redisStatus.RedisAvailable,
+		"redis_consumer_running":        redisStatus.RedisConsumerRunning,
+		"pending_count":                 redisStatus.PendingCount,
+		"oldest_pending_at":             redisStatus.OldestPendingAt,
+		"consumer_lag_seconds":          redisStatus.ConsumerLagSeconds,
+		"last_published_at":             redisStatus.LastPublishedAt,
+		"last_processed_at":             redisStatus.LastProcessedAt,
+		"retry_count":                   redisStatus.RetryCount,
+		"takeover_count":                redisStatus.TakeoverCount,
+		"marker_release_failure_count":  redisStatus.MarkerReleaseFailureCount,
+		"marker_release_failure_active": redisStatus.MarkerReleaseFailureActive,
+		"stream_trim_failure_count":     redisStatus.StreamTrimFailureCount,
+		"stream_trim_failure_active":    redisStatus.StreamTrimFailureActive,
+		"realtime_degraded":             windowIncomplete || redisStatus.RealtimeDegraded,
 		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
 		"stability_window_minutes":      settings.SmartScheduleStabilityWindowMinutes,
 		"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
@@ -218,6 +242,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"performance_items":             performanceByRoute,
 		"stability_metrics_available":   needsStability,
 		"stability_items":               stabilityMetrics,
+		"execution_snapshot_metrics":    executionSnapshotMetrics,
 	})
 }
 
@@ -277,7 +302,8 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	var taskResponse any
 	settings := getChannelMonitorSettings()
 	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
-		if task, _, enqueueErr := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, nil); enqueueErr == nil {
+		payload := newChannelSmartScheduleTaskPayload("schedule_route_config", "route_duration_or_protection_changed")
+		if task, _, enqueueErr := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, payload); enqueueErr == nil {
 			taskResponse = task.ToResponse()
 		}
 	}

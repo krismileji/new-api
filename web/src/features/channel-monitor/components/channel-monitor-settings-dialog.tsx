@@ -79,11 +79,6 @@ import {
 import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
-  DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
-  DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
-  DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
-  DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
-  DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -98,9 +93,23 @@ import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+  MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+  MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+  MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
   MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+  MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+  MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+  MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   type ChannelMonitorSettingsFormValues,
@@ -116,7 +125,7 @@ import { ChannelMonitorEmailNotificationFields } from './channel-monitor-email-n
 import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
 
-export type ChannelMonitorSettingsSection = 'monitor' | 'probe'
+export type ChannelMonitorSettingsSection = 'monitor' | 'retention' | 'probe'
 
 type ChannelMonitorSettingsDialogProps = {
   settings: ChannelMonitorSettings
@@ -150,15 +159,25 @@ const EMPTY_MODEL_OPTIONS_BY_GROUP: ReadonlyMap<string, string[]> = new Map()
 
 type ChannelMonitorRetentionFieldName =
   | 'costRetentionDays'
+  | 'routeMetricRetentionDays'
+  | 'apiKeyMetricRetentionDays'
   | 'executionDetailRetentionDays'
   | 'taskRetentionDays'
   | 'ratioHistoryRetentionDays'
   | 'statusProbeHistoryRetentionDays'
+  | 'modelDetectionRetentionDays'
+
+type ChannelMonitorCleanupNumberFieldName =
+  | 'cleanupBatchSize'
+  | 'cleanupBudgetSeconds'
+  | 'cleanupContinuationSeconds'
+  | 'cleanupIntervalMinutes'
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   name: ChannelMonitorRetentionFieldName
   label: string
+  min?: number
   description: string
   max?: number
 }) {
@@ -173,7 +192,7 @@ function ChannelMonitorRetentionDayField(props: {
             <FormControl>
               <InputGroupInput
                 type='number'
-                min={MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS}
+                min={props.min ?? MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS}
                 max={props.max ?? MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS}
                 step={1}
                 inputMode='numeric'
@@ -195,6 +214,48 @@ function ChannelMonitorRetentionDayField(props: {
   )
 }
 
+function ChannelMonitorCleanupNumberField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  name: ChannelMonitorCleanupNumberFieldName
+  label: string
+  description: string
+  min: number
+  max: number
+  unit: string
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{props.label}</FormLabel>
+          <InputGroup>
+            <FormControl>
+              <InputGroupInput
+                type='number'
+                min={props.min}
+                max={props.max}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(props.form.formState.errors[props.name])}
+              />
+            </FormControl>
+            <InputGroupAddon align='inline-end'>{props.unit}</InputGroupAddon>
+          </InputGroup>
+          <FormDescription>{props.description}</FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 export function ChannelMonitorCostRetentionField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
 }) {
@@ -202,8 +263,8 @@ export function ChannelMonitorCostRetentionField(props: {
     <ChannelMonitorRetentionDayField
       form={props.form}
       name='costRetentionDays'
-      label='成本与指标保留天数'
-      description='保留分钟指标、延迟分桶及渠道和 API Key 日成本'
+      label='日成本保留天数'
+      description='保留渠道和 API Key 日成本；分钟指标使用下方独立保留期'
     />
   )
 }
@@ -218,11 +279,27 @@ export function ChannelMonitorRetentionFields(props: {
           数据保留
         </h3>
         <p className='text-muted-foreground text-sm'>
-          每天按北京时间分批清理到期数据；删除后不可恢复
+          按配置周期分批清理到期数据；删除后不可恢复
         </p>
       </div>
       <div className='grid gap-4 sm:grid-cols-2'>
         <ChannelMonitorCostRetentionField form={props.form} />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='routeMetricRetentionDays'
+          label='路由分钟指标保留天数'
+          description='保留路由分钟统计和延迟分桶，并受智能调度最长窗口保护'
+          min={MIN_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='apiKeyMetricRetentionDays'
+          label='API Key 分钟指标保留天数'
+          description='保留 API Key 维度的分钟成功、失败和缓存统计'
+          min={MIN_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS}
+        />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='executionDetailRetentionDays'
@@ -248,6 +325,83 @@ export function ChannelMonitorRetentionFields(props: {
           description='仅清理每次模型执行明细，渠道配置和最新状态始终保留'
           max={MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS}
         />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='modelDetectionRetentionDays'
+          label='模型检测历史保留天数'
+          description='保留模型检测轮次、执行和成本事件历史'
+          min={MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS}
+        />
+      </div>
+      <FormField
+        control={props.form.control}
+        name='cleanupEnabled'
+        render={({ field }) => (
+          <FormItem className='flex items-center justify-between gap-4'>
+            <div className='space-y-1'>
+              <FormLabel>启用自动清理</FormLabel>
+              <FormDescription>
+                关闭后不再创建或续排清理任务，已排队任务执行时会直接结束
+              </FormDescription>
+            </div>
+            <FormControl>
+              <Switch
+                checked={field.value}
+                onCheckedChange={field.onChange}
+                aria-label='启用自动清理'
+              />
+            </FormControl>
+          </FormItem>
+        )}
+      />
+      <div className='space-y-3' aria-labelledby='channel-monitor-cleanup'>
+        <div className='space-y-1'>
+          <h4 id='channel-monitor-cleanup' className='text-sm font-medium'>
+            高级清理设置
+          </h4>
+          <p className='text-muted-foreground text-sm'>
+            控制单轮删除压力与未完成清理的续跑速度
+          </p>
+        </div>
+        <div className='grid gap-4 sm:grid-cols-3'>
+          <ChannelMonitorCleanupNumberField
+            form={props.form}
+            name='cleanupBatchSize'
+            label='单批删除数'
+            description='每次删除语句处理的最大记录数'
+            min={MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE}
+            max={MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE}
+            unit='条'
+          />
+          <ChannelMonitorCleanupNumberField
+            form={props.form}
+            name='cleanupBudgetSeconds'
+            label='单轮清理预算'
+            description='每轮任务可用于分批删除的最长时间'
+            min={MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS}
+            max={MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS}
+            unit='秒'
+          />
+          <ChannelMonitorCleanupNumberField
+            form={props.form}
+            name='cleanupIntervalMinutes'
+            label='清理周期'
+            description='保存后从下一次调度周期开始生效'
+            min={MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES}
+            max={MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES}
+            unit='分钟'
+          />
+          <ChannelMonitorCleanupNumberField
+            form={props.form}
+            name='cleanupContinuationSeconds'
+            label='续跑间隔'
+            description='单轮未清完时，等待该时间后再次执行'
+            min={MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS}
+            max={MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS}
+            unit='秒'
+          />
+        </div>
       </div>
     </section>
   )
@@ -380,21 +534,23 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         props.settings.auto_enable_on_cost_ratio_recovery ?? false,
       autoEnableOnBalanceRecovery:
         props.settings.auto_enable_on_balance_recovery ?? false,
-      costRetentionDays:
-        props.settings.cost_retention_days ??
-        DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+      costRetentionDays: props.settings.cost_retention_days,
+      routeMetricRetentionDays: props.settings.route_metric_retention_days,
+      apiKeyMetricRetentionDays: props.settings.api_key_metric_retention_days,
       executionDetailRetentionDays:
-        props.settings.execution_detail_retention_days ??
-        DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
-      taskRetentionDays:
-        props.settings.task_retention_days ??
-        DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
-      ratioHistoryRetentionDays:
-        props.settings.ratio_history_retention_days ??
-        DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+        props.settings.execution_detail_retention_days,
+      taskRetentionDays: props.settings.task_retention_days,
+      ratioHistoryRetentionDays: props.settings.ratio_history_retention_days,
       statusProbeHistoryRetentionDays:
-        props.settings.status_probe_history_retention_days ??
-        DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+        props.settings.status_probe_history_retention_days,
+      modelDetectionRetentionDays:
+        props.settings.model_detection_retention_days,
+      cleanupEnabled: props.settings.cleanup_enabled,
+      cleanupBatchSize: props.settings.cleanup_batch_size,
+      cleanupBudgetSeconds: props.settings.cleanup_budget_seconds,
+      cleanupContinuationSeconds:
+        props.settings.cleanup_continuation_seconds,
+      cleanupIntervalMinutes: props.settings.cleanup_interval_minutes,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
@@ -587,11 +743,19 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
               defaultValue={props.initialSection}
               className='min-h-0 flex-1 gap-5'
             >
-              <TabsList className='grid h-auto w-full shrink-0 grid-cols-2'>
+              <TabsList className='grid h-auto w-full shrink-0 grid-cols-3'>
                 <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
                   倍率、通知与错误
                 </TabsTrigger>
-                <TabsTrigger value='probe'>探针响应</TabsTrigger>
+                <TabsTrigger value='probe' className='h-auto px-2 text-wrap'>
+                  探针响应
+                </TabsTrigger>
+                <TabsTrigger
+                  value='retention'
+                  className='h-auto px-2 text-wrap'
+                >
+                  数据保留
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent
@@ -740,8 +904,6 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                   )}
                 />
 
-                <ChannelMonitorRetentionFields form={form} />
-
                 <ChannelMonitorEmailNotificationFields form={form} />
 
                 <FormField
@@ -784,6 +946,13 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 className='mt-0 min-h-0 overflow-y-auto pr-1'
               >
                 <ChannelMonitorProbeResponseFields form={form} />
+              </TabsContent>
+
+              <TabsContent
+                value='retention'
+                className='mt-0 min-h-0 overflow-y-auto pr-1'
+              >
+                <ChannelMonitorRetentionFields form={form} />
               </TabsContent>
             </Tabs>
 

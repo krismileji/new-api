@@ -49,7 +49,11 @@ func seedChannelDeleteCleanupData(t *testing.T, db *gorm.DB, channelId int, stat
 		ChannelId: channelId, DayStart: 1, KeyFingerprint: "key", KeyDisplay: "key",
 		CreatedAt: 1, UpdatedAt: 1,
 	}).Error)
-	require.NoError(t, db.Create(&ChannelMonitorMinuteMetric{
+	require.NoError(t, db.Create(&ChannelMonitorMinuteRouteMetric{
+		MinuteStart: 60, ChannelId: channelId, ModelKey: "model", GroupKey: "group", APIKeyKey: "key",
+		ModelName: "model-a", GroupName: "vip",
+	}).Error)
+	require.NoError(t, db.Create(&ChannelMonitorMinuteAPIKeyMetric{
 		MinuteStart: 60, ChannelId: channelId, ModelKey: "model", GroupKey: "group", APIKeyKey: "key",
 		ModelName: "model-a", GroupName: "vip", APIKeyName: "key",
 	}).Error)
@@ -121,7 +125,8 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelRatioHistory{},
 				&ChannelDailyCost{},
 				&ChannelDailyAPIKeyCost{},
-				&ChannelMonitorMinuteMetric{},
+				&ChannelMonitorMinuteRouteMetric{},
+				&ChannelMonitorMinuteAPIKeyMetric{},
 				&ChannelMonitorMinuteDurationBucket{},
 				&ChannelStatusProbeConfig{},
 				&ChannelStatusProbeState{},
@@ -148,13 +153,14 @@ func TestChannelDeletionRemovesConfigurationAndKeepsHistory(t *testing.T) {
 				&ChannelStatusProbeConfig{},
 				&ChannelStatusProbeState{},
 				&ChannelStatusProbeExecution{},
+				&ChannelMonitorMinuteRouteMetric{},
+				&ChannelMonitorMinuteAPIKeyMetric{},
+				&ChannelMonitorMinuteDurationBucket{},
 			}
 			historyTables := []any{
 				&ChannelRatioHistory{},
 				&ChannelDailyCost{},
 				&ChannelDailyAPIKeyCost{},
-				&ChannelMonitorMinuteMetric{},
-				&ChannelMonitorMinuteDurationBucket{},
 			}
 			for _, channelId := range []int{1801, 1802, 1803} {
 				wantCount := int64(1)

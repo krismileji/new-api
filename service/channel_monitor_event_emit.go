@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strings"
@@ -29,15 +30,15 @@ func EmitChannelMonitorSuccessEvent(
 	ctx *gin.Context,
 	relayInfo *relaycommon.RelayInfo,
 	input ChannelMonitorSuccessEventInput,
-) ChannelMonitorEventEnqueueStatus {
+) ChannelMonitorEventPublishStatus {
 	if relayInfo == nil || relayInfo.ChannelId <= 0 {
-		return ChannelMonitorEventEnqueueInvalid
+		return ChannelMonitorEventPublishStatusInvalid
 	}
 
 	now := time.Now()
 	source := channelMonitorEventSource(ctx)
 	if relayInfo.IsChannelTest && source != model.ChannelMonitorEventSourceModelDetection {
-		return ChannelMonitorEventEnqueueInvalid
+		return ChannelMonitorEventPublishStatusInvalid
 	}
 	event := model.NewChannelMonitorEvent(
 		relayInfo.ChannelId,
@@ -103,7 +104,8 @@ func EmitChannelMonitorSuccessEvent(
 			event.CostStatus = model.ChannelMonitorEventCostUnresolved
 		}
 	}
-	return EmitChannelMonitorEvent(event)
+	status, _ := PublishChannelMonitorEvent(channelMonitorPublishContext(ctx), event)
+	return status
 }
 
 func EmitChannelMonitorFailureEvent(
@@ -117,9 +119,9 @@ func EmitChannelMonitorFailureEvent(
 	requestDispatched bool,
 	runtimeProtectionEligible bool,
 	attemptDuration *time.Duration,
-) ChannelMonitorEventEnqueueStatus {
+) ChannelMonitorEventPublishStatus {
 	if channelId <= 0 || err == nil {
-		return ChannelMonitorEventEnqueueInvalid
+		return ChannelMonitorEventPublishStatusInvalid
 	}
 	outcome := model.ChannelMonitorEventOutcomeFailure
 	if relaytypes.IsClientGoneError(err) {
@@ -171,7 +173,15 @@ func EmitChannelMonitorFailureEvent(
 		}
 		event.AttemptDurationMs = &durationMs
 	}
-	return EmitChannelMonitorEvent(event)
+	status, _ := PublishChannelMonitorEvent(channelMonitorPublishContext(ctx), event)
+	return status
+}
+
+func channelMonitorPublishContext(ctx *gin.Context) context.Context {
+	if ctx == nil || ctx.Request == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx.Request.Context())
 }
 
 func channelMonitorEventSchedulingEligible(

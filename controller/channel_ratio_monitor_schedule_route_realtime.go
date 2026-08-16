@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
@@ -12,7 +13,7 @@ type channelSmartScheduleRealtimeRouteMetrics struct {
 	businessPerformance *model.ChannelMonitorRoutePerformanceMetric
 	stability           *model.ChannelMonitorRouteStabilityMetric
 	sampleItem          channelSmartScheduleSampleItem
-	snapshot            service.ChannelMonitorRealtimeSnapshot
+	snapshot            service.ChannelMonitorRedisRouteHealthSnapshot
 }
 
 type channelSmartScheduleMetricCoverageResponse struct {
@@ -29,15 +30,25 @@ type channelSmartScheduleMetricCoverageResponse struct {
 }
 
 func channelSmartScheduleRealtimeRouteMetricView(
+	ctx context.Context,
 	route model.ChannelSmartScheduleRoute,
 	policy channelSmartSchedulePolicy,
 	performanceStart int64,
 	stabilityStart int64,
-) channelSmartScheduleRealtimeRouteMetrics {
-	performanceEvents, snapshot := channelSmartScheduleRealtimeEvents(
-		route.ChannelId, route.Model, performanceStart,
+) (channelSmartScheduleRealtimeRouteMetrics, error) {
+	routeStabilityStart := stabilityStart
+	if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+		route.State.StabilitySince > routeStabilityStart {
+		routeStabilityStart = route.State.StabilitySince
+	}
+	events, snapshot, err := channelSmartScheduleRealtimeEvents(
+		ctx, route.ChannelId, route.Model, min(performanceStart, routeStabilityStart),
 		route.SharedSamples.ObservationSince, 0,
 	)
+	if err != nil {
+		return channelSmartScheduleRealtimeRouteMetrics{}, err
+	}
+	performanceEvents := channelSmartScheduleEventsForWindow(events, performanceStart, 0)
 	businessEvents := make([]model.ChannelMonitorEvent, 0, len(performanceEvents))
 	performanceSampleEvents := make([]model.ChannelMonitorEvent, 0, len(performanceEvents))
 	for _, event := range performanceEvents {
@@ -60,15 +71,7 @@ func channelSmartScheduleRealtimeRouteMetricView(
 		view.businessPerformance = &metric
 	}
 
-	routeStabilityStart := stabilityStart
-	if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
-		route.State.StabilitySince > routeStabilityStart {
-		routeStabilityStart = route.State.StabilitySince
-	}
-	stabilityEvents, _ := channelSmartScheduleRealtimeEvents(
-		route.ChannelId, route.Model, routeStabilityStart,
-		route.SharedSamples.ObservationSince, 0,
-	)
+	stabilityEvents := channelSmartScheduleEventsForWindow(events, routeStabilityStart, 0)
 	stabilitySampleEvents := make([]model.ChannelMonitorEvent, 0, len(stabilityEvents))
 	for _, event := range stabilityEvents {
 		if event.Source != model.ChannelMonitorEventSourceBusiness {
@@ -92,7 +95,7 @@ func channelSmartScheduleRealtimeRouteMetricView(
 			route, routeStabilityStart, stabilitySampleEvents,
 		),
 	}
-	return view
+	return view, nil
 }
 
 func channelSmartScheduleRealtimePerformanceMetric(
@@ -299,11 +302,11 @@ func channelSmartScheduleRealtimeGroupCount(events []model.ChannelMonitorEvent) 
 func channelSmartScheduleRealtimeMetricCoverage(
 	generatedAt int64,
 	settings channelMonitorSettings,
-	snapshots []service.ChannelMonitorRealtimeSnapshot,
+	snapshots []service.ChannelMonitorRedisRouteHealthSnapshot,
 ) channelSmartScheduleMetricCoverageResponse {
 	performanceStart := max(generatedAt-int64(settings.SmartSchedulePerformanceWindowMinutes*60), 0)
 	stabilityStart := max(generatedAt-int64(settings.SmartScheduleStabilityWindowMinutes*60), 0)
-	coverageStart := service.GetChannelMonitorRealtimeProjectionCoverageStart()
+	coverageStart := service.ChannelMonitorRedisRouteHealthCoverageStart()
 	for _, snapshot := range snapshots {
 		coverageStart = max(coverageStart, snapshot.CoverageStart)
 	}
@@ -325,8 +328,8 @@ func channelSmartScheduleRealtimeMetricCoverage(
 }
 
 func channelSmartScheduleMergeRealtimeSnapshot(
-	target *service.ChannelMonitorRealtimeSnapshot,
-	source service.ChannelMonitorRealtimeSnapshot,
+	target *service.ChannelMonitorRedisRouteHealthSnapshot,
+	source service.ChannelMonitorRedisRouteHealthSnapshot,
 ) {
 	if source.WindowStart > 0 && (target.WindowStart == 0 || source.WindowStart < target.WindowStart) {
 		target.WindowStart = source.WindowStart

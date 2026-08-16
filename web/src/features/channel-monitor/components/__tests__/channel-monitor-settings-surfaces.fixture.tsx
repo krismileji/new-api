@@ -85,7 +85,19 @@ const settings = {
   auto_disable_on_update_failure: false,
   auto_enable_on_cost_ratio_recovery: false,
   auto_enable_on_balance_recovery: false,
-  cost_retention_days: 120,
+  cost_retention_days: 30,
+  route_metric_retention_days: 30,
+  api_key_metric_retention_days: 7,
+  execution_detail_retention_days: 3,
+  task_retention_days: 90,
+  ratio_history_retention_days: 365,
+  status_probe_history_retention_days: 7,
+  model_detection_retention_days: 30,
+  cleanup_enabled: true,
+  cleanup_batch_size: 1000,
+  cleanup_budget_seconds: 10,
+  cleanup_continuation_seconds: 60,
+  cleanup_interval_minutes: 1440,
   email_notification_enabled: true,
   notification_email: 'alerts@example.com',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
@@ -211,16 +223,6 @@ const generalHasSchedule = generalTitle.includes('智能调度')
 const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
-const legacyRetentionDefaultsApplied = [
-  ['executionDetailRetentionDays', '14'],
-  ['taskRetentionDays', '90'],
-  ['ratioHistoryRetentionDays', '365'],
-  ['statusProbeHistoryRetentionDays', '7'],
-].every(
-  ([name, value]) =>
-    generalDialog.querySelector<HTMLInputElement>(`input[name="${name}"]`)
-      ?.value === value
-)
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
 ]
@@ -242,6 +244,84 @@ assert.ok(firstNotificationCheckbox)
 await act(async () => firstNotificationCheckbox.click())
 const notificationTypeCanBeUnchecked =
   firstNotificationCheckbox.getAttribute('aria-checked') === 'false'
+
+const settingsTabs = [
+  ...generalDialog.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+]
+const monitorTab = settingsTabs.find(
+  (tab) => tab.textContent?.trim() === '倍率、通知与错误'
+)
+const retentionTab = settingsTabs.find(
+  (tab) => tab.textContent?.trim() === '数据保留'
+)
+const probeTab = settingsTabs.find(
+  (tab) => tab.textContent?.trim() === '探针响应'
+)
+assert.ok(monitorTab)
+assert.ok(retentionTab)
+assert.ok(probeTab)
+const tabPanelFor = (tab: HTMLButtonElement) => {
+  const panelId = tab.getAttribute('aria-controls')
+  return panelId
+    ? document.querySelector<HTMLElement>(`[id="${panelId}"]`)
+    : null
+}
+const monitorRetentionFieldCount =
+  tabPanelFor(monitorTab)?.querySelectorAll('input[name$="RetentionDays"]')
+    .length ?? 0
+const retentionTabWrapsText = retentionTab.classList.contains('text-wrap')
+const retentionTabIsLast = settingsTabs.at(-1) === retentionTab
+await act(async () => {
+  monitorTab.focus()
+  monitorTab.dispatchEvent(
+    new domWindow.KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+    }) as unknown as KeyboardEvent
+  )
+  probeTab.dispatchEvent(
+    new domWindow.KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+    }) as unknown as KeyboardEvent
+  )
+  retentionTab.dispatchEvent(
+    new domWindow.KeyboardEvent('keydown', {
+      key: ' ',
+      bubbles: true,
+    }) as unknown as KeyboardEvent
+  )
+})
+const retentionTabKeyboardActivated =
+  retentionTab.getAttribute('aria-selected') === 'true'
+const retentionRetentionFieldCount =
+  tabPanelFor(retentionTab)?.querySelectorAll('input[name$="RetentionDays"]')
+    .length ?? 0
+const retentionSettingsLoaded =
+  [
+    ['costRetentionDays', '30'],
+    ['routeMetricRetentionDays', '30'],
+    ['apiKeyMetricRetentionDays', '7'],
+    ['executionDetailRetentionDays', '3'],
+    ['taskRetentionDays', '90'],
+    ['ratioHistoryRetentionDays', '365'],
+    ['statusProbeHistoryRetentionDays', '7'],
+    ['modelDetectionRetentionDays', '30'],
+    ['cleanupBatchSize', '1000'],
+    ['cleanupBudgetSeconds', '10'],
+    ['cleanupContinuationSeconds', '60'],
+    ['cleanupIntervalMinutes', '1440'],
+  ].every(
+    ([name, value]) =>
+      tabPanelFor(retentionTab)?.querySelector<HTMLInputElement>(
+        `input[name="${name}"]`
+      )?.value === value
+  ) &&
+  tabPanelFor(retentionTab)
+    ?.querySelector('[aria-label="启用自动清理"]')
+    ?.getAttribute('aria-checked') === 'true'
+const retentionFieldsOnlyInRetentionTab =
+  monitorRetentionFieldCount === 0 && retentionRetentionFieldCount === 8
 await unmountSettingsSurface(generalSurface)
 
 const scheduleSurface = await renderSettingsSurface('schedule')
@@ -451,8 +531,13 @@ process.stdout.write(
     generalHasSchedule,
     generalTitle,
     generalUsesContentSizedViewport,
-    legacyRetentionDefaultsApplied,
+    generalTabCount: settingsTabs.length,
+    retentionSettingsLoaded,
     notificationTypeCanBeUnchecked,
+    retentionFieldsOnlyInRetentionTab,
+    retentionTabIsLast,
+    retentionTabKeyboardActivated,
+    retentionTabWrapsText,
     policyDialogBlocksHorizontalOverflow,
     policyDialogCentered,
     policyDialogUsesContentSizedViewport,

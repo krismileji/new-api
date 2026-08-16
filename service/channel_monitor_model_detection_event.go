@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -54,5 +55,5 @@ func emitChannelModelDetectionMonitorEvent(costEvent model.ChannelModelDetection
 			event.UnresolvedCostNanoCNY = *costEvent.EstimatedCostNanoCNY
 		}
 	}
-	EmitChannelMonitorEvent(event)
+	_, _ = PublishChannelMonitorEvent(context.Background(), event)
 }

@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *testing.T) {
+func TestRunChannelMonitorAggregationAggregatesEachNormalMinuteOnceAndRepairsDirtyMinute(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -35,8 +35,10 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	constant.ErrorLogEnabled = true
 	require.NoError(t, db.AutoMigrate(
 		&model.Log{},
-		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
 	))
 	t.Cleanup(func() {
@@ -51,18 +53,26 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 	now := int64(10*time.Hour/time.Second + 17*time.Minute/time.Second + 23)
 	targetEnd := now - now%int64(channelMonitorAggregationInterval/time.Second)
 	completedMinute := now - now%60 - 60
-	oldMinute := targetEnd - int64(channelMonitorAggregationRecentTail/time.Second) - 60
+	oldMinute := completedMinute - 60
 	require.NoError(t, db.Create(&[]model.Log{
 		{ChannelId: 1, ModelName: "recent", CreatedAt: completedMinute + 1, Type: model.LogTypeConsume},
 		{ChannelId: 2, ModelName: "old", CreatedAt: oldMinute + 1, Type: model.LogTypeConsume},
 	}).Error)
 
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now, false))
-	var metrics []model.ChannelMonitorMinuteMetric
+	var metrics []model.ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Order("channel_id ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 1)
 	assert.Equal(t, 1, metrics[0].ChannelId)
 	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
+	coverage, err := model.GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	firstRevision := coverage.Revision
+
+	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now, false))
+	coverage, err = model.GetChannelMonitorAggregationCoverage(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, firstRevision, coverage.Revision)
 
 	require.NoError(t, db.Create(&model.Log{
 		ChannelId: 1,
@@ -70,16 +80,34 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 		CreatedAt: completedMinute + 2,
 		Type:      model.LogTypeError,
 	}).Error)
+	require.NoError(t, model.MarkChannelMonitorDirtyMinute(
+		context.Background(), completedMinute, model.ChannelMonitorDirtyReasonLateLog,
+	))
+	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now, false))
+	require.NoError(t, db.Order("channel_id ASC").Find(&metrics).Error)
+	require.Len(t, metrics, 1)
+	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
+	assert.Equal(t, int64(1), metrics[0].ActualFailureCount)
+	var dirtyCount int64
+	require.NoError(t, db.Model(&model.ChannelMonitorDirtyMinute{}).Count(&dirtyCount).Error)
+	assert.Zero(t, dirtyCount)
+	require.NoError(t, model.MarkChannelMonitorDirtyMinute(
+		context.Background(), completedMinute, model.ChannelMonitorDirtyReasonLateLog,
+	))
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now, false))
 	require.NoError(t, db.Order("channel_id ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 1)
 	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
 	assert.Equal(t, int64(1), metrics[0].ActualFailureCount)
 
-	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now, true))
+	_, err = model.AggregateChannelMonitorMinuteRangeWithResult(
+		context.Background(), completedMinute, targetEnd,
+	)
+	require.NoError(t, err)
 	require.NoError(t, db.Order("channel_id ASC").Find(&metrics).Error)
-	require.Len(t, metrics, 2)
-	assert.Equal(t, []int{1, 2}, []int{metrics[0].ChannelId, metrics[1].ChannelId})
+	require.Len(t, metrics, 1)
+	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
+	assert.Equal(t, int64(1), metrics[0].ActualFailureCount)
 
 	laterNow := now + int64(4*time.Minute/time.Second)
 	gapMinute := targetEnd + int64(time.Minute/time.Second)
@@ -87,12 +115,65 @@ func TestRunChannelMonitorAggregationOnceRebuildsOnlyRecentCompletedMinutes(t *t
 		ChannelId: 3, ModelName: "gap", CreatedAt: gapMinute + 1, Type: model.LogTypeConsume,
 	}).Error)
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), laterNow, false))
-	var gapMetric model.ChannelMonitorMinuteMetric
+	var gapMetric model.ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("channel_id = ?", 3).First(&gapMetric).Error)
 	assert.Equal(t, gapMinute, gapMetric.MinuteStart)
 	completedThrough, err := model.GetChannelMonitorAggregationCompletedThrough(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, laterNow-laterNow%60, completedThrough)
+}
+
+func TestRepairChannelMonitorDirtyMinutesKeepsMarkerAfterFailure(t *testing.T) {
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-dirty-repair.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	model.LOG_DB = db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	require.NoError(t, db.AutoMigrate(
+		&model.Log{},
+		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorDirtyMinute{},
+	))
+	t.Cleanup(func() {
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+		require.NoError(t, sqlDB.Close())
+	})
+
+	const minuteStart = int64(120)
+	require.NoError(t, db.Create(&model.Log{
+		ChannelId: 7, ModelName: "model-a", CreatedAt: minuteStart + 1, Type: model.LogTypeConsume,
+	}).Error)
+	require.NoError(t, model.MarkChannelMonitorDirtyMinute(
+		context.Background(), minuteStart, model.ChannelMonitorDirtyReasonLateLog,
+	))
+	key := channelMonitorAggregationDatabaseKey{db: db, logDB: db}
+	err = repairChannelMonitorDirtyMinutes(context.Background(), key, minuteStart+120)
+	require.Error(t, err)
+
+	var dirty model.ChannelMonitorDirtyMinute
+	require.NoError(t, db.First(&dirty).Error)
+	assert.Empty(t, dirty.ClaimedBy)
+	assert.Zero(t, dirty.ClaimedUntil)
+
+	require.NoError(t, db.AutoMigrate(
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
+	))
+	require.NoError(t, repairChannelMonitorDirtyMinutes(context.Background(), key, minuteStart+120))
+	var dirtyCount int64
+	require.NoError(t, db.Model(&model.ChannelMonitorDirtyMinute{}).Count(&dirtyCount).Error)
+	assert.Zero(t, dirtyCount)
+	var metric model.ChannelMonitorMinuteRouteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", minuteStart, 7).First(&metric).Error)
+	assert.Equal(t, int64(1), metric.ActualSuccessCount)
 }
 
 func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay(t *testing.T) {
@@ -116,8 +197,10 @@ func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay
 	common.IsMasterNode = true
 	require.NoError(t, db.AutoMigrate(
 		&model.Log{},
-		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
 	))
 	t.Cleanup(func() {
@@ -155,7 +238,7 @@ func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay
 
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now+20, false))
 
-	var metric model.ChannelMonitorMinuteMetric
+	var metric model.ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ?", oldMinute, 7,
 	).First(&metric).Error)
@@ -189,8 +272,10 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 	constant.ErrorLogEnabled = true
 	require.NoError(t, db.AutoMigrate(
 		&model.Log{},
-		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
 		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
 	))
 	common.OptionMapRWMutex.Lock()
@@ -224,7 +309,7 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), targetEnd, true))
 	var before int64
-	require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&before).Error)
+	require.NoError(t, db.Model(&model.ChannelMonitorMinuteRouteMetric{}).Count(&before).Error)
 	assert.Zero(t, before)
 
 	expectedCoverageStarts := []int64{
@@ -239,12 +324,12 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 		assert.Equal(t, expectedCoveredFrom, coverage.CoveredFrom)
 		if round < len(expectedCoverageStarts)-1 {
 			var metricCount int64
-			require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).Count(&metricCount).Error)
+			require.NoError(t, db.Model(&model.ChannelMonitorMinuteRouteMetric{}).Count(&metricCount).Error)
 			assert.Zero(t, metricCount)
 		}
 	}
 
-	var metric model.ChannelMonitorMinuteMetric
+	var metric model.ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("channel_id = ?", 9).First(&metric).Error)
 	assert.Equal(t, oldMinute, metric.MinuteStart)
 	coverage, err := model.GetChannelMonitorAggregationCoverage(context.Background())
@@ -292,7 +377,7 @@ func TestChannelMonitorAggregationWindowUsesRecentAndStartupWindows(t *testing.T
 		{
 			name:         "regular minute",
 			now:          regularNow,
-			expectedTail: channelMonitorAggregationRecentTail,
+			expectedTail: channelMonitorAggregationNormalTail,
 			expectedMode: "minute",
 		},
 		{
@@ -314,17 +399,6 @@ func TestChannelMonitorAggregationWindowUsesRecentAndStartupWindows(t *testing.T
 			assert.Equal(t, test.expectedMode, mode)
 		})
 	}
-}
-
-func TestChannelMonitorAggregationRepairWindowRunsOnlyOnHourBoundary(t *testing.T) {
-	hourEnd := int64(11 * time.Hour / time.Second)
-	start, end, repair := channelMonitorAggregationRepairWindow(hourEnd)
-	require.True(t, repair)
-	assert.Equal(t, hourEnd, end)
-	assert.Equal(t, int64(channelMonitorAggregationRepairTail/time.Second), end-start)
-
-	_, _, repair = channelMonitorAggregationRepairWindow(hourEnd + 60)
-	assert.False(t, repair)
 }
 
 func TestNextChannelMonitorAggregationRunAlignsToMinuteBoundary(t *testing.T) {
@@ -384,7 +458,8 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 	constant.ErrorLogEnabled = true
 	common.IsMasterNode = true
 	require.NoError(t, db.AutoMigrate(
-		&model.ChannelMonitorMinuteMetric{},
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelSmartScheduleModelSampleState{},
 	))
@@ -408,7 +483,7 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 	})
 
 	latestFirstToken := 100.0
-	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
+	require.NoError(t, db.Create(&model.ChannelMonitorMinuteRouteMetric{
 		MinuteStart:           60,
 		ChannelId:             1,
 		ModelKey:              "model-key",
@@ -429,7 +504,7 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 	require.Len(t, metrics, 1)
 	require.NotNil(t, metrics[0].AverageFirstTokenMs)
 	assert.Equal(t, 100.0, *metrics[0].AverageFirstTokenMs)
-	require.NoError(t, db.Model(&model.ChannelMonitorMinuteMetric{}).
+	require.NoError(t, db.Model(&model.ChannelMonitorMinuteRouteMetric{}).
 		Where("channel_id = ?", 1).
 		Updates(map[string]any{
 			"first_token_total_ms":  250,

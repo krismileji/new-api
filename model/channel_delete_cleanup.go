@@ -143,6 +143,9 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 
 func deleteChannelMonitorDataTx(tx *gorm.DB, channelIds []int) error {
 	monitorTables := []any{
+		&ChannelMonitorMinuteRouteMetric{},
+		&ChannelMonitorMinuteAPIKeyMetric{},
+		&ChannelMonitorMinuteDurationBucket{},
 		&ChannelRatioMonitor{},
 		&ChannelSmartScheduleRouteState{},
 		&ChannelSmartScheduleGroupPause{},

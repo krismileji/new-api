@@ -10,22 +10,25 @@ import (
 
 func TestGetChannelMonitorRouteMetricsForWindowsBatchesDifferentProbingStarts(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
-	require.NoError(t, db.Create(&[]ChannelMonitorMinuteMetric{
+	modelAKey := channelMonitorMinuteDimensionKey("model-a")
+	modelBKey := channelMonitorMinuteDimensionKey("model-b")
+	groupKey := channelMonitorMinuteDimensionKey("vip")
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
 		{
-			MinuteStart: 120, ChannelId: 61, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "key-1",
+			MinuteStart: 120, ChannelId: 61, ModelKey: modelAKey, GroupKey: groupKey, APIKeyKey: "key-1",
 			ModelName: "model-a", GroupName: "vip", ActualSuccessCount: 2, ActualFailureCount: 1,
 			FinalFailureCount: 1, SampleCount: 2, FirstTokenSampleCount: 2, FirstTokenTotalMs: 200,
 			TPSSampleCount: 2, TPSTotal: 20, LastUsedTime: 140,
 		},
 		{
-			MinuteStart: 180, ChannelId: 61, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "key-1",
+			MinuteStart: 180, ChannelId: 61, ModelKey: modelAKey, GroupKey: groupKey, APIKeyKey: "key-1",
 			ModelName: "model-a", GroupName: "vip", ActualSuccessCount: 3, ActualFailureCount: 1,
 			RetryFailureCount: 1, RetryFailureDurationTotalMs: 500, RetryFailureUnder1sCount: 1,
 			SampleCount: 1, FirstTokenSampleCount: 1, FirstTokenTotalMs: 300,
 			TPSSampleCount: 1, TPSTotal: 10, LastUsedTime: 190,
 		},
 		{
-			MinuteStart: 180, ChannelId: 62, ModelKey: "model-b", GroupKey: "vip", APIKeyKey: "key-1",
+			MinuteStart: 180, ChannelId: 62, ModelKey: modelBKey, GroupKey: groupKey, APIKeyKey: "key-1",
 			ModelName: "model-b", GroupName: "vip", ActualSuccessCount: 1,
 			SampleCount: 1, FirstTokenSampleCount: 1, FirstTokenTotalMs: 400,
 			TPSSampleCount: 1, TPSTotal: 5, LastUsedTime: 200,
@@ -33,12 +36,12 @@ func TestGetChannelMonitorRouteMetricsForWindowsBatchesDifferentProbingStarts(t 
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelMonitorMinuteDurationBucket{
 		{
-			MinuteStart: 120, ChannelId: 61, ModelKey: "model-a", GroupKey: "vip",
+			MinuteStart: 120, ChannelId: 61, ModelKey: modelAKey, GroupKey: groupKey,
 			ModelName: "model-a", GroupName: "vip", BucketIndex: channelMonitorDurationBucketIndex(100),
 			Count: 2, TotalMs: 200,
 		},
 		{
-			MinuteStart: 180, ChannelId: 61, ModelKey: "model-a", GroupKey: "vip",
+			MinuteStart: 180, ChannelId: 61, ModelKey: modelAKey, GroupKey: groupKey,
 			ModelName: "model-a", GroupName: "vip", BucketIndex: channelMonitorDurationBucketIndex(300),
 			Count: 1, TotalMs: 300,
 		},

@@ -12,3 +12,20 @@ func EnqueueRequiredSystemTask(taskType string, payload any) (*model.SystemTask,
 	notifySystemTaskRunner()
 	return task, created, nil
 }
+
+func EnqueueRequiredSystemTaskAfterRedisSequence(
+	taskType string,
+	payload any,
+	eventSequence int64,
+) (*model.SystemTask, bool, bool, error) {
+	task, created, applied, err := model.EnqueueRequiredSystemTaskAfterRedisSequence(
+		taskType,
+		payload,
+		eventSequence,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+	notifySystemTaskRunner()
+	return task, created, applied, nil
+}

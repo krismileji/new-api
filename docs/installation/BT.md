@@ -87,7 +87,7 @@ docker-compose up -d
 | `SESSION_SECRET`    | 会话密钥，多机部署必须一致      | **必填** |
 | `CRYPTO_SECRET`     | 加密密钥，使用 Redis 时必填  | 条件必填   |
 | `SQL_DSN`           | 数据库连接字符串（使用外部数据库时） | 可选     |
-| `REDIS_CONN_STRING` | Redis 连接字符串        | 可选     |
+| `REDIS_CONN_STRING` | Redis 连接字符串（渠道监控要求 Redis 6.2+） | 必须     |
 
 ### 生成随机密钥
 

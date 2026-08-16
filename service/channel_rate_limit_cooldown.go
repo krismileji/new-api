@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +17,12 @@ import (
 )
 
 const (
-	channelRateLimitCooldownRedisKey         = "channelRateLimitCooldown:v1:routes"
-	channelRateLimitCooldownRedisRevisionKey = "channelRateLimitCooldown:v1:control-revision"
+	channelRateLimitCooldownRedisKey              = "channelRateLimitCooldown:v1:routes"
+	channelRateLimitCooldownRedisRevisionKey      = "channelRateLimitCooldown:v1:control-revision"
+	channelRateLimitCooldownRedisEventSequenceKey = "channelRateLimitCooldown:v1:event-sequences"
 )
+
+var ErrChannelRateLimitCooldownRedisUnavailable = errors.New("Redis 429 冷却读取不可用")
 
 const channelRateLimitCooldownRedisExtendScript = `
 local now = tonumber(ARGV[2]) or 0
@@ -38,14 +42,22 @@ if current_revision and current_revision ~= ARGV[4] then
   return -1
 end
 if not current_revision then
-	redis.call('DEL', KEYS[1])
+	redis.call('DEL', KEYS[1], KEYS[3])
   redis.call('SET', KEYS[2], ARGV[4])
 end
 local now = tonumber(ARGV[2]) or 0
 local requested_until = tonumber(ARGV[3]) or 0
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 local current_until = tonumber(redis.call('ZSCORE', KEYS[1], ARGV[1]) or '0')
-if requested_until > current_until then
+local event_sequence = ARGV[5]
+if event_sequence ~= '' then
+  local current_sequence = redis.call('HGET', KEYS[3], ARGV[1])
+  if current_sequence and event_sequence <= current_sequence then
+    return current_until
+  end
+  redis.call('HSET', KEYS[3], ARGV[1], event_sequence)
+end
+if requested_until > now and requested_until > current_until then
   redis.call('ZADD', KEYS[1], requested_until, ARGV[1])
   return requested_until
 end
@@ -57,10 +69,14 @@ local current_revision = redis.call('GET', KEYS[2]) or ''
 if current_revision ~= ARGV[5] then
   return -1
 end
-redis.call('DEL', KEYS[1])
+redis.call('DEL', KEYS[1], KEYS[3])
 redis.call('SET', KEYS[2], ARGV[4])
 local now = tonumber(ARGV[2]) or 0
 local requested_until = tonumber(ARGV[3]) or 0
+local event_sequence = ARGV[6]
+if event_sequence ~= '' then
+  redis.call('HSET', KEYS[3], ARGV[1], event_sequence)
+end
 if requested_until > now then
   redis.call('ZADD', KEYS[1], requested_until, ARGV[1])
 end
@@ -72,14 +88,14 @@ local previous_revision = ARGV[2]
 local current_revision = redis.call('GET', KEYS[2])
 if not current_revision then
   redis.call('SET', KEYS[2], ARGV[1])
-  redis.call('DEL', KEYS[1])
+  redis.call('DEL', KEYS[1], KEYS[3])
   return 1
 end
 if previous_revision ~= '' and current_revision and current_revision ~= previous_revision then
   return 0
 end
 redis.call('SET', KEYS[2], ARGV[1])
-redis.call('DEL', KEYS[1])
+redis.call('DEL', KEYS[1], KEYS[3])
 return 1
 `
 
@@ -89,7 +105,7 @@ if current_revision ~= ARGV[2] then
   return 0
 end
 redis.call('SET', KEYS[2], ARGV[1])
-redis.call('DEL', KEYS[1])
+redis.call('DEL', KEYS[1], KEYS[3])
 return 1
 `
 
@@ -176,11 +192,70 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	modelName string,
 	durationSeconds int,
 	expectedControlRevision string,
-) (accepted bool) {
+) bool {
+	if durationSeconds <= 0 {
+		return false
+	}
+	accepted, err := startChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(),
+		channelId,
+		modelName,
+		common.GetTimestamp()+int64(durationSeconds),
+		expectedControlRevision,
+		0,
+		false,
+	)
+	if err != nil {
+		common.SysError("启动 429 冷却失败: " + err.Error())
+		return false
+	}
+	return accepted
+}
+
+// StartChannelRateLimitCooldownUntilIfControlRevision applies an absolute
+// event-time deadline and requires the shared Redis write to succeed.
+func StartChannelRateLimitCooldownUntilIfControlRevision(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	requestedUntil int64,
+	expectedControlRevision string,
+	eventSequence int64,
+) (bool, error) {
+	return startChannelRateLimitCooldownUntilIfControlRevision(
+		ctx,
+		channelId,
+		modelName,
+		requestedUntil,
+		expectedControlRevision,
+		eventSequence,
+		true,
+	)
+}
+
+func startChannelRateLimitCooldownUntilIfControlRevision(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	requestedUntil int64,
+	expectedControlRevision string,
+	eventSequence int64,
+	requireRedis bool,
+) (accepted bool, resultErr error) {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	expectedControlRevision = strings.TrimSpace(expectedControlRevision)
-	if channelId <= 0 || modelName == "" || durationSeconds <= 0 {
-		return false
+	if channelId <= 0 || modelName == "" || requestedUntil <= 0 || eventSequence < 0 {
+		return false, nil
+	}
+	if requireRedis && eventSequence == 0 {
+		return false, errors.New("共享 Redis 429 冷却事件顺序无效")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := common.GetTimestamp()
+	if !requireRedis && requestedUntil <= now {
+		return false, nil
 	}
 	channelRateLimitCooldowns.Lock()
 	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
@@ -203,14 +278,12 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	// Serialize the database revision check and local write with configuration cleanup.
 	currentRevision, err := model.GetChannelSmartScheduleControlRevision()
 	if err != nil {
-		common.SysError("校验 429 冷却配置修订号失败: " + err.Error())
-		return false
+		return false, fmt.Errorf("校验 429 冷却配置修订号失败: %w", err)
 	}
 	if currentRevision != expectedControlRevision {
-		return false
+		return false, nil
 	}
-	now := common.GetTimestamp()
-	until := now + int64(durationSeconds)
+	until := requestedUntil
 	if current := channelRateLimitCooldowns.untilByRoute[key]; current.revision != expectedControlRevision || current.until < until {
 		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
 			until: until, revision: expectedControlRevision,
@@ -219,54 +292,71 @@ func StartChannelRateLimitCooldownIfControlRevision(
 		publishChannelRateLimitCooldownSnapshotLocked()
 	}
 	shared := false
+	eventSequenceText := ""
+	if eventSequence > 0 {
+		eventSequenceText = fmt.Sprintf("%019d", eventSequence)
+	}
+	if requireRedis && (!common.RedisEnabled || common.RDB == nil) {
+		return false, errors.New("共享 Redis 429 冷却不可用")
+	}
 	if common.RedisEnabled && common.RDB != nil {
 		sharedUntil, redisErr := common.RDB.Eval(
-			context.Background(),
+			ctx,
 			channelRateLimitCooldownRedisGuardedExtendScript,
-			[]string{channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey},
+			[]string{
+				channelRateLimitCooldownRedisKey,
+				channelRateLimitCooldownRedisRevisionKey,
+				channelRateLimitCooldownRedisEventSequenceKey,
+			},
 			channelRateLimitCooldownRedisMember(key),
 			now,
 			until,
 			expectedControlRevision,
+			eventSequenceText,
 		).Int64()
 		if redisErr != nil {
+			if requireRedis {
+				return false, fmt.Errorf("同步 429 冷却到 Redis 失败: %w", redisErr)
+			}
 			common.SysError("同步 429 冷却到 Redis 失败: " + redisErr.Error())
 		} else if sharedUntil < 0 {
 			observedRevision, getErr := common.RDB.Get(
-				context.Background(), channelRateLimitCooldownRedisRevisionKey,
+				ctx, channelRateLimitCooldownRedisRevisionKey,
 			).Result()
 			if errors.Is(getErr, redis.Nil) {
 				observedRevision = ""
 				getErr = nil
 			}
 			if getErr != nil {
-				common.SysError("读取 Redis 429 冷却配置修订号失败: " + getErr.Error())
-				return false
+				return false, fmt.Errorf("读取 Redis 429 冷却配置修订号失败: %w", getErr)
 			}
 			recheckedRevision, revisionErr := model.GetChannelSmartScheduleControlRevision()
 			if revisionErr != nil {
-				common.SysError("重新校验 429 冷却配置修订号失败: " + revisionErr.Error())
-				return false
+				return false, fmt.Errorf("重新校验 429 冷却配置修订号失败: %w", revisionErr)
 			}
 			if recheckedRevision != expectedControlRevision {
-				return false
+				return false, nil
 			}
 			sharedUntil, redisErr = common.RDB.Eval(
-				context.Background(),
+				ctx,
 				channelRateLimitCooldownRedisRecoverExtendScript,
-				[]string{channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey},
+				[]string{
+					channelRateLimitCooldownRedisKey,
+					channelRateLimitCooldownRedisRevisionKey,
+					channelRateLimitCooldownRedisEventSequenceKey,
+				},
 				channelRateLimitCooldownRedisMember(key),
 				now,
 				until,
 				expectedControlRevision,
 				observedRevision,
+				eventSequenceText,
 			).Int64()
 			if redisErr != nil {
-				common.SysError("修复 Redis 429 冷却配置修订号失败: " + redisErr.Error())
-				return false
+				return false, fmt.Errorf("修复 Redis 429 冷却配置修订号失败: %w", redisErr)
 			}
 			if sharedUntil < 0 {
-				return false
+				return false, nil
 			}
 			channelRateLimitCooldowns.untilByRoute = make(map[channelRateLimitCooldownKey]channelRateLimitCooldownEntry)
 			until = sharedUntil
@@ -278,7 +368,15 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	}
 
 	current := channelRateLimitCooldowns.untilByRoute[key]
-	if current.revision != expectedControlRevision || current.until < until {
+	if requireRedis && shared {
+		if until > now {
+			channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
+				until: until, shared: true, revision: expectedControlRevision,
+			}
+		} else {
+			delete(channelRateLimitCooldowns.untilByRoute, key)
+		}
+	} else if current.revision != expectedControlRevision || current.until < until {
 		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
 			until: until, shared: shared, revision: expectedControlRevision,
 		}
@@ -288,7 +386,7 @@ func StartChannelRateLimitCooldownIfControlRevision(
 	}
 	publishChannelRateLimitCooldownSnapshotLocked()
 	accepted = true
-	return true
+	return true, nil
 }
 
 // UpdateChannelRateLimitCooldownControlRevision advances the revision used by
@@ -323,7 +421,11 @@ func UpdateChannelRateLimitCooldownControlRevision(
 	updated, err := common.RDB.Eval(
 		context.Background(),
 		channelRateLimitCooldownRedisRevisionScript,
-		[]string{channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey},
+		[]string{
+			channelRateLimitCooldownRedisKey,
+			channelRateLimitCooldownRedisRevisionKey,
+			channelRateLimitCooldownRedisEventSequenceKey,
+		},
 		controlRevision,
 		previousRevision,
 	).Int64()
@@ -354,7 +456,11 @@ func UpdateChannelRateLimitCooldownControlRevision(
 		updated, err = common.RDB.Eval(
 			context.Background(),
 			channelRateLimitCooldownRedisRevisionRecoveryScript,
-			[]string{channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey},
+			[]string{
+				channelRateLimitCooldownRedisKey,
+				channelRateLimitCooldownRedisRevisionKey,
+				channelRateLimitCooldownRedisEventSequenceKey,
+			},
 			controlRevision,
 			observedRevision,
 		).Int64()
@@ -375,7 +481,10 @@ func ClearChannelRateLimitCooldowns() {
 	channelRateLimitCooldowns.Unlock()
 	if common.RedisEnabled && common.RDB != nil {
 		if err := common.RDB.Del(
-			context.Background(), channelRateLimitCooldownRedisKey, channelRateLimitCooldownRedisRevisionKey,
+			context.Background(),
+			channelRateLimitCooldownRedisKey,
+			channelRateLimitCooldownRedisRevisionKey,
+			channelRateLimitCooldownRedisEventSequenceKey,
 		).Err(); err != nil {
 			common.SysError("清理 Redis 429 冷却失败: " + err.Error())
 			return
@@ -426,6 +535,101 @@ func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int6
 		latestUntil = max(latestUntil, entry.until)
 	}
 	return latestUntil
+}
+
+// ChannelRateLimitCooldownUntilMatchingFromRedis reads the shared cooldown
+// state directly. Redis-backed aggregation must use this reader so a stale
+// process-local snapshot cannot influence a replayed event.
+func ChannelRateLimitCooldownUntilMatchingFromRedis(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+) (int64, error) {
+	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	if channelId <= 0 || modelName == "" {
+		return 0, nil
+	}
+	if !common.RedisEnabled || common.RDB == nil {
+		return 0, ErrChannelRateLimitCooldownRedisUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	client := common.RDB
+	now := common.GetTimestamp()
+	expectedRevision := channelRateLimitCooldownControlRevision()
+	wildcard := strings.HasSuffix(modelName, "*")
+	pipe := client.TxPipeline()
+	revisionCommand := pipe.Get(ctx, channelRateLimitCooldownRedisRevisionKey)
+	var exactCommand *redis.FloatCmd
+	var activeCommand *redis.ZSliceCmd
+	if wildcard {
+		activeCommand = pipe.ZRangeByScoreWithScores(
+			ctx,
+			channelRateLimitCooldownRedisKey,
+			&redis.ZRangeBy{Min: "(" + strconv.FormatInt(now, 10), Max: "+inf"},
+		)
+	} else {
+		exactCommand = pipe.ZScore(
+			ctx,
+			channelRateLimitCooldownRedisKey,
+			channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+				channelId: channelId,
+				modelName: modelName,
+			}),
+		)
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, fmt.Errorf("读取 Redis 429 冷却失败: %w", err)
+	}
+	observedRevision, revisionErr := revisionCommand.Result()
+	if errors.Is(revisionErr, redis.Nil) {
+		observedRevision = ""
+		revisionErr = nil
+	}
+	if revisionErr != nil {
+		return 0, fmt.Errorf("读取 Redis 429 冷却配置修订号失败: %w", revisionErr)
+	}
+	if observedRevision != expectedRevision || channelRateLimitCooldownControlRevision() != expectedRevision {
+		return 0, fmt.Errorf(
+			"Redis 429 冷却配置修订号不一致: got=%q want=%q",
+			observedRevision,
+			expectedRevision,
+		)
+	}
+
+	if exactCommand != nil {
+		if exactErr := exactCommand.Err(); exactErr != nil && !errors.Is(exactErr, redis.Nil) {
+			return 0, fmt.Errorf("读取 Redis 429 冷却路由失败: %w", exactErr)
+		}
+		until := int64(exactCommand.Val())
+		if until <= now {
+			return 0, nil
+		}
+		return until, nil
+	}
+	if activeErr := activeCommand.Err(); activeErr != nil && !errors.Is(activeErr, redis.Nil) {
+		return 0, fmt.Errorf("读取 Redis 429 冷却路由失败: %w", activeErr)
+	}
+	prefix := strings.TrimSuffix(modelName, "*")
+	latestUntil := int64(0)
+	for _, item := range activeCommand.Val() {
+		key, ok := parseChannelRateLimitCooldownRedisMember(item.Member)
+		until := int64(item.Score)
+		if !ok || key.channelId != channelId || until <= now {
+			continue
+		}
+		if wildcard && !strings.HasPrefix(key.modelName, prefix) {
+			continue
+		}
+		if !wildcard && key.modelName != modelName {
+			continue
+		}
+		latestUntil = max(latestUntil, until)
+	}
+	return latestUntil, nil
 }
 
 func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {

@@ -55,7 +55,11 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
 	requestedWindowStart := generatedAt - int64(minutes*60)
-	view := service.QueryChannelMonitorRealtimePage(requestedWindowStart, generatedAt+1)
+	view, err := service.QueryChannelMonitorRealtimePageFromRedis(c.Request.Context(), requestedWindowStart, generatedAt+1)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	metrics, successMetrics := channelMonitorRealtimePerformanceMetrics(view)
 	groupSuccessMetrics := channelMonitorRealtimeGroupSuccessMetrics(view)
 	metadata := channelMonitorRealtimePageMetadata(view)
@@ -67,21 +71,35 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		WindowComplete:     !metadata.RealtimeDegraded && metadata.WindowStart > 0 && metadata.WindowStart <= view.WindowStart,
 	}
 	common.ApiSuccess(c, gin.H{
-		"range_minutes":             minutes,
-		"range_source":              rangeSource,
-		"generated_at":              generatedAt,
-		"window_start":              view.WindowStart,
-		"data_cutoff_at":            metadata.DataCutoffAt,
-		"processed_at":              metadata.ProcessedAt,
-		"projection_started_at":     metadata.ProjectionStartedAt,
-		"event_watermark":           metadata.EventWatermark,
-		"queue_depth":               metadata.QueueDepth,
-		"realtime_degraded":         metadata.RealtimeDegraded,
-		"metric_coverage":           metricCoverage,
-		"items":                     metrics,
-		"success_metrics_available": true,
-		"success_items":             successMetrics,
-		"group_success_items":       groupSuccessMetrics,
+		"range_minutes":                 minutes,
+		"range_source":                  rangeSource,
+		"generated_at":                  generatedAt,
+		"window_start":                  view.WindowStart,
+		"data_cutoff_at":                metadata.DataCutoffAt,
+		"processed_at":                  metadata.ProcessedAt,
+		"projection_started_at":         metadata.ProjectionStartedAt,
+		"event_watermark":               metadata.EventWatermark,
+		"queue_depth":                   metadata.QueueDepth,
+		"redis_status":                  metadata.RedisStatus,
+		"redis_available":               metadata.RedisAvailable,
+		"redis_consumer_running":        metadata.RedisConsumerRunning,
+		"pending_count":                 metadata.PendingCount,
+		"oldest_pending_at":             metadata.OldestPendingAt,
+		"consumer_lag_seconds":          metadata.ConsumerLagSeconds,
+		"last_published_at":             metadata.LastPublishedAt,
+		"last_processed_at":             metadata.LastProcessedAt,
+		"retry_count":                   metadata.RetryCount,
+		"takeover_count":                metadata.TakeoverCount,
+		"marker_release_failure_count":  metadata.MarkerReleaseFailureCount,
+		"marker_release_failure_active": metadata.MarkerReleaseFailureActive,
+		"stream_trim_failure_count":     metadata.StreamTrimFailureCount,
+		"stream_trim_failure_active":    metadata.StreamTrimFailureActive,
+		"realtime_degraded":             metadata.RealtimeDegraded,
+		"metric_coverage":               metricCoverage,
+		"items":                         metrics,
+		"success_metrics_available":     true,
+		"success_items":                 successMetrics,
+		"group_success_items":           groupSuccessMetrics,
 	})
 }
 
@@ -115,23 +133,41 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		filter.Group = group
 	}
 	requestedWindowStart := generatedAt - int64(minutes*60)
-	detailView := service.QueryChannelMonitorRealtimeSuccessDetail(
+	detailView, err := service.QueryChannelMonitorRealtimeSuccessDetailFromRedis(
+		c.Request.Context(),
 		requestedWindowStart, generatedAt+1, filter,
 	)
-	queueStats := service.GetChannelMonitorEventQueueStats()
-	projectionStartedAt := service.GetChannelMonitorRealtimeProjectionStartedAt()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	metadata := channelMonitorRealtimeMetadata(detailView.WindowStart)
 	common.ApiSuccess(c, gin.H{
-		"range_minutes":             minutes,
-		"generated_at":              generatedAt,
-		"window_start":              detailView.WindowStart,
-		"data_cutoff_at":            detailView.DataCutoffAt,
-		"processed_at":              detailView.ProcessedAt,
-		"projection_started_at":     projectionStartedAt,
-		"event_watermark":           detailView.EventWatermark,
-		"queue_depth":               queueStats.QueueDepth,
-		"realtime_degraded":         projectionStartedAt > detailView.WindowStart || queueStats.DroppedEvents > 0 || queueStats.FailedEvents > 0,
-		"success_metrics_available": true,
-		"scope":                     scope,
-		"detail":                    detailView.Detail,
+		"range_minutes":                 minutes,
+		"generated_at":                  generatedAt,
+		"window_start":                  detailView.WindowStart,
+		"data_cutoff_at":                detailView.DataCutoffAt,
+		"processed_at":                  detailView.ProcessedAt,
+		"projection_started_at":         metadata.ProjectionStartedAt,
+		"event_watermark":               detailView.EventWatermark,
+		"queue_depth":                   metadata.QueueDepth,
+		"redis_status":                  metadata.RedisStatus,
+		"redis_available":               metadata.RedisAvailable,
+		"redis_consumer_running":        metadata.RedisConsumerRunning,
+		"pending_count":                 metadata.PendingCount,
+		"oldest_pending_at":             metadata.OldestPendingAt,
+		"consumer_lag_seconds":          metadata.ConsumerLagSeconds,
+		"last_published_at":             metadata.LastPublishedAt,
+		"last_processed_at":             metadata.LastProcessedAt,
+		"retry_count":                   metadata.RetryCount,
+		"takeover_count":                metadata.TakeoverCount,
+		"marker_release_failure_count":  metadata.MarkerReleaseFailureCount,
+		"marker_release_failure_active": metadata.MarkerReleaseFailureActive,
+		"stream_trim_failure_count":     metadata.StreamTrimFailureCount,
+		"stream_trim_failure_active":    metadata.StreamTrimFailureActive,
+		"realtime_degraded":             metadata.RealtimeDegraded || metadata.ProjectionStartedAt > detailView.WindowStart,
+		"success_metrics_available":     true,
+		"scope":                         scope,
+		"detail":                        detailView.Detail,
 	})
 }

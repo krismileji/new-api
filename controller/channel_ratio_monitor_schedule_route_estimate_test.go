@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,7 +17,7 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 	fastFirstToken := 100.0
 	slowFirstToken := 500.0
 	insufficientFirstToken := 300.0
-	now := int64(1_000)
+	now := common.GetTimestamp()
 	routes := []model.ChannelSmartScheduleRoute{
 		{
 			ChannelId: 1, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
@@ -77,6 +78,7 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 		}
 	}
 	channelSmartScheduleApplyCurrentWindowScores(
+		context.Background(),
 		responses,
 		routes,
 		policyByGroup,

@@ -371,7 +371,11 @@ func getChannelMonitorSuccessMetricsWithObservationBoundary(
 // GetChannelMonitorSuccessDetail returns the selected scope's totals and
 // per-channel breakdown. Channel scopes also include categorized failures.
 func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, filter ChannelMonitorSuccessFilter) (ChannelMonitorSuccessDetail, error) {
-	rows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter, true, true)
+	routeRows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter, true, false)
+	if err != nil {
+		return ChannelMonitorSuccessDetail{}, err
+	}
+	apiKeyRows, err := getChannelMonitorSuccessRows(ctx, startTimestamp, filter, true, true)
 	if err != nil {
 		return ChannelMonitorSuccessDetail{}, err
 	}
@@ -379,7 +383,7 @@ func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, f
 	totalCounts := channelMonitorSuccessCounts{}
 	channelCounts := make(map[int]*channelMonitorSuccessCounts)
 	apiKeyCounts := make(map[channelMonitorSuccessAPIKeyKey]*channelMonitorSuccessAPIKeyAggregate)
-	for _, row := range rows {
+	for _, row := range routeRows {
 		if filter.Group == "" && strings.TrimSpace(row.ModelName) == "" {
 			continue
 		}
@@ -389,7 +393,6 @@ func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, f
 			row.CacheHitCount, row.CacheSampleCount,
 			row.CacheReadTokens, row.InputTokens,
 		)
-		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 		counts := channelCounts[row.ChannelId]
 		if counts == nil {
 			counts = &channelMonitorSuccessCounts{}
@@ -400,6 +403,12 @@ func GetChannelMonitorSuccessDetail(ctx context.Context, startTimestamp int64, f
 			row.CacheHitCount, row.CacheSampleCount,
 			row.CacheReadTokens, row.InputTokens,
 		)
+	}
+	for _, row := range apiKeyRows {
+		if filter.Group == "" && strings.TrimSpace(row.ModelName) == "" {
+			continue
+		}
+		addChannelMonitorSuccessAPIKeyCount(apiKeyCounts, row)
 	}
 
 	channelItems := make([]ChannelMonitorChannelSuccessMetric, 0, len(channelCounts))

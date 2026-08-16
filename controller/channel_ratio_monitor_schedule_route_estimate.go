@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"fmt"
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,12 +11,13 @@ import (
 )
 
 func channelSmartScheduleApplyCurrentWindowScores(
+	ctx context.Context,
 	responses []channelSmartScheduleRouteResponse,
 	routes []model.ChannelSmartScheduleRoute,
 	policyByGroup map[string]channelSmartSchedulePolicy,
 	stabilityStart int64,
 	now int64,
-) {
+) error {
 	settings := getChannelMonitorRuntimeSettings()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	responseIndexByRoute := make(map[channelSmartScheduleRouteKey]int, len(responses))
@@ -29,7 +32,7 @@ func channelSmartScheduleApplyCurrentWindowScores(
 
 	candidatesByPool := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	routeKeyByPoolChannel := make(map[channelSmartScheduleRoutePoolKey]map[int]channelSmartScheduleRouteKey)
-	snapshotByRoute := make(map[channelSmartScheduleRouteKey]service.ChannelMonitorRealtimeSnapshot)
+	snapshotByRoute := make(map[channelSmartScheduleRouteKey]service.ChannelMonitorRedisRouteHealthSnapshot)
 	for _, route := range routes {
 		policy, configured := policyByGroup[route.Group]
 		if !configured || (len(policy.Models) > 0 && !slices.Contains(policy.Models, route.Model)) ||
@@ -49,31 +52,30 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			currentPriority = route.State.BasePriority
 			currentWeight = route.State.BaseWeight
 		}
-		healthMetric, healthSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			now-int64(policy.AdaptiveSamplingWindowSeconds),
-			route.SharedSamples.ObservationSince,
-			policy.AdaptiveSamplingWindowRequests,
+		adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
+		readWindowStart := min(adaptiveWindowStart, performanceStart, stabilityStart)
+		routeEvents, snapshot, err := channelSmartScheduleRealtimeEvents(
+			ctx, route.ChannelId, route.Model, readWindowStart,
+			route.SharedSamples.ObservationSince, 0,
+		)
+		if err != nil {
+			return fmt.Errorf("读取渠道 %d 模型 %s 的 Redis 健康窗口失败: %w", route.ChannelId, route.Model, err)
+		}
+		healthMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(
+				routeEvents, adaptiveWindowStart, policy.AdaptiveSamplingWindowRequests,
+			),
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
 		health := channelSmartScheduleEvaluateHealth(route.State, healthMetric, policy)
-		performanceMetric, performanceSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			performanceStart,
-			route.SharedSamples.ObservationSince,
-			0,
+		performanceMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(routeEvents, performanceStart, 0),
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
-		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			stabilityStart,
-			route.SharedSamples.ObservationSince,
-			0,
+		stabilityMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(routeEvents, stabilityStart, 0),
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
@@ -121,10 +123,6 @@ func channelSmartScheduleApplyCurrentWindowScores(
 		if performanceMetric.RequestCount > 0 {
 			candidate.SampleGroupCount = 1
 		}
-		snapshot := performanceSnapshot
-		if healthSnapshot.EventWatermark > snapshot.EventWatermark {
-			snapshot = healthSnapshot
-		}
 		snapshotByRoute[key] = snapshot
 		candidatesByPool[poolKey] = append(candidatesByPool[poolKey], candidate)
 		if routeKeyByPoolChannel[poolKey] == nil {
@@ -156,4 +154,5 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			channelSmartScheduleAttachRealtimeWindow(details, snapshot)
 		}
 	}
+	return nil
 }

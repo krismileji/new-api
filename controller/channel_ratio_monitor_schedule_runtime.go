@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -32,8 +31,26 @@ type channelSmartScheduleRuntimeHealthSnapshot struct {
 	ConsecutiveFailures int
 	FailureTimes        []int64
 	RequestEvents       []channelSmartScheduleRuntimeRequestEvent
+	CoverageStart       int64
 	WindowComplete      bool
 }
+
+type channelSmartScheduleAdaptiveMetricReader func(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	windowStart int64,
+	observationSince int64,
+	maxRequests int,
+	warningSeconds float64,
+	criticalSeconds float64,
+) (model.ChannelSmartScheduleAdaptiveHealthMetric, error)
+
+type channelSmartScheduleCooldownReader func(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+) (int64, error)
 
 type channelSmartScheduleAdaptiveRefreshEvent struct {
 	database  any
@@ -260,13 +277,29 @@ func getChannelSmartScheduleRuntimeHealth(
 		now = common.GetTimestamp()
 	}
 	windowStart := now - int64(maxChannelSmartScheduleRuntimeRetentionSeconds())
-	events, snapshot := channelSmartScheduleRealtimeEvents(
+	events, snapshot, err := channelSmartScheduleRealtimeEvents(
+		context.Background(),
 		channelId,
 		modelName,
 		windowStart,
 		0,
 		maxChannelSmartScheduleRuntimeRequestEvents,
 	)
+	if err != nil {
+		common.SysError("读取渠道监控 Redis 运行时健康窗口失败: " + err.Error())
+		return channelSmartScheduleRuntimeHealthSnapshot{
+			CoverageStart:  service.ChannelMonitorRedisRouteHealthCoverageStart(),
+			WindowComplete: false,
+		}
+	}
+	return channelSmartScheduleRuntimeHealthFromEvents(events, snapshot.CoverageStart, windowStart)
+}
+
+func channelSmartScheduleRuntimeHealthFromEvents(
+	events []model.ChannelMonitorEvent,
+	coverageStart int64,
+	windowStart int64,
+) channelSmartScheduleRuntimeHealthSnapshot {
 	runtimeEvents := make([]channelSmartScheduleRuntimeRequestEvent, 0, len(events))
 	failureTimes := make([]int64, 0, len(events))
 	for _, event := range events {
@@ -289,7 +322,8 @@ func getChannelSmartScheduleRuntimeHealth(
 		ConsecutiveFailures: channelSmartScheduleRuntimeConsecutiveFailures(runtimeEvents),
 		FailureTimes:        failureTimes,
 		RequestEvents:       runtimeEvents,
-		WindowComplete:      snapshot.CoverageStart <= windowStart,
+		CoverageStart:       coverageStart,
+		WindowComplete:      coverageStart <= windowStart,
 	}
 }
 
@@ -319,49 +353,9 @@ func protectChannelSmartScheduleRuntimeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, true)
-}
-
-func protectChannelSmartScheduleProjectedRateLimit(channelId int, modelName string) {
-	err := types.NewErrorWithStatusCode(
-		errors.New("上游触发请求频率限制"),
-		types.ErrorCodeBadResponseStatusCode,
-		http.StatusTooManyRequests,
-	)
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, false)
-}
-
-func protectChannelSmartScheduleProjectedFailure(channelId int, modelName string) {
-	window, available := service.GetChannelMonitorRealtimeWindow(channelId, modelName)
-	if !available {
-		return
-	}
-	for index := len(window.Events) - 1; index >= 0; index-- {
-		event := window.Events[index]
-		if event.Source != model.ChannelMonitorEventSourceBusiness ||
-			!event.RuntimeProtectionEligible || event.FinalRetrySummary ||
-			event.Outcome != model.ChannelMonitorEventOutcomeFailure {
-			continue
-		}
-		statusCode := http.StatusInternalServerError
-		if event.StatusCode != nil {
-			statusCode = *event.StatusCode
-		}
-		if statusCode == http.StatusTooManyRequests {
-			continue
-		}
-		message := strings.TrimSpace(event.ErrorMessage)
-		if message == "" {
-			message = "渠道请求失败"
-		}
-		errorCode := types.ErrorCodeBadResponseStatusCode
-		if strings.TrimSpace(event.ErrorCode) != "" {
-			errorCode = types.ErrorCode(event.ErrorCode)
-		}
-		err := types.NewErrorWithStatusCode(errors.New(message), errorCode, statusCode)
-		protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, false, false)
-		return
-	}
+	logChannelSmartScheduleRuntimeEffectError(applyChannelSmartScheduleRuntimeFailureWithSource(
+		channelId, modelName, err, false, false, true, nil, true, 0, 0,
+	))
 }
 
 func protectChannelSmartScheduleScheduledProbeFailure(
@@ -369,7 +363,9 @@ func protectChannelSmartScheduleScheduledProbeFailure(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, false, true)
+	logChannelSmartScheduleRuntimeEffectError(applyChannelSmartScheduleRuntimeFailureWithSource(
+		channelId, modelName, err, true, false, true, nil, true, 0, 0,
+	))
 }
 
 func protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
@@ -377,7 +373,9 @@ func protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, true, true, true)
+	logChannelSmartScheduleRuntimeEffectError(applyChannelSmartScheduleRuntimeFailureWithSource(
+		channelId, modelName, err, true, true, true, nil, true, 0, 0,
+	))
 }
 
 func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
@@ -385,7 +383,15 @@ func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
 	modelName string,
 	err *types.NewAPIError,
 ) {
-	protectChannelSmartScheduleRuntimeFailureWithSource(channelId, modelName, err, false, true, true)
+	logChannelSmartScheduleRuntimeEffectError(applyChannelSmartScheduleRuntimeFailureWithSource(
+		channelId, modelName, err, false, true, true, nil, true, 0, 0,
+	))
+}
+
+func logChannelSmartScheduleRuntimeEffectError(err error) {
+	if err != nil {
+		common.SysError("智能调度运行时副作用失败: " + err.Error())
+	}
 }
 
 // protectChannelSmartScheduleRuntimeFailureWithSource protects every
@@ -393,18 +399,26 @@ func protectChannelSmartScheduleManualProbeFailureAfterRecoveryResult(
 // upstream failure is shared across groups. A scheduled probe failure renews
 // an active degraded route immediately instead of waiting for traffic failure
 // thresholds that may be shorter than the configured probe interval.
-func protectChannelSmartScheduleRuntimeFailureWithSource(
+func applyChannelSmartScheduleRuntimeFailureWithSource(
 	channelId int,
 	modelName string,
 	err *types.NewAPIError,
 	scheduledProbe bool,
 	probeRecoveryHandled bool,
 	includeCurrentFailure bool,
-) {
+	healthOverride *channelSmartScheduleRuntimeHealthSnapshot,
+	enqueueAdaptive bool,
+	effectAt int64,
+	redisEventSequence int64,
+) error {
 	if err == nil || types.IsSkipRetryError(err) {
-		return
+		return nil
 	}
 	requestModelName := strings.TrimSpace(modelName)
+	now := effectAt
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
 	if err.StatusCode == http.StatusTooManyRequests {
 		settings := getChannelMonitorRuntimeSettings()
 		cooldownStarted := false
@@ -414,8 +428,7 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 				channelId, requestModelName,
 			)
 			if routeErr != nil {
-				common.SysError("智能调度 429 参与路由读取失败: " + routeErr.Error())
-				return
+				return fmt.Errorf("智能调度 429 参与路由读取失败: %w", routeErr)
 			}
 			for _, configured := range settings.SmartScheduleGroupPolicies {
 				routeModelName, participating := participatingRoutes[configured.Group]
@@ -435,39 +448,54 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 						continue
 					}
 				}
-				cooldownStarted = service.StartChannelRateLimitCooldownIfControlRevision(
-					channelId,
-					requestModelName,
-					settings.SmartScheduleRateLimitCooldownSeconds,
-					settings.SmartScheduleControlRevision,
-				)
+				if redisEventSequence > 0 {
+					cooldownStarted, routeErr = service.StartChannelRateLimitCooldownUntilIfControlRevision(
+						context.Background(),
+						channelId,
+						requestModelName,
+						now+int64(settings.SmartScheduleRateLimitCooldownSeconds),
+						settings.SmartScheduleControlRevision,
+						redisEventSequence,
+					)
+					if routeErr != nil {
+						return routeErr
+					}
+				} else {
+					cooldownStarted = service.StartChannelRateLimitCooldownIfControlRevision(
+						channelId,
+						requestModelName,
+						settings.SmartScheduleRateLimitCooldownSeconds,
+						settings.SmartScheduleControlRevision,
+					)
+				}
 				break
 			}
 		}
-		if cooldownStarted {
+		if cooldownStarted && enqueueAdaptive {
 			enqueueChannelSmartScheduleAdaptiveRefresh(channelId, requestModelName)
 		}
-		return
+		return nil
 	}
 	if channelId <= 0 || !isChannelSmartScheduleRuntimeFailure(err) {
-		return
+		return nil
 	}
 	settings := getChannelMonitorRuntimeSettings()
 	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
-		return
+		return nil
 	}
 	if requestModelName == "" {
-		return
+		return nil
 	}
 	runtimeRoutes, routeErr := model.GetChannelSmartScheduleRuntimeRoutes(channelId, requestModelName)
 	if routeErr != nil {
-		common.SysError("智能调度运行时路由读取失败: " + routeErr.Error())
-		return
+		return fmt.Errorf("智能调度运行时路由读取失败: %w", routeErr)
 	}
 	if len(runtimeRoutes) == 0 {
-		return
+		return nil
 	}
-	defer enqueueChannelSmartScheduleAdaptiveRefresh(channelId, requestModelName)
+	if enqueueAdaptive {
+		defer enqueueChannelSmartScheduleAdaptiveRefresh(channelId, requestModelName)
+	}
 	type matchingPolicyRoute struct {
 		configured channelSmartScheduleGroupPolicy
 		route      model.ChannelSmartScheduleRuntimeRoute
@@ -501,16 +529,20 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 		})
 	}
 	if len(matchingPolicies) == 0 {
-		return
+		return nil
 	}
-	now := common.GetTimestamp()
-	health := getChannelSmartScheduleRuntimeHealth(
-		channelId,
-		requestModelName,
-		now,
-		maxChannelSmartScheduleRuntimeRetentionSeconds(),
-		settings.SmartScheduleControlRevision,
-	)
+	health := channelSmartScheduleRuntimeHealthSnapshot{}
+	if healthOverride != nil {
+		health = *healthOverride
+	} else {
+		health = getChannelSmartScheduleRuntimeHealth(
+			channelId,
+			requestModelName,
+			now,
+			maxChannelSmartScheduleRuntimeRetentionSeconds(),
+			settings.SmartScheduleControlRevision,
+		)
+	}
 	if includeCurrentFailure {
 		health.RequestEvents = append(health.RequestEvents, channelSmartScheduleRuntimeRequestEvent{
 			Timestamp: now, Failure: true,
@@ -539,7 +571,7 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 			now-int64(policy.BurstFailureWindowSeconds),
 			matched.route.SampleSince,
 		)
-		windowComplete := service.GetChannelMonitorRealtimeProjectionStartedAt() <= windowStart ||
+		windowComplete := health.CoverageStart <= windowStart ||
 			requestCount >= windowRequestLimit
 		if policy.BurstFailureThresholdLegacy > 0 {
 			windowReached = failureCount >= policy.BurstFailureThresholdLegacy
@@ -608,15 +640,24 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 		}
 		var result model.ChannelSmartScheduleRuntimeFailureResult
 		var protectErr error
+		if redisEventSequence > 0 {
+			changedPools[channelSmartScheduleRoutePoolKey{
+				group: matched.configured.Group, model: matched.route.ModelName,
+			}] = struct{}{}
+		}
 		if probing || temporaryTraffic {
-			result, protectErr = model.ProtectChannelSmartScheduleRouteOnRuntimeFailure(
-				channelId,
-				matched.configured.Group,
-				matched.route.ModelName,
-				now+int64(cooldownMinutes)*60,
-				reason,
-				settings.SmartScheduleControlRevision,
-			)
+			if redisEventSequence > 0 {
+				result, protectErr = model.ProtectChannelSmartScheduleRouteOnRuntimeFailureFromRedis(
+					channelId, matched.configured.Group, matched.route.ModelName,
+					now+int64(cooldownMinutes)*60, reason,
+					settings.SmartScheduleControlRevision, redisEventSequence,
+				)
+			} else {
+				result, protectErr = model.ProtectChannelSmartScheduleRouteOnRuntimeFailure(
+					channelId, matched.configured.Group, matched.route.ModelName,
+					now+int64(cooldownMinutes)*60, reason, settings.SmartScheduleControlRevision,
+				)
+			}
 		} else if degradedProbe {
 			result, protectErr = model.ProtectChannelSmartScheduleRouteOnRecoveryProbeFailure(
 				channelId,
@@ -627,18 +668,21 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 				settings.SmartScheduleControlRevision,
 			)
 		} else {
-			result, protectErr = model.ProtectChannelSmartScheduleRouteOnShortTermFailure(
-				channelId,
-				matched.configured.Group,
-				matched.route.ModelName,
-				now+int64(cooldownMinutes)*60,
-				reason,
-				settings.SmartScheduleControlRevision,
-			)
+			if redisEventSequence > 0 {
+				result, protectErr = model.ProtectChannelSmartScheduleRouteOnShortTermFailureFromRedis(
+					channelId, matched.configured.Group, matched.route.ModelName,
+					now+int64(cooldownMinutes)*60, reason,
+					settings.SmartScheduleControlRevision, redisEventSequence,
+				)
+			} else {
+				result, protectErr = model.ProtectChannelSmartScheduleRouteOnShortTermFailure(
+					channelId, matched.configured.Group, matched.route.ModelName,
+					now+int64(cooldownMinutes)*60, reason, settings.SmartScheduleControlRevision,
+				)
+			}
 		}
 		if protectErr != nil {
-			common.SysError("智能调度运行时错误保护失败: " + protectErr.Error())
-			continue
+			return fmt.Errorf("智能调度运行时错误保护失败: %w", protectErr)
 		}
 		protectionApplied = protectionApplied || result.Handled
 		routingChanged = routingChanged || result.RoutingChanged
@@ -653,22 +697,28 @@ func protectChannelSmartScheduleRuntimeFailureWithSource(
 		if common.SyncFrequency <= 0 {
 			bridgeSeconds = 65
 		}
-		service.StartChannelRateLimitCooldownIfControlRevision(
-			channelId, requestModelName, bridgeSeconds, settings.SmartScheduleControlRevision,
-		)
+		if redisEventSequence > 0 {
+			if _, err := service.StartChannelRateLimitCooldownUntilIfControlRevision(
+				context.Background(), channelId, requestModelName, now+int64(bridgeSeconds),
+				settings.SmartScheduleControlRevision, redisEventSequence,
+			); err != nil {
+				return err
+			}
+		} else {
+			service.StartChannelRateLimitCooldownIfControlRevision(
+				channelId, requestModelName, bridgeSeconds, settings.SmartScheduleControlRevision,
+			)
+		}
 	}
-	if routingChanged {
-		refreshed := true
+	if routingChanged || (redisEventSequence > 0 && len(changedPools) > 0) {
 		for pool := range changedPools {
 			if err := model.RefreshChannelSmartScheduleRoutePoolCache(pool.group, pool.model); err != nil {
-				common.SysError("刷新运行时保护路由池缓存失败: " + err.Error())
-				refreshed = false
+				model.InitChannelCache()
+				return fmt.Errorf("刷新运行时保护路由池缓存失败: %w", err)
 			}
 		}
-		if !refreshed {
-			model.InitChannelCache()
-		}
 	}
+	return nil
 }
 
 func enqueueChannelSmartScheduleAdaptiveRefresh(channelId int, modelName string) {
@@ -857,11 +907,12 @@ func processChannelSmartScheduleAdaptiveRefreshEventsWithThrottle(
 func channelSmartScheduleAdaptiveRouteAvailable(
 	route model.ChannelSmartScheduleRoute,
 	now int64,
+	cooldownUntil int64,
 ) bool {
 	return route.State.Participates() && route.ChannelStatus == common.ChannelStatusEnabled &&
 		route.Enabled && !route.TrafficPaused(now) && route.State.StabilityState == "" &&
 		route.State.RuntimeProtectionUntil <= now &&
-		service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model) <= 0
+		cooldownUntil <= 0
 }
 
 func refreshChannelSmartScheduleAdaptivePool(
@@ -871,9 +922,65 @@ func refreshChannelSmartScheduleAdaptivePool(
 	expectedControlRevision string,
 	expectedDatabase any,
 ) (bool, error) {
+	return refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
+		ctx,
+		poolKey,
+		policy,
+		expectedControlRevision,
+		expectedDatabase,
+		channelSmartScheduleLocalAdaptiveMetric,
+		channelSmartScheduleLocalCooldown,
+		0,
+		0,
+	)
+}
+
+func channelSmartScheduleLocalCooldown(
+	_ context.Context,
+	channelId int,
+	modelName string,
+) (int64, error) {
+	return service.ChannelRateLimitCooldownUntilMatching(channelId, modelName), nil
+}
+
+func channelSmartScheduleLocalAdaptiveMetric(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	windowStart int64,
+	observationSince int64,
+	maxRequests int,
+	warningSeconds float64,
+	criticalSeconds float64,
+) (model.ChannelSmartScheduleAdaptiveHealthMetric, error) {
+	metric, _, err := channelSmartScheduleRealtimeAdaptiveMetric(
+		ctx,
+		channelId,
+		modelName,
+		windowStart,
+		observationSince,
+		maxRequests,
+		warningSeconds,
+		criticalSeconds,
+	)
+	return metric, err
+}
+
+func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
+	ctx context.Context,
+	poolKey channelSmartScheduleRoutePoolKey,
+	policy channelSmartSchedulePolicy,
+	expectedControlRevision string,
+	expectedDatabase any,
+	readMetric channelSmartScheduleAdaptiveMetricReader,
+	readCooldown channelSmartScheduleCooldownReader,
+	effectAt int64,
+	redisEventSequence int64,
+) (bool, error) {
 	softRoutingEnabled := policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight &&
 		(policy.AdaptiveSamplingEnabled || policy.SampleMode == channelMonitorSmartScheduleSampleTraffic)
-	if expectedDatabase != model.DB || (!softRoutingEnabled && !policy.StabilityEnabled) {
+	if expectedDatabase != model.DB || readMetric == nil || readCooldown == nil ||
+		(!softRoutingEnabled && !policy.StabilityEnabled) {
 		return false, nil
 	}
 	routes, err := model.GetChannelSmartScheduleRoutePool(poolKey.group, poolKey.model)
@@ -907,23 +1014,32 @@ func refreshChannelSmartScheduleAdaptivePool(
 		routes[index].GrossMargin = economics.GrossMargin
 		routes[index].EconomicRole = economics.EconomicRole
 	}
-	now := common.GetTimestamp()
+	now := effectAt
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
 	settings := getChannelMonitorRuntimeSettings()
 	adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
 	performanceWindowStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
 	stabilityWindowStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
-	_ = ctx
 	healthByChannel := make(map[int]channelSmartScheduleHealthUpdate, len(routes))
 	metricByChannel := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
+	cooldownUntilByChannel := make(map[int]int64, len(routes))
 	rollingStabilityByChannel := make(map[int]*channelSmartSchedulePerformance, len(routes))
 	stabilityAvailableByChannel := make(map[int]bool, len(routes))
 	stateByChannel := make(map[int]model.ChannelSmartScheduleRouteState, len(routes))
 	for _, route := range routes {
 		stateByChannel[route.ChannelId] = route.State
+		cooldownUntil, err := readCooldown(ctx, route.ChannelId, route.Model)
+		if err != nil {
+			return false, err
+		}
+		cooldownUntilByChannel[route.ChannelId] = cooldownUntil
 		if !route.State.Participates() {
 			continue
 		}
-		metric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+		metric, err := readMetric(
+			ctx,
 			route.ChannelId,
 			route.Model,
 			adaptiveWindowStart,
@@ -932,7 +1048,11 @@ func refreshChannelSmartScheduleAdaptivePool(
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
-		performanceMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+		if err != nil {
+			return false, err
+		}
+		performanceMetric, err := readMetric(
+			ctx,
 			route.ChannelId,
 			route.Model,
 			performanceWindowStart,
@@ -941,12 +1061,16 @@ func refreshChannelSmartScheduleAdaptivePool(
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
+		if err != nil {
+			return false, err
+		}
 		routeStabilityWindowStart := stabilityWindowStart
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince
 		}
-		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
+		stabilityMetric, err := readMetric(
+			ctx,
 			route.ChannelId,
 			route.Model,
 			routeStabilityWindowStart,
@@ -955,6 +1079,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
+		if err != nil {
+			return false, err
+		}
 		stabilityAvailableByChannel[route.ChannelId] = stabilityMetric.RequestCount > 0
 		performanceMetric.RequestCount = stabilityMetric.RequestCount
 		performanceMetric.LastUsedTime = max(performanceMetric.LastUsedTime, stabilityMetric.LastUsedTime)
@@ -992,7 +1119,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 	primaryIndex := -1
 	manualPrimaryActive := false
 	for index, route := range routes {
-		if route.State.ManualPrimaryUntil > now && channelSmartScheduleAdaptiveRouteAvailable(route, now) {
+		if route.State.ManualPrimaryUntil > now && channelSmartScheduleAdaptiveRouteAvailable(
+			route, now, cooldownUntilByChannel[route.ChannelId],
+		) {
 			primaryIndex = index
 			manualPrimaryActive = true
 			break
@@ -1000,7 +1129,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 	}
 	if primaryIndex < 0 {
 		for index, route := range routes {
-			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 {
+			if !channelSmartScheduleAdaptiveRouteAvailable(
+				route, now, cooldownUntilByChannel[route.ChannelId],
+			) || route.State.BaseRank <= 0 {
 				continue
 			}
 			if primaryIndex < 0 || route.Priority > routes[primaryIndex].Priority ||
@@ -1024,7 +1155,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 		primaryRoute := routes[primaryIndex]
 		primaryHealth := healthByChannel[primaryRoute.ChannelId]
 		for _, route := range routes {
-			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) ||
+			if !channelSmartScheduleAdaptiveRouteAvailable(
+				route, now, cooldownUntilByChannel[route.ChannelId],
+			) ||
 				route.State.BaseRank <= 0 {
 				continue
 			}
@@ -1288,7 +1421,9 @@ func refreshChannelSmartScheduleAdaptivePool(
 	if primaryIndex >= 0 && !manualPrimaryActive {
 		basePrimaryIndex := -1
 		for index, route := range routes {
-			if !channelSmartScheduleAdaptiveRouteAvailable(route, now) || route.State.BaseRank <= 0 ||
+			if !channelSmartScheduleAdaptiveRouteAvailable(
+				route, now, cooldownUntilByChannel[route.ChannelId],
+			) || route.State.BaseRank <= 0 ||
 				route.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback {
 				continue
 			}
@@ -1314,8 +1449,7 @@ func refreshChannelSmartScheduleAdaptivePool(
 		topLayerWeight := uint64(0)
 		for _, route := range routes {
 			if route.ChannelId == selectedChannelId || route.ChannelStatus != common.ChannelStatusEnabled ||
-				!route.Enabled || route.TrafficPaused(now) ||
-				service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model) > 0 {
+				!route.Enabled || route.TrafficPaused(now) || cooldownUntilByChannel[route.ChannelId] > 0 {
 				continue
 			}
 			priority := desiredPriority[route.ChannelId]
@@ -1471,6 +1605,7 @@ func refreshChannelSmartScheduleAdaptivePool(
 			SamplingCandidate:                isSamplingCandidate,
 			SamplingOrder:                    policy.SamplingOrder,
 			LastSamplingAt:                   lastSamplingAt,
+			RedisRuntimeEventSequence:        redisEventSequence,
 		}
 		if healthSet {
 			channelSmartScheduleAttachHealthUpdate(&update, health)
@@ -1487,6 +1622,12 @@ func refreshChannelSmartScheduleAdaptivePool(
 		updates = append(updates, update)
 	}
 	if !hasChanges || expectedDatabase != model.DB {
+		if redisEventSequence > 0 && expectedDatabase == model.DB {
+			if err := model.RefreshChannelSmartScheduleRoutePoolCache(poolKey.group, poolKey.model); err != nil {
+				model.InitChannelCache()
+				return false, fmt.Errorf("刷新 Redis 自适应备援路由缓存失败: %w", err)
+			}
+		}
 		return false, nil
 	}
 	sort.Slice(updates, func(i int, j int) bool { return updates[i].ChannelId < updates[j].ChannelId })
@@ -1504,10 +1645,13 @@ func refreshChannelSmartScheduleAdaptivePool(
 			runtimeRecovered = true
 		}
 	}
-	if !conflict && (routingChanged || trafficStateChanged) {
+	if !conflict && (routingChanged || trafficStateChanged || redisEventSequence > 0) {
 		if cacheErr := model.RefreshChannelSmartScheduleRoutePoolCache(poolKey.group, poolKey.model); cacheErr != nil {
-			common.SysError("刷新自适应备援路由缓存失败: " + cacheErr.Error())
 			model.InitChannelCache()
+			if redisEventSequence > 0 {
+				return false, fmt.Errorf("刷新 Redis 自适应备援路由缓存失败: %w", cacheErr)
+			}
+			common.SysError("刷新自适应备援路由缓存失败: " + cacheErr.Error())
 		}
 	}
 	if !conflict && runtimeRecovered {

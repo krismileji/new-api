@@ -10,15 +10,16 @@ import (
 
 func TestChannelSmartScheduleMetricsShareBusinessSamplesAcrossGroups(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
-	require.NoError(t, db.Create(&[]ChannelMonitorMinuteMetric{
+	modelKey := channelMonitorMinuteDimensionKey("model-a")
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
 		{
-			MinuteStart: 120, ChannelId: 21, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "all",
+			MinuteStart: 120, ChannelId: 21, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("vip"), APIKeyKey: "all",
 			ModelName: "model-a", GroupName: "vip", SampleCount: 2,
 			FirstTokenSampleCount: 2, FirstTokenTotalMs: 400,
 			TPSSampleCount: 2, TPSTotal: 20, ActualSuccessCount: 2, LastUsedTime: 130,
 		},
 		{
-			MinuteStart: 120, ChannelId: 21, ModelKey: "model-a", GroupKey: "standard", APIKeyKey: "all",
+			MinuteStart: 120, ChannelId: 21, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("standard"), APIKeyKey: "all",
 			ModelName: "model-a", GroupName: "standard", SampleCount: 1,
 			FirstTokenSampleCount: 1, FirstTokenTotalMs: 400,
 			TPSSampleCount: 1, TPSTotal: 40, ActualFailureCount: 1, FinalFailureCount: 1,
@@ -54,8 +55,8 @@ func TestChannelSmartScheduleMetricsShareBusinessSamplesAcrossGroups(t *testing.
 func TestChannelSmartScheduleMetricLookupNormalizesParameterizedModel(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	const normalizedModel = "gemini-2.5-pro-thinking-*"
-	require.NoError(t, db.Create(&ChannelMonitorMinuteMetric{
-		MinuteStart: 120, ChannelId: 22, ModelKey: normalizedModel, GroupKey: "vip", APIKeyKey: "all",
+	require.NoError(t, db.Create(&ChannelMonitorMinuteRouteMetric{
+		MinuteStart: 120, ChannelId: 22, ModelKey: channelMonitorMinuteDimensionKey(normalizedModel), GroupKey: channelMonitorMinuteDimensionKey("vip"), APIKeyKey: "all",
 		ModelName: normalizedModel, GroupName: "vip", SampleCount: 2,
 		FirstTokenSampleCount: 2, FirstTokenTotalMs: 500,
 		ActualSuccessCount: 1, ActualFailureCount: 1, FinalFailureCount: 1,

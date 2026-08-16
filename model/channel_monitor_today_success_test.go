@@ -30,7 +30,7 @@ func TestGetChannelMonitorTodaySuccessMetricsAggregatesModelsWithinBeijingDay(t 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteRouteMetric{}, &ChannelMonitorMinuteAPIKeyMetric{}))
 	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
@@ -107,7 +107,7 @@ func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteRouteMetric{}, &ChannelMonitorMinuteAPIKeyMetric{}))
 	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
@@ -170,7 +170,7 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteRouteMetric{}, &ChannelMonitorMinuteAPIKeyMetric{}))
 	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)

@@ -1,7 +1,10 @@
 package model
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,6 +16,7 @@ import (
 
 type channelSmartScheduleExecutionDetailFixture struct {
 	ChannelId int                               `json:"channel_id"`
+	Action    string                            `json:"action"`
 	Reason    string                            `json:"reason"`
 	Details   *ChannelSmartScheduleScoreDetails `json:"score_details"`
 }
@@ -30,6 +34,7 @@ func TestChannelSmartScheduleExecutionDetailsPreserveOrderedRuntimePayloads(t *t
 				AdjustmentIndex: 0,
 				Payload: channelSmartScheduleExecutionDetailFixture{
 					ChannelId: 11,
+					Action:    "updated",
 					Reason:    "评分最高，设为主渠道",
 					Details: &ChannelSmartScheduleScoreDetails{
 						Version:    ChannelSmartScheduleScoreDetailsVersion,
@@ -42,6 +47,7 @@ func TestChannelSmartScheduleExecutionDetailsPreserveOrderedRuntimePayloads(t *t
 				AdjustmentIndex: 1,
 				Payload: channelSmartScheduleExecutionDetailFixture{
 					ChannelId: 12,
+					Action:    "unchanged",
 					Reason:    "评分较低，保留备用流量",
 					Details: &ChannelSmartScheduleScoreDetails{
 						Version:    ChannelSmartScheduleScoreDetailsVersion,
@@ -63,9 +69,14 @@ func TestChannelSmartScheduleExecutionDetailsPreserveOrderedRuntimePayloads(t *t
 	var first channelSmartScheduleExecutionDetailFixture
 	require.NoError(t, common.UnmarshalJsonStr(loaded["schedule-task-1"][0].Payload, &first))
 	assert.Equal(t, 11, first.ChannelId)
+	assert.Equal(t, "updated", first.Action)
 	assert.Equal(t, "评分最高，设为主渠道", first.Reason)
 	require.NotNil(t, first.Details)
 	assert.InDelta(t, firstScore, *first.Details.FinalScore, 1e-9)
+	var second channelSmartScheduleExecutionDetailFixture
+	require.NoError(t, common.UnmarshalJsonStr(loaded["schedule-task-1"][1].Payload, &second))
+	assert.Equal(t, 12, second.ChannelId)
+	assert.Equal(t, "unchanged", second.Action)
 }
 
 func TestChannelSmartScheduleExecutionDetailsReplaceARepeatedTaskSnapshot(t *testing.T) {
@@ -216,4 +227,147 @@ func TestFinishChannelSmartScheduleTaskRollsBackResultWhenDetailWriteFails(t *te
 	var lockCount int64
 	require.NoError(t, db.Model(&SystemTaskLock{}).Where("task_id = ?", task.TaskID).Count(&lockCount).Error)
 	assert.Equal(t, int64(1), lockCount)
+}
+
+func TestChannelSmartScheduleExecutionDetailsSaveEmptySnapshot(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+
+	require.NoError(t, SaveChannelSmartScheduleExecutionDetails("schedule-empty", nil))
+	var row ChannelSmartScheduleExecutionDetail
+	require.NoError(t, db.Where("task_id = ?", "schedule-empty").First(&row).Error)
+	assert.Equal(t, 0, row.ItemCount)
+	assert.NotEmpty(t, row.PayloadBlob)
+
+	loaded, err := GetChannelSmartScheduleExecutionDetails([]string{"schedule-empty"})
+	require.NoError(t, err)
+	require.Contains(t, loaded, "schedule-empty")
+	assert.Empty(t, loaded["schedule-empty"])
+}
+
+func TestChannelSmartScheduleExecutionDetailsRejectsLimitsAndCorruption(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+
+	tooMany := make([]ChannelSmartScheduleExecutionDetailInput, ChannelSmartScheduleExecutionDetailMaxItems+1)
+	for index := range tooMany {
+		tooMany[index] = ChannelSmartScheduleExecutionDetailInput{
+			AdjustmentIndex: index,
+			Payload:         channelSmartScheduleExecutionDetailFixture{ChannelId: index},
+		}
+	}
+	assert.Error(t, SaveChannelSmartScheduleExecutionDetails("schedule-too-many", tooMany))
+	assert.Error(t, SaveChannelSmartScheduleExecutionDetails("schedule-negative-index", []ChannelSmartScheduleExecutionDetailInput{{
+		AdjustmentIndex: -1,
+		Payload:         channelSmartScheduleExecutionDetailFixture{ChannelId: 1},
+	}}))
+	assert.ErrorContains(t, SaveChannelSmartScheduleExecutionDetails("schedule-duplicate-index", []ChannelSmartScheduleExecutionDetailInput{
+		{AdjustmentIndex: 0, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 1}},
+		{AdjustmentIndex: 0, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 2}},
+	}), "索引重复")
+	assert.ErrorContains(t, SaveChannelSmartScheduleExecutionDetails("schedule-non-contiguous-index", []ChannelSmartScheduleExecutionDetailInput{
+		{AdjustmentIndex: 0, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 1}},
+		{AdjustmentIndex: 2, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 2}},
+	}), "必须按输入顺序从 0 开始连续递增")
+	assert.ErrorContains(t, SaveChannelSmartScheduleExecutionDetails("schedule-out-of-order-index", []ChannelSmartScheduleExecutionDetailInput{
+		{AdjustmentIndex: 1, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 2}},
+		{AdjustmentIndex: 0, Payload: channelSmartScheduleExecutionDetailFixture{ChannelId: 1}},
+	}), "必须按输入顺序从 0 开始连续递增")
+
+	largePayload := strings.Repeat("x", channelSmartScheduleExecutionDetailMaxJSON)
+	assert.Error(t, SaveChannelSmartScheduleExecutionDetails("schedule-too-large", []ChannelSmartScheduleExecutionDetailInput{{
+		AdjustmentIndex: 0,
+		Payload:         largePayload,
+	}}))
+
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-corrupt",
+		PayloadBlob: []byte("not-gzip"),
+		ItemCount:   1,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+	_, err := GetChannelSmartScheduleExecutionDetails([]string{"schedule-corrupt"})
+	assert.Error(t, err)
+
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-count-mismatch",
+		PayloadBlob: channelSmartScheduleExecutionDetailTestGzip(t, []byte("[]")),
+		ItemCount:   1,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+	_, err = GetChannelSmartScheduleExecutionDetails([]string{"schedule-count-mismatch"})
+	assert.Error(t, err)
+}
+
+func TestChannelSmartScheduleExecutionDetailsRejectsDecompressedDataOverLimit(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+	decoded := bytes.Repeat([]byte{'x'}, channelSmartScheduleExecutionDetailMaxJSON+1)
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-over-decompressed-limit",
+		PayloadBlob: channelSmartScheduleExecutionDetailTestGzip(t, decoded),
+		ItemCount:   0,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+	_, err := GetChannelSmartScheduleExecutionDetails([]string{"schedule-over-decompressed-limit"})
+	assert.Error(t, err)
+}
+
+func TestChannelSmartScheduleExecutionDetailIndexes(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+	assert.True(t, db.Migrator().HasIndex(&ChannelSmartScheduleExecutionDetail{}, "idx_channel_smart_schedule_execution_details_task_id"))
+	assert.True(t, db.Migrator().HasIndex(&ChannelSmartScheduleExecutionDetail{}, "idx_channel_smart_schedule_execution_details_created_at"))
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-unique-index",
+		PayloadBlob: []byte{1},
+		ItemCount:   0,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+	assert.Error(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-unique-index",
+		PayloadBlob: []byte{2},
+		ItemCount:   0,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+}
+
+func channelSmartScheduleExecutionDetailTestGzip(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return compressed.Bytes()
+}
+
+func TestChannelSmartScheduleExecutionDetailMetricsTrackSnapshotAndDecodeFailures(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+	before := GetChannelSmartScheduleExecutionDetailMetrics()
+	require.NoError(t, SaveChannelSmartScheduleExecutionDetails(
+		"schedule-metrics",
+		[]ChannelSmartScheduleExecutionDetailInput{{
+			AdjustmentIndex: 0,
+			Payload:         channelSmartScheduleExecutionDetailFixture{ChannelId: 1},
+		}},
+	))
+	afterSave := GetChannelSmartScheduleExecutionDetailMetrics()
+	assert.Equal(t, before.Rounds+1, afterSave.Rounds)
+	assert.Equal(t, before.AdjustmentCount+1, afterSave.AdjustmentCount)
+	assert.Greater(t, afterSave.UncompressedBytes, before.UncompressedBytes)
+	assert.Greater(t, afterSave.CompressedBytes, before.CompressedBytes)
+	assert.GreaterOrEqual(t, afterSave.CompressionDurationMicros, before.CompressionDurationMicros)
+
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-metrics-corrupt",
+		PayloadBlob: []byte("not-gzip"),
+		ItemCount:   1,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+	_, err := GetChannelSmartScheduleExecutionDetails([]string{"schedule-metrics-corrupt"})
+	assert.Error(t, err)
+	afterFailure := GetChannelSmartScheduleExecutionDetailMetrics()
+	assert.Equal(t, afterSave.DecompressionFailures+1, afterFailure.DecompressionFailures)
 }

@@ -15,9 +15,9 @@ import (
 
 type ChannelSmartScheduleRouteState struct {
 	Id               int64  `json:"id"`
-	ChannelId        int    `json:"channel_id" gorm:"not null;uniqueIndex:idx_channel_smart_schedule_route"`
-	GroupName        string `json:"group" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_smart_schedule_route"`
-	ModelName        string `json:"model" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_smart_schedule_route"`
+	ChannelId        int    `json:"channel_id" gorm:"not null;uniqueIndex:idx_channel_smart_schedule_route;index:idx_channel_smart_schedule_route_pool,priority:3"`
+	GroupName        string `json:"group" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_smart_schedule_route;index:idx_channel_smart_schedule_route_pool,priority:1"`
+	ModelName        string `json:"model" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_smart_schedule_route;index:idx_channel_smart_schedule_route_pool,priority:2"`
 	ParticipationSet bool   `json:"participation_set"`
 	Excluded         bool   `json:"excluded"`
 	Revision         int64  `json:"-" gorm:"bigint"`
@@ -220,6 +220,7 @@ type ChannelSmartScheduleRouteResultUpdate struct {
 	SamplingCandidate                             bool
 	SamplingOrder                                 string
 	LastSamplingAt                                int64
+	RedisRuntimeEventSequence                     int64
 }
 
 type ChannelSmartScheduleRouteApplyOutcome struct {
@@ -1529,7 +1530,21 @@ func ProtectChannelSmartScheduleRouteOnRuntimeFailure(
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	return protectChannelSmartScheduleRouteOnRuntimeFailure(
-		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, false,
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, false, 0,
+	)
+}
+
+func ProtectChannelSmartScheduleRouteOnRuntimeFailureFromRedis(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+	expectedControlRevision string,
+	eventSequence int64,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	return protectChannelSmartScheduleRouteOnRuntimeFailure(
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, false, eventSequence,
 	)
 }
 
@@ -1545,7 +1560,21 @@ func ProtectChannelSmartScheduleRouteOnShortTermFailure(
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	return protectChannelSmartScheduleRouteOnRuntimeFailure(
-		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true, false,
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true, false, 0,
+	)
+}
+
+func ProtectChannelSmartScheduleRouteOnShortTermFailureFromRedis(
+	channelId int,
+	group string,
+	modelName string,
+	protectionUntil int64,
+	reason string,
+	expectedControlRevision string,
+	eventSequence int64,
+) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
+	return protectChannelSmartScheduleRouteOnRuntimeFailure(
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, true, false, eventSequence,
 	)
 }
 
@@ -1561,7 +1590,7 @@ func ProtectChannelSmartScheduleRouteOnRecoveryProbeFailure(
 	expectedControlRevision string,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	return protectChannelSmartScheduleRouteOnRuntimeFailure(
-		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, true,
+		channelId, group, modelName, protectionUntil, reason, expectedControlRevision, false, true, 0,
 	)
 }
 
@@ -1574,15 +1603,21 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 	expectedControlRevision string,
 	allowNormalRoute bool,
 	recoveryProbeOnly bool,
+	redisEventSequence int64,
 ) (result ChannelSmartScheduleRuntimeFailureResult, err error) {
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
 	if channelId <= 0 || group == "" || modelName == "" {
 		return result, nil
 	}
+	if redisEventSequence < 0 {
+		return result, errors.New("渠道监控 Redis 运行时保护事件顺序无效")
+	}
 	now := common.GetTimestamp()
-	if protectionUntil <= now {
+	protectionExpired := protectionUntil <= now
+	if protectionExpired && redisEventSequence == 0 {
 		protectionUntil = now + 60
+		protectionExpired = false
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -1595,12 +1630,28 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 	defer channelStatusLock.Unlock()
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		var redisEffectState *ChannelMonitorRedisEffectState
+		if redisEventSequence > 0 {
+			redisEffectState, err = lockChannelMonitorRedisEffectStateTx(
+				tx,
+				channelMonitorRedisProtectionEffectKey(channelId, group, modelName),
+			)
+			if err != nil {
+				return err
+			}
+			if redisEventSequence <= redisEffectState.EventSequence {
+				return nil
+			}
+		}
+		finishRedisEffect := func() error {
+			return advanceChannelMonitorRedisEffectStateTx(tx, redisEffectState, redisEventSequence)
+		}
 		controlRevision, err := lockChannelSmartScheduleControlRevisionTx(tx)
 		if err != nil {
 			return err
 		}
 		if controlRevision != expectedControlRevision {
-			return nil
+			return finishRedisEffect()
 		}
 		pool := channelSmartScheduleRoutePool{group: group, model: modelName}
 		channels, err := lockChannelSmartScheduleRoutePoolChannelsTx(tx, group, modelName, channelId)
@@ -1633,8 +1684,8 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 				break
 			}
 		}
-		if state == nil || ability == nil || !state.Participates() || !ability.Enabled {
-			return nil
+		if state == nil || ability == nil || !state.Participates() || !ability.Enabled || protectionExpired {
+			return finishRedisEffect()
 		}
 		activeTemporaryTraffic := state.TemporaryTrafficKind != "" ||
 			state.StabilityState == ChannelSmartScheduleStabilityProbing
@@ -1649,7 +1700,7 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 			!state.ManualPrimaryAllowStabilityDegrade && state.StabilityState == ""
 		if manualPrimaryBlocksDegrade ||
 			(!activeTemporaryTraffic && !activeFixedPrimary && !normalRouteEligible && !recoveryProbeEligible) {
-			return nil
+			return finishRedisEffect()
 		}
 		if state.Revision == math.MaxInt64 {
 			return errors.New("智能调度路由修订号已达上限")
@@ -1734,7 +1785,10 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 		state.LastScheduleWeight = degradedWeight
 		state.LastScheduleTime = now
 		state.Revision++
-		return saveChannelSmartScheduleRouteStateTx(tx, state)
+		if err := saveChannelSmartScheduleRouteStateTx(tx, state); err != nil {
+			return err
+		}
+		return finishRedisEffect()
 	})
 	if err != nil {
 		result.Handled = false
@@ -1753,6 +1807,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	outcomes := make([]ChannelSmartScheduleRouteApplyOutcome, len(results))
 	poolGuarded := false
 	adaptiveOverlayOnly := results[0].AdaptiveOverlayOnly
+	redisRuntimeEventSequence := results[0].RedisRuntimeEventSequence
 	for index, result := range results {
 		if result.Group != group || result.Model != modelName {
 			return nil, errors.New("智能调度路由结果必须属于同一分组和模型池")
@@ -1763,6 +1818,12 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		seenChannels[result.ChannelId] = struct{}{}
 		if result.AdaptiveOverlayOnly != adaptiveOverlayOnly {
 			return nil, errors.New("智能调度整池结果不能混用运行时覆盖和完整调度写入")
+		}
+		if result.RedisRuntimeEventSequence != redisRuntimeEventSequence || result.RedisRuntimeEventSequence < 0 {
+			return nil, errors.New("智能调度整池结果的 Redis 运行时事件顺序不一致")
+		}
+		if result.RedisRuntimeEventSequence > 0 && !result.AdaptiveOverlayOnly {
+			return nil, errors.New("Redis 运行时事件顺序只能用于自适应运行时覆盖")
 		}
 		if result.AdaptiveOverlayOnly && !result.ObservationOnly && !result.RuntimeStabilityRecovery &&
 			(result.Status != "" || result.Error != "" || result.Score != nil || result.ScoreDetails != nil ||
@@ -1791,6 +1852,23 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	observationBoundaryAdvanced := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var redisEffectState *ChannelMonitorRedisEffectState
+		if redisRuntimeEventSequence > 0 {
+			var effectErr error
+			redisEffectState, effectErr = lockChannelMonitorRedisEffectStateTx(
+				tx,
+				channelMonitorRedisAdaptiveEffectKey(group, modelName),
+			)
+			if effectErr != nil {
+				return effectErr
+			}
+			if redisRuntimeEventSequence <= redisEffectState.EventSequence {
+				for index := range outcomes {
+					outcomes[index].Applied = true
+				}
+				return nil
+			}
+		}
 		controlRevision := ""
 		economicRevision := ""
 		var err error
@@ -2018,7 +2096,11 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			}
 			outcomes[index].Applied = true
 		}
-		return nil
+		return advanceChannelMonitorRedisEffectStateTx(
+			tx,
+			redisEffectState,
+			redisRuntimeEventSequence,
+		)
 	})
 	if err != nil {
 		for index := range outcomes {

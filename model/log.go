@@ -100,7 +100,13 @@ func ensureLogRequestId(log *Log) {
 
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
-	return LOG_DB.Create(log).Error
+	if err := LOG_DB.Create(log).Error; err != nil {
+		return err
+	}
+	if err := markChannelMonitorDirtyMinutesForLog(log); err != nil {
+		return fmt.Errorf("日志已写入，但渠道监控脏分钟标记失败: %w", err)
+	}
+	return nil
 }
 
 func clickHouseLogOrder(prefix string) string {

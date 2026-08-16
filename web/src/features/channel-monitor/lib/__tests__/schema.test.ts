@@ -25,9 +25,25 @@ import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
   createChannelMonitorSmartSchedulePolicySchema,
+  DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
   createUpstreamConfigSchema,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
+  MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+  MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+  MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+  MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -37,6 +53,11 @@ import {
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+  MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+  MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+  MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
@@ -281,6 +302,25 @@ describe('channel concurrency limit schema', () => {
 })
 
 describe('channel monitor settings schema', () => {
+  test('exposes the retention defaults used when options are missing', () => {
+    assert.deepEqual(
+      [
+        DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+        DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED,
+        DEFAULT_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+        DEFAULT_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+        DEFAULT_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+        DEFAULT_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+      ],
+      [30, 3, 90, 365, 7, 30, true, 1000, 10, 60, 1440]
+    )
+  })
+
   test('keeps the cost ratio recovery switch in parsed settings', () => {
     const settings = createChannelMonitorSettingsSchema().parse({
       autoUpdateIntervalMinutes: 10,
@@ -326,6 +366,12 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.taskRetentionDays, 90)
     assert.equal(settings.ratioHistoryRetentionDays, 365)
     assert.equal(settings.statusProbeHistoryRetentionDays, 7)
+    assert.equal(settings.modelDetectionRetentionDays, 30)
+    assert.equal(settings.cleanupEnabled, true)
+    assert.equal(settings.cleanupBatchSize, 1000)
+    assert.equal(settings.cleanupBudgetSeconds, 10)
+    assert.equal(settings.cleanupContinuationSeconds, 60)
+    assert.equal(settings.cleanupIntervalMinutes, 1440)
     assert.equal(
       settings.errorMessageMapping,
       '{"429":"请求过于频繁，请稍后再试"}'
@@ -553,6 +599,62 @@ describe('channel monitor settings schema', () => {
         }).success,
         false
       )
+    }
+    for (const retentionDays of [
+      MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+      MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+    ]) {
+      assert.equal(
+        schema.parse({
+          ...baseSettings,
+          modelDetectionRetentionDays: retentionDays,
+        }).modelDetectionRetentionDays,
+        retentionDays
+      )
+    }
+    for (const retentionDays of [6, 1.5, 181]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          modelDetectionRetentionDays: retentionDays,
+        }).success,
+        false
+      )
+    }
+    for (const [field, minimum, maximum] of [
+      [
+        'cleanupBatchSize',
+        MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+        MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
+      ],
+      [
+        'cleanupBudgetSeconds',
+        MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+        MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
+      ],
+      [
+        'cleanupContinuationSeconds',
+        MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+        MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
+      ],
+      [
+        'cleanupIntervalMinutes',
+        MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+        MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+      ],
+    ] as const) {
+      for (const value of [minimum, maximum]) {
+        assert.equal(
+          schema.parse({ ...baseSettings, [field]: value })[field],
+          value
+        )
+      }
+      for (const value of [minimum - 1, 1.5, maximum + 1]) {
+        assert.equal(
+          schema.safeParse({ ...baseSettings, [field]: value }).success,
+          false
+        )
+      }
     }
     const invalidRetentionRelationship = schema.safeParse({
       ...baseSettings,

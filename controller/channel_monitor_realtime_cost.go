@@ -18,26 +18,25 @@ type channelMonitorRealtimeChannelCost struct {
 	UnresolvedCount           int64
 }
 
-func channelMonitorRealtimeTodayCosts(channelId int, dayStart int64) map[int]channelMonitorRealtimeChannelCost {
+func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, dayStart int64) (map[int]channelMonitorRealtimeChannelCost, error) {
 	costs := make(map[int]channelMonitorRealtimeChannelCost)
-	for _, snapshot := range service.ListChannelMonitorRealtimeRouteSnapshots() {
-		if channelId > 0 && snapshot.ChannelId != channelId {
+	shared, err := service.QueryChannelMonitorRedisSharedProjectionForCosts(ctx, dayStart, dayStart+channelMonitorCostDaySeconds)
+	if err != nil {
+		return nil, err
+	}
+	for itemChannelID, aggregate := range shared {
+		if channelId > 0 && itemChannelID != channelId {
 			continue
 		}
-		for _, dailyCost := range snapshot.DailyCosts {
-			if dailyCost.DayStart != dayStart {
-				continue
-			}
-			cost := costs[snapshot.ChannelId]
-			cost.CostNanoCNY += dailyCost.SettledCostNanoCNY
-			cost.ProbeCostNanoCNY += dailyCost.ProbeSettledCostNanoCNY
-			cost.ModelDetectionCostNanoCNY += dailyCost.ModelDetectionSettledCostNanoCNY
-			cost.SettledCount += dailyCost.SettledRequestCount
-			cost.UnresolvedCount += dailyCost.UnresolvedRequestCount
-			costs[snapshot.ChannelId] = cost
+		costs[itemChannelID] = channelMonitorRealtimeChannelCost{
+			CostNanoCNY:               aggregate.SettledCostNanoCNY,
+			ProbeCostNanoCNY:          aggregate.ProbeSettledCostNanoCNY,
+			ModelDetectionCostNanoCNY: aggregate.ModelDetectionSettledCostNanoCNY,
+			SettledCount:              aggregate.SettledRequestCount,
+			UnresolvedCount:           aggregate.UnresolvedRequestCount,
 		}
 	}
-	return costs
+	return costs, nil
 }
 
 func applyChannelMonitorRealtimeCost(
@@ -50,7 +49,10 @@ func applyChannelMonitorRealtimeCost(
 	summaryOnly bool,
 ) error {
 	todayStart := channelMonitorCostDayStart(now)
-	realtimeCosts := channelMonitorRealtimeTodayCosts(channelId, todayStart)
+	realtimeCosts, err := channelMonitorRealtimeTodayCosts(ctx, channelId, todayStart)
+	if err != nil {
+		return err
+	}
 	today := channelMonitorCostDay{Date: channelMonitorCostDate(todayStart), StartAt: todayStart}
 	for _, cost := range realtimeCosts {
 		today.CostCNY += channelMonitorCostCNY(cost.CostNanoCNY)
@@ -78,6 +80,20 @@ func applyChannelMonitorRealtimeCost(
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt
 	overview.EventWatermark = metadata.EventWatermark
 	overview.QueueDepth = metadata.QueueDepth
+	overview.RedisStatus = metadata.RedisStatus
+	overview.RedisAvailable = metadata.RedisAvailable
+	overview.RedisConsumerRunning = metadata.RedisConsumerRunning
+	overview.PendingCount = metadata.PendingCount
+	overview.OldestPendingAt = metadata.OldestPendingAt
+	overview.ConsumerLagSeconds = metadata.ConsumerLagSeconds
+	overview.LastPublishedAt = metadata.LastPublishedAt
+	overview.LastProcessedAt = metadata.LastProcessedAt
+	overview.RetryCount = metadata.RetryCount
+	overview.TakeoverCount = metadata.TakeoverCount
+	overview.MarkerReleaseFailureCount = metadata.MarkerReleaseFailureCount
+	overview.MarkerReleaseFailureActive = metadata.MarkerReleaseFailureActive
+	overview.StreamTrimFailureCount = metadata.StreamTrimFailureCount
+	overview.StreamTrimFailureActive = metadata.StreamTrimFailureActive
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
@@ -96,7 +112,10 @@ func applyChannelMonitorRealtimeCost(
 	if err != nil {
 		return err
 	}
-	pageView := service.QueryChannelMonitorRealtimePage(todayStart, todayStart+channelMonitorCostDaySeconds)
+	pageView, err := service.QueryChannelMonitorRealtimePageFromRedis(ctx, todayStart, todayStart+channelMonitorCostDaySeconds)
+	if err != nil {
+		return err
+	}
 	realtimeAPIKeys := channelMonitorRealtimeCostAPIKeys(pageView)
 	if detailDayStart == todayStart {
 		overview.APIKeys = realtimeAPIKeys

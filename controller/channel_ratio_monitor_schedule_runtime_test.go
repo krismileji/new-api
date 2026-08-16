@@ -449,16 +449,17 @@ func TestProtectChannelSmartScheduleRuntimeFailureUsesConsecutiveThresholdAfterS
 
 func TestChannelSmartScheduleRuntimeSuccessResetsOnlyConsecutiveFailures(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
 	const (
 		channelID = 1591
 		revision  = "runtime-health-success"
 	)
 
-	failure := projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 30, revision)
+	failure := projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", now, 30, revision)
 	assert.Equal(t, 1, failure.ConsecutiveFailures)
 
 	requestSuccess := projectChannelSmartScheduleRuntimeSuccessForTest(
-		channelID, "model-a", 101, revision,
+		channelID, "model-a", now+1, revision,
 	)
 	assert.Zero(t, requestSuccess.ConsecutiveFailures)
 	assert.Len(t, requestSuccess.FailureTimes, 1)
@@ -501,12 +502,13 @@ func TestChannelSmartScheduleRuntimeWindowFailureThresholdUsesRecentRequestPerce
 func TestChannelSmartScheduleRuntimeSuccessEntersFailureRateDenominator(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	const revision = "runtime-health-percentage"
+	now := common.GetTimestamp()
 
-	projectChannelSmartScheduleRuntimeFailureForTest(1602, "model-a", 100, 3600, revision)
-	requestSuccess := projectChannelSmartScheduleRuntimeSuccessForTest(1602, "model-a", 101, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(1602, "model-a", now, 3600, revision)
+	requestSuccess := projectChannelSmartScheduleRuntimeSuccessForTest(1602, "model-a", now+1, revision)
 
 	reached, failures, requests := channelSmartScheduleRuntimeWindowFailureThresholdReached(
-		requestSuccess, 101, 3600, 100, 50,
+		requestSuccess, now+1, 3600, 100, 50,
 	)
 	assert.True(t, reached)
 	assert.Equal(t, 1, failures)
@@ -515,31 +517,33 @@ func TestChannelSmartScheduleRuntimeSuccessEntersFailureRateDenominator(t *testi
 
 func TestChannelSmartScheduleRuntimeHealthKeepsFailuresForLongerConfiguredWindows(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
 	const (
 		channelID = 1592
 		revision  = "runtime-health-window"
 	)
 
-	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 300, revision)
-	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", 200, 30, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", now, 300, revision)
+	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", now+100, 30, revision)
 
-	assert.Equal(t, 1, channelSmartScheduleRuntimeFailureCount(snapshot, 200, 300))
-	assert.Zero(t, channelSmartScheduleRuntimeFailureCount(snapshot, 200, 30))
+	assert.Equal(t, 1, channelSmartScheduleRuntimeFailureCount(snapshot, now+100, 300))
+	assert.Zero(t, channelSmartScheduleRuntimeFailureCount(snapshot, now+100, 30))
 }
 
 func TestChannelSmartScheduleRuntimeObservationSinceDropsRecoveredFailures(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
 	const (
 		channelID = 1594
 		revision  = "runtime-health-recovery"
 	)
 
-	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 100, 300, revision)
-	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", 110, 300, revision)
-	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", 111, 300, revision)
-	assert.Equal(t, []int64{100, 110}, snapshot.FailureTimes)
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", now, 300, revision)
+	projectChannelSmartScheduleRuntimeFailureForTest(channelID, "model-a", now+10, 300, revision)
+	snapshot := getChannelSmartScheduleRuntimeHealth(channelID, "model-a", now+11, 300, revision)
+	assert.Equal(t, []int64{now, now + 10}, snapshot.FailureTimes)
 	failures, requests, events := channelSmartScheduleRuntimeWindowFailureRateSince(
-		snapshot, 111, 300, maxChannelSmartScheduleRuntimeRequestEvents, 105,
+		snapshot, now+11, 300, maxChannelSmartScheduleRuntimeRequestEvents, now+5,
 	)
 	assert.Equal(t, 1, failures)
 	assert.Equal(t, 1, requests)
@@ -662,7 +666,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 	}).Error)
 
 	oldMinute := now - now%60 - 60
-	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
+	require.NoError(t, db.Create(&model.ChannelMonitorMinuteRouteMetric{
 		MinuteStart: oldMinute, ChannelId: 1510,
 		ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "all",
 		ModelName: "model-a", GroupName: "vip",
@@ -790,7 +794,6 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(
 		false,
 	)
 
-	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
 	require.Eventually(t, func() bool {
 		ability = model.Ability{}
 		if err := db.Where(&model.Ability{
@@ -1036,7 +1039,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureUses429CooldownWithoutStabilit
 	}).Error)
 	now := common.GetTimestamp()
 	minuteStart := now - now%60 - 60
-	require.NoError(t, db.Create(&model.ChannelMonitorMinuteMetric{
+	require.NoError(t, db.Create(&model.ChannelMonitorMinuteRouteMetric{
 		MinuteStart: minuteStart, ChannelId: 1502,
 		ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "all",
 		ModelName: "model-a", GroupName: "vip",
@@ -1315,7 +1318,10 @@ func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *test
 		"channel_id = ? AND group_name = ? AND model_name = ?", 1602, "vip", "model-a",
 	).First(&deferredState).Error)
 	assert.Empty(t, deferredState.TemporaryTrafficKind)
-	require.NoError(t, db.Model(&runningTask).Update("status", model.SystemTaskStatusSucceeded).Error)
+	require.NoError(t, db.Model(&runningTask).Updates(map[string]any{
+		"status":     model.SystemTaskStatusSucceeded,
+		"active_key": nil,
+	}).Error)
 	require.Eventually(t, func() bool {
 		var state model.ChannelSmartScheduleRouteState
 		if err := db.Where(
@@ -1411,7 +1417,16 @@ func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *test
 		ChannelId: 1601, Group: "vip", ModelName: "model-a", Type: model.LogTypeConsume,
 		IsStream: true, Other: `{"frt":100}`, CreatedAt: common.GetTimestamp(),
 	}).Error)
-	service.ResetChannelMonitorRealtimeProjectionsForTest()
+	require.Eventually(t, func() bool {
+		channelSmartScheduleAdaptiveRefreshQueue.Lock()
+		defer channelSmartScheduleAdaptiveRefreshQueue.Unlock()
+		return !channelSmartScheduleAdaptiveRefreshQueue.running &&
+			len(channelSmartScheduleAdaptiveRefreshQueue.pending) == 0
+	}, 3*time.Second, 20*time.Millisecond)
+	require.NoError(t, common.RDB.Del(
+		context.Background(),
+		service.ChannelMonitorRedisRouteHealthWindowKey(1601, "model-a"),
+	).Err())
 	event := model.NewChannelMonitorEvent(
 		1601, model.ChannelMonitorEventSourceBusiness,
 		model.ChannelMonitorEventOutcomeSuccess, common.GetTimestamp(),
@@ -1419,8 +1434,11 @@ func TestAdaptiveSamplingRefreshesOnRequestEventAndPreservesBaseSchedule(t *test
 	event.ModelName = "model-a"
 	event.RequestDispatched = true
 	event.IsFinalAttempt = true
-	require.Equal(t, service.ChannelMonitorEventEnqueueAccepted, service.EmitChannelMonitorEvent(event))
-	require.NoError(t, service.FlushChannelMonitorEvents(context.Background()))
+	fastFirstTokenMs := 100.0
+	event.FirstTokenMs = &fastFirstTokenMs
+	status, err := service.PublishChannelMonitorEvent(context.Background(), event)
+	require.NoError(t, err)
+	assert.Equal(t, service.ChannelMonitorEventPublishStatusPublished, status)
 	require.Eventually(t, func() bool {
 		if err := db.Where(&model.Ability{
 			ChannelId: 1601, Group: "vip", Model: "model-a",

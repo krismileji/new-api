@@ -1,7 +1,6 @@
 package controller
 
 import (
-	contextpkg "context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +31,7 @@ type channelMonitorPerformanceAPIResponse struct {
 }
 
 func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "false",
 	})
@@ -64,9 +63,8 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	failure.ErrorType = "upstream_error"
 	failure.ErrorCode = "bad_response_status_code"
 	failure.ErrorMessage = "status_code=503, upstream unavailable"
-	require.NotEqual(t, service.ChannelMonitorEventEnqueueInvalid, service.EmitChannelMonitorEvent(success))
-	require.NotEqual(t, service.ChannelMonitorEventEnqueueInvalid, service.EmitChannelMonitorEvent(failure))
-	require.NoError(t, service.FlushChannelMonitorEvents(contextpkg.Background()))
+	require.NoError(t, projectChannelSmartScheduleTestEvent(success))
+	require.NoError(t, projectChannelSmartScheduleTestEvent(failure))
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -82,9 +80,9 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.Equal(t, 30, response.Data.RangeMinutes)
 	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
-	assert.NotZero(t, response.Data.ProjectionStartedAt)
-	assert.True(t, response.Data.RealtimeDegraded)
-	assert.False(t, response.Data.MetricCoverage.WindowComplete)
+	assert.Zero(t, response.Data.ProjectionStartedAt)
+	assert.False(t, response.Data.RealtimeDegraded)
+	assert.True(t, response.Data.MetricCoverage.WindowComplete)
 	windowStart := (response.Data.GeneratedAt - 30*60) - (response.Data.GeneratedAt-30*60)%60
 	assert.Equal(t, windowStart, response.Data.MetricCoverage.WindowStart)
 	var performanceItem model.ChannelMonitorPerformanceMetric
@@ -127,8 +125,8 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse))
 	assert.True(t, detailResponse.Success)
-	assert.NotZero(t, detailResponse.Data.ProjectionStartedAt)
-	assert.True(t, detailResponse.Data.RealtimeDegraded)
+	assert.Zero(t, detailResponse.Data.ProjectionStartedAt)
+	assert.False(t, detailResponse.Data.RealtimeDegraded)
 	assert.True(t, detailResponse.Data.SuccessMetricsAvailable)
 	assert.Equal(t, int64(1), detailResponse.Data.Detail.Summary.ActualFailureCount)
 	require.Len(t, detailResponse.Data.Detail.FailureCategories, 1)

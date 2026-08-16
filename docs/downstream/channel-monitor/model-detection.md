@@ -22,7 +22,7 @@
 | `GPT56_DETECTOR_URL` | 首次初始化检测器地址 | 仅在数据库尚无统一配置记录时读取；记录建立后修改环境变量不会覆盖管理端设置 |
 | `GPT56_DETECTOR_PROXY_TOKEN` | 可选的检测器反向代理共享凭证 | 主系统以 `Authorization: Bearer <token>` 发送；不得写入应用或代理日志 |
 | `GPT56_INTERNAL_RELAY_URL` | 检测器可访问的内部 Relay 基地址 | 应指向包含 `/internal/model-detector/v1` 的基地址；未配置时使用 `ServerAddress` 拼接该路径 |
-| `CHANNEL_MODEL_DETECTION_RETENTION_DAYS` | 检测历史保留天数 | 默认 `30`，允许 `7..180`；越界或无效值回退到默认值 |
+| 管理端“数据保留”中的模型检测历史保留天数 | 检测历史保留天数 | 保存到 `ChannelMonitorModelDetectionRetentionDays`，默认 `30`，允许 `7..180` |
 
 检测器地址保存和连接测试会解析主机名，并要求解析结果全部属于回环或私网地址。主系统发起连接时还会使用检测器专用直连 Transport：每次实际拨号都重新解析主机名，任一候选结果为公网、链路本地、未指定或组播地址时整体拒绝，并直接拨号到已验证 IP；请求 Host 和 HTTPS SNI 仍保留原主机名。该 Transport 不读取环境代理，也不受通用 SSRF 开关影响。生产环境仍应优先使用私网 IP 或受控的内部 DNS。
 
@@ -79,7 +79,7 @@
 
 ## 历史清理
 
-模型检测历史复用渠道监控清理任务。`CHANNEL_MODEL_DETECTION_RETENTION_DAYS` 控制轮次、执行和成本事件的保留时间，默认 `30` 天，范围 `7..180`。
+模型检测历史复用渠道监控清理任务。管理端“数据保留”中的模型检测历史保留天数控制轮次、执行和成本事件的保留时间，保存到数据库 option `ChannelMonitorModelDetectionRetentionDays`，默认 `30` 天，范围 `7..180`。清理任务每次运行都直接读取数据库中的最新值，不依赖节点内存中的旧设置缓存。
 
 清理只选择已完成、部分完成、失败、外部会话冲突或已取消的终态轮次。存在 `dispatch_state=prepared` 或 `settlement_status=pending` 成本事件的轮次不会删除，必须先完成核对或结算。清理前仍应保留数据库备份，并监控清理任务是否因时间预算耗尽而续排。
 

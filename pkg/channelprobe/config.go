@@ -62,31 +62,36 @@ func DefaultResponseConfig() ResponseConfig {
 
 func GetResponseConfig() ResponseConfig {
 	common.OptionMapRWMutex.RLock()
-	rawEnabled := common.OptionMap[OptionKey]
-	rawMatchInput := common.OptionMap[MatchInputOptionKey]
-	rawResponseText := common.OptionMap[ResponseTextOptionKey]
-	rawMinDelayMs := common.OptionMap[MinDelayMsOptionKey]
-	rawMaxDelayMs := common.OptionMap[MaxDelayMsOptionKey]
-	rawInputTokens := common.OptionMap[InputTokensOptionKey]
-	rawCacheWriteTokens := common.OptionMap[CacheWriteTokensOptionKey]
-	rawCachedTokens := common.OptionMap[CachedTokensOptionKey]
-	rawOutputTokens := common.OptionMap[OutputTokensOptionKey]
+	options := map[string]string{
+		OptionKey:                 common.OptionMap[OptionKey],
+		MatchInputOptionKey:       common.OptionMap[MatchInputOptionKey],
+		ResponseTextOptionKey:     common.OptionMap[ResponseTextOptionKey],
+		MinDelayMsOptionKey:       common.OptionMap[MinDelayMsOptionKey],
+		MaxDelayMsOptionKey:       common.OptionMap[MaxDelayMsOptionKey],
+		InputTokensOptionKey:      common.OptionMap[InputTokensOptionKey],
+		CacheWriteTokensOptionKey: common.OptionMap[CacheWriteTokensOptionKey],
+		CachedTokensOptionKey:     common.OptionMap[CachedTokensOptionKey],
+		OutputTokensOptionKey:     common.OptionMap[OutputTokensOptionKey],
+	}
 	common.OptionMapRWMutex.RUnlock()
+	return ResponseConfigFromOptions(options)
+}
 
+func ResponseConfigFromOptions(options map[string]string) ResponseConfig {
 	config := DefaultResponseConfig()
-	config.Enabled, _ = strconv.ParseBool(rawEnabled)
-	config.MatchInput = parseResponseTextOption(rawMatchInput, config.MatchInput, MaxMatchInputLength)
-	config.ResponseText = parseResponseTextOption(rawResponseText, config.ResponseText, MaxResponseTextLength)
-	config.MinDelayMs = parseResponseIntOption(rawMinDelayMs, config.MinDelayMs, 0, MaxDelayMs)
-	config.MaxDelayMs = parseResponseIntOption(rawMaxDelayMs, config.MaxDelayMs, 0, MaxDelayMs)
+	config.Enabled, _ = strconv.ParseBool(options[OptionKey])
+	config.MatchInput = parseResponseTextOption(options[MatchInputOptionKey], config.MatchInput, MaxMatchInputLength)
+	config.ResponseText = parseResponseTextOption(options[ResponseTextOptionKey], config.ResponseText, MaxResponseTextLength)
+	config.MinDelayMs = parseResponseIntOption(options[MinDelayMsOptionKey], config.MinDelayMs, 0, MaxDelayMs)
+	config.MaxDelayMs = parseResponseIntOption(options[MaxDelayMsOptionKey], config.MaxDelayMs, 0, MaxDelayMs)
 	if config.MinDelayMs > config.MaxDelayMs {
 		config.MinDelayMs = DefaultMinDelayMs
 		config.MaxDelayMs = DefaultMaxDelayMs
 	}
-	config.InputTokens = parseResponseIntOption(rawInputTokens, config.InputTokens, 0, MaxTokenCount)
-	config.CacheWriteTokens = parseResponseIntOption(rawCacheWriteTokens, config.CacheWriteTokens, 0, MaxTokenCount)
-	config.CachedTokens = parseResponseIntOption(rawCachedTokens, config.CachedTokens, 0, MaxTokenCount)
-	config.OutputTokens = parseResponseIntOption(rawOutputTokens, config.OutputTokens, 0, MaxTokenCount)
+	config.InputTokens = parseResponseIntOption(options[InputTokensOptionKey], config.InputTokens, 0, MaxTokenCount)
+	config.CacheWriteTokens = parseResponseIntOption(options[CacheWriteTokensOptionKey], config.CacheWriteTokens, 0, MaxTokenCount)
+	config.CachedTokens = parseResponseIntOption(options[CachedTokensOptionKey], config.CachedTokens, 0, MaxTokenCount)
+	config.OutputTokens = parseResponseIntOption(options[OutputTokensOptionKey], config.OutputTokens, 0, MaxTokenCount)
 	return config
 }
 

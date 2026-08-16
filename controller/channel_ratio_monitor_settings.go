@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -28,10 +29,18 @@ const (
 	channelMonitorAutoEnableOnCostRatioRecoveryOption          = "ChannelMonitorAutoEnableOnCostRatioRecovery"
 	channelMonitorAutoEnableOnBalanceRecoveryOption            = "ChannelMonitorAutoEnableOnBalanceRecovery"
 	channelMonitorCostRetentionDaysOption                      = "ChannelMonitorCostRetentionDays"
+	channelMonitorRouteMetricRetentionDaysOption               = "ChannelMonitorRouteMetricRetentionDays"
+	channelMonitorAPIKeyMetricRetentionDaysOption              = "ChannelMonitorApiKeyMetricRetentionDays"
 	channelMonitorExecutionDetailRetentionDaysOption           = "ChannelMonitorExecutionDetailRetentionDays"
 	channelMonitorTaskRetentionDaysOption                      = "ChannelMonitorTaskRetentionDays"
 	channelMonitorRatioHistoryRetentionDaysOption              = "ChannelMonitorRatioHistoryRetentionDays"
 	channelMonitorStatusProbeHistoryRetentionDaysOption        = "ChannelMonitorStatusProbeHistoryRetentionDays"
+	channelMonitorModelDetectionRetentionDaysOption            = "ChannelMonitorModelDetectionRetentionDays"
+	channelMonitorCleanupEnabledOption                         = "ChannelMonitorCleanupEnabled"
+	channelMonitorCleanupBatchSizeOption                       = "ChannelMonitorCleanupBatchSize"
+	channelMonitorCleanupBudgetSecondsOption                   = "ChannelMonitorCleanupBudgetSeconds"
+	channelMonitorCleanupContinuationSecondsOption             = "ChannelMonitorCleanupContinuationSeconds"
+	channelMonitorCleanupIntervalMinutesOption                 = "ChannelMonitorCleanupIntervalMinutes"
 	channelMonitorEmailNotificationOption                      = "ChannelMonitorEmailNotificationEnabled"
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
@@ -76,6 +85,14 @@ const (
 	minChannelMonitorCostRetentionDays                         = 1
 	maxChannelMonitorCostRetentionDays                         = 3650
 	maxChannelMonitorStatusProbeHistoryRetentionDays           = 90
+	minChannelMonitorCleanupBatchSize                          = 1
+	maxChannelMonitorCleanupBatchSize                          = 10000
+	minChannelMonitorCleanupBudgetSeconds                      = 1
+	maxChannelMonitorCleanupBudgetSeconds                      = 300
+	minChannelMonitorCleanupContinuationSeconds                = 15
+	maxChannelMonitorCleanupContinuationSeconds                = 3600
+	minChannelMonitorCleanupIntervalMinutes                    = 60
+	maxChannelMonitorCleanupIntervalMinutes                    = 10080
 	maxChannelMonitorNotificationEmailLength                   = 254
 	maxChannelMonitorChannelOrderCount                         = 100000
 	maxChannelMonitorSmartScheduleModelLength                  = 255
@@ -90,11 +107,18 @@ const (
 	defaultChannelMonitorAutoUpdateRetryCount                  = 2
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 2
-	defaultChannelMonitorCostRetentionDays                     = 120
-	defaultChannelMonitorExecutionDetailRetentionDays          = 14
+	defaultChannelMonitorCostRetentionDays                     = 30
+	defaultChannelMonitorRouteMetricRetentionDays              = 30
+	defaultChannelMonitorAPIKeyMetricRetentionDays             = 7
+	defaultChannelMonitorExecutionDetailRetentionDays          = 3
 	defaultChannelMonitorTaskRetentionDays                     = 90
 	defaultChannelMonitorRatioHistoryRetentionDays             = 365
 	defaultChannelMonitorStatusProbeHistoryRetentionDays       = 7
+	defaultChannelMonitorCleanupEnabled                        = true
+	defaultChannelMonitorCleanupBatchSize                      = 1000
+	defaultChannelMonitorCleanupBudgetSeconds                  = 10
+	defaultChannelMonitorCleanupContinuationSeconds            = 60
+	defaultChannelMonitorCleanupIntervalMinutes                = 24 * 60
 	defaultChannelMonitorGroupCoefficient                      = 1
 	defaultChannelMonitorSmartScheduleProbeInterval            = 10
 	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
@@ -126,10 +150,18 @@ type channelMonitorSettings struct {
 	AutoEnableOnCostRatioRecovery         bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     int                        `json:"cost_retention_days"`
+	RouteMetricRetentionDays              int                        `json:"route_metric_retention_days"`
+	APIKeyMetricRetentionDays             int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     int                        `json:"task_retention_days"`
 	RatioHistoryRetentionDays             int                        `json:"ratio_history_retention_days"`
 	StatusProbeHistoryRetentionDays       int                        `json:"status_probe_history_retention_days"`
+	ModelDetectionRetentionDays           int                        `json:"model_detection_retention_days"`
+	CleanupEnabled                        bool                       `json:"cleanup_enabled"`
+	CleanupBatchSize                      int                        `json:"cleanup_batch_size"`
+	CleanupBudgetSeconds                  int                        `json:"cleanup_budget_seconds"`
+	CleanupContinuationSeconds            int                        `json:"cleanup_continuation_seconds"`
+	CleanupIntervalMinutes                int                        `json:"cleanup_interval_minutes"`
 	EmailNotificationEnabled              bool                       `json:"email_notification_enabled"`
 	NotificationEmail                     string                     `json:"notification_email"`
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
@@ -164,10 +196,18 @@ type channelMonitorSettingsUpdateRequest struct {
 	AutoEnableOnCostRatioRecovery         *bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           *bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     *int                        `json:"cost_retention_days"`
+	RouteMetricRetentionDays              *int                        `json:"route_metric_retention_days"`
+	APIKeyMetricRetentionDays             *int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          *int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     *int                        `json:"task_retention_days"`
 	RatioHistoryRetentionDays             *int                        `json:"ratio_history_retention_days"`
 	StatusProbeHistoryRetentionDays       *int                        `json:"status_probe_history_retention_days"`
+	ModelDetectionRetentionDays           *int                        `json:"model_detection_retention_days"`
+	CleanupEnabled                        *bool                       `json:"cleanup_enabled"`
+	CleanupBatchSize                      *int                        `json:"cleanup_batch_size"`
+	CleanupBudgetSeconds                  *int                        `json:"cleanup_budget_seconds"`
+	CleanupContinuationSeconds            *int                        `json:"cleanup_continuation_seconds"`
+	CleanupIntervalMinutes                *int                        `json:"cleanup_interval_minutes"`
 	EmailNotificationEnabled              *bool                       `json:"email_notification_enabled"`
 	NotificationEmail                     *string                     `json:"notification_email"`
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
@@ -197,30 +237,106 @@ type channelMonitorOrderUpdateRequest struct {
 
 func getChannelMonitorSettings() channelMonitorSettings {
 	common.OptionMapRWMutex.RLock()
-	rawInterval := common.OptionMap[channelMonitorAutoUpdateIntervalOption]
-	rawRetryCount := common.OptionMap[channelMonitorAutoUpdateRetryCountOption]
-	rawUpstreamRequestTimeout := common.OptionMap[channelMonitorUpstreamRequestTimeoutOption]
-	rawConsecutiveFailureLimit := common.OptionMap[channelMonitorAutoUpdateConsecutiveFailureLimitOption]
-	rawAutoDisableOnUpdateFailure := common.OptionMap[channelMonitorAutoDisableOnUpdateFailureOption]
-	rawAutoEnableOnCostRatioRecovery := common.OptionMap[channelMonitorAutoEnableOnCostRatioRecoveryOption]
-	rawAutoEnableOnBalanceRecovery := common.OptionMap[channelMonitorAutoEnableOnBalanceRecoveryOption]
-	rawCostRetentionDays := common.OptionMap[channelMonitorCostRetentionDaysOption]
-	rawExecutionDetailRetentionDays := common.OptionMap[channelMonitorExecutionDetailRetentionDaysOption]
-	rawTaskRetentionDays := common.OptionMap[channelMonitorTaskRetentionDaysOption]
-	rawRatioHistoryRetentionDays := common.OptionMap[channelMonitorRatioHistoryRetentionDaysOption]
-	rawStatusProbeHistoryRetentionDays := common.OptionMap[channelMonitorStatusProbeHistoryRetentionDaysOption]
-	rawEmailNotificationEnabled := common.OptionMap[channelMonitorEmailNotificationOption]
-	rawNotificationEmail := common.OptionMap[channelMonitorNotificationEmailOption]
-	rawEmailNotificationTypes := common.OptionMap[channelMonitorEmailNotificationTypesOption]
-	rawErrorMessageMapping := common.OptionMap[channelMonitorErrorMessageMappingOption]
-	rawRelayResponseHeaderTimeout := common.OptionMap[common.RelayResponseHeaderTimeoutOptionKey]
-	rawSmartScheduleEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
-	rawSmartScheduleGroupPolicies := common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption]
-	rawSmartSchedulePerformanceWindow := common.OptionMap[channelMonitorSmartSchedulePerformanceWindowOption]
-	rawSmartScheduleStabilityWindow := common.OptionMap[channelMonitorSmartScheduleStabilityWindowOption]
-	rawSmartScheduleRateLimitCooldown := common.OptionMap[channelMonitorSmartScheduleRateLimitCooldownOption]
-	rawSmartScheduleControlRevision := common.OptionMap[channelMonitorSmartScheduleControlRevisionOption]
+	options := make(map[string]string, len(common.OptionMap))
+	for key, value := range common.OptionMap {
+		options[key] = value
+	}
 	common.OptionMapRWMutex.RUnlock()
+	return channelMonitorSettingsFromOptions(options)
+}
+
+func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSettings, error) {
+	if model.DB == nil {
+		return channelMonitorSettings{}, errors.New("渠道监控设置数据库未初始化")
+	}
+	optionKeys := []string{
+		channelMonitorAutoUpdateIntervalOption,
+		channelMonitorAutoUpdateRetryCountOption,
+		channelMonitorUpstreamRequestTimeoutOption,
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption,
+		channelMonitorAutoDisableOnUpdateFailureOption,
+		channelMonitorAutoEnableOnCostRatioRecoveryOption,
+		channelMonitorAutoEnableOnBalanceRecoveryOption,
+		channelMonitorCostRetentionDaysOption,
+		channelMonitorRouteMetricRetentionDaysOption,
+		channelMonitorAPIKeyMetricRetentionDaysOption,
+		channelMonitorExecutionDetailRetentionDaysOption,
+		channelMonitorTaskRetentionDaysOption,
+		channelMonitorRatioHistoryRetentionDaysOption,
+		channelMonitorStatusProbeHistoryRetentionDaysOption,
+		channelMonitorModelDetectionRetentionDaysOption,
+		channelMonitorCleanupEnabledOption,
+		channelMonitorCleanupBatchSizeOption,
+		channelMonitorCleanupBudgetSecondsOption,
+		channelMonitorCleanupContinuationSecondsOption,
+		channelMonitorCleanupIntervalMinutesOption,
+		channelMonitorEmailNotificationOption,
+		channelMonitorNotificationEmailOption,
+		channelMonitorEmailNotificationTypesOption,
+		channelMonitorErrorMessageMappingOption,
+		channelMonitorProbeResponseOption,
+		channelMonitorProbeResponseMatchInputOption,
+		channelMonitorProbeResponseTextOption,
+		channelMonitorProbeResponseMinDelayMsOption,
+		channelMonitorProbeResponseMaxDelayMsOption,
+		channelMonitorProbeResponseInputTokensOption,
+		channelMonitorProbeResponseCacheWriteTokensOption,
+		channelMonitorProbeResponseCachedTokensOption,
+		channelMonitorProbeResponseOutputTokensOption,
+		common.RelayResponseHeaderTimeoutOptionKey,
+		channelMonitorSmartScheduleEnabledOption,
+		channelMonitorSmartScheduleGroupPoliciesOption,
+		channelMonitorSmartSchedulePerformanceWindowOption,
+		channelMonitorSmartScheduleStabilityWindowOption,
+		channelMonitorSmartScheduleRateLimitCooldownOption,
+		channelMonitorSmartScheduleControlRevisionOption,
+	}
+	var storedOptions []model.Option
+	if err := model.DB.WithContext(ctx).
+		Select("key", "value").
+		Where(map[string]any{"key": optionKeys}).
+		Find(&storedOptions).Error; err != nil {
+		return channelMonitorSettings{}, fmt.Errorf("读取渠道监控设置失败: %w", err)
+	}
+	options := make(map[string]string, len(storedOptions))
+	for _, option := range storedOptions {
+		options[option.Key] = option.Value
+	}
+	return channelMonitorSettingsFromOptions(options), nil
+}
+
+func channelMonitorSettingsFromOptions(options map[string]string) channelMonitorSettings {
+	rawInterval := options[channelMonitorAutoUpdateIntervalOption]
+	rawRetryCount := options[channelMonitorAutoUpdateRetryCountOption]
+	rawUpstreamRequestTimeout := options[channelMonitorUpstreamRequestTimeoutOption]
+	rawConsecutiveFailureLimit := options[channelMonitorAutoUpdateConsecutiveFailureLimitOption]
+	rawAutoDisableOnUpdateFailure := options[channelMonitorAutoDisableOnUpdateFailureOption]
+	rawAutoEnableOnCostRatioRecovery := options[channelMonitorAutoEnableOnCostRatioRecoveryOption]
+	rawAutoEnableOnBalanceRecovery := options[channelMonitorAutoEnableOnBalanceRecoveryOption]
+	rawCostRetentionDays := options[channelMonitorCostRetentionDaysOption]
+	rawRouteMetricRetentionDays := options[channelMonitorRouteMetricRetentionDaysOption]
+	rawAPIKeyMetricRetentionDays := options[channelMonitorAPIKeyMetricRetentionDaysOption]
+	rawExecutionDetailRetentionDays := options[channelMonitorExecutionDetailRetentionDaysOption]
+	rawTaskRetentionDays := options[channelMonitorTaskRetentionDaysOption]
+	rawRatioHistoryRetentionDays := options[channelMonitorRatioHistoryRetentionDaysOption]
+	rawStatusProbeHistoryRetentionDays := options[channelMonitorStatusProbeHistoryRetentionDaysOption]
+	rawModelDetectionRetentionDays := options[channelMonitorModelDetectionRetentionDaysOption]
+	rawCleanupEnabled := options[channelMonitorCleanupEnabledOption]
+	rawCleanupBatchSize := options[channelMonitorCleanupBatchSizeOption]
+	rawCleanupBudgetSeconds := options[channelMonitorCleanupBudgetSecondsOption]
+	rawCleanupContinuationSeconds := options[channelMonitorCleanupContinuationSecondsOption]
+	rawCleanupIntervalMinutes := options[channelMonitorCleanupIntervalMinutesOption]
+	rawEmailNotificationEnabled := options[channelMonitorEmailNotificationOption]
+	rawNotificationEmail := options[channelMonitorNotificationEmailOption]
+	rawEmailNotificationTypes := options[channelMonitorEmailNotificationTypesOption]
+	rawErrorMessageMapping := options[channelMonitorErrorMessageMappingOption]
+	rawRelayResponseHeaderTimeout := options[common.RelayResponseHeaderTimeoutOptionKey]
+	rawSmartScheduleEnabled := options[channelMonitorSmartScheduleEnabledOption]
+	rawSmartScheduleGroupPolicies := options[channelMonitorSmartScheduleGroupPoliciesOption]
+	rawSmartSchedulePerformanceWindow := options[channelMonitorSmartSchedulePerformanceWindowOption]
+	rawSmartScheduleStabilityWindow := options[channelMonitorSmartScheduleStabilityWindowOption]
+	rawSmartScheduleRateLimitCooldown := options[channelMonitorSmartScheduleRateLimitCooldownOption]
+	rawSmartScheduleControlRevision := options[channelMonitorSmartScheduleControlRevisionOption]
 
 	interval, err := strconv.Atoi(rawInterval)
 	if err != nil || interval < 0 || interval > maxChannelMonitorAutoUpdateIntervalMinutes {
@@ -256,6 +372,14 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	if err != nil || costRetentionDays < minChannelMonitorCostRetentionDays || costRetentionDays > maxChannelMonitorCostRetentionDays {
 		costRetentionDays = defaultChannelMonitorCostRetentionDays
 	}
+	routeMetricRetentionDays, err := strconv.Atoi(rawRouteMetricRetentionDays)
+	if err != nil || routeMetricRetentionDays < minChannelMonitorCostRetentionDays || routeMetricRetentionDays > maxChannelMonitorCostRetentionDays {
+		routeMetricRetentionDays = defaultChannelMonitorRouteMetricRetentionDays
+	}
+	apiKeyMetricRetentionDays, err := strconv.Atoi(rawAPIKeyMetricRetentionDays)
+	if err != nil || apiKeyMetricRetentionDays < minChannelMonitorCostRetentionDays || apiKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays {
+		apiKeyMetricRetentionDays = defaultChannelMonitorAPIKeyMetricRetentionDays
+	}
 	executionDetailRetentionDays, err := strconv.Atoi(rawExecutionDetailRetentionDays)
 	if err != nil || executionDetailRetentionDays < minChannelMonitorCostRetentionDays || executionDetailRetentionDays > maxChannelMonitorCostRetentionDays {
 		executionDetailRetentionDays = defaultChannelMonitorExecutionDetailRetentionDays
@@ -276,6 +400,33 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		statusProbeHistoryRetentionDays > maxChannelMonitorStatusProbeHistoryRetentionDays {
 		statusProbeHistoryRetentionDays = defaultChannelMonitorStatusProbeHistoryRetentionDays
 	}
+	modelDetectionRetentionDays, err := strconv.Atoi(rawModelDetectionRetentionDays)
+	if err != nil || modelDetectionRetentionDays < model.ChannelModelDetectionMinRetentionDays ||
+		modelDetectionRetentionDays > model.ChannelModelDetectionMaxRetentionDays {
+		modelDetectionRetentionDays = model.ChannelModelDetectionDefaultRetentionDays
+	}
+	cleanupEnabled, err := strconv.ParseBool(rawCleanupEnabled)
+	if err != nil {
+		cleanupEnabled = defaultChannelMonitorCleanupEnabled
+	}
+	cleanupBatchSize, err := strconv.Atoi(rawCleanupBatchSize)
+	if err != nil || cleanupBatchSize < minChannelMonitorCleanupBatchSize || cleanupBatchSize > maxChannelMonitorCleanupBatchSize {
+		cleanupBatchSize = defaultChannelMonitorCleanupBatchSize
+	}
+	cleanupBudgetSeconds, err := strconv.Atoi(rawCleanupBudgetSeconds)
+	if err != nil || cleanupBudgetSeconds < minChannelMonitorCleanupBudgetSeconds || cleanupBudgetSeconds > maxChannelMonitorCleanupBudgetSeconds {
+		cleanupBudgetSeconds = defaultChannelMonitorCleanupBudgetSeconds
+	}
+	cleanupContinuationSeconds, err := strconv.Atoi(rawCleanupContinuationSeconds)
+	if err != nil || cleanupContinuationSeconds < minChannelMonitorCleanupContinuationSeconds ||
+		cleanupContinuationSeconds > maxChannelMonitorCleanupContinuationSeconds {
+		cleanupContinuationSeconds = defaultChannelMonitorCleanupContinuationSeconds
+	}
+	cleanupIntervalMinutes, err := strconv.Atoi(rawCleanupIntervalMinutes)
+	if err != nil || cleanupIntervalMinutes < minChannelMonitorCleanupIntervalMinutes ||
+		cleanupIntervalMinutes > maxChannelMonitorCleanupIntervalMinutes {
+		cleanupIntervalMinutes = defaultChannelMonitorCleanupIntervalMinutes
+	}
 	notificationEmail, err := normalizeChannelMonitorNotificationEmail(rawNotificationEmail)
 	if err != nil {
 		notificationEmail = ""
@@ -285,7 +436,7 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		emailNotificationEnabled = false
 	}
 	emailNotificationTypes := parseChannelMonitorEmailNotificationTypes(rawEmailNotificationTypes)
-	probeResponseConfig := channelprobe.GetResponseConfig()
+	probeResponseConfig := channelprobe.ResponseConfigFromOptions(options)
 	relayResponseHeaderTimeoutSeconds, err := strconv.Atoi(rawRelayResponseHeaderTimeout)
 	if err != nil || relayResponseHeaderTimeoutSeconds < 0 ||
 		relayResponseHeaderTimeoutSeconds > common.MaxRelayResponseHeaderTimeoutSeconds {
@@ -320,10 +471,18 @@ func getChannelMonitorSettings() channelMonitorSettings {
 		AutoEnableOnCostRatioRecovery:         autoEnableOnCostRatioRecovery,
 		AutoEnableOnBalanceRecovery:           autoEnableOnBalanceRecovery,
 		CostRetentionDays:                     costRetentionDays,
+		RouteMetricRetentionDays:              routeMetricRetentionDays,
+		APIKeyMetricRetentionDays:             apiKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          executionDetailRetentionDays,
 		TaskRetentionDays:                     taskRetentionDays,
 		RatioHistoryRetentionDays:             ratioHistoryRetentionDays,
 		StatusProbeHistoryRetentionDays:       statusProbeHistoryRetentionDays,
+		ModelDetectionRetentionDays:           modelDetectionRetentionDays,
+		CleanupEnabled:                        cleanupEnabled,
+		CleanupBatchSize:                      cleanupBatchSize,
+		CleanupBudgetSeconds:                  cleanupBudgetSeconds,
+		CleanupContinuationSeconds:            cleanupContinuationSeconds,
+		CleanupIntervalMinutes:                cleanupIntervalMinutes,
 		EmailNotificationEnabled:              emailNotificationEnabled,
 		NotificationEmail:                     notificationEmail,
 		EmailNotificationTypes:                emailNotificationTypes,
@@ -619,10 +778,18 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.AutoEnableOnCostRatioRecovery == nil &&
 		request.AutoEnableOnBalanceRecovery == nil &&
 		request.CostRetentionDays == nil &&
+		request.RouteMetricRetentionDays == nil &&
+		request.APIKeyMetricRetentionDays == nil &&
 		request.ExecutionDetailRetentionDays == nil &&
 		request.TaskRetentionDays == nil &&
 		request.RatioHistoryRetentionDays == nil &&
 		request.StatusProbeHistoryRetentionDays == nil &&
+		request.ModelDetectionRetentionDays == nil &&
+		request.CleanupEnabled == nil &&
+		request.CleanupBatchSize == nil &&
+		request.CleanupBudgetSeconds == nil &&
+		request.CleanupContinuationSeconds == nil &&
+		request.CleanupIntervalMinutes == nil &&
 		request.EmailNotificationEnabled == nil &&
 		request.NotificationEmail == nil &&
 		request.EmailNotificationTypes == nil &&
@@ -652,14 +819,26 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.SmartSchedulePerformanceWindowMinutes != nil ||
 		request.SmartScheduleStabilityWindowMinutes != nil ||
 		request.SmartScheduleRateLimitCooldownSeconds != nil || forceResetSmartSchedule
-	settings := getChannelMonitorSettings()
+	if err := validateChannelMonitorRetentionRequest(request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	settings, err := loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if smartScheduleSettingsChanged && request.SmartScheduleControlRevision != nil &&
 		settings.SmartScheduleControlRevision != *request.SmartScheduleControlRevision {
 		if err := model.RefreshChannelSmartScheduleOptions(); err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		settings = getChannelMonitorSettings()
+		settings, err = loadChannelMonitorSettingsSnapshot(c.Request.Context())
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	values := make(map[string]string, 32)
 	if request.ErrorMessageMapping != nil {
@@ -745,6 +924,30 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.CostRetentionDays = *request.CostRetentionDays
 		values[channelMonitorCostRetentionDaysOption] = strconv.Itoa(settings.CostRetentionDays)
 	}
+	if request.RouteMetricRetentionDays != nil && (*request.RouteMetricRetentionDays < minChannelMonitorCostRetentionDays ||
+		*request.RouteMetricRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "路由分钟指标保留天数必须在 1 到 3650 天之间",
+		})
+		return
+	}
+	if request.RouteMetricRetentionDays != nil {
+		settings.RouteMetricRetentionDays = *request.RouteMetricRetentionDays
+		values[channelMonitorRouteMetricRetentionDaysOption] = strconv.Itoa(settings.RouteMetricRetentionDays)
+	}
+	if request.APIKeyMetricRetentionDays != nil && (*request.APIKeyMetricRetentionDays < minChannelMonitorCostRetentionDays ||
+		*request.APIKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "API Key 分钟指标保留天数必须在 1 到 3650 天之间",
+		})
+		return
+	}
+	if request.APIKeyMetricRetentionDays != nil {
+		settings.APIKeyMetricRetentionDays = *request.APIKeyMetricRetentionDays
+		values[channelMonitorAPIKeyMetricRetentionDaysOption] = strconv.Itoa(settings.APIKeyMetricRetentionDays)
+	}
 	if request.ExecutionDetailRetentionDays != nil && (*request.ExecutionDetailRetentionDays < minChannelMonitorCostRetentionDays ||
 		*request.ExecutionDetailRetentionDays > maxChannelMonitorCostRetentionDays) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -793,6 +996,73 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.StatusProbeHistoryRetentionDays != nil {
 		settings.StatusProbeHistoryRetentionDays = *request.StatusProbeHistoryRetentionDays
 		values[channelMonitorStatusProbeHistoryRetentionDaysOption] = strconv.Itoa(settings.StatusProbeHistoryRetentionDays)
+	}
+	if request.ModelDetectionRetentionDays != nil &&
+		(*request.ModelDetectionRetentionDays < model.ChannelModelDetectionMinRetentionDays ||
+			*request.ModelDetectionRetentionDays > model.ChannelModelDetectionMaxRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "模型检测历史保留天数必须在 7 到 180 天之间",
+		})
+		return
+	}
+	if request.ModelDetectionRetentionDays != nil {
+		settings.ModelDetectionRetentionDays = *request.ModelDetectionRetentionDays
+		values[channelMonitorModelDetectionRetentionDaysOption] = strconv.Itoa(settings.ModelDetectionRetentionDays)
+	}
+	if request.CleanupEnabled != nil {
+		settings.CleanupEnabled = *request.CleanupEnabled
+		values[channelMonitorCleanupEnabledOption] = strconv.FormatBool(settings.CleanupEnabled)
+	}
+	if request.CleanupBatchSize != nil && (*request.CleanupBatchSize < minChannelMonitorCleanupBatchSize ||
+		*request.CleanupBatchSize > maxChannelMonitorCleanupBatchSize) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "清理批次大小必须在 1 到 10000 条之间",
+		})
+		return
+	}
+	if request.CleanupBatchSize != nil {
+		settings.CleanupBatchSize = *request.CleanupBatchSize
+		values[channelMonitorCleanupBatchSizeOption] = strconv.Itoa(settings.CleanupBatchSize)
+	}
+	if request.CleanupBudgetSeconds != nil && (*request.CleanupBudgetSeconds < minChannelMonitorCleanupBudgetSeconds ||
+		*request.CleanupBudgetSeconds > maxChannelMonitorCleanupBudgetSeconds) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "单轮清理预算必须在 1 到 300 秒之间",
+		})
+		return
+	}
+	if request.CleanupBudgetSeconds != nil {
+		settings.CleanupBudgetSeconds = *request.CleanupBudgetSeconds
+		values[channelMonitorCleanupBudgetSecondsOption] = strconv.Itoa(settings.CleanupBudgetSeconds)
+	}
+	if request.CleanupContinuationSeconds != nil &&
+		(*request.CleanupContinuationSeconds < minChannelMonitorCleanupContinuationSeconds ||
+			*request.CleanupContinuationSeconds > maxChannelMonitorCleanupContinuationSeconds) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "清理续跑间隔必须在 15 到 3600 秒之间",
+		})
+		return
+	}
+	if request.CleanupContinuationSeconds != nil {
+		settings.CleanupContinuationSeconds = *request.CleanupContinuationSeconds
+		values[channelMonitorCleanupContinuationSecondsOption] = strconv.Itoa(settings.CleanupContinuationSeconds)
+	}
+	if request.CleanupIntervalMinutes != nil &&
+		(*request.CleanupIntervalMinutes < minChannelMonitorCleanupIntervalMinutes ||
+			*request.CleanupIntervalMinutes > maxChannelMonitorCleanupIntervalMinutes) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "清理周期必须在 60 到 10080 分钟之间",
+		})
+		return
+	}
+	if request.CleanupIntervalMinutes != nil {
+		settings.CleanupIntervalMinutes = *request.CleanupIntervalMinutes
+		values[channelMonitorCleanupIntervalMinutesOption] = strconv.Itoa(settings.CleanupIntervalMinutes)
 	}
 	if settings.TaskRetentionDays < settings.ExecutionDetailRetentionDays {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1028,7 +1298,11 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if routingChanged {
 		model.InitChannelCache()
 	}
-	settings = getChannelMonitorSettings()
+	settings, err = loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	previousSmartScheduleControlRevision := settings.SmartScheduleControlRevision
 	if expectedSmartScheduleControlRevision != nil {
 		previousSmartScheduleControlRevision = *expectedSmartScheduleControlRevision
@@ -1051,9 +1325,11 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	} else if scheduleTaskRequested && !cooldownRevisionApplied && forceResetSmartSchedule {
 		forceResetTaskError = "智能调度配置已被更新的修订覆盖，未创建强制重置任务"
 	} else if scheduleTaskRequested && cooldownRevisionError == nil && cooldownRevisionApplied {
+		payload := newChannelSmartScheduleTaskPayload("settings_update", "smart_schedule_settings_changed")
+		payload.ForceReset = forceResetSmartSchedule
 		task, created, err := service.EnqueueRequiredSystemTask(
 			channelMonitorSmartScheduleTaskType,
-			channelSmartScheduleTaskPayload{ForceReset: forceResetSmartSchedule},
+			payload,
 		)
 		scheduleTaskError = err
 		if forceResetSmartSchedule {
@@ -1077,10 +1353,18 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"auto_enable_on_cost_ratio_recovery":         settings.AutoEnableOnCostRatioRecovery,
 		"auto_enable_on_balance_recovery":            settings.AutoEnableOnBalanceRecovery,
 		"cost_retention_days":                        settings.CostRetentionDays,
+		"route_metric_retention_days":                settings.RouteMetricRetentionDays,
+		"api_key_metric_retention_days":              settings.APIKeyMetricRetentionDays,
 		"execution_detail_retention_days":            settings.ExecutionDetailRetentionDays,
 		"task_retention_days":                        settings.TaskRetentionDays,
 		"ratio_history_retention_days":               settings.RatioHistoryRetentionDays,
 		"status_probe_history_retention_days":        settings.StatusProbeHistoryRetentionDays,
+		"model_detection_retention_days":             settings.ModelDetectionRetentionDays,
+		"cleanup_enabled":                            settings.CleanupEnabled,
+		"cleanup_batch_size":                         settings.CleanupBatchSize,
+		"cleanup_budget_seconds":                     settings.CleanupBudgetSeconds,
+		"cleanup_continuation_seconds":               settings.CleanupContinuationSeconds,
+		"cleanup_interval_minutes":                   settings.CleanupIntervalMinutes,
 		"email_notification_enabled":                 settings.EmailNotificationEnabled,
 		"notification_email_configured":              settings.NotificationEmail != "",
 		"email_notification_types":                   settings.EmailNotificationTypes,
@@ -1135,4 +1419,68 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, settings)
+}
+
+func validateChannelMonitorRetentionRequest(request channelMonitorSettingsUpdateRequest) error {
+	validateDays := func(value *int, min int, max int, message string) error {
+		if value != nil && (*value < min || *value > max) {
+			return errors.New(message)
+		}
+		return nil
+	}
+	if err := validateDays(request.CostRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "成本保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.RouteMetricRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "路由分钟指标保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.APIKeyMetricRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "API Key 分钟指标保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.ExecutionDetailRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "执行明细保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.TaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "监控任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.RatioHistoryRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "倍率历史保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.StatusProbeHistoryRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorStatusProbeHistoryRetentionDays, "状态探测历史保留天数必须在 1 到 90 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.ModelDetectionRetentionDays, model.ChannelModelDetectionMinRetentionDays,
+		model.ChannelModelDetectionMaxRetentionDays, "模型检测历史保留天数必须在 7 到 180 天之间"); err != nil {
+		return err
+	}
+	if request.TaskRetentionDays != nil && request.ExecutionDetailRetentionDays != nil &&
+		*request.TaskRetentionDays < *request.ExecutionDetailRetentionDays {
+		return errors.New("监控任务保留天数不能小于调度执行明细保留天数")
+	}
+	if request.CleanupBatchSize != nil && (*request.CleanupBatchSize < minChannelMonitorCleanupBatchSize ||
+		*request.CleanupBatchSize > maxChannelMonitorCleanupBatchSize) {
+		return errors.New("清理批次大小必须在 1 到 10000 条之间")
+	}
+	if request.CleanupBudgetSeconds != nil && (*request.CleanupBudgetSeconds < minChannelMonitorCleanupBudgetSeconds ||
+		*request.CleanupBudgetSeconds > maxChannelMonitorCleanupBudgetSeconds) {
+		return errors.New("单轮清理预算必须在 1 到 300 秒之间")
+	}
+	if request.CleanupContinuationSeconds != nil &&
+		(*request.CleanupContinuationSeconds < minChannelMonitorCleanupContinuationSeconds ||
+			*request.CleanupContinuationSeconds > maxChannelMonitorCleanupContinuationSeconds) {
+		return errors.New("清理续跑间隔必须在 15 到 3600 秒之间")
+	}
+	if request.CleanupIntervalMinutes != nil &&
+		(*request.CleanupIntervalMinutes < minChannelMonitorCleanupIntervalMinutes ||
+			*request.CleanupIntervalMinutes > maxChannelMonitorCleanupIntervalMinutes) {
+		return errors.New("清理周期必须在 60 到 10080 分钟之间")
+	}
+	return nil
 }

@@ -11,11 +11,11 @@ import (
 // buckets are persisted.
 type ChannelMonitorMinuteDurationBucket struct {
 	Id          int64   `gorm:"primaryKey"`
-	MinuteStart int64   `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_channel_monitor_minute_duration_start"`
-	ChannelId   int     `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_channel_monitor_minute_duration_channel"`
-	ModelKey    string  `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions"`
-	GroupKey    string  `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions"`
-	BucketIndex int     `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions"`
+	MinuteStart int64   `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_cm_duration_route_lookup,priority:3"`
+	ChannelId   int     `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_cm_duration_route_lookup,priority:1"`
+	ModelKey    string  `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_cm_duration_route_lookup,priority:2"`
+	GroupKey    string  `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_cm_duration_route_lookup,priority:4"`
+	BucketIndex int     `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_duration_dimensions;index:idx_cm_duration_route_lookup,priority:5"`
 	ModelName   string  `gorm:"size:255;not null"`
 	GroupName   string  `gorm:"size:255;not null"`
 	Count       int64   `gorm:"not null"`
@@ -196,6 +196,7 @@ func SummarizeChannelMonitorDurationBuckets(
 
 type channelMonitorDurationAggregateRow struct {
 	ChannelId   int
+	ModelKey    string
 	ModelName   string
 	BucketIndex int
 	Count       int64
@@ -215,7 +216,8 @@ func getChannelMonitorRouteDurationBuckets(
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteDurationBucket{}).
 		Select(
-			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_key AS model_key, "+
+				"MIN("+metricTable+".model_name) AS model_name, "+
 				metricTable+".bucket_index AS bucket_index, "+
 				"SUM("+metricTable+".count) AS count, SUM("+metricTable+".total_ms) AS total_ms",
 		).
@@ -225,11 +227,11 @@ func getChannelMonitorRouteDurationBuckets(
 		query = query.Where(metricTable+".channel_id = ?", filter.ChannelId)
 	}
 	if filter.ModelName != "" {
-		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_key = ?", channelMonitorMinuteDimensionKey(filter.ModelName))
 	}
 	var rows []channelMonitorDurationAggregateRow
 	err := query.
-		Group(metricTable + ".channel_id, " + metricTable + ".model_name, " + metricTable + ".bucket_index").
+		Group(metricTable + ".channel_id, " + metricTable + ".model_key, " + metricTable + ".bucket_index").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err

@@ -15,42 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type legacyChannelMonitorMinuteMetric struct {
-	Id          int64  `gorm:"primaryKey"`
-	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	APIKeyKey   string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_dimensions"`
-	ModelName   string `gorm:"size:255;not null"`
-	GroupName   string `gorm:"size:255;not null"`
-	APIKeyId    int    `gorm:"not null"`
-	APIKeyName  string `gorm:"size:255;not null"`
-
-	ActualSuccessCount int64 `gorm:"not null"`
-	ActualFailureCount int64 `gorm:"not null"`
-	FinalSuccessCount  int64 `gorm:"not null"`
-	FinalFailureCount  int64 `gorm:"not null"`
-	CacheHitCount      int64 `gorm:"not null"`
-	CacheSampleCount   int64 `gorm:"not null"`
-	CacheWriteCount    int64 `gorm:"not null"`
-
-	SampleCount           int64   `gorm:"not null"`
-	FirstTokenSampleCount int64   `gorm:"not null"`
-	FirstTokenTotalMs     float64 `gorm:"not null"`
-	LatestFirstTokenMs    *float64
-	LatestFirstTokenAt    int64   `gorm:"not null"`
-	TPSSampleCount        int64   `gorm:"not null"`
-	TPSTotal              float64 `gorm:"not null"`
-	LatestTPS             *float64
-	LatestTPSAt           int64 `gorm:"not null"`
-	LastUsedTime          int64 `gorm:"not null"`
-}
-
-func (legacyChannelMonitorMinuteMetric) TableName() string {
-	return "channel_monitor_minute_metrics"
-}
-
 func useChannelMonitorMinuteTestDB(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	originalDB := DB
@@ -58,7 +22,8 @@ func useChannelMonitorMinuteTestDB(t *testing.T, db *gorm.DB) {
 	DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	require.NoError(t, db.AutoMigrate(
-		&ChannelMonitorMinuteMetric{},
+		&ChannelMonitorMinuteRouteMetric{},
+		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
 		&ChannelMonitorAggregationState{},
 		&ChannelSmartScheduleModelSampleState{},
@@ -127,7 +92,9 @@ func TestAggregateChannelMonitorMinuteRangeWithResultReportsWork(t *testing.T) {
 	assert.Equal(t, int64(180), result.EndTimestamp)
 	assert.Equal(t, 3, result.ScannedLogRows)
 	assert.Equal(t, 1, result.MetricRows)
+	assert.Equal(t, 1, result.APIKeyMetricRows)
 	assert.Equal(t, 1, result.DurationBucketRows)
+	assert.Equal(t, 3, result.GeneratedRows())
 }
 
 func TestAggregateChannelMonitorMinuteCalculatesCacheUtilizationFromTokens(t *testing.T) {
@@ -157,7 +124,7 @@ func TestAggregateChannelMonitorMinuteCalculatesCacheUtilizationFromTokens(t *te
 
 	aggregateChannelMonitorMinuteTestRange(t, 60, 120)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ?", 60, 1,
 	).First(&metric).Error)
@@ -197,7 +164,7 @@ func TestUpgradeChannelMonitorCacheUtilizationMetricsRebuildsCurrentDayOnce(t *t
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, ChannelMonitorCacheUtilizationVersion, state.CacheUtilizationVersion)
 	assert.Equal(t, int64(120), state.CacheUtilizationCoveredFrom)
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
 	assert.Equal(t, int64(250), metric.CacheReadTokens)
 	assert.Equal(t, int64(1000), metric.InputTokens)
@@ -240,7 +207,7 @@ func TestBackfillChannelMonitorCacheUtilizationRangeExtendsCacheCoverage(t *test
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(60), state.CoveredFrom)
 	assert.Equal(t, int64(60), state.CacheUtilizationCoveredFrom)
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
 	assert.Equal(t, int64(500), metric.CacheReadTokens)
 	assert.Equal(t, int64(2000), metric.InputTokens)
@@ -270,7 +237,7 @@ func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *t
 	assert.Equal(t, 1, rescanned.MetricRows)
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(2), state.Revision)
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
 	assert.Equal(t, int64(2), metric.ActualSuccessCount)
 
@@ -301,7 +268,7 @@ func TestBackfillChannelMonitorMinuteRangeExtendsCoverageWithoutMovingCompletion
 	assert.Equal(t, int64(60), coverage.CoveredFrom)
 	assert.Equal(t, int64(240), coverage.CompletedThrough)
 
-	var metrics []ChannelMonitorMinuteMetric
+	var metrics []ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Order("minute_start ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 2)
 	assert.Equal(t, []int64{60, 180}, []int64{metrics[0].MinuteStart, metrics[1].MinuteStart})
@@ -316,7 +283,7 @@ func TestBackfillChannelMonitorMinuteRangeExtendsCoverageWithoutMovingCompletion
 	var state ChannelMonitorAggregationState
 	require.NoError(t, db.First(&state, channelMonitorAggregationStateID).Error)
 	assert.Equal(t, int64(3), state.Revision)
-	var earliestMetric ChannelMonitorMinuteMetric
+	var earliestMetric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ?", 60).First(&earliestMetric).Error)
 	assert.Equal(t, int64(2), earliestMetric.ActualSuccessCount)
 }
@@ -342,7 +309,7 @@ func TestAggregateChannelMonitorMinuteRangeSkipsOnlyAfterConcurrentWatermarkAdva
 	assert.Zero(t, skipped.ScannedLogRows)
 	assert.Zero(t, skipped.MetricRows)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
 	assert.Equal(t, int64(1), metric.ActualSuccessCount)
 }
@@ -366,7 +333,7 @@ func TestAggregateChannelMonitorMinuteRangeDoesNotSkipWiderConcurrentRepair(t *t
 	assert.Equal(t, 2, rebuilt.ScannedLogRows)
 	assert.Equal(t, 2, rebuilt.MetricRows)
 
-	var metrics []ChannelMonitorMinuteMetric
+	var metrics []ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Order("minute_start ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 2)
 	assert.Equal(t, []int64{60, 120}, []int64{metrics[0].MinuteStart, metrics[1].MinuteStart})
@@ -393,32 +360,9 @@ func TestBackfillChannelMonitorMinuteRangeSkipsOnlyAfterConcurrentCoverageAdvanc
 	assert.Zero(t, skipped.ScannedLogRows)
 	assert.Zero(t, skipped.MetricRows)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&metric).Error)
 	assert.Equal(t, int64(1), metric.ActualSuccessCount)
-}
-
-func TestChannelMonitorMinuteMetricMigrationBackfillsRetryColumns(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-minute-migration.db")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&legacyChannelMonitorMinuteMetric{}))
-	require.NoError(t, db.Create(&legacyChannelMonitorMinuteMetric{
-		MinuteStart: 120, ChannelId: 1, ModelKey: "model", GroupKey: "group", APIKeyKey: "key",
-		ModelName: "model-a", GroupName: "vip", ActualSuccessCount: 3,
-	}).Error)
-
-	require.NoError(t, db.AutoMigrate(&ChannelMonitorMinuteMetric{}))
-	var metric ChannelMonitorMinuteMetric
-	require.NoError(t, db.First(&metric).Error)
-	assert.Equal(t, int64(3), metric.ActualSuccessCount)
-	assert.Zero(t, metric.RetryFailureCount)
-	assert.Zero(t, metric.RetryFailureDurationTotalMs)
-	assert.Zero(t, metric.RetryFailureOver60sCount)
-	assert.Zero(t, metric.CacheReadTokens)
-	assert.Zero(t, metric.InputTokens)
 }
 
 func TestAggregateChannelMonitorMinuteBucketsRetryFailureDurations(t *testing.T) {
@@ -437,7 +381,7 @@ func TestAggregateChannelMonitorMinuteBucketsRetryFailureDurations(t *testing.T)
 	require.NoError(t, db.Create(&logs).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
 		120, 1, "model-a", "vip",
@@ -465,7 +409,7 @@ func TestAggregateChannelMonitorMinuteUsesFormattedRoutingModelName(t *testing.T
 	}).Error)
 
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ?", 120, 1,
 	).First(&metric).Error)
@@ -516,7 +460,7 @@ func TestAggregateChannelMonitorMinuteKeeps429ErrorsButExcludesThemFromStability
 
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
 		120, 1, "model-a", "vip",
@@ -553,7 +497,7 @@ func TestAggregateChannelMonitorMinuteSaturatesRetryFailureDuration(t *testing.T
 
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
 		120, 1, "model-a", "vip",
@@ -594,13 +538,13 @@ func TestAggregateChannelMonitorMinuteIgnoresMonitoringAndChannelTestConsumeLogs
 
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metrics []ChannelMonitorMinuteMetric
+	var metrics []ChannelMonitorMinuteAPIKeyMetric
 	require.NoError(t, db.Order("api_key_name ASC").Find(&metrics).Error)
 	require.Len(t, metrics, 1)
 	assert.Equal(t, "业务令牌", metrics[0].APIKeyName)
 	assert.Equal(t, int64(1), metrics[0].ActualSuccessCount)
 	assert.Equal(t, int64(1), metrics[0].FinalSuccessCount)
-	assert.Zero(t, metrics[0].SampleCount)
+	assert.Zero(t, metrics[0].CacheSampleCount)
 }
 
 func TestAggregateChannelMonitorMinuteCountsFinalRetryFailureOnce(t *testing.T) {
@@ -633,7 +577,7 @@ func TestAggregateChannelMonitorMinuteCountsFinalRetryFailureOnce(t *testing.T) 
 	}).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
 		120, 1, "model-a", "vip",
@@ -669,7 +613,7 @@ func TestAggregateChannelMonitorMinuteMatchesFinalRetryRegardlessOfLogOrder(t *t
 	}).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
 
-	var metric ChannelMonitorMinuteMetric
+	var metric ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"minute_start = ? AND channel_id = ? AND model_name = ? AND group_name = ?",
 		120, 1, "model-a", "vip",
@@ -704,7 +648,7 @@ func TestAggregateChannelMonitorMinuteDeduplicatesFinalRetryAcrossMinutes(t *tes
 	}).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 120, 240)
 
-	var metrics []ChannelMonitorMinuteMetric
+	var metrics []ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where(
 		"channel_id = ? AND model_name = ? AND group_name = ?", 1, "model-a", "vip",
 	).Order("minute_start ASC").Find(&metrics).Error)
@@ -732,4 +676,140 @@ func TestAggregateChannelMonitorMinuteDeduplicatesFinalRetryAcrossMinutes(t *tes
 	assert.Equal(t, int64(1), boundaryMetrics[0].FailureCount)
 	assert.Equal(t, int64(1), boundaryMetrics[0].FinalFailureCount)
 	assert.Equal(t, int64(1), boundaryMetrics[0].SampleCount)
+}
+
+func TestAggregateChannelMonitorMinutePointRepairMatchesFullRangeForCrossMinuteRetries(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	requestId := "request-cross-minute-point-repair"
+	durationMs := int64(1_500)
+	retryOther, err := common.Marshal(channelMonitorMinuteLogOther{AttemptDurationMs: &durationMs})
+	require.NoError(t, err)
+	finalOther, err := common.Marshal(channelMonitorMinuteLogOther{
+		AttemptDurationMs: &durationMs,
+		FinalRetrySummary: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 61, Type: LogTypeError, IsRetryAttempt: true, RequestId: requestId, Other: string(retryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 121, Type: LogTypeError, IsRetryAttempt: true, RequestId: requestId, Other: string(retryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 122, Type: LogTypeError, IsRetryAttempt: true, RequestId: requestId, Other: string(retryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 123, Type: LogTypeError, RequestId: requestId, Other: string(finalOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 12, TokenName: "key-b",
+			CreatedAt: 124, Type: LogTypeError, IsRetryAttempt: true, RequestId: requestId, Other: string(retryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 301, Type: LogTypeError, IsRetryAttempt: true, RequestId: requestId, Other: string(retryOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 302, Type: LogTypeError, RequestId: requestId, Other: string(finalOther),
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 12, TokenName: "key-b",
+			CreatedAt: 303, Type: LogTypeError, RequestId: requestId, Other: string(finalOther),
+		},
+	}).Error)
+
+	fullResult, err := AggregateChannelMonitorMinuteRangeWithResult(context.Background(), 60, 360)
+	require.NoError(t, err)
+	assert.Equal(t, 8, fullResult.ScannedLogRows)
+	var fullRoute ChannelMonitorMinuteRouteMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&fullRoute).Error)
+	fullRoute.Id = 0
+	var fullAPIKeys []ChannelMonitorMinuteAPIKeyMetric
+	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).
+		Order("api_key_id ASC").Find(&fullAPIKeys).Error)
+	require.Len(t, fullAPIKeys, 2)
+	for index := range fullAPIKeys {
+		fullAPIKeys[index].Id = 0
+	}
+	assert.Equal(t, int64(1), fullRoute.RetryFailureCount)
+	assert.Equal(t, durationMs, fullRoute.RetryFailureDurationTotalMs)
+	assert.Equal(t, int64(1), fullRoute.RetryFailure1To3sCount)
+	assert.Equal(t, int64(1), fullAPIKeys[0].RetryFailureCount)
+	assert.Equal(t, durationMs, fullAPIKeys[0].RetryFailureDurationTotalMs)
+	assert.Equal(t, int64(1), fullAPIKeys[0].RetryFailure1To3sCount)
+	assert.Zero(t, fullAPIKeys[1].RetryFailureCount)
+	assert.Zero(t, fullAPIKeys[1].RetryFailureDurationTotalMs)
+	assert.Zero(t, fullAPIKeys[1].RetryFailure1To3sCount)
+
+	for repair := 0; repair < 2; repair++ {
+		repairResult, err := AggregateChannelMonitorMinuteRangeWithResult(context.Background(), 120, 180)
+		require.NoError(t, err)
+		assert.Equal(t, 8, repairResult.ScannedLogRows)
+		var repairedRoute ChannelMonitorMinuteRouteMetric
+		require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).First(&repairedRoute).Error)
+		repairedRoute.Id = 0
+		assert.Equal(t, fullRoute, repairedRoute)
+
+		var repairedAPIKeys []ChannelMonitorMinuteAPIKeyMetric
+		require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 120, 1).
+			Order("api_key_id ASC").Find(&repairedAPIKeys).Error)
+		require.Len(t, repairedAPIKeys, 2)
+		for index := range repairedAPIKeys {
+			repairedAPIKeys[index].Id = 0
+		}
+		assert.Equal(t, fullAPIKeys, repairedAPIKeys)
+	}
+}
+
+func TestAggregateChannelMonitorMinuteSplitsRouteAndAPIKeyMetrics(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	require.NoError(t, db.Create(&[]Log{
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 11, TokenName: "key-a",
+			CreatedAt: 121, Type: LogTypeConsume, IsStream: true, PromptTokens: 1000, CompletionTokens: 20, UseTime: 2,
+			Other: `{"frt":100,"cache_tokens":20}`,
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 12, TokenName: "key-b",
+			CreatedAt: 122, Type: LogTypeConsume, IsStream: true, PromptTokens: 1000, CompletionTokens: 40, UseTime: 4,
+			Other: `{"frt":200,"cache_tokens":40}`,
+		},
+		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenId: 12, TokenName: "key-b",
+			CreatedAt: 123, Type: LogTypeError, IsRetryAttempt: true,
+			Other: `{"channel_monitor_attempt_duration_ms":1500}`,
+		},
+	}).Error)
+	aggregateChannelMonitorMinuteTestRange(t, 120, 180)
+
+	var routeRows []ChannelMonitorMinuteRouteMetric
+	require.NoError(t, db.Where("minute_start = ?", 120).Find(&routeRows).Error)
+	require.Len(t, routeRows, 1)
+	assert.Equal(t, int64(2), routeRows[0].ActualSuccessCount)
+	assert.Equal(t, int64(1), routeRows[0].ActualFailureCount)
+	assert.Equal(t, int64(2), routeRows[0].SampleCount)
+	assert.Equal(t, int64(2), routeRows[0].FirstTokenSampleCount)
+	assert.Equal(t, int64(1), routeRows[0].RetryFailureCount)
+
+	var apiKeyRows []ChannelMonitorMinuteAPIKeyMetric
+	require.NoError(t, db.Where("minute_start = ?", 120).Order("api_key_id ASC").Find(&apiKeyRows).Error)
+	require.Len(t, apiKeyRows, 2)
+	assert.Equal(t, int64(1), apiKeyRows[0].ActualSuccessCount)
+	assert.Equal(t, int64(1), apiKeyRows[1].ActualSuccessCount)
+	assert.Equal(t, int64(1), apiKeyRows[1].ActualFailureCount)
+	assert.Equal(t, int64(20), apiKeyRows[0].CacheReadTokens)
+	assert.Equal(t, int64(40), apiKeyRows[1].CacheReadTokens)
+
+	performance, err := GetChannelMonitorPerformanceMetrics(context.Background(), 120)
+	require.NoError(t, err)
+	require.Len(t, performance, 1)
+	assert.Equal(t, 2, performance[0].SampleCount)
+	assert.Equal(t, 2, performance[0].FirstTokenSampleCount)
+	assert.Equal(t, 2, performance[0].TPSSampleCount)
 }

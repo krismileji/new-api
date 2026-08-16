@@ -1,49 +1,96 @@
 package controller
 
 import (
+	"context"
+	"time"
+
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 )
 
 type channelMonitorRealtimeResponseMetadata struct {
-	DataCutoffAt        int64  `json:"data_cutoff_at"`
-	ProcessedAt         int64  `json:"processed_at"`
-	ProjectionStartedAt int64  `json:"projection_started_at"`
-	EventWatermark      uint64 `json:"event_watermark"`
-	QueueDepth          int    `json:"queue_depth"`
-	RealtimeDegraded    bool   `json:"realtime_degraded"`
-	WindowStart         int64  `json:"-"`
+	DataCutoffAt               int64  `json:"data_cutoff_at"`
+	ProcessedAt                int64  `json:"processed_at"`
+	ProjectionStartedAt        int64  `json:"projection_started_at"`
+	EventWatermark             uint64 `json:"event_watermark"`
+	QueueDepth                 int    `json:"queue_depth"`
+	RedisStatus                string `json:"redis_status"`
+	RedisAvailable             bool   `json:"redis_available"`
+	RedisConsumerRunning       bool   `json:"redis_consumer_running"`
+	PendingCount               int64  `json:"pending_count"`
+	OldestPendingAt            int64  `json:"oldest_pending_at"`
+	ConsumerLagSeconds         int64  `json:"consumer_lag_seconds"`
+	LastPublishedAt            int64  `json:"last_published_at"`
+	LastProcessedAt            int64  `json:"last_processed_at"`
+	RetryCount                 int64  `json:"retry_count"`
+	TakeoverCount              int64  `json:"takeover_count"`
+	MarkerReleaseFailureCount  int64  `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive bool   `json:"marker_release_failure_active"`
+	StreamTrimFailureCount     int64  `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive    bool   `json:"stream_trim_failure_active"`
+	RealtimeDegraded           bool   `json:"realtime_degraded"`
+	WindowStart                int64  `json:"-"`
 }
 
 func channelMonitorRealtimeMetadata(windowStart int64) channelMonitorRealtimeResponseMetadata {
-	snapshot := service.GetChannelMonitorRealtimeGlobalSnapshot()
-	queueStats := service.GetChannelMonitorEventQueueStats()
-	projectionStartedAt := service.GetChannelMonitorRealtimeProjectionStartedAt()
-	windowIncomplete := windowStart > 0 && projectionStartedAt > windowStart
+	now := time.Now().Unix()
+	dataCutoffAt, processedAt, eventWatermark, projectionErr := service.GetChannelMonitorRedisSharedProjectionMetadata(context.Background(), windowStart, now+1)
+	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(context.Background())
+	if projectionErr != nil {
+		dataCutoffAt, processedAt, eventWatermark = 0, 0, 0
+	}
 	return channelMonitorRealtimeResponseMetadata{
-		DataCutoffAt:        snapshot.DataCutoffAt,
-		ProcessedAt:         snapshot.ProcessedAt,
-		ProjectionStartedAt: projectionStartedAt,
-		EventWatermark:      snapshot.EventWatermark,
-		QueueDepth:          queueStats.QueueDepth,
-		RealtimeDegraded:    windowIncomplete || queueStats.DroppedEvents > 0 || queueStats.FailedEvents > 0,
-		WindowStart:         max(windowStart, projectionStartedAt),
+		DataCutoffAt:               dataCutoffAt,
+		ProcessedAt:                processedAt,
+		ProjectionStartedAt:        0,
+		EventWatermark:             eventWatermark,
+		QueueDepth:                 int(redisStatus.PendingCount),
+		RedisStatus:                redisStatus.RedisStatus,
+		RedisAvailable:             redisStatus.RedisAvailable,
+		RedisConsumerRunning:       redisStatus.RedisConsumerRunning,
+		PendingCount:               redisStatus.PendingCount,
+		OldestPendingAt:            redisStatus.OldestPendingAt,
+		ConsumerLagSeconds:         redisStatus.ConsumerLagSeconds,
+		LastPublishedAt:            redisStatus.LastPublishedAt,
+		LastProcessedAt:            redisStatus.LastProcessedAt,
+		RetryCount:                 redisStatus.RetryCount,
+		TakeoverCount:              redisStatus.TakeoverCount,
+		MarkerReleaseFailureCount:  redisStatus.MarkerReleaseFailureCount,
+		MarkerReleaseFailureActive: redisStatus.MarkerReleaseFailureActive,
+		StreamTrimFailureCount:     redisStatus.StreamTrimFailureCount,
+		StreamTrimFailureActive:    redisStatus.StreamTrimFailureActive,
+		RealtimeDegraded:           redisStatus.RealtimeDegraded,
+		WindowStart:                windowStart,
 	}
 }
 
 func channelMonitorRealtimePageMetadata(
 	view service.ChannelMonitorRealtimePageView,
 ) channelMonitorRealtimeResponseMetadata {
-	queueStats := service.GetChannelMonitorEventQueueStats()
-	projectionStartedAt := service.GetChannelMonitorRealtimeProjectionStartedAt()
+	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(context.Background())
+	projectionStartedAt := int64(0)
 	return channelMonitorRealtimeResponseMetadata{
-		DataCutoffAt:        view.DataCutoffAt,
-		ProcessedAt:         view.ProcessedAt,
-		ProjectionStartedAt: projectionStartedAt,
-		EventWatermark:      view.EventWatermark,
-		QueueDepth:          queueStats.QueueDepth,
-		RealtimeDegraded:    projectionStartedAt > view.WindowStart || queueStats.DroppedEvents > 0 || queueStats.FailedEvents > 0,
-		WindowStart:         max(view.WindowStart, projectionStartedAt),
+		DataCutoffAt:               view.DataCutoffAt,
+		ProcessedAt:                view.ProcessedAt,
+		ProjectionStartedAt:        projectionStartedAt,
+		EventWatermark:             view.EventWatermark,
+		QueueDepth:                 int(redisStatus.PendingCount),
+		RedisStatus:                redisStatus.RedisStatus,
+		RedisAvailable:             redisStatus.RedisAvailable,
+		RedisConsumerRunning:       redisStatus.RedisConsumerRunning,
+		PendingCount:               redisStatus.PendingCount,
+		OldestPendingAt:            redisStatus.OldestPendingAt,
+		ConsumerLagSeconds:         redisStatus.ConsumerLagSeconds,
+		LastPublishedAt:            redisStatus.LastPublishedAt,
+		LastProcessedAt:            redisStatus.LastProcessedAt,
+		RetryCount:                 redisStatus.RetryCount,
+		TakeoverCount:              redisStatus.TakeoverCount,
+		MarkerReleaseFailureCount:  redisStatus.MarkerReleaseFailureCount,
+		MarkerReleaseFailureActive: redisStatus.MarkerReleaseFailureActive,
+		StreamTrimFailureCount:     redisStatus.StreamTrimFailureCount,
+		StreamTrimFailureActive:    redisStatus.StreamTrimFailureActive,
+		RealtimeDegraded:           redisStatus.RealtimeDegraded,
+		WindowStart:                view.WindowStart,
 	}
 }
 

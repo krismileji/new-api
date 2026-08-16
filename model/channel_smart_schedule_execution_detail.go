@@ -1,21 +1,63 @@
 package model
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
 )
 
+const (
+	ChannelSmartScheduleExecutionDetailMaxItems = 20_000
+	channelSmartScheduleExecutionDetailMaxJSON  = 64 * 1024 * 1024
+)
+
+// ChannelSmartScheduleExecutionDetailMetrics contains process-local snapshot
+// counters. They are intentionally observational and never affect scheduling.
+type ChannelSmartScheduleExecutionDetailMetrics struct {
+	Rounds                    int64 `json:"rounds"`
+	AdjustmentCount           int64 `json:"adjustment_count"`
+	UncompressedBytes         int64 `json:"uncompressed_bytes"`
+	CompressedBytes           int64 `json:"compressed_bytes"`
+	CompressionDurationMicros int64 `json:"compression_duration_micros"`
+	DecompressionFailures     int64 `json:"decompression_failures"`
+}
+
+var channelSmartScheduleExecutionDetailMetrics struct {
+	rounds                    atomic.Int64
+	adjustmentCount           atomic.Int64
+	uncompressedBytes         atomic.Int64
+	compressedBytes           atomic.Int64
+	compressionDurationMicros atomic.Int64
+	decompressionFailures     atomic.Int64
+}
+
+func GetChannelSmartScheduleExecutionDetailMetrics() ChannelSmartScheduleExecutionDetailMetrics {
+	return ChannelSmartScheduleExecutionDetailMetrics{
+		Rounds:                    channelSmartScheduleExecutionDetailMetrics.rounds.Load(),
+		AdjustmentCount:           channelSmartScheduleExecutionDetailMetrics.adjustmentCount.Load(),
+		UncompressedBytes:         channelSmartScheduleExecutionDetailMetrics.uncompressedBytes.Load(),
+		CompressedBytes:           channelSmartScheduleExecutionDetailMetrics.compressedBytes.Load(),
+		CompressionDurationMicros: channelSmartScheduleExecutionDetailMetrics.compressionDurationMicros.Load(),
+		DecompressionFailures:     channelSmartScheduleExecutionDetailMetrics.decompressionFailures.Load(),
+	}
+}
+
 type ChannelSmartScheduleExecutionDetail struct {
-	Id              int64  `gorm:"primaryKey"`
-	TaskId          string `gorm:"type:varchar(64);not null;uniqueIndex:idx_schedule_execution_detail_task_item;index"`
-	AdjustmentIndex int    `gorm:"not null;uniqueIndex:idx_schedule_execution_detail_task_item"`
-	Payload         string `gorm:"type:text;not null"`
-	CreatedAt       int64  `gorm:"bigint;not null;index"`
+	Id          int64  `gorm:"primaryKey"`
+	TaskId      string `gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_smart_schedule_execution_details_task_id"`
+	PayloadBlob []byte `gorm:"not null"`
+	ItemCount   int    `gorm:"not null"`
+	CreatedAt   int64  `gorm:"bigint;not null;index:idx_channel_smart_schedule_execution_details_created_at"`
 }
 
 type ChannelSmartScheduleExecutionDetailInput struct {
@@ -33,7 +75,7 @@ func SaveChannelSmartScheduleExecutionDetails(
 	inputs []ChannelSmartScheduleExecutionDetailInput,
 ) error {
 	taskId = strings.TrimSpace(taskId)
-	rows, err := channelSmartScheduleExecutionDetailRows(taskId, inputs, common.GetTimestamp())
+	row, err := channelSmartScheduleExecutionDetailSnapshot(taskId, inputs, common.GetTimestamp())
 	if err != nil {
 		return err
 	}
@@ -42,10 +84,7 @@ func SaveChannelSmartScheduleExecutionDetails(
 			Delete(&ChannelSmartScheduleExecutionDetail{}).Error; err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			return nil
-		}
-		return tx.CreateInBatches(&rows, 100).Error
+		return tx.Create(row).Error
 	})
 }
 
@@ -64,7 +103,7 @@ func FinishChannelSmartScheduleTaskWithExecutionDetails(
 		return errors.New("智能调度任务 ID 不能为空")
 	}
 	now := common.GetTimestamp()
-	rows, err := channelSmartScheduleExecutionDetailRows(taskId, inputs, now)
+	row, err := channelSmartScheduleExecutionDetailSnapshot(taskId, inputs, now)
 	if err != nil {
 		return err
 	}
@@ -93,10 +132,8 @@ func FinishChannelSmartScheduleTaskWithExecutionDetails(
 			Delete(&ChannelSmartScheduleExecutionDetail{}).Error; err != nil {
 			return err
 		}
-		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, 100).Error; err != nil {
-				return err
-			}
+		if err := tx.Create(row).Error; err != nil {
+			return err
 		}
 		lockResult := tx.Where("task_id = ? AND locked_by = ?", taskId, lockedBy).
 			Delete(&SystemTaskLock{})
@@ -110,32 +147,112 @@ func FinishChannelSmartScheduleTaskWithExecutionDetails(
 	})
 }
 
-func channelSmartScheduleExecutionDetailRows(
+func channelSmartScheduleExecutionDetailSnapshot(
 	taskId string,
 	inputs []ChannelSmartScheduleExecutionDetailInput,
 	createdAt int64,
-) ([]ChannelSmartScheduleExecutionDetail, error) {
-	taskId = strings.TrimSpace(taskId)
+) (*ChannelSmartScheduleExecutionDetail, error) {
 	if taskId == "" {
 		return nil, errors.New("智能调度任务 ID 不能为空")
 	}
-	rows := make([]ChannelSmartScheduleExecutionDetail, 0, len(inputs))
-	for _, input := range inputs {
-		if input.AdjustmentIndex < 0 || input.Payload == nil {
-			continue
+	if len(inputs) > ChannelSmartScheduleExecutionDetailMaxItems {
+		return nil, fmt.Errorf("智能调度执行明细数量不能超过 %d", ChannelSmartScheduleExecutionDetailMaxItems)
+	}
+
+	payloads := make([]json.RawMessage, 0, len(inputs))
+	seenIndexes := make(map[int]struct{}, len(inputs))
+	for expectedIndex, input := range inputs {
+		if input.AdjustmentIndex < 0 {
+			return nil, fmt.Errorf("智能调度执行明细索引不能为负数: %d", input.AdjustmentIndex)
+		}
+		if input.Payload == nil {
+			return nil, errors.New("智能调度执行明细 payload 不能为空")
+		}
+		if _, exists := seenIndexes[input.AdjustmentIndex]; exists {
+			return nil, fmt.Errorf("智能调度执行明细索引重复: %d", input.AdjustmentIndex)
+		}
+		seenIndexes[input.AdjustmentIndex] = struct{}{}
+		if input.AdjustmentIndex != expectedIndex {
+			return nil, fmt.Errorf(
+				"智能调度执行明细索引必须按输入顺序从 0 开始连续递增: 期望 %d，实际 %d",
+				expectedIndex,
+				input.AdjustmentIndex,
+			)
 		}
 		encoded, err := common.Marshal(input.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("编码智能调度执行明细失败: %w", err)
 		}
-		rows = append(rows, ChannelSmartScheduleExecutionDetail{
-			TaskId:          taskId,
-			AdjustmentIndex: input.AdjustmentIndex,
-			Payload:         string(encoded),
-			CreatedAt:       createdAt,
-		})
+		payloads = append(payloads, json.RawMessage(encoded))
 	}
-	return rows, nil
+	encoded, err := common.Marshal(payloads)
+	if err != nil {
+		return nil, fmt.Errorf("编码智能调度执行明细数组失败: %w", err)
+	}
+	if len(encoded) > channelSmartScheduleExecutionDetailMaxJSON {
+		return nil, fmt.Errorf("智能调度执行明细未压缩 JSON 不能超过 %d MiB", channelSmartScheduleExecutionDetailMaxJSON/(1024*1024))
+	}
+
+	compressionStarted := time.Now()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(encoded); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("压缩智能调度执行明细失败: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("完成压缩智能调度执行明细失败: %w", err)
+	}
+	channelSmartScheduleExecutionDetailMetrics.rounds.Add(1)
+	channelSmartScheduleExecutionDetailMetrics.adjustmentCount.Add(int64(len(payloads)))
+	channelSmartScheduleExecutionDetailMetrics.uncompressedBytes.Add(int64(len(encoded)))
+	channelSmartScheduleExecutionDetailMetrics.compressedBytes.Add(int64(compressed.Len()))
+	channelSmartScheduleExecutionDetailMetrics.compressionDurationMicros.Add(time.Since(compressionStarted).Microseconds())
+	return &ChannelSmartScheduleExecutionDetail{
+		TaskId:      taskId,
+		PayloadBlob: compressed.Bytes(),
+		ItemCount:   len(payloads),
+		CreatedAt:   createdAt,
+	}, nil
+}
+
+func channelSmartScheduleExecutionDetailPayloads(
+	row ChannelSmartScheduleExecutionDetail,
+) (payloads []json.RawMessage, err error) {
+	defer func() {
+		if err != nil {
+			channelSmartScheduleExecutionDetailMetrics.decompressionFailures.Add(1)
+		}
+	}()
+	if row.ItemCount < 0 || row.ItemCount > ChannelSmartScheduleExecutionDetailMaxItems {
+		return nil, fmt.Errorf("智能调度执行明细数量无效: %d", row.ItemCount)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(row.PayloadBlob))
+	if err != nil {
+		return nil, fmt.Errorf("打开智能调度执行明细压缩数据失败: %w", err)
+	}
+	decoded, readErr := io.ReadAll(io.LimitReader(reader, channelSmartScheduleExecutionDetailMaxJSON+1))
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("解压智能调度执行明细失败: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("关闭智能调度执行明细压缩数据失败: %w", closeErr)
+	}
+	if len(decoded) > channelSmartScheduleExecutionDetailMaxJSON {
+		return nil, fmt.Errorf("解压后的智能调度执行明细超过 %d MiB", channelSmartScheduleExecutionDetailMaxJSON/(1024*1024))
+	}
+	if common.GetJsonType(json.RawMessage(decoded)) != "array" {
+		return nil, errors.New("智能调度执行明细压缩数据不是数组")
+	}
+	var decodedPayloads []json.RawMessage
+	if err := common.Unmarshal(decoded, &decodedPayloads); err != nil {
+		return nil, fmt.Errorf("解码智能调度执行明细数组失败: %w", err)
+	}
+	if len(decodedPayloads) != row.ItemCount {
+		return nil, fmt.Errorf("智能调度执行明细数量校验失败: item_count=%d, decoded=%d", row.ItemCount, len(decodedPayloads))
+	}
+	return decodedPayloads, nil
 }
 
 func GetChannelSmartScheduleExecutionDetails(
@@ -146,16 +263,22 @@ func GetChannelSmartScheduleExecutionDetails(
 		return result, nil
 	}
 	var rows []ChannelSmartScheduleExecutionDetail
-	if err := DB.Where("task_id IN ?", taskIds).
-		Order("task_id asc, adjustment_index asc").
-		Find(&rows).Error; err != nil {
+	if err := DB.Where("task_id IN ?", taskIds).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		result[row.TaskId] = append(result[row.TaskId], ChannelSmartScheduleExecutionDetailPayload{
-			AdjustmentIndex: row.AdjustmentIndex,
-			Payload:         row.Payload,
-		})
+		payloads, err := channelSmartScheduleExecutionDetailPayloads(row)
+		if err != nil {
+			return nil, err
+		}
+		details := make([]ChannelSmartScheduleExecutionDetailPayload, 0, len(payloads))
+		for index, payload := range payloads {
+			details = append(details, ChannelSmartScheduleExecutionDetailPayload{
+				AdjustmentIndex: index,
+				Payload:         string(payload),
+			})
+		}
+		result[row.TaskId] = details
 	}
 	return result, nil
 }

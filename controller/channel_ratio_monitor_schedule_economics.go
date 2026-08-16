@@ -24,11 +24,16 @@ type channelSmartScheduleEconomics struct {
 }
 
 func requestChannelSmartScheduleRun(ctx context.Context) error {
+	return requestChannelSmartScheduleRunWithSource(ctx, channelSmartScheduleTriggerFallback, "smart_schedule_input_changed")
+}
+
+func requestChannelSmartScheduleRunWithSource(ctx context.Context, source string, dirtyReasons ...string) error {
 	settings := getChannelMonitorSettings()
 	if !settings.SmartScheduleEnabled || len(settings.SmartScheduleGroupPolicies) == 0 {
 		return nil
 	}
-	_, _, err := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, nil)
+	payload := newChannelSmartScheduleTaskPayload(source, dirtyReasons...)
+	_, _, err := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, payload)
 	if err == nil {
 		return nil
 	}

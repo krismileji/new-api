@@ -77,6 +77,7 @@ func getChannelMonitorRoutePerformanceMetrics(
 	}
 	type performanceAggregate struct {
 		ChannelId             int
+		ModelKey              string
 		ModelName             string
 		GroupCount            int
 		SampleCount           int64
@@ -90,12 +91,13 @@ func getChannelMonitorRoutePerformanceMetrics(
 		InputTokens           int64
 		LastUsedTime          int64
 	}
-	metricTable := channelMonitorMinuteMetricTable
+	metricTable := channelMonitorMinuteRouteMetricTable
 	query := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
-			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
-				"COUNT(DISTINCT "+metricTable+".group_name) AS group_count, "+
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_key AS model_key, "+
+				"MIN("+metricTable+".model_name) AS model_name, "+
+				"COUNT(DISTINCT "+metricTable+".group_key) AS group_count, "+
 				"SUM("+metricTable+".sample_count) AS sample_count, "+
 				"SUM("+metricTable+".first_token_sample_count) AS first_token_sample_count, "+
 				"SUM("+metricTable+".tps_sample_count) AS tps_sample_count, "+
@@ -115,11 +117,11 @@ func getChannelMonitorRoutePerformanceMetrics(
 	}
 	if filter.ModelName != "" {
 		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
-		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_key = ?", channelMonitorMinuteDimensionKey(filter.ModelName))
 	}
 	var aggregates []performanceAggregate
 	err := query.
-		Group(metricTable + ".channel_id, " + metricTable + ".model_name").
+		Group(metricTable + ".channel_id, " + metricTable + ".model_key").
 		Scan(&aggregates).Error
 	if err != nil {
 		return nil, err
@@ -211,6 +213,7 @@ func GetChannelMonitorRoutePerformanceMetric(
 
 type channelMonitorRouteStabilityAggregate struct {
 	ChannelId                   int
+	ModelKey                    string
 	ModelName                   string
 	GroupCount                  int
 	ActualSuccessCount          int64
@@ -238,12 +241,13 @@ func getChannelMonitorRouteStabilityAggregates(
 	if startTimestamp >= endTimestamp {
 		return []channelMonitorRouteStabilityAggregate{}, nil
 	}
-	metricTable := channelMonitorMinuteMetricTable
+	metricTable := channelMonitorMinuteRouteMetricTable
 	query := DB.WithContext(ctx).
-		Model(&ChannelMonitorMinuteMetric{}).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
-			metricTable+".channel_id AS channel_id, "+metricTable+".model_name AS model_name, "+
-				"COUNT(DISTINCT "+metricTable+".group_name) AS group_count, "+
+			metricTable+".channel_id AS channel_id, "+metricTable+".model_key AS model_key, "+
+				"MIN("+metricTable+".model_name) AS model_name, "+
+				"COUNT(DISTINCT "+metricTable+".group_key) AS group_count, "+
 				"SUM("+metricTable+".actual_success_count) AS actual_success_count, "+
 				"SUM("+metricTable+".actual_failure_count) AS actual_failure_count, "+
 				"SUM("+metricTable+".final_failure_count) AS final_failure_count, "+
@@ -265,10 +269,10 @@ func getChannelMonitorRouteStabilityAggregates(
 	}
 	if filter.ModelName != "" {
 		filter.ModelName = channelSmartScheduleModelName(filter.ModelName)
-		query = query.Where(metricTable+".model_name = ?", filter.ModelName)
+		query = query.Where(metricTable+".model_key = ?", channelMonitorMinuteDimensionKey(filter.ModelName))
 	}
 	var aggregates []channelMonitorRouteStabilityAggregate
-	if err := query.Group(metricTable + ".channel_id, " + metricTable + ".model_name").Scan(&aggregates).Error; err != nil {
+	if err := query.Group(metricTable + ".channel_id, " + metricTable + ".model_key").Scan(&aggregates).Error; err != nil {
 		return nil, err
 	}
 	return aggregates, nil

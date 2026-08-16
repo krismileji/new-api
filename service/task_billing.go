@@ -334,7 +334,7 @@ func emitTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
 	if other, err := common.Marshal(map[string]string{"cost_event_id": costEventId}); err == nil {
 		event.OtherJson = string(other)
 	}
-	EmitChannelMonitorEvent(event)
+	_, _ = PublishChannelMonitorEvent(context.Background(), event)
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

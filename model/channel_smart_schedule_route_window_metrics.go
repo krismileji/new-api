@@ -30,12 +30,13 @@ type channelMonitorRouteMetricWindowKey struct {
 
 type channelMonitorRouteMetricPairKey struct {
 	channelId int
-	modelName string
+	modelKey  string
 }
 
 type channelMonitorRouteMinuteWindowRow struct {
 	MinuteStart                 int64
 	ChannelId                   int
+	ModelKey                    string
 	ModelName                   string
 	GroupName                   string
 	ActualSuccessCount          int64
@@ -62,6 +63,7 @@ type channelMonitorRouteMinuteWindowRow struct {
 type channelMonitorRouteMinuteBucketWindowRow struct {
 	MinuteStart int64
 	ChannelId   int
+	ModelKey    string
 	ModelName   string
 	BucketIndex int
 	Count       int64
@@ -86,7 +88,7 @@ func GetChannelMonitorRouteMetricsForWindows(
 	windowByKey := make(map[channelMonitorRouteMetricWindowKey]ChannelMonitorRouteMetricWindow, len(windows))
 	requestedPairs := make(map[channelMonitorRouteMetricPairKey]struct{}, len(windows))
 	channelIds := make(map[int]struct{}, len(windows))
-	modelNames := make(map[string]struct{}, len(windows))
+	modelKeys := make(map[string]struct{}, len(windows))
 	minimumStart := int64(0)
 	for _, window := range windows {
 		window.ModelName = channelSmartScheduleModelName(window.ModelName)
@@ -103,10 +105,11 @@ func GetChannelMonitorRouteMetricsForWindows(
 		if window.StartTimestamp >= endTimestamp {
 			continue
 		}
-		pairKey := channelMonitorRouteMetricPairKey{channelId: window.ChannelId, modelName: window.ModelName}
+		modelKey := channelMonitorMinuteDimensionKey(window.ModelName)
+		pairKey := channelMonitorRouteMetricPairKey{channelId: window.ChannelId, modelKey: modelKey}
 		requestedPairs[pairKey] = struct{}{}
 		channelIds[window.ChannelId] = struct{}{}
-		modelNames[window.ModelName] = struct{}{}
+		modelKeys[modelKey] = struct{}{}
 		if minimumStart == 0 || window.StartTimestamp < minimumStart {
 			minimumStart = window.StartTimestamp
 		}
@@ -123,21 +126,22 @@ func GetChannelMonitorRouteMetricsForWindows(
 			channelIdList = append(channelIdList, channelId)
 		}
 		sort.Ints(channelIdList)
-		modelNameList := make([]string, 0, len(modelNames))
-		for modelName := range modelNames {
-			modelNameList = append(modelNameList, modelName)
+		modelKeyList := make([]string, 0, len(modelKeys))
+		for modelKey := range modelKeys {
+			modelKeyList = append(modelKeyList, modelKey)
 		}
-		sort.Strings(modelNameList)
+		sort.Strings(modelKeyList)
 
-		metricTable := channelMonitorMinuteMetricTable
+		metricTable := channelMonitorMinuteRouteMetricTable
 		var minuteRows []channelMonitorRouteMinuteWindowRow
 		query := DB.WithContext(ctx).
-			Model(&ChannelMonitorMinuteMetric{}).
+			Model(&ChannelMonitorMinuteRouteMetric{}).
 			Select(
 				metricTable+".minute_start AS minute_start, "+
 					metricTable+".channel_id AS channel_id, "+
-					metricTable+".model_name AS model_name, "+
-					metricTable+".group_name AS group_name, "+
+					metricTable+".model_key AS model_key, "+
+					"MIN("+metricTable+".model_name) AS model_name, "+
+					"MIN("+metricTable+".group_name) AS group_name, "+
 					"SUM("+metricTable+".actual_success_count) AS actual_success_count, "+
 					"SUM("+metricTable+".actual_failure_count) AS actual_failure_count, "+
 					"SUM("+metricTable+".final_failure_count) AS final_failure_count, "+
@@ -160,15 +164,15 @@ func GetChannelMonitorRouteMetricsForWindows(
 			).
 			Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", minimumStart, endTimestamp).
 			Where(metricTable+".channel_id IN ?", channelIdList).
-			Where(metricTable+".model_name IN ?", modelNameList)
+			Where(metricTable+".model_key IN ?", modelKeyList)
 		query = applyChannelMonitorObservationBoundary(query, metricTable)
 		if err := query.
-			Group(metricTable + ".minute_start, " + metricTable + ".channel_id, " + metricTable + ".model_name, " + metricTable + ".group_name").
+			Group(metricTable + ".minute_start, " + metricTable + ".channel_id, " + metricTable + ".model_key, " + metricTable + ".group_key").
 			Scan(&minuteRows).Error; err != nil {
 			return nil, err
 		}
 		for _, row := range minuteRows {
-			pairKey := channelMonitorRouteMetricPairKey{channelId: row.ChannelId, modelName: row.ModelName}
+			pairKey := channelMonitorRouteMetricPairKey{channelId: row.ChannelId, modelKey: row.ModelKey}
 			if _, requested := requestedPairs[pairKey]; !requested {
 				continue
 			}
@@ -183,22 +187,23 @@ func GetChannelMonitorRouteMetricsForWindows(
 				Select(
 					bucketTable+".minute_start AS minute_start, "+
 						bucketTable+".channel_id AS channel_id, "+
-						bucketTable+".model_name AS model_name, "+
+						bucketTable+".model_key AS model_key, "+
+						"MIN("+bucketTable+".model_name) AS model_name, "+
 						bucketTable+".bucket_index AS bucket_index, "+
 						"SUM("+bucketTable+".count) AS count, "+
 						"SUM("+bucketTable+".total_ms) AS total_ms",
 				).
 				Where(bucketTable+".minute_start >= ? AND "+bucketTable+".minute_start < ?", minimumStart, endTimestamp).
 				Where(bucketTable+".channel_id IN ?", channelIdList).
-				Where(bucketTable+".model_name IN ?", modelNameList)
+				Where(bucketTable+".model_key IN ?", modelKeyList)
 			bucketQuery = applyChannelMonitorObservationBoundary(bucketQuery, bucketTable)
 			if err := bucketQuery.
-				Group(bucketTable + ".minute_start, " + bucketTable + ".channel_id, " + bucketTable + ".model_name, " + bucketTable + ".bucket_index").
+				Group(bucketTable + ".minute_start, " + bucketTable + ".channel_id, " + bucketTable + ".model_key, " + bucketTable + ".bucket_index").
 				Scan(&bucketRows).Error; err != nil {
 				return nil, err
 			}
 			for _, row := range bucketRows {
-				pairKey := channelMonitorRouteMetricPairKey{channelId: row.ChannelId, modelName: row.ModelName}
+				pairKey := channelMonitorRouteMetricPairKey{channelId: row.ChannelId, modelKey: row.ModelKey}
 				if _, requested := requestedPairs[pairKey]; !requested {
 					continue
 				}
@@ -209,7 +214,10 @@ func GetChannelMonitorRouteMetricsForWindows(
 
 	results := make([]ChannelMonitorRouteWindowMetrics, 0, len(windowByKey))
 	for key, window := range windowByKey {
-		pairKey := channelMonitorRouteMetricPairKey{channelId: key.channelId, modelName: key.modelName}
+		pairKey := channelMonitorRouteMetricPairKey{
+			channelId: key.channelId,
+			modelKey:  channelMonitorMinuteDimensionKey(key.modelName),
+		}
 		result := ChannelMonitorRouteWindowMetrics{
 			Window: window,
 			Performance: ChannelMonitorRoutePerformanceMetric{

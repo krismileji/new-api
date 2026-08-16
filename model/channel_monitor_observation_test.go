@@ -17,9 +17,11 @@ func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistor
 	oldTPS := 10.0
 	newFirstToken := 200.0
 	newTPS := 40.0
-	require.NoError(t, db.Create(&[]ChannelMonitorMinuteMetric{
+	modelKey := channelMonitorMinuteDimensionKey("model-a")
+	groupKey := channelMonitorMinuteDimensionKey("vip")
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
 		{
-			MinuteStart: 120, ChannelId: 71, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "id:11",
+			MinuteStart: 120, ChannelId: 71, ModelKey: modelKey, GroupKey: groupKey, APIKeyKey: "id:11",
 			ModelName: "model-a", GroupName: "vip", APIKeyId: 11, APIKeyName: "主 Key",
 			ActualSuccessCount: 1, ActualFailureCount: 1, FinalSuccessCount: 1, FinalFailureCount: 1,
 			CacheHitCount: 1, CacheSampleCount: 1,
@@ -29,7 +31,7 @@ func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistor
 			LastUsedTime: 121,
 		},
 		{
-			MinuteStart: 240, ChannelId: 71, ModelKey: "model-a", GroupKey: "vip", APIKeyKey: "id:11",
+			MinuteStart: 240, ChannelId: 71, ModelKey: modelKey, GroupKey: groupKey, APIKeyKey: "id:11",
 			ModelName: "model-a", GroupName: "vip", APIKeyId: 11, APIKeyName: "主 Key",
 			ActualSuccessCount: 2, FinalSuccessCount: 2,
 			CacheHitCount: 1, CacheSampleCount: 2,
@@ -41,12 +43,12 @@ func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistor
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelMonitorMinuteDurationBucket{
 		{
-			MinuteStart: 120, ChannelId: 71, ModelKey: "model-a", GroupKey: "vip",
+			MinuteStart: 120, ChannelId: 71, ModelKey: modelKey, GroupKey: groupKey,
 			ModelName: "model-a", GroupName: "vip", BucketIndex: channelMonitorDurationBucketIndex(1000),
 			Count: 1, TotalMs: 1000,
 		},
 		{
-			MinuteStart: 240, ChannelId: 71, ModelKey: "model-a", GroupKey: "vip",
+			MinuteStart: 240, ChannelId: 71, ModelKey: modelKey, GroupKey: groupKey,
 			ModelName: "model-a", GroupName: "vip", BucketIndex: channelMonitorDurationBucketIndex(200),
 			Count: 2, TotalMs: 400,
 		},

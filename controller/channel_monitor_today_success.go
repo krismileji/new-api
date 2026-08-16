@@ -48,6 +48,20 @@ type channelMonitorTodaySuccessOverview struct {
 	ProjectionStartedAt        int64                                     `json:"projection_started_at"`
 	EventWatermark             uint64                                    `json:"event_watermark"`
 	QueueDepth                 int                                       `json:"queue_depth"`
+	RedisStatus                string                                    `json:"redis_status"`
+	RedisAvailable             bool                                      `json:"redis_available"`
+	RedisConsumerRunning       bool                                      `json:"redis_consumer_running"`
+	PendingCount               int64                                     `json:"pending_count"`
+	OldestPendingAt            int64                                     `json:"oldest_pending_at"`
+	ConsumerLagSeconds         int64                                     `json:"consumer_lag_seconds"`
+	LastPublishedAt            int64                                     `json:"last_published_at"`
+	LastProcessedAt            int64                                     `json:"last_processed_at"`
+	RetryCount                 int64                                     `json:"retry_count"`
+	TakeoverCount              int64                                     `json:"takeover_count"`
+	MarkerReleaseFailureCount  int64                                     `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive bool                                      `json:"marker_release_failure_active"`
+	StreamTrimFailureCount     int64                                     `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive    bool                                      `json:"stream_trim_failure_active"`
 	RealtimeDegraded           bool                                      `json:"realtime_degraded"`
 	DayStart                   int64                                     `json:"day_start"`
 	DetailDate                 string                                    `json:"detail_date"`
@@ -97,18 +111,35 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		CacheWriteItems:            make([]channelMonitorTodayCacheWriteChannel, 0),
 		ChartItems:                 channelMonitorDailySuccessChartItems(rangeStart, days, nil),
 	}
-	todayView := service.QueryChannelMonitorRealtimePage(todayStart, todayStart+channelMonitorCostDaySeconds)
+	todayView, err := service.QueryChannelMonitorRealtimePageFromRedis(c.Request.Context(), todayStart, todayStart+channelMonitorCostDaySeconds)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	metadata := channelMonitorRealtimePageMetadata(todayView)
 	overview.DataCutoffAt = metadata.DataCutoffAt
 	overview.ProcessedAt = metadata.ProcessedAt
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt
 	overview.EventWatermark = metadata.EventWatermark
 	overview.QueueDepth = metadata.QueueDepth
+	overview.RedisStatus = metadata.RedisStatus
+	overview.RedisAvailable = metadata.RedisAvailable
+	overview.RedisConsumerRunning = metadata.RedisConsumerRunning
+	overview.PendingCount = metadata.PendingCount
+	overview.OldestPendingAt = metadata.OldestPendingAt
+	overview.ConsumerLagSeconds = metadata.ConsumerLagSeconds
+	overview.LastPublishedAt = metadata.LastPublishedAt
+	overview.LastProcessedAt = metadata.LastProcessedAt
+	overview.RetryCount = metadata.RetryCount
+	overview.TakeoverCount = metadata.TakeoverCount
+	overview.MarkerReleaseFailureCount = metadata.MarkerReleaseFailureCount
+	overview.MarkerReleaseFailureActive = metadata.MarkerReleaseFailureActive
+	overview.StreamTrimFailureCount = metadata.StreamTrimFailureCount
+	overview.StreamTrimFailureActive = metadata.StreamTrimFailureActive
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 
 	todayMetrics := channelMonitorRealtimeTodaySuccessMetrics(todayView)
 	metrics := todayMetrics
-	var err error
 	if detailDayStart != todayStart {
 		metrics, err = model.GetChannelMonitorSuccessMetricsForDayCached(c.Request.Context(), detailDayStart)
 		if err != nil {

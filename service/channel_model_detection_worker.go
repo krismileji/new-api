@@ -629,9 +629,22 @@ func finalizeChannelModelDetectionRun(tx *gorm.DB, run model.ChannelModelDetecti
 	if err := tx.Model(&model.ChannelModelDetectionExecution{}).Where("run_id = ? AND status = ?", run.RunId, model.ChannelModelDetectionExecutionStatusSkipped).Count(&skipped).Error; err != nil {
 		return err
 	}
+	progress, err := aggregateChannelModelDetectionRunProgress(tx, run.RunId)
+	if err != nil {
+		return err
+	}
+	progressUpdates := map[string]any{
+		"planned_logical_requests":   progress.PlannedLogicalRequests,
+		"completed_logical_requests": progress.CompletedLogicalRequests,
+		"http_attempts":              progress.HTTPAttempts,
+		"retry_count":                progress.RetryCount,
+	}
 	if pending > 0 {
+		progressUpdates["status"] = model.ChannelModelDetectionRunStatusRunning
+		progressUpdates["completed_target_count"] = completed
+		progressUpdates["updated_at"] = now.Unix()
 		return tx.Model(&model.ChannelModelDetectionRun{}).Where("run_id = ?", run.RunId).
-			Updates(map[string]any{"status": model.ChannelModelDetectionRunStatusRunning, "completed_target_count": completed, "updated_at": now.Unix()}).Error
+			Updates(progressUpdates).Error
 	}
 	status := model.ChannelModelDetectionRunStatusCompleted
 	if completed > 0 && (failed > 0 || canceled > 0 || skipped > 0) {
@@ -641,9 +654,11 @@ func finalizeChannelModelDetectionRun(tx *gorm.DB, run model.ChannelModelDetecti
 	} else if completed == 0 && canceled > 0 {
 		status = model.ChannelModelDetectionRunStatusCanceled
 	}
-	if err := tx.Model(&model.ChannelModelDetectionRun{}).Where("run_id = ?", run.RunId).Updates(map[string]any{
-		"status": status, "completed_target_count": completed, "finished_at": now.Unix(), "updated_at": now.Unix(),
-	}).Error; err != nil {
+	progressUpdates["status"] = status
+	progressUpdates["completed_target_count"] = completed
+	progressUpdates["finished_at"] = now.Unix()
+	progressUpdates["updated_at"] = now.Unix()
+	if err := tx.Model(&model.ChannelModelDetectionRun{}).Where("run_id = ?", run.RunId).Updates(progressUpdates).Error; err != nil {
 		return err
 	}
 	if _, err := model.ReleaseChannelModelDetectionRun(tx, run.ChannelId, run.RunId, now.Unix()); err != nil {
@@ -653,6 +668,30 @@ func finalizeChannelModelDetectionRun(tx *gorm.DB, run model.ChannelModelDetecti
 		return rebuildChannelModelDetectionBatchState(tx, *run.BatchId, now)
 	}
 	return nil
+}
+
+type channelModelDetectionRunProgressAggregate struct {
+	PlannedLogicalRequests   int64
+	CompletedLogicalRequests int64
+	HTTPAttempts             int64
+	RetryCount               int64
+}
+
+func aggregateChannelModelDetectionRunProgress(tx *gorm.DB, runID string) (channelModelDetectionRunProgressAggregate, error) {
+	var executions []model.ChannelModelDetectionExecution
+	if err := tx.Model(&model.ChannelModelDetectionExecution{}).
+		Select("planned_logical_requests, completed_logical_requests, http_attempts, retry_count").
+		Where("run_id = ?", runID).Find(&executions).Error; err != nil {
+		return channelModelDetectionRunProgressAggregate{}, err
+	}
+	var aggregate channelModelDetectionRunProgressAggregate
+	for _, execution := range executions {
+		aggregate.PlannedLogicalRequests += execution.PlannedLogicalRequests
+		aggregate.CompletedLogicalRequests += execution.CompletedLogicalRequests
+		aggregate.HTTPAttempts += execution.HTTPAttempts
+		aggregate.RetryCount += execution.RetryCount
+	}
+	return aggregate, nil
 }
 
 func rebuildChannelModelDetectionBatchState(tx *gorm.DB, batchID string, now time.Time) error {

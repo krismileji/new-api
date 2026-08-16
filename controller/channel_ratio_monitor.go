@@ -495,13 +495,22 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	settings, err := loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	todayStart := channelMonitorCostDayStart(common.GetTimestamp())
 
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
-	todayCostByChannel := channelMonitorRealtimeTodayCosts(0, todayStart)
+	todayCostByChannel, err := channelMonitorRealtimeTodayCosts(c.Request.Context(), 0, todayStart)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
 	channelOrder := getChannelMonitorChannelOrder(channels)
@@ -599,18 +608,32 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"channels":              items,
-			"generated_at":          common.GetTimestamp(),
-			"data_cutoff_at":        realtimeMetadata.DataCutoffAt,
-			"processed_at":          realtimeMetadata.ProcessedAt,
-			"projection_started_at": realtimeMetadata.ProjectionStartedAt,
-			"event_watermark":       realtimeMetadata.EventWatermark,
-			"queue_depth":           realtimeMetadata.QueueDepth,
-			"realtime_degraded":     realtimeMetadata.RealtimeDegraded,
-			"channel_order":         channelOrder,
-			"group_ratios":          groupRatios,
-			"group_coefficients":    getChannelMonitorGroupCoefficients(),
-			"settings":              getChannelMonitorSettings(),
+			"channels":                      items,
+			"generated_at":                  common.GetTimestamp(),
+			"data_cutoff_at":                realtimeMetadata.DataCutoffAt,
+			"processed_at":                  realtimeMetadata.ProcessedAt,
+			"projection_started_at":         realtimeMetadata.ProjectionStartedAt,
+			"event_watermark":               realtimeMetadata.EventWatermark,
+			"queue_depth":                   realtimeMetadata.QueueDepth,
+			"redis_status":                  realtimeMetadata.RedisStatus,
+			"redis_available":               realtimeMetadata.RedisAvailable,
+			"redis_consumer_running":        realtimeMetadata.RedisConsumerRunning,
+			"pending_count":                 realtimeMetadata.PendingCount,
+			"oldest_pending_at":             realtimeMetadata.OldestPendingAt,
+			"consumer_lag_seconds":          realtimeMetadata.ConsumerLagSeconds,
+			"last_published_at":             realtimeMetadata.LastPublishedAt,
+			"last_processed_at":             realtimeMetadata.LastProcessedAt,
+			"retry_count":                   realtimeMetadata.RetryCount,
+			"takeover_count":                realtimeMetadata.TakeoverCount,
+			"marker_release_failure_count":  realtimeMetadata.MarkerReleaseFailureCount,
+			"marker_release_failure_active": realtimeMetadata.MarkerReleaseFailureActive,
+			"stream_trim_failure_count":     realtimeMetadata.StreamTrimFailureCount,
+			"stream_trim_failure_active":    realtimeMetadata.StreamTrimFailureActive,
+			"realtime_degraded":             realtimeMetadata.RealtimeDegraded,
+			"channel_order":                 channelOrder,
+			"group_ratios":                  groupRatios,
+			"group_coefficients":            getChannelMonitorGroupCoefficients(),
+			"settings":                      settings,
 		},
 	})
 }

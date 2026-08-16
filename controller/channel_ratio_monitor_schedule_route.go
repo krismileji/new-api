@@ -335,35 +335,34 @@ func runChannelSmartScheduleByRouteOnce(
 			groupRatio,
 			groupRatioAvailable,
 		)
-		adaptiveHealthMetric, scoreSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			now-int64(policy.AdaptiveSamplingWindowSeconds),
-			route.SharedSamples.ObservationSince,
-			policy.AdaptiveSamplingWindowRequests,
-			policy.AdaptiveSamplingFirstTokenWarningSeconds,
-			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-		)
-		performanceMetric, performanceSnapshot := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			performanceStart,
-			route.SharedSamples.ObservationSince,
-			0,
-			policy.AdaptiveSamplingFirstTokenWarningSeconds,
-			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
-		)
 		routeStabilityWindowStart := stabilityStart
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince
 		}
-		stabilityMetric, _ := channelSmartScheduleRealtimeAdaptiveMetric(
-			route.ChannelId,
-			route.Model,
-			routeStabilityWindowStart,
-			route.SharedSamples.ObservationSince,
-			0,
+		adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
+		readWindowStart := min(adaptiveWindowStart, performanceStart, routeStabilityWindowStart)
+		routeEvents, scoreSnapshot, err := channelSmartScheduleRealtimeEvents(
+			ctx, route.ChannelId, route.Model, readWindowStart,
+			route.SharedSamples.ObservationSince, 0,
+		)
+		if err != nil {
+			return result, fmt.Errorf("读取渠道 %d 模型 %s 的 Redis 健康窗口失败: %w", route.ChannelId, route.Model, err)
+		}
+		adaptiveHealthMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(
+				routeEvents, adaptiveWindowStart, policy.AdaptiveSamplingWindowRequests,
+			),
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		performanceMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(routeEvents, performanceStart, 0),
+			policy.AdaptiveSamplingFirstTokenWarningSeconds,
+			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+		)
+		stabilityMetric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
+			channelSmartScheduleEventsForWindow(routeEvents, routeStabilityWindowStart, 0),
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
 		)
@@ -412,9 +411,6 @@ func runChannelSmartScheduleByRouteOnce(
 			policy.Strategy, policy.StabilityEnabled, policy.ApplyMode, policy.MinSamples,
 			forceReset, policy.Scoring,
 		)
-		if performanceSnapshot.EventWatermark > scoreSnapshot.EventWatermark {
-			scoreSnapshot = performanceSnapshot
-		}
 		channelSmartScheduleAttachRealtimeWindow(scoreDetailsByRoute[key], scoreSnapshot)
 		currentPriority := route.Priority
 		currentWeight := route.Weight

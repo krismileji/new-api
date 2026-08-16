@@ -252,6 +252,12 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	db := setupChannelModelDetectionSchedulerTestDB(t)
 	now := time.Date(2026, time.August, 13, 8, 0, 0, 0, time.UTC)
 	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "owned-session", model.ChannelModelDetectionExecutionStatusRunning)
+	require.NoError(t, db.Model(&execution).Updates(map[string]any{
+		"planned_logical_requests":   49,
+		"completed_logical_requests": 49,
+		"http_attempts":              52,
+		"retry_count":                3,
+	}).Error)
 	execution.ConfigHash = "report-hash"
 	require.NoError(t, db.Model(&execution).Update("config_hash", execution.ConfigHash).Error)
 	report := ChannelModelDetectorReportResponse{
@@ -273,6 +279,10 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	var storedRun model.ChannelModelDetectionRun
 	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&storedRun).Error)
 	assert.Equal(t, model.ChannelModelDetectionRunStatusCompleted, storedRun.Status)
+	assert.Equal(t, int64(49), storedRun.PlannedLogicalRequests)
+	assert.Equal(t, int64(49), storedRun.CompletedLogicalRequests)
+	assert.Equal(t, int64(52), storedRun.HTTPAttempts)
+	assert.Equal(t, int64(3), storedRun.RetryCount)
 	assert.Positive(t, storedRun.FinishedAt)
 	var config model.ChannelModelDetectionConfig
 	require.NoError(t, db.Where("channel_id = ?", run.ChannelId).First(&config).Error)

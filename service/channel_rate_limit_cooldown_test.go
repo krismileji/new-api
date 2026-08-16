@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +22,74 @@ type blockingCooldownPipelineHook struct {
 	once    sync.Once
 	after   chan struct{}
 	release chan struct{}
+}
+
+type channelRateLimitCooldownEvalErrorHook struct {
+	script string
+	err    error
+	calls  atomic.Int64
+}
+
+type channelRateLimitCooldownPipelineErrorHook struct {
+	err error
+}
+
+func (hook *channelRateLimitCooldownPipelineErrorHook) BeforeProcess(
+	ctx context.Context,
+	_ redis.Cmder,
+) (context.Context, error) {
+	return ctx, nil
+}
+
+func (hook *channelRateLimitCooldownPipelineErrorHook) AfterProcess(context.Context, redis.Cmder) error {
+	return nil
+}
+
+func (hook *channelRateLimitCooldownPipelineErrorHook) BeforeProcessPipeline(
+	ctx context.Context,
+	_ []redis.Cmder,
+) (context.Context, error) {
+	return ctx, hook.err
+}
+
+func (hook *channelRateLimitCooldownPipelineErrorHook) AfterProcessPipeline(
+	context.Context,
+	[]redis.Cmder,
+) error {
+	return nil
+}
+
+func (hook *channelRateLimitCooldownEvalErrorHook) BeforeProcess(
+	ctx context.Context,
+	command redis.Cmder,
+) (context.Context, error) {
+	if hook.calls.Load() > 0 || command.Name() != "eval" {
+		return ctx, nil
+	}
+	arguments := command.Args()
+	if len(arguments) < 2 || fmt.Sprint(arguments[1]) != hook.script {
+		return ctx, nil
+	}
+	hook.calls.Add(1)
+	return ctx, hook.err
+}
+
+func (hook *channelRateLimitCooldownEvalErrorHook) AfterProcess(context.Context, redis.Cmder) error {
+	return nil
+}
+
+func (hook *channelRateLimitCooldownEvalErrorHook) BeforeProcessPipeline(
+	ctx context.Context,
+	_ []redis.Cmder,
+) (context.Context, error) {
+	return ctx, nil
+}
+
+func (hook *channelRateLimitCooldownEvalErrorHook) AfterProcessPipeline(
+	context.Context,
+	[]redis.Cmder,
+) error {
+	return nil
 }
 
 func (hook *blockingCooldownPipelineHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
@@ -398,6 +469,81 @@ func TestChannelRateLimitCooldownRepairsMismatchedRedisRevision(t *testing.T) {
 	).ExcludedChannelIds)
 }
 
+func TestChannelRateLimitCooldownStrictRedisSequenceIsIdempotent(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	setChannelRateLimitCooldownControlRevision(t, "revision-sequence")
+	updated, err := UpdateChannelRateLimitCooldownControlRevision("revision-sequence", "")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	now := common.GetTimestamp()
+	member := channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+		channelId: 49,
+		modelName: "model-a",
+	})
+	firstSequence := int64(115_000_000_000_000_001)
+	accepted, err := StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 49, "model-a", now+60, "revision-sequence", firstSequence,
+	)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	firstUntil := ChannelRateLimitCooldownUntil(49, "model-a")
+	assert.Equal(t, now+60, firstUntil)
+
+	accepted, err = StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 49, "model-a", now+600, "revision-sequence", firstSequence,
+	)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	assert.Equal(t, firstUntil, ChannelRateLimitCooldownUntil(49, "model-a"))
+
+	accepted, err = StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 49, "model-a", now+900, "revision-sequence", firstSequence-1,
+	)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	assert.Equal(t, firstUntil, ChannelRateLimitCooldownUntil(49, "model-a"))
+
+	accepted, err = StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 49, "model-a", now+120, "revision-sequence", firstSequence+1,
+	)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	assert.Equal(t, now+120, ChannelRateLimitCooldownUntil(49, "model-a"))
+	sequence, err := common.RDB.HGet(
+		context.Background(), channelRateLimitCooldownRedisEventSequenceKey, member,
+	).Result()
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("%019d", firstSequence+1), sequence)
+}
+
+func TestChannelRateLimitCooldownStrictRedisFailureIsReturnedAndRolledBack(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	setChannelRateLimitCooldownControlRevision(t, "revision-write-failure")
+	updated, err := UpdateChannelRateLimitCooldownControlRevision("revision-write-failure", "")
+	require.NoError(t, err)
+	assert.True(t, updated)
+	writeErr := errors.New("redis cooldown write failed")
+	hook := &channelRateLimitCooldownEvalErrorHook{
+		script: channelRateLimitCooldownRedisGuardedExtendScript,
+		err:    writeErr,
+	}
+	common.RDB.AddHook(hook)
+
+	accepted, err := StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(),
+		50,
+		"model-a",
+		common.GetTimestamp()+60,
+		"revision-write-failure",
+		115_000_000_000_000_010,
+	)
+	assert.ErrorIs(t, err, writeErr)
+	assert.False(t, accepted)
+	assert.Equal(t, int64(1), hook.calls.Load())
+	assert.Zero(t, ChannelRateLimitCooldownUntil(50, "model-a"))
+}
+
 func TestChannelRateLimitCooldownUntilMatchingCoversWildcardRoute(t *testing.T) {
 	ClearChannelRateLimitCooldowns()
 	t.Cleanup(ClearChannelRateLimitCooldowns)
@@ -407,4 +553,78 @@ func TestChannelRateLimitCooldownUntilMatchingCoversWildcardRoute(t *testing.T) 
 	assert.Positive(t, ChannelRateLimitCooldownUntilMatching(51, "gpt-4o-mini"))
 	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(51, "claude*"))
 	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(52, "gpt-4o*"))
+}
+
+func TestChannelRateLimitCooldownStrictRedisReaderIgnoresLocalSnapshot(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	setChannelRateLimitCooldownControlRevision(t, "revision-strict-read")
+	updated, err := UpdateChannelRateLimitCooldownControlRevision("revision-strict-read", "")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	StartChannelRateLimitCooldown(52, "gpt-4o-mini", 60)
+	localUntil := ChannelRateLimitCooldownUntilMatching(52, "gpt-4o*")
+	require.Positive(t, localUntil)
+	strictExactUntil, err := ChannelRateLimitCooldownUntilMatchingFromRedis(
+		context.Background(), 52, "gpt-4o-mini",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, localUntil, strictExactUntil)
+	strictWildcardUntil, err := ChannelRateLimitCooldownUntilMatchingFromRedis(
+		context.Background(), 52, "gpt-4o*",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, localUntil, strictWildcardUntil)
+	require.NoError(t, common.RDB.ZRem(
+		context.Background(),
+		channelRateLimitCooldownRedisKey,
+		channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+			channelId: 52,
+			modelName: "gpt-4o-mini",
+		}),
+	).Err())
+
+	strictUntil, err := ChannelRateLimitCooldownUntilMatchingFromRedis(
+		context.Background(), 52, "gpt-4o*",
+	)
+	require.NoError(t, err)
+	assert.Zero(t, strictUntil)
+	assert.Equal(t, localUntil, ChannelRateLimitCooldownUntilMatching(52, "gpt-4o*"))
+}
+
+func TestChannelRateLimitCooldownStrictRedisReaderReturnsReadErrors(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	setChannelRateLimitCooldownControlRevision(t, "revision-strict-error")
+	updated, err := UpdateChannelRateLimitCooldownControlRevision("revision-strict-error", "")
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	readErr := errors.New("redis cooldown read failed")
+	common.RDB.AddHook(&channelRateLimitCooldownPipelineErrorHook{err: readErr})
+	_, err = ChannelRateLimitCooldownUntilMatchingFromRedis(
+		context.Background(), 53, "model-a",
+	)
+	assert.ErrorIs(t, err, readErr)
+}
+
+func TestChannelRateLimitCooldownStrictRedisReaderRequiresRedis(t *testing.T) {
+	stopChannelRateLimitCooldownRedisSync()
+	originalEnabled := common.RedisEnabled
+	originalClient := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	ClearChannelRateLimitCooldowns()
+	StartChannelRateLimitCooldown(54, "model-a", 60)
+	t.Cleanup(func() {
+		stopChannelRateLimitCooldownRedisSync()
+		ClearChannelRateLimitCooldowns()
+		common.RedisEnabled = originalEnabled
+		common.RDB = originalClient
+	})
+
+	assert.Positive(t, ChannelRateLimitCooldownUntilMatching(54, "model-a"))
+	_, err := ChannelRateLimitCooldownUntilMatchingFromRedis(
+		context.Background(), 54, "model-a",
+	)
+	assert.ErrorIs(t, err, ErrChannelRateLimitCooldownRedisUnavailable)
 }

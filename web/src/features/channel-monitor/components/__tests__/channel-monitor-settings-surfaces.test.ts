@@ -28,10 +28,15 @@ type SettingsSurfaceResult = {
   conflictHistoryQueryInvalidated: boolean
   conflictMonitorQueryInvalidated: boolean
   generalHasSchedule: boolean
+  generalTabCount: number
   generalTitle: string
   generalUsesContentSizedViewport: boolean
-  legacyRetentionDefaultsApplied: boolean
+  retentionSettingsLoaded: boolean
   notificationTypeCanBeUnchecked: boolean
+  retentionFieldsOnlyInRetentionTab: boolean
+  retentionTabIsLast: boolean
+  retentionTabKeyboardActivated: boolean
+  retentionTabWrapsText: boolean
   policyDialogBlocksHorizontalOverflow: boolean
   policyDialogCentered: boolean
   policyDialogUsesContentSizedViewport: boolean
@@ -82,10 +87,15 @@ test(
     assert.match(result.generalTitle, /上游请求超时/)
     assert.match(result.generalTitle, /错误信息映射/)
     assert.equal(result.generalHasSchedule, false)
+    assert.equal(result.generalTabCount, 3)
     assert.equal(result.generalUsesContentSizedViewport, true)
-    assert.equal(result.legacyRetentionDefaultsApplied, true)
+    assert.equal(result.retentionSettingsLoaded, true)
     assert.equal(result.allNotificationTypesSelected, true)
     assert.equal(result.notificationTypeCanBeUnchecked, true)
+    assert.equal(result.retentionFieldsOnlyInRetentionTab, true)
+    assert.equal(result.retentionTabIsLast, true)
+    assert.equal(result.retentionTabKeyboardActivated, true)
+    assert.equal(result.retentionTabWrapsText, true)
     assert.equal(result.previewEmailButtonEnabled, true)
     assert.equal(result.scheduleSide, 'right')
     assert.match(result.scheduleTitle, /智能调度设置/)

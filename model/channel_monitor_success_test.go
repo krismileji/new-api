@@ -31,7 +31,7 @@ func TestGetChannelMonitorSuccessMetricsDistinguishesActualAndFinalResults(t *te
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteMetric{}))
+	require.NoError(t, db.AutoMigrate(&Log{}, &ChannelMonitorMinuteRouteMetric{}, &ChannelMonitorMinuteAPIKeyMetric{}))
 	DB = db
 	LOG_DB = db
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
