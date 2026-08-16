@@ -59,6 +59,8 @@ const (
 	channelMonitorSmartScheduleEnabledOption                   = "ChannelMonitorSmartScheduleEnabled"
 	channelMonitorSmartSchedulePerformanceWindowOption         = model.ChannelMonitorSmartSchedulePerformanceWindowOption
 	channelMonitorSmartScheduleStabilityWindowOption           = model.ChannelMonitorSmartScheduleStabilityWindowOption
+	channelMonitorSmartScheduleRealtimeRetentionOption         = model.ChannelMonitorSmartScheduleRealtimeRetentionOption
+	channelMonitorSmartScheduleRealtimeSampleLimitOption       = model.ChannelMonitorSmartScheduleRealtimeSampleLimitOption
 	channelMonitorSmartScheduleRateLimitCooldownOption         = "ChannelMonitorSmartScheduleRateLimitCooldownSeconds"
 	channelMonitorSmartScheduleControlRevisionOption           = model.ChannelSmartScheduleControlRevisionOption
 	channelMonitorPolicyActionNone                             = "none"
@@ -103,6 +105,10 @@ const (
 	maxChannelMonitorSmartScheduleSuccessRate                  = 100
 	maxChannelMonitorSmartScheduleExplorationPercent           = 20
 	maxChannelMonitorSmartScheduleWindowMinutes                = model.ChannelMonitorSmartScheduleMaxWindowMinutes
+	minChannelMonitorSmartScheduleRealtimeRetentionMinutes     = model.ChannelMonitorSmartScheduleMinRealtimeRetentionMinutes
+	maxChannelMonitorSmartScheduleRealtimeRetentionMinutes     = model.ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes
+	minChannelMonitorSmartScheduleRealtimeSampleLimit          = model.ChannelMonitorSmartScheduleMinRealtimeSampleLimit
+	maxChannelMonitorSmartScheduleRealtimeSampleLimit          = model.ChannelMonitorSmartScheduleMaxRealtimeSampleLimit
 	maxChannelMonitorSmartScheduleRateLimitCooldownSeconds     = 300
 	defaultChannelMonitorAutoUpdateRetryCount                  = 2
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
@@ -123,6 +129,8 @@ const (
 	defaultChannelMonitorSmartScheduleProbeInterval            = 10
 	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
 	defaultChannelMonitorSmartScheduleStabilityWindowMinutes   = model.ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes
+	defaultChannelMonitorSmartScheduleRealtimeRetentionMinutes = model.ChannelMonitorSmartScheduleDefaultRealtimeRetentionMinutes
+	defaultChannelMonitorSmartScheduleRealtimeSampleLimit      = model.ChannelMonitorSmartScheduleDefaultRealtimeSampleLimit
 	defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds = 30
 	channelMonitorEmailTypeRatioChange                         = "ratio_change"
 	channelMonitorEmailTypeBalanceWarning                      = "balance_warning"
@@ -180,6 +188,8 @@ type channelMonitorSettings struct {
 	SmartScheduleGroupPolicies            smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
 	SmartSchedulePerformanceWindowMinutes int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   int                        `json:"smart_schedule_stability_window_minutes"`
+	SmartScheduleRealtimeRetentionMinutes int                        `json:"smart_schedule_realtime_retention_minutes"`
+	SmartScheduleRealtimeSampleLimit      int                        `json:"smart_schedule_realtime_sample_limit"`
 	SmartScheduleRateLimitCooldownSeconds int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
 	SmartScheduleControlRevision          string                     `json:"smart_schedule_control_revision"`
 	SmartScheduleForceResetTaskCreated    *bool                      `json:"smart_schedule_force_reset_task_created,omitempty"`
@@ -226,6 +236,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	SmartScheduleGroupPolicies            *smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
 	SmartSchedulePerformanceWindowMinutes *int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   *int                        `json:"smart_schedule_stability_window_minutes"`
+	SmartScheduleRealtimeRetentionMinutes *int                        `json:"smart_schedule_realtime_retention_minutes"`
+	SmartScheduleRealtimeSampleLimit      *int                        `json:"smart_schedule_realtime_sample_limit"`
 	SmartScheduleRateLimitCooldownSeconds *int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
 	SmartScheduleControlRevision          *string                     `json:"smart_schedule_control_revision"`
 	SmartScheduleForceReset               *bool                       `json:"smart_schedule_force_reset"`
@@ -288,6 +300,8 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorSmartScheduleGroupPoliciesOption,
 		channelMonitorSmartSchedulePerformanceWindowOption,
 		channelMonitorSmartScheduleStabilityWindowOption,
+		channelMonitorSmartScheduleRealtimeRetentionOption,
+		channelMonitorSmartScheduleRealtimeSampleLimitOption,
 		channelMonitorSmartScheduleRateLimitCooldownOption,
 		channelMonitorSmartScheduleControlRevisionOption,
 	}
@@ -335,6 +349,8 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawSmartScheduleGroupPolicies := options[channelMonitorSmartScheduleGroupPoliciesOption]
 	rawSmartSchedulePerformanceWindow := options[channelMonitorSmartSchedulePerformanceWindowOption]
 	rawSmartScheduleStabilityWindow := options[channelMonitorSmartScheduleStabilityWindowOption]
+	rawSmartScheduleRealtimeRetention := options[channelMonitorSmartScheduleRealtimeRetentionOption]
+	rawSmartScheduleRealtimeSampleLimit := options[channelMonitorSmartScheduleRealtimeSampleLimitOption]
 	rawSmartScheduleRateLimitCooldown := options[channelMonitorSmartScheduleRateLimitCooldownOption]
 	rawSmartScheduleControlRevision := options[channelMonitorSmartScheduleControlRevisionOption]
 
@@ -454,6 +470,12 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(smartScheduleStabilityWindow) {
 		smartScheduleStabilityWindow = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
 	}
+	realtimeSettings := model.ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(map[string]string{
+		channelMonitorSmartSchedulePerformanceWindowOption:   rawSmartSchedulePerformanceWindow,
+		channelMonitorSmartScheduleStabilityWindowOption:     rawSmartScheduleStabilityWindow,
+		channelMonitorSmartScheduleRealtimeRetentionOption:   rawSmartScheduleRealtimeRetention,
+		channelMonitorSmartScheduleRealtimeSampleLimitOption: rawSmartScheduleRealtimeSampleLimit,
+	})
 	smartScheduleRateLimitCooldown, err := strconv.Atoi(rawSmartScheduleRateLimitCooldown)
 	if err != nil || smartScheduleRateLimitCooldown < 0 || smartScheduleRateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
 		smartScheduleRateLimitCooldown = defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds
@@ -501,6 +523,8 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		SmartScheduleGroupPolicies:            smartScheduleGroupPolicies,
 		SmartSchedulePerformanceWindowMinutes: smartSchedulePerformanceWindow,
 		SmartScheduleStabilityWindowMinutes:   smartScheduleStabilityWindow,
+		SmartScheduleRealtimeRetentionMinutes: realtimeSettings.RetentionMinutes,
+		SmartScheduleRealtimeSampleLimit:      realtimeSettings.SampleLimit,
 		SmartScheduleRateLimitCooldownSeconds: smartScheduleRateLimitCooldown,
 		SmartScheduleControlRevision:          rawSmartScheduleControlRevision,
 	}
@@ -808,6 +832,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.SmartScheduleGroupPolicies == nil &&
 		request.SmartSchedulePerformanceWindowMinutes == nil &&
 		request.SmartScheduleStabilityWindowMinutes == nil &&
+		request.SmartScheduleRealtimeRetentionMinutes == nil &&
+		request.SmartScheduleRealtimeSampleLimit == nil &&
 		request.SmartScheduleRateLimitCooldownSeconds == nil &&
 		request.SmartScheduleForceReset == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供要更新的设置"})
@@ -818,6 +844,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.SmartScheduleGroupPolicies != nil ||
 		request.SmartSchedulePerformanceWindowMinutes != nil ||
 		request.SmartScheduleStabilityWindowMinutes != nil ||
+		request.SmartScheduleRealtimeRetentionMinutes != nil ||
+		request.SmartScheduleRealtimeSampleLimit != nil ||
 		request.SmartScheduleRateLimitCooldownSeconds != nil || forceResetSmartSchedule
 	if err := validateChannelMonitorRetentionRequest(request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
@@ -1215,7 +1243,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if request.SmartSchedulePerformanceWindowMinutes != nil &&
 		!isChannelMonitorSmartScheduleWindowSupported(*request.SmartSchedulePerformanceWindowMinutes) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度性能窗口必须在 1 到 43200 分钟之间"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度性能窗口必须在 1 到 1440 分钟之间"})
 		return
 	}
 	if request.SmartSchedulePerformanceWindowMinutes != nil {
@@ -1224,12 +1252,62 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if request.SmartScheduleStabilityWindowMinutes != nil &&
 		!isChannelMonitorSmartScheduleWindowSupported(*request.SmartScheduleStabilityWindowMinutes) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度稳定性评分窗口必须在 1 到 43200 分钟之间"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度稳定性评分窗口必须在 1 到 1440 分钟之间"})
 		return
 	}
 	if request.SmartScheduleStabilityWindowMinutes != nil {
 		settings.SmartScheduleStabilityWindowMinutes = *request.SmartScheduleStabilityWindowMinutes
 		values[channelMonitorSmartScheduleStabilityWindowOption] = strconv.Itoa(settings.SmartScheduleStabilityWindowMinutes)
+	}
+	if request.SmartScheduleRealtimeRetentionMinutes != nil &&
+		(*request.SmartScheduleRealtimeRetentionMinutes < minChannelMonitorSmartScheduleRealtimeRetentionMinutes ||
+			*request.SmartScheduleRealtimeRetentionMinutes > maxChannelMonitorSmartScheduleRealtimeRetentionMinutes) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "智能调度实时样本保留时间必须在 5 到 1440 分钟之间",
+		})
+		return
+	}
+	if request.SmartScheduleRealtimeRetentionMinutes != nil {
+		settings.SmartScheduleRealtimeRetentionMinutes = *request.SmartScheduleRealtimeRetentionMinutes
+		values[channelMonitorSmartScheduleRealtimeRetentionOption] = strconv.Itoa(settings.SmartScheduleRealtimeRetentionMinutes)
+	}
+	if request.SmartScheduleRealtimeSampleLimit != nil &&
+		(*request.SmartScheduleRealtimeSampleLimit < minChannelMonitorSmartScheduleRealtimeSampleLimit ||
+			*request.SmartScheduleRealtimeSampleLimit > maxChannelMonitorSmartScheduleRealtimeSampleLimit) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "智能调度单路由实时样本上限必须在 1000 到 200000 条之间",
+		})
+		return
+	}
+	if request.SmartScheduleRealtimeSampleLimit != nil {
+		settings.SmartScheduleRealtimeSampleLimit = *request.SmartScheduleRealtimeSampleLimit
+		values[channelMonitorSmartScheduleRealtimeSampleLimitOption] = strconv.Itoa(settings.SmartScheduleRealtimeSampleLimit)
+	}
+	if request.SmartScheduleRealtimeRetentionMinutes == nil {
+		requiredRetentionMinutes := max(
+			settings.SmartSchedulePerformanceWindowMinutes,
+			settings.SmartScheduleStabilityWindowMinutes,
+		)
+		if settings.SmartScheduleRealtimeRetentionMinutes < requiredRetentionMinutes {
+			settings.SmartScheduleRealtimeRetentionMinutes = requiredRetentionMinutes
+			values[channelMonitorSmartScheduleRealtimeRetentionOption] = strconv.Itoa(requiredRetentionMinutes)
+		}
+	}
+	if settings.SmartScheduleRealtimeRetentionMinutes < settings.SmartSchedulePerformanceWindowMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "实时样本保留时间不能短于性能窗口",
+		})
+		return
+	}
+	if settings.SmartScheduleRealtimeRetentionMinutes < settings.SmartScheduleStabilityWindowMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "实时样本保留时间不能短于稳定性评分窗口",
+		})
+		return
 	}
 	if request.SmartScheduleRateLimitCooldownSeconds != nil &&
 		(*request.SmartScheduleRateLimitCooldownSeconds < 0 ||
@@ -1382,6 +1460,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"smart_schedule_group_policies":              settings.SmartScheduleGroupPolicies,
 		"smart_schedule_performance_window_minutes":  settings.SmartSchedulePerformanceWindowMinutes,
 		"smart_schedule_stability_window_minutes":    settings.SmartScheduleStabilityWindowMinutes,
+		"smart_schedule_realtime_retention_minutes":  settings.SmartScheduleRealtimeRetentionMinutes,
+		"smart_schedule_realtime_sample_limit":       settings.SmartScheduleRealtimeSampleLimit,
 		"smart_schedule_rate_limit_cooldown_seconds": settings.SmartScheduleRateLimitCooldownSeconds,
 		"smart_schedule_force_reset":                 forceResetSmartSchedule,
 		"smart_schedule_force_reset_created":         forceResetTaskCreated,

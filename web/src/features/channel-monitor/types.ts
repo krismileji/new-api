@@ -616,6 +616,8 @@ export type ChannelMonitorSettings = {
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_performance_window_minutes: number
   smart_schedule_stability_window_minutes: number
+  smart_schedule_realtime_retention_minutes: number
+  smart_schedule_realtime_sample_limit: number
   smart_schedule_rate_limit_cooldown_seconds: number
   smart_schedule_control_revision: string
   smart_schedule_force_reset_task_created?: boolean
@@ -962,6 +964,10 @@ export type ChannelMonitorSmartScheduleMetricCoverage = {
   configured_retention_days: number
   required_retention_minutes: number
   configured_retention_sufficient: boolean
+  realtime_retention_minutes: number
+  realtime_sample_limit: number
+  sample_limit_truncated: boolean
+  sample_limit_cutoff_at: number
 }
 
 export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {

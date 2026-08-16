@@ -588,6 +588,8 @@ func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {
 	assert.True(t, settings.SmartScheduleEnabled)
 	assert.Equal(t, defaultChannelMonitorSmartSchedulePerformanceWindowMinutes, settings.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleStabilityWindowMinutes, settings.SmartScheduleStabilityWindowMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleRealtimeRetentionMinutes, settings.SmartScheduleRealtimeRetentionMinutes)
+	assert.Equal(t, defaultChannelMonitorSmartScheduleRealtimeSampleLimit, settings.SmartScheduleRealtimeSampleLimit)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds, settings.SmartScheduleRateLimitCooldownSeconds)
 	require.Len(t, settings.SmartScheduleGroupPolicies, 1)
 	assert.Equal(t, "vip", settings.SmartScheduleGroupPolicies[0].Group)
@@ -1010,6 +1012,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"smart_schedule_performance_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
 		{"smart_schedule_stability_window_minutes": 0},
 		{"smart_schedule_stability_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
+		{"smart_schedule_realtime_retention_minutes": minChannelMonitorSmartScheduleRealtimeRetentionMinutes - 1},
+		{"smart_schedule_realtime_retention_minutes": maxChannelMonitorSmartScheduleRealtimeRetentionMinutes + 1},
+		{"smart_schedule_realtime_sample_limit": minChannelMonitorSmartScheduleRealtimeSampleLimit - 1},
+		{"smart_schedule_realtime_sample_limit": maxChannelMonitorSmartScheduleRealtimeSampleLimit + 1},
 		{"smart_schedule_rate_limit_cooldown_seconds": -1},
 		{"smart_schedule_rate_limit_cooldown_seconds": maxChannelMonitorSmartScheduleRateLimitCooldownSeconds + 1},
 	}
@@ -1095,6 +1101,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		},
 		"smart_schedule_performance_window_minutes":  360,
 		"smart_schedule_stability_window_minutes":    120,
+		"smart_schedule_realtime_retention_minutes":  720,
+		"smart_schedule_realtime_sample_limit":       50000,
 		"smart_schedule_rate_limit_cooldown_seconds": 300,
 		"smart_schedule_control_revision":            "",
 	}
@@ -1227,6 +1235,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 600, *groupPolicy.AdaptiveSamplingWindowSeconds)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
 	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)
+	assert.Equal(t, 720, response.Data.SmartScheduleRealtimeRetentionMinutes)
+	assert.Equal(t, 50000, response.Data.SmartScheduleRealtimeSampleLimit)
 	assert.Equal(t, 300, response.Data.SmartScheduleRateLimitCooldownSeconds)
 
 	var option model.Option
@@ -1297,6 +1307,12 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStabilityWindowOption).First(&option).Error)
 	assert.Equal(t, "120", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRealtimeRetentionOption).First(&option).Error)
+	assert.Equal(t, "720", option.Value)
+	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRealtimeSampleLimitOption).First(&option).Error)
+	assert.Equal(t, "50000", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRateLimitCooldownOption).First(&option).Error)
 	assert.Equal(t, "300", option.Value)

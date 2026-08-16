@@ -51,6 +51,8 @@ import {
   MAX_PROBE_RESPONSE_TOKEN_COUNT,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
+  MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+  MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
@@ -61,6 +63,8 @@ import {
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
+  MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+  MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
 } from '../schema'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE } from '../smart-schedule-group-policy'
 
@@ -353,6 +357,8 @@ describe('channel monitor settings schema', () => {
       smartScheduleGroupPolicies: [],
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 120,
+      smartScheduleRealtimeRetentionMinutes: 120,
+      smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     })
@@ -388,6 +394,8 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.relayResponseHeaderTimeoutSeconds, 60)
     assert.equal(settings.smartSchedulePerformanceWindowMinutes, 60)
     assert.equal(settings.smartScheduleStabilityWindowMinutes, 120)
+    assert.equal(settings.smartScheduleRealtimeRetentionMinutes, 120)
+    assert.equal(settings.smartScheduleRealtimeSampleLimit, 20_000)
     assert.equal(settings.smartScheduleRateLimitCooldownSeconds, 30)
   })
 
@@ -422,6 +430,8 @@ describe('channel monitor settings schema', () => {
       smartScheduleGroupPolicies: [],
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRealtimeRetentionMinutes: 60,
+      smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     })
@@ -467,6 +477,8 @@ describe('channel monitor settings schema', () => {
       smartScheduleGroupPolicies: [],
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRealtimeRetentionMinutes: 60,
+      smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     }
@@ -712,10 +724,59 @@ describe('channel monitor settings schema', () => {
         ...baseSettings,
         smartSchedulePerformanceWindowMinutes: windowMinutes,
         smartScheduleStabilityWindowMinutes: windowMinutes,
+        smartScheduleRealtimeRetentionMinutes: Math.max(
+          windowMinutes,
+          MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES
+        ),
       })
       assert.equal(parsed.smartSchedulePerformanceWindowMinutes, windowMinutes)
       assert.equal(parsed.smartScheduleStabilityWindowMinutes, windowMinutes)
     }
+
+    for (const retentionMinutes of [
+      MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+      MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+    ]) {
+      const windowMinutes = Math.min(retentionMinutes, 60)
+      const parsed = schema.parse({
+        ...baseSettings,
+        smartSchedulePerformanceWindowMinutes: windowMinutes,
+        smartScheduleStabilityWindowMinutes: windowMinutes,
+        smartScheduleRealtimeRetentionMinutes: retentionMinutes,
+      })
+      assert.equal(
+        parsed.smartScheduleRealtimeRetentionMinutes,
+        retentionMinutes
+      )
+    }
+    for (const sampleLimit of [
+      MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
+      MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
+    ]) {
+      assert.equal(
+        schema.parse({
+          ...baseSettings,
+          smartScheduleRealtimeSampleLimit: sampleLimit,
+        }).smartScheduleRealtimeSampleLimit,
+        sampleLimit
+      )
+    }
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartSchedulePerformanceWindowMinutes: 120,
+        smartScheduleRealtimeRetentionMinutes: 60,
+      }).success,
+      false
+    )
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleStabilityWindowMinutes: 120,
+        smartScheduleRealtimeRetentionMinutes: 60,
+      }).success,
+      false
+    )
     for (const windowMinutes of [
       MIN_SMART_SCHEDULE_WINDOW_MINUTES - 1,
       1.5,
@@ -853,6 +914,8 @@ describe('channel monitor settings schema', () => {
       smartScheduleGroupPolicies: [groupPolicy],
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 60,
+      smartScheduleRealtimeRetentionMinutes: 60,
+      smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     }

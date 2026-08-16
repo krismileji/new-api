@@ -100,7 +100,13 @@ export const MAX_SMART_SCHEDULE_EXPLORATION_TRAFFIC_PERCENT = 20
 export const MAX_SMART_SCHEDULE_EXPLORATION_PROMPT_K_TOKENS = 1_000
 export const MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES = 525_600
 export const MIN_SMART_SCHEDULE_WINDOW_MINUTES = 1
-export const MAX_SMART_SCHEDULE_WINDOW_MINUTES = 43_200
+export const MAX_SMART_SCHEDULE_WINDOW_MINUTES = 1_440
+export const MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES = 5
+export const MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES = 1_440
+export const DEFAULT_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES = 60
+export const MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT = 1_000
+export const MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT = 200_000
+export const DEFAULT_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT = 20_000
 export const DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 30
 export const MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS = 300
 export const MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT = 10
@@ -1081,15 +1087,39 @@ export function createChannelMonitorSettingsSchema() {
         .number()
         .int('性能窗口必须是整数')
         .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能小于 1 分钟')
-        .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 43200 分钟'),
+        .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 1440 分钟'),
       smartScheduleStabilityWindowMinutes: z.coerce
         .number()
         .int('稳定性评分窗口必须是整数')
         .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性评分窗口不能小于 1 分钟')
         .max(
           MAX_SMART_SCHEDULE_WINDOW_MINUTES,
-          '稳定性评分窗口不能超过 43200 分钟'
+          '稳定性评分窗口不能超过 1440 分钟'
         ),
+      smartScheduleRealtimeRetentionMinutes: z.coerce
+        .number()
+        .int('实时样本保留时间必须是整数')
+        .min(
+          MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+          '实时样本保留时间不能小于 5 分钟'
+        )
+        .max(
+          MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+          '实时样本保留时间不能超过 1440 分钟'
+        )
+        .default(DEFAULT_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES),
+      smartScheduleRealtimeSampleLimit: z.coerce
+        .number()
+        .int('单路由实时样本上限必须是整数')
+        .min(
+          MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
+          '单路由实时样本上限不能小于 1000 条'
+        )
+        .max(
+          MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
+          '单路由实时样本上限不能超过 200000 条'
+        )
+        .default(DEFAULT_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT),
       smartScheduleRateLimitCooldownSeconds: z.coerce
         .number()
         .int('429 冷却时间必须是整数')
@@ -1134,6 +1164,26 @@ export function createChannelMonitorSettingsSchema() {
           code: 'custom',
           path: ['smartScheduleGroupPolicies'],
           message: '启用智能调度前请至少配置一个分组策略',
+        })
+      }
+      if (
+        values.smartScheduleRealtimeRetentionMinutes <
+        values.smartSchedulePerformanceWindowMinutes
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['smartScheduleRealtimeRetentionMinutes'],
+          message: '实时样本保留时间不能短于性能窗口',
+        })
+      }
+      if (
+        values.smartScheduleRealtimeRetentionMinutes <
+        values.smartScheduleStabilityWindowMinutes
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['smartScheduleRealtimeRetentionMinutes'],
+          message: '实时样本保留时间不能短于稳定性评分窗口',
         })
       }
       if (values.probeResponseMinDelayMs > values.probeResponseMaxDelayMs) {

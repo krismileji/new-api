@@ -478,6 +478,9 @@ export function ChannelMonitorSmartScheduleBoard(
     if (!metricCoverage.stability_window_complete) {
       incompleteMetricWindows.push('稳定性窗口覆盖不足')
     }
+    if (metricCoverage.sample_limit_truncated) {
+      incompleteMetricWindows.push('实时样本已达到单路由数量上限')
+    }
   }
 
   if (props.isLoading) {
@@ -607,7 +610,7 @@ export function ChannelMonitorSmartScheduleBoard(
           <HugeiconsIcon icon={Alert02Icon} aria-hidden='true' />
           <AlertTitle>调度窗口数据尚未覆盖完整</AlertTitle>
           <AlertDescription>
-            {incompleteMetricWindows.join('、')}。当前分钟汇总覆盖从{' '}
+            {incompleteMetricWindows.join('、')}。当前实时样本覆盖从{' '}
             {metricCoverage.aggregated_from > 0
               ? formatTimestampToDate(metricCoverage.aggregated_from)
               : '尚未建立'}{' '}
@@ -615,9 +618,10 @@ export function ChannelMonitorSmartScheduleBoard(
             {metricCoverage.aggregated_through > 0
               ? formatTimestampToDate(metricCoverage.aggregated_through)
               : '尚未建立'}
-            ，后台正在分批补齐分钟汇总
+            ；配置为保留 {metricCoverage.realtime_retention_minutes}{' '}
+            分钟、每个渠道模型最多 {metricCoverage.realtime_sample_limit} 条
             {!metricCoverage.configured_retention_sufficient
-              ? '；保留配置短于最长调度窗口，系统会优先保留调度所需分钟汇总'
+              ? '；保留时间短于最长调度窗口，请调整智能调度设置'
               : ''}
             。
           </AlertDescription>

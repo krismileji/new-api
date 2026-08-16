@@ -18,7 +18,7 @@ const (
 	ChannelMonitorGroupCoefficientsOption                      = "ChannelMonitorGroupCoefficients"
 	ChannelMonitorSmartSchedulePerformanceWindowOption         = "ChannelMonitorSmartSchedulePerformanceWindowMinutes"
 	ChannelMonitorSmartScheduleStabilityWindowOption           = "ChannelMonitorSmartScheduleStabilityWindowMinutes"
-	ChannelMonitorSmartScheduleMaxWindowMinutes                = 43200
+	ChannelMonitorSmartScheduleMaxWindowMinutes                = ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes
 	ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes = 60
 	ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes   = 5
 )

@@ -203,7 +203,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		return
 	}
 	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(c.Request.Context())
-	projectionStartedAt := int64(0)
+	projectionStartedAt := combinedSnapshot.ProjectionStartedAt
+	if projectionStartedAt == 0 {
+		projectionStartedAt = service.ChannelMonitorRedisRouteHealthProjectionStartedAt(c.Request.Context())
+	}
 	windowIncomplete := !metricCoverage.PerformanceWindowComplete || !metricCoverage.StabilityWindowComplete
 	common.ApiSuccess(c, gin.H{
 		"generated_at":                  generatedAt,

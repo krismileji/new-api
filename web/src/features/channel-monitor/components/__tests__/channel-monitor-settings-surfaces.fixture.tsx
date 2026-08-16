@@ -168,6 +168,8 @@ const settings = {
   ],
   smart_schedule_performance_window_minutes: 60,
   smart_schedule_stability_window_minutes: 120,
+  smart_schedule_realtime_retention_minutes: 120,
+  smart_schedule_realtime_sample_limit: 20_000,
   smart_schedule_rate_limit_cooldown_seconds: 30,
   smart_schedule_control_revision: 'revision-a',
 } satisfies ChannelMonitorSettings

@@ -34,9 +34,13 @@ import {
 import { Switch } from '@/components/ui/switch'
 
 import {
+  MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+  MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
+  MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
+  MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
@@ -50,6 +54,54 @@ type ChannelMonitorSmartScheduleFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
   modelOptionsByGroup: ReadonlyMap<string, string[]>
   groupOptions: string[]
+}
+
+function ChannelMonitorSmartScheduleRealtimeStorageField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+  name:
+    | 'smartScheduleRealtimeRetentionMinutes'
+    | 'smartScheduleRealtimeSampleLimit'
+  label: string
+  description: string
+  helpKey: ChannelMonitorSettingHelpKey
+  min: number
+  max: number
+  unit: string
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name={props.name}
+      render={({ field }) => (
+        <FormItem>
+          <ChannelMonitorSettingLabel
+            label={props.label}
+            helpKey={props.helpKey}
+          />
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={props.min}
+                max={props.max}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={props.form.getFieldState(props.name).invalid}
+              />
+              <InputGroupAddon align='inline-end'>{props.unit}</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>{props.description}</FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 }
 
 function ChannelMonitorSmartScheduleWindowField(props: {
@@ -221,12 +273,12 @@ export function ChannelMonitorSmartScheduleFields(
             运行设置
           </h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            控制所有已配置分组的统计窗口、429 临时冷却和响应等待时间
+            控制所有已配置分组的统计窗口、实时样本、429 临时冷却和响应等待时间
           </p>
         </div>
         <div
           data-slot='smart-schedule-runtime-fields'
-          className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4'
+          className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3'
         >
           <ChannelMonitorSmartScheduleWindowField
             form={props.form}
@@ -234,6 +286,28 @@ export function ChannelMonitorSmartScheduleFields(
             label='性能窗口'
             description='用于首字、TPS 和业务性能评分'
             helpKey='performanceRange'
+          />
+
+          <ChannelMonitorSmartScheduleRealtimeStorageField
+            form={props.form}
+            name='smartScheduleRealtimeRetentionMinutes'
+            label='实时样本保留时间'
+            description='同时覆盖性能窗口和稳定性评分窗口'
+            helpKey='realtimeRetention'
+            min={MIN_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES}
+            max={MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES}
+            unit='分钟'
+          />
+
+          <ChannelMonitorSmartScheduleRealtimeStorageField
+            form={props.form}
+            name='smartScheduleRealtimeSampleLimit'
+            label='单路由实时样本上限'
+            description='每个渠道和模型独立计算，超出后删除最早样本'
+            helpKey='realtimeSampleLimit'
+            min={MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT}
+            max={MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT}
+            unit='条'
           />
 
           <ChannelMonitorSmartScheduleWindowField

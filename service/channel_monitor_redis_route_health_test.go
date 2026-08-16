@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -16,54 +15,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type channelMonitorRedisRouteHealthRefreshHook struct {
-	key       string
-	payload   []byte
-	writer    *redis.Client
-	mu        sync.Mutex
-	getCount  int
-	triggered bool
-}
-
-func (hook *channelMonitorRedisRouteHealthRefreshHook) BeforeProcess(
-	ctx context.Context,
-	cmd redis.Cmder,
-) (context.Context, error) {
-	if cmd.Name() != "get" || len(cmd.Args()) < 2 || fmt.Sprint(cmd.Args()[1]) != hook.key {
-		return ctx, nil
-	}
-	hook.mu.Lock()
-	defer hook.mu.Unlock()
-	hook.getCount++
-	if hook.getCount != 2 {
-		return ctx, nil
-	}
-	hook.triggered = true
-	return ctx, hook.writer.Set(ctx, hook.key, hook.payload, time.Hour).Err()
-}
-
-func (hook *channelMonitorRedisRouteHealthRefreshHook) AfterProcess(context.Context, redis.Cmder) error {
-	return nil
-}
-
-func (hook *channelMonitorRedisRouteHealthRefreshHook) BeforeProcessPipeline(
-	ctx context.Context,
-	_ []redis.Cmder,
-) (context.Context, error) {
-	return ctx, nil
-}
-
-func (hook *channelMonitorRedisRouteHealthRefreshHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
-	return nil
-}
-
-func useChannelMonitorRedisRouteHealthTestProjection(t *testing.T) (*miniredis.Miniredis, *ChannelMonitorRedisRouteHealthProjection) {
+func useChannelMonitorRedisRouteHealthTestProjection(
+	t *testing.T,
+) (*miniredis.Miniredis, *ChannelMonitorRedisRouteHealthProjection) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	projection, err := NewChannelMonitorRedisRouteHealthProjectionForClient(client)
 	require.NoError(t, err)
+	projection.settingsFn = func() model.ChannelMonitorSmartScheduleRealtimeSettings {
+		return model.ChannelMonitorSmartScheduleRealtimeSettings{
+			RetentionMinutes: 60,
+			SampleLimit:      1000,
+		}
+	}
 	return server, projection
 }
 
@@ -94,9 +60,9 @@ func TestChannelMonitorRedisRouteHealthWindowOrdersDeduplicatesAndTrims(t *testi
 	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
 	now := time.Unix(1_750_000_000, 0)
 	server.SetTime(now)
-	old := newChannelMonitorRedisRouteHealthTestEvent("old", 7, "model-a", now.Unix()-int64(time.Hour/time.Second)-1, 1)
-	latest := newChannelMonitorRedisRouteHealthTestEvent("latest", 7, "model-a", now.Unix()-10, 3)
-	middle := newChannelMonitorRedisRouteHealthTestEvent("middle", 7, "model-a", now.Unix()-20, 2)
+	old := newChannelMonitorRedisRouteHealthTestEvent("old", 7, "model-a", now.Add(-time.Hour-time.Second).Unix(), 1)
+	latest := newChannelMonitorRedisRouteHealthTestEvent("latest", 7, "model-a", now.Add(-10*time.Second).Unix(), 3)
+	middle := newChannelMonitorRedisRouteHealthTestEvent("middle", 7, "model-a", now.Add(-20*time.Second).Unix(), 2)
 	middle.RequestId = "request-raw-field"
 	middle.OtherJson = `{"raw":"field"}`
 	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{latest, old, middle, middle}))
@@ -108,31 +74,95 @@ func TestChannelMonitorRedisRouteHealthWindowOrdersDeduplicatesAndTrims(t *testi
 	assert.Equal(t, []string{"middle", "latest"}, []string{window.Samples[0].EventID, window.Samples[1].EventID})
 	assert.Equal(t, int64(2), window.Snapshot.EventCount)
 	assert.Equal(t, uint64(3), window.Snapshot.EventWatermark)
-	assert.Equal(t, now.Unix()-20, window.Snapshot.WindowStart)
-	assert.Equal(t, now.Unix()-10, window.Snapshot.WindowEnd)
-	rawState, err := projection.client.Get(context.Background(), ChannelMonitorRedisRouteHealthWindowKey(7, "model-a")).Result()
+	assert.Equal(t, now.Add(-20*time.Second).Unix(), window.Snapshot.WindowStart)
+	assert.Equal(t, now.Add(-10*time.Second).Unix(), window.Snapshot.WindowEnd)
+	assert.Equal(t, 60, window.Snapshot.RetentionMinutes)
+	assert.Equal(t, 1000, window.Snapshot.SampleLimit)
+	rawSamples, err := projection.client.ZRange(context.Background(), ChannelMonitorRedisRouteHealthWindowKey(7, "model-a"), 0, -1).Result()
 	require.NoError(t, err)
-	assert.False(t, strings.Contains(rawState, "request-raw-field"))
-	assert.False(t, strings.Contains(rawState, "raw\\\":\\\"field"))
+	assert.Len(t, rawSamples, 2)
+	assert.False(t, strings.Contains(strings.Join(rawSamples, ""), "request-raw-field"))
+	assert.False(t, strings.Contains(strings.Join(rawSamples, ""), `raw\":\"field`))
 }
 
-func TestChannelMonitorRedisRouteHealthWindowEvictsTheOldestAfterOneThousandSamples(t *testing.T) {
+func TestChannelMonitorRedisRouteHealthWindowUsesConfiguredSampleLimitAndReportsTruncation(t *testing.T) {
 	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
 	now := time.Unix(1_750_000_000, 0)
 	server.SetTime(now)
-	events := make([]model.ChannelMonitorEvent, 0, channelMonitorRedisRouteHealthSampleLimit+1)
-	for index := 0; index <= channelMonitorRedisRouteHealthSampleLimit; index++ {
+	projection.settingsFn = func() model.ChannelMonitorSmartScheduleRealtimeSettings {
+		return model.ChannelMonitorSmartScheduleRealtimeSettings{RetentionMinutes: 60, SampleLimit: 3}
+	}
+	require.NoError(t, projection.client.Set(
+		context.Background(),
+		channelMonitorRedisRouteHealthStartedAtKey,
+		now.Add(-time.Hour).Unix(),
+		0,
+	).Err())
+	events := make([]model.ChannelMonitorEvent, 0, 5)
+	for index := 0; index < 5; index++ {
 		events = append(events, newChannelMonitorRedisRouteHealthTestEvent(
-			fmt.Sprintf("event-%04d", index), 7, "model-a", now.Unix()-int64(channelMonitorRedisRouteHealthSampleLimit-index), uint64(index+1),
+			fmt.Sprintf("event-%02d", index), 7, "model-a", now.Add(time.Duration(index-5)*time.Second).Unix(), uint64(index+1),
 		))
 	}
 	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), events))
+
 	window, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
 	require.NoError(t, err)
 	require.True(t, available)
-	require.Len(t, window.Samples, channelMonitorRedisRouteHealthSampleLimit)
-	assert.Equal(t, "event-0001", window.Samples[0].EventID)
-	assert.Equal(t, "event-1000", window.Samples[len(window.Samples)-1].EventID)
+	require.Len(t, window.Samples, 3)
+	assert.Equal(t, "event-02", window.Samples[0].EventID)
+	assert.Equal(t, "event-04", window.Samples[2].EventID)
+	assert.True(t, window.Snapshot.SampleLimitTruncated)
+	assert.Equal(t, events[1].OccurredAt, window.Snapshot.SampleLimitCutoffAt)
+	assert.Equal(t, events[1].OccurredAt+1, window.Snapshot.CoverageStart)
+}
+
+func TestChannelMonitorRedisRouteHealthWindowUsesConfiguredRetention(t *testing.T) {
+	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
+	now := time.Unix(1_750_000_000, 0)
+	server.SetTime(now)
+	projection.settingsFn = func() model.ChannelMonitorSmartScheduleRealtimeSettings {
+		return model.ChannelMonitorSmartScheduleRealtimeSettings{RetentionMinutes: 120, SampleLimit: 1000}
+	}
+	require.NoError(t, projection.client.Set(
+		context.Background(),
+		channelMonitorRedisRouteHealthStartedAtKey,
+		now.Add(-2*time.Hour).Unix(),
+		0,
+	).Err())
+	event := newChannelMonitorRedisRouteHealthTestEvent("retained", 7, "model-a", now.Add(-90*time.Minute).Unix(), 1)
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+
+	window, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
+	require.NoError(t, err)
+	require.True(t, available)
+	require.Len(t, window.Samples, 1)
+	assert.Equal(t, "retained", window.Samples[0].EventID)
+	assert.Equal(t, now.Add(-2*time.Hour).Unix(), window.Snapshot.CoverageStart)
+	assert.Equal(t, 120, window.Snapshot.RetentionMinutes)
+}
+
+func TestChannelMonitorRedisRouteHealthWindowMarksRetentionIncreaseAsIncomplete(t *testing.T) {
+	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
+	now := time.Unix(1_750_000_000, 0)
+	server.SetTime(now)
+	settings := model.ChannelMonitorSmartScheduleRealtimeSettings{RetentionMinutes: 60, SampleLimit: 1000}
+	projection.settingsFn = func() model.ChannelMonitorSmartScheduleRealtimeSettings { return settings }
+	require.NoError(t, projection.client.Set(
+		context.Background(),
+		channelMonitorRedisRouteHealthStartedAtKey,
+		now.Add(-2*time.Hour).Unix(),
+		0,
+	).Err())
+	event := newChannelMonitorRedisRouteHealthTestEvent("current", 7, "model-a", now.Add(-30*time.Minute).Unix(), 1)
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+	settings.RetentionMinutes = 120
+
+	window, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
+	require.NoError(t, err)
+	require.True(t, available)
+	assert.Equal(t, now.Add(-time.Hour).Unix(), window.Snapshot.CoverageStart)
+	assert.Equal(t, 120, window.Snapshot.RetentionMinutes)
 }
 
 func TestChannelMonitorRedisRouteHealthProjectionHasNoGlobalRouteLimitAndReadsConsistently(t *testing.T) {
@@ -154,6 +184,7 @@ func TestChannelMonitorRedisRouteHealthProjectionHasNoGlobalRouteLimitAndReadsCo
 	assert.Len(t, windows, 513)
 	secondProjection, err := NewChannelMonitorRedisRouteHealthProjectionForClient(projection.client)
 	require.NoError(t, err)
+	secondProjection.settingsFn = projection.settingsFn
 	first, firstAvailable, err := projection.GetRouteHealthWindow(context.Background(), 513, "model-a")
 	require.NoError(t, err)
 	second, secondAvailable, err := secondProjection.GetRouteHealthWindow(context.Background(), 513, "model-a")
@@ -176,9 +207,7 @@ func TestChannelMonitorRedisRouteHealthProjectionPrunesExpiredHighCardinalityInd
 		})
 	}
 	require.NoError(t, projection.client.ZAdd(
-		context.Background(),
-		ChannelMonitorRedisRouteHealthIndexKey(),
-		expiredRoutes...,
+		context.Background(), ChannelMonitorRedisRouteHealthIndexKey(), expiredRoutes...,
 	).Err())
 	windows, err := projection.ListRouteHealthWindows(context.Background())
 	require.NoError(t, err)
@@ -186,25 +215,6 @@ func TestChannelMonitorRedisRouteHealthProjectionPrunesExpiredHighCardinalityInd
 	indexSize, err := projection.client.ZCard(context.Background(), ChannelMonitorRedisRouteHealthIndexKey()).Result()
 	require.NoError(t, err)
 	assert.Zero(t, indexSize)
-	require.NoError(t, projection.client.ZAdd(
-		context.Background(),
-		ChannelMonitorRedisRouteHealthIndexKey(),
-		expiredRoutes...,
-	).Err())
-
-	active := newChannelMonitorRedisRouteHealthTestEvent("active", expiredRouteCount+1, "model-a", now.Unix(), 1)
-	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{active}))
-
-	indexedRoutes, err := projection.client.ZRangeWithScores(
-		context.Background(),
-		ChannelMonitorRedisRouteHealthIndexKey(),
-		0,
-		-1,
-	).Result()
-	require.NoError(t, err)
-	require.Len(t, indexedRoutes, 1)
-	assert.Equal(t, ChannelMonitorRedisRouteHealthWindowKey(expiredRouteCount+1, "model-a"), indexedRoutes[0].Member)
-	assert.Equal(t, float64(now.Add(channelMonitorRedisRouteHealthStateTTL).UnixMilli()), indexedRoutes[0].Score)
 }
 
 func TestChannelMonitorRedisRouteHealthProjectionRemovesMissingWindowFromActiveIndex(t *testing.T) {
@@ -226,54 +236,36 @@ func TestChannelMonitorRedisRouteHealthProjectionRemovesMissingWindowFromActiveI
 	assert.Zero(t, indexSize)
 }
 
-func TestChannelMonitorRedisRouteHealthProjectionReloadsConcurrentRefreshDuringExpiryCleanup(t *testing.T) {
+func TestChannelMonitorRedisRouteHealthProjectionRemovesCorruptRouteFromActiveIndex(t *testing.T) {
 	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
 	now := time.Unix(1_750_000_000, 0)
 	server.SetTime(now)
-	redisKey := ChannelMonitorRedisRouteHealthWindowKey(7, "model-a")
-	expired := channelMonitorRedisRouteHealthState{
-		Version:   channelMonitorRedisRouteHealthVersion,
-		ChannelID: 7,
-		ModelName: "model-a",
-		Window: ChannelMonitorRedisRouteHealthWindow{Samples: []ChannelMonitorRedisRouteHealthSample{
-			channelMonitorRedisRouteHealthSampleFromEvent(newChannelMonitorRedisRouteHealthTestEvent(
-				"expired", 7, "model-a", now.Add(-time.Hour-time.Second).Unix(), 1,
-			)),
-		}},
-	}
-	refreshed := channelMonitorRedisRouteHealthState{
-		Version:   channelMonitorRedisRouteHealthVersion,
-		ChannelID: 7,
-		ModelName: "model-a",
-		Window: ChannelMonitorRedisRouteHealthWindow{Samples: []ChannelMonitorRedisRouteHealthSample{
-			channelMonitorRedisRouteHealthSampleFromEvent(newChannelMonitorRedisRouteHealthTestEvent(
-				"refreshed", 7, "model-a", now.Unix(), 2,
-			)),
-		}},
-	}
-	expiredPayload, err := common.Marshal(expired)
-	require.NoError(t, err)
-	refreshedPayload, err := common.Marshal(refreshed)
-	require.NoError(t, err)
-	require.NoError(t, projection.client.Set(context.Background(), redisKey, expiredPayload, time.Hour).Err())
+	corruptKey := ChannelMonitorRedisRouteHealthWindowKey(99, "corrupt-model")
+	metaKey := channelMonitorRedisRouteHealthMetaKeyFromWindowKey(corruptKey)
+	require.NoError(t, projection.client.ZAdd(
+		context.Background(),
+		corruptKey,
+		&redis.Z{Score: float64(now.Unix()), Member: `{}`},
+	).Err())
+	require.NoError(t, projection.client.HSet(context.Background(), metaKey, map[string]interface{}{
+		"channel_id": "invalid",
+		"model_name": "corrupt-model",
+	}).Err())
 	require.NoError(t, projection.client.ZAdd(
 		context.Background(),
 		ChannelMonitorRedisRouteHealthIndexKey(),
-		&redis.Z{Score: float64(now.Add(time.Hour).UnixMilli()), Member: redisKey},
+		&redis.Z{Score: float64(now.Add(time.Hour).UnixMilli()), Member: corruptKey},
 	).Err())
-	writer := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { _ = writer.Close() })
-	hook := &channelMonitorRedisRouteHealthRefreshHook{
-		key: redisKey, payload: refreshedPayload, writer: writer,
-	}
-	projection.client.AddHook(hook)
 
-	window, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
+	windows, err := projection.ListRouteHealthWindows(context.Background())
 	require.NoError(t, err)
-	require.True(t, hook.triggered)
-	require.True(t, available)
-	require.Len(t, window.Samples, 1)
-	assert.Equal(t, "refreshed", window.Samples[0].EventID)
+	assert.Empty(t, windows)
+	existingKeys, err := projection.client.Exists(context.Background(), corruptKey, metaKey).Result()
+	require.NoError(t, err)
+	assert.Zero(t, existingKeys)
+	indexSize, err := projection.client.ZCard(context.Background(), ChannelMonitorRedisRouteHealthIndexKey()).Result()
+	require.NoError(t, err)
+	assert.Zero(t, indexSize)
 }
 
 func TestChannelMonitorRedisRouteHealthProjectionConcurrentWritesConverge(t *testing.T) {

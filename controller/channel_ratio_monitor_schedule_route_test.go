@@ -43,6 +43,8 @@ func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(
 	settings := channelMonitorSettings{
 		SmartSchedulePerformanceWindowMinutes: 60,
 		SmartScheduleStabilityWindowMinutes:   60,
+		SmartScheduleRealtimeRetentionMinutes: 60,
+		SmartScheduleRealtimeSampleLimit:      1000,
 	}
 	coverageStart := generatedAt - 30*60
 	coverage := channelSmartScheduleRealtimeMetricCoverage(
@@ -58,6 +60,8 @@ func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(
 	assert.Equal(t, generatedAt-1, coverage.AggregatedThrough)
 	assert.False(t, coverage.PerformanceWindowComplete)
 	assert.False(t, coverage.StabilityWindowComplete)
+	assert.Equal(t, 60, coverage.RealtimeRetentionMinutes)
+	assert.Equal(t, 1000, coverage.RealtimeSampleLimit)
 }
 
 func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) {
@@ -928,13 +932,13 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	require.NotNil(t, response.Data.MetricCoverage)
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
 	assert.Equal(t, minuteStart+2, response.Data.DataCutoffAt)
-	assert.Zero(t, response.Data.ProjectionStartedAt)
+	assert.NotZero(t, response.Data.ProjectionStartedAt)
 	assert.NotZero(t, response.Data.EventWatermark)
-	assert.False(t, response.Data.RealtimeDegraded)
+	assert.True(t, response.Data.RealtimeDegraded)
 	assert.Equal(t, response.Data.DataCutoffAt, response.Data.MetricCoverage.AggregatedThrough)
 	assert.Greater(t, response.Data.MetricCoverage.AggregatedFrom, int64(0))
-	assert.True(t, response.Data.MetricCoverage.PerformanceWindowComplete)
-	assert.True(t, response.Data.MetricCoverage.StabilityWindowComplete)
+	assert.False(t, response.Data.MetricCoverage.PerformanceWindowComplete)
+	assert.False(t, response.Data.MetricCoverage.StabilityWindowComplete)
 	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.PerformanceWindowStart)
 	assert.Equal(t, response.Data.GeneratedAt-60*60, response.Data.MetricCoverage.StabilityWindowStart)
 	require.Len(t, response.Data.PerformanceItems, 1)

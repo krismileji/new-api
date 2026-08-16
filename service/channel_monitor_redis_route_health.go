@@ -16,19 +16,90 @@ import (
 )
 
 const (
-	channelMonitorRedisRouteHealthVersion      = 1
-	channelMonitorRedisRouteHealthRetention    = time.Hour
-	channelMonitorRedisRouteHealthSampleLimit  = 1000
-	channelMonitorRedisRouteHealthWriteRetries = 128
-	channelMonitorRedisRouteHealthStateTTL     = channelMonitorRedisRouteHealthRetention
-	channelMonitorRedisRouteHealthIndexKey     = ChannelMonitorRedisRouteProjectionPrefix + "health:index"
+	channelMonitorRedisRouteHealthSamplesSuffix = ":health:v2:samples"
+	channelMonitorRedisRouteHealthMetaSuffix    = ":health:v2:meta"
+	channelMonitorRedisRouteHealthIndexKey      = ChannelMonitorRedisRouteProjectionPrefix + "health:index:v2"
+	channelMonitorRedisRouteHealthStartedAtKey  = ChannelMonitorRedisRouteProjectionPrefix + "health:started_at:v2"
 )
+
+var channelMonitorRedisRouteHealthWriteScript = redis.NewScript(`
+local samples_key = KEYS[1]
+local meta_key = KEYS[2]
+local index_key = KEYS[3]
+local started_at_key = KEYS[4]
+local now = tonumber(ARGV[1])
+local cutoff = tonumber(ARGV[2])
+local sample_limit = tonumber(ARGV[3])
+local ttl_seconds = tonumber(ARGV[4])
+local index_expires_at = tonumber(ARGV[5])
+local channel_id = ARGV[6]
+local model_name = ARGV[7]
+local retention_minutes = tonumber(ARGV[8])
+local index_member = ARGV[9]
+
+redis.call('SETNX', started_at_key, tostring(now))
+local projection_started_at = tonumber(redis.call('GET', started_at_key) or tostring(now))
+local previous_retention = tonumber(redis.call('HGET', meta_key, 'retention_minutes') or '0')
+local coverage_floor = tonumber(redis.call('HGET', meta_key, 'coverage_floor') or '0')
+local limit_cutoff_at = tonumber(redis.call('HGET', meta_key, 'limit_cutoff_at') or '0')
+
+if previous_retention > 0 and retention_minutes > previous_retention then
+  local previous_cutoff = now - previous_retention * 60
+  if previous_cutoff > coverage_floor then
+    coverage_floor = previous_cutoff
+  end
+end
+if coverage_floor < cutoff then
+  coverage_floor = 0
+end
+if limit_cutoff_at < cutoff then
+  limit_cutoff_at = 0
+end
+
+redis.call('ZREMRANGEBYSCORE', samples_key, '-inf', '(' .. tostring(cutoff))
+for index = 10, #ARGV, 2 do
+  redis.call('ZADD', samples_key, tonumber(ARGV[index]), ARGV[index + 1])
+end
+
+local sample_count = redis.call('ZCARD', samples_key)
+if sample_count > sample_limit then
+  local excess = sample_count - sample_limit
+  local removed = redis.call('ZRANGE', samples_key, 0, excess - 1, 'WITHSCORES')
+  for index = 2, #removed, 2 do
+    local removed_at = tonumber(removed[index])
+    if removed_at > limit_cutoff_at then
+      limit_cutoff_at = removed_at
+    end
+  end
+  redis.call('ZREMRANGEBYRANK', samples_key, 0, excess - 1)
+end
+
+if redis.call('ZCARD', samples_key) == 0 then
+  redis.call('DEL', samples_key)
+  redis.call('DEL', meta_key)
+  redis.call('ZREM', index_key, index_member)
+  redis.call('ZREMRANGEBYSCORE', index_key, '-inf', tostring(now * 1000))
+  return {limit_cutoff_at, coverage_floor, projection_started_at}
+end
+
+redis.call('HSET', meta_key,
+  'channel_id', channel_id,
+  'model_name', model_name,
+  'retention_minutes', tostring(retention_minutes),
+  'sample_limit', tostring(sample_limit),
+  'coverage_floor', tostring(coverage_floor),
+  'limit_cutoff_at', tostring(limit_cutoff_at),
+  'projection_started_at', tostring(projection_started_at),
+  'updated_at', tostring(now))
+redis.call('EXPIRE', samples_key, ttl_seconds)
+redis.call('EXPIRE', meta_key, ttl_seconds)
+redis.call('ZREMRANGEBYSCORE', index_key, '-inf', tostring(now * 1000))
+redis.call('ZADD', index_key, index_expires_at, index_member)
+return {limit_cutoff_at, coverage_floor, projection_started_at}
+`)
 
 var ErrChannelMonitorRedisRouteHealthUnavailable = errors.New("渠道监控 Redis 路由健康窗口不可用")
 
-// ChannelMonitorRedisRouteHealthSample is the compact scheduling subset of a
-// channel monitor event. Raw request, token, cost and extension fields are
-// deliberately excluded from the shared Redis window.
 type ChannelMonitorRedisRouteHealthSample struct {
 	EventID                   string                           `json:"event_id"`
 	EventSequence             uint64                           `json:"event_sequence"`
@@ -50,9 +121,6 @@ type ChannelMonitorRedisRouteHealthSample struct {
 	AttemptDurationMs         *int64                           `json:"attempt_duration_ms,omitempty"`
 }
 
-// ChannelMonitorRedisRouteHealthSnapshot is the shared, query-ready summary
-// used by scheduling. It intentionally mirrors the scheduling-relevant part
-// of the local realtime snapshot without carrying complete events.
 type ChannelMonitorRedisRouteHealthSnapshot struct {
 	ChannelID             int                                       `json:"channel_id"`
 	ModelName             string                                    `json:"model"`
@@ -76,6 +144,11 @@ type ChannelMonitorRedisRouteHealthSnapshot struct {
 	WindowStart           int64                                     `json:"window_start"`
 	WindowEnd             int64                                     `json:"window_end"`
 	CoverageStart         int64                                     `json:"coverage_start"`
+	ProjectionStartedAt   int64                                     `json:"projection_started_at"`
+	RetentionMinutes      int                                       `json:"retention_minutes"`
+	SampleLimit           int                                       `json:"sample_limit"`
+	SampleLimitTruncated  bool                                      `json:"sample_limit_truncated"`
+	SampleLimitCutoffAt   int64                                     `json:"sample_limit_cutoff_at"`
 	DataCutoffAt          int64                                     `json:"data_cutoff_at"`
 	ProcessedAt           int64                                     `json:"processed_at"`
 	EventWatermark        uint64                                    `json:"event_watermark"`
@@ -86,32 +159,31 @@ type ChannelMonitorRedisRouteHealthWindow struct {
 	Samples  []ChannelMonitorRedisRouteHealthSample `json:"samples"`
 }
 
-type channelMonitorRedisRouteHealthState struct {
-	Version   int                                  `json:"version"`
-	ChannelID int                                  `json:"channel_id"`
-	ModelName string                               `json:"model"`
-	Window    ChannelMonitorRedisRouteHealthWindow `json:"window"`
-}
-
 type channelMonitorRedisRouteHealthRouteKey struct {
 	channelID int
 	modelName string
 }
 
 type ChannelMonitorRedisRouteHealthProjection struct {
-	client   *redis.Client
-	now      func(context.Context) (time.Time, error)
-	maxRetry int
+	client     *redis.Client
+	now        func(context.Context) (time.Time, error)
+	settingsFn func() model.ChannelMonitorSmartScheduleRealtimeSettings
 }
 
 var _ ChannelMonitorRedisEventHandler = (*ChannelMonitorRedisRouteHealthProjection)(nil)
 
-// ChannelMonitorRedisRouteHealthWindowKey returns the stable per-route key.
-// There is no global route cardinality cap; the index is a bounded sorted set
-// whose scores track the per-route window expiry time.
 func ChannelMonitorRedisRouteHealthWindowKey(channelID int, modelName string) string {
 	identity := strconv.Itoa(channelID) + ":" + ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
-	return ChannelMonitorRedisProjectionKeyForRoute(identity)
+	return ChannelMonitorRedisProjectionKeyForRoute(identity) + channelMonitorRedisRouteHealthSamplesSuffix
+}
+
+func channelMonitorRedisRouteHealthMetaKey(channelID int, modelName string) string {
+	identity := strconv.Itoa(channelID) + ":" + ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	return ChannelMonitorRedisProjectionKeyForRoute(identity) + channelMonitorRedisRouteHealthMetaSuffix
+}
+
+func channelMonitorRedisRouteHealthMetaKeyFromWindowKey(windowKey string) string {
+	return strings.TrimSuffix(windowKey, channelMonitorRedisRouteHealthSamplesSuffix) + channelMonitorRedisRouteHealthMetaSuffix
 }
 
 func ChannelMonitorRedisRouteHealthIndexKey() string {
@@ -119,18 +191,37 @@ func ChannelMonitorRedisRouteHealthIndexKey() string {
 }
 
 func ChannelMonitorRedisRouteHealthCoverageStart() int64 {
-	return time.Now().Add(-channelMonitorRedisRouteHealthRetention).Unix()
+	settings := model.GetChannelMonitorSmartScheduleRealtimeSettings()
+	coverageStart := time.Now().Add(-time.Duration(settings.RetentionMinutes) * time.Minute).Unix()
+	if projectionStartedAt := ChannelMonitorRedisRouteHealthProjectionStartedAt(context.Background()); projectionStartedAt > coverageStart {
+		coverageStart = projectionStartedAt
+	}
+	return coverageStart
+}
+
+func ChannelMonitorRedisRouteHealthProjectionStartedAt(ctx context.Context) int64 {
+	if !common.RedisEnabled || common.RDB == nil {
+		return 0
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	value, err := common.RDB.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey).Int64()
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func NewChannelMonitorRedisRouteHealthProjection() (*ChannelMonitorRedisRouteHealthProjection, error) {
 	if !common.RedisEnabled || common.RDB == nil {
 		return nil, ErrChannelMonitorRedisRouteHealthUnavailable
 	}
-	return newChannelMonitorRedisRouteHealthProjection(common.RDB, nil, 0)
+	return newChannelMonitorRedisRouteHealthProjection(common.RDB, nil)
 }
 
 func NewChannelMonitorRedisRouteHealthProjectionForClient(client *redis.Client) (*ChannelMonitorRedisRouteHealthProjection, error) {
-	return newChannelMonitorRedisRouteHealthProjection(client, nil, 0)
+	return newChannelMonitorRedisRouteHealthProjection(client, nil)
 }
 
 func GetChannelMonitorRedisRouteHealthWindow(
@@ -148,15 +239,14 @@ func GetChannelMonitorRedisRouteHealthWindow(
 func newChannelMonitorRedisRouteHealthProjection(
 	client *redis.Client,
 	now func(context.Context) (time.Time, error),
-	maxRetry int,
 ) (*ChannelMonitorRedisRouteHealthProjection, error) {
 	if client == nil {
 		return nil, ErrChannelMonitorRedisRouteHealthUnavailable
 	}
-	if maxRetry <= 0 {
-		maxRetry = channelMonitorRedisRouteHealthWriteRetries
+	projection := &ChannelMonitorRedisRouteHealthProjection{
+		client:     client,
+		settingsFn: model.GetChannelMonitorSmartScheduleRealtimeSettings,
 	}
-	projection := &ChannelMonitorRedisRouteHealthProjection{client: client, maxRetry: maxRetry}
 	if now == nil {
 		projection.now = func(ctx context.Context) (time.Time, error) {
 			return client.Time(ctx).Result()
@@ -167,9 +257,6 @@ func newChannelMonitorRedisRouteHealthProjection(
 	return projection, nil
 }
 
-// HandleChannelMonitorEvents implements the REDIS-03 single logical
-// aggregator handler. Each route is committed with WATCH/MULTI so concurrent
-// writers converge on the same deduplicated, ordered window.
 func (projection *ChannelMonitorRedisRouteHealthProjection) HandleChannelMonitorEvents(
 	ctx context.Context,
 	events []model.ChannelMonitorEvent,
@@ -204,7 +291,7 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) HandleChannelMonitor
 	if err != nil {
 		return err
 	}
-
+	settings := projection.settingsFn()
 	keys := make([]channelMonitorRedisRouteHealthRouteKey, 0, len(grouped))
 	for key := range grouped {
 		keys = append(keys, key)
@@ -216,7 +303,7 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) HandleChannelMonitor
 		return keys[i].channelID < keys[j].channelID
 	})
 	for _, key := range keys {
-		if err := projection.updateRoute(ctx, key, grouped[key], now); err != nil {
+		if err := projection.updateRoute(ctx, key, grouped[key], now, settings); err != nil {
 			return err
 		}
 	}
@@ -235,85 +322,36 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) updateRoute(
 	key channelMonitorRedisRouteHealthRouteKey,
 	incoming []ChannelMonitorRedisRouteHealthSample,
 	now time.Time,
+	settings model.ChannelMonitorSmartScheduleRealtimeSettings,
 ) error {
-	redisKey := ChannelMonitorRedisRouteHealthWindowKey(key.channelID, key.modelName)
-	cutoff := now.Unix() - int64(channelMonitorRedisRouteHealthRetention/time.Second)
-	indexExpiryCutoff := strconv.FormatInt(now.UnixMilli(), 10)
-	indexExpiresAt := now.Add(channelMonitorRedisRouteHealthStateTTL).UnixMilli()
-	for attempt := 0; attempt < projection.maxRetry; attempt++ {
-		err := projection.client.Watch(ctx, func(tx *redis.Tx) error {
-			stored, err := tx.Get(ctx, redisKey).Bytes()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return err
-			}
-			state := channelMonitorRedisRouteHealthState{
-				Version:   channelMonitorRedisRouteHealthVersion,
-				ChannelID: key.channelID,
-				ModelName: key.modelName,
-			}
-			if len(stored) > 0 {
-				if err := common.Unmarshal(stored, &state); err != nil {
-					return fmt.Errorf("解析 Redis 路由健康窗口失败: %w", err)
-				}
-				if state.Version != channelMonitorRedisRouteHealthVersion ||
-					state.ChannelID != key.channelID || state.ModelName != key.modelName {
-					return errors.New("Redis 路由健康窗口版本或路由标识无效")
-				}
-			}
-
-			byEventID := make(map[string]ChannelMonitorRedisRouteHealthSample, len(state.Window.Samples)+len(incoming))
-			for _, sample := range state.Window.Samples {
-				byEventID[sample.EventID] = sample
-			}
-			for _, sample := range incoming {
-				if existing, exists := byEventID[sample.EventID]; !exists || channelMonitorRedisRouteHealthSampleCanonicalLess(sample, existing) {
-					byEventID[sample.EventID] = sample
-				}
-			}
-			samples := make([]ChannelMonitorRedisRouteHealthSample, 0, len(byEventID))
-			for _, sample := range byEventID {
-				if sample.OccurredAt >= cutoff {
-					samples = append(samples, sample)
-				}
-			}
-			sortChannelMonitorRedisRouteHealthSamples(samples)
-			if len(samples) > channelMonitorRedisRouteHealthSampleLimit {
-				samples = samples[len(samples)-channelMonitorRedisRouteHealthSampleLimit:]
-			}
-			if len(samples) == 0 {
-				_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-					pipe.Del(ctx, redisKey)
-					pipe.ZRemRangeByScore(ctx, channelMonitorRedisRouteHealthIndexKey, "-inf", indexExpiryCutoff)
-					pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, redisKey)
-					return nil
-				})
-				return err
-			}
-			state.Window.Samples = samples
-			state.Window.Snapshot = buildChannelMonitorRedisRouteHealthSnapshot(
-				key.channelID, key.modelName, samples, cutoff, now.Unix(),
-			)
-			payload, err := common.Marshal(state)
-			if err != nil {
-				return err
-			}
-			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.Set(ctx, redisKey, payload, channelMonitorRedisRouteHealthStateTTL)
-				pipe.ZRemRangeByScore(ctx, channelMonitorRedisRouteHealthIndexKey, "-inf", indexExpiryCutoff)
-				pipe.ZAdd(ctx, channelMonitorRedisRouteHealthIndexKey, &redis.Z{
-					Score:  float64(indexExpiresAt),
-					Member: redisKey,
-				})
-				pipe.Expire(ctx, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStateTTL)
-				return nil
-			})
-			return err
-		}, redisKey)
-		if !errors.Is(err, redis.TxFailedErr) {
+	windowKey := ChannelMonitorRedisRouteHealthWindowKey(key.channelID, key.modelName)
+	metaKey := channelMonitorRedisRouteHealthMetaKey(key.channelID, key.modelName)
+	retention := time.Duration(settings.RetentionMinutes) * time.Minute
+	args := []interface{}{
+		now.Unix(),
+		now.Add(-retention).Unix(),
+		settings.SampleLimit,
+		int64(retention / time.Second),
+		now.Add(retention).UnixMilli(),
+		key.channelID,
+		key.modelName,
+		settings.RetentionMinutes,
+		windowKey,
+	}
+	for _, sample := range incoming {
+		payload, err := common.Marshal(sample)
+		if err != nil {
 			return err
 		}
+		args = append(args, sample.OccurredAt, string(payload))
 	}
-	return fmt.Errorf("Redis 路由健康窗口并发更新重试次数耗尽: %s", redisKey)
+	_, err := channelMonitorRedisRouteHealthWriteScript.Run(
+		ctx,
+		projection.client,
+		[]string{windowKey, metaKey, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStartedAtKey},
+		args...,
+	).Result()
+	return err
 }
 
 func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow(
@@ -327,90 +365,157 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	if channelID <= 0 || modelName == "" {
+		return ChannelMonitorRedisRouteHealthWindow{}, false, nil
+	}
 	now, err := projection.now(ctx)
 	if err != nil {
 		return ChannelMonitorRedisRouteHealthWindow{}, false, err
 	}
-	redisKey := ChannelMonitorRedisRouteHealthWindowKey(channelID, modelName)
-	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
-	for attempt := 0; attempt < projection.maxRetry; attempt++ {
-		payload, err := projection.client.Get(ctx, redisKey).Bytes()
-		if errors.Is(err, redis.Nil) {
-			if removeErr := projection.removeMissingRouteHealthIndexEntry(ctx, redisKey); removeErr != nil {
-				return ChannelMonitorRedisRouteHealthWindow{}, false, removeErr
-			}
-			return ChannelMonitorRedisRouteHealthWindow{}, false, nil
+	windowKey := ChannelMonitorRedisRouteHealthWindowKey(channelID, modelName)
+	metaKey := channelMonitorRedisRouteHealthMetaKey(channelID, modelName)
+	var metaCommand *redis.StringStringMapCmd
+	var samplesCommand *redis.ZSliceCmd
+	var startedAtCommand *redis.StringCmd
+	_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		metaCommand = pipe.HGetAll(ctx, metaKey)
+		samplesCommand = pipe.ZRangeWithScores(ctx, windowKey, 0, -1)
+		startedAtCommand = pipe.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey)
+		return nil
+	})
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return ChannelMonitorRedisRouteHealthWindow{}, false, err
+	}
+	meta, err := metaCommand.Result()
+	if err != nil {
+		return ChannelMonitorRedisRouteHealthWindow{}, false, err
+	}
+	stored, err := samplesCommand.Result()
+	if err != nil {
+		return ChannelMonitorRedisRouteHealthWindow{}, false, err
+	}
+	if len(stored) == 0 {
+		if removeErr := projection.removeMissingRouteHealthIndexEntry(ctx, windowKey); removeErr != nil {
+			return ChannelMonitorRedisRouteHealthWindow{}, false, removeErr
 		}
+		return ChannelMonitorRedisRouteHealthWindow{}, false, nil
+	}
+	if meta["channel_id"] != strconv.Itoa(channelID) || meta["model_name"] != modelName {
+		return ChannelMonitorRedisRouteHealthWindow{}, false, errors.New("Redis 路由健康窗口标识无效")
+	}
+	settings := projection.settingsFn()
+	cutoff := now.Add(-time.Duration(settings.RetentionMinutes) * time.Minute).Unix()
+	projectionStartedAt, _ := startedAtCommand.Int64()
+	if projectionStartedAt <= 0 {
+		projectionStartedAt, _ = strconv.ParseInt(meta["projection_started_at"], 10, 64)
+	}
+	previousRetention, _ := strconv.Atoi(meta["retention_minutes"])
+	coverageFloor, _ := strconv.ParseInt(meta["coverage_floor"], 10, 64)
+	if previousRetention > 0 && settings.RetentionMinutes > previousRetention {
+		coverageFloor = max(coverageFloor, now.Add(-time.Duration(previousRetention)*time.Minute).Unix())
+	}
+	if coverageFloor < cutoff {
+		coverageFloor = 0
+	}
+	limitCutoffAt, _ := strconv.ParseInt(meta["limit_cutoff_at"], 10, 64)
+	if limitCutoffAt < cutoff {
+		limitCutoffAt = 0
+	}
+
+	type storedSample struct {
+		member string
+		sample ChannelMonitorRedisRouteHealthSample
+	}
+	byEventID := make(map[string]storedSample, len(stored))
+	removeMembers := make([]interface{}, 0)
+	for _, item := range stored {
+		member, ok := item.Member.(string)
+		if !ok {
+			return ChannelMonitorRedisRouteHealthWindow{}, false, errors.New("Redis 路由健康样本格式无效")
+		}
+		var sample ChannelMonitorRedisRouteHealthSample
+		if err := common.Unmarshal([]byte(member), &sample); err != nil {
+			return ChannelMonitorRedisRouteHealthWindow{}, false, fmt.Errorf("解析 Redis 路由健康样本失败: %w", err)
+		}
+		if sample.OccurredAt < cutoff {
+			removeMembers = append(removeMembers, member)
+			continue
+		}
+		candidate := storedSample{member: member, sample: sample}
+		if existing, exists := byEventID[sample.EventID]; exists {
+			if channelMonitorRedisRouteHealthSampleCanonicalLess(sample, existing.sample) {
+				removeMembers = append(removeMembers, existing.member)
+				byEventID[sample.EventID] = candidate
+			} else {
+				removeMembers = append(removeMembers, member)
+			}
+			continue
+		}
+		byEventID[sample.EventID] = candidate
+	}
+	ordered := make([]storedSample, 0, len(byEventID))
+	for _, item := range byEventID {
+		ordered = append(ordered, item)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return channelMonitorRedisRouteHealthSampleCanonicalLess(ordered[i].sample, ordered[j].sample)
+	})
+	if len(ordered) > settings.SampleLimit {
+		excess := len(ordered) - settings.SampleLimit
+		for _, item := range ordered[:excess] {
+			removeMembers = append(removeMembers, item.member)
+			limitCutoffAt = max(limitCutoffAt, item.sample.OccurredAt)
+		}
+		ordered = ordered[excess:]
+	}
+	if len(ordered) == 0 {
+		_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, windowKey, metaKey)
+			pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, windowKey)
+			return nil
+		})
+		return ChannelMonitorRedisRouteHealthWindow{}, false, err
+	}
+	if len(removeMembers) > 0 || previousRetention != settings.RetentionMinutes {
+		_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			if len(removeMembers) > 0 {
+				pipe.ZRem(ctx, windowKey, removeMembers...)
+			}
+			pipe.HSet(ctx, metaKey, map[string]interface{}{
+				"retention_minutes": settings.RetentionMinutes,
+				"sample_limit":      settings.SampleLimit,
+				"coverage_floor":    coverageFloor,
+				"limit_cutoff_at":   limitCutoffAt,
+			})
+			return nil
+		})
 		if err != nil {
 			return ChannelMonitorRedisRouteHealthWindow{}, false, err
 		}
-		var state channelMonitorRedisRouteHealthState
-		if err := common.Unmarshal(payload, &state); err != nil {
-			return ChannelMonitorRedisRouteHealthWindow{}, false, fmt.Errorf("解析 Redis 路由健康窗口失败: %w", err)
-		}
-		if state.Version != channelMonitorRedisRouteHealthVersion || state.ChannelID != channelID {
-			return ChannelMonitorRedisRouteHealthWindow{}, false, errors.New("Redis 路由健康窗口版本或路由标识无效")
-		}
-		if state.ModelName != modelName {
-			return ChannelMonitorRedisRouteHealthWindow{}, false, errors.New("Redis 路由健康窗口模型标识不一致")
-		}
-		cutoff := now.Unix() - int64(channelMonitorRedisRouteHealthRetention/time.Second)
-		samples := make([]ChannelMonitorRedisRouteHealthSample, 0, len(state.Window.Samples))
-		for _, sample := range state.Window.Samples {
-			if sample.OccurredAt >= cutoff {
-				samples = append(samples, sample)
-			}
-		}
-		sortChannelMonitorRedisRouteHealthSamples(samples)
-		if len(samples) > channelMonitorRedisRouteHealthSampleLimit {
-			samples = samples[len(samples)-channelMonitorRedisRouteHealthSampleLimit:]
-		}
-		if len(samples) > 0 {
-			return ChannelMonitorRedisRouteHealthWindow{
-				Samples:  samples,
-				Snapshot: buildChannelMonitorRedisRouteHealthSnapshot(channelID, modelName, samples, cutoff, now.Unix()),
-			}, true, nil
-		}
-		deleted := false
-		err = projection.client.Watch(ctx, func(tx *redis.Tx) error {
-			currentPayload, getErr := tx.Get(ctx, redisKey).Bytes()
-			if errors.Is(getErr, redis.Nil) {
-				_, getErr = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-					pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, redisKey)
-					return nil
-				})
-				return getErr
-			}
-			if getErr != nil {
-				return getErr
-			}
-			if string(currentPayload) != string(payload) {
-				return redis.TxFailedErr
-			}
-			_, getErr = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.Del(ctx, redisKey)
-				pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, redisKey)
-				return nil
-			})
-			if getErr == nil {
-				deleted = true
-			}
-			return getErr
-		}, redisKey)
-		if err == nil && deleted {
-			return ChannelMonitorRedisRouteHealthWindow{}, false, nil
-		}
-		// A concurrent writer can make WATCH return without an explicit error
-		// in some go-redis versions. Re-read instead of reporting a transient
-		// empty window.
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, redis.TxFailedErr) {
-			return ChannelMonitorRedisRouteHealthWindow{}, false, err
-		}
 	}
-	return ChannelMonitorRedisRouteHealthWindow{}, false, fmt.Errorf("Redis 路由健康窗口并发清理重试次数耗尽: %s", redisKey)
+	samples := make([]ChannelMonitorRedisRouteHealthSample, len(ordered))
+	for index, item := range ordered {
+		samples[index] = item.sample
+	}
+	coverageStart := max(cutoff, projectionStartedAt)
+	coverageStart = max(coverageStart, coverageFloor)
+	if limitCutoffAt >= cutoff {
+		coverageStart = max(coverageStart, limitCutoffAt+1)
+	}
+	return ChannelMonitorRedisRouteHealthWindow{
+		Samples: samples,
+		Snapshot: buildChannelMonitorRedisRouteHealthSnapshot(
+			channelID,
+			modelName,
+			samples,
+			coverageStart,
+			now.Unix(),
+			projectionStartedAt,
+			settings,
+			limitCutoffAt,
+		),
+	}, true, nil
 }
 
 func (projection *ChannelMonitorRedisRouteHealthProjection) GetSnapshot(
@@ -455,28 +560,25 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) ListRouteHealthWindo
 	sort.Strings(keys)
 	result := make([]ChannelMonitorRedisRouteHealthWindow, 0, len(keys))
 	for _, key := range keys {
-		payload, getErr := projection.client.Get(ctx, key).Bytes()
-		if errors.Is(getErr, redis.Nil) {
-			if removeErr := projection.removeMissingRouteHealthIndexEntry(ctx, key); removeErr != nil {
+		meta, getErr := projection.client.HGetAll(ctx, channelMonitorRedisRouteHealthMetaKeyFromWindowKey(key)).Result()
+		if getErr != nil {
+			return nil, getErr
+		}
+		channelID, parseErr := strconv.Atoi(meta["channel_id"])
+		modelName := meta["model_name"]
+		if parseErr != nil || channelID <= 0 || modelName == "" {
+			if removeErr := projection.removeCorruptRouteHealthIndexEntry(ctx, key); removeErr != nil {
 				return nil, removeErr
 			}
 			continue
 		}
+		window, available, getErr := projection.GetRouteHealthWindow(ctx, channelID, modelName)
 		if getErr != nil {
 			return nil, getErr
 		}
-		var state channelMonitorRedisRouteHealthState
-		if err := common.Unmarshal(payload, &state); err != nil {
-			return nil, err
+		if available {
+			result = append(result, window)
 		}
-		window, available, getErr := projection.GetRouteHealthWindow(ctx, state.ChannelID, state.ModelName)
-		if getErr != nil {
-			return nil, getErr
-		}
-		if !available {
-			continue
-		}
-		result = append(result, window)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Snapshot.ModelName != result[j].Snapshot.ModelName {
@@ -489,25 +591,30 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) ListRouteHealthWindo
 
 func (projection *ChannelMonitorRedisRouteHealthProjection) removeMissingRouteHealthIndexEntry(
 	ctx context.Context,
-	redisKey string,
+	windowKey string,
 ) error {
-	for attempt := 0; attempt < projection.maxRetry; attempt++ {
-		err := projection.client.Watch(ctx, func(tx *redis.Tx) error {
-			exists, err := tx.Exists(ctx, redisKey).Result()
-			if err != nil || exists > 0 {
-				return err
-			}
-			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, redisKey)
-				return nil
-			})
-			return err
-		}, redisKey)
-		if !errors.Is(err, redis.TxFailedErr) {
-			return err
-		}
+	exists, err := projection.client.Exists(ctx, windowKey).Result()
+	if err != nil || exists > 0 {
+		return err
 	}
-	return fmt.Errorf("Redis 路由健康索引并发清理重试次数耗尽: %s", redisKey)
+	_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, channelMonitorRedisRouteHealthMetaKeyFromWindowKey(windowKey))
+		pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, windowKey)
+		return nil
+	})
+	return err
+}
+
+func (projection *ChannelMonitorRedisRouteHealthProjection) removeCorruptRouteHealthIndexEntry(
+	ctx context.Context,
+	windowKey string,
+) error {
+	_, err := projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, windowKey, channelMonitorRedisRouteHealthMetaKeyFromWindowKey(windowKey))
+		pipe.ZRem(ctx, channelMonitorRedisRouteHealthIndexKey, windowKey)
+		return nil
+	})
+	return err
 }
 
 func channelMonitorRedisRouteHealthSampleFromEvent(event model.ChannelMonitorEvent) ChannelMonitorRedisRouteHealthSample {
@@ -556,36 +663,30 @@ func channelMonitorRedisRouteHealthSampleCanonicalLess(
 	if candidate.EventID != current.EventID {
 		return candidate.EventID < current.EventID
 	}
-	// Duplicate IDs should normally carry identical data. A serialized tie
-	// breaker keeps malformed duplicates convergent across concurrent writers.
 	candidatePayload, _ := common.Marshal(candidate)
 	currentPayload, _ := common.Marshal(current)
 	return string(candidatePayload) < string(currentPayload)
-}
-
-func sortChannelMonitorRedisRouteHealthSamples(samples []ChannelMonitorRedisRouteHealthSample) {
-	sort.SliceStable(samples, func(i, j int) bool {
-		left, right := samples[i], samples[j]
-		if left.OccurredAt != right.OccurredAt {
-			return left.OccurredAt < right.OccurredAt
-		}
-		if left.EventSequence != right.EventSequence {
-			return left.EventSequence < right.EventSequence
-		}
-		return left.EventID < right.EventID
-	})
 }
 
 func buildChannelMonitorRedisRouteHealthSnapshot(
 	channelID int,
 	modelName string,
 	samples []ChannelMonitorRedisRouteHealthSample,
-	cutoff int64,
+	coverageStart int64,
 	processedAt int64,
+	projectionStartedAt int64,
+	settings model.ChannelMonitorSmartScheduleRealtimeSettings,
+	limitCutoffAt int64,
 ) ChannelMonitorRedisRouteHealthSnapshot {
 	snapshot := ChannelMonitorRedisRouteHealthSnapshot{
-		ChannelID: channelID, ModelName: modelName, CoverageStart: cutoff,
-		ProcessedAt: processedAt, SourceCounts: make(map[model.ChannelMonitorEventSource]int64),
+		ChannelID: channelID, ModelName: modelName, CoverageStart: coverageStart,
+		ProjectionStartedAt:  projectionStartedAt,
+		RetentionMinutes:     settings.RetentionMinutes,
+		SampleLimit:          settings.SampleLimit,
+		SampleLimitTruncated: limitCutoffAt > 0,
+		SampleLimitCutoffAt:  limitCutoffAt,
+		ProcessedAt:          processedAt,
+		SourceCounts:         make(map[model.ChannelMonitorEventSource]int64),
 	}
 	for _, sample := range samples {
 		snapshot.EventCount++

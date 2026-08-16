@@ -199,6 +199,10 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
       configured_retention_days: 120,
       required_retention_minutes: 120,
       configured_retention_sufficient: true,
+      realtime_retention_minutes: 120,
+      realtime_sample_limit: 20_000,
+      sample_limit_truncated: false,
+      sample_limit_cutoff_at: 0,
     },
     routes: [
       createRoute(1, {
@@ -573,7 +577,7 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('智能调度加载失败'), false)
   })
 
-  test('warns when the persisted minute coverage does not fill a schedule window', () => {
+  test('warns when realtime samples do not fill a schedule window', () => {
     const result = createResult()
     assert.ok(result.metric_coverage)
     result.metric_coverage = {
@@ -583,6 +587,8 @@ describe('channel monitor smart schedule board', () => {
       stability_window_complete: true,
       configured_retention_days: 1,
       configured_retention_sufficient: false,
+      sample_limit_truncated: true,
+      sample_limit_cutoff_at: 1_752_776_000,
     }
 
     const markup = renderBoard({ result })
@@ -590,8 +596,11 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('调度窗口数据尚未覆盖完整'))
     assert.ok(markup.includes('性能窗口覆盖不足'))
     assert.equal(markup.includes('稳定性窗口覆盖不足'), false)
-    assert.ok(markup.includes('后台正在分批补齐分钟汇总'))
-    assert.ok(markup.includes('保留配置短于最长调度窗口'))
+    assert.ok(markup.includes('实时样本已达到单路由数量上限'))
+    assert.ok(markup.includes('当前实时样本覆盖从'))
+    assert.ok(markup.includes('配置为保留 120 分钟'))
+    assert.ok(markup.includes('每个渠道模型最多'))
+    assert.ok(markup.includes('保留时间短于最长调度窗口'))
   })
 
   test('keeps dozens of routes in a fixed-header scroll region', () => {

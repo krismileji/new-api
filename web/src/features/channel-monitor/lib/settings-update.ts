@@ -41,6 +41,10 @@ export function createChannelMonitorSettingsUpdatePayload(
         values.smartSchedulePerformanceWindowMinutes,
       smart_schedule_stability_window_minutes:
         values.smartScheduleStabilityWindowMinutes,
+      smart_schedule_realtime_retention_minutes:
+        values.smartScheduleRealtimeRetentionMinutes,
+      smart_schedule_realtime_sample_limit:
+        values.smartScheduleRealtimeSampleLimit,
       smart_schedule_rate_limit_cooldown_seconds:
         values.smartScheduleRateLimitCooldownSeconds,
       relay_response_header_timeout_seconds:

@@ -27,6 +27,10 @@ type channelSmartScheduleMetricCoverageResponse struct {
 	ConfiguredRetentionDays       int   `json:"configured_retention_days"`
 	RequiredRetentionMinutes      int   `json:"required_retention_minutes"`
 	ConfiguredRetentionSufficient bool  `json:"configured_retention_sufficient"`
+	RealtimeRetentionMinutes      int   `json:"realtime_retention_minutes"`
+	RealtimeSampleLimit           int   `json:"realtime_sample_limit"`
+	SampleLimitTruncated          bool  `json:"sample_limit_truncated"`
+	SampleLimitCutoffAt           int64 `json:"sample_limit_cutoff_at"`
 }
 
 func channelSmartScheduleRealtimeRouteMetricView(
@@ -311,18 +315,23 @@ func channelSmartScheduleRealtimeMetricCoverage(
 		coverageStart = max(coverageStart, snapshot.CoverageStart)
 	}
 	coverage := channelSmartScheduleMetricCoverageResponse{
-		AggregationEnabled:            true,
-		AggregatedFrom:                coverageStart,
-		PerformanceWindowStart:        performanceStart,
-		StabilityWindowStart:          stabilityStart,
-		PerformanceWindowComplete:     coverageStart <= performanceStart,
-		StabilityWindowComplete:       coverageStart <= stabilityStart,
-		ConfiguredRetentionDays:       settings.CostRetentionDays,
-		RequiredRetentionMinutes:      max(settings.SmartSchedulePerformanceWindowMinutes, settings.SmartScheduleStabilityWindowMinutes),
-		ConfiguredRetentionSufficient: true,
+		AggregationEnabled:        true,
+		AggregatedFrom:            coverageStart,
+		PerformanceWindowStart:    performanceStart,
+		StabilityWindowStart:      stabilityStart,
+		PerformanceWindowComplete: coverageStart <= performanceStart,
+		StabilityWindowComplete:   coverageStart <= stabilityStart,
+		ConfiguredRetentionDays:   settings.CostRetentionDays,
+		RequiredRetentionMinutes:  max(settings.SmartSchedulePerformanceWindowMinutes, settings.SmartScheduleStabilityWindowMinutes),
+		ConfiguredRetentionSufficient: settings.SmartScheduleRealtimeRetentionMinutes >=
+			max(settings.SmartSchedulePerformanceWindowMinutes, settings.SmartScheduleStabilityWindowMinutes),
+		RealtimeRetentionMinutes: settings.SmartScheduleRealtimeRetentionMinutes,
+		RealtimeSampleLimit:      settings.SmartScheduleRealtimeSampleLimit,
 	}
 	for _, snapshot := range snapshots {
 		coverage.AggregatedThrough = max(coverage.AggregatedThrough, snapshot.DataCutoffAt)
+		coverage.SampleLimitTruncated = coverage.SampleLimitTruncated || snapshot.SampleLimitTruncated
+		coverage.SampleLimitCutoffAt = max(coverage.SampleLimitCutoffAt, snapshot.SampleLimitCutoffAt)
 	}
 	return coverage
 }
@@ -335,6 +344,11 @@ func channelSmartScheduleMergeRealtimeSnapshot(
 		target.WindowStart = source.WindowStart
 	}
 	target.CoverageStart = max(target.CoverageStart, source.CoverageStart)
+	target.ProjectionStartedAt = max(target.ProjectionStartedAt, source.ProjectionStartedAt)
+	target.RetentionMinutes = max(target.RetentionMinutes, source.RetentionMinutes)
+	target.SampleLimit = max(target.SampleLimit, source.SampleLimit)
+	target.SampleLimitTruncated = target.SampleLimitTruncated || source.SampleLimitTruncated
+	target.SampleLimitCutoffAt = max(target.SampleLimitCutoffAt, source.SampleLimitCutoffAt)
 	target.WindowEnd = max(target.WindowEnd, source.WindowEnd)
 	target.DataCutoffAt = max(target.DataCutoffAt, source.DataCutoffAt)
 	target.ProcessedAt = max(target.ProcessedAt, source.ProcessedAt)

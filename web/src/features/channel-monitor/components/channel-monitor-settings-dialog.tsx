@@ -548,8 +548,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       cleanupEnabled: props.settings.cleanup_enabled,
       cleanupBatchSize: props.settings.cleanup_batch_size,
       cleanupBudgetSeconds: props.settings.cleanup_budget_seconds,
-      cleanupContinuationSeconds:
-        props.settings.cleanup_continuation_seconds,
+      cleanupContinuationSeconds: props.settings.cleanup_continuation_seconds,
       cleanupIntervalMinutes: props.settings.cleanup_interval_minutes,
       emailNotificationEnabled: props.settings.email_notification_enabled,
       notificationEmail: props.settings.notification_email,
@@ -590,6 +589,10 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         props.settings.smart_schedule_performance_window_minutes,
       smartScheduleStabilityWindowMinutes:
         props.settings.smart_schedule_stability_window_minutes,
+      smartScheduleRealtimeRetentionMinutes:
+        props.settings.smart_schedule_realtime_retention_minutes,
+      smartScheduleRealtimeSampleLimit:
+        props.settings.smart_schedule_realtime_sample_limit,
       smartScheduleRateLimitCooldownSeconds:
         props.settings.smart_schedule_rate_limit_cooldown_seconds ??
         DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,

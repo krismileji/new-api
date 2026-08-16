@@ -115,6 +115,8 @@ function SmartScheduleFieldsFixture() {
       smartScheduleGroupPolicies: [],
       smartSchedulePerformanceWindowMinutes: 60,
       smartScheduleStabilityWindowMinutes: 120,
+      smartScheduleRealtimeRetentionMinutes: 120,
+      smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
       smartScheduleForceReset: false,
     } as unknown as ChannelMonitorSettingsFormValues,
@@ -369,12 +371,22 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /value="60"/)
     assert.match(
       markup,
-      /<input(?=[^>]*name="smartSchedulePerformanceWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="60")[^>]*>/
+      /<input(?=[^>]*name="smartSchedulePerformanceWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="60")[^>]*>/
     )
     assert.match(
       markup,
-      /<input(?=[^>]*name="smartScheduleStabilityWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="43200")(?=[^>]*value="120")[^>]*>/
+      /<input(?=[^>]*name="smartScheduleStabilityWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="120")[^>]*>/
     )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="smartScheduleRealtimeRetentionMinutes")(?=[^>]*min="5")(?=[^>]*max="1440")(?=[^>]*value="120")[^>]*>/
+    )
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="smartScheduleRealtimeSampleLimit")(?=[^>]*min="1000")(?=[^>]*max="200000")(?=[^>]*value="20000")[^>]*>/
+    )
+    assert.ok(markup.includes('实时样本保留时间'))
+    assert.ok(markup.includes('单路由实时样本上限'))
     assert.match(
       markup,
       /<input(?=[^>]*name="smartScheduleRateLimitCooldownSeconds")(?=[^>]*min="0")(?=[^>]*max="300")(?=[^>]*value="30")[^>]*>/

@@ -20,8 +20,8 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
-import type { ChannelMonitorSettings } from '../../types'
 import { createChannelMonitorSettingsUpdatePayload } from '../../lib/settings-update'
+import type { ChannelMonitorSettings } from '../../types'
 
 type OptionalKeys<T> = {
   [K in keyof T]-?: {} extends Pick<T, K> ? K : never
@@ -42,17 +42,15 @@ type StorageSettingKeys =
   | 'cleanup_continuation_seconds'
   | 'cleanup_interval_minutes'
 
-type StorageSettingsAreRequired = Exclude<
-  StorageSettingKeys,
-  keyof ChannelMonitorSettings
-> extends never
-  ? Extract<
-      OptionalKeys<ChannelMonitorSettings>,
-      StorageSettingKeys
-    > extends never
-    ? true
+type StorageSettingsAreRequired =
+  Exclude<StorageSettingKeys, keyof ChannelMonitorSettings> extends never
+    ? Extract<
+        OptionalKeys<ChannelMonitorSettings>,
+        StorageSettingKeys
+      > extends never
+      ? true
+      : false
     : false
-  : false
 
 const storageSettingsAreRequired: StorageSettingsAreRequired = true
 
@@ -155,6 +153,8 @@ const formValues = {
   ],
   smartSchedulePerformanceWindowMinutes: 60,
   smartScheduleStabilityWindowMinutes: 120,
+  smartScheduleRealtimeRetentionMinutes: 120,
+  smartScheduleRealtimeSampleLimit: 20_000,
   smartScheduleRateLimitCooldownSeconds: 30,
   smartScheduleForceReset: true,
 } as ChannelMonitorSettingsFormValues
@@ -179,6 +179,8 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_group_policies',
       'smart_schedule_performance_window_minutes',
       'smart_schedule_rate_limit_cooldown_seconds',
+      'smart_schedule_realtime_retention_minutes',
+      'smart_schedule_realtime_sample_limit',
       'smart_schedule_stability_window_minutes',
     ])
     assert.equal(payload.smart_schedule_control_revision, 'revision-a')
@@ -245,6 +247,8 @@ describe('channel monitor settings submit payload', () => {
     )
     assert.equal(payload.smart_schedule_performance_window_minutes, 60)
     assert.equal(payload.smart_schedule_stability_window_minutes, 120)
+    assert.equal(payload.smart_schedule_realtime_retention_minutes, 120)
+    assert.equal(payload.smart_schedule_realtime_sample_limit, 20_000)
     assert.equal(payload.smart_schedule_rate_limit_cooldown_seconds, 30)
     assert.equal(
       Object.hasOwn(
