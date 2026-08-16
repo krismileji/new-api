@@ -387,14 +387,15 @@ describe('channel monitor today success overview', () => {
     assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '3')
   })
 
-  test('fits the channel detail table inside the dialog without horizontal scrolling', () => {
+  test('keeps channel detail headers horizontal in narrow dialogs', () => {
     const markup = renderDialogContent()
     const channelTable = getTables(markup)[0] ?? ''
 
     assert.ok(markup.includes('class="rounded-lg border"'))
     assert.ok(channelTable.includes('table-fixed'))
     assert.ok(channelTable.includes('w-full'))
-    assert.equal(channelTable.includes('min-w-[960px]'), false)
+    assert.ok(channelTable.includes('min-w-[840px]'))
+    assert.ok(markup.includes('overflow-x-auto'))
     assert.match(channelTable, /<th[^>]*w-\[19%\]/)
     assert.match(channelTable, /<th[^>]*w-\[22%\]/)
   })

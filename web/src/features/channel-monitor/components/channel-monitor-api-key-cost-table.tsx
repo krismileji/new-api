@@ -132,7 +132,7 @@ export function ChannelMonitorAPIKeyCostTable(
         .map((item) => ({
           ...item,
           display_name: getAPIKeyName(item),
-          channels: item.channels.filter(
+          channels: (item.channels ?? []).filter(
             (channel) =>
               channel.settled_count > 0 || channel.unresolved_count > 0
           ),

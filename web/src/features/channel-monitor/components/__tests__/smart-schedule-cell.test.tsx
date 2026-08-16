@@ -60,22 +60,32 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(switchElement.includes('aria-disabled="true"'))
   })
 
-  test('shows only the selected group-model priority and weight', () => {
+  test('shows only the selected group-model routing values and scores', () => {
     const markup = renderCell(
       [
-        createRoute(),
+        createRoute({ current_window_score: 0.25 }),
         createRoute({
           model: 'model-b',
           priority: 90,
           weight: 50,
-          state: { model: 'model-b', excluded: true },
+          current_window_score: 0.91,
+          state: {
+            model: 'model-b',
+            excluded: true,
+            last_schedule_score: 0.87,
+          },
         }),
         createRoute({
           group: 'vip',
           model: 'model-c',
           priority: 100,
           weight: 100,
-          state: { group: 'vip', model: 'model-c' },
+          current_window_score: 0.99,
+          state: {
+            group: 'vip',
+            model: 'model-c',
+            last_schedule_score: 0.98,
+          },
         }),
       ],
       false,
@@ -83,6 +93,10 @@ describe('channel monitor smart schedule cell status', () => {
     )
 
     assert.match(markup, /优先级[\s\S]*90[\s\S]*权重[\s\S]*50/)
+    assert.match(markup, /当前得分[\s\S]*91\.0[\s\S]*最近得分[\s\S]*87\.0/)
+    assert.equal(markup.includes('25.0'), false)
+    assert.equal(markup.includes('99.0'), false)
+    assert.equal(markup.includes('98.0'), false)
     assert.equal(markup.includes('路由参与'), false)
     assert.equal(markup.includes('可调度'), false)
     assert.equal(markup.includes('主候选'), false)
@@ -93,12 +107,32 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(markup.indexOf('role="switch"') < markup.indexOf('优先级'))
   })
 
-  test('keeps the compact summary at exactly three visible lines', () => {
-    const markup = renderCell([createRoute()])
+  test('shows routing, scores, and status in four stable lines', () => {
+    const markup = renderCell([createRoute({ current_window_score: 0.75 })])
 
-    assert.equal((markup.match(/data-smart-schedule-line=/g) ?? []).length, 3)
+    assert.equal((markup.match(/data-smart-schedule-line=/g) ?? []).length, 4)
     assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
+    assert.match(markup, /当前得分[\s\S]*75\.0[\s\S]*最近得分[\s\S]*80\.0/)
     assert.ok(markup.includes('常规调度'))
+  })
+
+  test('shows score placeholders without falling back to another route', () => {
+    const markup = renderCell(
+      [
+        createRoute({ current_window_score: 0.75 }),
+        createRoute({
+          model: 'model-b',
+          current_window_score: null,
+          state: { model: 'model-b', last_schedule_score: null },
+        }),
+      ],
+      false,
+      { group: 'default', model: 'model-b' }
+    )
+
+    assert.match(markup, /当前得分[\s\S]*—[\s\S]*最近得分[\s\S]*—/)
+    assert.equal(markup.includes('75.0'), false)
+    assert.equal(markup.includes('80.0'), false)
   })
 
   test('shows active special traffic and stability states for the selected route', () => {
@@ -230,7 +264,7 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(fixedMarkup.includes('保本兜底 · 已手动固定'))
   })
 
-  test('opens the selected route status details from the third line', () => {
+  test('opens the selected route status details from the fourth line', () => {
     const fixturePath = fileURLToPath(
       new URL('./smart-schedule-cell-interaction.fixture.tsx', import.meta.url)
     )
@@ -317,6 +351,7 @@ describe('channel monitor smart schedule cell status', () => {
     })
 
     assert.match(markup, /优先级[\s\S]*—[\s\S]*权重[\s\S]*—/)
+    assert.match(markup, /当前得分[\s\S]*—[\s\S]*最近得分[\s\S]*—/)
   })
 
   test('shows an uninitialized route as not participating', () => {

@@ -138,6 +138,32 @@ function findButton(text: string) {
   return button
 }
 
+async function renderDialog(channelItem: ChannelMonitorItem) {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  })
+  rendered = { host, queryClient, root }
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <I18nextProvider i18n={i18n}>
+          <UpstreamConfigDialog
+            channel={channelItem}
+            open
+            onOpenChange={() => undefined}
+          />
+        </I18nextProvider>
+      </QueryClientProvider>
+    )
+  })
+}
+
 async function changeInput(placeholder: string, value: string) {
   const input = document.querySelector<HTMLInputElement>(
     `input[placeholder="${placeholder}"]`
@@ -192,29 +218,7 @@ describe('Sub2API credential controls', () => {
       }
     }
 
-    const host = document.createElement('div')
-    document.body.append(host)
-    const root = createRoot(host)
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    })
-    rendered = { host, queryClient, root }
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <I18nextProvider i18n={i18n}>
-            <UpstreamConfigDialog
-              channel={channel}
-              open
-              onOpenChange={() => undefined}
-            />
-          </I18nextProvider>
-        </QueryClientProvider>
-      )
-    })
+    await renderDialog(channel)
 
     findButton('API Key（新版）')
     findButton('账号密码')
@@ -259,5 +263,21 @@ describe('Sub2API credential controls', () => {
         },
       ]
     )
+  })
+
+  test('shows safety defaults for an unconfigured upstream', async () => {
+    await renderDialog({ ...channel, upstream: null })
+    const warningThreshold = document.querySelector<HTMLInputElement>(
+      'input[name="balanceWarningThreshold"]'
+    )
+    const autoDisableThreshold = document.querySelector<HTMLInputElement>(
+      'input[name="balanceAutoDisableThreshold"]'
+    )
+    const dialogText = document.body.textContent ?? ''
+
+    assert.equal(warningThreshold?.value, '2')
+    assert.equal(autoDisableThreshold?.value, '1')
+    assert.match(dialogText, /仅剩此渠道时禁用此渠道/)
+    assert.match(dialogText, /存在多个渠道时移除当前渠道/)
   })
 })

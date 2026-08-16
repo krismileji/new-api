@@ -280,6 +280,24 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	assert.Zero(t, detailQueries.Load())
 }
 
+func TestChannelMonitorRealtimeCostAPIKeysSerializeEmptyChannelsAsArray(t *testing.T) {
+	items := channelMonitorRealtimeCostAPIKeys(service.ChannelMonitorRealtimePageView{
+		APIKeys: []service.ChannelMonitorRealtimePageAggregate{{
+			APIKeyId:            101,
+			APIKeyName:          "生产 Key",
+			SettledCostNanoCNY:  1_000_000_000,
+			SettledRequestCount: 1,
+		}},
+	})
+
+	require.Len(t, items, 1)
+	assert.NotNil(t, items[0].Channels)
+	assert.Empty(t, items[0].Channels)
+	encoded, err := common.Marshal(items)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"channels":[]`)
+}
+
 func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	channelAlphaRemark := "  主力线路  "

@@ -101,6 +101,28 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('上游请求结算或进入未解析后开始记录'))
   })
 
+  test('renders realtime API key costs when channel details are null', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorAPIKeyCostTable
+        items={[
+          {
+            id: 0,
+            api_key_id: 7,
+            api_key_name: '实时 API Key',
+            api_key: '',
+            cost_cny: 1,
+            settled_count: 1,
+            unresolved_count: 0,
+            channels: null as unknown as [],
+          },
+        ]}
+      />
+    )
+
+    assert.ok(markup.includes('实时 API Key'))
+    assert.ok(markup.includes('0 个渠道'))
+  })
+
   test('uses the masked upstream key when historical rows have no stored name', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorAPIKeyCostTable

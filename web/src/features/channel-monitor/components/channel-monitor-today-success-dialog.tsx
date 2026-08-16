@@ -437,7 +437,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
         >
           <h3 className='sr-only'>渠道明细</h3>
           <div className='rounded-lg border'>
-            <Table className='w-full table-fixed'>
+            <Table className='w-full min-w-[840px] table-fixed'>
               <TableHeader>
                 <TableRow>
                   <ChannelMonitorSortableTableHead

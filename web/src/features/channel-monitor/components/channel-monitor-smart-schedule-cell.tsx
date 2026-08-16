@@ -501,6 +501,26 @@ export function ChannelMonitorSmartScheduleCell(
       </div>
       <div
         className='flex h-5 min-w-0 items-center'
+        data-smart-schedule-line='scores'
+      >
+        <span className='flex min-w-0 flex-1 items-baseline gap-2 text-xs whitespace-nowrap'>
+          <span className='text-muted-foreground'>当前得分</span>
+          <span className='font-mono text-sm font-medium tabular-nums'>
+            {selectedRoute?.current_window_score == null
+              ? '—'
+              : (selectedRoute.current_window_score * 100).toFixed(1)}
+          </span>
+          <span className='bg-border h-3.5 w-px shrink-0' aria-hidden='true' />
+          <span className='text-muted-foreground'>最近得分</span>
+          <span className='font-mono text-sm font-medium tabular-nums'>
+            {selectedRoute?.state.last_schedule_score == null
+              ? '—'
+              : (selectedRoute.state.last_schedule_score * 100).toFixed(1)}
+          </span>
+        </span>
+      </div>
+      <div
+        className='flex h-5 min-w-0 items-center'
         data-smart-schedule-line='status'
       >
         <ChannelMonitorSmartScheduleCellStatus

@@ -145,6 +145,7 @@ func channelMonitorRealtimeCostAPIKeys(view service.ChannelMonitorRealtimePageVi
 			CostCNY:         channelMonitorCostCNY(apiKey.SettledCostNanoCNY),
 			SettledCount:    apiKey.SettledRequestCount,
 			UnresolvedCount: apiKey.UnresolvedRequestCount,
+			Channels:        make([]channelMonitorCostAPIKeyChannel, 0),
 		})
 	}
 	sort.Slice(items, func(i int, j int) bool {

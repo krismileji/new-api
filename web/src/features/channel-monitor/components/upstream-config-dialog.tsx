@@ -183,13 +183,18 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       refreshToken: '',
       account: savedUpstream?.account || '',
       password: '',
-      singleChannelAction: savedUpstream?.single_channel_action || 'none',
-      multipleChannelsAction: savedUpstream?.multiple_channels_action || 'none',
+      singleChannelAction:
+        savedUpstream?.single_channel_action || 'disable_channel',
+      multipleChannelsAction:
+        savedUpstream?.multiple_channels_action || 'remove_from_group',
       ratioSyncEnabled: savedUpstream?.ratio_sync_enabled ?? true,
       balanceSyncEnabled: savedUpstream?.balance_sync_enabled ?? true,
-      balanceWarningThreshold: savedUpstream?.balance_warning_threshold ?? null,
-      balanceAutoDisableThreshold:
-        savedUpstream?.balance_auto_disable_threshold ?? null,
+      balanceWarningThreshold: savedUpstream
+        ? savedUpstream.balance_warning_threshold
+        : 2,
+      balanceAutoDisableThreshold: savedUpstream
+        ? savedUpstream.balance_auto_disable_threshold
+        : 1,
       costConversionMode: savedCostConversion.mode,
       rechargePaidCny:
         savedCostConversion.mode === 'recharge'
