@@ -13,6 +13,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -188,6 +189,29 @@ func TestChannelModelDetectionScheduleBacklogAdvancesWithoutCreatingBatch(t *tes
 	var count int64
 	require.NoError(t, db.Model(&model.ChannelModelDetectionBatch{}).Count(&count).Error)
 	assert.Zero(t, count)
+}
+
+func TestChannelModelDetectionScheduleBacklogQuotesTriggerForMySQL(t *testing.T) {
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		DSN:                       "root:pass@tcp(127.0.0.1:3306)/new_api",
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	require.NoError(t, err)
+
+	activeStatuses := []string{
+		model.ChannelModelDetectionRunStatusQueued,
+		model.ChannelModelDetectionRunStatusWaitingDetector,
+		model.ChannelModelDetectionRunStatusSubmitting,
+		model.ChannelModelDetectionRunStatusRunning,
+		model.ChannelModelDetectionRunStatusSubmissionUnknown,
+		model.ChannelModelDetectionRunStatusCanceling,
+	}
+	var count int64
+	statement := channelModelDetectionActiveScheduledRunsQuery(db, activeStatuses).Count(&count).Statement
+
+	sql := statement.SQL.String()
+	assert.Contains(t, sql, "`trigger`")
+	assert.NotContains(t, sql, "trigger = ?")
 }
 
 func TestChannelModelDetectionScheduleManualPresetIsIndependentAndDoesNotMoveNextBatch(t *testing.T) {

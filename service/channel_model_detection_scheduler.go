@@ -285,8 +285,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 			model.ChannelModelDetectionRunStatusCanceling,
 		}
 		var activeScheduledRuns int64
-		if err := tx.Model(&model.ChannelModelDetectionRun{}).
-			Where("trigger = ? AND status IN ?", model.ChannelModelDetectionTriggerScheduled, activeStatuses).
+		if err := channelModelDetectionActiveScheduledRunsQuery(tx, activeStatuses).
 			Count(&activeScheduledRuns).Error; err != nil {
 			return err
 		}
@@ -354,6 +353,12 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 		_, _ = config.ReleaseLease(db.WithContext(context.Background()), config.Revision, leaseToken, time.Now().UTC().Unix())
 	}
 	return result, err
+}
+
+func channelModelDetectionActiveScheduledRunsQuery(tx *gorm.DB, activeStatuses []string) *gorm.DB {
+	return tx.Model(&model.ChannelModelDetectionRun{}).
+		Where(map[string]any{"trigger": model.ChannelModelDetectionTriggerScheduled}).
+		Where("status IN ?", activeStatuses)
 }
 
 func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelModelDetectionGlobalConfig, batch *model.ChannelModelDetectionBatch, now int64) ([]string, error) {
