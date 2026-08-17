@@ -146,6 +146,10 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	if !estimateKnown {
 		estimatedQuota = 0
 	}
+	requestQuota, requestQuotaKnown := service.CalculateChannelModelDetectionRequestQuota(info, tokenMeta.MaxTokens, snapshot)
+	if !requestQuotaKnown {
+		requestQuota = 0
+	}
 	keyFingerprint, keyDisplay := model.ChannelDailyCostAPIKeyIdentity(info.ApiKey)
 	costEventID := common.GetUUID()
 	requestID := c.GetString(common.RequestIdKey)
@@ -171,6 +175,7 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		return result, err
 	}
 	service.BeginChannelModelDetectionTransport(c, db, prepared.CostEventId)
+	costFinalized := false
 	defer func() {
 		dispatched, dispatchErr := service.ChannelModelDetectionTransportStatus(c)
 		result.Dispatched = dispatched || dispatchErr != nil
@@ -192,6 +197,33 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 			if markErr != nil && returnedErr == nil {
 				returnedErr = markErr
 			}
+			return
+		}
+		if costFinalized {
+			return
+		}
+		if !requestQuotaKnown {
+			_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
+				CostEventId:           prepared.CostEventId,
+				UpstreamRequestId:     result.UpstreamRequestID,
+				ErrorCode:             "request_cost_unavailable",
+				SanitizedErrorMessage: "模型检测请求成本无法计算",
+			})
+			if markErr != nil && returnedErr == nil {
+				returnedErr = markErr
+			}
+			return
+		}
+		_, settleErr := service.SettleChannelModelDetectionCostEvent(ctx, db, service.ChannelModelDetectionCostSettlementInput{
+			CostEventId:       prepared.CostEventId,
+			SettledQuota:      requestQuota,
+			CostBasisQuota:    requestQuota,
+			UsageSource:       model.ChannelModelDetectionUsageLocalEstimate,
+			UsageAvailable:    false,
+			UpstreamRequestId: result.UpstreamRequestID,
+		})
+		if settleErr != nil && returnedErr == nil {
+			returnedErr = settleErr
 		}
 	}()
 
@@ -235,15 +267,6 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 
 	response, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "upstream_request_failed",
-			SanitizedErrorMessage: "模型检测上游请求失败",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
 	}
 	var httpResponse *http.Response
@@ -251,87 +274,35 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		httpResponse, _ = response.(*http.Response)
 	}
 	if httpResponse == nil {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			ErrorCode:             "upstream_response_missing",
-			SanitizedErrorMessage: "模型检测上游响应缺失",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, types.NewError(errors.New("模型检测上游响应缺失"), types.ErrorCodeBadResponse)
 	}
 	result.StatusCode = httpResponse.StatusCode
 	if httpResponse.StatusCode != http.StatusOK {
 		apiErr := service.RelayErrorHandler(ctx, httpResponse, false)
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "upstream_http_error",
-			SanitizedErrorMessage: "模型检测上游返回错误",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, apiErr
 	}
 
 	usageValue, responseErr := adaptor.DoResponse(c, httpResponse, info)
 	if writer.err != nil {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "relay_response_too_large",
-			SanitizedErrorMessage: "模型检测渠道响应过大",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, writer.err
 	}
 	result.ContentType = writer.Header().Get("Content-Type")
 	result.ResponseBody = writer.Bytes()
 	result.UsagePayload = result.ResponseBody
 	if responseErr != nil {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "relay_response_failed",
-			SanitizedErrorMessage: "模型检测响应解析失败",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, responseErr
 	}
 	usage, ok := usageValue.(*dto.Usage)
 	authoritativeUsage, usageErr := service.NormalizeChannelModelDetectorUsage(result.ResponseBody)
 	if !ok || usage == nil || usageErr != nil {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "usage_unavailable",
-			SanitizedErrorMessage: "模型检测响应缺少可靠 Usage",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, nil
 	}
 	quota := service.CalculateChannelModelDetectionQuotaWithSnapshot(c, info, usage, snapshot)
 	if !quota.Reliable || quota.Usage.InputTokens != authoritativeUsage.InputTokens || quota.Usage.OutputTokens != authoritativeUsage.OutputTokens || quota.Usage.TotalTokens != authoritativeUsage.TotalTokens {
-		_, markErr := service.MarkChannelModelDetectionCostEventUnresolved(ctx, db, service.ChannelModelDetectionCostUnresolvedInput{
-			CostEventId:           prepared.CostEventId,
-			UpstreamRequestId:     c.GetString(common.UpstreamRequestIdKey),
-			ErrorCode:             "usage_unreliable",
-			SanitizedErrorMessage: "模型检测 Usage 或成本不可可靠结算",
-		})
-		if markErr != nil {
-			return result, markErr
-		}
 		return result, nil
 	}
 	result.Usage = &quota.Usage
+	costFinalized = true
 	_, err = service.SettleChannelModelDetectionCostEvent(ctx, db, service.ChannelModelDetectionCostSettlementInput{
 		CostEventId:       prepared.CostEventId,
 		SettledQuota:      quota.SettledQuota,

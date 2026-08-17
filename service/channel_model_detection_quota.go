@@ -52,6 +52,17 @@ func AlignChannelModelDetectionCostSnapshot(info *relaycommon.RelayInfo, snapsho
 // EstimateChannelModelDetectionQuota calculates a conservative pre-group
 // estimate for model detection only. It never writes channel daily costs.
 func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens int, snapshot ChannelModelDetectionCostSnapshot) (int64, bool) {
+	return calculateChannelModelDetectionRequestQuota(info, maxTokens, snapshot, channelModelDetectionEstimateSafetyMargin)
+}
+
+// CalculateChannelModelDetectionRequestQuota prices one request exactly as it
+// was sent, without the preview-only safety margin. It is used only after the
+// request crosses the upstream transport boundary.
+func CalculateChannelModelDetectionRequestQuota(info *relaycommon.RelayInfo, maxTokens int, snapshot ChannelModelDetectionCostSnapshot) (int64, bool) {
+	return calculateChannelModelDetectionRequestQuota(info, maxTokens, snapshot, 1)
+}
+
+func calculateChannelModelDetectionRequestQuota(info *relaycommon.RelayInfo, maxTokens int, snapshot ChannelModelDetectionCostSnapshot, multiplier float64) (int64, bool) {
 	if info == nil {
 		return 0, false
 	}
@@ -60,7 +71,7 @@ func EstimateChannelModelDetectionQuota(info *relaycommon.RelayInfo, maxTokens i
 		quotaPerUnit = float64(*snapshot.QuotaPerUnit)
 	}
 	estimate := channelModelDetectionEstimateQuotaBeforeGroup(info, maxTokens, quotaPerUnit)
-	estimate = validChannelModelDetectionEstimate(estimate * channelModelDetectionEstimateSafetyMargin)
+	estimate = validChannelModelDetectionEstimate(estimate * multiplier)
 	if estimate == 0 {
 		return 0, true
 	}
@@ -169,9 +180,8 @@ func normalizeChannelModelDetectionAuthoritativeUsage(usage *dto.Usage) (Channel
 	}, true
 }
 
-// The following helpers are used only for the model-detection run preview.
-// They must never be used by channel daily-cost settlement: unresolved relay
-// attempts are intentionally recorded with zero cost.
+// The following helpers price a request before group markup. The preview adds
+// a safety margin; runtime request settlement does not.
 func channelModelDetectionEstimateQuotaBeforeGroup(info *relaycommon.RelayInfo, maxTokens int, quotaPerUnit float64) float64 {
 	if info == nil {
 		return 0

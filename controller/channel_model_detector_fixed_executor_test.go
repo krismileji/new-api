@@ -20,6 +20,9 @@ import (
 func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	disableChannelMonitorSSRFProtection(t)
+	originalStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
 	require.NoError(t, db.AutoMigrate(
 		&model.ChannelModelDetectionRun{},
 		&model.ChannelModelDetectionExecution{},
@@ -44,29 +47,51 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 	tests := []struct {
 		name             string
 		responseBody     string
+		responseStatus   int
+		contentType      string
+		requestBody      string
 		baseURL          func(string) string
 		wantErr          bool
 		wantRequestCount int64
 		wantDispatch     string
 		wantSettlement   string
+		wantUsageSource  string
 		wantDailyCost    int64
 	}{
 		{
 			name:             "authoritative usage settles after real http dispatch",
-			responseBody:     `{"id":"resp-settled","object":"response","status":"completed","model":"detector-fixed-model","output":[],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`,
+			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-settled\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[],\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6}}}\n\ndata: [DONE]\n\n",
+			contentType:      "text/event-stream",
+			requestBody:      `{"model":"detector-fixed-model","input":"hello","stream":true}`,
 			baseURL:          func(serverURL string) string { return serverURL },
 			wantRequestCount: 1,
 			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
 			wantSettlement:   model.ChannelModelDetectionSettlementSettled,
+			wantUsageSource:  model.ChannelModelDetectionUsageUpstreamAuthoritative,
 			wantDailyCost:    1,
 		},
 		{
-			name:             "missing usage is unresolved after real http dispatch",
-			responseBody:     `{"id":"resp-unresolved","object":"response","status":"completed","model":"detector-fixed-model","output":[]}`,
+			name:             "missing usage settles from the dispatched request",
+			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-no-usage\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[]}}\n\ndata: [DONE]\n\n",
+			contentType:      "text/event-stream",
+			requestBody:      `{"model":"detector-fixed-model","input":"hello","stream":true}`,
 			baseURL:          func(serverURL string) string { return serverURL },
 			wantRequestCount: 1,
 			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
-			wantSettlement:   model.ChannelModelDetectionSettlementUnresolved,
+			wantSettlement:   model.ChannelModelDetectionSettlementSettled,
+			wantUsageSource:  model.ChannelModelDetectionUsageLocalEstimate,
+			wantDailyCost:    1,
+		},
+		{
+			name:             "upstream http error settles the dispatched request",
+			responseBody:     `{"error":{"message":"upstream failed"}}`,
+			responseStatus:   http.StatusInternalServerError,
+			baseURL:          func(serverURL string) string { return serverURL },
+			wantErr:          true,
+			wantRequestCount: 1,
+			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
+			wantSettlement:   model.ChannelModelDetectionSettlementSettled,
+			wantUsageSource:  model.ChannelModelDetectionUsageLocalEstimate,
 			wantDailyCost:    1,
 		},
 		{
@@ -87,8 +112,16 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 				upstreamRequests.Add(1)
 				assert.Equal(t, "/v1/responses", request.URL.Path)
 				assert.Equal(t, "Bearer detector-upstream-secret", request.Header.Get("Authorization"))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
+				contentType := test.contentType
+				if contentType == "" {
+					contentType = "application/json"
+				}
+				w.Header().Set("Content-Type", contentType)
+				status := test.responseStatus
+				if status == 0 {
+					status = http.StatusOK
+				}
+				w.WriteHeader(status)
 				_, err := w.Write([]byte(test.responseBody))
 				assert.NoError(t, err)
 			}))
@@ -120,11 +153,15 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			}
 			require.NoError(t, db.Create(&execution).Error)
 
+			requestBody := test.requestBody
+			if requestBody == "" {
+				requestBody = `{"model":"detector-fixed-model","input":"hello"}`
+			}
 			result, err := NewChannelModelDetectorFixedExecutor(db).ExecuteChannelModelDetectorAttempt(context.Background(), service.ChannelModelDetectorRelayExecution{
 				Source: service.ChannelModelDetectorRequestSource, RunID: runID, TargetID: targetID,
 				ExecutionID: executionID, ChannelID: channelID, RequestModel: execution.RequestModel,
 				ClaimedModel: execution.ClaimedModel, Preset: execution.Preset, DetectorRequestID: "detector-request-" + runID,
-				AttemptNo: 1, RequestBody: []byte(`{"model":"detector-fixed-model","input":"hello"}`),
+				AttemptNo: 1, RequestBody: []byte(requestBody),
 			})
 			if test.wantErr {
 				require.Error(t, err)
@@ -138,6 +175,13 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			require.NoError(t, db.Where("execution_id = ?", executionID).First(&event).Error)
 			assert.Equal(t, test.wantDispatch, event.DispatchState)
 			assert.Equal(t, test.wantSettlement, event.SettlementStatus)
+			if test.wantUsageSource != "" {
+				assert.Equal(t, test.wantUsageSource, event.UsageSource)
+			}
+			if test.wantUsageSource == model.ChannelModelDetectionUsageLocalEstimate {
+				require.NotNil(t, event.CostBasisQuota)
+				assert.Less(t, *event.CostBasisQuota, event.EstimatedQuota)
+			}
 			assert.NotContains(t, event.UpstreamKeyId, channel.Key)
 			assert.NotContains(t, event.UpstreamKeyDisplay, channel.Key)
 
@@ -152,17 +196,10 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			if test.wantDailyCost > 0 {
 				var dailyCost model.ChannelDailyCost
 				require.NoError(t, db.Where("channel_id = ?", channelID).First(&dailyCost).Error)
-				if test.wantSettlement == model.ChannelModelDetectionSettlementSettled {
-					assert.Positive(t, dailyCost.CostNanoCNY)
-					assert.Equal(t, dailyCost.CostNanoCNY, dailyCost.ModelDetectionCostNanoCNY)
-					assert.Equal(t, int64(1), dailyCost.SettledCount)
-					assert.Zero(t, dailyCost.UnresolvedCount)
-				} else {
-					assert.Zero(t, dailyCost.CostNanoCNY)
-					assert.Zero(t, dailyCost.ModelDetectionCostNanoCNY)
-					assert.Zero(t, dailyCost.SettledCount)
-					assert.Equal(t, int64(1), dailyCost.UnresolvedCount)
-				}
+				assert.Positive(t, dailyCost.CostNanoCNY)
+				assert.Equal(t, dailyCost.CostNanoCNY, dailyCost.ModelDetectionCostNanoCNY)
+				assert.Equal(t, int64(1), dailyCost.SettledCount)
+				assert.Zero(t, dailyCost.UnresolvedCount)
 			}
 		})
 	}

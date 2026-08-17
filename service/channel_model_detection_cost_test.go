@@ -125,6 +125,24 @@ func TestChannelModelDetectionQuotaKeepsFrozenQuotaPerUnit(t *testing.T) {
 	assert.Equal(t, int64(5_000), result.CostBasisQuota)
 }
 
+func TestChannelModelDetectionRequestQuotaExcludesPreviewSafetyMargin(t *testing.T) {
+	quotaPerUnit := int64(500_000)
+	snapshot := ChannelModelDetectionCostSnapshot{QuotaPerUnit: &quotaPerUnit}
+	info := &relaycommon.RelayInfo{PriceData: types.PriceData{
+		ModelPrice:     0.01,
+		UsePrice:       true,
+		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+	}}
+
+	requestQuota, requestKnown := CalculateChannelModelDetectionRequestQuota(info, 0, snapshot)
+	estimatedQuota, estimateKnown := EstimateChannelModelDetectionQuota(info, 0, snapshot)
+
+	require.True(t, requestKnown)
+	require.True(t, estimateKnown)
+	assert.Equal(t, int64(5_000), requestQuota)
+	assert.Equal(t, int64(5_250), estimatedQuota)
+}
+
 func TestAlignChannelModelDetectionCostSnapshotUsesTieredBillingQuotaUnit(t *testing.T) {
 	costQuotaPerUnit := int64(1_000_000)
 	snapshot, err := AlignChannelModelDetectionCostSnapshot(&relaycommon.RelayInfo{
