@@ -467,7 +467,7 @@ describe('channel monitor channel view timestamps', () => {
     )
   })
 
-  test('shows channel concurrency limit as active over configured limit', () => {
+  test('shows configured limit and current concurrency on separate lines', () => {
     const cells = getTableCells(
       renderView(
         createChannel({
@@ -477,8 +477,7 @@ describe('channel monitor channel view timestamps', () => {
       )
     )
 
-    assert.ok(cells[6]?.includes('3/8'))
-    assert.ok(cells[6]?.includes('当前/上限'))
+    assert.match(cells[6] ?? '', />8<[\s\S]*当前并发：3/)
   })
 
   test('shows cache utilization on the third line of the success rate cell', () => {
@@ -518,10 +517,13 @@ describe('channel monitor channel view timestamps', () => {
   })
 
   test('shows unlimited concurrency and exposes the edit action', () => {
-    const markup = renderView(createChannel({ concurrency_limit: 0 }))
+    const markup = renderView(
+      createChannel({ concurrency_limit: 0, concurrency_active: 4 })
+    )
     const cells = getTableCells(markup)
 
     assert.ok(cells[6]?.includes('不限'))
+    assert.ok(cells[6]?.includes('当前并发：4'))
     assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 

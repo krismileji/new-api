@@ -532,18 +532,16 @@ export function ChannelMonitorChannelView(
                   />
                 </TableCell>
                 <TableCell className='whitespace-normal'>
-                  {channel.concurrency_limit > 0 ? (
-                    <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                      <span className='font-mono text-sm font-medium'>
-                        {channel.concurrency_active}/{channel.concurrency_limit}
-                      </span>
-                      <span className='text-muted-foreground text-xs'>
-                        当前/上限
-                      </span>
-                    </div>
-                  ) : (
-                    <span className='text-muted-foreground text-sm'>不限</span>
-                  )}
+                  <div className='flex min-w-0 flex-col items-start gap-0.5'>
+                    <span className='font-mono text-sm font-medium'>
+                      {channel.concurrency_limit > 0
+                        ? channel.concurrency_limit
+                        : '不限'}
+                    </span>
+                    <span className='text-muted-foreground text-xs'>
+                      当前并发：{channel.concurrency_active}
+                    </span>
+                  </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>
                   <ChannelMonitorSmartScheduleCell
