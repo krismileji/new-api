@@ -149,7 +149,7 @@ try {
 
   assert.equal(cacheUtilization.textContent, '25%')
   assert.ok(trigger.textContent?.includes('生产 Key · ID 21'))
-  assert.ok(container.textContent?.includes('缓存读取 25 / 输入 100 tokens'))
+  assert.ok(container.textContent?.includes('缓存 25 / 100 tokens'))
   assert.equal(detailOpenCount, 2)
 } finally {
   await act(async () => root.unmount())

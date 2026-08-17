@@ -928,17 +928,11 @@ export function ChannelMonitor() {
         costOverview.today_cost_cny - todayProbeCost - todayModelDetectionCost
       )
     : 0
-  let costDescription = costOverview
-    ? `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)} · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)} · 昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 近 2 日解析率 ${formatChannelMonitorResolutionRate(
-        costOverview.coverage.settled_count,
-        costOverview.coverage.unresolved_count
-      )}`
-    : '按北京时间记录已结算成本'
-  if (costOverview && costOverview.coverage.unresolved_count > 0) {
-    costDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
-  }
+  let costDescription = '按北京时间记录已结算成本'
+  let costSecondaryDescription = '详情中可查看成本趋势与解析情况'
   if (costQuery.isError) {
     costDescription = '成本统计加载失败'
+    costSecondaryDescription = '请稍后重试或手动刷新'
   } else if (
     costOverview &&
     costOverview.coverage.settled_count +
@@ -946,7 +940,21 @@ export function ChannelMonitor() {
       0
   ) {
     costDescription = '暂无已记录的上游请求尝试'
+    costSecondaryDescription = '按北京时间统计已结算成本'
+  } else if (costOverview) {
+    costDescription = `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)} · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)}`
+    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 解析率 ${formatChannelMonitorResolutionRate(
+      costOverview.coverage.settled_count,
+      costOverview.coverage.unresolved_count
+    )}`
+    if (costOverview.coverage.unresolved_count > 0) {
+      costSecondaryDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
+    }
   }
+  const enabledChannelCount = channels.filter(
+    (channel) => channel.status === CHANNEL_STATUS.ENABLED
+  ).length
+  const disabledChannelCount = channels.length - enabledChannelCount
   const newAPIChannelCount = channels.filter(
     (channel) => channel.upstream?.type === 'new_api'
   ).length
@@ -988,7 +996,8 @@ export function ChannelMonitor() {
           <MonitorStatCard
             label='全部渠道'
             value={channels.length}
-            description='包含启用和禁用渠道'
+            description={`启用 ${enabledChannelCount} · 停用 ${disabledChannelCount}`}
+            secondaryDescription={`New API ${newAPIChannelCount} · Sub2API ${sub2APIChannelCount} · 自定义 ${customUpstreamChannelCount}`}
             icon={Analytics01Icon}
           />
           <MonitorStatCard
@@ -1001,6 +1010,7 @@ export function ChannelMonitor() {
               )
             }
             description={costDescription}
+            secondaryDescription={costSecondaryDescription}
             icon={MoneyBag02Icon}
             ariaLabel='查看每日成本'
             onClick={openCostHistory}
@@ -1763,6 +1773,7 @@ type MonitorStatCardProps = {
   label: string
   value: ReactNode
   description: string
+  secondaryDescription?: string
   icon: React.ComponentProps<typeof HugeiconsIcon>['icon']
   ariaLabel?: string
   onClick?: () => void
@@ -1788,19 +1799,29 @@ export function MonitorStatCard(props: MonitorStatCardProps) {
           : undefined
       }
       className={cn(
+        'h-full min-h-0 gap-0 py-0 sm:h-32',
         interactive &&
           'cursor-pointer transition-colors hover:ring-2 hover:ring-ring/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
       )}
     >
-      <CardHeader>
+      <CardHeader className='h-full !grid-rows-[auto_auto_1fr] gap-1 py-3'>
         <CardDescription>{props.label}</CardDescription>
         <CardTitle className='text-2xl tabular-nums'>{props.value}</CardTitle>
         <CardAction>
-          <span className='bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-lg'>
+          <span className='bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md'>
             <HugeiconsIcon icon={props.icon} />
           </span>
         </CardAction>
-        <CardDescription>{props.description}</CardDescription>
+        <CardDescription className='col-span-full min-w-0 self-end text-xs leading-4'>
+          <span className='block truncate' title={props.description}>
+            {props.description}
+          </span>
+          {props.secondaryDescription ? (
+            <span className='block truncate' title={props.secondaryDescription}>
+              {props.secondaryDescription}
+            </span>
+          ) : null}
+        </CardDescription>
       </CardHeader>
     </Card>
   )

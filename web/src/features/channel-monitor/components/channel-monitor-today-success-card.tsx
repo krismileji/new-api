@@ -23,8 +23,8 @@ import { useMemo, useState } from 'react'
 import {
   Card,
   CardAction,
-  CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -137,6 +137,13 @@ export function ChannelMonitorTodaySuccessCard(
     cacheWriteChannelCount == null ? '-' : `${cacheWriteChannelCount} 个`
   const cacheWriteRequestLabel =
     cacheWriteRequestCount == null ? '-' : `${cacheWriteRequestCount} 次`
+  const cacheTokenSummary = cacheMetric
+    ? `缓存 ${(cacheMetric.cache_read_tokens ?? 0).toLocaleString()} / ${(cacheMetric.input_tokens ?? 0).toLocaleString()} tokens`
+    : '缓存 -'
+  const cacheWriteSummary =
+    cacheWriteChannelCount == null || cacheWriteRequestCount == null
+      ? '写入 -'
+      : `写入 ${cacheWriteChannelCount} 个渠道 / ${cacheWriteRequestCount} 次`
 
   let description = '按北京时间统计真实调用结果'
   if (props.isLoading) {
@@ -148,13 +155,13 @@ export function ChannelMonitorTodaySuccessCard(
   } else if (!summary || summary.actual_sample_count === 0) {
     description = '今日暂无请求数据'
   } else {
-    description = `${summary.actual_sample_count} 次请求 · 缓存读取 ${(cacheMetric?.cache_read_tokens ?? 0).toLocaleString()} / 输入 ${(cacheMetric?.input_tokens ?? 0).toLocaleString()} tokens`
+    description = `${summary.actual_sample_count} 请求 · ${cacheTokenSummary} · ${cacheWriteSummary}`
   }
 
   return (
-    <Card size='sm' className='h-full gap-0 py-0'>
+    <Card size='sm' className='h-full gap-0 py-0 sm:h-32'>
       <CardHeader
-        className='hover:bg-muted/50 focus-visible:ring-ring/50 cursor-pointer rounded-t-xl py-3 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset'
+        className='hover:bg-muted/50 focus-visible:ring-ring/50 min-h-0 flex-1 cursor-pointer gap-0 rounded-t-xl py-2 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset'
         role='button'
         tabIndex={0}
         onClick={props.onOpen}
@@ -183,32 +190,18 @@ export function ChannelMonitorTodaySuccessCard(
           )}
         </CardTitle>
         <CardAction>
-          <span className='bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-lg'>
+          <span className='bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md'>
             <HugeiconsIcon icon={ChartAverageIcon} aria-hidden='true' />
           </span>
         </CardAction>
-        <CardDescription className='flex flex-col gap-1'>
-          <span>{description}</span>
-          <span className='flex flex-wrap gap-x-3 gap-y-1'>
-            <span>
-              缓存写渠道{' '}
-              <span className='text-foreground font-mono font-medium tabular-nums'>
-                {cacheWriteChannelLabel}
-              </span>
-            </span>
-            <span>
-              缓存写请求{' '}
-              <span className='text-foreground font-mono font-medium tabular-nums'>
-                {cacheWriteRequestLabel}
-              </span>
-            </span>
-          </span>
+        <CardDescription className='truncate text-[11px]' title={description}>
+          {description}
         </CardDescription>
       </CardHeader>
-      <CardContent className='bg-muted/20 mt-auto border-t py-2.5'>
-        <div className='flex min-w-0 items-center gap-2'>
+      <CardFooter className='bg-muted/20 mt-auto py-1.5'>
+        <div className='flex w-full min-w-0 items-center gap-2'>
           <span className='text-muted-foreground shrink-0 text-xs'>
-            缓存利用率口径
+            缓存口径
           </span>
           <Select
             items={apiKeyOptions}
@@ -241,7 +234,7 @@ export function ChannelMonitorTodaySuccessCard(
             </SelectContent>
           </Select>
         </div>
-      </CardContent>
+      </CardFooter>
     </Card>
   )
 }

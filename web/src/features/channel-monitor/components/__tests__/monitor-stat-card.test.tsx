@@ -17,11 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { Analytics01Icon } from '@hugeicons/core-free-icons'
 import type { KeyboardEvent, ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { MonitorStatCard } from '../../index'
 
@@ -39,6 +39,23 @@ function createCard(onClick = noop) {
 }
 
 describe('channel monitor stat card', () => {
+  test('keeps desktop summaries compact and limits each supporting line', () => {
+    const markup = renderToStaticMarkup(
+      <MonitorStatCard
+        label='全部渠道'
+        value='12'
+        description='启用 9 · 停用 3'
+        secondaryDescription='New API 5 · Sub2API 4 · 自定义 3'
+        icon={Analytics01Icon}
+      />
+    )
+
+    assert.ok(markup.includes('sm:h-32'))
+    assert.ok(markup.includes('truncate'))
+    assert.ok(markup.includes('启用 9 · 停用 3'))
+    assert.ok(markup.includes('New API 5 · Sub2API 4 · 自定义 3'))
+  })
+
   test('makes the whole card keyboard-focusable when it has an action', () => {
     const markup = renderToStaticMarkup(createCard())
 
