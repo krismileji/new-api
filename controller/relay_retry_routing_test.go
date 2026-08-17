@@ -111,7 +111,7 @@ func TestRelayRetryRoutingReloadsCompletePinnedChannelForRetry(t *testing.T) {
 	assert.Equal(t, []int{initialChannel.Id}, options.ExcludedChannelIds)
 }
 
-func TestRelayRetryRoutingRejectsNonparticipatingSameChannelWhenSmartScheduleEnabled(t *testing.T) {
+func TestRelayRetryRoutingDefersNonparticipatingSameChannelFallbackToOrdinaryRetry(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
 	priority := int64(100)
@@ -161,9 +161,53 @@ func TestRelayRetryRoutingRejectsNonparticipatingSameChannelWhenSmartScheduleEna
 		Ctx: ctx, TokenGroup: "vip", ModelName: "model-a", RequestPath: "/v1/chat/completions",
 	})
 	require.NoError(t, err)
-	require.NotNil(t, selected)
-	assert.Equal(t, 262, selected.Id)
+	assert.Nil(t, selected)
 	assert.Equal(t, "vip", group)
+	assert.True(t, routing.takeSameChannelRetryUnavailable())
+	options, hasExcludedChannels := routing.selectionOptions()
+	require.True(t, hasExcludedChannels)
+	assert.Equal(t, []int{261}, options.ExcludedChannelIds)
+}
+
+func TestRelayRetryRoutingKeepsPinnedLowerPriorityAfterHigherPriorityFailure(t *testing.T) {
+	t.Cleanup(model.InitChannelCache)
+	db := setupChannelMonitorControllerTestDB(t)
+	priorityHigh := int64(200)
+	priorityLow := int64(100)
+	weight := uint(10)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 263, Name: "failed-primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityHigh, Weight: &weight},
+		{Id: 264, Name: "pinned-fallback", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &priorityLow, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 263, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityHigh, Weight: weight},
+		{ChannelId: 264, Group: "vip", Model: "model-a", Enabled: true, Priority: &priorityLow, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 263, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 264, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	useChannelMonitorOptionMap(t, map[string]string{
+		"ChannelMonitorSmartScheduleEnabled":       "true",
+		"ChannelMonitorSmartScheduleGroupPolicies": `[{"group":"vip","models":["model-a"]}]`,
+	})
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+
+	routing := newRelayRetryRouting()
+	routing.exclude(263)
+	routing.retrySameChannel(&model.Channel{Id: 264}, "vip")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	selected, group, err := routing.selectChannel(&service.RetryParam{
+		Ctx: ctx, TokenGroup: "vip", ModelName: "model-a", RequestPath: ctx.Request.URL.Path,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 264, selected.Id)
+	assert.Equal(t, "vip", group)
+	assert.False(t, routing.takeSameChannelRetryUnavailable())
 }
 
 func TestRelayRetryRoutingRetries502WithReloadedBaseURL(t *testing.T) {
@@ -238,7 +282,7 @@ func TestRelayRetryRoutingRetries502WithReloadedBaseURL(t *testing.T) {
 	assert.EqualValues(t, 2, requestCount.Load())
 }
 
-func TestRelayRetryRoutingFallsBackWhenPinnedChannelLosesModelAbility(t *testing.T) {
+func TestRelayRetryRoutingConsumesOrdinaryRetryWhenPinnedChannelLosesModelAbility(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
 	priorityHigh := int64(200)
@@ -275,6 +319,15 @@ func TestRelayRetryRoutingFallsBackWhenPinnedChannelLosesModelAbility(t *testing
 	selected, group, err := routing.selectChannel(retryParam)
 
 	require.NoError(t, err)
+	assert.Nil(t, selected)
+	assert.Equal(t, "vip", group)
+	handled, retryAllowed := resolveUnavailableSameChannelRetry(
+		routing, retryParam, &relayFastFailureRetryBudget{}, true,
+	)
+	require.True(t, handled)
+	require.True(t, retryAllowed)
+	selected, group, err = routing.selectChannel(retryParam)
+	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 64, selected.Id)
 	assert.Equal(t, "vip", group)
@@ -284,18 +337,28 @@ func TestRelayRetryRoutingFallsBackWhenPinnedChannelLosesModelAbility(t *testing
 	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, false)
 	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "vip")
 	retryParam.TokenGroup = "auto"
+	retryParam.SetRetry(0)
 	routing = newRelayRetryRouting()
 	routing.retrySameChannel(&model.Channel{Id: 63}, "vip")
 
 	selected, group, err = routing.selectChannel(retryParam)
 
 	require.NoError(t, err)
+	assert.Nil(t, selected)
+	assert.Equal(t, "vip", group)
+	handled, retryAllowed = resolveUnavailableSameChannelRetry(
+		routing, retryParam, &relayFastFailureRetryBudget{}, true,
+	)
+	require.True(t, handled)
+	require.True(t, retryAllowed)
+	selected, group, err = routing.selectChannel(retryParam)
+	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 64, selected.Id)
 	assert.Equal(t, "vip", group)
 }
 
-func TestRelayRetryRoutingFallsBackWhenPinnedChannelIsDisabled(t *testing.T) {
+func TestRelayRetryRoutingConsumesOrdinaryRetryWhenPinnedChannelIsDisabled(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
 	priorityHigh := int64(200)
@@ -334,6 +397,15 @@ func TestRelayRetryRoutingFallsBackWhenPinnedChannelIsDisabled(t *testing.T) {
 
 	selected, group, err := routing.selectChannel(retryParam)
 
+	require.NoError(t, err)
+	assert.Nil(t, selected)
+	assert.Equal(t, "vip", group)
+	handled, retryAllowed := resolveUnavailableSameChannelRetry(
+		routing, retryParam, &relayFastFailureRetryBudget{}, true,
+	)
+	require.True(t, handled)
+	require.True(t, retryAllowed)
+	selected, group, err = routing.selectChannel(retryParam)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 56, selected.Id)

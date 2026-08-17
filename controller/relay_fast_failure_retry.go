@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -109,6 +110,25 @@ func waitForRelayFastFailureRetry(ctx context.Context, delay time.Duration) bool
 func (budget *relayFastFailureRetryBudget) resetChannelVisit() {
 	budget.channelID = 0
 	budget.used = 0
+}
+
+func resolveUnavailableSameChannelRetry(
+	routing *relayRetryRouting,
+	retryParam *service.RetryParam,
+	budget *relayFastFailureRetryBudget,
+	ordinaryRetryable bool,
+) (bool, bool) {
+	if routing == nil || !routing.takeSameChannelRetryUnavailable() {
+		return false, false
+	}
+	if retryParam == nil || !ordinaryRetryable {
+		return true, false
+	}
+	retryParam.IncreaseRetry()
+	if budget != nil {
+		budget.resetChannelVisit()
+	}
+	return true, true
 }
 
 func relayRetryGroup(c *gin.Context, tokenGroup string) string {

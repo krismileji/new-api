@@ -226,6 +226,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 		relayInfo.RetryIndex = attemptIndex
 		channel, channelErr := getChannel(c, relayInfo, retryParam, retryRouting)
+		if unavailable, retryAllowed := resolveUnavailableSameChannelRetry(
+			retryRouting,
+			retryParam,
+			fastFailureRetryBudget,
+			relayInfo.LastError != nil && shouldRetry(
+				c, relayInfo.LastError, common.RetryTimes-retryParam.GetRetry(),
+			),
+		); unavailable {
+			if !retryAllowed {
+				newAPIError = relayInfo.LastError
+				break
+			}
+			channel, channelErr = getChannel(c, relayInfo, retryParam, retryRouting)
+		}
 		if channelErr != nil {
 			if retryRouting.candidatesExhausted() && relayInfo.LastError != nil {
 				newAPIError = relayInfo.LastError
@@ -762,6 +776,19 @@ func RelayTask(c *gin.Context) {
 		} else {
 			var channelErr *types.NewAPIError
 			channel, channelErr = getChannel(c, relayInfo, retryParam, retryRouting)
+			if unavailable, retryAllowed := resolveUnavailableSameChannelRetry(
+				retryRouting,
+				retryParam,
+				fastFailureRetryBudget,
+				taskErr != nil && shouldRetryTaskRelay(
+					c, 0, taskErr, common.RetryTimes-retryParam.GetRetry(),
+				),
+			); unavailable {
+				if !retryAllowed {
+					break
+				}
+				channel, channelErr = getChannel(c, relayInfo, retryParam, retryRouting)
+			}
 			if channelErr != nil {
 				if retryRouting.candidatesExhausted() && taskErr != nil {
 					break

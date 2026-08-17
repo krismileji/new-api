@@ -9,11 +9,12 @@ import (
 )
 
 type relayRetryRouting struct {
-	excluded      map[int]struct{}
-	excludedOrder []int
-	exhausted     bool
-	sameChannelID int // Reload before retry because the first-attempt channel may be a sparse context stub.
-	sameGroup     string
+	excluded                    map[int]struct{}
+	excludedOrder               []int
+	exhausted                   bool
+	sameChannelID               int // Reload before retry because the first-attempt channel may be a sparse context stub.
+	sameGroup                   string
+	sameChannelRetryUnavailable bool
 }
 
 func newRelayRetryRouting() *relayRetryRouting {
@@ -29,6 +30,7 @@ func (routing *relayRetryRouting) exclude(channelID int) {
 	if routing.sameChannelID == channelID {
 		routing.sameChannelID = 0
 		routing.sameGroup = ""
+		routing.sameChannelRetryUnavailable = false
 	}
 	if _, exists := routing.excluded[channelID]; exists {
 		return
@@ -44,7 +46,16 @@ func (routing *relayRetryRouting) retrySameChannel(channel *model.Channel, group
 	}
 	routing.sameChannelID = channel.Id
 	routing.sameGroup = group
+	routing.sameChannelRetryUnavailable = false
 	routing.exhausted = false
+}
+
+func (routing *relayRetryRouting) takeSameChannelRetryUnavailable() bool {
+	if routing == nil || !routing.sameChannelRetryUnavailable {
+		return false
+	}
+	routing.sameChannelRetryUnavailable = false
+	return true
 }
 
 func (routing *relayRetryRouting) selectionOptions() (model.ChannelSelectionOptions, bool) {
@@ -65,6 +76,7 @@ func (routing *relayRetryRouting) restartRound(retryParam *service.RetryParam) {
 	routing.exhausted = false
 	routing.sameChannelID = 0
 	routing.sameGroup = ""
+	routing.sameChannelRetryUnavailable = false
 	if retryParam.TokenGroup == "auto" && retryParam.Ctx != nil {
 		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupIndex, 0)
 		common.SetContextKey(retryParam.Ctx, constant.ContextKeyAutoGroupRetryIndex, 0)
@@ -82,12 +94,17 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 		routing.sameChannelID = 0
 		routing.sameGroup = ""
 		channel, err := model.CacheGetChannel(channelID)
+		sameChannelOptions := retryParam.SelectionOptions
+		sameChannelOptions.ExcludedChannelIds = append(
+			append([]int(nil), sameChannelOptions.ExcludedChannelIds...),
+			routing.excludedOrder...,
+		)
 		groupEligible := group != "" && model.ChannelSmartScheduleAffinityEligibility(
 			group,
 			retryParam.ModelName,
 			channelID,
 			retryParam.RequestPath,
-			retryParam.SelectionOptions,
+			sameChannelOptions,
 		) == model.ChannelSmartScheduleAffinityEligible
 		if retryParam.TokenGroup == "auto" {
 			groupAllowed := false
@@ -105,7 +122,7 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 				retryParam.ModelName,
 				channelID,
 				retryParam.RequestPath,
-				retryParam.SelectionOptions,
+				sameChannelOptions,
 			) == model.ChannelSmartScheduleAffinityEligible
 		}
 		if err == nil && channel != nil && channel.Status == common.ChannelStatusEnabled &&
@@ -113,10 +130,11 @@ func (routing *relayRetryRouting) selectChannel(retryParam *service.RetryParam) 
 			middleware.ChannelSupportsRequestPath(channel, retryParam.RequestPath, retryParam.ModelName) {
 			return channel, group, nil
 		}
-		// A fast same-channel retry is opportunistic. If that channel was
-		// removed or disabled after the failed attempt, continue with normal
-		// routing instead of terminating the request.
+		// Switching channels here must consume ordinary retry budget. Report the
+		// unavailable pinned retry to the controller before selecting a replacement.
 		routing.exclude(channelID)
+		routing.sameChannelRetryUnavailable = true
+		return nil, group, nil
 	}
 	return routing.selectChannelCandidates(retryParam, true)
 }
