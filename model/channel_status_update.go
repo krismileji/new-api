@@ -11,12 +11,24 @@ import (
 func updateChannelStatusAtomically(channelId int, usingKey string, status int, reason string) (bool, error) {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
+	pollingLock := GetChannelPollingLock(channelId)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+
+	var cachedChannel *Channel
+	if common.MemoryCacheEnabled {
+		cachedChannel, _ = CacheGetChannel(channelId)
+	}
 
 	changed := false
+	var updatedChannel Channel
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var channel Channel
 		if err := lockForUpdate(tx).Where("id = ?", channelId).First(&channel).Error; err != nil {
 			return err
+		}
+		if cachedChannel != nil && channel.ChannelInfo.IsMultiKey && cachedChannel.ChannelInfo.IsMultiKey {
+			channel.ChannelInfo.MultiKeyPollingIndex = cachedChannel.ChannelInfo.MultiKeyPollingIndex
 		}
 
 		previousStatus := channel.Status
@@ -78,11 +90,17 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 				return err
 			}
 		}
+		updatedChannel = channel
 		changed = true
 		return nil
 	})
 	if err != nil || !changed {
 		return false, err
+	}
+	if cachedChannel != nil {
+		cachedChannel.Status = updatedChannel.Status
+		cachedChannel.OtherInfo = updatedChannel.OtherInfo
+		cachedChannel.ChannelInfo = updatedChannel.ChannelInfo
 	}
 	if common.MemoryCacheEnabled {
 		InitChannelCache()

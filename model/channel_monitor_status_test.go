@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -278,6 +279,65 @@ func TestUpdateChannelStatusRollsBackBeforePublishingCacheWhenAbilityUpdateFails
 	cached, err := CacheGetChannel(channel.Id)
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusEnabled, cached.Status)
+}
+
+func TestUpdateChannelStatusPreservesCachedMultiKeyPollingState(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	channelSyncLock.Lock()
+	originalGroupRoutes := group2model2channels
+	originalChannels := channelsIDM
+	originalAdvancedConfigs := channel2advancedCustomConfig
+	originalSmartRoutes := channelSmartScheduleRouteCache
+	channelSyncLock.Unlock()
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelSyncLock.Lock()
+		group2model2channels = originalGroupRoutes
+		channelsIDM = originalChannels
+		channel2advancedCustomConfig = originalAdvancedConfigs
+		channelSmartScheduleRouteCache = originalSmartRoutes
+		channelSyncLock.Unlock()
+	})
+
+	priority := int64(10)
+	channel := Channel{
+		Id: 9027, Name: "cached multi-key polling", Key: "key-a\nkey-b",
+		Status: common.ChannelStatusEnabled, Group: "default", Models: "gpt-test",
+		Priority: &priority,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling,
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: channel.Id, Group: "default", Model: "gpt-test",
+		Enabled: true, Priority: &priority, Weight: 100,
+	}).Error)
+	InitChannelCache()
+
+	cached, err := CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	pollingLock := GetChannelPollingLock(channel.Id)
+	pollingLock.Lock()
+	cached.ChannelInfo.MultiKeyPollingIndex = 1
+	pollingLock.Unlock()
+
+	require.True(t, UpdateChannelStatus(
+		channel.Id, "key-a", common.ChannelStatusAutoDisabled, "provider rejected key",
+	))
+
+	var stored Channel
+	require.NoError(t, db.First(&stored, channel.Id).Error)
+	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.ChannelInfo.MultiKeyStatusList[0])
+	assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[0])
+
+	refreshed, err := CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 1, refreshed.ChannelInfo.MultiKeyPollingIndex)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, refreshed.ChannelInfo.MultiKeyStatusList[0])
 }
 
 func TestUpdateChannelStatusRestoresEnabledMultiKeyWithoutDisablingAbility(t *testing.T) {
