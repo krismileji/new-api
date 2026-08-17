@@ -109,6 +109,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
     ChannelMonitorSmartScheduleRouteStability
   >
   samplesByModel?: ReadonlyMap<string, ChannelMonitorSmartScheduleSampleItem>
+  realtimeDegraded: boolean
   updateRouteKey: string | null
   groupPauseKey: string | null
   updateDisabled: boolean
@@ -305,7 +306,9 @@ function RouteAdaptiveHealthSummary(props: {
   route: ChannelMonitorSmartScheduleRoute
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 }) {
-  if (!props.placement?.isActualPrimary) return null
+  if (!props.placement?.isActualPrimary && !props.placement?.isScoringWinner) {
+    return null
+  }
   const details =
     props.route.current_window_score_details ??
     props.route.state.last_schedule_score_details
@@ -319,12 +322,21 @@ function RouteAdaptiveHealthSummary(props: {
   }
   const stateLabel = state ? stateLabels[state] : undefined
   if (!stateLabel && !details?.health.evidence) return null
+  let contextLabel = '当前主渠道'
+  if (props.placement.isScoringWinner && !props.placement.isActualPrimary) {
+    contextLabel = '评分第一渠道'
+  } else if (
+    props.placement.isActualPrimary &&
+    !props.placement.isScoringWinner
+  ) {
+    contextLabel = '实际主渠道'
+  }
   return (
     <span
       className='text-muted-foreground mt-1 block text-[11px] leading-4'
-      title='主渠道自适应备援秒级窗口状态'
+      title={`${contextLabel}自适应备援秒级窗口状态`}
     >
-      软健康 {stateLabel ?? '-'}
+      {contextLabel}软健康 {stateLabel ?? '-'}
       {details?.health.evidence
         ? ` · 错误 ${details.health.error_request_percent.toFixed(1)}% · 首字告警 ${details.health.first_token_warning_request_percent.toFixed(1)}% · 风险 ${details.health.risk_request_percent.toFixed(1)}% · 健康 ${details.health.healthy_request_percent.toFixed(1)}%`
         : ''}
@@ -361,6 +373,7 @@ function formatPoolChannelReference(
 
 function PoolDecisionSummary(props: {
   pool: ChannelMonitorSmartSchedulePoolView
+  realtimeDegraded: boolean
 }) {
   const summary = props.pool.summary
   const topLayer = summary.actualTopLayerChannelIds
@@ -368,19 +381,42 @@ function PoolDecisionSummary(props: {
       formatPoolChannelReference(props.pool.routes, channelId)
     )
     .join('、')
-  const decision = props.pool.routes
-    .map(
-      (route) =>
-        route.current_window_score_details?.decision ??
-        route.state.last_schedule_score_details?.decision
-    )
-    .find((item) => item != null)
-  const nonSwitchReason =
+  const decision =
+    props.pool.routes.find(
+      (route) => route.channel_id === summary.scoringWinnerChannelId
+    )?.current_window_score_details?.decision ??
+    props.pool.routes
+      .map((route) => route.current_window_score_details?.decision)
+      .find((item) => item != null)
+  const historicalDecision =
+    props.pool.routes.find(
+      (route) => route.channel_id === summary.historicalScoringWinnerChannelId
+    )?.state.last_schedule_score_details?.decision ??
+    props.pool.routes
+      .map((route) => route.state.last_schedule_score_details?.decision)
+      .find((item) => item != null)
+  let nonSwitchReason =
+    decision?.selection_reason ||
+    decision?.reason ||
+    historicalDecision?.selection_reason ||
+    historicalDecision?.reason ||
+    '暂无可用评分决策'
+  if (props.realtimeDegraded) {
+    nonSwitchReason = '实时链路已降级，当前评分与实际流量可能不同步'
+  } else if (
     summary.scoringWinnerChannelId > 0 &&
     summary.actualPrimaryChannelId > 0 &&
-    summary.scoringWinnerChannelId !== summary.actualPrimaryChannelId
-      ? decision?.selection_reason || decision?.reason || '未记录未切换原因'
-      : '当前无需切换'
+    summary.scoringWinnerChannelId === summary.actualPrimaryChannelId
+  ) {
+    nonSwitchReason = '当前无需切换'
+  }
+  const scoringWinnerLabel =
+    summary.scoringWinnerSource === 'current_window'
+      ? '当前评分第一'
+      : '上次调度评分第一'
+  const showHistoricalWinner =
+    summary.scoringWinnerSource === 'current_window' &&
+    summary.historicalScoringWinnerChannelId > 0
 
   return (
     <div
@@ -388,13 +424,24 @@ function PoolDecisionSummary(props: {
       aria-label='调度池决策结果'
     >
       <div className='min-w-0'>
-        <div className='text-muted-foreground text-[11px]'>评分第一</div>
+        <div className='text-muted-foreground text-[11px]'>
+          {scoringWinnerLabel}
+        </div>
         <div className='mt-0.5 truncate text-xs font-medium'>
           {formatPoolChannelReference(
             props.pool.routes,
             summary.scoringWinnerChannelId
           )}
         </div>
+        {showHistoricalWinner ? (
+          <div className='text-muted-foreground mt-0.5 truncate text-[11px]'>
+            上次调度：
+            {formatPoolChannelReference(
+              props.pool.routes,
+              summary.historicalScoringWinnerChannelId
+            )}
+          </div>
+        ) : null}
       </div>
       <div className='min-w-0'>
         <div className='text-muted-foreground text-[11px]'>实际主渠道</div>
@@ -785,7 +832,10 @@ export function ChannelMonitorSmartSchedulePool(
         </div>
       </header>
 
-      <PoolDecisionSummary pool={props.pool} />
+      <PoolDecisionSummary
+        pool={props.pool}
+        realtimeDegraded={props.realtimeDegraded}
+      />
 
       <div className='bg-muted/15 grid gap-3 border-b px-4 py-3 lg:grid-cols-[8rem_minmax(0,1fr)]'>
         <div>

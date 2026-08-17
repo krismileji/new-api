@@ -112,6 +112,39 @@ func TestChannelMonitorRedisLogicalAggregatorDoesNotScheduleIneligibleEvents(t *
 	assert.False(t, available)
 }
 
+func TestChannelMonitorRedisLogicalAggregatorOmitsFullScheduleForRequestEvents(t *testing.T) {
+	server, client := useChannelMonitorRedisConsumerTestClient(t)
+	event := channelMonitorRedisAggregatorTestEvent("event-runtime-only", true)
+	server.SetTime(time.Unix(event.OccurredAt, 0))
+	addChannelMonitorRedisConsumerTestEvent(t, client, event)
+	var runtimeCalls atomic.Int64
+	aggregator, err := NewChannelMonitorRedisLogicalAggregatorWithClient(
+		client,
+		func(context.Context, []model.ChannelMonitorEvent) error {
+			runtimeCalls.Add(1)
+			return nil
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	consumer := newChannelMonitorRedisConsumerForTest(
+		t,
+		client,
+		"runtime-only",
+		aggregator.HandleChannelMonitorEvents,
+		channelMonitorRedisConsumerTestConfig(),
+	)
+
+	processed, acquired, err := consumer.consumeOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, acquired)
+	assert.Equal(t, 1, processed)
+	assert.Equal(t, int64(1), runtimeCalls.Load())
+	assert.Zero(t, client.Exists(
+		context.Background(), ChannelMonitorRedisSchedulingDedupKey(event.EventId),
+	).Val())
+}
+
 func TestChannelMonitorRedisLogicalAggregatorRetriesSchedulingWithoutRepeatingProjection(t *testing.T) {
 	server, client := useChannelMonitorRedisConsumerTestClient(t)
 	event := channelMonitorRedisAggregatorTestEvent("event-enqueue-retry", true)

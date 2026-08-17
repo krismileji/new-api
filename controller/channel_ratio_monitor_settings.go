@@ -185,6 +185,7 @@ type channelMonitorSettings struct {
 	ProbeResponseOutputTokens             int                        `json:"probe_response_output_tokens"`
 	RelayHeaderTimeoutSeconds             int                        `json:"relay_response_header_timeout_seconds"`
 	SmartScheduleEnabled                  bool                       `json:"smart_schedule_enabled"`
+	SmartScheduleConfigError              string                     `json:"smart_schedule_config_error"`
 	SmartScheduleGroupPolicies            smartScheduleGroupPolicies `json:"smart_schedule_group_policies"`
 	SmartSchedulePerformanceWindowMinutes int                        `json:"smart_schedule_performance_window_minutes"`
 	SmartScheduleStabilityWindowMinutes   int                        `json:"smart_schedule_stability_window_minutes"`
@@ -480,9 +481,16 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || smartScheduleRateLimitCooldown < 0 || smartScheduleRateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
 		smartScheduleRateLimitCooldown = defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds
 	}
-	smartScheduleGroupPolicies := parseChannelSmartScheduleGroupPolicies(rawSmartScheduleGroupPolicies)
-	if len(smartScheduleGroupPolicies) == 0 {
+	smartScheduleGroupPolicies, smartScheduleConfigErr := parseChannelSmartScheduleGroupPoliciesWithError(
+		rawSmartScheduleGroupPolicies,
+	)
+	if smartScheduleConfigErr == nil && smartScheduleEnabled && len(smartScheduleGroupPolicies) == 0 {
+		smartScheduleConfigErr = errors.New("智能调度已启用，但分组调度策略为空")
+	}
+	smartScheduleConfigError := ""
+	if smartScheduleConfigErr != nil {
 		smartScheduleEnabled = false
+		smartScheduleConfigError = smartScheduleConfigErr.Error()
 	}
 	settings := channelMonitorSettings{
 		AutoUpdateIntervalMinutes:             interval,
@@ -520,6 +528,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		ProbeResponseOutputTokens:             probeResponseConfig.OutputTokens,
 		RelayHeaderTimeoutSeconds:             relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:                  smartScheduleEnabled,
+		SmartScheduleConfigError:              smartScheduleConfigError,
 		SmartScheduleGroupPolicies:            smartScheduleGroupPolicies,
 		SmartSchedulePerformanceWindowMinutes: smartSchedulePerformanceWindow,
 		SmartScheduleStabilityWindowMinutes:   smartScheduleStabilityWindow,

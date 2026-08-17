@@ -16,8 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
-var errChannelSmartScheduleRedisAdaptiveRefreshDeferred = errors.New("完整调度运行期间延后 Redis 自适应刷新")
-
 type channelSmartScheduleRedisRuntimeRouteKey struct {
 	channelId int
 	modelName string
@@ -222,7 +220,7 @@ func channelSmartScheduleRedisWindowEvents(
 			EventId: sample.EventID, EventSequence: sample.EventSequence,
 			OccurredAt: sample.OccurredAt, ChannelId: channelId, ModelName: modelName,
 			GroupName: sample.GroupName,
-			Source: sample.Source, Outcome: sample.Outcome,
+			Source:    sample.Source, Outcome: sample.Outcome,
 			IsRetryAttempt: sample.IsRetryAttempt, IsFinalAttempt: sample.IsFinalAttempt,
 			FinalRetrySummary: sample.FinalRetrySummary, RequestDispatched: sample.RequestDispatched,
 			SchedulingEligible:        sample.SchedulingEligible,
@@ -286,7 +284,8 @@ func refreshChannelSmartScheduleRedisAdaptiveRoute(
 		return fmt.Errorf("自适应备援检查完整调度任务失败: %w", err)
 	}
 	if running {
-		return errChannelSmartScheduleRedisAdaptiveRefreshDeferred
+		enqueueChannelSmartScheduleAdaptiveRefresh(channelId, modelName)
+		return nil
 	}
 	participatingRoutes, err := model.GetChannelSmartScheduleRuntimeParticipatingRoutes(channelId, modelName)
 	if err != nil {

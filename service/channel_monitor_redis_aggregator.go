@@ -24,7 +24,6 @@ const (
 	channelMonitorRedisEffectProcessingPrefix = "processing:"
 )
 
-var ErrChannelMonitorRedisSchedulingTriggerUnavailable = errors.New("渠道监控 Redis 完整调度触发器不可用")
 var ErrChannelMonitorRedisRuntimeEffectUnavailable = errors.New("渠道监控 Redis 运行时副作用处理器不可用")
 var ErrChannelMonitorRedisEffectProcessing = errors.New("渠道监控 Redis 副作用正在由其他 owner 处理")
 var ErrChannelMonitorRedisEffectOwnershipLost = errors.New("渠道监控 Redis 副作用 owner 已失效")
@@ -109,29 +108,14 @@ func RegisterChannelMonitorRedisRuntimeEffectHandler(handle ChannelMonitorRedisR
 	return true
 }
 
-// ChannelMonitorRedisSchedulingTrigger requests the existing full smart
-// schedule for one or more scheduling-eligible health events.
+// ChannelMonitorRedisSchedulingTrigger is an optional compatibility callback
+// used by explicit test/integration constructors. The production aggregator
+// deliberately omits it so request events never trigger full scheduling.
 type ChannelMonitorRedisSchedulingTrigger func(context.Context, []model.ChannelMonitorEvent) error
 
-type channelMonitorRedisSchedulingTriggerHolder struct {
-	trigger ChannelMonitorRedisSchedulingTrigger
-}
-
-var channelMonitorRedisSchedulingTrigger atomic.Pointer[channelMonitorRedisSchedulingTriggerHolder]
-
-// RegisterChannelMonitorRedisSchedulingTrigger connects the Redis logical
-// aggregator to the existing controller-owned full-schedule entry point.
-func RegisterChannelMonitorRedisSchedulingTrigger(trigger ChannelMonitorRedisSchedulingTrigger) bool {
-	if trigger == nil {
-		return false
-	}
-	channelMonitorRedisSchedulingTrigger.Store(&channelMonitorRedisSchedulingTriggerHolder{trigger: trigger})
-	return true
-}
-
 // ChannelMonitorRedisLogicalAggregator is the only REDIS-03 handler that
-// combines shared projections with scheduling side effects. REDIS-08 owns
-// installing it into the runtime consumer.
+// combines shared projections with runtime scheduling side effects. REDIS-08
+// owns installing it into the runtime consumer.
 type ChannelMonitorRedisLogicalAggregator struct {
 	client           *redis.Client
 	routeHealth      ChannelMonitorRedisEventHandler
@@ -150,11 +134,7 @@ func NewChannelMonitorRedisLogicalAggregator() (*ChannelMonitorRedisLogicalAggre
 	if runtimeHolder == nil || runtimeHolder.handle == nil {
 		return nil, ErrChannelMonitorRedisRuntimeEffectUnavailable
 	}
-	scheduleHolder := channelMonitorRedisSchedulingTrigger.Load()
-	if scheduleHolder == nil || scheduleHolder.trigger == nil {
-		return nil, ErrChannelMonitorRedisSchedulingTriggerUnavailable
-	}
-	return NewChannelMonitorRedisLogicalAggregatorWithClient(common.RDB, runtimeHolder.handle, scheduleHolder.trigger)
+	return NewChannelMonitorRedisLogicalAggregatorWithClient(common.RDB, runtimeHolder.handle, nil)
 }
 
 func NewChannelMonitorRedisLogicalAggregatorWithClient(
@@ -184,9 +164,6 @@ func newChannelMonitorRedisLogicalAggregator(
 ) (*ChannelMonitorRedisLogicalAggregator, error) {
 	if client == nil || routeHealth == nil || sharedProjection == nil {
 		return nil, ErrChannelMonitorRedisConsumerUnavailable
-	}
-	if trigger == nil {
-		return nil, ErrChannelMonitorRedisSchedulingTriggerUnavailable
 	}
 	if runtimeEffect == nil {
 		return nil, ErrChannelMonitorRedisRuntimeEffectUnavailable
@@ -248,6 +225,9 @@ func (aggregator *ChannelMonitorRedisLogicalAggregator) HandleChannelMonitorEven
 		aggregator.runtimeEffect,
 	); err != nil {
 		return err
+	}
+	if aggregator.triggerSchedule == nil {
+		return nil
 	}
 	return aggregator.applyEffect(
 		ctx,

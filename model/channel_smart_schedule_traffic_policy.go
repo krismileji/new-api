@@ -20,6 +20,7 @@ type channelSmartScheduleTrafficPolicyGroup struct {
 
 type channelSmartScheduleTrafficPolicy struct {
 	enabled       bool
+	faulted       bool
 	allModels     map[string]struct{}
 	modelsByGroup map[string]map[string]struct{}
 }
@@ -70,16 +71,23 @@ func parseChannelSmartScheduleTrafficPolicy(rawEnabled string, rawPolicies strin
 
 	var configured []channelSmartScheduleTrafficPolicyGroup
 	if common.UnmarshalJsonStr(rawPolicies, &configured) != nil {
+		policy.faulted = true
+		return policy
+	}
+	if len(configured) == 0 {
+		policy.faulted = true
 		return policy
 	}
 	seenGroups := make(map[string]struct{}, len(configured))
 	for _, groupPolicy := range configured {
 		group := strings.TrimSpace(groupPolicy.Group)
 		if group == "" || groupPolicy.Models == nil {
-			return &channelSmartScheduleTrafficPolicy{enabled: true}
+			policy.faulted = true
+			return policy
 		}
 		if _, exists := seenGroups[group]; exists {
-			return &channelSmartScheduleTrafficPolicy{enabled: true}
+			policy.faulted = true
+			return policy
 		}
 		seenGroups[group] = struct{}{}
 		if len(*groupPolicy.Models) == 0 {
@@ -90,7 +98,8 @@ func parseChannelSmartScheduleTrafficPolicy(rawEnabled string, rawPolicies strin
 		for _, configuredModel := range *groupPolicy.Models {
 			modelName := strings.TrimSpace(configuredModel)
 			if modelName == "" {
-				return &channelSmartScheduleTrafficPolicy{enabled: true}
+				policy.faulted = true
+				return policy
 			}
 			models[modelName] = struct{}{}
 		}
@@ -103,6 +112,9 @@ func (policy *channelSmartScheduleTrafficPolicy) managesPool(group string, model
 	if policy == nil || !policy.enabled {
 		return false
 	}
+	if policy.faulted {
+		return true
+	}
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
 	if _, allModels := policy.allModels[group]; allModels {
@@ -113,6 +125,9 @@ func (policy *channelSmartScheduleTrafficPolicy) managesPool(group string, model
 }
 
 func (policy *channelSmartScheduleTrafficPolicy) managesAnyPool(group string, modelNames []string) bool {
+	if policy != nil && policy.enabled && policy.faulted {
+		return true
+	}
 	for _, modelName := range modelNames {
 		if policy.managesPool(group, modelName) {
 			return true

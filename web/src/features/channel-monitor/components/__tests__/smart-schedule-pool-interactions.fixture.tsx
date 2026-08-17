@@ -302,6 +302,7 @@ const poolSummary = summarizeChannelMonitorSmartSchedulePools(routes)[0]
 assert.ok(poolSummary)
 
 async function renderPool(options?: {
+  realtimeDegraded?: boolean
   onSetPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
   onGroupPauseChange?: (
@@ -321,6 +322,7 @@ async function renderPool(options?: {
         placements={placements}
         performanceByRoute={performanceByRoute}
         stabilityByRoute={stabilityByRoute}
+        realtimeDegraded={options?.realtimeDegraded ?? false}
         updateRouteKey={null}
         groupPauseKey={null}
         updateDisabled={false}
@@ -454,6 +456,16 @@ assert.ok(sharedWindow.textContent?.includes('最近恢复探测成功'))
 assert.equal(sharedWindow.textContent?.includes('最近恢复探测成功-'), false)
 await act(async () => expanded.root.unmount())
 expanded.container.remove()
+
+const degraded = await renderPool({ realtimeDegraded: true })
+assert.ok(
+  degraded.container.textContent?.includes(
+    '实时链路已降级，当前评分与实际流量可能不同步'
+  )
+)
+assert.equal(degraded.container.textContent?.includes('当前无需切换'), false)
+await act(async () => degraded.root.unmount())
+degraded.container.remove()
 
 const primaryActions: Array<{
   action: 'set' | 'clear'

@@ -44,6 +44,8 @@ describe('channel monitor realtime status', () => {
           last_processed_at: 1_752_777_845,
           retry_count: 3,
           takeover_count: 2,
+          quarantine_count: 1,
+          last_quarantined_at: 1_752_777_820,
           marker_release_failure_count: 4,
           marker_release_failure_active: true,
           stream_trim_failure_count: 5,
@@ -60,6 +62,8 @@ describe('channel monitor realtime status', () => {
     assert.ok(markup.includes('消费延迟 45 秒'))
     assert.ok(markup.includes('重试 3 次'))
     assert.ok(markup.includes('接管 2 次'))
+    assert.ok(markup.includes('隔离 1 条'))
+    assert.ok(markup.includes(formatTimestampToDate(1_752_777_820)))
     assert.ok(markup.includes('副作用标记释放故障'))
     assert.ok(markup.includes('Stream 裁剪故障'))
     assert.ok(markup.includes('标记释放失败 4 次'))

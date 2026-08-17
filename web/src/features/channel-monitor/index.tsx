@@ -654,10 +654,11 @@ export function ChannelMonitor() {
     [effectiveSmartScheduleRoutes]
   )
   const smartScheduleHasCriticalIssue =
-    settings.smart_schedule_enabled &&
-    (smartScheduleSummaryQuery.isError ||
-      smartScheduleSummary.degradedCount > 0 ||
-      smartScheduleSummary.failedCount > 0)
+    Boolean(settings.smart_schedule_config_error) ||
+    (settings.smart_schedule_enabled &&
+      (smartScheduleSummaryQuery.isError ||
+        smartScheduleSummary.degradedCount > 0 ||
+        smartScheduleSummary.failedCount > 0))
   const smartScheduleHasProbing =
     !smartScheduleHasCriticalIssue && smartScheduleSummary.probingCount > 0
   const performanceMetrics =
@@ -679,9 +680,12 @@ export function ChannelMonitor() {
     autoUpdateIntervalMinutes > 0
       ? `自动更新：每 ${autoUpdateIntervalMinutes} 分钟 · 失败重试 ${settings.auto_update_retry_count} 次 · 连续失败 ${autoUpdateConsecutiveFailureLimit} 次后停止`
       : '自动更新：已关闭'
-  const smartScheduleLabel = settings.smart_schedule_enabled
-    ? '智能调度：请求事件投影后异步更新'
-    : '智能调度：已关闭'
+  let smartScheduleLabel = '智能调度：已关闭'
+  if (settings.smart_schedule_config_error) {
+    smartScheduleLabel = `智能调度：配置错误（${settings.smart_schedule_config_error}）`
+  } else if (settings.smart_schedule_enabled) {
+    smartScheduleLabel = '智能调度：请求事件投影后异步更新'
+  }
   const performanceRangeMinutes =
     performanceQuery.data?.data.range_minutes ??
     requestedPerformanceRangeMinutes

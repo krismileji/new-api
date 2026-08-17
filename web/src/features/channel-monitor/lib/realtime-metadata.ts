@@ -106,6 +106,24 @@ export function mergeChannelMonitorRealtimeMetadata(
       )
     }
     if (
+      merged.quarantine_count !== undefined ||
+      snapshot.quarantine_count !== undefined
+    ) {
+      merged.quarantine_count = Math.max(
+        merged.quarantine_count ?? 0,
+        snapshot.quarantine_count ?? 0
+      )
+    }
+    if (
+      merged.last_quarantined_at !== undefined ||
+      snapshot.last_quarantined_at !== undefined
+    ) {
+      merged.last_quarantined_at = Math.max(
+        merged.last_quarantined_at ?? 0,
+        snapshot.last_quarantined_at ?? 0
+      )
+    }
+    if (
       merged.marker_release_failure_count !== undefined ||
       snapshot.marker_release_failure_count !== undefined
     ) {

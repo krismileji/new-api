@@ -173,6 +173,29 @@ func TestChannelSmartScheduleTrafficPolicyDisabledRestoresOfficialCandidates(t *
 	assert.Equal(t, 5221, channel.Id)
 }
 
+func TestChannelSmartScheduleTrafficPolicyInvalidConfigFailsClosedToParticipatingRoutes(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useDatabaseChannelSelection(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `{`)
+	priority := int64(100)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 5226, Name: "未参与渠道", Status: common.ChannelStatusEnabled},
+		{Id: 5227, Name: "已有参与状态渠道", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 5226, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 1000},
+		{ChannelId: 5227, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&ChannelSmartScheduleRouteState{
+		ChannelId: 5227, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5227, channel.Id)
+}
+
 func TestChannelSmartScheduleTrafficPolicySelectionSkipsDegradedRouteUntilRetry(t *testing.T) {
 	for _, memoryCacheEnabled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "database", true: "cache"}[memoryCacheEnabled], func(t *testing.T) {

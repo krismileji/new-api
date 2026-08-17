@@ -76,6 +76,8 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   topPriority: number | null
   candidateCount: number
   scoringWinnerChannelId: number
+  historicalScoringWinnerChannelId: number
+  scoringWinnerSource: 'current_window' | 'last_schedule' | 'none'
   actualPrimaryChannelId: number
   actualHighestPriority: number | null
   actualTopLayerChannelIds: number[]
@@ -391,6 +393,10 @@ export function groupChannelMonitorSmartScheduleRoutesByChannel(
 
 type ChannelMonitorSmartSchedulePoolRoutingSnapshot = {
   decision: ChannelMonitorSmartScheduleScoreDetails['decision'] | undefined
+  historicalDecision:
+    | ChannelMonitorSmartScheduleScoreDetails['decision']
+    | undefined
+  decisionSource: 'current_window' | 'last_schedule' | 'none'
   actualPrimaryChannelId: number
   actualHighestPriority: number | null
   actualTopLayerChannelIds: number[]
@@ -399,15 +405,25 @@ type ChannelMonitorSmartSchedulePoolRoutingSnapshot = {
 function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
   routes: readonly ChannelMonitorSmartScheduleRoute[]
 ): ChannelMonitorSmartSchedulePoolRoutingSnapshot {
-  let decision: ChannelMonitorSmartScheduleScoreDetails['decision'] | undefined
+  let historicalDecision:
+    | ChannelMonitorSmartScheduleScoreDetails['decision']
+    | undefined
   let decisionTime = -1
   for (const route of routes) {
     const candidate = route.state.last_schedule_score_details?.decision
     if (candidate && route.state.last_schedule_time >= decisionTime) {
-      decision = candidate
+      historicalDecision = candidate
       decisionTime = route.state.last_schedule_time
     }
   }
+  const currentDecision = routes
+    .map((route) => route.current_window_score_details?.decision)
+    .find((candidate) => candidate != null)
+  const decision = currentDecision ?? historicalDecision
+  let decisionSource: ChannelMonitorSmartSchedulePoolRoutingSnapshot['decisionSource'] =
+    'none'
+  if (currentDecision) decisionSource = 'current_window'
+  else if (historicalDecision) decisionSource = 'last_schedule'
 
   const activeRoutes = routes.filter(channelMonitorSmartScheduleRouteIsActive)
   const routesOutsideRateLimitCooldown = activeRoutes.filter(
@@ -470,6 +486,8 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
 
   return {
     decision,
+    historicalDecision,
+    decisionSource,
     actualPrimaryChannelId,
     actualHighestPriority,
     actualTopLayerChannelIds,
@@ -723,6 +741,8 @@ export function summarizeChannelMonitorSmartSchedulePools(
         topPriority: active ? route.priority : null,
         candidateCount: active ? 1 : 0,
         scoringWinnerChannelId: 0,
+        historicalScoringWinnerChannelId: 0,
+        scoringWinnerSource: 'none',
         actualPrimaryChannelId: 0,
         actualHighestPriority: null,
         actualTopLayerChannelIds: [],
@@ -779,6 +799,14 @@ export function summarizeChannelMonitorSmartSchedulePools(
               (snapshot.decision?.raw_winner_channel_id ?? 0) &&
             channelMonitorSmartScheduleRouteIsActive(route)
         )?.channel_id ?? 0,
+      historicalScoringWinnerChannelId:
+        poolRoutes.find(
+          (route) =>
+            route.channel_id ===
+              (snapshot.historicalDecision?.raw_winner_channel_id ?? 0) &&
+            channelMonitorSmartScheduleRouteIsActive(route)
+        )?.channel_id ?? 0,
+      scoringWinnerSource: snapshot.decisionSource,
       actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
       actualTopLayerChannelIds: snapshot.actualTopLayerChannelIds,

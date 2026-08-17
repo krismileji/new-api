@@ -117,6 +117,17 @@ func useChannelMonitorOptionMap(t *testing.T, values map[string]string) {
 	})
 }
 
+func TestChannelMonitorSettingsReportsInvalidSmartSchedulePolicy(t *testing.T) {
+	settings := channelMonitorSettingsFromOptions(map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: `{`,
+	})
+
+	assert.False(t, settings.SmartScheduleEnabled)
+	assert.Contains(t, settings.SmartScheduleConfigError, "JSON 无效")
+	assert.Empty(t, settings.SmartScheduleGroupPolicies)
+}
+
 func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	originalDB := model.DB

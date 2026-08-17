@@ -232,6 +232,8 @@ export type ChannelMonitorRealtimeMetadata = {
   last_processed_at?: number
   retry_count?: number
   takeover_count?: number
+  quarantine_count?: number
+  last_quarantined_at?: number
   marker_release_failure_count?: number
   marker_release_failure_active?: boolean
   stream_trim_failure_count?: number
@@ -623,6 +625,7 @@ export type ChannelMonitorSettings = {
   probe_response_output_tokens?: number
   relay_response_header_timeout_seconds?: number
   smart_schedule_enabled: boolean
+  smart_schedule_config_error?: string
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_performance_window_minutes: number
   smart_schedule_stability_window_minutes: number

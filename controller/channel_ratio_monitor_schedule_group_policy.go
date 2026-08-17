@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -231,18 +232,23 @@ type channelSmartSchedulePolicy struct {
 }
 
 func parseChannelSmartScheduleGroupPolicies(raw string) []channelSmartScheduleGroupPolicy {
+	policies, _ := parseChannelSmartScheduleGroupPoliciesWithError(raw)
+	return policies
+}
+
+func parseChannelSmartScheduleGroupPoliciesWithError(raw string) ([]channelSmartScheduleGroupPolicy, error) {
 	if strings.TrimSpace(raw) == "" {
-		return []channelSmartScheduleGroupPolicy{}
+		return []channelSmartScheduleGroupPolicy{}, nil
 	}
 	var policies []channelSmartScheduleGroupPolicy
-	if common.UnmarshalJsonStr(raw, &policies) != nil {
-		return []channelSmartScheduleGroupPolicy{}
+	if err := common.UnmarshalJsonStr(raw, &policies); err != nil {
+		return []channelSmartScheduleGroupPolicy{}, fmt.Errorf("分组调度策略 JSON 无效: %w", err)
 	}
 	normalized, err := normalizeChannelSmartScheduleGroupPolicies(policies)
 	if err != nil {
-		return []channelSmartScheduleGroupPolicy{}
+		return []channelSmartScheduleGroupPolicy{}, err
 	}
-	return normalized
+	return normalized, nil
 }
 
 func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleGroupPolicy) ([]channelSmartScheduleGroupPolicy, error) {

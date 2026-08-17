@@ -227,6 +227,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"last_processed_at":             redisStatus.LastProcessedAt,
 		"retry_count":                   redisStatus.RetryCount,
 		"takeover_count":                redisStatus.TakeoverCount,
+		"quarantine_count":              redisStatus.QuarantineCount,
+		"last_quarantined_at":           redisStatus.LastQuarantinedAt,
 		"marker_release_failure_count":  redisStatus.MarkerReleaseFailureCount,
 		"marker_release_failure_active": redisStatus.MarkerReleaseFailureActive,
 		"stream_trim_failure_count":     redisStatus.StreamTrimFailureCount,

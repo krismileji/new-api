@@ -18,16 +18,18 @@ import (
 )
 
 const (
-	channelMonitorRedisConsumerBatchSize        = int64(100)
-	channelMonitorRedisConsumerBlock            = time.Second
-	channelMonitorRedisConsumerClaimMinIdle     = 30 * time.Second
-	channelMonitorRedisAggregatorLeaseTTL       = 15 * time.Second
-	channelMonitorRedisAggregatorLeaseHeartbeat = 5 * time.Second
-	channelMonitorRedisConsumerOperationTimeout = 3 * time.Second
-	channelMonitorRedisConsumerRetryDelay       = time.Second
-	channelMonitorRedisDedupTTL                 = channelMonitorRedisReplayProtectionTTL
-	channelMonitorRedisStreamSequenceBits       = 20
-	channelMonitorRedisStreamSequenceLimit      = uint64(1<<channelMonitorRedisStreamSequenceBits) - 1
+	channelMonitorRedisConsumerBatchSize           = int64(100)
+	channelMonitorRedisConsumerBlock               = time.Second
+	channelMonitorRedisConsumerClaimMinIdle        = 30 * time.Second
+	channelMonitorRedisAggregatorLeaseTTL          = 15 * time.Second
+	channelMonitorRedisAggregatorLeaseHeartbeat    = 5 * time.Second
+	channelMonitorRedisConsumerOperationTimeout    = 3 * time.Second
+	channelMonitorRedisConsumerRetryDelay          = time.Second
+	channelMonitorRedisConsumerMaxDeliveryAttempts = 20
+	channelMonitorRedisDeadLetterMaxLength         = 10_000
+	channelMonitorRedisDedupTTL                    = channelMonitorRedisReplayProtectionTTL
+	channelMonitorRedisStreamSequenceBits          = 20
+	channelMonitorRedisStreamSequenceLimit         = uint64(1<<channelMonitorRedisStreamSequenceBits) - 1
 )
 
 var (
@@ -56,13 +58,57 @@ if redis.call('GET', KEYS[1]) ~= ARGV[1] then
 end
 local dedup_count = tonumber(ARGV[2])
 for index = 1, dedup_count do
-  redis.call('SET', KEYS[index + 2], '1', 'PX', ARGV[3])
+  redis.call('SET', KEYS[index + 3], '1', 'PX', ARGV[3])
 end
 local ack_args = {KEYS[2], ARGV[4]}
 for index = 5, #ARGV do
   table.insert(ack_args, ARGV[index])
 end
-return redis.call('XACK', unpack(ack_args))
+local acknowledged = redis.call('XACK', unpack(ack_args))
+if #ARGV >= 5 then
+  local delete_args = {KEYS[3]}
+  for index = 5, #ARGV do
+    table.insert(delete_args, ARGV[index])
+  end
+  redis.call('HDEL', unpack(delete_args))
+end
+return acknowledged
+`
+
+const channelMonitorRedisIncrementFailureScript = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return {-1}
+end
+local counts = {}
+for index = 2, #ARGV do
+  counts[index - 1] = redis.call('HINCRBY', KEYS[2], ARGV[index], 1)
+end
+return counts
+`
+
+const channelMonitorRedisQuarantineScript = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return -1
+end
+local item_count = tonumber(ARGV[4])
+local acknowledged = 0
+local offset = 6
+for index = 1, item_count do
+  local message_id = ARGV[offset]
+  redis.call(
+    'XADD', KEYS[3], 'MAXLEN', '~', ARGV[5], '*',
+    'original_message_id', message_id,
+    'event_id', ARGV[offset + 1],
+    'payload', ARGV[offset + 2],
+    'error', ARGV[offset + 3],
+    'failure_count', ARGV[offset + 4],
+    'quarantined_at', ARGV[3]
+  )
+  redis.call('HDEL', KEYS[4], message_id)
+  acknowledged = acknowledged + redis.call('XACK', KEYS[2], ARGV[2], message_id)
+  offset = offset + 5
+end
+return acknowledged
 `
 
 // ChannelMonitorRedisEventHandler applies one batch of previously validated,
@@ -85,15 +131,39 @@ func (handle ChannelMonitorRedisEventHandlerFunc) HandleChannelMonitorEvents(
 }
 
 type channelMonitorRedisConsumerConfig struct {
-	BatchSize        int64
-	Block            time.Duration
-	ClaimMinIdle     time.Duration
-	LeaseTTL         time.Duration
-	LeaseHeartbeat   time.Duration
-	OperationTimeout time.Duration
-	RetryDelay       time.Duration
-	DedupTTL         time.Duration
+	BatchSize           int64
+	Block               time.Duration
+	ClaimMinIdle        time.Duration
+	LeaseTTL            time.Duration
+	LeaseHeartbeat      time.Duration
+	OperationTimeout    time.Duration
+	RetryDelay          time.Duration
+	DedupTTL            time.Duration
+	MaxDeliveryAttempts int
 }
+
+type channelMonitorRedisParsedMessage struct {
+	message  redis.XMessage
+	eventID  string
+	payload  string
+	event    model.ChannelMonitorEvent
+	dedupKey string
+}
+
+type channelMonitorRedisQuarantineItem struct {
+	messageID    string
+	eventID      string
+	payload      string
+	reason       string
+	failureCount int64
+}
+
+type channelMonitorRedisHandlerRetryError struct {
+	err error
+}
+
+func (retryErr *channelMonitorRedisHandlerRetryError) Error() string { return retryErr.err.Error() }
+func (retryErr *channelMonitorRedisHandlerRetryError) Unwrap() error { return retryErr.err }
 
 // ChannelMonitorRedisEventConsumer reliably consumes the versioned raw event
 // Stream. It does not install projections or replace the legacy local queue.
@@ -171,14 +241,15 @@ func newChannelMonitorRedisEventConsumer(
 
 func defaultChannelMonitorRedisConsumerConfig() channelMonitorRedisConsumerConfig {
 	return channelMonitorRedisConsumerConfig{
-		BatchSize:        channelMonitorRedisConsumerBatchSize,
-		Block:            channelMonitorRedisConsumerBlock,
-		ClaimMinIdle:     channelMonitorRedisConsumerClaimMinIdle,
-		LeaseTTL:         channelMonitorRedisAggregatorLeaseTTL,
-		LeaseHeartbeat:   channelMonitorRedisAggregatorLeaseHeartbeat,
-		OperationTimeout: channelMonitorRedisConsumerOperationTimeout,
-		RetryDelay:       channelMonitorRedisConsumerRetryDelay,
-		DedupTTL:         channelMonitorRedisDedupTTL,
+		BatchSize:           channelMonitorRedisConsumerBatchSize,
+		Block:               channelMonitorRedisConsumerBlock,
+		ClaimMinIdle:        channelMonitorRedisConsumerClaimMinIdle,
+		LeaseTTL:            channelMonitorRedisAggregatorLeaseTTL,
+		LeaseHeartbeat:      channelMonitorRedisAggregatorLeaseHeartbeat,
+		OperationTimeout:    channelMonitorRedisConsumerOperationTimeout,
+		RetryDelay:          channelMonitorRedisConsumerRetryDelay,
+		DedupTTL:            channelMonitorRedisDedupTTL,
+		MaxDeliveryAttempts: channelMonitorRedisConsumerMaxDeliveryAttempts,
 	}
 }
 
@@ -208,6 +279,9 @@ func normalizeChannelMonitorRedisConsumerConfig(config channelMonitorRedisConsum
 	if config.RetryDelay <= 0 {
 		config.RetryDelay = defaults.RetryDelay
 	}
+	if config.MaxDeliveryAttempts <= 0 {
+		config.MaxDeliveryAttempts = defaults.MaxDeliveryAttempts
+	}
 	minimumDedupTTL := config.ClaimMinIdle + config.LeaseTTL
 	if config.DedupTTL < minimumDedupTTL {
 		config.DedupTTL = defaults.DedupTTL
@@ -218,8 +292,9 @@ func normalizeChannelMonitorRedisConsumerConfig(config channelMonitorRedisConsum
 	return config
 }
 
-// Run consumes until ctx is canceled or a Redis/handler error occurs. Handler
-// errors deliberately stop the loop with the batch left pending for takeover.
+// Run consumes until ctx is canceled or an infrastructure error requires the
+// runtime supervisor to rebuild the consumer. Handler failures remain pending
+// and are retried by this consumer while its heartbeat stays alive.
 func (consumer *ChannelMonitorRedisEventConsumer) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -230,9 +305,12 @@ func (consumer *ChannelMonitorRedisEventConsumer) Run(ctx context.Context) error
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return err
+			var handlerRetry *channelMonitorRedisHandlerRetryError
+			if !errors.As(err, &handlerRetry) {
+				return err
+			}
 		}
-		if acquired {
+		if acquired && err == nil {
 			continue
 		}
 		timer := time.NewTimer(consumer.config.RetryDelay)
@@ -265,6 +343,12 @@ func (consumer *ChannelMonitorRedisEventConsumer) consumeOnce(ctx context.Contex
 		return 0, true, err
 	}
 	if len(messages) == 0 {
+		messages, err = consumer.readOwnedPending(lease.ctx)
+		if err != nil {
+			return 0, true, err
+		}
+	}
+	if len(messages) == 0 {
 		hasPending, pendingErr := consumer.hasPending(lease.ctx)
 		if pendingErr != nil {
 			return 0, true, pendingErr
@@ -291,6 +375,29 @@ func (consumer *ChannelMonitorRedisEventConsumer) consumeOnce(ctx context.Contex
 		return 0, true, err
 	}
 	return len(messages), true, nil
+}
+
+func (consumer *ChannelMonitorRedisEventConsumer) readOwnedPending(ctx context.Context) ([]redis.XMessage, error) {
+	opCtx, cancel := context.WithTimeout(ctx, consumer.config.OperationTimeout)
+	defer cancel()
+	streams, err := consumer.client.XReadGroup(opCtx, &redis.XReadGroupArgs{
+		Group:    ChannelMonitorRedisConsumerGroup,
+		Consumer: consumer.consumerName,
+		Streams:  []string{ChannelMonitorRedisEventStream, "0"},
+		Count:    consumer.config.BatchSize,
+		Block:    -1,
+	}).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var messages []redis.XMessage
+	for _, stream := range streams {
+		messages = append(messages, stream.Messages...)
+	}
+	return messages, nil
 }
 
 func (consumer *ChannelMonitorRedisEventConsumer) hasPending(ctx context.Context) (bool, error) {
@@ -507,75 +614,193 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 	lease *channelMonitorRedisAggregatorLease,
 	messages []redis.XMessage,
 ) error {
-	events := make([]model.ChannelMonitorEvent, 0, len(messages))
-	messageIDs := make([]string, 0, len(messages))
-	eventIDs := make([]string, 0, len(messages))
-	dedupKeys := make([]string, 0, len(messages))
+	parsedMessages := make([]channelMonitorRedisParsedMessage, 0, len(messages))
+	invalidMessages := make([]channelMonitorRedisQuarantineItem, 0)
 	for _, message := range messages {
 		eventID, err := channelMonitorRedisMessageValue(message, ChannelMonitorRedisEventFieldEventID)
 		if err != nil {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), err)
+			invalidMessages = append(invalidMessages, channelMonitorRedisQuarantineItem{
+				messageID: message.ID, reason: err.Error(), failureCount: 1,
+			})
+			continue
 		}
 		payload, err := channelMonitorRedisMessageValue(message, ChannelMonitorRedisEventFieldPayload)
 		if err != nil {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), err)
+			invalidMessages = append(invalidMessages, channelMonitorRedisQuarantineItem{
+				messageID: message.ID, eventID: eventID, reason: err.Error(), failureCount: 1,
+			})
+			continue
 		}
 		event, err := model.UnmarshalChannelMonitorEvent([]byte(payload))
 		if err != nil {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), fmt.Errorf("渠道监控 Redis Stream 事件 %s 无效: %w", message.ID, err))
+			invalidMessages = append(invalidMessages, channelMonitorRedisQuarantineItem{
+				messageID: message.ID, eventID: eventID, payload: payload,
+				reason:       fmt.Sprintf("渠道监控 Redis Stream 事件 %s 无效: %v", message.ID, err),
+				failureCount: 1,
+			})
+			continue
 		}
 		if event.EventId != eventID {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), fmt.Errorf("渠道监控 Redis Stream 事件 %s 的 event_id 与 payload 不一致", message.ID))
+			invalidMessages = append(invalidMessages, channelMonitorRedisQuarantineItem{
+				messageID: message.ID, eventID: eventID, payload: payload,
+				reason:       fmt.Sprintf("渠道监控 Redis Stream 事件 %s 的 event_id 与 payload 不一致", message.ID),
+				failureCount: 1,
+			})
+			continue
 		}
 		event.EventSequence, err = channelMonitorRedisEventSequenceFromStreamID(message.ID)
 		if err != nil {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), err)
+			invalidMessages = append(invalidMessages, channelMonitorRedisQuarantineItem{
+				messageID: message.ID, eventID: eventID, payload: payload,
+				reason: err.Error(), failureCount: 1,
+			})
+			continue
 		}
-		events = append(events, event)
-		messageIDs = append(messageIDs, message.ID)
-		eventIDs = append(eventIDs, eventID)
-		dedupKeys = append(dedupKeys, ChannelMonitorRedisProjectionDedupKey(eventID))
+		parsedMessages = append(parsedMessages, channelMonitorRedisParsedMessage{
+			message: message, eventID: eventID, payload: payload, event: event,
+			dedupKey: ChannelMonitorRedisProjectionDedupKey(eventID),
+		})
+	}
+	if len(invalidMessages) > 0 {
+		if err := consumer.quarantineMessages(lease, invalidMessages); err != nil {
+			return consumer.retryPendingMessages(lease.ctx, len(invalidMessages), err)
+		}
+	}
+	if len(parsedMessages) == 0 {
+		return consumer.completeMessageProcessing(lease.ctx)
 	}
 
 	opCtx, cancel := context.WithTimeout(lease.ctx, consumer.config.OperationTimeout)
+	dedupKeys := make([]string, 0, len(parsedMessages))
+	for _, parsed := range parsedMessages {
+		dedupKeys = append(dedupKeys, parsed.dedupKey)
+	}
 	dedupValues, err := consumer.client.MGet(opCtx, dedupKeys...).Result()
 	cancel()
 	if err != nil {
 		return err
 	}
-	uniqueEvents := make([]model.ChannelMonitorEvent, 0, len(events))
-	uniqueDedupKeys := make([]string, 0, len(events))
-	seenEventIDs := make(map[string]struct{}, len(events))
-	for index, event := range events {
+	uniqueMessages := make([]channelMonitorRedisParsedMessage, 0, len(parsedMessages))
+	alreadyProcessedMessageIDs := make([]string, 0)
+	messageIDsByEventID := make(map[string][]string, len(parsedMessages))
+	seenEventIDs := make(map[string]struct{}, len(parsedMessages))
+	for index, parsed := range parsedMessages {
 		if dedupValues[index] != nil {
+			alreadyProcessedMessageIDs = append(alreadyProcessedMessageIDs, parsed.message.ID)
 			continue
 		}
-		if _, duplicate := seenEventIDs[eventIDs[index]]; duplicate {
+		messageIDsByEventID[parsed.eventID] = append(messageIDsByEventID[parsed.eventID], parsed.message.ID)
+		if _, duplicate := seenEventIDs[parsed.eventID]; duplicate {
 			continue
 		}
-		seenEventIDs[eventIDs[index]] = struct{}{}
-		uniqueEvents = append(uniqueEvents, event)
-		uniqueDedupKeys = append(uniqueDedupKeys, dedupKeys[index])
+		seenEventIDs[parsed.eventID] = struct{}{}
+		uniqueMessages = append(uniqueMessages, parsed)
+	}
+	if len(alreadyProcessedMessageIDs) > 0 {
+		if err := consumer.finalizeMessages(lease, nil, alreadyProcessedMessageIDs); err != nil {
+			return consumer.retryPendingMessages(lease.ctx, len(alreadyProcessedMessageIDs), err)
+		}
+	}
+	if len(uniqueMessages) == 0 {
+		return consumer.completeMessageProcessing(lease.ctx)
 	}
 
-	if len(uniqueEvents) > 0 {
-		handlerCtx := context.WithValue(
-			lease.ctx,
-			channelMonitorRedisEffectOwnerContextKey{},
-			lease.token,
-		)
-		if err := consumer.handler.HandleChannelMonitorEvents(handlerCtx, uniqueEvents); err != nil {
-			return consumer.retryPendingMessages(lease.ctx, len(messages), err)
+	handlerCtx := context.WithValue(
+		lease.ctx,
+		channelMonitorRedisEffectOwnerContextKey{},
+		lease.token,
+	)
+	uniqueEvents := make([]model.ChannelMonitorEvent, 0, len(uniqueMessages))
+	for _, parsed := range uniqueMessages {
+		uniqueEvents = append(uniqueEvents, parsed.event)
+	}
+	handlerErr := consumer.handler.HandleChannelMonitorEvents(handlerCtx, uniqueEvents)
+	if handlerErr != nil {
+		pendingMessageIDs := make([]string, 0, len(parsedMessages))
+		for _, parsed := range uniqueMessages {
+			pendingMessageIDs = append(pendingMessageIDs, messageIDsByEventID[parsed.eventID]...)
 		}
+		failureCounts, countErr := consumer.incrementFailureCounts(lease, pendingMessageIDs)
+		if countErr != nil {
+			return consumer.retryPendingMessages(lease.ctx, len(pendingMessageIDs), countErr)
+		}
+		incrementChannelMonitorRedisObservation(
+			consumer.client,
+			ChannelMonitorRedisObservabilityFieldRetryCount,
+			int64(len(pendingMessageIDs)),
+		)
+		readyForIsolation := false
+		for _, count := range failureCounts {
+			if count >= int64(consumer.config.MaxDeliveryAttempts) {
+				readyForIsolation = true
+				break
+			}
+		}
+		if !readyForIsolation {
+			return &channelMonitorRedisHandlerRetryError{err: handlerErr}
+		}
+
+		successfulDedupKeys := make([]string, 0, len(uniqueMessages))
+		successfulMessageIDs := make([]string, 0, len(pendingMessageIDs))
+		quarantined := make([]channelMonitorRedisQuarantineItem, 0)
+		unresolved := false
+		for _, parsed := range uniqueMessages {
+			messageIDs := messageIDsByEventID[parsed.eventID]
+			attempts := int64(0)
+			for _, messageID := range messageIDs {
+				attempts = max(attempts, failureCounts[messageID])
+			}
+			if attempts < int64(consumer.config.MaxDeliveryAttempts) {
+				unresolved = true
+				continue
+			}
+			if err := consumer.handler.HandleChannelMonitorEvents(
+				handlerCtx, []model.ChannelMonitorEvent{parsed.event},
+			); err != nil {
+				for _, messageID := range messageIDs {
+					quarantined = append(quarantined, channelMonitorRedisQuarantineItem{
+						messageID: messageID, eventID: parsed.eventID, payload: parsed.payload,
+						reason: err.Error(), failureCount: attempts,
+					})
+				}
+				continue
+			}
+			successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
+			successfulMessageIDs = append(successfulMessageIDs, messageIDs...)
+		}
+		if len(quarantined) > 0 {
+			if err := consumer.quarantineMessages(lease, quarantined); err != nil {
+				return consumer.retryPendingMessages(lease.ctx, len(quarantined), err)
+			}
+		}
+		if len(successfulMessageIDs) > 0 {
+			if err := consumer.finalizeMessages(lease, successfulDedupKeys, successfulMessageIDs); err != nil {
+				return consumer.retryPendingMessages(lease.ctx, len(successfulMessageIDs), err)
+			}
+		}
+		if unresolved {
+			return &channelMonitorRedisHandlerRetryError{err: handlerErr}
+		}
+		return consumer.completeMessageProcessing(lease.ctx)
 	}
 	if lease.lost.Load() {
-		return consumer.retryPendingMessages(lease.ctx, len(messages), ErrChannelMonitorRedisAggregatorLeaseLost)
+		return consumer.retryPendingMessages(lease.ctx, len(parsedMessages), ErrChannelMonitorRedisAggregatorLeaseLost)
 	}
-	if err := consumer.finalizeMessages(lease, uniqueDedupKeys, messageIDs); err != nil {
-		return consumer.retryPendingMessages(lease.ctx, len(messages), err)
+	successfulDedupKeys := make([]string, 0, len(uniqueMessages))
+	successfulMessageIDs := make([]string, 0, len(parsedMessages))
+	for _, parsed := range uniqueMessages {
+		successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
+		successfulMessageIDs = append(successfulMessageIDs, messageIDsByEventID[parsed.eventID]...)
 	}
+	if err := consumer.finalizeMessages(lease, successfulDedupKeys, successfulMessageIDs); err != nil {
+		return consumer.retryPendingMessages(lease.ctx, len(successfulMessageIDs), err)
+	}
+	return consumer.completeMessageProcessing(lease.ctx)
+}
+
+func (consumer *ChannelMonitorRedisEventConsumer) completeMessageProcessing(ctx context.Context) error {
 	recordChannelMonitorRedisProcessedAt(consumer.client, time.Now().Unix())
-	if err := consumer.trimAcknowledged(lease.ctx); err != nil {
+	if err := consumer.trimAcknowledged(ctx); err != nil {
 		recordChannelMonitorRedisFault(
 			consumer.client,
 			ChannelMonitorRedisObservabilityFieldStreamTrimFailureCount,
@@ -588,6 +813,104 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 			consumer.client,
 			ChannelMonitorRedisObservabilityFieldStreamTrimFailureActive,
 		)
+	}
+	return nil
+}
+
+func (consumer *ChannelMonitorRedisEventConsumer) incrementFailureCounts(
+	lease *channelMonitorRedisAggregatorLease,
+	messageIDs []string,
+) (map[string]int64, error) {
+	keys := []string{ChannelMonitorRedisAggregatorLeaseKey, ChannelMonitorRedisConsumerFailureCountKey}
+	args := make([]interface{}, 0, len(messageIDs)+1)
+	args = append(args, lease.token)
+	for _, messageID := range messageIDs {
+		args = append(args, messageID)
+	}
+	opCtx, cancel := context.WithTimeout(lease.ctx, consumer.config.OperationTimeout)
+	defer cancel()
+	result, err := consumer.client.Eval(
+		opCtx, channelMonitorRedisIncrementFailureScript, keys, args...,
+	).Result()
+	if err != nil {
+		return nil, err
+	}
+	rawCounts, ok := result.([]interface{})
+	if !ok || len(rawCounts) != len(messageIDs) {
+		return nil, errors.New("渠道监控 Redis 失败计数响应无效")
+	}
+	counts := make(map[string]int64, len(messageIDs))
+	for index, rawCount := range rawCounts {
+		count, err := channelMonitorRedisReplyInt64(rawCount)
+		if err != nil {
+			return nil, err
+		}
+		if count < 0 {
+			return nil, ErrChannelMonitorRedisAggregatorLeaseLost
+		}
+		counts[messageIDs[index]] = count
+	}
+	return counts, nil
+}
+
+func (consumer *ChannelMonitorRedisEventConsumer) quarantineMessages(
+	lease *channelMonitorRedisAggregatorLease,
+	items []channelMonitorRedisQuarantineItem,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+	quarantinedAt := time.Now().Unix()
+	args := make([]interface{}, 0, len(items)*5+5)
+	args = append(
+		args,
+		lease.token,
+		ChannelMonitorRedisConsumerGroup,
+		quarantinedAt,
+		len(items),
+		channelMonitorRedisDeadLetterMaxLength,
+	)
+	for _, item := range items {
+		args = append(args, item.messageID, item.eventID, item.payload, item.reason, item.failureCount)
+	}
+	opCtx, cancel := context.WithTimeout(lease.ctx, consumer.config.OperationTimeout)
+	defer cancel()
+	acknowledged, err := consumer.client.Eval(
+		opCtx,
+		channelMonitorRedisQuarantineScript,
+		[]string{
+			ChannelMonitorRedisAggregatorLeaseKey,
+			ChannelMonitorRedisEventStream,
+			ChannelMonitorRedisDeadLetterStream,
+			ChannelMonitorRedisConsumerFailureCountKey,
+		},
+		args...,
+	).Int64()
+	if err != nil {
+		return err
+	}
+	if acknowledged == -1 {
+		return ErrChannelMonitorRedisAggregatorLeaseLost
+	}
+	if acknowledged != int64(len(items)) {
+		return fmt.Errorf("渠道监控 Redis 隔离消息确认数量不一致: got=%d want=%d", acknowledged, len(items))
+	}
+	incrementChannelMonitorRedisObservation(
+		consumer.client, ChannelMonitorRedisObservabilityFieldQuarantineCount, int64(len(items)),
+	)
+	ctx, observationCancel := context.WithTimeout(context.Background(), consumer.config.OperationTimeout)
+	defer observationCancel()
+	_ = consumer.client.HSet(
+		ctx,
+		ChannelMonitorRedisObservabilityKey,
+		ChannelMonitorRedisObservabilityFieldLastQuarantinedAt,
+		quarantinedAt,
+	).Err()
+	for _, item := range items {
+		common.SysError(fmt.Sprintf(
+			"渠道监控 Redis 消息已隔离: message_id=%s event_id=%s attempts=%d error=%s",
+			item.messageID, item.eventID, item.failureCount, item.reason,
+		))
 	}
 	return nil
 }
@@ -627,8 +950,13 @@ func (consumer *ChannelMonitorRedisEventConsumer) finalizeMessages(
 	dedupKeys []string,
 	messageIDs []string,
 ) error {
-	keys := make([]string, 0, len(dedupKeys)+2)
-	keys = append(keys, ChannelMonitorRedisAggregatorLeaseKey, ChannelMonitorRedisEventStream)
+	keys := make([]string, 0, len(dedupKeys)+3)
+	keys = append(
+		keys,
+		ChannelMonitorRedisAggregatorLeaseKey,
+		ChannelMonitorRedisEventStream,
+		ChannelMonitorRedisConsumerFailureCountKey,
+	)
 	keys = append(keys, dedupKeys...)
 	args := make([]interface{}, 0, len(messageIDs)+4)
 	args = append(

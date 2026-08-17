@@ -11,20 +11,24 @@ const (
 	// channel-monitor Redis Streams implementation.
 	ChannelMonitorRedisKeyPrefix = "channel_monitor:v1"
 
-	ChannelMonitorRedisEventStream    = ChannelMonitorRedisKeyPrefix + ":events"
-	ChannelMonitorRedisConsumerGroup  = ChannelMonitorRedisKeyPrefix + ":aggregators"
-	ChannelMonitorRedisConsumerPrefix = ChannelMonitorRedisKeyPrefix + ":consumer:"
+	ChannelMonitorRedisEventStream      = ChannelMonitorRedisKeyPrefix + ":events"
+	ChannelMonitorRedisDeadLetterStream = ChannelMonitorRedisKeyPrefix + ":dead_letters"
+	ChannelMonitorRedisConsumerGroup    = ChannelMonitorRedisKeyPrefix + ":aggregators"
+	ChannelMonitorRedisConsumerPrefix   = ChannelMonitorRedisKeyPrefix + ":consumer:"
 
 	ChannelMonitorRedisEventFieldEventID = "event_id"
 	ChannelMonitorRedisEventFieldPayload = "payload"
 
-	ChannelMonitorRedisAggregatorLeaseKey   = ChannelMonitorRedisKeyPrefix + ":aggregator:lease"
-	ChannelMonitorRedisConsumerHeartbeatKey = ChannelMonitorRedisKeyPrefix + ":consumer:heartbeat"
-	ChannelMonitorRedisObservabilityKey     = ChannelMonitorRedisKeyPrefix + ":observability"
+	ChannelMonitorRedisAggregatorLeaseKey      = ChannelMonitorRedisKeyPrefix + ":aggregator:lease"
+	ChannelMonitorRedisConsumerHeartbeatKey    = ChannelMonitorRedisKeyPrefix + ":consumer:heartbeat"
+	ChannelMonitorRedisConsumerFailureCountKey = ChannelMonitorRedisKeyPrefix + ":consumer:failure_counts"
+	ChannelMonitorRedisObservabilityKey        = ChannelMonitorRedisKeyPrefix + ":observability"
 
 	ChannelMonitorRedisObservabilityFieldLastProcessedAt            = "last_processed_at"
 	ChannelMonitorRedisObservabilityFieldRetryCount                 = "retry_count"
 	ChannelMonitorRedisObservabilityFieldTakeoverCount              = "takeover_count"
+	ChannelMonitorRedisObservabilityFieldQuarantineCount            = "quarantine_count"
+	ChannelMonitorRedisObservabilityFieldLastQuarantinedAt          = "last_quarantined_at"
 	ChannelMonitorRedisObservabilityFieldRuntimeMarkerFailureCount  = "runtime_marker_failure_count"
 	ChannelMonitorRedisObservabilityFieldScheduleMarkerFailureCount = "schedule_marker_failure_count"
 	ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureCount  = "marker_release_failure_count"

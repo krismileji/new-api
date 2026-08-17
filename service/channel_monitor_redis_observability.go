@@ -41,6 +41,8 @@ type ChannelMonitorRedisRealtimeStatus struct {
 	LastProcessedAt            int64    `json:"last_processed_at"`
 	RetryCount                 int64    `json:"retry_count"`
 	TakeoverCount              int64    `json:"takeover_count"`
+	QuarantineCount            int64    `json:"quarantine_count"`
+	LastQuarantinedAt          int64    `json:"last_quarantined_at"`
 	MarkerReleaseFailureCount  int64    `json:"marker_release_failure_count"`
 	MarkerReleaseFailureActive bool     `json:"marker_release_failure_active"`
 	StreamTrimFailureCount     int64    `json:"stream_trim_failure_count"`
@@ -90,6 +92,12 @@ func getChannelMonitorRedisRealtimeStatus(
 	)
 	status.TakeoverCount = channelMonitorRedisObservationInt64(
 		observability[ChannelMonitorRedisObservabilityFieldTakeoverCount],
+	)
+	status.QuarantineCount = channelMonitorRedisObservationInt64(
+		observability[ChannelMonitorRedisObservabilityFieldQuarantineCount],
+	)
+	status.LastQuarantinedAt = channelMonitorRedisObservationInt64(
+		observability[ChannelMonitorRedisObservabilityFieldLastQuarantinedAt],
 	)
 	status.MarkerReleaseFailureCount = channelMonitorRedisObservationInt64(
 		observability[ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureCount],

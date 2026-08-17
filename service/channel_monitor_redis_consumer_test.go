@@ -226,6 +226,104 @@ func TestChannelMonitorRedisConsumerDoesNotAckFailedHandler(t *testing.T) {
 	assert.Zero(t, exists)
 }
 
+func TestChannelMonitorRedisConsumerQuarantinesMalformedMessageWithoutBlockingValidEvent(t *testing.T) {
+	_, client := useChannelMonitorRedisConsumerTestClient(t)
+	_, err := client.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: ChannelMonitorRedisEventStream,
+		Values: map[string]interface{}{
+			ChannelMonitorRedisEventFieldEventID: "event-malformed",
+			ChannelMonitorRedisEventFieldPayload: "{",
+		},
+	}).Result()
+	require.NoError(t, err)
+	addChannelMonitorRedisConsumerTestEvent(t, client, newChannelMonitorRedisConsumerTestEvent("event-valid"))
+	var handled []string
+	consumer := newChannelMonitorRedisConsumerForTest(
+		t,
+		client,
+		"malformed-isolation",
+		func(_ context.Context, events []model.ChannelMonitorEvent) error {
+			for _, event := range events {
+				handled = append(handled, event.EventId)
+			}
+			return nil
+		},
+		channelMonitorRedisConsumerTestConfig(),
+	)
+
+	processed, acquired, err := consumer.consumeOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, acquired)
+	assert.Equal(t, 2, processed)
+	assert.Equal(t, []string{"event-valid"}, handled)
+	pending, pendingErr := client.XPending(
+		context.Background(), ChannelMonitorRedisEventStream, ChannelMonitorRedisConsumerGroup,
+	).Result()
+	require.NoError(t, pendingErr)
+	assert.Zero(t, pending.Count)
+	quarantined, quarantineErr := client.XRange(
+		context.Background(), ChannelMonitorRedisDeadLetterStream, "-", "+",
+	).Result()
+	require.NoError(t, quarantineErr)
+	require.Len(t, quarantined, 1)
+	assert.Equal(t, "event-malformed", quarantined[0].Values[ChannelMonitorRedisEventFieldEventID])
+	assert.Equal(t, "1", client.HGet(
+		context.Background(),
+		ChannelMonitorRedisObservabilityKey,
+		ChannelMonitorRedisObservabilityFieldQuarantineCount,
+	).Val())
+	assert.NotEmpty(t, client.HGet(
+		context.Background(),
+		ChannelMonitorRedisObservabilityKey,
+		ChannelMonitorRedisObservabilityFieldLastQuarantinedAt,
+	).Val())
+}
+
+func TestChannelMonitorRedisConsumerIsolatesHandlerPoisonAfterBoundedRetries(t *testing.T) {
+	_, client := useChannelMonitorRedisConsumerTestClient(t)
+	addChannelMonitorRedisConsumerTestEvent(t, client, newChannelMonitorRedisConsumerTestEvent("event-poison"))
+	addChannelMonitorRedisConsumerTestEvent(t, client, newChannelMonitorRedisConsumerTestEvent("event-valid-after-poison"))
+	config := channelMonitorRedisConsumerTestConfig()
+	config.MaxDeliveryAttempts = 2
+	var handled []string
+	handlerErr := errors.New("poison projection")
+	consumer := newChannelMonitorRedisConsumerForTest(
+		t,
+		client,
+		"handler-isolation",
+		func(_ context.Context, events []model.ChannelMonitorEvent) error {
+			if len(events) > 1 || events[0].EventId == "event-poison" {
+				return handlerErr
+			}
+			handled = append(handled, events[0].EventId)
+			return nil
+		},
+		config,
+	)
+
+	_, _, err := consumer.consumeOnce(context.Background())
+	assert.ErrorIs(t, err, handlerErr)
+	processed, acquired, err := consumer.consumeOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, acquired)
+	assert.Equal(t, 2, processed)
+	assert.Equal(t, []string{"event-valid-after-poison"}, handled)
+	pending, pendingErr := client.XPending(
+		context.Background(), ChannelMonitorRedisEventStream, ChannelMonitorRedisConsumerGroup,
+	).Result()
+	require.NoError(t, pendingErr)
+	assert.Zero(t, pending.Count)
+	quarantined, quarantineErr := client.XRange(
+		context.Background(), ChannelMonitorRedisDeadLetterStream, "-", "+",
+	).Result()
+	require.NoError(t, quarantineErr)
+	require.Len(t, quarantined, 1)
+	assert.Equal(t, "event-poison", quarantined[0].Values[ChannelMonitorRedisEventFieldEventID])
+	assert.Equal(t, int64(1), client.Exists(
+		context.Background(), ChannelMonitorRedisProjectionDedupKey("event-valid-after-poison"),
+	).Val())
+}
+
 func TestChannelMonitorRedisConsumerAppliesDuplicateEventOnce(t *testing.T) {
 	_, client := useChannelMonitorRedisConsumerTestClient(t)
 	event := newChannelMonitorRedisConsumerTestEvent("event-duplicate")
@@ -466,7 +564,7 @@ func TestChannelMonitorRedisConsumerOverridesPayloadEventSequenceWithStreamID(t 
 	assert.NotEqual(t, uint64(77), observed)
 }
 
-func TestChannelMonitorRedisConsumerLeavesOutOfRangeSequencePending(t *testing.T) {
+func TestChannelMonitorRedisConsumerQuarantinesOutOfRangeSequence(t *testing.T) {
 	_, client := useChannelMonitorRedisConsumerTestClient(t)
 	event := newChannelMonitorRedisConsumerTestEvent("event-sequence-overflow")
 	milliseconds := (uint64(math.MaxInt64) >> channelMonitorRedisStreamSequenceBits) + 1
@@ -489,9 +587,9 @@ func TestChannelMonitorRedisConsumerLeavesOutOfRangeSequencePending(t *testing.T
 	)
 
 	processed, acquired, err := consumer.consumeOnce(context.Background())
-	assert.ErrorContains(t, err, "超出事件顺序编码范围")
+	require.NoError(t, err)
 	assert.True(t, acquired)
-	assert.Zero(t, processed)
+	assert.Equal(t, 1, processed)
 	assert.Zero(t, calls.Load())
 	pending, pendingErr := client.XPending(
 		context.Background(),
@@ -499,7 +597,13 @@ func TestChannelMonitorRedisConsumerLeavesOutOfRangeSequencePending(t *testing.T
 		ChannelMonitorRedisConsumerGroup,
 	).Result()
 	require.NoError(t, pendingErr)
-	assert.Equal(t, int64(1), pending.Count)
+	assert.Zero(t, pending.Count)
+	quarantined, quarantineErr := client.XRange(
+		context.Background(), ChannelMonitorRedisDeadLetterStream, "-", "+",
+	).Result()
+	require.NoError(t, quarantineErr)
+	require.Len(t, quarantined, 1)
+	assert.Contains(t, quarantined[0].Values["error"], "超出事件顺序编码范围")
 }
 
 type channelMonitorRedisCommandErrorHook struct {

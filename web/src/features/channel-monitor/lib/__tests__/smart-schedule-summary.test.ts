@@ -306,6 +306,75 @@ describe('smart schedule pool status', () => {
 })
 
 describe('smart schedule route placement', () => {
+  test('uses the current-window winner while preserving the historical winner', () => {
+    const currentWinner = createRoute(14, 'default', 'model-a', 3, 1000)
+    const actualPrimary = createRoute(22, 'default', 'model-a', 4, 1000)
+    currentWinner.state.last_schedule_score_details = {
+      decision: {
+        apply_mode: 'priority_weight',
+        current_primary_channel_id: 22,
+        raw_winner_channel_id: 22,
+        selected_primary_channel_id: 22,
+        actual_primary_channel_id: 22,
+        selected_primary: true,
+        manual_primary_channel_id: 0,
+        base_rank: 2,
+        base_priority: 3,
+        base_weight: 1000,
+        applied_priority: 3,
+        applied_weight: 1000,
+        actual_highest_priority: 4,
+        actual_top_layer_channel_ids: [22],
+        temporary_traffic_kind: '',
+        temporary_traffic_target_percent: 0,
+        switch_threshold_percent: 3,
+        primary_traffic_percent: 100,
+        force_reset: false,
+        manual_primary: false,
+        selection_reason: '上一轮 a-2 得分最高',
+        adjustment_reason: '',
+        reason: '上一轮 a-2 得分最高',
+      },
+    } as ChannelMonitorSmartScheduleRoute['state']['last_schedule_score_details']
+    const historicalDecision =
+      currentWinner.state.last_schedule_score_details?.decision
+    assert.ok(historicalDecision)
+    currentWinner.current_window_score_details = {
+      decision: {
+        ...historicalDecision,
+        raw_winner_channel_id: 14,
+        selected_primary_channel_id: 22,
+        selected_primary: false,
+        selection_reason: 'md 得分更高，但切换确认健康比例不足',
+        reason: 'md 得分更高，但切换确认健康比例不足',
+      },
+    } as ChannelMonitorSmartScheduleRoute['current_window_score_details']
+
+    const placements = placeChannelMonitorSmartScheduleRoutes([
+      currentWinner,
+      actualPrimary,
+    ])
+    const summary = summarizeChannelMonitorSmartSchedulePools([
+      currentWinner,
+      actualPrimary,
+    ])[0]
+
+    assert.equal(summary?.scoringWinnerChannelId, 14)
+    assert.equal(summary?.historicalScoringWinnerChannelId, 22)
+    assert.equal(summary?.scoringWinnerSource, 'current_window')
+    assert.equal(summary?.actualPrimaryChannelId, 22)
+    assert.equal(
+      placements.get(channelMonitorSmartScheduleRouteKey(currentWinner))
+        ?.isScoringWinner,
+      true
+    )
+    assert.equal(
+      placements.get(channelMonitorSmartScheduleRouteKey(actualPrimary))
+        ?.isActualPrimary,
+      true
+    )
+  })
+
   test('keeps a degraded P0/W0 route out of current availability and traffic', () => {
     const degraded = createRoute(1, 'vip', 'model-a', 0, 0)
     degraded.state.stability_state = 'degraded'

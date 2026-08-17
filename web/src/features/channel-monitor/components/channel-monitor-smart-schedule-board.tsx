@@ -880,6 +880,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 businessPerformanceByRoute={businessPerformanceByRoute}
                 stabilityByRoute={stabilityByRoute}
                 samplesByModel={samplesByModel}
+                realtimeDegraded={props.result?.realtime_degraded === true}
                 updateRouteKey={updateRouteKey}
                 groupPauseKey={groupPauseKey}
                 updateDisabled={

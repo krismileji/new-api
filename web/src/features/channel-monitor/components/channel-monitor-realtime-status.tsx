@@ -53,6 +53,10 @@ export function ChannelMonitorRealtimeStatus(
   const lastProcessedLabel = formatRealtimeTimestamp(
     props.metadata.last_processed_at
   )
+  const lastQuarantinedLabel = formatRealtimeTimestamp(
+    props.metadata.last_quarantined_at
+  )
+  const quarantineCount = props.metadata.quarantine_count ?? 0
 
   return (
     <span
@@ -96,9 +100,10 @@ export function ChannelMonitorRealtimeStatus(
         {props.metadata.consumer_lag_seconds ?? 0} 秒 · 最后发布{' '}
         {publishedLabel} · 最后处理 {lastProcessedLabel} · 重试{' '}
         {props.metadata.retry_count ?? 0} 次 · 接管{' '}
-        {props.metadata.takeover_count ?? 0} 次 · 标记释放失败{' '}
-        {props.metadata.marker_release_failure_count ?? 0} 次 · Stream 裁剪失败{' '}
-        {props.metadata.stream_trim_failure_count ?? 0} 次
+        {props.metadata.takeover_count ?? 0} 次 · 隔离 {quarantineCount} 条
+        {quarantineCount > 0 ? `（最近 ${lastQuarantinedLabel}）` : ''} ·
+        标记释放失败 {props.metadata.marker_release_failure_count ?? 0} 次 ·
+        Stream 裁剪失败 {props.metadata.stream_trim_failure_count ?? 0} 次
       </span>
     </span>
   )

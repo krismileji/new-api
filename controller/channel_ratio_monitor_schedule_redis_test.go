@@ -13,9 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRedisHealthEventsRequestExistingFullSchedule(t *testing.T) {
+func TestRedisAdaptiveRefreshQueuesReplayWhileFullScheduleRuns(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorRedisEffectState{}))
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
@@ -24,7 +23,7 @@ func TestRedisHealthEventsRequestExistingFullSchedule(t *testing.T) {
 				"vip",
 				channelMonitorSmartScheduleStrategyRatio,
 				false,
-				channelMonitorSmartScheduleApplyWeight,
+				channelMonitorSmartScheduleApplyPriorityWeight,
 				[]string{"model-a"},
 				2,
 				80,
@@ -32,27 +31,34 @@ func TestRedisHealthEventsRequestExistingFullSchedule(t *testing.T) {
 			),
 		),
 	})
-	events := []model.ChannelMonitorEvent{
-		{EventId: "redis-health-1", EventSequence: 101, SchedulingEligible: true},
-		{EventId: "redis-health-2", EventSequence: 102, SchedulingEligible: true},
-	}
+	activeKey := channelMonitorSmartScheduleTaskType
+	require.NoError(t, model.DB.Create(&model.SystemTask{
+		TaskID:    "redis-runtime-full-schedule",
+		Type:      channelMonitorSmartScheduleTaskType,
+		Status:    model.SystemTaskStatusRunning,
+		ActiveKey: &activeKey,
+		LockedBy:  "test-runner",
+	}).Error)
 
-	require.NoError(t, requestChannelSmartScheduleRunForRedisEvents(context.Background(), events))
-	task, err := model.GetActiveSystemTask(channelMonitorSmartScheduleTaskType)
-	require.NoError(t, err)
-	require.NotNil(t, task)
-	var payload channelSmartScheduleTaskPayload
-	require.NoError(t, task.DecodePayload(&payload))
-	assert.Equal(t, channelSmartScheduleRedisTriggerSource, payload.TriggerSource)
-	assert.Equal(t, 2, payload.TriggerCount)
-	assert.Equal(t, []string{channelSmartScheduleRedisDirtyReason}, payload.DirtyReasons)
+	channelSmartScheduleAdaptiveRefreshQueue.Lock()
+	channelSmartScheduleAdaptiveRefreshQueue.running = true
+	channelSmartScheduleAdaptiveRefreshQueue.pending = make(map[channelSmartScheduleAdaptiveRefreshEvent]struct{})
+	channelSmartScheduleAdaptiveRefreshQueue.Unlock()
+	t.Cleanup(func() {
+		channelSmartScheduleAdaptiveRefreshQueue.Lock()
+		channelSmartScheduleAdaptiveRefreshQueue.running = false
+		channelSmartScheduleAdaptiveRefreshQueue.pending = make(map[channelSmartScheduleAdaptiveRefreshEvent]struct{})
+		channelSmartScheduleAdaptiveRefreshQueue.Unlock()
+	})
 
-	require.NoError(t, requestChannelSmartScheduleRunForRedisEvents(context.Background(), events))
-	var taskCount int64
-	require.NoError(t, model.DB.Model(&model.SystemTask{}).
-		Where("type = ?", channelMonitorSmartScheduleTaskType).
-		Count(&taskCount).Error)
-	assert.Equal(t, int64(1), taskCount)
+	require.NoError(t, refreshChannelSmartScheduleRedisAdaptiveRoute(
+		context.Background(), 1702, "model-a", common.GetTimestamp(), 101,
+	))
+	channelSmartScheduleAdaptiveRefreshQueue.Lock()
+	defer channelSmartScheduleAdaptiveRefreshQueue.Unlock()
+	assert.Contains(t, channelSmartScheduleAdaptiveRefreshQueue.pending, channelSmartScheduleAdaptiveRefreshEvent{
+		database: model.DB, channelId: 1702, modelName: "model-a",
+	})
 }
 
 func TestRedisRuntimeEffectPositionUsesHighestSequenceEventTime(t *testing.T) {
