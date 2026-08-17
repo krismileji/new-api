@@ -96,7 +96,7 @@ func TestEmitChannelMonitorSuccessEventUsesAttemptPerformanceTiming(t *testing.T
 	require.NotNil(t, event.FirstTokenMs)
 	assert.InDelta(t, 500, *event.FirstTokenMs, 1e-9)
 	require.NotNil(t, event.TPS)
-	assert.InDelta(t, 20, *event.TPS, 1e-9)
+	assert.InDelta(t, 50, *event.TPS, 1e-9)
 	require.NotNil(t, event.AttemptDurationMs)
 	assert.Equal(t, int64(2500), *event.AttemptDurationMs)
 }

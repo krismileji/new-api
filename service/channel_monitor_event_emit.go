@@ -10,9 +10,12 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -38,7 +41,6 @@ func EmitChannelMonitorSuccessEvent(
 	now := time.Now()
 	outputTokens := max(input.CompletionTokens, 0)
 	if input.PerformanceTiming != nil {
-		outputTokens = input.PerformanceTiming.OutputTokens
 		if !input.PerformanceTiming.CompletedAt.IsZero() {
 			now = input.PerformanceTiming.CompletedAt
 		}
@@ -47,6 +49,12 @@ func EmitChannelMonitorSuccessEvent(
 	source := channelMonitorEventSource(ctx)
 	if relayInfo.IsChannelTest && source != model.ChannelMonitorEventSourceModelDetection {
 		return ChannelMonitorEventPublishStatusInvalid
+	}
+	if input.PerformanceTiming != nil && source == model.ChannelMonitorEventSourceBusiness &&
+		relayInfo.RelayMode != relayconstant.RelayModeRealtime {
+		gopool.Go(func() {
+			perfmetrics.RecordRelaySample(relayInfo, true, int64(input.CompletionTokens))
+		})
 	}
 	event := model.NewChannelMonitorEvent(
 		relayInfo.ChannelId,

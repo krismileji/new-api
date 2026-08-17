@@ -33,19 +33,8 @@ func BeginChannelMonitorPerformanceAttempt(ctx *gin.Context, startedAt time.Time
 	ctx.Set(channelMonitorPerformanceAttemptStartedAtKey, startedAt)
 }
 
-func RelayPerformanceOutputTokens(completionTokens int, details dto.OutputTokenDetails) int {
-	completionTokens = max(completionTokens, 0)
-	if details.TextTokens > 0 {
-		if completionTokens > 0 {
-			return min(details.TextTokens, completionTokens)
-		}
-		return details.TextTokens
-	}
-
-	nonTextTokens := max(details.ReasoningTokens, 0) +
-		max(details.AudioTokens, 0) +
-		max(details.ImageTokens, 0)
-	return max(completionTokens-nonTextTokens, 0)
+func RelayPerformanceOutputTokens(completionTokens int, _ dto.OutputTokenDetails) int {
+	return max(completionTokens, 0)
 }
 
 func BuildRelayPerformanceTiming(
@@ -75,8 +64,15 @@ func BuildRelayPerformanceTiming(
 			timing.FirstTokenMs = &firstTokenMs
 		}
 	}
-	if relayInfo.IsStream && timing.OutputTokens > 0 && duration > 0 {
-		tokensPerSecond := float64(timing.OutputTokens) / duration.Seconds()
+	generationDuration := duration
+	if relayInfo.IsStream && relayInfo.HasSendResponse() {
+		generationDuration = completedAt.Sub(relayInfo.FirstResponseTime)
+	}
+	if generationDuration <= 0 {
+		generationDuration = duration
+	}
+	if timing.OutputTokens > 0 && generationDuration > 0 {
+		tokensPerSecond := float64(timing.OutputTokens) / generationDuration.Seconds()
 		if tokensPerSecond >= 0 && !math.IsNaN(tokensPerSecond) && !math.IsInf(tokensPerSecond, 0) {
 			timing.TokensPerSecond = &tokensPerSecond
 		}

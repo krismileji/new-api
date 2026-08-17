@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRelayPerformanceOutputTokensExcludesNonTextUsage(t *testing.T) {
-	assert.Equal(t, 35, RelayPerformanceOutputTokens(120, dto.OutputTokenDetails{
+func TestRelayPerformanceOutputTokensUsesOfficialCompletionTokens(t *testing.T) {
+	assert.Equal(t, 120, RelayPerformanceOutputTokens(120, dto.OutputTokenDetails{
 		ReasoningTokens: 80,
 		AudioTokens:     5,
 	}))
-	assert.Equal(t, 24, RelayPerformanceOutputTokens(120, dto.OutputTokenDetails{
+	assert.Equal(t, 120, RelayPerformanceOutputTokens(120, dto.OutputTokenDetails{
 		TextTokens:      24,
 		ReasoningTokens: 80,
 	}))
@@ -36,17 +36,18 @@ func TestBuildRelayPerformanceTimingPreservesUsageLogTotalDuration(t *testing.T)
 	require.NotNil(t, timing.FirstTokenMs)
 	assert.InDelta(t, 750, *timing.FirstTokenMs, 1e-9)
 	require.NotNil(t, timing.TokensPerSecond)
-	assert.InDelta(t, 16, *timing.TokensPerSecond, 1e-9)
+	assert.InDelta(t, 40.0/1.75, *timing.TokensPerSecond, 1e-9)
 }
 
-func TestBuildRelayPerformanceTimingLeavesNonStreamTPSUnavailable(t *testing.T) {
+func TestBuildRelayPerformanceTimingUsesLatencyForNonStreamTPS(t *testing.T) {
 	startedAt := time.Unix(100, 0)
 	info := &relaycommon.RelayInfo{StartTime: startedAt}
 
 	timing := BuildRelayPerformanceTiming(info, 40, startedAt.Add(2*time.Second))
 
 	assert.Nil(t, timing.FirstTokenMs)
-	assert.Nil(t, timing.TokensPerSecond)
+	require.NotNil(t, timing.TokensPerSecond)
+	assert.InDelta(t, 20, *timing.TokensPerSecond, 1e-9)
 }
 
 func TestChannelMonitorPerformanceTimingUsesCurrentRetryAttemptWithoutChangingUsageLogTiming(t *testing.T) {
@@ -67,7 +68,7 @@ func TestChannelMonitorPerformanceTimingUsesCurrentRetryAttemptWithoutChangingUs
 	require.NotNil(t, logTiming.FirstTokenMs)
 	assert.InDelta(t, 5750, *logTiming.FirstTokenMs, 1e-9)
 	require.NotNil(t, logTiming.TokensPerSecond)
-	assert.InDelta(t, 40.0/7.75, *logTiming.TokensPerSecond, 1e-9)
+	assert.InDelta(t, 20, *logTiming.TokensPerSecond, 1e-9)
 
 	timing := BuildChannelMonitorPerformanceTiming(ctx, info, 40, completedAt)
 
