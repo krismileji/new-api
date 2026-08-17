@@ -136,6 +136,8 @@ func TestChannelModelDetectionWorkerStartsOneSessionAndFreezesOfficialConfig(t *
 	require.Len(t, stub.startRequests, 1)
 	assert.Empty(t, stub.startRequests[0].PreviousSessionID)
 	assert.Equal(t, "task-secret", stub.startRequests[0].APIKey)
+	assert.Equal(t, execution.ClaimedModel, stub.startRequests[0].ClaimedModel)
+	assert.Equal(t, execution.RequestModel, stub.startRequests[0].RequestModel)
 
 	var stored model.ChannelModelDetectionExecution
 	require.NoError(t, db.First(&stored, execution.Id).Error)
@@ -262,7 +264,8 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	require.NoError(t, db.Model(&execution).Update("config_hash", execution.ConfigHash).Error)
 	report := ChannelModelDetectorReportResponse{
 		SessionID: "owned-session", ConfigHash: "report-hash", OutcomeCode: "juice_pass_fingerprint_strong",
-		OverallVerdict: "通过", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+		OverallVerdict: "通过", TitleCN: "Juice通过；指纹强烈指向 Sol", SubtitleCN: "检测器原始说明",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, RequestModel: execution.RequestModel,
 		JuiceVerdictState: "pass", FingerprintVerdictState: "strong_match",
 		FingerprintModel: model.ChannelModelDetectionClaimedModelLuna,
 	}
@@ -291,9 +294,85 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	assert.Equal(t, "pass", storedExecution.JuiceVerdictState)
 	assert.Equal(t, "strong_match", storedExecution.FingerprintVerdictState)
 	assert.Equal(t, model.ChannelModelDetectionClaimedModelLuna, storedExecution.FingerprintModel)
+	assert.Equal(t, "Juice通过；指纹强烈指向 Sol", storedExecution.TitleCN)
+	assert.Equal(t, "检测器原始说明", storedExecution.SubtitleCN)
 	var config model.ChannelModelDetectionConfig
 	require.NoError(t, db.Where("channel_id = ?", run.ChannelId).First(&config).Error)
 	assert.Empty(t, config.RunningRunId)
+}
+
+func TestChannelModelDetectionRecoveryPreservesUnsupportedReportAndMarksExecutionFailed(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 17, 8, 0, 0, 0, time.UTC)
+	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "future-session", model.ChannelModelDetectionExecutionStatusRunning)
+	execution.ConfigHash = "future-report-hash"
+	require.NoError(t, db.Model(&execution).Update("config_hash", execution.ConfigHash).Error)
+	schemaVersion := int64(5)
+	report := ChannelModelDetectorReportResponse{
+		SessionID: "future-session", ConfigHash: execution.ConfigHash, SchemaVersion: &schemaVersion,
+		OutcomeCode: "juice_pass_fingerprint_strong", OverallVerdict: "未来版本结论",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+	}
+	stub := &channelModelDetectionDetectorStub{
+		statuses: []ChannelModelDetectorStatusResponse{{Status: "complete", SessionID: "future-session", ConfigHash: execution.ConfigHash}},
+		report:   report,
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now.Add(time.Minute) }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Completed)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, result.Status)
+
+	var storedExecution model.ChannelModelDetectionExecution
+	require.NoError(t, db.Where("id = ?", execution.Id).First(&storedExecution).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, storedExecution.Status)
+	assert.Equal(t, "report_contract_incompatible", storedExecution.ErrorCode)
+	assert.Contains(t, storedExecution.ErrorMessage, "schema_version 5 不受支持")
+	assert.Empty(t, storedExecution.OutcomeCode)
+	assert.NotEmpty(t, storedExecution.ReportJSON)
+	assert.Equal(t, 5, storedExecution.SchemaVersion)
+
+	var storedRun model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&storedRun).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusFailed, storedRun.Status)
+}
+
+func TestChannelModelDetectionRecoveryRejectsReportWithDifferentRequestModel(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 17, 8, 30, 0, 0, time.UTC)
+	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "legacy-session", model.ChannelModelDetectionExecutionStatusRunning)
+	execution.ConfigHash = "legacy-report-hash"
+	require.NoError(t, db.Model(&execution).Update("config_hash", execution.ConfigHash).Error)
+	schemaVersion := int64(3)
+	report := ChannelModelDetectorReportResponse{
+		SessionID: "legacy-session", ConfigHash: execution.ConfigHash, SchemaVersion: &schemaVersion,
+		OutcomeCode: "juice_pass_fingerprint_strong", OverallVerdict: "通过",
+		ClaimedModel: execution.ClaimedModel, RequestModel: execution.ClaimedModel,
+	}
+	stub := &channelModelDetectionDetectorStub{
+		statuses: []ChannelModelDetectorStatusResponse{{Status: "complete", SessionID: "legacy-session", ConfigHash: execution.ConfigHash}},
+		report:   report,
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now.Add(time.Minute) }
+
+	result, err := worker.RunOnce(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.Completed)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, result.Status)
+
+	var storedExecution model.ChannelModelDetectionExecution
+	require.NoError(t, db.Where("id = ?", execution.Id).First(&storedExecution).Error)
+	assert.Equal(t, "report_contract_incompatible", storedExecution.ErrorCode)
+	assert.Contains(t, storedExecution.ErrorMessage, "request_model")
+	assert.Contains(t, storedExecution.ErrorMessage, "可能不支持独立请求模型")
+	assert.Empty(t, storedExecution.OutcomeCode)
+
+	var storedRun model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&storedRun).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusFailed, storedRun.Status)
 }
 
 func TestChannelModelDetectionLeaseIsSingleSessionAndRenewable(t *testing.T) {

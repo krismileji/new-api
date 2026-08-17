@@ -167,7 +167,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 		w.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/bootstrap":
-			_, err := io.WriteString(w, `{"session_token":"`+bootstrapToken+`","schema_version":3,"single_presets":{"low":{"config_hash":"integration-low"},"medium":{"config_hash":"`+configHash+`","probe_profile":"medium"},"high":{"config_hash":"integration-high"}},"continuous_presets":{},"schema":{},"probe_catalog":[]}`)
+			_, err := io.WriteString(w, `{"session_token":"`+bootstrapToken+`","schema_version":2,"single_presets":{"low":{"config_hash":"integration-low"},"medium":{"config_hash":"`+configHash+`","probe_profile":"medium"},"high":{"config_hash":"integration-high"}},"continuous_presets":{},"schema":{},"probe_catalog":[]}`)
 			assert.NoError(t, err)
 		case "/api/detector/estimate":
 			assert.Equal(t, bootstrapToken, request.Header.Get("X-GPT56-Session"))
@@ -180,16 +180,18 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 				assert.NoError(t, err)
 				return
 			}
-			_, err := io.WriteString(w, `{"status":"complete","session_id":"`+officialSession+`","config_hash":"`+configHash+`","claimed_model":"gpt-5.6-sol","report_available":true,"progress":{"planned":1,"logical_completed":1,"successful":1,"errors":0,"cancelled":0,"http_attempts":1,"retries":0}}`)
+			_, err := io.WriteString(w, `{"status":"complete","session_id":"`+officialSession+`","config_hash":"`+configHash+`","claimed_model":"gpt-5.6-sol","request_model":"integration-upstream-model","report_available":true,"progress":{"planned":1,"logical_completed":1,"successful":1,"errors":0,"cancelled":0,"http_attempts":1,"retries":0}}`)
 			assert.NoError(t, err)
 		case "/api/detector/start":
 			detectorStartCalls.Add(1)
 			assert.Equal(t, bootstrapToken, request.Header.Get("X-GPT56-Session"))
 			var payload struct {
-				BaseURL string                                   `json:"base_url"`
-				APIKey  string                                   `json:"api_key"`
-				Model   string                                   `json:"model"`
-				Config  service.ChannelModelDetectorPresetConfig `json:"config"`
+				BaseURL      string                                   `json:"base_url"`
+				APIKey       string                                   `json:"api_key"`
+				Model        string                                   `json:"model"`
+				ClaimedModel string                                   `json:"claimed_model"`
+				RequestModel string                                   `json:"request_model"`
+				Config       service.ChannelModelDetectorPresetConfig `json:"config"`
 			}
 			if !assert.NoError(t, common.DecodeJson(request.Body, &payload)) {
 				http.Error(w, "invalid start payload", http.StatusBadRequest)
@@ -197,6 +199,8 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 			}
 			assert.Equal(t, relayBaseURL, payload.BaseURL)
 			assert.Equal(t, model.ChannelModelDetectionClaimedModelSol, payload.Model)
+			assert.Equal(t, model.ChannelModelDetectionClaimedModelSol, payload.ClaimedModel)
+			assert.Equal(t, "integration-upstream-model", payload.RequestModel)
 			assert.NotEmpty(t, payload.APIKey)
 			credentialMu.Lock()
 			issuedCredential = payload.APIKey
@@ -204,7 +208,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 
 			expectedStatuses := []int{http.StatusOK, http.StatusConflict}
 			for _, expectedStatus := range expectedStatuses {
-				relayRequest, err := http.NewRequestWithContext(request.Context(), http.MethodPost, payload.BaseURL+"/responses", bytes.NewBufferString(`{"model":"gpt-5.6-sol","input":"integration"}`))
+				relayRequest, err := http.NewRequestWithContext(request.Context(), http.MethodPost, payload.BaseURL+"/responses", bytes.NewBufferString(`{"model":"`+payload.RequestModel+`","input":"integration"}`))
 				if !assert.NoError(t, err) {
 					http.Error(w, "relay request creation failed", http.StatusBadGateway)
 					return
@@ -229,7 +233,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 			assert.NoError(t, err)
 		case "/api/detector/report":
 			detectorReportCalls.Add(1)
-			_, err := io.WriteString(w, `{"session_id":"`+officialSession+`","schema_version":3,"scoring_version":"integration-score-v1","config_hash":"`+configHash+`","baseline_id":"integration-baseline","baseline_sha256":"integration-baseline-sha","build_hash":"integration-build","official":true,"claimed_model":"gpt-5.6-sol","overall_verdict":"通过","outcome_code":"juice_pass_fingerprint_strong","candidate_configuration_without_key":{"base_url":"http://redacted.invalid","model":"gpt-5.6-sol"}}`)
+			_, err := io.WriteString(w, `{"session_id":"`+officialSession+`","schema_version":4,"scoring_version":"trusted-fingerprint-v3","config_hash":"`+configHash+`","baseline_id":"integration-baseline","baseline_sha256":"integration-baseline-sha","build_hash":"integration-build","official":true,"claimed_model":"gpt-5.6-sol","request_model":"integration-upstream-model","overall_verdict":"通过","outcome_code":"juice_pass_fingerprint_strong","candidate_configuration_without_key":{"base_url":"http://redacted.invalid","claimed_model":"gpt-5.6-sol","request_model":"integration-upstream-model"}}`)
 			assert.NoError(t, err)
 		default:
 			http.NotFound(w, request)
@@ -295,7 +299,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	assert.Equal(t, officialSession, storedExecution.OfficialSessionId)
 	assert.Equal(t, configHash, storedExecution.ConfigHash)
 	assert.Equal(t, "juice_pass_fingerprint_strong", storedExecution.OutcomeCode)
-	assert.Equal(t, "integration-score-v1", storedExecution.ScoringVersion)
+	assert.Equal(t, "trusted-fingerprint-v3", storedExecution.ScoringVersion)
 	assert.Equal(t, "integration-baseline", storedExecution.BaselineId)
 	assert.Equal(t, "integration-build", storedExecution.BuildHash)
 	assert.NotEmpty(t, storedExecution.ReportSHA256)
@@ -323,8 +327,8 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	require.Len(t, detail.Executions, 1)
 	assert.Equal(t, officialSession, detail.Executions[0].OfficialSessionID)
 	assert.Equal(t, configHash, detail.Executions[0].ConfigHash)
-	assert.Equal(t, 3, detail.Executions[0].SchemaVersion)
-	assert.Equal(t, "integration-score-v1", detail.Executions[0].ScoringVersion)
+	assert.Equal(t, 4, detail.Executions[0].SchemaVersion)
+	assert.Equal(t, "trusted-fingerprint-v3", detail.Executions[0].ScoringVersion)
 	assert.Equal(t, "integration-baseline", detail.Executions[0].BaselineID)
 	assert.Equal(t, "integration-build", detail.Executions[0].BuildHash)
 	assert.Equal(t, "juice_pass_fingerprint_strong", detail.Executions[0].OutcomeCode)

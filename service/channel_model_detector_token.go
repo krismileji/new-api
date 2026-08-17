@@ -237,7 +237,8 @@ func (store *ChannelModelDetectorTokenStore) AuthorizeAttempt(token, requestedMo
 	if record.revoked {
 		return ChannelModelDetectorAttemptAuthorization{}, ErrChannelModelDetectorTokenRevoked
 	}
-	if !channelModelDetectorSecureStringEqual(requestedModel, record.claims.ClaimedModel) {
+	if !channelModelDetectorSecureStringEqual(requestedModel, record.claims.RequestModel) &&
+		!channelModelDetectorSecureStringEqual(requestedModel, record.claims.ClaimedModel) {
 		return ChannelModelDetectorAttemptAuthorization{}, ErrChannelModelDetectorTokenModelMismatch
 	}
 

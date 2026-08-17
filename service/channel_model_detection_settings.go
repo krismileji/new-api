@@ -464,6 +464,7 @@ func testChannelModelDetectionServiceURL(ctx context.Context, db *gorm.DB, detec
 		response.CompatibilityMessage = "官方检测器检查失败"
 		if errors.Is(compatibilityErr, ErrChannelModelDetectorIncompatible) {
 			response.State = "incompatible"
+			response.CompatibilityMessage = "官方检测器版本或接口不兼容：" + response.LastError
 		} else {
 			response.State = "offline"
 		}

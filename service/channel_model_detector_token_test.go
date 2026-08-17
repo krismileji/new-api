@@ -48,7 +48,7 @@ func TestChannelModelDetectorTokenBindsIdentityAndHidesBearer(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, string(claimsJSON))
 
-	authorized, err := store.AuthorizeAttempt(credential.BearerToken(), model.ChannelModelDetectionClaimedModelSol, "detector-request-1")
+	authorized, err := store.AuthorizeAttempt(credential.BearerToken(), "channel-alias", "detector-request-1")
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", authorized.Claims.RunID)
 	assert.EqualValues(t, 11, authorized.Claims.TargetID)

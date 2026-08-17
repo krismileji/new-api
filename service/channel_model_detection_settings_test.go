@@ -126,7 +126,7 @@ func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *t
 			_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		case channelModelDetectorBootstrapPath:
 			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
-			_, _ = writer.Write([]byte(`{"session_token":"active-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"active-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 		case channelModelDetectorEstimatePath:
 			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
 		case channelModelDetectorStatusPath:
@@ -173,7 +173,7 @@ func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T)
 			_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		case channelModelDetectorBootstrapPath:
 			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
-			_, _ = writer.Write([]byte(`{"session_token":"secret-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"secret-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 		case channelModelDetectorEstimatePath:
 			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
 		case channelModelDetectorStatusPath:
@@ -195,6 +195,32 @@ func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T)
 	assert.NotContains(t, string(encoded), "session_token")
 }
 
+func TestTestChannelModelDetectionServiceReportsUnsupportedDetectorSchema(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case channelModelDetectorBootstrapPath:
+			_, _ = writer.Write([]byte(`{"session_token":"session","schema_version":3,"single_presets":{"low":{},"medium":{},"high":{}}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seedChannelModelDetectionSettings(t, db, server.URL)
+
+	response, err := TestChannelModelDetectionService(
+		context.Background(), db, time.Unix(1_700_000_000, 0).UTC(),
+		ChannelModelDetectorClientOptions{HTTPClient: server.Client()},
+	)
+	require.Error(t, err)
+	assert.Equal(t, "incompatible", response.State)
+	assert.Contains(t, response.CompatibilityMessage, "版本或接口不兼容")
+	assert.Contains(t, response.CompatibilityMessage, "schema_version 3 不受支持")
+}
+
 func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *testing.T) {
 	ResetChannelModelDetectionServiceCache()
 	t.Cleanup(ResetChannelModelDetectionServiceCache)
@@ -205,7 +231,7 @@ func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *test
 			_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		case channelModelDetectorBootstrapPath:
 			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
-			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 		case channelModelDetectorEstimatePath:
 			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
 		case channelModelDetectorStatusPath:

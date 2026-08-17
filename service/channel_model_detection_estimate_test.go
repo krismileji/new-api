@@ -73,7 +73,7 @@ func newChannelModelDetectionEstimateServer(t *testing.T, totalRequests int64, b
 		case channelModelDetectorBootstrapPath:
 			bootstrapCalls.Add(1)
 			preset := `{"mode":"single","workers":2,"retries":9}`
-			_, _ = writer.Write([]byte(`{"session_token":"session-secret","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"session-secret","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 		case channelModelDetectorEstimatePath:
 			estimateCalls.Add(1)
 			assert.Equal(t, "session-secret", request.Header.Get("X-GPT56-Session"))
@@ -180,7 +180,7 @@ func TestChannelModelDetectionEstimateAPIRejectsIncompatibleOfficialCount(t *tes
 		writer.Header().Set("Content-Type", "application/json")
 		if request.URL.Path == channelModelDetectorBootstrapPath {
 			preset := `{"mode":"single"}`
-			_, _ = writer.Write([]byte(`{"session_token":"secret","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"secret","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 			return
 		}
 		_, _ = writer.Write([]byte(`{"total_requests":-1}`))

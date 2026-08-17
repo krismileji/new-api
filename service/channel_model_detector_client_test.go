@@ -99,6 +99,9 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 			var payload map[string]json.RawMessage
 			require.NoError(t, common.Unmarshal(body, &payload))
 			assert.Contains(t, string(payload["api_key"]), "task-secret")
+			assert.JSONEq(t, `"gpt-5.6-sol"`, string(payload["model"]))
+			assert.JSONEq(t, `"gpt-5.6-sol"`, string(payload["claimed_model"]))
+			assert.JSONEq(t, `"upstream-model-alias"`, string(payload["request_model"]))
 			assert.JSONEq(t, string(preset["future_setting"]), func() string {
 				var config ChannelModelDetectorPresetConfig
 				require.NoError(t, common.Unmarshal(payload["config"], &config))
@@ -119,7 +122,8 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 			}
 			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{
 				"status": "complete", "session_id": "official-session", "config_hash": "hash-low",
-				"claimed_model": "gpt-5.6-sol", "safe_endpoint": "https://relay.example/internal/model-detector/v1",
+				"claimed_model": "gpt-5.6-sol", "request_model": "upstream-model-alias",
+				"safe_endpoint":    "https://relay.example/internal/model-detector/v1",
 				"report_available": true, "progress": map[string]any{"planned": 14, "logical_completed": 14, "future_progress": 9},
 				"future_status": "kept",
 			})
@@ -127,10 +131,12 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 			assert.Equal(t, http.MethodGet, request.Method)
 			assert.Empty(t, request.Header.Get("X-GPT56-Session"))
 			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{
-				"schema_version": 3, "scoring_version": "score-v3", "session_id": "official-session", "config_hash": "hash-low",
+				"schema_version": 4, "scoring_version": "trusted-fingerprint-v3", "session_id": "official-session", "config_hash": "hash-low",
 				"baseline_id": "baseline", "baseline_sha256": "baseline-sha", "build_hash": "build-sha", "official": true,
-				"candidate_configuration_without_key": map[string]any{"model": "gpt-5.6-sol"},
+				"claimed_model": "gpt-5.6-sol", "request_model": "upstream-model-alias",
+				"candidate_configuration_without_key": map[string]any{"claimed_model": "gpt-5.6-sol", "request_model": "upstream-model-alias"},
 				"outcome_code":                        "juice_pass_fingerprint_strong", "overall_verdict": "通过",
+				"title_cn": "Juice通过；指纹强烈指向 Sol", "subtitle_cn": "检测器原始说明",
 				"juice_verdict_state": "pass", "fingerprint_verdict_state": "strong_match",
 				"fingerprint_model": "gpt-5.6-luna", "fingerprint_claim_mismatch": true,
 				"future_report": map[string]any{"proof": 1},
@@ -177,7 +183,8 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 	assert.Contains(t, estimate.Raw, "future_estimate")
 
 	started, err := client.Start(context.Background(), ChannelModelDetectorStartRequest{
-		BaseURL: "https://relay.example/internal/model-detector/v1/", APIKey: "task-secret", Model: "gpt-5.6-sol", Config: low,
+		BaseURL: "https://relay.example/internal/model-detector/v1/", APIKey: "task-secret", Model: "gpt-5.6-sol",
+		ClaimedModel: "gpt-5.6-sol", RequestModel: "upstream-model-alias", Config: low,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "official-session", started.SessionID)
@@ -186,14 +193,18 @@ func TestChannelModelDetectorClientContractCallsOfficialEndpoints(t *testing.T) 
 	status, err := client.Status(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "complete", status.Status)
+	assert.Equal(t, "upstream-model-alias", status.RequestModel)
 	assert.Contains(t, status.Raw, "future_status")
 
 	report, err := client.Report(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "score-v3", report.ScoringVersion)
+	assert.Equal(t, "trusted-fingerprint-v3", report.ScoringVersion)
 	assert.Equal(t, "baseline-sha", report.BaselineSHA256)
 	assert.Equal(t, "build-sha", report.BuildHash)
 	assert.Equal(t, "gpt-5.6-sol", report.ClaimedModel)
+	assert.Equal(t, "upstream-model-alias", report.RequestModel)
+	assert.Equal(t, "Juice通过；指纹强烈指向 Sol", report.TitleCN)
+	assert.Equal(t, "检测器原始说明", report.SubtitleCN)
 	assert.Equal(t, "pass", report.JuiceVerdictState)
 	assert.Equal(t, "strong_match", report.FingerprintVerdictState)
 	assert.Equal(t, "gpt-5.6-luna", report.FingerprintModel)
@@ -318,6 +329,30 @@ func TestChannelModelDetectorContractCheckCompatibilityUsesDynamicLowEstimate(t 
 	assert.EqualValues(t, 31, *result.LowEstimate.TotalRequests)
 	require.NotNil(t, result.LowEstimate.Fixed32KRequests)
 	assert.EqualValues(t, 4, *result.LowEstimate.Fixed32KRequests)
+}
+
+func TestChannelModelDetectorContractRejectsUnsupportedBootstrapSchema(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{"status": "ok"})
+		case channelModelDetectorBootstrapPath:
+			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{
+				"session_token": "session", "schema_version": 3,
+				"single_presets": map[string]any{"low": map[string]any{}, "medium": map[string]any{}, "high": map[string]any{}},
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewChannelModelDetectorClientWithHTTPClient(server.URL, server.Client())
+	require.NoError(t, err)
+
+	_, err = client.CheckCompatibility(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrChannelModelDetectorIncompatible)
+	assert.Contains(t, err.Error(), "schema_version 3 不受支持")
 }
 
 func TestChannelModelDetectorClientStartTimeoutReconcilesBeforeReturning(t *testing.T) {
@@ -455,7 +490,8 @@ func TestChannelModelDetectorClientStartRejectsBusySessionBeforeSubmission(t *te
 		switch request.URL.Path {
 		case channelModelDetectorBootstrapPath:
 			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{
-				"session_token": "token", "single_presets": map[string]any{"low": preset, "medium": preset, "high": preset},
+				"session_token": "token", "schema_version": 2,
+				"single_presets": map[string]any{"low": preset, "medium": preset, "high": preset},
 			})
 		case channelModelDetectorStatusPath:
 			writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{"status": "running", "session_id": "external-session"})
@@ -498,7 +534,8 @@ func TestChannelModelDetectorClientClassifiesFailuresAndLimitsResponses(t *testi
 			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == channelModelDetectorBootstrapPath {
 					writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{
-						"session_token": "token", "single_presets": map[string]any{"low": map[string]any{}, "medium": map[string]any{}, "high": map[string]any{}},
+						"session_token": "token", "schema_version": 2,
+						"single_presets": map[string]any{"low": map[string]any{}, "medium": map[string]any{}, "high": map[string]any{}},
 					})
 					return
 				}
@@ -553,7 +590,7 @@ func TestChannelModelDetectorContractRejectsMissingRequiredCapability(t *testing
 		if bootstrapCalls > 1 {
 			delete(presets, "high")
 		}
-		writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{"session_token": "token", "single_presets": presets})
+		writeDetectorContractJSON(t, response, http.StatusOK, map[string]any{"session_token": "token", "schema_version": 2, "single_presets": presets})
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewChannelModelDetectorClientWithHTTPClient(server.URL, server.Client())
@@ -590,12 +627,14 @@ func TestChannelModelDetectorClientRequiresBootstrapForPost(t *testing.T) {
 func TestChannelModelDetectorClientStartRequestDoesNotSerializeAPIKey(t *testing.T) {
 	data, err := common.Marshal(ChannelModelDetectorStartRequest{
 		BaseURL: "https://relay.example/v1", APIKey: "task-secret", Model: "gpt-5.6-sol",
+		ClaimedModel: "gpt-5.6-sol", RequestModel: "upstream-model-alias",
 		Config: detectorContractPreset(t, "hash"), PreviousSessionID: "old-session",
 	})
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "task-secret")
 	assert.NotContains(t, string(data), "api_key")
 	assert.Contains(t, string(data), "old-session")
+	assert.Contains(t, string(data), "upstream-model-alias")
 }
 
 func TestChannelModelDetectorClientNormalizeURL(t *testing.T) {

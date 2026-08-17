@@ -116,7 +116,7 @@ func TestChannelModelDetectionServiceAPITestsUnsavedAddressWithoutPersisting(t *
 			_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		case "/api/bootstrap":
 			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
-			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+			_, _ = writer.Write([]byte(`{"session_token":"temporary-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
 		case "/api/detector/estimate":
 			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
 		case "/api/detector/status":

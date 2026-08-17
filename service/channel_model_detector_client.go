@@ -40,6 +40,10 @@ const (
 	// while allowing callers to tighten the limit when required.
 	channelModelDetectorDefaultMaxResponseBytes int64 = 8 << 20
 	channelModelDetectorDefaultMaxReportBytes   int64 = 1 << 20
+
+	channelModelDetectorBootstrapSchemaVersion = 2
+	channelModelDetectorReportSchemaMin        = 3
+	channelModelDetectorReportSchemaMax        = 4
 )
 
 // ChannelModelDetectorPresetConfig is an opaque official detector preset.
@@ -163,9 +167,23 @@ type ChannelModelDetectorStartRequest struct {
 	BaseURL           string                           `json:"base_url"`
 	APIKey            string                           `json:"api_key"`
 	Model             string                           `json:"model"`
+	ClaimedModel      string                           `json:"claimed_model"`
+	RequestModel      string                           `json:"request_model"`
 	Config            ChannelModelDetectorPresetConfig `json:"config"`
 	ResumeSessionID   string                           `json:"resume_session_id,omitempty"`
 	PreviousSessionID string                           `json:"-"`
+}
+
+func (r ChannelModelDetectorStartRequest) models() (string, string) {
+	claimedModel := strings.TrimSpace(r.ClaimedModel)
+	if claimedModel == "" {
+		claimedModel = strings.TrimSpace(r.Model)
+	}
+	requestModel := strings.TrimSpace(r.RequestModel)
+	if requestModel == "" {
+		requestModel = claimedModel
+	}
+	return claimedModel, requestModel
 }
 
 // MarshalJSON prevents the task API key from being accidentally serialized
@@ -174,12 +192,15 @@ func (r ChannelModelDetectorStartRequest) MarshalJSON() ([]byte, error) {
 	type safeStartRequest struct {
 		BaseURL           string                           `json:"base_url"`
 		Model             string                           `json:"model"`
+		ClaimedModel      string                           `json:"claimed_model"`
+		RequestModel      string                           `json:"request_model"`
 		Config            ChannelModelDetectorPresetConfig `json:"config"`
 		ResumeSessionID   string                           `json:"resume_session_id,omitempty"`
 		PreviousSessionID string                           `json:"previous_session_id,omitempty"`
 	}
+	claimedModel, requestModel := r.models()
 	return common.Marshal(safeStartRequest{
-		BaseURL: r.BaseURL, Model: r.Model, Config: r.Config,
+		BaseURL: r.BaseURL, Model: claimedModel, ClaimedModel: claimedModel, RequestModel: requestModel, Config: r.Config,
 		ResumeSessionID: r.ResumeSessionID, PreviousSessionID: r.PreviousSessionID,
 	})
 }
@@ -221,6 +242,7 @@ type ChannelModelDetectorStatusResponse struct {
 	Official        *bool                        `json:"official"`
 	ConfigHash      string                       `json:"config_hash"`
 	ClaimedModel    string                       `json:"claimed_model"`
+	RequestModel    string                       `json:"request_model"`
 	SafeEndpoint    string                       `json:"safe_endpoint"`
 	ReportAvailable *bool                        `json:"report_available"`
 	Verdict         string                       `json:"verdict"`
@@ -241,17 +263,47 @@ type ChannelModelDetectorReportResponse struct {
 	BuildHash                string `json:"build_hash"`
 	Official                 *bool  `json:"official"`
 	ClaimedModel             string `json:"claimed_model"`
+	RequestModel             string `json:"request_model"`
 	OverallVerdict           string `json:"overall_verdict"`
+	TitleCN                  string `json:"title_cn"`
+	SubtitleCN               string `json:"subtitle_cn"`
 	OutcomeCode              string `json:"outcome_code"`
 	JuiceVerdictState        string `json:"juice_verdict_state"`
 	FingerprintVerdictState  string `json:"fingerprint_verdict_state"`
 	FingerprintModel         string `json:"fingerprint_model"`
 	FingerprintClaimMismatch *bool  `json:"fingerprint_claim_mismatch"`
 	Candidate                struct {
-		BaseURL string `json:"base_url"`
-		Model   string `json:"model"`
+		BaseURL      string `json:"base_url"`
+		Model        string `json:"model"`
+		ClaimedModel string `json:"claimed_model"`
+		RequestModel string `json:"request_model"`
 	} `json:"candidate_configuration_without_key"`
 	Raw ChannelModelDetectorJSON `json:"-"`
+}
+
+func channelModelDetectorReportCompatibilityError(report ChannelModelDetectorReportResponse, expectedClaimedModel, expectedRequestModel string) error {
+	if report.SchemaVersion == nil {
+		return errors.New("检测报告未返回 schema_version")
+	}
+	if *report.SchemaVersion < channelModelDetectorReportSchemaMin || *report.SchemaVersion > channelModelDetectorReportSchemaMax {
+		return fmt.Errorf(
+			"检测报告 schema_version %d 不受支持，主系统当前支持版本 %d-%d",
+			*report.SchemaVersion,
+			channelModelDetectorReportSchemaMin,
+			channelModelDetectorReportSchemaMax,
+		)
+	}
+	if report.ClaimedModel == "" || report.ClaimedModel != expectedClaimedModel {
+		return fmt.Errorf("检测报告 claimed_model %q 与执行快照 %q 不一致", report.ClaimedModel, expectedClaimedModel)
+	}
+	if report.RequestModel == "" || report.RequestModel != expectedRequestModel {
+		return fmt.Errorf(
+			"检测报告 request_model %q 与执行快照 %q 不一致，检测器版本可能不支持独立请求模型",
+			report.RequestModel,
+			expectedRequestModel,
+		)
+	}
+	return nil
 }
 
 // MarshalJSON emits the complete official report when it is available. The
@@ -406,6 +458,14 @@ func (c *ChannelModelDetectorClient) Bootstrap(ctx context.Context) (ChannelMode
 		c.clearSession()
 		return response, c.contractError(channelModelDetectorBootstrapPath, "bootstrap 未返回 session_token", nil)
 	}
+	if response.SchemaVersion != channelModelDetectorBootstrapSchemaVersion {
+		c.clearSession()
+		return response, c.contractError(
+			channelModelDetectorBootstrapPath,
+			fmt.Sprintf("bootstrap schema_version %d 不受支持，主系统当前支持版本 %d", response.SchemaVersion, channelModelDetectorBootstrapSchemaVersion),
+			nil,
+		)
+	}
 	for _, preset := range []string{"low", "medium", "high"} {
 		if _, ok := response.SinglePresets[preset]; !ok {
 			c.clearSession()
@@ -452,7 +512,8 @@ func (c *ChannelModelDetectorClient) Start(ctx context.Context, request ChannelM
 	if err := c.requireSession(); err != nil {
 		return response, err
 	}
-	if strings.TrimSpace(request.BaseURL) == "" || strings.TrimSpace(request.APIKey) == "" || strings.TrimSpace(request.Model) == "" || request.Config == nil {
+	claimedModel, requestModel := request.models()
+	if strings.TrimSpace(request.BaseURL) == "" || strings.TrimSpace(request.APIKey) == "" || claimedModel == "" || requestModel == "" || request.Config == nil {
 		return response, &ChannelModelDetectorError{Kind: ChannelModelDetectorErrorInvalidRequest, Endpoint: channelModelDetectorStartPath, Message: "start 请求缺少必要字段"}
 	}
 	before, err := c.Status(ctx)
@@ -480,10 +541,13 @@ func (c *ChannelModelDetectorClient) Start(ctx context.Context, request ChannelM
 		BaseURL         string                           `json:"base_url"`
 		APIKey          string                           `json:"api_key"`
 		Model           string                           `json:"model"`
+		ClaimedModel    string                           `json:"claimed_model"`
+		RequestModel    string                           `json:"request_model"`
 		Config          ChannelModelDetectorPresetConfig `json:"config"`
 		ResumeSessionID string                           `json:"resume_session_id,omitempty"`
 	}{
-		BaseURL: normalizedBaseURL, APIKey: request.APIKey, Model: request.Model,
+		BaseURL: normalizedBaseURL, APIKey: request.APIKey, Model: claimedModel,
+		ClaimedModel: claimedModel, RequestModel: requestModel,
 		Config: request.Config, ResumeSessionID: request.ResumeSessionID,
 	}
 	submittedAt := time.Now().UTC()
@@ -544,7 +608,16 @@ func (c *ChannelModelDetectorClient) Report(ctx context.Context) (ChannelModelDe
 	raw, err := c.doJSONWithTimeout(ctx, http.MethodGet, channelModelDetectorReportPath, nil, false, c.maxReportBytes, &response, c.timeout(channelModelDetectorReportTimeout))
 	response.Raw = raw
 	if response.ClaimedModel == "" {
-		response.ClaimedModel = response.Candidate.Model
+		response.ClaimedModel = response.Candidate.ClaimedModel
+		if response.ClaimedModel == "" {
+			response.ClaimedModel = response.Candidate.Model
+		}
+	}
+	if response.RequestModel == "" {
+		response.RequestModel = response.Candidate.RequestModel
+		if response.RequestModel == "" {
+			response.RequestModel = response.Candidate.Model
+		}
 	}
 	return response, err
 }
@@ -799,7 +872,11 @@ func (c *ChannelModelDetectorClient) startReconciles(request ChannelModelDetecto
 	if expectedHash := detectorConfigHash(request.Config); expectedHash == "" || status.ConfigHash == "" || status.ConfigHash != expectedHash {
 		return false
 	}
-	if status.ClaimedModel == "" || status.ClaimedModel != request.Model {
+	claimedModel, requestModel := request.models()
+	if status.ClaimedModel == "" || status.ClaimedModel != claimedModel {
+		return false
+	}
+	if status.RequestModel != "" && status.RequestModel != requestModel {
 		return false
 	}
 	if status.SafeEndpoint == "" || !sameChannelModelDetectorSafeEndpoint(status.SafeEndpoint, normalizedBaseURL) {

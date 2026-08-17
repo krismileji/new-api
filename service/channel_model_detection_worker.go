@@ -368,7 +368,8 @@ func (worker *ChannelModelDetectionWorker) startChannelModelDetectionExecution(c
 		return result, err
 	}
 	started, err := detector.Start(ctx, ChannelModelDetectorStartRequest{
-		BaseURL: baseURL, APIKey: credential, Model: execution.ClaimedModel, Config: preset,
+		BaseURL: baseURL, APIKey: credential, Model: execution.ClaimedModel,
+		ClaimedModel: execution.ClaimedModel, RequestModel: execution.RequestModel, Config: preset,
 	})
 	credential = ""
 	if err != nil {
@@ -457,7 +458,8 @@ func (worker *ChannelModelDetectionWorker) reconcileOwnedChannelModelDetectionSe
 		return worker.markChannelModelDetectionConflict(ctx, db, run, execution, status.SessionID, now)
 	}
 	if status.ConfigHash != "" && execution.ConfigHash != "" && status.ConfigHash != execution.ConfigHash ||
-		status.ClaimedModel != "" && status.ClaimedModel != execution.ClaimedModel {
+		status.ClaimedModel != "" && status.ClaimedModel != execution.ClaimedModel ||
+		status.RequestModel != "" && status.RequestModel != execution.RequestModel {
 		return worker.markChannelModelDetectionConflict(ctx, db, run, execution, status.SessionID, now)
 	}
 	switch status.Status {
@@ -495,10 +497,14 @@ func (worker *ChannelModelDetectionWorker) reconcileOwnedChannelModelDetectionSe
 		if err := execution.SetReport(report); err != nil {
 			return result, err
 		}
-		if err := worker.completeChannelModelDetectionExecution(ctx, db, run, execution, status, report, now); err != nil {
+		reportCompatibilityErr := channelModelDetectorReportCompatibilityError(report, execution.ClaimedModel, execution.RequestModel)
+		if err := worker.completeChannelModelDetectionExecution(ctx, db, run, execution, status, report, reportCompatibilityErr, now); err != nil {
 			return result, err
 		}
 		result.Status = model.ChannelModelDetectionExecutionStatusCompleted
+		if reportCompatibilityErr != nil {
+			result.Status = model.ChannelModelDetectionExecutionStatusFailed
+		}
 		result.Completed = true
 		return result, nil
 	case "interrupted":
@@ -546,7 +552,8 @@ func (worker *ChannelModelDetectionWorker) resumeChannelModelDetectionExecution(
 		return result, err
 	}
 	resumed, err := detector.Start(ctx, ChannelModelDetectorStartRequest{
-		BaseURL: baseURL, APIKey: credential, Model: execution.ClaimedModel, Config: preset,
+		BaseURL: baseURL, APIKey: credential, Model: execution.ClaimedModel,
+		ClaimedModel: execution.ClaimedModel, RequestModel: execution.RequestModel, Config: preset,
 		ResumeSessionID: execution.OfficialSessionId, PreviousSessionID: status.SessionID,
 	})
 	credential = ""
@@ -578,12 +585,17 @@ func (worker *ChannelModelDetectionWorker) resumeChannelModelDetectionExecution(
 	return result, nil
 }
 
-func (worker *ChannelModelDetectionWorker) completeChannelModelDetectionExecution(ctx context.Context, db *gorm.DB, run model.ChannelModelDetectionRun, execution model.ChannelModelDetectionExecution, status ChannelModelDetectorStatusResponse, report ChannelModelDetectorReportResponse, now time.Time) error {
+func (worker *ChannelModelDetectionWorker) completeChannelModelDetectionExecution(ctx context.Context, db *gorm.DB, run model.ChannelModelDetectionRun, execution model.ChannelModelDetectionExecution, status ChannelModelDetectorStatusResponse, report ChannelModelDetectorReportResponse, reportCompatibilityErr error, now time.Time) error {
 	reportHash := sha256.Sum256([]byte(execution.ReportJSON))
 	updates := channelModelDetectionProgressUpdates(status.Progress, now.Unix())
 	updates["status"] = model.ChannelModelDetectionExecutionStatusCompleted
 	updates["outcome_code"] = report.OutcomeCode
-	updates["title_cn"] = report.OverallVerdict
+	titleCN := strings.TrimSpace(report.TitleCN)
+	if titleCN == "" {
+		titleCN = report.OverallVerdict
+	}
+	updates["title_cn"] = titleCN
+	updates["subtitle_cn"] = report.SubtitleCN
 	updates["juice_verdict_state"] = report.JuiceVerdictState
 	updates["fingerprint_verdict_state"] = report.FingerprintVerdictState
 	updates["fingerprint_model"] = report.FingerprintModel
@@ -596,6 +608,17 @@ func (worker *ChannelModelDetectionWorker) completeChannelModelDetectionExecutio
 	updates["report_json"] = execution.ReportJSON
 	updates["report_sha256"] = fmt.Sprintf("%x", reportHash[:])
 	updates["finished_at"] = now.Unix()
+	if reportCompatibilityErr != nil {
+		updates["status"] = model.ChannelModelDetectionExecutionStatusFailed
+		updates["outcome_code"] = ""
+		updates["title_cn"] = "检测报告版本不兼容"
+		updates["subtitle_cn"] = reportCompatibilityErr.Error()
+		updates["juice_verdict_state"] = ""
+		updates["fingerprint_verdict_state"] = ""
+		updates["fingerprint_model"] = ""
+		updates["error_code"] = "report_contract_incompatible"
+		updates["error_message"] = reportCompatibilityErr.Error()
+	}
 	if err := worker.withDBLeaseTransaction(ctx, db, func(tx *gorm.DB) error {
 		updated := tx.Model(&model.ChannelModelDetectionExecution{}).
 			Where("id = ? AND official_session_id = ? AND status = ?", execution.Id, execution.OfficialSessionId, model.ChannelModelDetectionExecutionStatusRunning).

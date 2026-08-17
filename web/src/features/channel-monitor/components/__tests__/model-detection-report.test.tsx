@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { afterEach, beforeEach, describe, test } from 'vitest'
 
 import type { ChannelModelDetectionCost } from '../../types-model-detection'
@@ -95,7 +96,7 @@ function createExecution(
     official_session_id: 'official-session-123',
     official: true,
     config_hash: 'config-sha-123',
-    schema_version: 3,
+    schema_version: 4,
     scoring_version: 'trusted-fingerprint-v3',
     baseline_id: 'gpt56-fingerprint-baseline',
     baseline_sha256: 'baseline-sha-456',
@@ -113,29 +114,31 @@ function createExecution(
     error_code: '',
     error_message: '',
     report: {
+      schema_version: 4,
+      scoring_version: 'trusted-fingerprint-v3',
       overall_verdict: 'pass',
-      official_grade: 'medium',
-      trust_scope: 'official-baseline',
+      official_grade: true,
+      trust_scope: 'official_preset',
       possible_models: [
         {
           model: 'gpt-5.6-sol',
           label_cn: 'Sol',
-          match: true,
-          score: 0.92,
+          match: 0.920_549_805_582_057_7,
+          score: -2.291_608_932_175_692_3,
           threshold: 0.8,
         },
         {
           model: 'gpt-5.6-terra',
           label_cn: 'Terra',
-          match: false,
-          score: 0.42,
+          match: 0.069_898_587_567_904_5,
+          score: -4.869_534_595_913_43,
           threshold: 0.8,
         },
         {
           model: 'gpt-5.6-luna',
           label_cn: 'Luna',
-          match: false,
-          score: 0.18,
+          match: 0.009_551_606_850_037_782,
+          score: -6.859_870_641_593_742_5,
           threshold: 0.8,
         },
       ],
@@ -302,6 +305,80 @@ describe('模型检测目标报告', () => {
     assert.match(node.textContent ?? '', /不会被自动解释为正常或异常/)
   })
 
+  test('优先显示检测器报告中的原始中文标题和副标题', async () => {
+    await renderReport([
+      createExecution({
+        title_cn: '数据库旧标题',
+        subtitle_cn: '数据库旧说明',
+        report: {
+          schema_version: 4,
+          scoring_version: 'trusted-fingerprint-v3',
+          title_cn: 'Juice通过；指纹强烈指向 Sol',
+          subtitle_cn:
+            'Juice 未发现型号冲突；本批行为分布与 Sol 的可信指纹最接近。',
+        },
+      }),
+    ])
+
+    const text = document.body.textContent ?? ''
+    assert.match(text, /Juice通过；指纹强烈指向 Sol/)
+    assert.match(text, /本批行为分布与 Sol 的可信指纹最接近/)
+    assert.doesNotMatch(text, /数据库旧标题/)
+    assert.doesNotMatch(text, /数据库旧说明/)
+  })
+
+  test('不支持的报告 Schema 明确提示版本不兼容且不归类为正常', async () => {
+    await renderReport([
+      createExecution({
+        target_key: 'unsupported-schema',
+        schema_version: 5,
+        report: {
+          schema_version: 5,
+          scoring_version: 'trusted-fingerprint-v4',
+          outcome_code: 'juice_pass_fingerprint_strong',
+          title_cn: '未来版本声称检测正常',
+          subtitle_cn: '此字段语义未经当前主系统验证。',
+        },
+      }),
+    ])
+
+    const node = executionNode('unsupported-schema')
+    assert.equal(node.dataset.outcomeLevel, 'unknown')
+    assert.match(node.textContent ?? '', /报告版本不兼容/)
+    assert.match(node.textContent ?? '', /Schema 5 不受支持/)
+    assert.match(node.textContent ?? '', /主系统当前支持 3-4/)
+    assert.doesNotMatch(node.textContent ?? '', /未来版本声称检测正常/)
+    assert.doesNotMatch(node.textContent ?? '', /此字段语义未经当前主系统验证/)
+  })
+
+  test('报告请求模型与执行快照不一致时停止解释检测结论', async () => {
+    await renderReport([
+      createExecution({
+        target_key: 'request-model-mismatch',
+        request_model: 'upstream-model-alias',
+        schema_version: 3,
+        report: {
+          schema_version: 3,
+          scoring_version: 'trusted-fingerprint-v3',
+          claimed_model: 'gpt-5.6-sol',
+          candidate_configuration_without_key: {
+            model: 'gpt-5.6-sol',
+          },
+          outcome_code: 'juice_pass_fingerprint_strong',
+          title_cn: '旧检测器声称检测正常',
+        },
+      }),
+    ])
+
+    const node = executionNode('request-model-mismatch')
+    assert.equal(node.dataset.outcomeLevel, 'unknown')
+    assert.match(node.textContent ?? '', /报告版本不兼容/)
+    assert.match(node.textContent ?? '', /报告请求模型 gpt-5\.6-sol/)
+    assert.match(node.textContent ?? '', /执行快照 upstream-model-alias/)
+    assert.match(node.textContent ?? '', /可能不支持独立请求模型/)
+    assert.doesNotMatch(node.textContent ?? '', /旧检测器声称检测正常/)
+  })
+
   test('展示型号匹配度、正式阈值、失败项目和未完成探针格', async () => {
     await renderReport([
       createExecution({
@@ -310,15 +387,15 @@ describe('模型检测目标报告', () => {
             {
               model: 'gpt-5.6-sol',
               label_cn: 'Sol',
-              match: true,
-              score: 0.92,
+              match: 0.920_549_805_582_057_7,
+              score: -2.291_608_932_175_692_3,
               threshold: 0.8,
             },
             {
               model: 'gpt-5.6-terra',
               label_cn: 'Terra',
-              match: false,
-              score: 0.42,
+              match: 0.069_898_587_567_904_5,
+              score: -4.869_534_595_913_43,
               threshold: 0.75,
             },
           ],
@@ -338,9 +415,11 @@ describe('模型检测目标报告', () => {
     ])
 
     const text = document.body.textContent ?? ''
-    assert.match(text, /Sol匹配度 92\.0%正式阈值 80\.0%命中 是/)
-    assert.match(text, /Terra匹配度 42\.0%正式阈值 75\.0%命中 否/)
-    assert.match(text, /Luna匹配度 未提供正式阈值 未提供命中 未提供/)
+    assert.match(text, /Sol匹配度 92\.055%强指向线 >80%/)
+    assert.match(text, /Terra匹配度 6\.990%强指向线 >75%/)
+    assert.match(text, /Luna匹配度 未提供当前模式仅参考/)
+    assert.doesNotMatch(text, /-2\.2916/)
+    assert.doesNotMatch(text, /-4\.8695/)
     assert.match(text, /有效探针格不足/)
     assert.match(text, /insufficient_cells/)
     assert.match(text, /effort_4\/cell_2/)
@@ -355,12 +434,110 @@ describe('模型检测目标报告', () => {
     assert.match(text, /official-session-123/)
     assert.match(text, /是（官方报告）/)
     assert.match(text, /config-sha-123/)
-    assert.match(text, /Schema 版本3/)
+    assert.match(text, /Schema 版本4/)
     assert.match(text, /trusted-fingerprint-v3/)
     assert.match(text, /gpt56-fingerprint-baseline/)
     assert.match(text, /baseline-sha-456/)
     assert.match(text, /build-sha-789/)
     assert.match(text, /report-sha-abc/)
+  })
+
+  test('按检测器报告展示 Juice、完整性、线路、探针和请求格式数据', async () => {
+    await renderReport([
+      createExecution({
+        report: {
+          schema_version: 4,
+          scoring_version: 'trusted-fingerprint-v3',
+          juice_summary: {
+            per_effort: {
+              high: {
+                attempted: 6,
+                valid_completed: 6,
+                current_success: 6,
+                mixed: 0,
+                unsuccessful: 0,
+                network_error: 0,
+                shared_current_success: 0,
+              },
+            },
+          },
+          output_integrity_summary: {
+            requests: 2,
+            exact: 2,
+            invalid: 0,
+            hard_anomaly: false,
+            sticky_hard_anomaly: false,
+          },
+          coverage_summary: {
+            requests: 2,
+            hard_anomaly: false,
+            sticky_hard_anomaly: false,
+          },
+          network_summary: {
+            logical_tasks: 49,
+            logical_completed: 49,
+            successful: 49,
+            final_errors: 0,
+            cancelled: 0,
+            http_attempts: 49,
+            retries: 0,
+          },
+          fingerprint_summary: {
+            cell_details: {
+              'rand_country|normal+no_history': {
+                probe_id: 'rand_country',
+                profile: 'normal+no_history',
+                sample_count: 10,
+                planned_samples: 10,
+                counts: { uruguay: 5, portugal: 3, madagascar: 1 },
+                average_log_likelihood: {
+                  'gpt-5.6-sol': -1.61,
+                  'gpt-5.6-terra': -3.99,
+                  'gpt-5.6-luna': -4.2,
+                },
+                between_model_jsd: 0.513,
+                within_model_jsd: 0.045,
+                weight: 0.913,
+                complete: true,
+              },
+            },
+          },
+          profile_summary: {
+            'normal+no_history': {
+              logical_tasks: 49,
+              successful: 49,
+              final_errors: 0,
+              cancelled: 0,
+            },
+          },
+          failed_items: [],
+          network_error_details: [
+            {
+              probe_id: 'rand_bird',
+              category_cn: '上游限流',
+              http_status: 429,
+              attempt: 2,
+              safe_message: '请求频率过高',
+            },
+          ],
+        },
+      }),
+    ])
+
+    const text = document.body.textContent ?? ''
+    assert.match(text, /Juice 结果/)
+    assert.match(text, /高6660000/)
+    assert.match(text, /32\/48 输出完整性/)
+    assert.match(text, /成功响应 2 条，精确返回 2 条，格式无效 0 条/)
+    assert.match(text, /逻辑请求49 \/ 49/)
+    assert.match(text, /行为指纹探针/)
+    assert.match(text, /固定随机国家/)
+    assert.match(text, /uruguay 5；portugal 3；madagascar 1/)
+    assert.match(text, /更支持 Sol/)
+    assert.match(text, /请求格式对比/)
+    assert.match(text, /普通请求 · 无历史494900/)
+    assert.match(text, /固定随机鸟 · 上游限流/)
+    assert.match(text, /HTTP 429，第 2 次尝试/)
   })
 
   test('Usage 可用时显示 Token，不可用时明确提示而不显示零值', async () => {
