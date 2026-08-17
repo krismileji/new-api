@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -245,15 +246,18 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	}
 
 	record := ChannelDailyCost{
-		ChannelId:                 channelId,
-		DayStart:                  ChannelDailyCostDayStart(occurredAt),
-		CostNanoCNY:               costNanoCNY,
-		ProbeCostNanoCNY:          probeCostNanoCNY,
-		ModelDetectionCostNanoCNY: modelDetectionCostNanoCNY,
-		SettledCount:              settledDelta,
-		UnresolvedCount:           unresolvedDelta,
-		CreatedAt:                 occurredAt,
-		UpdatedAt:                 occurredAt,
+		ChannelId: channelId,
+		DayStart:  ChannelDailyCostDayStart(occurredAt),
+		CreatedAt: occurredAt,
+		UpdatedAt: occurredAt,
+	}
+	// Multiple requests can create the first row for the same
+	// channel/day concurrently. Try the conflict-safe insert before a missing-row
+	// update can acquire competing MySQL gap locks, then apply this event through
+	// one bounded atomic increment regardless of which request won the race.
+	created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+	if created.Error != nil {
+		return created.Error
 	}
 	updated, err := updateChannelDailyCostIfWithinBounds(
 		tx, channelId, record.DayStart, occurredAt,
@@ -262,49 +266,7 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	if err != nil || updated {
 		return err
 	}
-
-	var existingId int64
-	err = tx.Model(&ChannelDailyCost{}).
-		Select("id").
-		Where("channel_id = ? AND day_start = ?", channelId, record.DayStart).
-		Take(&existingId).Error
-	if err == nil {
-		return errors.New("渠道日成本累计超过 int64 范围")
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-
-	const savepoint = "channel_daily_cost_insert"
-	if err := tx.SavePoint(savepoint).Error; err != nil {
-		return err
-	}
-	createErr := tx.Create(&record).Error
-	if createErr == nil {
-		return nil
-	}
-	if err := tx.RollbackTo(savepoint).Error; err != nil {
-		return err
-	}
-
-	updated, err = updateChannelDailyCostIfWithinBounds(
-		tx, channelId, record.DayStart, occurredAt,
-		costNanoCNY, probeCostNanoCNY, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta,
-	)
-	if err != nil || updated {
-		return err
-	}
-	err = tx.Model(&ChannelDailyCost{}).
-		Select("id").
-		Where("channel_id = ? AND day_start = ?", channelId, record.DayStart).
-		Take(&existingId).Error
-	if err == nil {
-		return errors.New("渠道日成本累计超过 int64 范围")
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	return createErr
+	return errors.New("渠道日成本累计超过 int64 范围")
 }
 
 func updateChannelDailyCostIfWithinBounds(tx *gorm.DB, channelId int, dayStart int64, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) (bool, error) {

@@ -2,15 +2,20 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 func TestChannelDailyCostUpsertUsesBeijingDayAndOneRowPerChannel(t *testing.T) {
@@ -49,6 +54,53 @@ func TestChannelDailyCostUpsertUsesBeijingDayAndOneRowPerChannel(t *testing.T) {
 	assert.Equal(t, ChannelDailyCostDayStart(afterMidnight), rows[1].DayStart)
 	assert.Equal(t, 1, rows[1].ChannelId)
 	assert.Equal(t, 2, rows[2].ChannelId)
+}
+
+func TestChannelDailyCostConcurrentFirstWriteConfiguredMySQL(t *testing.T) {
+	dsn := os.Getenv("TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("TEST_MYSQL_DSN is not configured")
+	}
+
+	prefix := fmt.Sprintf("mcdc%x_", time.Now().UnixNano())
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	const writes = 8
+	sqlDB.SetMaxOpenConns(writes)
+	t.Cleanup(func() {
+		require.NoError(t, db.Migrator().DropTable(&ChannelDailyCost{}))
+		require.NoError(t, sqlDB.Close())
+	})
+
+	start := make(chan struct{})
+	errs := make(chan error, writes)
+	var wait sync.WaitGroup
+	for range writes {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			errs <- AddChannelDailyCostWithModelDetection(context.Background(), db, 501, 1_786_896_000, 10, 10, 1, 0)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+	for writeErr := range errs {
+		require.NoError(t, writeErr)
+	}
+
+	var stored ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", 501).First(&stored).Error)
+	assert.Equal(t, int64(writes*10), stored.CostNanoCNY)
+	assert.Equal(t, int64(writes*10), stored.ModelDetectionCostNanoCNY)
+	assert.Equal(t, int64(writes), stored.SettledCount)
+	assert.Zero(t, stored.UnresolvedCount)
 }
 
 func TestGetChannelDailyCostDayTotalsAggregatesOnlyRequestedRange(t *testing.T) {
