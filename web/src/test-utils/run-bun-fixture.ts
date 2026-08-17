@@ -21,7 +21,20 @@ import path from 'node:path'
 
 export function runBunFixture(relativePath: string, args: string[] = []) {
   const fixturePath = path.resolve(process.cwd(), relativePath)
-  return spawnSync('bun', [fixturePath, ...args], {
+  const packageRunner = process.env.npm_execpath
+  const packageRunnerName = packageRunner
+    ? path.basename(packageRunner).toLowerCase()
+    : ''
+  let bunExecutable = 'bun'
+  if ('bun' in process.versions) {
+    bunExecutable = process.execPath
+  } else if (
+    packageRunner &&
+    (packageRunnerName === 'bun' || packageRunnerName === 'bun.exe')
+  ) {
+    bunExecutable = packageRunner
+  }
+  return spawnSync(bunExecutable, [fixturePath, ...args], {
     cwd: process.cwd(),
     encoding: 'utf8',
   })
