@@ -67,6 +67,20 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 			Enabled: true, Priority: 80, Weight: 50,
 			State: model.ChannelSmartScheduleRouteState{ParticipationSet: true, Excluded: true},
 		},
+		{
+			ChannelId: 6, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 80, Weight: 50,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, RuntimeProtectionUntil: now + 60,
+			},
+		},
+		{
+			ChannelId: 7, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 80, Weight: 50,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, StabilityState: model.ChannelSmartScheduleStabilityProbing,
+			},
+		},
 	}
 	responses := channelSmartScheduleRouteResponses(routes)
 	policyByGroup := map[string]channelSmartSchedulePolicy{
@@ -135,6 +149,173 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 	assert.Nil(t, byChannel[4].CurrentWindowScoreDetails)
 	assert.Nil(t, byChannel[5].CurrentWindowScore)
 	assert.Nil(t, byChannel[5].CurrentWindowScoreDetails)
+	assert.Nil(t, byChannel[6].CurrentWindowScore)
+	assert.Nil(t, byChannel[6].CurrentWindowScoreDetails)
+	assert.Nil(t, byChannel[7].CurrentWindowScore)
+	assert.Nil(t, byChannel[7].CurrentWindowScoreDetails)
+}
+
+func TestChannelSmartScheduleApplyCurrentWindowScoresUsesSwitchConfirmation(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	currentRatio := 2.0
+	challengerRatio := 1.0
+	groupRatio := 3.0
+	currentMargin := groupRatio - currentRatio
+	challengerMargin := groupRatio - challengerRatio
+	routes := []model.ChannelSmartScheduleRoute{
+		{
+			ChannelId: 21, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 2, Weight: 1000,
+			CostRatio: &currentRatio, GroupRatio: &groupRatio, GrossMargin: &currentMargin,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 1, BasePriority: 2, BaseWeight: 1000,
+			},
+		},
+		{
+			ChannelId: 22, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 1, Weight: 1000,
+			CostRatio: &challengerRatio, GroupRatio: &groupRatio, GrossMargin: &challengerMargin,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 2, BasePriority: 1, BaseWeight: 1000,
+			},
+		},
+	}
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	).policy()
+	responses := channelSmartScheduleRouteResponses(routes)
+	firstTokenMs := 100.0
+	for _, channelId := range []int{21, 22} {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			channelId, "vip", "model-a", now, true, &firstTokenMs, nil, nil, false,
+		))
+	}
+
+	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
+		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+	))
+
+	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
+	for _, response := range responses {
+		byChannel[response.ChannelId] = response
+	}
+	details := byChannel[22].CurrentWindowScoreDetails
+	require.NotNil(t, details)
+	assert.Equal(t, 22, details.Decision.RawWinnerChannelId)
+	assert.Equal(t, 21, details.Decision.CurrentPrimaryChannelId)
+	assert.Equal(t, 21, details.Decision.SelectedPrimaryChannelId)
+	assert.Equal(t, 21, details.Decision.ActualPrimaryChannelId)
+	assert.Contains(t, details.Decision.SelectionReason, "仅允许自适应采样")
+	assert.True(t, details.Health.Evidence)
+	assert.Equal(t, channelSmartScheduleHealthHealthy, details.Health.State)
+	currentDetails := byChannel[21].CurrentWindowScoreDetails
+	require.NotNil(t, currentDetails)
+	assert.Equal(t, 1, currentDetails.Decision.BaseRank)
+	assert.Equal(t, 2, byChannel[22].CurrentWindowScoreDetails.Decision.BaseRank)
+}
+
+func TestChannelSmartScheduleApplyCurrentWindowScoresUsesMinimumComparableChannels(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	ratioOne := 1.0
+	ratioTwo := 2.0
+	groupRatio := 3.0
+	marginOne := groupRatio - ratioOne
+	marginTwo := groupRatio - ratioTwo
+	routes := []model.ChannelSmartScheduleRoute{
+		{
+			ChannelId: 23, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 2, Weight: 1000,
+			CostRatio: &ratioOne, GroupRatio: &groupRatio, GrossMargin: &marginOne,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 1, BasePriority: 2, BaseWeight: 1000,
+			},
+		},
+		{
+			ChannelId: 24, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 1, Weight: 1000,
+			CostRatio: &ratioTwo, GroupRatio: &groupRatio, GrossMargin: &marginTwo,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 2, BasePriority: 1, BaseWeight: 1000,
+			},
+		},
+	}
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	).policy()
+	policy.AdaptiveSamplingMinComparableChannels = 3
+	policy.AdaptiveSamplingEnabled = false
+	responses := channelSmartScheduleRouteResponses(routes)
+
+	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
+		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+	))
+
+	for _, response := range responses {
+		assert.Nil(t, response.CurrentWindowScore)
+		require.NotNil(t, response.CurrentWindowScoreDetails)
+		assert.Equal(t, model.ChannelSmartScheduleComparisonInsufficient, response.CurrentWindowScoreDetails.ComparisonState)
+		assert.Equal(t, 3, response.CurrentWindowScoreDetails.MinComparableChannels)
+	}
+}
+
+func TestChannelSmartScheduleApplyCurrentWindowScoresUsesWinsorizedFirstToken(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	routes := []model.ChannelSmartScheduleRoute{
+		{
+			ChannelId: 25, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 2, Weight: 1000,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 1, BasePriority: 2, BaseWeight: 1000,
+			},
+		},
+		{
+			ChannelId: 26, ChannelStatus: common.ChannelStatusEnabled, Group: "vip", Model: "model-a",
+			Enabled: true, Priority: 1, Weight: 1000,
+			State: model.ChannelSmartScheduleRouteState{
+				ParticipationSet: true, BaseRank: 2, BasePriority: 1, BaseWeight: 1000,
+			},
+		},
+	}
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 20, 80, 30,
+	).policy()
+	policy.AdaptiveSamplingEnabled = false
+	responses := channelSmartScheduleRouteResponses(routes)
+	baselineFirstTokenMs := 300.0
+	for index := range 20 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			25, "vip", "model-a", now-int64(index), true, &baselineFirstTokenMs, nil, nil, false,
+		))
+	}
+	fastFirstTokenMs := 100.0
+	for index := range 19 {
+		require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+			26, "vip", "model-a", now-int64(index), true, &fastFirstTokenMs, nil, nil, false,
+		))
+	}
+	outlierFirstTokenMs := 10_000.0
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		26, "vip", "model-a", now-19, true, &outlierFirstTokenMs, nil, nil, false,
+	))
+
+	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
+		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+	))
+
+	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
+	for _, response := range responses {
+		byChannel[response.ChannelId] = response
+	}
+	details := byChannel[26].CurrentWindowScoreDetails
+	require.NotNil(t, details)
+	require.NotNil(t, details.Inputs.FirstTokenMs.Value)
+	assert.InDelta(t, 101.25, *details.Inputs.FirstTokenMs.Value, 1e-9)
 }
 
 func TestChannelSmartScheduleRealtimeRouteMetricViewUsesPolicyStabilityWindow(t *testing.T) {

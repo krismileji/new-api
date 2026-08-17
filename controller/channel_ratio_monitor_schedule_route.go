@@ -225,7 +225,14 @@ func channelSmartScheduleApplyJitterMeasurement(
 	performance *channelSmartSchedulePerformance,
 	policy channelSmartSchedulePolicy,
 ) {
-	if performance == nil || performance.FirstTokenDurationSampleCount < int64(policy.MinSamples) {
+	if performance == nil {
+		return
+	}
+	performance.FirstTokenDurationSampleCount, performance.FirstTokenP50Ms, performance.FirstTokenP95Ms,
+		performance.WinsorizedAverageFirstTokenMs = model.SummarizeChannelMonitorDurationBuckets(
+		performance.FirstTokenDurationBuckets,
+	)
+	if performance.FirstTokenDurationSampleCount < int64(policy.MinSamples) {
 		return
 	}
 	measurement := channelSmartScheduleMeasureJitter(

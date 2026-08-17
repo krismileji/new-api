@@ -378,8 +378,14 @@ func TestChannelSmartScheduleSwitchConfirmationKeepsUnverifiedPrimary(t *testing
 	winnerDetails := &model.ChannelSmartScheduleScoreDetails{}
 	plan := channelSmartSchedulePlan{
 		Items: []channelSmartSchedulePlanItem{
-			{ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true, TargetPriority: 1},
-			{ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true, TargetPriority: 2},
+			{
+				ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true,
+				BaseRank: 2, BasePriority: 1, BaseWeight: 1000, TargetPriority: 1, TargetWeight: 1000,
+			},
+			{
+				ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true,
+				BaseRank: 1, BasePriority: 2, BaseWeight: 1000, TargetPriority: 2, TargetWeight: 1000,
+			},
 		},
 		RawWinnerId:     2,
 		ActualPrimaryId: 2,
@@ -395,9 +401,54 @@ func TestChannelSmartScheduleSwitchConfirmationKeepsUnverifiedPrimary(t *testing
 	channelSmartScheduleApplySwitchConfirmation(&plan, candidates, policy, false)
 
 	assert.Equal(t, 1, plan.ActualPrimaryId)
+	assert.Equal(t, 1, plan.Items[0].BaseRank)
+	assert.Equal(t, int64(2), plan.Items[0].BasePriority)
 	assert.Equal(t, int64(2), plan.Items[0].TargetPriority)
+	assert.Equal(t, 2, plan.Items[1].BaseRank)
+	assert.Equal(t, int64(1), plan.Items[1].BasePriority)
 	assert.Equal(t, int64(1), plan.Items[1].TargetPriority)
+	assert.Equal(t, 1, currentDetails.Decision.BaseRank)
+	assert.Equal(t, int64(2), currentDetails.Decision.BasePriority)
 	assert.Contains(t, winnerDetails.Decision.SelectionReason, "仅允许自适应采样")
+}
+
+func TestChannelSmartScheduleSwitchConfirmationRepairsStaleBasePrimary(t *testing.T) {
+	currentDetails := &model.ChannelSmartScheduleScoreDetails{}
+	winnerDetails := &model.ChannelSmartScheduleScoreDetails{}
+	plan := channelSmartSchedulePlan{
+		Items: []channelSmartSchedulePlanItem{
+			{
+				ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true,
+				CurrentPriority: 2, CurrentWeight: 1000,
+				BaseRank: 2, BasePriority: 1, BaseWeight: 1000, TargetPriority: 1, TargetWeight: 1000,
+			},
+			{
+				ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true,
+				CurrentPriority: 1, CurrentWeight: 1000,
+				BaseRank: 1, BasePriority: 2, BaseWeight: 1000, TargetPriority: 2, TargetWeight: 1000,
+			},
+		},
+		RawWinnerId:     2,
+		ActualPrimaryId: 2,
+	}
+	currentDetails.Decision.CurrentPrimaryChannelId = 2
+	winnerDetails.Decision.CurrentPrimaryChannelId = 2
+	candidates := []channelSmartScheduleCandidate{
+		{ChannelId: 1, HealthState: channelSmartScheduleHealthHealthy, HealthEvidence: true},
+		{ChannelId: 2, HealthState: channelSmartScheduleHealthUnknown, HealthEvidence: false},
+	}
+
+	channelSmartScheduleApplySwitchConfirmation(&plan, candidates, channelSmartSchedulePolicy{
+		AdaptiveSamplingSwitchConfirmRequestPercent: 95,
+	}, false)
+
+	assert.Equal(t, 1, plan.ActualPrimaryId)
+	assert.Equal(t, 1, currentDetails.Decision.CurrentPrimaryChannelId)
+	assert.Equal(t, 1, currentDetails.Decision.ActualPrimaryChannelId)
+	assert.Equal(t, 1, plan.Items[0].BaseRank)
+	assert.Equal(t, int64(2), plan.Items[0].BasePriority)
+	assert.Equal(t, 2, plan.Items[1].BaseRank)
+	assert.Equal(t, int64(1), plan.Items[1].BasePriority)
 }
 
 func TestChannelSmartScheduleSwitchConfirmationUsesHealthyRequestPercent(t *testing.T) {
@@ -440,10 +491,22 @@ func TestChannelSmartScheduleSwitchConfirmationUsesNextConfirmedCandidate(t *tes
 	fallbackDetails := &model.ChannelSmartScheduleScoreDetails{}
 	plan := channelSmartSchedulePlan{
 		Items: []channelSmartSchedulePlanItem{
-			{ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true, TargetPriority: 2, TargetWeight: 10000},
-			{ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true, TargetPriority: 4, TargetWeight: 10000},
-			{ChannelId: 3, Score: 0.8, ScoreDetails: nextDetails, Scored: true, TargetPriority: 3, TargetWeight: 10000},
-			{ChannelId: 4, Score: 1, ScoreDetails: fallbackDetails, Scored: true, TargetPriority: 1, TargetWeight: 10000},
+			{
+				ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true,
+				BaseRank: 3, BasePriority: 2, BaseWeight: 10000, TargetPriority: 2, TargetWeight: 10000,
+			},
+			{
+				ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true,
+				BaseRank: 1, BasePriority: 4, BaseWeight: 10000, TargetPriority: 4, TargetWeight: 10000,
+			},
+			{
+				ChannelId: 3, Score: 0.8, ScoreDetails: nextDetails, Scored: true,
+				BaseRank: 2, BasePriority: 3, BaseWeight: 10000, TargetPriority: 3, TargetWeight: 10000,
+			},
+			{
+				ChannelId: 4, Score: 1, ScoreDetails: fallbackDetails, Scored: true,
+				BaseRank: 4, BasePriority: 1, BaseWeight: 10000, TargetPriority: 1, TargetWeight: 10000,
+			},
 		},
 		RawWinnerId:     2,
 		ActualPrimaryId: 2,
@@ -490,8 +553,12 @@ func TestChannelSmartScheduleSwitchConfirmationUsesNextConfirmedCandidate(t *tes
 		items[item.ChannelId] = item
 	}
 	assert.Equal(t, int64(4), items[3].TargetPriority)
+	assert.Equal(t, 1, items[3].BaseRank)
+	assert.Equal(t, int64(4), items[3].BasePriority)
 	assert.Equal(t, int64(3), items[2].TargetPriority)
+	assert.Equal(t, 2, items[2].BaseRank)
 	assert.Equal(t, int64(2), items[1].TargetPriority)
+	assert.Equal(t, 3, items[1].BaseRank)
 	assert.Equal(t, int64(1), items[4].TargetPriority)
 	assert.Equal(t, 3, nextDetails.Decision.ActualPrimaryChannelId)
 	assert.True(t, nextDetails.Decision.SelectedPrimary)
@@ -588,6 +655,63 @@ func TestChannelSmartScheduleSwitchConfirmationDoesNotCrossEconomicLayers(t *tes
 
 	assert.Equal(t, 1, plan.ActualPrimaryId)
 	assert.True(t, currentDetails.Decision.SelectedPrimary)
+	assert.Equal(t, int64(1), plan.Items[2].TargetPriority)
+}
+
+func TestChannelSmartScheduleSwitchConfirmationIgnoresFallbackRoutingWhenNormalLayerAvailable(t *testing.T) {
+	currentDetails := &model.ChannelSmartScheduleScoreDetails{}
+	winnerDetails := &model.ChannelSmartScheduleScoreDetails{}
+	fallbackDetails := &model.ChannelSmartScheduleScoreDetails{}
+	currentDetails.Decision.CurrentPrimaryChannelId = 1
+	winnerDetails.Decision.CurrentPrimaryChannelId = 1
+	fallbackDetails.Decision.CurrentPrimaryChannelId = 3
+	plan := channelSmartSchedulePlan{
+		Items: []channelSmartSchedulePlanItem{
+			{
+				ChannelId: 1, Score: 0.4, ScoreDetails: currentDetails, Scored: true,
+				CurrentPriority: 1, CurrentWeight: 1000,
+				BaseRank: 2, BasePriority: 2, BaseWeight: 1000, TargetPriority: 2, TargetWeight: 1000,
+			},
+			{
+				ChannelId: 2, Score: 0.9, ScoreDetails: winnerDetails, Scored: true,
+				CurrentPriority: 1, CurrentWeight: 900,
+				BaseRank: 1, BasePriority: 3, BaseWeight: 1000, TargetPriority: 3, TargetWeight: 1000,
+			},
+			{
+				ChannelId: 3, Score: 1, ScoreDetails: fallbackDetails, Scored: true,
+				CurrentPriority: 1, CurrentWeight: 10000,
+				BaseRank: 3, BasePriority: 1, BaseWeight: 10000, TargetPriority: 1, TargetWeight: 10000,
+			},
+		},
+		RawWinnerId:     2,
+		ActualPrimaryId: 2,
+	}
+	candidates := []channelSmartScheduleCandidate{
+		{
+			ChannelId: 1, EconomicRole: channelSmartScheduleEconomicRoleNormal,
+			HealthEvidence: true, HealthState: channelSmartScheduleHealthObserve,
+		},
+		{
+			ChannelId: 2, EconomicRole: channelSmartScheduleEconomicRoleNormal,
+			HealthEvidence: true, HealthState: channelSmartScheduleHealthObserve,
+		},
+		{
+			ChannelId: 3, EconomicRole: channelSmartScheduleEconomicRoleBreakEvenFallback,
+			HealthEvidence: true, HealthState: channelSmartScheduleHealthHealthy,
+			HealthHealthyRequestPercent: 100,
+		},
+	}
+
+	channelSmartScheduleApplySwitchConfirmation(&plan, candidates, channelSmartSchedulePolicy{
+		AdaptiveSamplingSwitchConfirmRequestPercent: 95,
+		Scoring: channelSmartScheduleScoring{
+			PrimarySwitchThresholdPercent: 3,
+		},
+	}, false)
+
+	assert.Equal(t, 1, plan.ActualPrimaryId)
+	assert.True(t, currentDetails.Decision.SelectedPrimary)
+	assert.False(t, fallbackDetails.Decision.SelectedPrimary)
 	assert.Equal(t, int64(1), plan.Items[2].TargetPriority)
 }
 

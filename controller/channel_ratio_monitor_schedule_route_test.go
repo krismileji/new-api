@@ -183,6 +183,72 @@ func TestRunChannelSmartScheduleRecordsUnchangedWhenOnlyBaseSnapshotRefreshes(t 
 	}
 }
 
+func TestRunChannelSmartScheduleRepairsStaleBaseSnapshotFromAppliedRoute(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	)
+	minimumComparable := 3
+	policy.AdaptiveSamplingMinComparableChannels = &minimumComparable
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+	currentPriority := int64(2)
+	stalePrimaryPriority := int64(1)
+	weight := uint(1000)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1107, Name: "applied primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &currentPriority, Weight: &weight},
+		{Id: 1108, Name: "stale snapshot primary", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled, Priority: &stalePrimaryPriority, Weight: &weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1107, Group: "vip", Model: "model-a", Enabled: true, Priority: &currentPriority, Weight: weight},
+		{ChannelId: 1108, Group: "vip", Model: "model-a", Enabled: true, Priority: &stalePrimaryPriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1107, Ratio: 2, UpdatedTime: 1},
+		{ChannelId: 1108, Ratio: 1, UpdatedTime: 1},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 1107, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			BaseRank: 2, BasePriority: stalePrimaryPriority, BaseWeight: weight,
+		},
+		{
+			ChannelId: 1108, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			BaseRank: 1, BasePriority: currentPriority, BaseWeight: weight,
+		},
+	}).Error)
+
+	result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+	require.NoError(t, err)
+	require.Len(t, result.Adjustments, 2)
+	for _, adjustment := range result.Adjustments {
+		require.NotNil(t, adjustment.ScoreDetails)
+		assert.Contains(t, adjustment.ScoreDetails.Decision.SelectionReason, "基础快照不一致")
+	}
+
+	var states []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("group_name = ? AND model_name = ?", "vip", "model-a").
+		Order("channel_id ASC").Find(&states).Error)
+	require.Len(t, states, 2)
+	assert.Equal(t, 1, states[0].BaseRank)
+	assert.Equal(t, currentPriority, states[0].BasePriority)
+	assert.Equal(t, 2, states[1].BaseRank)
+	assert.Equal(t, stalePrimaryPriority, states[1].BasePriority)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Where(&model.Ability{Group: "vip", Model: "model-a"}).
+		Order("channel_id ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+	require.NotNil(t, abilities[0].Priority)
+	require.NotNil(t, abilities[1].Priority)
+	assert.Equal(t, currentPriority, *abilities[0].Priority)
+	assert.Equal(t, stalePrimaryPriority, *abilities[1].Priority)
+}
+
 func TestChannelSmartScheduleRouteResultChangesTrafficState(t *testing.T) {
 	state := model.ChannelSmartScheduleRouteState{
 		StabilityState:                  model.ChannelSmartScheduleStabilityDegraded,

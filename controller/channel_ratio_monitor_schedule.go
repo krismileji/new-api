@@ -1368,12 +1368,15 @@ func channelSmartSchedulePromoteConfirmedPrimary(
 		return
 	}
 	primaryIsFallback := primaryCandidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback
-	type routingTarget struct {
-		Priority int64
-		Weight   uint
+	type routingSlot struct {
+		BaseRank       int
+		BasePriority   int64
+		BaseWeight     uint
+		TargetPriority int64
+		TargetWeight   uint
 	}
 	layerItems := make([]channelSmartSchedulePlanItem, 0, len(items))
-	targets := make([]routingTarget, 0, len(items))
+	slots := make([]routingSlot, 0, len(items))
 	itemIndexByChannel := make(map[int]int, len(items))
 	for index, item := range items {
 		candidate, exists := candidateByChannel[item.ChannelId]
@@ -1382,7 +1385,10 @@ func channelSmartSchedulePromoteConfirmedPrimary(
 			continue
 		}
 		layerItems = append(layerItems, item)
-		targets = append(targets, routingTarget{Priority: item.TargetPriority, Weight: item.TargetWeight})
+		slots = append(slots, routingSlot{
+			BaseRank: item.BaseRank, BasePriority: item.BasePriority, BaseWeight: item.BaseWeight,
+			TargetPriority: item.TargetPriority, TargetWeight: item.TargetWeight,
+		})
 		itemIndexByChannel[item.ChannelId] = index
 	}
 	if len(layerItems) == 0 {
@@ -1391,11 +1397,14 @@ func channelSmartSchedulePromoteConfirmedPrimary(
 	if _, exists := itemIndexByChannel[primaryChannelId]; !exists {
 		return
 	}
-	sort.Slice(targets, func(i int, j int) bool {
-		if targets[i].Priority != targets[j].Priority {
-			return targets[i].Priority > targets[j].Priority
+	sort.Slice(slots, func(i int, j int) bool {
+		if slots[i].TargetPriority != slots[j].TargetPriority {
+			return slots[i].TargetPriority > slots[j].TargetPriority
 		}
-		return targets[i].Weight > targets[j].Weight
+		if slots[i].TargetWeight != slots[j].TargetWeight {
+			return slots[i].TargetWeight > slots[j].TargetWeight
+		}
+		return slots[i].BaseRank < slots[j].BaseRank
 	})
 	orderedChannels := make([]int, 0, len(layerItems))
 	orderedChannels = append(orderedChannels, primaryChannelId)
@@ -1407,11 +1416,15 @@ func channelSmartSchedulePromoteConfirmedPrimary(
 	}
 	for index, channelId := range orderedChannels {
 		itemIndex, exists := itemIndexByChannel[channelId]
-		if !exists || index >= len(targets) {
+		if !exists || index >= len(slots) {
 			continue
 		}
-		items[itemIndex].TargetPriority = targets[index].Priority
-		items[itemIndex].TargetWeight = targets[index].Weight
+		slot := slots[index]
+		items[itemIndex].BaseRank = slot.BaseRank
+		items[itemIndex].BasePriority = slot.BasePriority
+		items[itemIndex].BaseWeight = slot.BaseWeight
+		items[itemIndex].TargetPriority = slot.TargetPriority
+		items[itemIndex].TargetWeight = slot.TargetWeight
 	}
 }
 
@@ -1635,23 +1648,75 @@ func channelSmartScheduleApplySwitchConfirmation(
 	if plan == nil || len(candidates) == 0 || forceReset {
 		return
 	}
+	candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(candidates))
+	for _, candidate := range candidates {
+		candidateByChannel[candidate.ChannelId] = candidate
+	}
+	activeLayerIsFallback := false
+	activeLayerKnown := false
+	for _, channelId := range []int{plan.ActualPrimaryId, plan.RawWinnerId} {
+		candidate, exists := candidateByChannel[channelId]
+		if !exists {
+			continue
+		}
+		activeLayerIsFallback = candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback
+		activeLayerKnown = true
+		break
+	}
 	currentPrimaryId := 0
 	manualPrimary := false
+	activeLayerItems := make([]channelSmartSchedulePlanItem, 0, len(plan.Items))
 	for _, item := range plan.Items {
 		if item.ScoreDetails != nil {
-			if item.ScoreDetails.Decision.CurrentPrimaryChannelId > 0 {
-				currentPrimaryId = item.ScoreDetails.Decision.CurrentPrimaryChannelId
-			}
 			manualPrimary = manualPrimary || item.ScoreDetails.Decision.ManualPrimaryChannelId > 0
+		}
+		candidate, exists := candidateByChannel[item.ChannelId]
+		if !exists || (activeLayerKnown &&
+			(candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback) != activeLayerIsFallback) {
+			continue
+		}
+		activeLayerItems = append(activeLayerItems, item)
+		if currentPrimaryId == 0 && item.ScoreDetails != nil {
+			currentPrimaryId = item.ScoreDetails.Decision.CurrentPrimaryChannelId
+		}
+	}
+	routingSnapshotMismatch := false
+	if !manualPrimary && currentPrimaryId > 0 {
+		routedPrimaryId := channelSmartScheduleCurrentPrimaryId(activeLayerItems)
+		if routedPrimaryId > 0 && routedPrimaryId != currentPrimaryId {
+			currentPrimaryId = routedPrimaryId
+			routingSnapshotMismatch = true
+			for index := range plan.Items {
+				if plan.Items[index].ScoreDetails != nil {
+					plan.Items[index].ScoreDetails.Decision.CurrentPrimaryChannelId = currentPrimaryId
+				}
+			}
 		}
 	}
 	if manualPrimary || plan.RawWinnerId <= 0 || plan.RawWinnerId == currentPrimaryId || currentPrimaryId <= 0 ||
 		plan.ActualPrimaryId == currentPrimaryId {
+		if routingSnapshotMismatch {
+			plan.ActualPrimaryId = currentPrimaryId
+			channelSmartSchedulePromoteConfirmedPrimary(plan.Items, candidateByChannel, currentPrimaryId)
+			const selectionReason = "当前应用路由与基础快照不一致，已按当前实际主渠道修正基础路由"
+			for index := range plan.Items {
+				item := &plan.Items[index]
+				if item.ScoreDetails == nil {
+					continue
+				}
+				item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
+				item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
+				item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
+				item.ScoreDetails.Decision.BaseRank = item.BaseRank
+				item.ScoreDetails.Decision.BasePriority = item.BasePriority
+				item.ScoreDetails.Decision.BaseWeight = item.BaseWeight
+				item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
+				item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
+				item.ScoreDetails.Decision.SelectionReason = selectionReason
+				channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, selectionReason)
+			}
+		}
 		return
-	}
-	candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(candidates))
-	for _, candidate := range candidates {
-		candidateByChannel[candidate.ChannelId] = candidate
 	}
 	rawWinner, exists := candidateByChannel[plan.RawWinnerId]
 	if !exists {
@@ -1693,6 +1758,9 @@ func channelSmartScheduleApplySwitchConfirmation(
 			item.ScoreDetails.Decision.SelectedPrimaryChannelId = confirmedPrimaryId
 			item.ScoreDetails.Decision.ActualPrimaryChannelId = confirmedPrimaryId
 			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == confirmedPrimaryId
+			item.ScoreDetails.Decision.BaseRank = item.BaseRank
+			item.ScoreDetails.Decision.BasePriority = item.BasePriority
+			item.ScoreDetails.Decision.BaseWeight = item.BaseWeight
 			item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
 			item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
 			item.ScoreDetails.Decision.SelectionReason = selectionReason
@@ -1714,6 +1782,9 @@ func channelSmartScheduleApplySwitchConfirmation(
 		item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
 		item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
 		item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
+		item.ScoreDetails.Decision.BaseRank = item.BaseRank
+		item.ScoreDetails.Decision.BasePriority = item.BasePriority
+		item.ScoreDetails.Decision.BaseWeight = item.BaseWeight
 		item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
 		item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
 		if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
