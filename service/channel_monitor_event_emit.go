@@ -36,13 +36,14 @@ func EmitChannelMonitorSuccessEvent(
 	}
 
 	now := time.Now()
-	performanceTiming := input.PerformanceTiming
-	if performanceTiming == nil {
-		value := BuildRelayPerformanceTiming(relayInfo, input.CompletionTokens, now)
-		performanceTiming = &value
-	} else if !performanceTiming.CompletedAt.IsZero() {
-		now = performanceTiming.CompletedAt
+	outputTokens := max(input.CompletionTokens, 0)
+	if input.PerformanceTiming != nil {
+		outputTokens = input.PerformanceTiming.OutputTokens
+		if !input.PerformanceTiming.CompletedAt.IsZero() {
+			now = input.PerformanceTiming.CompletedAt
+		}
 	}
+	performanceTiming := BuildChannelMonitorPerformanceTiming(ctx, relayInfo, outputTokens, now)
 	source := channelMonitorEventSource(ctx)
 	if relayInfo.IsChannelTest && source != model.ChannelMonitorEventSourceModelDetection {
 		return ChannelMonitorEventPublishStatusInvalid

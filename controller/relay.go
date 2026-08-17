@@ -270,6 +270,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
+		service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
@@ -796,6 +797,7 @@ func RelayTask(c *gin.Context) {
 
 		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
+		service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
 		if retryParam.ModelName == "" && relayInfo.OriginModelName != "" {

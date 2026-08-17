@@ -42,6 +42,7 @@ type testResult struct {
 	newAPIError               *types.NewAPIError
 	requestDispatched         bool
 	originalModelName         string
+	attemptDuration           *time.Duration
 	firstResponseMilliseconds *float64
 	tokensPerSecond           *float64
 	usageMetrics              channelTestUsageMetrics
@@ -480,8 +481,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	service.BeginChannelDailyCostAttempt(c, channel.Id)
+	attemptStartedAt := time.Now()
+	service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
 	defer func() {
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, result.requestDispatched)
+		if result.requestDispatched && result.attemptDuration == nil {
+			duration := time.Since(attemptStartedAt)
+			result.attemptDuration = &duration
+		}
 	}()
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	requestDispatched := wasChannelTestRequestDispatched(c, resp)
@@ -565,11 +572,19 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
+	completedAt := time.Now()
 	performanceTiming := service.BuildRelayPerformanceTiming(
 		info,
 		service.RelayPerformanceOutputTokens(usage.CompletionTokens, usage.CompletionTokenDetails),
-		time.Now(),
+		completedAt,
 	)
+	monitorPerformanceTiming := service.BuildChannelMonitorPerformanceTiming(
+		c,
+		info,
+		performanceTiming.OutputTokens,
+		completedAt,
+	)
+	attemptDuration := completedAt.Sub(attemptStartedAt)
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	_, pointerUsage := usageA.(*dto.Usage)
 	_, valueUsage := usageA.(dto.Usage)
@@ -613,8 +628,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		newAPIError:               nil,
 		requestDispatched:         requestDispatched,
 		originalModelName:         info.OriginModelName,
-		firstResponseMilliseconds: performanceTiming.FirstTokenMs,
-		tokensPerSecond:           performanceTiming.TokensPerSecond,
+		attemptDuration:           &attemptDuration,
+		firstResponseMilliseconds: monitorPerformanceTiming.FirstTokenMs,
+		tokensPerSecond:           monitorPerformanceTiming.TokensPerSecond,
 		usageMetrics:              buildChannelTestUsageMetrics(usage, usageIsAuthoritative),
 	}
 }

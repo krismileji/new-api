@@ -60,24 +60,25 @@ func TestEmitChannelMonitorSuccessEventLeavesModelDetectionCostToCostEvent(t *te
 	assert.Zero(t, event.UnresolvedCostNanoCNY)
 }
 
-func TestEmitChannelMonitorSuccessEventUsesCanonicalPerformanceTiming(t *testing.T) {
+func TestEmitChannelMonitorSuccessEventUsesAttemptPerformanceTiming(t *testing.T) {
 	_, client := useChannelMonitorPublisherRedis(t)
 
 	ctx, _ := gin.CreateTestContext(nil)
-	tokensPerSecond := 18.75
-	firstTokenMs := 625.0
 	completedAt := time.Unix(1000, 0)
+	attemptStartedAt := completedAt.Add(-2500 * time.Millisecond)
+	firstResponseAt := attemptStartedAt.Add(500 * time.Millisecond)
+	BeginChannelMonitorPerformanceAttempt(ctx, attemptStartedAt)
 	timing := RelayPerformanceTiming{
 		CompletedAt:       completedAt,
-		AttemptDurationMs: 3200,
-		FirstTokenMs:      &firstTokenMs,
-		OutputTokens:      60,
-		TokensPerSecond:   &tokensPerSecond,
+		AttemptDurationMs: 9999,
+		OutputTokens:      40,
 	}
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "model-c",
-		StartTime:       completedAt.Add(-3200 * time.Millisecond),
-		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 9},
+		OriginModelName:   "model-c",
+		StartTime:         completedAt.Add(-10 * time.Second),
+		FirstResponseTime: firstResponseAt,
+		IsStream:          true,
+		ChannelMeta:       &relaycommon.ChannelMeta{ChannelId: 9},
 	}
 
 	status := EmitChannelMonitorSuccessEvent(ctx, info, ChannelMonitorSuccessEventInput{
@@ -93,9 +94,9 @@ func TestEmitChannelMonitorSuccessEventUsesCanonicalPerformanceTiming(t *testing
 	)))
 	require.NoError(t, err)
 	require.NotNil(t, event.FirstTokenMs)
-	assert.InDelta(t, firstTokenMs, *event.FirstTokenMs, 1e-9)
+	assert.InDelta(t, 500, *event.FirstTokenMs, 1e-9)
 	require.NotNil(t, event.TPS)
-	assert.InDelta(t, tokensPerSecond, *event.TPS, 1e-9)
+	assert.InDelta(t, 20, *event.TPS, 1e-9)
 	require.NotNil(t, event.AttemptDurationMs)
-	assert.Equal(t, int64(3200), *event.AttemptDurationMs)
+	assert.Equal(t, int64(2500), *event.AttemptDurationMs)
 }

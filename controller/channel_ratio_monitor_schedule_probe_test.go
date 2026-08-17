@@ -457,8 +457,7 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, err = w.Write([]byte(strings.Join([]string{
 			`data: {"type":"response.created","response":{"id":"resp-probe","model":"gpt-3.5-turbo","created_at":1}}`,
-			`data: {"type":"response.output_text.delta","delta":"ok"}`,
-			`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+			`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`,
 			"",
 		}, "\n\n")))
 		assert.NoError(t, err)
@@ -530,8 +529,9 @@ func TestRunChannelSmartScheduleProbeRecordsMetricsAndConsumeLog(t *testing.T) {
 	assert.Equal(t, int64(2), state.SuccessCount)
 	assert.Equal(t, int64(2), state.FirstTokenSampleCount)
 	require.NotNil(t, state.AverageFirstTokenMs)
-	assert.Equal(t, int64(2), state.TPSSampleCount)
+	assert.Equal(t, int64(1), state.TPSSampleCount)
 	require.NotNil(t, state.AverageTPS)
+	assert.InDelta(t, previousTPS, *state.AverageTPS, 1e-9)
 	var routeStates []model.ChannelSmartScheduleRouteState
 	require.NoError(t, db.Order("group_name ASC").Find(&routeStates).Error)
 	require.Len(t, routeStates, 2)

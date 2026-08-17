@@ -6,6 +6,7 @@ import (
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ func TestRelayPerformanceOutputTokensExcludesNonTextUsage(t *testing.T) {
 	}))
 }
 
-func TestBuildRelayPerformanceTimingUsesPreciseTotalDuration(t *testing.T) {
+func TestBuildRelayPerformanceTimingPreservesUsageLogTotalDuration(t *testing.T) {
 	startedAt := time.Unix(100, 0)
 	info := &relaycommon.RelayInfo{
 		StartTime:         startedAt,
@@ -46,6 +47,35 @@ func TestBuildRelayPerformanceTimingLeavesNonStreamTPSUnavailable(t *testing.T) 
 
 	assert.Nil(t, timing.FirstTokenMs)
 	assert.Nil(t, timing.TokensPerSecond)
+}
+
+func TestChannelMonitorPerformanceTimingUsesCurrentRetryAttemptWithoutChangingUsageLogTiming(t *testing.T) {
+	requestStartedAt := time.Unix(100, 0)
+	attemptStartedAt := requestStartedAt.Add(5 * time.Second)
+	firstResponseAt := attemptStartedAt.Add(750 * time.Millisecond)
+	completedAt := firstResponseAt.Add(2 * time.Second)
+	info := &relaycommon.RelayInfo{
+		StartTime:         requestStartedAt,
+		FirstResponseTime: firstResponseAt,
+		IsStream:          true,
+	}
+	ctx, _ := gin.CreateTestContext(nil)
+	BeginChannelMonitorPerformanceAttempt(ctx, attemptStartedAt)
+
+	logTiming := BuildRelayPerformanceTiming(info, 40, completedAt)
+	assert.Equal(t, int64(7750), logTiming.AttemptDurationMs)
+	require.NotNil(t, logTiming.FirstTokenMs)
+	assert.InDelta(t, 5750, *logTiming.FirstTokenMs, 1e-9)
+	require.NotNil(t, logTiming.TokensPerSecond)
+	assert.InDelta(t, 40.0/7.75, *logTiming.TokensPerSecond, 1e-9)
+
+	timing := BuildChannelMonitorPerformanceTiming(ctx, info, 40, completedAt)
+
+	assert.Equal(t, int64(2750), timing.AttemptDurationMs)
+	require.NotNil(t, timing.FirstTokenMs)
+	assert.InDelta(t, 750, *timing.FirstTokenMs, 1e-9)
+	require.NotNil(t, timing.TokensPerSecond)
+	assert.InDelta(t, 20, *timing.TokensPerSecond, 1e-9)
 }
 
 func TestAppendRelayPerformanceTimingLogInfoMarksUnavailableTPS(t *testing.T) {

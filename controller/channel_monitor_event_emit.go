@@ -54,6 +54,9 @@ func emitChannelTestMonitorEvent(
 	}
 	now := time.Now()
 	duration := now.Sub(startedAt)
+	if result.attemptDuration != nil {
+		duration = *result.attemptDuration
+	}
 	if duration < 0 {
 		duration = 0
 	}
