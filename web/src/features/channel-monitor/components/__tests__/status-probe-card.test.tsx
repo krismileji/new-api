@@ -326,4 +326,50 @@ describe('状态探测卡片', () => {
     assert.match(html, /近 2 小时平均首字/)
     assert.match(html, /近 2 小时状态/)
   })
+
+  test('周期探测已开启但时间格未执行时使用灰色状态', () => {
+    const channel = createChannel()
+    channel.model_statuses = channel.model_statuses.map((modelStatus) => ({
+      ...modelStatus,
+      recent_window: modelStatus.recent_window.slice(0, 1),
+    }))
+
+    const enabledHtml = renderToStaticMarkup(
+      <ChannelStatusProbeCard
+        channel={channel}
+        serverNow={1_754_000_000}
+        actionPending={false}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onRun={noop}
+        onToggleEnabled={noop}
+      />
+    )
+
+    assert.equal(
+      (enabledHtml.match(/data-probe-bucket-state="not-executed"/g) ?? [])
+        .length,
+      2
+    )
+    assert.match(enabledHtml, /bg-muted-foreground\/35/)
+    assert.match(enabledHtml, /周期探测已开启但未执行/)
+
+    if (!channel.config) throw new Error('测试渠道缺少状态探测配置')
+    channel.config.enabled = false
+    const pausedHtml = renderToStaticMarkup(
+      <ChannelStatusProbeCard
+        channel={channel}
+        serverNow={1_754_000_000}
+        actionPending={false}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onRun={noop}
+        onToggleEnabled={noop}
+      />
+    )
+
+    assert.doesNotMatch(pausedHtml, /data-probe-bucket-state="not-executed"/)
+    assert.match(pausedHtml, /data-probe-bucket-state="not-scheduled"/)
+    assert.match(pausedHtml, /周期探测未开启/)
+  })
 })

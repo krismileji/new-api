@@ -394,7 +394,7 @@ describe('模型检测渠道卡片', () => {
     assert.equal(buckets.length, 6)
     assert.equal(
       buckets.filter((bucket) =>
-        bucket.getAttribute('aria-label')?.includes('无检测')
+        bucket.getAttribute('aria-label')?.includes('已开启但未执行')
       ).length,
       1
     )
@@ -427,6 +427,34 @@ describe('模型检测渠道卡片', () => {
       /aria-label=".*近 6 分钟模型检测结果"/
     )
     assert.match(domWindow.document.body.innerHTML, /正常 1 · 关注 0 · 异常 0/)
+  })
+
+  test('统一定时检测已开启但时间格未执行时使用灰色状态', () => {
+    const channel = createChannel('healthy')
+    const target = channel.targets[0]
+    if (!target) throw new Error('测试渠道缺少模型检测目标')
+    target.recent_window = target.recent_window.slice(-1)
+
+    const enabledHtml = renderCard(channel)
+    assert.match(
+      enabledHtml,
+      /data-model-detection-bucket-state="not-executed"/
+    )
+    assert.match(enabledHtml, /bg-muted-foreground\/35/)
+    assert.match(enabledHtml, /定时检测已开启但未执行/)
+
+    if (!channel.config) throw new Error('测试渠道缺少模型检测配置')
+    channel.config.schedule_enabled = false
+    const pausedHtml = renderCard(channel)
+    assert.doesNotMatch(
+      pausedHtml,
+      /data-model-detection-bucket-state="not-executed"/
+    )
+    assert.match(
+      pausedHtml,
+      /data-model-detection-bucket-state="not-scheduled"/
+    )
+    assert.match(pausedHtml, /定时检测未开启/)
   })
 
   test('未配置卡片提供单一配置命令且不嵌套按钮', () => {

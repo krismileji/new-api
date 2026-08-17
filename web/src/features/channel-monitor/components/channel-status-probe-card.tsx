@@ -83,8 +83,7 @@ const RESULT_LABEL: Record<ChannelStatusProbeResult, string> = {
 
 const NANO_CNY_PER_CNY = 1_000_000_000
 
-const BUCKET_COLOR: Record<'' | ChannelStatusProbeResult, string> = {
-  '': 'bg-muted/60',
+const BUCKET_COLOR: Record<ChannelStatusProbeResult, string> = {
   success: 'bg-success',
   upstream_failure: 'bg-destructive',
   rate_limited: 'bg-warning',
@@ -126,11 +125,16 @@ function bucketTimeLabel(
 
 function bucketTooltip(
   bucket: ChannelStatusProbeBucket,
-  unit: ChannelStatusProbeDisplayUnit
+  unit: ChannelStatusProbeDisplayUnit,
+  automaticProbeEnabled: boolean
 ) {
   const time = bucketTimeLabel(bucket, unit)
   const models = bucket.models?.join('、') || '无'
-  if (!bucket.result) return `${time} · 无探测`
+  if (!bucket.result) {
+    return automaticProbeEnabled
+      ? `${time} · 周期探测已开启但未执行`
+      : `${time} · 周期探测未开启`
+  }
   return `${time} · 成功 ${bucket.success} · 失败 ${bucket.upstream_failure + bucket.local_failure} · 限流 ${bucket.rate_limited} · 跳过 ${bucket.skipped + bucket.canceled} · 模型 ${models}`
 }
 
@@ -141,6 +145,7 @@ const ChannelStatusProbeModelStatuses = memo(
     displayValue: number
     displayUnit: ChannelStatusProbeDisplayUnit
     displayRangeLabel: string
+    automaticProbeEnabled: boolean
   }) {
     return (
       <section
@@ -210,17 +215,29 @@ const ChannelStatusProbeModelStatuses = memo(
                       data-status-window-unit={props.displayUnit}
                     >
                       {modelStatus.recent_window.map((bucket) => {
-                        const tooltip = bucketTooltip(bucket, props.displayUnit)
+                        const tooltip = bucketTooltip(
+                          bucket,
+                          props.displayUnit,
+                          props.automaticProbeEnabled
+                        )
+                        let bucketState = 'executed'
+                        let bucketColor = bucket.result
+                          ? BUCKET_COLOR[bucket.result]
+                          : 'bg-muted/60'
+                        if (!bucket.result && props.automaticProbeEnabled) {
+                          bucketState = 'not-executed'
+                          bucketColor = 'bg-muted-foreground/35'
+                        } else if (!bucket.result) {
+                          bucketState = 'not-scheduled'
+                        }
                         return (
                           <span
                             key={bucket.started_at}
-                            className={cn(
-                              'h-2.5 min-w-0',
-                              BUCKET_COLOR[bucket.result]
-                            )}
+                            className={cn('h-2.5 min-w-0', bucketColor)}
                             title={tooltip}
                             aria-label={tooltip}
                             data-slot='status-probe-bucket'
+                            data-probe-bucket-state={bucketState}
                           />
                         )
                       })}
@@ -450,6 +467,7 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             displayValue={displayValue}
             displayUnit={displayUnit}
             displayRangeLabel={displayRangeLabelValue}
+            automaticProbeEnabled={Boolean(config?.enabled)}
           />
         </button>
       </CardContent>

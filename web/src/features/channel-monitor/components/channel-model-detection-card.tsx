@@ -144,7 +144,6 @@ const ACTIVE_RUN_LABEL: Partial<
 }
 
 const RESULT_BUCKET_COLOR = {
-  '': 'bg-muted/60',
   running: 'bg-primary',
   success: 'bg-success',
   attention: 'bg-warning',
@@ -288,13 +287,18 @@ function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
 
 function modelDetectionBucketTooltip(
   bucket: ChannelModelDetectionResultBucket,
-  displayUnit: ChannelModelDetectionDisplayUnit
+  displayUnit: ChannelModelDetectionDisplayUnit,
+  automaticDetectionEnabled: boolean
 ) {
   const timestamp = formatTimestampToDate(bucket.started_at)
   let time = timestamp.slice(11, 16)
   if (displayUnit === 'day') time = timestamp.slice(0, 10)
   if (displayUnit === 'hour') time = timestamp.slice(5, 13)
-  if (!bucket.result) return `${time} · 无检测`
+  if (!bucket.result) {
+    return automaticDetectionEnabled
+      ? `${time} · 定时检测已开启但未执行`
+      : `${time} · 定时检测未开启`
+  }
   return `${time} · 正常 ${bucket.success} · 关注 ${bucket.attention} · 异常 ${bucket.unhealthy} · 执行失败 ${bucket.failed} · 进行中 ${bucket.running} · 跳过 ${bucket.inactive}`
 }
 
@@ -303,6 +307,7 @@ function ModelDetectionTarget(props: {
   serverNow: number
   displayValue: number
   displayUnit: ChannelModelDetectionDisplayUnit
+  automaticDetectionEnabled: boolean
 }) {
   const presentation = outcomePresentation(props.target)
   const latest = props.target.latest
@@ -364,18 +369,27 @@ function ModelDetectionTarget(props: {
           {recentWindow.map((bucket) => {
             const tooltip = modelDetectionBucketTooltip(
               bucket,
-              props.displayUnit
+              props.displayUnit,
+              props.automaticDetectionEnabled
             )
+            let bucketState = 'executed'
+            let bucketColor = bucket.result
+              ? RESULT_BUCKET_COLOR[bucket.result]
+              : 'bg-muted/60'
+            if (!bucket.result && props.automaticDetectionEnabled) {
+              bucketState = 'not-executed'
+              bucketColor = 'bg-muted-foreground/35'
+            } else if (!bucket.result) {
+              bucketState = 'not-scheduled'
+            }
             return (
               <span
                 key={bucket.started_at}
-                className={cn(
-                  'h-2.5 min-w-0',
-                  RESULT_BUCKET_COLOR[bucket.result]
-                )}
+                className={cn('h-2.5 min-w-0', bucketColor)}
                 title={tooltip}
                 aria-label={tooltip}
                 data-slot='model-detection-bucket'
+                data-model-detection-bucket-state={bucketState}
               />
             )
           })}
@@ -684,6 +698,11 @@ export const ChannelModelDetectionCard = memo(
                       serverNow={props.serverNow}
                       displayValue={props.displayValue}
                       displayUnit={props.displayUnit}
+                      automaticDetectionEnabled={Boolean(
+                        props.scheduleEnabled &&
+                        config.schedule_enabled &&
+                        target.enabled
+                      )}
                     />
                   ))}
                 </div>
