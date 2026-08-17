@@ -1215,7 +1215,13 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 			debtByChannel[route.ChannelId] = candidate.SampleDebt
 			candidateByChannel[route.ChannelId] = candidate
 			scoringCandidates = append(scoringCandidates, candidate)
-			if route.ChannelId != primaryRoute.ChannelId && candidate.SampleDebt > 0 {
+			ratioPriorityCandidate := policy.SampleMode == channelMonitorSmartScheduleSampleTraffic &&
+				(policy.Strategy == channelMonitorSmartScheduleStrategyRatio ||
+					policy.SamplingOrder == channelMonitorSmartScheduleSamplingOrderRatio) &&
+				primaryRoute.CostRatio != nil && candidate.CostRatio != nil &&
+				*candidate.CostRatio+channelMonitorRatioEpsilon < *primaryRoute.CostRatio
+			if route.ChannelId != primaryRoute.ChannelId &&
+				(candidate.SampleDebt > 0 || ratioPriorityCandidate) {
 				backupCandidates = append(backupCandidates, candidate)
 			}
 		}

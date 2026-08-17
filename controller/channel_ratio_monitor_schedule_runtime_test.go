@@ -222,6 +222,130 @@ func TestFullSchedulePreservesRuntimeOverlayAndQueuesOnePoolReplay(t *testing.T)
 	assert.Zero(t, abilities[2].Weight)
 }
 
+func TestAdaptiveRefreshRatioStrategyExploresCheapestHealthyBackupWithoutSampleDebt(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelSmartScheduleGroupRatio(t, `{"vip":2}`)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	sampleMode := channelMonitorSmartScheduleSampleTraffic
+	adaptiveSamplingEnabled := false
+	policy.SampleMode = &sampleMode
+	policy.AdaptiveSamplingEnabled = &adaptiveSamplingEnabled
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	primaryPriority := int64(3)
+	cheapestPriority := int64(2)
+	expensivePriority := int64(1)
+	weight := uint(1000)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id: 1641, Name: "healthy primary", Status: common.ChannelStatusEnabled,
+			Group: "vip", Models: "model-a", Priority: &primaryPriority, Weight: &weight,
+		},
+		{
+			Id: 1642, Name: "cheapest healthy backup", Status: common.ChannelStatusEnabled,
+			Group: "vip", Models: "model-a", Priority: &cheapestPriority, Weight: &weight,
+		},
+		{
+			Id: 1643, Name: "expensive healthy backup", Status: common.ChannelStatusEnabled,
+			Group: "vip", Models: "model-a", Priority: &expensivePriority, Weight: &weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1641, Group: "vip", Model: "model-a", Enabled: true, Priority: &primaryPriority, Weight: weight},
+		{ChannelId: 1642, Group: "vip", Model: "model-a", Enabled: true, Priority: &cheapestPriority, Weight: weight},
+		{ChannelId: 1643, Group: "vip", Model: "model-a", Enabled: true, Priority: &expensivePriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 1641, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			Revision: 1, BaseRank: 1, BasePriority: primaryPriority, BaseWeight: weight,
+		},
+		{
+			ChannelId: 1642, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			Revision: 1, BaseRank: 2, BasePriority: cheapestPriority, BaseWeight: weight,
+		},
+		{
+			ChannelId: 1643, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			Revision: 1, BaseRank: 3, BasePriority: expensivePriority, BaseWeight: weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1641, Ratio: 0.8, UpdatedTime: 1},
+		{ChannelId: 1642, Ratio: 0.79, UpdatedTime: 1},
+		{ChannelId: 1643, Ratio: 1, UpdatedTime: 1},
+	}).Error)
+
+	now := common.GetTimestamp()
+	settings := getChannelMonitorSettings()
+	conflict, err := refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
+		context.Background(),
+		channelSmartScheduleRoutePoolKey{group: "vip", model: "model-a"},
+		policy.policy(),
+		settings.SmartScheduleControlRevision,
+		model.DB,
+		func(
+			_ context.Context,
+			channelId int,
+			_ string,
+			_ int64,
+			_ int64,
+			_ int,
+			_ float64,
+			_ float64,
+		) (model.ChannelSmartScheduleAdaptiveHealthMetric, error) {
+			firstTokenTotalMs := 200.0
+			totalTPS := 200.0
+			if channelId != 1641 {
+				firstTokenTotalMs = 2000
+				totalTPS = 20
+			}
+			return model.ChannelSmartScheduleAdaptiveHealthMetric{
+				RequestCount: 2, HealthyRequestCount: 2,
+				FirstTokenCount: 2, FirstTokenTotalMs: firstTokenTotalMs,
+				TPSSampleCount: 2, TPSTotal: totalTPS,
+				LastUsedTime: now,
+			}, nil
+		},
+		func(context.Context, int, string) (int64, error) { return 0, nil },
+		now,
+		0,
+	)
+	require.NoError(t, err)
+	assert.False(t, conflict)
+
+	var abilities []model.Ability
+	require.NoError(t, db.Where(&model.Ability{Group: "vip", Model: "model-a"}).
+		Order("channel_id ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 3)
+	assert.Equal(t, int64(3), modelAbilityPriority(t, abilities[0]))
+	assert.Equal(t, uint(9700), abilities[0].Weight)
+	assert.Equal(t, int64(3), modelAbilityPriority(t, abilities[1]))
+	assert.Equal(t, uint(300), abilities[1].Weight)
+	assert.Equal(t, int64(1), modelAbilityPriority(t, abilities[2]))
+	assert.Equal(t, weight, abilities[2].Weight)
+
+	var states []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("group_name = ? AND model_name = ?", "vip", "model-a").
+		Order("channel_id ASC").Find(&states).Error)
+	require.Len(t, states, 3)
+	assert.Zero(t, states[0].SamplingDebt)
+	assert.False(t, states[0].SamplingCandidate)
+	assert.Zero(t, states[1].SamplingDebt)
+	assert.True(t, states[1].SamplingCandidate)
+	assert.Equal(t, channelMonitorSmartScheduleSamplingOrderPriorityWeight, states[1].SamplingOrder)
+	assert.Equal(t, model.ChannelSmartScheduleTemporaryTrafficExploration, states[1].TemporaryTrafficKind)
+	assert.Equal(t, 3.0, states[1].TemporaryTrafficTargetPercent)
+	assert.Zero(t, states[2].SamplingDebt)
+	assert.False(t, states[2].SamplingCandidate)
+	assert.Empty(t, states[2].TemporaryTrafficKind)
+}
+
 func modelAbilityPriority(t *testing.T, ability model.Ability) int64 {
 	t.Helper()
 	require.NotNil(t, ability.Priority)
