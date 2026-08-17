@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import type {
@@ -141,6 +142,24 @@ describe('模型检测展示工具', () => {
         expectedLabel
       )
     }
+
+    assert.equal(
+      channelModelDetectionResultTone({
+        claimedModel: 'gpt-5.6-sol',
+        status: 'canceled',
+        outcomeCode: '',
+        errorCode: 'schedule_timeout',
+      }),
+      'attention'
+    )
+    assert.equal(
+      channelModelDetectionResultLabel({
+        status: 'canceled',
+        outcomeCode: '',
+        errorCode: 'schedule_timeout',
+      }),
+      '周期超时警告'
+    )
 
     assert.equal(
       channelModelDetectionResultTone({

@@ -43,6 +43,8 @@ const (
 	ChannelModelDetectionRunStatusExternalSessionConflict = "external_session_conflict"
 	ChannelModelDetectionRunStatusCanceling               = "canceling"
 	ChannelModelDetectionRunStatusCanceled                = "canceled"
+	ChannelModelDetectionErrorScheduleTimeout             = "schedule_timeout"
+	ChannelModelDetectionScheduleTimeoutMessage           = "上一轮模型检测在下一周期开始时仍未完成，已标记为超时警告"
 
 	ChannelModelDetectionExecutionStatusPending    = "pending"
 	ChannelModelDetectionExecutionStatusSubmitting = "submitting"

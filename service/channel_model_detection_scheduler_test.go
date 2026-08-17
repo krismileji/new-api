@@ -169,26 +169,48 @@ func TestChannelModelDetectionScheduleLeaseAndUniqueBatchPreventDuplicateCreatio
 	assert.EqualValues(t, 1, runs)
 }
 
-func TestChannelModelDetectionScheduleBacklogAdvancesWithoutCreatingBatch(t *testing.T) {
+func TestChannelModelDetectionScheduleMarksPreviousRunWarningAndCreatesNextBatch(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
 	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
 	global := seedChannelModelDetectionSchedule(t, db, 301, common.ChannelStatusEnabled, model.ChannelModelDetectionPresetMedium, now.Unix())
-	require.NoError(t, db.Create(&model.ChannelModelDetectionRun{
+	previousRun := model.ChannelModelDetectionRun{
 		ChannelId: 999, ConfigRevision: 1, GlobalConfigRevision: global.Revision,
 		Trigger: model.ChannelModelDetectionTriggerScheduled, Preset: model.ChannelModelDetectionPresetLow,
 		Status: model.ChannelModelDetectionRunStatusRunning,
-	}).Error)
+	}
+	require.NoError(t, db.Create(&previousRun).Error)
+	previousExecution := model.ChannelModelDetectionExecution{
+		RunId: previousRun.RunId, TargetKey: "previous-target", TargetId: 999,
+		ChannelId: previousRun.ChannelId, RequestModel: "channel-alias",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+		Preset:       model.ChannelModelDetectionPresetLow,
+		Status:       model.ChannelModelDetectionExecutionStatusRunning,
+	}
+	require.NoError(t, db.Create(&previousExecution).Error)
 
 	result, err := RunChannelModelDetectionScheduleOnce(context.Background(), db, now)
 	require.NoError(t, err)
 	assert.True(t, result.Due)
-	assert.True(t, result.SkippedForBacklog)
-	assert.False(t, result.Created)
+	assert.False(t, result.SkippedForBacklog)
+	assert.True(t, result.Created)
+	assert.Equal(t, []string{previousRun.RunId}, result.WarningRunIDs)
 	assert.Equal(t, now.Add(24*time.Hour).Unix(), result.NextBatchAt)
+
+	var storedRun model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", previousRun.RunId).First(&storedRun).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusPartial, storedRun.Status)
+	assert.Equal(t, model.ChannelModelDetectionErrorScheduleTimeout, storedRun.ErrorCode)
+	assert.Equal(t, model.ChannelModelDetectionScheduleTimeoutMessage, storedRun.ErrorMessage)
+
+	var storedExecution model.ChannelModelDetectionExecution
+	require.NoError(t, db.First(&storedExecution, previousExecution.Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusCanceled, storedExecution.Status)
+	assert.Equal(t, model.ChannelModelDetectionErrorScheduleTimeout, storedExecution.ErrorCode)
+	assert.Equal(t, channelModelDetectionBucketResultAttention, channelModelDetectionBucketClassification(storedExecution))
 
 	var count int64
 	require.NoError(t, db.Model(&model.ChannelModelDetectionBatch{}).Count(&count).Error)
-	assert.Zero(t, count)
+	assert.EqualValues(t, 1, count)
 }
 
 func TestChannelModelDetectionScheduleBacklogQuotesTriggerForMySQL(t *testing.T) {

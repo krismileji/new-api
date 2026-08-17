@@ -24,6 +24,7 @@ const (
 	channelStatusProbeLeaseRenewEvery           = 2 * time.Minute
 	channelStatusProbeDefaultConcurrent         = 5
 	channelStatusProbeMaxConcurrent             = 20
+	channelStatusProbeTimeoutBatch              = 100
 	channelStatusProbeSampleRetryEvery          = 30 * time.Second
 	channelStatusProbeSampleRetryMaxAge         = 24 * time.Hour
 	channelStatusProbeSampleRetryBatch          = 20
@@ -120,11 +121,19 @@ func startChannelStatusProbeWorker() {
 }
 
 func runChannelStatusProbeScanOnce(ctx context.Context, semaphore chan struct{}) error {
+	now := common.GetTimestamp()
+	timedOut, err := model.TimeoutOverdueChannelStatusProbes(now, channelStatusProbeTimeoutBatch)
+	if err != nil {
+		return err
+	}
+	if timedOut > 0 {
+		invalidateChannelStatusProbeOverviewCache()
+	}
 	available := cap(semaphore) - len(semaphore)
 	if available <= 0 {
 		return nil
 	}
-	claims, err := model.ClaimDueChannelStatusProbes(common.GetTimestamp(), available)
+	claims, err := model.ClaimDueChannelStatusProbes(now, available)
 	if err != nil {
 		return err
 	}
@@ -146,6 +155,10 @@ func runChannelStatusProbeScanOnce(ctx context.Context, semaphore chan struct{})
 
 func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatusProbeClaim) error {
 	ctx, cancel := context.WithCancel(parent)
+	if claim.DeadlineAt > 0 {
+		cancel()
+		ctx, cancel = context.WithDeadline(parent, time.Unix(claim.DeadlineAt, 0))
+	}
 	done := make(chan struct{})
 	gopool.Go(func() {
 		ticker := time.NewTicker(channelStatusProbeLeaseRenewEvery)
@@ -195,6 +208,9 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 		}
 		if ctx.Err() != nil {
 			outcome := channelStatusProbeCanceledOutcome("探测租约已失效或服务正在停止")
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				outcome = channelStatusProbeTimeoutOutcome(claim.Config.RunningStartedAt)
+			}
 			if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
 				return err
 			}
@@ -250,6 +266,17 @@ func channelStatusProbeCanceledOutcome(message string) channelStatusProbeOutcome
 	}
 }
 
+func channelStatusProbeTimeoutOutcome(startedAt int64) channelStatusProbeOutcome {
+	now := common.GetTimestamp()
+	if startedAt <= 0 {
+		startedAt = now
+	}
+	return channelStatusProbeOutcome{
+		Result: model.ChannelStatusProbeResultUpstreamFailure, StartedAt: startedAt, FinishedAt: now,
+		ErrorCode: model.ChannelStatusProbeErrorTimeout, ErrorMessage: model.ChannelStatusProbeTimeoutMessage,
+	}
+}
+
 func executeChannelStatusProbeModel(
 	ctx context.Context,
 	channel *model.Channel,
@@ -283,6 +310,14 @@ func executeChannelStatusProbeModel(
 	lease.Release()
 	finished := time.Now()
 	durationMs := float64(finished.Sub(started)) / float64(time.Millisecond)
+	if probeResult.localErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return channelStatusProbeOutcome{
+			Result: model.ChannelStatusProbeResultUpstreamFailure, StartedAt: startedAt, FinishedAt: finished.Unix(),
+			DurationMs: &durationMs, SettledCostNanoCNY: settledCostNanoCNY,
+			ProbeResult: probeResult, TestExecuted: true,
+			ErrorCode: model.ChannelStatusProbeErrorTimeout, ErrorMessage: model.ChannelStatusProbeTimeoutMessage,
+		}
+	}
 	result := model.ChannelStatusProbeResultSuccess
 	if isChannelSmartScheduleUpstreamRateLimit(probeResult) {
 		result = model.ChannelStatusProbeResultRateLimited

@@ -198,10 +198,10 @@ func TestManualChannelStatusProbeClaimKeepsScheduledRunTime(t *testing.T) {
 	assert.Empty(t, stored.RunningRunId)
 }
 
-func TestScheduledStatusProbeMarksOverdueTickWithoutCancelingRunningRequest(t *testing.T) {
+func TestScheduledStatusProbeTimesOutPreviousRunBeforeClaimingNext(t *testing.T) {
 	db := setupChannelStatusProbeModelTestDB(t)
 	created, err := SaveChannelStatusProbeConfig(9, ChannelStatusProbeConfigInput{
-		Enabled: true, Models: []string{"model-a"}, IntervalSeconds: 60,
+		Enabled: true, Models: []string{"model-a", "model-b"}, IntervalSeconds: 60,
 	}, 1_000)
 	require.NoError(t, err)
 
@@ -216,44 +216,72 @@ func TestScheduledStatusProbeMarksOverdueTickWithoutCancelingRunningRequest(t *t
 	assert.Equal(t, claim.RunId, stored.RunningRunId)
 	assert.Equal(t, claim.LeaseToken, stored.LeaseToken)
 
-	overdueClaims, err := ClaimDueChannelStatusProbes(stored.NextRunAt, 1)
-	require.NoError(t, err)
-	assert.Empty(t, overdueClaims)
-
-	var overdue ChannelStatusProbeExecution
-	require.NoError(t, db.Where("channel_id = ? AND error_code = ?", 9, "probe_previous_pending").First(&overdue).Error)
-	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, overdue.Result)
-	assert.False(t, overdue.RequestDispatched)
-	assert.Nil(t, overdue.SettledCostNanoCNY)
-	var state ChannelStatusProbeState
-	require.NoError(t, db.Where("channel_id = ? AND model_name = ?", 9, "model-a").First(&state).Error)
-	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, state.LastHealthResult)
-	assert.EqualValues(t, 1, state.ConsecutiveFailures)
-
-	stillRunning, err := GetChannelStatusProbeConfig(9)
-	require.NoError(t, err)
-	assert.Equal(t, claim.RunId, stillRunning.RunningRunId)
-	assert.Equal(t, claim.LeaseToken, stillRunning.LeaseToken)
-	assert.Equal(t, stored.NextRunAt+60, stillRunning.NextRunAt)
-
-	settledCost := int64(123456)
-	actual := ChannelStatusProbeExecution{
+	completedCost := int64(123456)
+	completedExecution := ChannelStatusProbeExecution{
 		RunId: claim.RunId, ChannelId: 9, ModelName: "model-a", ConfigRevision: claim.Config.Revision,
 		Trigger: ChannelStatusProbeTriggerScheduled, Result: ChannelStatusProbeResultSuccess,
-		StartedAt: created.NextRunAt, FinishedAt: stored.NextRunAt + 1,
-		RequestDispatched: true, SettledCostNanoCNY: &settledCost,
+		StartedAt: created.NextRunAt, FinishedAt: stored.NextRunAt - 1,
+		RequestDispatched: true, SettledCostNanoCNY: &completedCost,
 		SampleStatus: ChannelStatusProbeSampleSkipped,
 	}
-	inserted, err := SaveChannelStatusProbeExecution(&actual)
+	inserted, err := SaveChannelStatusProbeExecution(&completedExecution)
 	require.NoError(t, err)
 	assert.True(t, inserted)
-	assert.Equal(t, settledCost, *actual.SettledCostNanoCNY)
-	require.NoError(t, CompleteChannelStatusProbeClaim(claim, actual.FinishedAt))
 
-	completed, err := GetChannelStatusProbeConfig(9)
+	timedOut, err := TimeoutOverdueChannelStatusProbes(stored.NextRunAt, 10)
 	require.NoError(t, err)
-	assert.Empty(t, completed.RunningRunId)
-	assert.Equal(t, stillRunning.NextRunAt, completed.NextRunAt)
+	assert.Equal(t, 1, timedOut)
+
+	var completed ChannelStatusProbeExecution
+	require.NoError(t, db.Where("run_id = ? AND model_name = ?", claim.RunId, "model-a").First(&completed).Error)
+	assert.Equal(t, ChannelStatusProbeResultSuccess, completed.Result)
+	require.NotNil(t, completed.SettledCostNanoCNY)
+	assert.Equal(t, completedCost, *completed.SettledCostNanoCNY)
+
+	var timeout ChannelStatusProbeExecution
+	require.NoError(t, db.Where("run_id = ? AND model_name = ?", claim.RunId, "model-b").First(&timeout).Error)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, timeout.Result)
+	assert.Equal(t, ChannelStatusProbeErrorTimeout, timeout.ErrorCode)
+	assert.Equal(t, ChannelStatusProbeTimeoutMessage, timeout.ErrorMessage)
+	assert.False(t, timeout.RequestDispatched)
+	assert.Nil(t, timeout.SettledCostNanoCNY)
+	assert.Equal(t, stored.NextRunAt, timeout.FinishedAt)
+
+	var timeoutState ChannelStatusProbeState
+	require.NoError(t, db.Where("channel_id = ? AND model_name = ?", 9, "model-b").First(&timeoutState).Error)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, timeoutState.LastHealthResult)
+	assert.EqualValues(t, 1, timeoutState.ConsecutiveFailures)
+
+	timedOutConfig, err := GetChannelStatusProbeConfig(9)
+	require.NoError(t, err)
+	assert.Empty(t, timedOutConfig.RunningRunId)
+	assert.Empty(t, timedOutConfig.LeaseToken)
+	assert.Equal(t, stored.NextRunAt, timedOutConfig.NextRunAt)
+
+	lateCost := int64(654321)
+	late := ChannelStatusProbeExecution{
+		RunId: claim.RunId, ChannelId: 9, ModelName: "model-b", ConfigRevision: claim.Config.Revision,
+		Trigger: ChannelStatusProbeTriggerScheduled, Result: ChannelStatusProbeResultSuccess,
+		StartedAt: created.NextRunAt, FinishedAt: stored.NextRunAt + 1,
+		RequestDispatched: true, SettledCostNanoCNY: &lateCost,
+		SampleStatus: ChannelStatusProbeSampleSkipped,
+	}
+	inserted, err = SaveChannelStatusProbeExecution(&late)
+	require.NoError(t, err)
+	assert.False(t, inserted)
+	assert.Equal(t, ChannelStatusProbeErrorTimeout, late.ErrorCode)
+
+	nextClaims, err := ClaimDueChannelStatusProbes(stored.NextRunAt, 1)
+	require.NoError(t, err)
+	require.Len(t, nextClaims, 1)
+	assert.NotEqual(t, claim.RunId, nextClaims[0].RunId)
+	assert.Equal(t, stored.NextRunAt+60, nextClaims[0].DeadlineAt)
+
+	require.NoError(t, CompleteChannelStatusProbeClaim(claim, stored.NextRunAt+1))
+	current, err := GetChannelStatusProbeConfig(9)
+	require.NoError(t, err)
+	assert.Equal(t, nextClaims[0].RunId, current.RunningRunId)
+	assert.Equal(t, nextClaims[0].LeaseToken, current.LeaseToken)
 }
 
 func TestScheduledStatusProbeRealignsLegacyRunTimeAfterClaim(t *testing.T) {

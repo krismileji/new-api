@@ -28,6 +28,8 @@ const (
 	ChannelStatusProbeSampleRecorded = "recorded"
 	ChannelStatusProbeSampleSkipped  = "skipped"
 	ChannelStatusProbeSampleFailed   = "failed"
+	ChannelStatusProbeErrorTimeout   = "probe_timeout"
+	ChannelStatusProbeTimeoutMessage = "探测在下一监测周期开始前仍未返回，已判定为超时失败"
 
 	ChannelMonitorStatusProbeLogKey = "channel_monitor_status_probe"
 
@@ -292,6 +294,7 @@ type ChannelStatusProbeClaim struct {
 	RunId           string
 	ManualRequestId string
 	LeaseToken      string
+	DeadlineAt      int64
 }
 
 func nextChannelStatusProbeRunAt(after int64, intervalSeconds int) int64 {
@@ -433,10 +436,7 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		return []ChannelStatusProbeClaim{}, nil
 	}
 	var candidates []ChannelStatusProbeConfig
-	err := DB.Where(
-		"(lease_until <= ?) OR (lease_until > ? AND running_trigger = ? AND enabled = ? AND next_run_at > 0 AND next_run_at <= ?)",
-		now, now, ChannelStatusProbeTriggerScheduled, true, now,
-	).
+	err := DB.Where("lease_until <= ?", now).
 		Where("manual_request_id <> ? OR (enabled = ? AND next_run_at > 0 AND next_run_at <= ?)", "", true, now).
 		Order("manual_requested_at DESC, next_run_at ASC, channel_id ASC").
 		Limit(limit * 3).
@@ -452,12 +452,6 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		models, decodeErr := candidate.Models()
 		if decodeErr != nil {
 			return nil, decodeErr
-		}
-		if candidate.LeaseUntil > now && candidate.RunningTrigger == ChannelStatusProbeTriggerScheduled && candidate.RunningRunId != "" {
-			if err := markOverdueChannelStatusProbe(candidate, models, now); err != nil {
-				return nil, err
-			}
-			continue
 		}
 		trigger := ChannelStatusProbeTriggerScheduled
 		runId := common.GetUUID()
@@ -477,8 +471,12 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 			"running_trigger": trigger, "running_run_id": runId, "running_started_at": now,
 			"updated_at": now,
 		}
+		deadlineAt := nextChannelStatusProbeRunAt(now, candidate.IntervalSeconds)
 		if trigger == ChannelStatusProbeTriggerScheduled {
-			claimUpdates["next_run_at"] = nextChannelStatusProbeRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+			deadlineAt = nextChannelStatusProbeRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+			claimUpdates["next_run_at"] = deadlineAt
+		} else if candidate.NextRunAt > now {
+			deadlineAt = candidate.NextRunAt
 		}
 		claimed := claimQuery.Updates(claimUpdates)
 		if claimed.Error != nil {
@@ -494,43 +492,93 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		candidate.RunningStartedAt = now
 		claims = append(claims, ChannelStatusProbeClaim{
 			Config: candidate, Models: models, Trigger: trigger, RunId: runId,
-			ManualRequestId: manualRequestId, LeaseToken: leaseToken,
+			ManualRequestId: manualRequestId, LeaseToken: leaseToken, DeadlineAt: deadlineAt,
 		})
 	}
 	return claims, nil
 }
 
-// markOverdueChannelStatusProbe records the scheduled tick that arrived while
-// the previous request was still running. The in-flight request keeps its
-// context and can later settle its real upstream cost; this synthetic failure
-// only makes the missed monitoring tick visible and advances the next tick.
-func markOverdueChannelStatusProbe(config ChannelStatusProbeConfig, models []string, now int64) error {
-	if config.IntervalSeconds <= 0 || config.NextRunAt <= 0 {
-		return nil
+// TimeoutOverdueChannelStatusProbes fences runs that are still active when
+// their next monitoring period begins. Completed model results remain intact;
+// only missing results under the previous run ID are recorded as timeouts.
+func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
 	}
-	dueAt := config.NextRunAt
-	nextRunAt := nextChannelStatusProbeRunAt(dueAt, config.IntervalSeconds)
-	updated := DB.Model(&ChannelStatusProbeConfig{}).
-		Where("id = ? AND running_run_id = ? AND next_run_at = ?", config.Id, config.RunningRunId, dueAt).
-		Update("next_run_at", nextRunAt)
-	if updated.Error != nil || updated.RowsAffected == 0 {
-		return updated.Error
+	var candidates []ChannelStatusProbeConfig
+	err := DB.Where(
+		"running_run_id <> ? AND enabled = ? AND next_run_at > 0 AND next_run_at <= ?",
+		"", true, now,
+	).
+		Order("next_run_at ASC, channel_id ASC").
+		Limit(limit).
+		Find(&candidates).Error
+	if err != nil {
+		return 0, err
 	}
-	overdueRunID := common.GetUUID()
-	for _, modelName := range models {
-		execution := &ChannelStatusProbeExecution{
-			RunId: overdueRunID, ChannelId: config.ChannelId,
-			ModelName: modelName, ConfigRevision: config.Revision, Trigger: ChannelStatusProbeTriggerScheduled,
-			Result: ChannelStatusProbeResultUpstreamFailure, StartedAt: dueAt, FinishedAt: now,
-			ErrorCode: "probe_previous_pending", ErrorMessage: "上一轮探测尚未返回，本次周期标记为失败",
-			SampleStatus: ChannelStatusProbeSampleSkipped, SampleMessage: "未发起新请求，上一轮请求仍在进行",
-			CreatedAt: now,
+	timedOut := 0
+	for _, candidate := range candidates {
+		err = DB.Transaction(func(tx *gorm.DB) error {
+			var current ChannelStatusProbeConfig
+			if err := lockForUpdate(tx).
+				Where("id = ? AND revision = ? AND running_run_id = ? AND next_run_at = ?",
+					candidate.Id, candidate.Revision, candidate.RunningRunId, candidate.NextRunAt).
+				First(&current).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			if current.NextRunAt <= 0 || current.NextRunAt > now || strings.TrimSpace(current.RunningRunId) == "" {
+				return nil
+			}
+			models, err := current.Models()
+			if err != nil {
+				return err
+			}
+			updates := map[string]any{
+				"lease_token": "", "lease_until": int64(0), "running_trigger": "",
+				"running_run_id": "", "running_started_at": int64(0), "updated_at": now,
+			}
+			if current.RunningTrigger == ChannelStatusProbeTriggerManual {
+				updates["manual_request_id"] = ""
+				updates["manual_requested_at"] = int64(0)
+			}
+			updated := tx.Model(&ChannelStatusProbeConfig{}).
+				Where("id = ? AND revision = ? AND lease_token = ? AND running_run_id = ? AND next_run_at = ?",
+					current.Id, current.Revision, current.LeaseToken, current.RunningRunId, current.NextRunAt).
+				Updates(updates)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return nil
+			}
+			startedAt := current.RunningStartedAt
+			if startedAt <= 0 {
+				startedAt = current.NextRunAt
+			}
+			for _, modelName := range models {
+				execution := &ChannelStatusProbeExecution{
+					RunId: current.RunningRunId, ChannelId: current.ChannelId,
+					ModelName: modelName, ConfigRevision: current.Revision, Trigger: current.RunningTrigger,
+					Result: ChannelStatusProbeResultUpstreamFailure, StartedAt: startedAt, FinishedAt: current.NextRunAt,
+					ErrorCode: ChannelStatusProbeErrorTimeout, ErrorMessage: ChannelStatusProbeTimeoutMessage,
+					SampleStatus: ChannelStatusProbeSampleSkipped, SampleMessage: "探测超时，未计入智能调度样本",
+					CreatedAt: now,
+				}
+				if _, err := saveChannelStatusProbeExecutionTx(tx, execution); err != nil {
+					return err
+				}
+			}
+			timedOut++
+			return nil
+		})
+		if err != nil {
+			return timedOut, err
 		}
-		if _, err := SaveChannelStatusProbeExecution(execution); err != nil {
-			return err
-		}
 	}
-	return nil
+	return timedOut, nil
 }
 
 func RenewChannelStatusProbeLease(claim ChannelStatusProbeClaim, now int64) (bool, error) {
@@ -628,146 +676,149 @@ func accumulateChannelStatusProbeBuckets(
 	return retained
 }
 
-func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bool, error) {
+func saveChannelStatusProbeExecutionTx(tx *gorm.DB, execution *ChannelStatusProbeExecution) (bool, error) {
 	if execution == nil || execution.ChannelId <= 0 || strings.TrimSpace(execution.RunId) == "" || strings.TrimSpace(execution.ModelName) == "" {
 		return false, errors.New("渠道状态探测执行记录无效")
 	}
 	created := false
+	if execution.CreatedAt <= 0 {
+		execution.CreatedAt = execution.FinishedAt
+	}
+	inserted := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "run_id"}, {Name: "model_name"}},
+		DoNothing: true,
+	}).Create(execution)
+	if inserted.Error != nil {
+		return false, inserted.Error
+	}
+	if inserted.RowsAffected == 0 {
+		var existing ChannelStatusProbeExecution
+		if err := tx.Where("run_id = ? AND model_name = ?", execution.RunId, execution.ModelName).
+			First(&existing).Error; err != nil {
+			return false, err
+		}
+		*execution = existing
+		return false, nil
+	}
+	created = true
+
+	var currentConfig ChannelStatusProbeConfig
+	configErr := lockForUpdate(tx).
+		Select("id", "models_json").
+		Where("channel_id = ?", execution.ChannelId).
+		First(&currentConfig).Error
+	if configErr == nil {
+		configuredModels, err := currentConfig.Models()
+		if err != nil {
+			return false, err
+		}
+		modelConfigured := false
+		for _, modelName := range configuredModels {
+			if modelName == execution.ModelName {
+				modelConfigured = true
+				break
+			}
+		}
+		if !modelConfigured {
+			return created, nil
+		}
+	} else if !errors.Is(configErr, gorm.ErrRecordNotFound) {
+		return false, configErr
+	}
+
+	var state ChannelStatusProbeState
+	stateErr := lockForUpdate(tx).
+		Where("channel_id = ? AND model_name = ?", execution.ChannelId, execution.ModelName).
+		First(&state).Error
+	if errors.Is(stateErr, gorm.ErrRecordNotFound) {
+		state = ChannelStatusProbeState{
+			ChannelId: execution.ChannelId, ModelName: execution.ModelName,
+			CreatedAt: execution.FinishedAt,
+		}
+	} else if stateErr != nil {
+		return false, stateErr
+	}
+
+	bucketSeries := []struct {
+		unit  string
+		limit int
+	}{
+		{unit: ChannelStatusProbeDisplayUnitMinute, limit: ChannelStatusProbeMaxDisplayMinutes},
+		{unit: ChannelStatusProbeDisplayUnitHour, limit: ChannelStatusProbeMaxDisplayHours},
+		{unit: ChannelStatusProbeDisplayUnitDay, limit: ChannelStatusProbeMaxDisplayDays},
+	}
+	for _, series := range bucketSeries {
+		buckets, err := state.Buckets(series.unit)
+		if err != nil {
+			return false, err
+		}
+		buckets = accumulateChannelStatusProbeBuckets(buckets, execution, series.unit, series.limit)
+		encodedBuckets, err := common.Marshal(buckets)
+		if err != nil {
+			return false, err
+		}
+		switch series.unit {
+		case ChannelStatusProbeDisplayUnitMinute:
+			state.MinuteBucketsJSON = string(encodedBuckets)
+		case ChannelStatusProbeDisplayUnitHour:
+			state.HourBucketsJSON = string(encodedBuckets)
+		case ChannelStatusProbeDisplayUnitDay:
+			state.DayBucketsJSON = string(encodedBuckets)
+		}
+	}
+
+	if execution.FinishedAt > state.FinishedAt || (execution.FinishedAt == state.FinishedAt && execution.Id > state.ExecutionId) {
+		state.ExecutionId = execution.Id
+		state.RunId = execution.RunId
+		state.StartedAt = execution.StartedAt
+		state.FinishedAt = execution.FinishedAt
+		state.Result = execution.Result
+		state.Success = execution.Result == ChannelStatusProbeResultSuccess
+		state.RequestDispatched = execution.RequestDispatched
+		state.ResponseTimeMs = execution.ResponseTimeMs
+		state.FirstTokenMs = execution.FirstTokenMs
+		state.TPS = execution.TPS
+		state.SettledCostNanoCNY = execution.SettledCostNanoCNY
+		state.ErrorCode = execution.ErrorCode
+		state.ErrorMessage = execution.ErrorMessage
+		state.SampleStatus = execution.SampleStatus
+		state.SampleMessage = execution.SampleMessage
+		state.Trigger = execution.Trigger
+		state.Endpoint = execution.Endpoint
+		state.Stream = execution.Stream
+	}
+	healthOutcome := execution.RequestDispatched && (execution.Result == ChannelStatusProbeResultSuccess ||
+		execution.Result == ChannelStatusProbeResultUpstreamFailure || execution.Result == ChannelStatusProbeResultRateLimited)
+	if execution.Result == ChannelStatusProbeResultUpstreamFailure && execution.ErrorCode == ChannelStatusProbeErrorTimeout {
+		healthOutcome = true
+	}
+	if healthOutcome &&
+		(execution.FinishedAt > state.LastHealthFinishedAt ||
+			(execution.FinishedAt == state.LastHealthFinishedAt && execution.Id > state.LastHealthExecutionId)) {
+		state.LastHealthResult = execution.Result
+		state.LastHealthExecutionId = execution.Id
+		state.LastHealthFinishedAt = execution.FinishedAt
+		if execution.Result == ChannelStatusProbeResultSuccess {
+			state.ConsecutiveSuccesses++
+			state.ConsecutiveFailures = 0
+		} else {
+			state.ConsecutiveFailures++
+			state.ConsecutiveSuccesses = 0
+		}
+	}
+	state.UpdatedAt = max(state.UpdatedAt, execution.FinishedAt)
+	if state.Id == 0 {
+		return created, tx.Create(&state).Error
+	}
+	return created, tx.Save(&state).Error
+}
+
+func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bool, error) {
+	created := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		if execution.CreatedAt <= 0 {
-			execution.CreatedAt = execution.FinishedAt
-		}
-		inserted := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "run_id"}, {Name: "model_name"}},
-			DoNothing: true,
-		}).Create(execution)
-		if inserted.Error != nil {
-			return inserted.Error
-		}
-		if inserted.RowsAffected == 0 {
-			var existing ChannelStatusProbeExecution
-			if err := tx.Where("run_id = ? AND model_name = ?", execution.RunId, execution.ModelName).
-				First(&existing).Error; err != nil {
-				return err
-			}
-			*execution = existing
-			return nil
-		}
-		created = true
-
-		var currentConfig ChannelStatusProbeConfig
-		configErr := lockForUpdate(tx).
-			Select("id", "models_json").
-			Where("channel_id = ?", execution.ChannelId).
-			First(&currentConfig).Error
-		if configErr == nil {
-			configuredModels, err := currentConfig.Models()
-			if err != nil {
-				return err
-			}
-			modelConfigured := false
-			for _, modelName := range configuredModels {
-				if modelName == execution.ModelName {
-					modelConfigured = true
-					break
-				}
-			}
-			if !modelConfigured {
-				return nil
-			}
-		} else if !errors.Is(configErr, gorm.ErrRecordNotFound) {
-			return configErr
-		}
-
-		var state ChannelStatusProbeState
-		stateErr := lockForUpdate(tx).
-			Where("channel_id = ? AND model_name = ?", execution.ChannelId, execution.ModelName).
-			First(&state).Error
-		if errors.Is(stateErr, gorm.ErrRecordNotFound) {
-			state = ChannelStatusProbeState{
-				ChannelId: execution.ChannelId, ModelName: execution.ModelName,
-				CreatedAt: execution.FinishedAt,
-			}
-		} else if stateErr != nil {
-			return stateErr
-		}
-
-		bucketSeries := []struct {
-			unit  string
-			limit int
-		}{
-			{unit: ChannelStatusProbeDisplayUnitMinute, limit: ChannelStatusProbeMaxDisplayMinutes},
-			{unit: ChannelStatusProbeDisplayUnitHour, limit: ChannelStatusProbeMaxDisplayHours},
-			{unit: ChannelStatusProbeDisplayUnitDay, limit: ChannelStatusProbeMaxDisplayDays},
-		}
-		for _, series := range bucketSeries {
-			buckets, err := state.Buckets(series.unit)
-			if err != nil {
-				return err
-			}
-			buckets = accumulateChannelStatusProbeBuckets(buckets, execution, series.unit, series.limit)
-			encodedBuckets, err := common.Marshal(buckets)
-			if err != nil {
-				return err
-			}
-			switch series.unit {
-			case ChannelStatusProbeDisplayUnitMinute:
-				state.MinuteBucketsJSON = string(encodedBuckets)
-			case ChannelStatusProbeDisplayUnitHour:
-				state.HourBucketsJSON = string(encodedBuckets)
-			case ChannelStatusProbeDisplayUnitDay:
-				state.DayBucketsJSON = string(encodedBuckets)
-			}
-		}
-
-		if execution.FinishedAt > state.FinishedAt || (execution.FinishedAt == state.FinishedAt && execution.Id > state.ExecutionId) {
-			state.ExecutionId = execution.Id
-			state.RunId = execution.RunId
-			state.StartedAt = execution.StartedAt
-			state.FinishedAt = execution.FinishedAt
-			state.Result = execution.Result
-			state.Success = execution.Result == ChannelStatusProbeResultSuccess
-			state.RequestDispatched = execution.RequestDispatched
-			state.ResponseTimeMs = execution.ResponseTimeMs
-			state.FirstTokenMs = execution.FirstTokenMs
-			state.TPS = execution.TPS
-			state.SettledCostNanoCNY = execution.SettledCostNanoCNY
-			state.ErrorCode = execution.ErrorCode
-			state.ErrorMessage = execution.ErrorMessage
-			state.SampleStatus = execution.SampleStatus
-			state.SampleMessage = execution.SampleMessage
-			state.Trigger = execution.Trigger
-			state.Endpoint = execution.Endpoint
-			state.Stream = execution.Stream
-		}
-		healthOutcome := execution.RequestDispatched && (execution.Result == ChannelStatusProbeResultSuccess ||
-			execution.Result == ChannelStatusProbeResultUpstreamFailure || execution.Result == ChannelStatusProbeResultRateLimited)
-		// A scheduled tick that arrives before the previous request returns is a
-		// real monitoring failure, even though no second upstream request was
-		// dispatched. Keep its cost fields empty while still reflecting the
-		// failure in health counters.
-		if execution.Result == ChannelStatusProbeResultUpstreamFailure && execution.ErrorCode == "probe_previous_pending" {
-			healthOutcome = true
-		}
-		if healthOutcome &&
-			(execution.FinishedAt > state.LastHealthFinishedAt ||
-				(execution.FinishedAt == state.LastHealthFinishedAt && execution.Id > state.LastHealthExecutionId)) {
-			state.LastHealthResult = execution.Result
-			state.LastHealthExecutionId = execution.Id
-			state.LastHealthFinishedAt = execution.FinishedAt
-			if execution.Result == ChannelStatusProbeResultSuccess {
-				state.ConsecutiveSuccesses++
-				state.ConsecutiveFailures = 0
-			} else {
-				state.ConsecutiveFailures++
-				state.ConsecutiveSuccesses = 0
-			}
-		}
-		state.UpdatedAt = max(state.UpdatedAt, execution.FinishedAt)
-		if state.Id == 0 {
-			return tx.Create(&state).Error
-		}
-		return tx.Save(&state).Error
+		var err error
+		created, err = saveChannelStatusProbeExecutionTx(tx, execution)
+		return err
 	})
 	return created, err
 }

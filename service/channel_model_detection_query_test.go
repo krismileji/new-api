@@ -183,6 +183,15 @@ func TestChannelModelDetectionOverviewTreatsStrongFingerprintConflictAsUnhealthy
 	assert.True(t, response.Channels[0].Targets[0].Latest.FingerprintClaimMismatch)
 }
 
+func TestChannelModelDetectionExecutionSummaryIncludesScheduleTimeoutCode(t *testing.T) {
+	summary := channelModelDetectionExecutionSummary(model.ChannelModelDetectionExecution{
+		Status:    model.ChannelModelDetectionExecutionStatusCanceled,
+		ErrorCode: model.ChannelModelDetectionErrorScheduleTimeout,
+	}, "", "", ChannelModelDetectionCostAggregate{})
+
+	assert.Equal(t, model.ChannelModelDetectionErrorScheduleTimeout, summary.ErrorCode)
+}
+
 func TestChannelModelDetectionOverviewBuildsConfiguredDisplayBuckets(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{

@@ -127,9 +127,11 @@ export function channelModelDetectionResultTone(input: {
   claimedModel: string
   status: ChannelModelDetectionExecutionStatus
   outcomeCode: ChannelModelDetectionOutcomeCode | ''
+  errorCode?: string
   fingerprintModel?: string
   fingerprintClaimMismatch?: boolean
 }): ChannelModelDetectionResultTone {
+  if (input.errorCode === 'schedule_timeout') return 'attention'
   if (
     input.status === 'pending' ||
     input.status === 'submitting' ||
@@ -170,8 +172,10 @@ export function channelModelDetectionResultTone(input: {
 export function channelModelDetectionResultLabel(input: {
   status: ChannelModelDetectionExecutionStatus
   outcomeCode: ChannelModelDetectionOutcomeCode | ''
+  errorCode?: string
   title?: string
 }) {
+  if (input.errorCode === 'schedule_timeout') return '周期超时警告'
   if (input.status === 'pending') return '待执行'
   if (input.status === 'submitting') return '提交中'
   if (input.status === 'running') return '检测中'

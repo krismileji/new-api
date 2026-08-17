@@ -135,6 +135,7 @@ export type ChannelModelDetectionExecutionSummary = {
   run_id: string
   target_key: string
   status: ChannelModelDetectionExecutionStatus
+  error_code?: string
   request_model: string
   claimed_model: ChannelModelDetectionClaimedModel
   outcome_code: ChannelModelDetectionOutcomeCode | ''

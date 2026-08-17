@@ -33,9 +33,9 @@ type ChannelModelDetectionManualRunInput struct {
 	CreatedByUsername string
 }
 
-// ChannelModelDetectionScheduleResult describes one scheduler pass. A due
-// schedule may be skipped because an older batch is still active; that still
-// advances NextBatchAt so historical periods are never replayed one by one.
+// ChannelModelDetectionScheduleResult describes one scheduler pass. Active
+// runs from the previous period are stopped and recorded as timeout warnings
+// before the next batch is created.
 type ChannelModelDetectionScheduleResult struct {
 	Due               bool
 	Created           bool
@@ -44,6 +44,7 @@ type ChannelModelDetectionScheduleResult struct {
 	NextBatchAt       int64
 	Batch             *model.ChannelModelDetectionBatch
 	RunIDs            []string
+	WarningRunIDs     []string
 }
 
 // CalculateChannelModelDetectionScheduleAnchor returns the first configured
@@ -235,9 +236,14 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 		result.NextBatchAt = config.NextBatchAt
 		return result, nil
 	}
+	warningRunIDs, err := timeoutChannelModelDetectionScheduledRuns(ctx, db, now)
+	if err != nil {
+		return result, err
+	}
+	result.WarningRunIDs = warningRunIDs
 
 	leaseToken := common.GetUUID()
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		claimed, claimErr := config.TryAcquireLease(tx, config.Revision, nowUnix, leaseToken)
 		if claimErr != nil || !claimed {
 			return claimErr
@@ -293,7 +299,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 			result.SkippedForBacklog = true
 			updated := tx.Model(&model.ChannelModelDetectionGlobalConfig{}).
 				Where("id = ? AND revision = ? AND lease_token = ?", current.Id, current.Revision, leaseToken).
-				Updates(map[string]any{"next_batch_at": result.NextBatchAt, "lease_token": "", "lease_until": int64(0), "updated_at": nowUnix})
+				Updates(map[string]any{"lease_token": "", "lease_until": int64(0), "updated_at": nowUnix})
 			if updated.Error != nil {
 				return updated.Error
 			}
@@ -353,6 +359,64 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 		_, _ = config.ReleaseLease(db.WithContext(context.Background()), config.Revision, leaseToken, time.Now().UTC().Unix())
 	}
 	return result, err
+}
+
+func timeoutChannelModelDetectionScheduledRuns(ctx context.Context, db *gorm.DB, now time.Time) ([]string, error) {
+	activeStatuses := []string{
+		model.ChannelModelDetectionRunStatusQueued,
+		model.ChannelModelDetectionRunStatusWaitingDetector,
+		model.ChannelModelDetectionRunStatusSubmitting,
+		model.ChannelModelDetectionRunStatusRunning,
+		model.ChannelModelDetectionRunStatusSubmissionUnknown,
+		model.ChannelModelDetectionRunStatusCanceling,
+	}
+	var runs []model.ChannelModelDetectionRun
+	if err := channelModelDetectionActiveScheduledRunsQuery(db.WithContext(ctx), activeStatuses).
+		Order("queued_at ASC, channel_id ASC, id ASC").
+		Find(&runs).Error; err != nil {
+		return nil, err
+	}
+	warningRunIDs := make([]string, 0, len(runs))
+	for _, run := range runs {
+		response, err := CancelChannelModelDetectionRun(ctx, db, run.RunId)
+		if err != nil {
+			return warningRunIDs, err
+		}
+		if response.Status != model.ChannelModelDetectionRunStatusCanceled {
+			continue
+		}
+		err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&model.ChannelModelDetectionExecution{}).
+				Where("run_id = ? AND status = ?", run.RunId, model.ChannelModelDetectionExecutionStatusCanceled).
+				Updates(map[string]any{
+					"error_code":    model.ChannelModelDetectionErrorScheduleTimeout,
+					"error_message": model.ChannelModelDetectionScheduleTimeoutMessage,
+					"updated_at":    now.Unix(),
+				}).Error; err != nil {
+				return err
+			}
+			updated := tx.Model(&model.ChannelModelDetectionRun{}).
+				Where("run_id = ? AND status = ?", run.RunId, model.ChannelModelDetectionRunStatusCanceled).
+				Updates(map[string]any{
+					"status":        model.ChannelModelDetectionRunStatusPartial,
+					"error_code":    model.ChannelModelDetectionErrorScheduleTimeout,
+					"error_message": model.ChannelModelDetectionScheduleTimeoutMessage,
+					"finished_at":   now.Unix(), "updated_at": now.Unix(),
+				})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 || run.BatchId == nil {
+				return nil
+			}
+			return rebuildChannelModelDetectionBatchState(tx, *run.BatchId, now)
+		})
+		if err != nil {
+			return warningRunIDs, err
+		}
+		warningRunIDs = append(warningRunIDs, run.RunId)
+	}
+	return warningRunIDs, nil
 }
 
 func channelModelDetectionActiveScheduledRunsQuery(tx *gorm.DB, activeStatuses []string) *gorm.DB {

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import type {
@@ -381,6 +382,29 @@ describe('模型检测渠道卡片', () => {
     assert.match(outcome.className, /text-destructive/)
     assert.doesNotMatch(outcome.className, /text-success/)
     assert.match(outcome.textContent ?? '', /强烈指向 Luna/)
+  })
+
+  test('上一周期超时的取消结果按警告展示', () => {
+    const channel = createChannel('attention')
+    const latest = channel.targets[0]?.latest
+    if (!latest) throw new Error('测试目标缺少最新执行')
+    Object.assign(latest, {
+      status: 'canceled',
+      error_code: 'schedule_timeout',
+      outcome_code: '',
+      title_cn: '',
+    })
+
+    domWindow.document.body.innerHTML = renderCard(channel)
+    const target = domWindow.document.querySelector(
+      '[data-slot="model-detection-target"]'
+    )
+    assert.ok(target)
+    const outcome = target.children.item(1)
+    assert.ok(outcome)
+    assert.match(outcome.className, /text-warning/)
+    assert.doesNotMatch(outcome.className, /text-muted-foreground/)
+    assert.match(outcome.textContent ?? '', /周期超时警告/)
   })
 
   test('每个目标按配置的时间范围渲染状态格并区分结果语义', () => {

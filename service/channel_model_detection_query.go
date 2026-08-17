@@ -97,6 +97,7 @@ type ChannelModelDetectionExecutionSummary struct {
 	RunID                    string                                `json:"run_id"`
 	TargetKey                string                                `json:"target_key"`
 	Status                   string                                `json:"status"`
+	ErrorCode                string                                `json:"error_code"`
 	RequestModel             string                                `json:"request_model"`
 	ClaimedModel             string                                `json:"claimed_model"`
 	OutcomeCode              string                                `json:"outcome_code"`
@@ -938,7 +939,7 @@ func channelModelDetectionExecutionSummary(execution model.ChannelModelDetection
 		cancelled = 1
 	}
 	return ChannelModelDetectionExecutionSummary{
-		RunID: execution.RunId, TargetKey: execution.TargetKey, Status: execution.Status,
+		RunID: execution.RunId, TargetKey: execution.TargetKey, Status: execution.Status, ErrorCode: execution.ErrorCode,
 		RequestModel: execution.RequestModel, ClaimedModel: execution.ClaimedModel,
 		OutcomeCode: execution.OutcomeCode, TitleCN: execution.TitleCN, SubtitleCN: execution.SubtitleCN,
 		JuiceVerdictState: evidence.JuiceVerdictState, FingerprintVerdictState: evidence.FingerprintVerdictState,
@@ -1004,6 +1005,9 @@ func channelModelDetectionResultBuckets(
 }
 
 func channelModelDetectionBucketClassification(execution model.ChannelModelDetectionExecution) string {
+	if execution.ErrorCode == model.ChannelModelDetectionErrorScheduleTimeout {
+		return channelModelDetectionBucketResultAttention
+	}
 	switch execution.Status {
 	case model.ChannelModelDetectionExecutionStatusPending,
 		model.ChannelModelDetectionExecutionStatusSubmitting,

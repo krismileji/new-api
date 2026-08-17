@@ -248,12 +248,14 @@ function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
   const label = channelModelDetectionResultLabel({
     status: latest.status,
     outcomeCode: outcome,
+    errorCode: latest.error_code,
     title: latest.title_cn,
   })
   const resultTone = channelModelDetectionResultTone({
     claimedModel: target.claimed_model,
     status: latest.status,
     outcomeCode: outcome,
+    errorCode: latest.error_code,
     fingerprintModel: latest.fingerprint_model,
     fingerprintClaimMismatch: latest.fingerprint_claim_mismatch,
   })
