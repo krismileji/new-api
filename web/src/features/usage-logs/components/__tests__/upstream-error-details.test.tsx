@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { afterAll, describe, test } from 'vitest'
 
 import { Window } from 'happy-dom'
 
@@ -132,7 +132,7 @@ async function renderDetails(isAdmin: boolean) {
 }
 
 describe('upstream error log details', () => {
-  after(() => {
+  afterAll(() => {
     domWindow.close()
   })
 

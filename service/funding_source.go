@@ -7,8 +7,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-var errWalletQuotaInsufficient = errors.New("wallet quota insufficient")
-
 // ---------------------------------------------------------------------------
 // FundingSource — 资金来源接口（钱包 or 订阅）
 // ---------------------------------------------------------------------------
@@ -29,6 +27,11 @@ type FundingSource interface {
 // WalletFunding — 钱包资金来源实现
 // ---------------------------------------------------------------------------
 
+// ErrInsufficientWalletQuota 钱包原子预扣失败（余额不足），未发生任何扣减。
+// BillingSession 据此映射为 ErrorCodeInsufficientUserQuota，
+// 使 wallet_first 等计费偏好可以回退到订阅。
+var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
+
 type WalletFunding struct {
 	userId      int
 	consumed    int  // 实际预扣的用户额度
@@ -41,12 +44,12 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	reserved, err := model.DecreaseUserQuotaIfEnough(w.userId, amount)
+	reserved, err := model.TryReserveUserQuota(w.userId, amount)
 	if err != nil {
 		return err
 	}
 	if !reserved {
-		return errWalletQuotaInsufficient
+		return ErrInsufficientWalletQuota
 	}
 	w.consumed = amount
 	return nil

@@ -17,22 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('keeps execution record dialogs readable and resets task filters', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./execution-records-dialog.fixture.tsx', import.meta.url)
-  )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
+import { test } from 'vitest'
 
-  assert.equal(
-    execution.status,
-    0,
-    execution.stderr || execution.stdout || 'execution records fixture failed'
-  )
-})
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test(
+  'keeps execution record dialogs readable and resets task filters',
+  { timeout: 15_000 },
+  () => {
+    const execution = runBunFixture(
+      'src/features/channel-monitor/components/__tests__/execution-records-dialog.fixture.tsx'
+    )
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || 'execution records fixture failed'
+    )
+  }
+)

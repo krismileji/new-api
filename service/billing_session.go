@@ -214,16 +214,17 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			}
 			s.tokenConsumed = 0
 		}
-		if errors.Is(err, errWalletQuotaInsufficient) {
-			return types.NewErrorWithStatusCode(
-				fmt.Errorf("预扣费额度失败，用户余额不足"),
-				types.ErrorCodeInsufficientUserQuota,
-				http.StatusForbidden,
-				types.ErrOptionWithSkipRetry(),
-				types.ErrOptionWithNoRecordErrorLog(),
-			)
-		}
 		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
+		if errors.Is(err, ErrInsufficientWalletQuota) {
+			userQuota, quotaErr := model.GetUserQuota(s.relayInfo.UserId, false)
+			if quotaErr != nil {
+				userQuota = 0
+			}
+			return types.NewErrorWithStatusCode(
+				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
+				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "no active subscription") || strings.Contains(errMsg, "subscription quota insufficient") {
 			return types.NewErrorWithStatusCode(fmt.Errorf("订阅额度不足或未配置订阅: %s", errMsg), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
@@ -247,7 +248,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 		// fresh wallet pre-consume is protected by WalletFunding.PreConsume.
 		if s.relayInfo != nil && s.relayInfo.ForcePreConsume {
 			funding.directQuota = true
-			reserved, err := model.DecreaseUserQuotaIfEnough(funding.userId, delta)
+			reserved, err := model.TryReserveUserQuota(funding.userId, delta)
 			if err != nil {
 				return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 			}
@@ -376,10 +377,9 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		// This is only an advisory check; the actual deduction is guarded by
-		// DecreaseUserQuotaIfEnough. Read the database directly so a lagging
-		// Redis value cannot incorrectly force a subscription fallback.
-		userQuota, err := model.GetUserQuota(relayInfo.UserId, true)
+		// This is only an advisory check; TryReserveUserQuota performs the
+		// authoritative atomic deduction against the live cache or database.
+		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}

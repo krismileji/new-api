@@ -17,22 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('状态监测筛选保持选择，暂停所有时确认并保留渠道配置', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./status-probe-filter-interaction.fixture.tsx', import.meta.url)
-  )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
+import { test } from 'vitest'
 
-  assert.equal(
-    execution.status,
-    0,
-    execution.stderr || execution.stdout || '状态监测筛选交互校验失败'
-  )
-})
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test(
+  '状态监测筛选保持选择，暂停所有时确认并保留渠道配置',
+  { timeout: 15_000 },
+  () => {
+    const execution = runBunFixture(
+      'src/features/channel-monitor/components/__tests__/status-probe-filter-interaction.fixture.tsx'
+    )
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || '状态监测筛选交互校验失败'
+    )
+  }
+)

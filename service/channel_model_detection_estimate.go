@@ -498,9 +498,5 @@ func channelModelDetectionConfiguredModelRatio(modelName string) (float64, bool)
 	if value, ok := ratios[matched]; ok {
 		return value, true
 	}
-	if strings.HasSuffix(matched, ratio_setting.CompactModelSuffix) {
-		value, ok := ratios[ratio_setting.CompactWildcardModelKey]
-		return value, ok
-	}
 	return 0, false
 }

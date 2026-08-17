@@ -17,18 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('状态探测记录筛选在桌面端紧凑右对齐', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./status-probe-history-filter-layout.fixture.tsx', import.meta.url)
+import { test } from 'vitest'
+
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test('状态探测记录筛选在桌面端紧凑右对齐', { timeout: 15_000 }, () => {
+  const execution = runBunFixture(
+    'src/features/channel-monitor/components/__tests__/status-probe-history-filter-layout.fixture.tsx'
   )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
 
   assert.equal(
     execution.status,

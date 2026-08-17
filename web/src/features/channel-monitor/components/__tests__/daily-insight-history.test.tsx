@@ -17,12 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test, vi } from 'vitest'
 
 import type { ChannelMonitorDailyInsightDay } from '../../types'
 import { ChannelMonitorDailyInsightHistory } from '../channel-monitor-daily-insight-history'
+
+vi.mock('@visactor/react-vchart', () => ({
+  VChart: () => null,
+}))
 
 const items: ChannelMonitorDailyInsightDay[] = [
   {

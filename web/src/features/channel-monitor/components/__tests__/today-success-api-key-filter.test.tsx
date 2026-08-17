@@ -17,18 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('按 API Key 切换缓存利用率且保留明细键盘入口', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./today-success-api-key-filter.fixture.tsx', import.meta.url)
+import { test } from 'vitest'
+
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test('按 API Key 切换缓存利用率且保留明细键盘入口', { timeout: 15_000 }, () => {
+  const execution = runBunFixture(
+    'src/features/channel-monitor/components/__tests__/today-success-api-key-filter.fixture.tsx'
   )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
 
   assert.equal(
     execution.status,

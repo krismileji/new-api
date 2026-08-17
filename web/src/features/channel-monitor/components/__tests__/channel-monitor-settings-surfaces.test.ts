@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+
+import { test } from 'vitest'
+
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
 
 type SettingsSurfaceResult = {
   allNotificationTypesSelected: boolean
@@ -59,13 +60,9 @@ type SettingsSurfaceResult = {
 }
 
 function runSettingsSurfaceFixture() {
-  const fixturePath = fileURLToPath(
-    new URL('./channel-monitor-settings-surfaces.fixture.tsx', import.meta.url)
+  const execution = runBunFixture(
+    'src/features/channel-monitor/components/__tests__/channel-monitor-settings-surfaces.fixture.tsx'
   )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
 
   assert.equal(
     execution.status,

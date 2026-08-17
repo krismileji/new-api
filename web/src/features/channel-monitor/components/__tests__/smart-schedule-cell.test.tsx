@@ -17,11 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { describe, test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
+
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
 
 import type {
   ChannelMonitorSmartScheduleRoute,
@@ -227,21 +227,21 @@ describe('channel monitor smart schedule cell status', () => {
     assert.equal(markup.includes('aria-label="解除 '), false)
   })
 
-  test('opens clearing from degradation, release, and exploration states only', () => {
-    const fixturePath = fileURLToPath(
-      new URL('./smart-schedule-cell-protection.fixture.tsx', import.meta.url)
-    )
-    const execution = spawnSync(process.execPath, [fixturePath], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    })
+  test(
+    'opens clearing from degradation, release, and exploration states only',
+    { timeout: 15_000 },
+    () => {
+      const execution = runBunFixture(
+        'src/features/channel-monitor/components/__tests__/smart-schedule-cell-protection.fixture.tsx'
+      )
 
-    assert.equal(
-      execution.status,
-      0,
-      execution.stderr || execution.stdout || '调度保护解除交互测试失败'
-    )
-  })
+      assert.equal(
+        execution.status,
+        0,
+        execution.stderr || execution.stdout || '调度保护解除交互测试失败'
+      )
+    }
+  )
 
   test('shows fixed intent together with stability degradation', () => {
     const markup = renderCell([
@@ -281,21 +281,21 @@ describe('channel monitor smart schedule cell status', () => {
     assert.ok(fixedMarkup.includes('保本兜底 · 已手动固定'))
   })
 
-  test('opens the selected route status details from the fourth line', () => {
-    const fixturePath = fileURLToPath(
-      new URL('./smart-schedule-cell-interaction.fixture.tsx', import.meta.url)
-    )
-    const execution = spawnSync(process.execPath, [fixturePath], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    })
+  test(
+    'opens the selected route status details from the fourth line',
+    { timeout: 15_000 },
+    () => {
+      const execution = runBunFixture(
+        'src/features/channel-monitor/components/__tests__/smart-schedule-cell-interaction.fixture.tsx'
+      )
 
-    assert.equal(
-      execution.status,
-      0,
-      execution.stderr || execution.stdout || '调度状态详情交互测试失败'
-    )
-  })
+      assert.equal(
+        execution.status,
+        0,
+        execution.stderr || execution.stdout || '调度状态详情交互测试失败'
+      )
+    }
+  )
 
   test('does not leak a different group-model state into the selected route', () => {
     const markup = renderCell([
@@ -400,26 +400,23 @@ describe('channel monitor smart schedule cell status', () => {
     )
   })
 
-  test('reveals the nonparticipating models from the partial badge', () => {
-    const fixturePath = fileURLToPath(
-      new URL(
-        './smart-schedule-cell-partial-tooltip.fixture.tsx',
-        import.meta.url
+  test(
+    'reveals the nonparticipating models from the partial badge',
+    { timeout: 15_000 },
+    () => {
+      const execution = runBunFixture(
+        'src/features/channel-monitor/components/__tests__/smart-schedule-cell-partial-tooltip.fixture.tsx'
       )
-    )
-    const execution = spawnSync(process.execPath, [fixturePath], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    })
 
-    assert.equal(
-      execution.status,
-      0,
-      execution.stderr ||
-        execution.stdout ||
-        '部分参与模型 Tooltip 交互测试失败'
-    )
-  })
+      assert.equal(
+        execution.status,
+        0,
+        execution.stderr ||
+          execution.stdout ||
+          '部分参与模型 Tooltip 交互测试失败'
+      )
+    }
+  )
 
   test('disables participation while a participation update is pending', () => {
     const markup = renderCell([createRoute()], true)

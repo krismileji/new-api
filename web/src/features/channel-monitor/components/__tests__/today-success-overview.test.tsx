@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test, vi } from 'vitest'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 
@@ -30,6 +30,10 @@ import type {
 import { ChannelMonitorSuccessAPIKeyTable } from '../channel-monitor-success-api-key-table'
 import { ChannelMonitorTodaySuccessCard } from '../channel-monitor-today-success-card'
 import { ChannelMonitorTodaySuccessDialogContent } from '../channel-monitor-today-success-dialog'
+
+vi.mock('@visactor/react-vchart', () => ({
+  VChart: () => null,
+}))
 
 const noop = () => {}
 

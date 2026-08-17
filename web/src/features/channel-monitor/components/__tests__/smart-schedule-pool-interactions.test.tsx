@@ -17,22 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('supports dense pool filtering and route details', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./smart-schedule-pool-interactions.fixture.tsx', import.meta.url)
-  )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
+import { test } from 'vitest'
 
-  assert.equal(
-    execution.status,
-    0,
-    execution.stderr || execution.stdout || 'smart schedule pool fixture failed'
-  )
-})
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test(
+  'supports dense pool filtering and route details',
+  { timeout: 15_000 },
+  () => {
+    const execution = runBunFixture(
+      'src/features/channel-monitor/components/__tests__/smart-schedule-pool-interactions.fixture.tsx'
+    )
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr ||
+        execution.stdout ||
+        'smart schedule pool fixture failed'
+    )
+  }
+)

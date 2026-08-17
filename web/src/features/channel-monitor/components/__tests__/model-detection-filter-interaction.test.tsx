@@ -17,22 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-test('选择分组后列出该分组支持的模型并正确筛选渠道', () => {
-  const fixturePath = fileURLToPath(
-    new URL('./model-detection-filter-interaction.fixture.tsx', import.meta.url)
-  )
-  const execution = spawnSync(process.execPath, [fixturePath], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
+import { test } from 'vitest'
 
-  assert.equal(
-    execution.status,
-    0,
-    execution.stderr || execution.stdout || '模型检测筛选交互校验失败'
-  )
-})
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
+
+test(
+  '选择分组后列出该分组支持的模型并正确筛选渠道',
+  { timeout: 15_000 },
+  () => {
+    const execution = runBunFixture(
+      'src/features/channel-monitor/components/__tests__/model-detection-filter-interaction.fixture.tsx'
+    )
+
+    assert.equal(
+      execution.status,
+      0,
+      execution.stderr || execution.stdout || '模型检测筛选交互校验失败'
+    )
+  }
+)

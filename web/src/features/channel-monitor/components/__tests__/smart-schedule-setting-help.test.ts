@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+
+import { test } from 'vitest'
+
+import { runBunFixture } from '@/test-utils/run-bun-fixture'
 
 type SettingHelpResult = {
   focusShowsExplanation: boolean
@@ -29,13 +30,10 @@ type SettingHelpResult = {
 }
 
 function runSettingHelpFixture(scenario: string): SettingHelpResult {
-  const fixturePath = fileURLToPath(
-    new URL('./smart-schedule-setting-help.fixture.tsx', import.meta.url)
+  const execution = runBunFixture(
+    'src/features/channel-monitor/components/__tests__/smart-schedule-setting-help.fixture.tsx',
+    [scenario]
   )
-  const execution = spawnSync(process.execPath, [fixturePath, scenario], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  })
 
   assert.equal(
     execution.status,
@@ -47,29 +45,41 @@ function runSettingHelpFixture(scenario: string): SettingHelpResult {
   return JSON.parse(output) as SettingHelpResult
 }
 
-test('shows first-token warning request help when its icon receives keyboard focus', () => {
-  const result = runSettingHelpFixture('first-token-warning')
+test(
+  'shows first-token warning request help when its icon receives keyboard focus',
+  { timeout: 15_000 },
+  () => {
+    const result = runSettingHelpFixture('first-token-warning')
 
-  assert.equal(result.triggerType, 'button')
-  assert.equal(result.triggerAriaLabel, '查看“首字告警请求占比”说明')
-  assert.equal(result.focusShowsExplanation, true)
-  assert.equal(result.coversRequiredMetadata, true)
-})
+    assert.equal(result.triggerType, 'button')
+    assert.equal(result.triggerAriaLabel, '查看“首字告警请求占比”说明')
+    assert.equal(result.focusShowsExplanation, true)
+    assert.equal(result.coversRequiredMetadata, true)
+  }
+)
 
-test('explains the exploration-owned shared sampling order on keyboard focus', () => {
-  const result = runSettingHelpFixture('sampling-order')
+test(
+  'explains the exploration-owned shared sampling order on keyboard focus',
+  { timeout: 15_000 },
+  () => {
+    const result = runSettingHelpFixture('sampling-order')
 
-  assert.equal(result.triggerType, 'button')
-  assert.equal(result.triggerAriaLabel, '查看“统一采样顺序”说明')
-  assert.equal(result.focusShowsExplanation, true)
-  assert.equal(result.coversRequiredMetadata, true)
-})
+    assert.equal(result.triggerType, 'button')
+    assert.equal(result.triggerAriaLabel, '查看“统一采样顺序”说明')
+    assert.equal(result.focusShowsExplanation, true)
+    assert.equal(result.coversRequiredMetadata, true)
+  }
+)
 
-test('explains K Token conversion and bounds for exploration requests', () => {
-  const result = runSettingHelpFixture('exploration-prompt-k-tokens')
+test(
+  'explains K Token conversion and bounds for exploration requests',
+  { timeout: 15_000 },
+  () => {
+    const result = runSettingHelpFixture('exploration-prompt-k-tokens')
 
-  assert.equal(result.triggerType, 'button')
-  assert.equal(result.triggerAriaLabel, '查看“探索请求上限”说明')
-  assert.equal(result.focusShowsExplanation, true)
-  assert.equal(result.coversRequiredMetadata, true)
-})
+    assert.equal(result.triggerType, 'button')
+    assert.equal(result.triggerAriaLabel, '查看“探索请求上限”说明')
+    assert.equal(result.focusShowsExplanation, true)
+    assert.equal(result.coversRequiredMetadata, true)
+  }
+)
