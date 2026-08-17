@@ -114,7 +114,6 @@ function SmartScheduleFieldsFixture() {
       smartScheduleEnabled: false,
       smartScheduleGroupPolicies: [],
       smartSchedulePerformanceWindowMinutes: 60,
-      smartScheduleStabilityWindowMinutes: 120,
       smartScheduleRealtimeRetentionMinutes: 120,
       smartScheduleRealtimeSampleLimit: 20_000,
       smartScheduleRateLimitCooldownSeconds: 30,
@@ -373,7 +372,6 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="smartSchedulePerformanceWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="60")[^>]*>/
     )
-    assert.doesNotMatch(markup, /name="smartScheduleStabilityWindowMinutes"/)
     assert.match(
       markup,
       /<input(?=[^>]*name="smartScheduleRealtimeRetentionMinutes")(?=[^>]*min="5")(?=[^>]*max="1440")(?=[^>]*value="120")[^>]*>/

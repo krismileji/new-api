@@ -1095,8 +1095,6 @@ export function createChannelMonitorSettingsSchema() {
         .int('性能窗口必须是整数')
         .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能小于 1 分钟')
         .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 1440 分钟'),
-      smartScheduleStabilityWindowMinutes:
-        smartScheduleStabilityWindowMinutesSchema,
       smartScheduleRealtimeRetentionMinutes: z.coerce
         .number()
         .int('实时样本保留时间必须是整数')

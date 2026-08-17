@@ -84,7 +84,6 @@
 | `smart_schedule_enabled` | `ChannelMonitorSmartScheduleEnabled` | `false` | 布尔值 |
 | `smart_schedule_group_policies` | `ChannelMonitorSmartScheduleGroupPolicies` | `[]` | 最多 100 个完整分组策略；未配置分组不参与调度 |
 | `smart_schedule_performance_window_minutes` | `ChannelMonitorSmartSchedulePerformanceWindowMinutes` | `60` | `1..43200` |
-| `smart_schedule_stability_window_minutes` | `ChannelMonitorSmartScheduleStabilityWindowMinutes` | `5` | `1..43200` 分钟；仅用于稳定性软评分，不直接触发硬保护 |
 
 `ChannelMonitorChannelOrder` 保存页面人工顺序，`ChannelMonitorGroupCoefficients` 保存分组同步系数。`smart_schedule_force_reset` 是一次性命令，不作为长期设置保存。
 
@@ -94,7 +93,7 @@
 
 `error_message_mapping` 对全部渠道统一生效。系统优先匹配上游错误码，再匹配最终 HTTP 状态码；匹配后的文案用于用户使用日志，并只在请求响应尚未开始时替换返回给用户的错误信息。未配置或未匹配时保持原有行为，用户使用日志只展示状态码。
 
-`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少首字告警请求占比、恢复健康占比、独立秒级窗口或切换确认占比会校验失败，旧的轮数字段和探索租约字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`，`sampling_order` 支持 `priority_weight`、`ratio`。探索流量只允许与 `priority_weight` 应用方式一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
+`smart_schedule_group_policies` 以分组名为唯一键，没有默认策略或未配置分组的回退规则。稳定性评分窗口只存在于每项分组策略的 `stability_window_minutes`，范围为 `1..1440` 分钟，不再提供全局稳定性窗口字段。启用智能调度时至少要提交一项策略；每项策略必须完整提交当前版本字段，缺少首字告警请求占比、恢复健康占比、独立秒级窗口或切换确认占比会校验失败，旧的轮数字段和探索租约字段不再输出或参与运行；`models: []` 表示该分组的全部模型。`strategy` 支持 `smart`、`ratio`、`first_token`、`tps`，`apply_mode` 支持 `weight`、`priority_weight`，`sample_mode` 支持 `off`、`traffic`、`probe`，`sampling_order` 支持 `priority_weight`、`ratio`。探索流量只允许与 `priority_weight` 应用方式一起使用，定时探测只会向支持文本 Responses 协议的渠道发送流式 `/v1/responses` 请求。
 
 全局智能调度开启后，命中分组策略及其模型范围的调度池只允许明确参与调度的路由接收首请求、亲和或重试流量；参与候选为空时返回无可用渠道，不回退渠道默认 P/W。未配置策略的分组以及未命中策略模型范围的模型池不参与智能调度，继续使用官方 Ability 候选集合。旧的未参与路由人工 P/W 接口已删除，不提供兼容入口。
 

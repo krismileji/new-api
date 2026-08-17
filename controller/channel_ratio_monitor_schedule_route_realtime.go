@@ -40,7 +40,7 @@ func channelSmartScheduleRealtimeRouteMetricView(
 	performanceStart int64,
 	generatedAt int64,
 ) (channelSmartScheduleRealtimeRouteMetrics, error) {
-	routeStabilityStart := generatedAt - int64(policy.stabilityWindowMinutes()*60)
+	routeStabilityStart := generatedAt - int64(policy.StabilityWindowMinutes*60)
 	if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 		route.State.StabilitySince > routeStabilityStart {
 		routeStabilityStart = route.State.StabilitySince
@@ -309,7 +309,8 @@ func channelSmartScheduleRealtimeMetricCoverage(
 	snapshots []service.ChannelMonitorRedisRouteHealthSnapshot,
 ) channelSmartScheduleMetricCoverageResponse {
 	performanceStart := max(generatedAt-int64(settings.SmartSchedulePerformanceWindowMinutes*60), 0)
-	stabilityStart := max(generatedAt-int64(settings.SmartScheduleStabilityWindowMinutes*60), 0)
+	stabilityWindowMinutes := settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes()
+	stabilityStart := max(generatedAt-int64(stabilityWindowMinutes*60), 0)
 	coverageStart := service.ChannelMonitorRedisRouteHealthCoverageStart()
 	for _, snapshot := range snapshots {
 		coverageStart = max(coverageStart, snapshot.CoverageStart)
@@ -322,9 +323,9 @@ func channelSmartScheduleRealtimeMetricCoverage(
 		PerformanceWindowComplete: coverageStart <= performanceStart,
 		StabilityWindowComplete:   coverageStart <= stabilityStart,
 		ConfiguredRetentionDays:   settings.CostRetentionDays,
-		RequiredRetentionMinutes:  max(settings.SmartSchedulePerformanceWindowMinutes, settings.SmartScheduleStabilityWindowMinutes),
+		RequiredRetentionMinutes:  max(settings.SmartSchedulePerformanceWindowMinutes, stabilityWindowMinutes),
 		ConfiguredRetentionSufficient: settings.SmartScheduleRealtimeRetentionMinutes >=
-			max(settings.SmartSchedulePerformanceWindowMinutes, settings.SmartScheduleStabilityWindowMinutes),
+			max(settings.SmartSchedulePerformanceWindowMinutes, stabilityWindowMinutes),
 		RealtimeRetentionMinutes: settings.SmartScheduleRealtimeRetentionMinutes,
 		RealtimeSampleLimit:      settings.SmartScheduleRealtimeSampleLimit,
 	}

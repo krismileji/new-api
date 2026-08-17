@@ -104,7 +104,7 @@ func recordChannelSmartScheduleProbeResult(
 	}
 	retentionMinutes := max(
 		settings.SmartSchedulePerformanceWindowMinutes,
-		settings.SmartScheduleStabilityWindowMinutes,
+		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	)
 	windowStart := probeTime - int64(retentionMinutes*60)
 	sampleId = strings.TrimSpace(sampleId)

@@ -539,8 +539,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   group: string
   strategy: ChannelMonitorSmartScheduleStrategy
   stability_enabled: boolean
-  /** Missing on legacy policies; the backend fills it from the former global setting. */
-  stability_window_minutes?: number
+  stability_window_minutes: number
   jitter_enabled: boolean
   jitter_tolerance_percent: number
   jitter_slow_threshold_seconds: number
@@ -630,7 +629,6 @@ export type ChannelMonitorSettings = {
   smart_schedule_config_error?: string
   smart_schedule_group_policies: ChannelMonitorSmartScheduleGroupPolicy[]
   smart_schedule_performance_window_minutes: number
-  smart_schedule_stability_window_minutes: number
   smart_schedule_realtime_retention_minutes: number
   smart_schedule_realtime_sample_limit: number
   smart_schedule_rate_limit_cooldown_seconds: number

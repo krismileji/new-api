@@ -10,7 +10,8 @@ import (
 
 const (
 	channelMonitorSmartScheduleEnabledOption       = "ChannelMonitorSmartScheduleEnabled"
-	channelMonitorSmartScheduleGroupPoliciesOption = "ChannelMonitorSmartScheduleGroupPolicies"
+	ChannelMonitorSmartScheduleGroupPoliciesOption = "ChannelMonitorSmartScheduleGroupPolicies"
+	channelMonitorSmartScheduleGroupPoliciesOption = ChannelMonitorSmartScheduleGroupPoliciesOption
 )
 
 type channelSmartScheduleTrafficPolicyGroup struct {

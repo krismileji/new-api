@@ -52,7 +52,7 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			currentWeight = route.State.BaseWeight
 		}
 		adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
-		stabilityStart := now - int64(policy.stabilityWindowMinutes()*60)
+		stabilityStart := now - int64(policy.StabilityWindowMinutes*60)
 		readWindowStart := min(adaptiveWindowStart, performanceStart, stabilityStart)
 		routeEvents, snapshot, err := channelSmartScheduleRealtimeEvents(
 			ctx, route.ChannelId, route.Model, readWindowStart,

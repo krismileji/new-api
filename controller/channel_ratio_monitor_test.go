@@ -598,12 +598,12 @@ func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {
 	settings := getChannelMonitorSettings()
 	assert.True(t, settings.SmartScheduleEnabled)
 	assert.Equal(t, defaultChannelMonitorSmartSchedulePerformanceWindowMinutes, settings.SmartSchedulePerformanceWindowMinutes)
-	assert.Equal(t, defaultChannelMonitorSmartScheduleStabilityWindowMinutes, settings.SmartScheduleStabilityWindowMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRealtimeRetentionMinutes, settings.SmartScheduleRealtimeRetentionMinutes)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRealtimeSampleLimit, settings.SmartScheduleRealtimeSampleLimit)
 	assert.Equal(t, defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds, settings.SmartScheduleRateLimitCooldownSeconds)
 	require.Len(t, settings.SmartScheduleGroupPolicies, 1)
 	assert.Equal(t, "vip", settings.SmartScheduleGroupPolicies[0].Group)
+	assert.Equal(t, 5, *settings.SmartScheduleGroupPolicies[0].StabilityWindowMinutes)
 
 	handler := channelSmartScheduleTaskHandler{}
 	assert.Equal(t, channelMonitorSmartScheduleTaskType, handler.Type())
@@ -611,7 +611,7 @@ func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {
 	assert.False(t, scheduled)
 }
 
-func TestChannelSmartScheduleSettingsDeriveLegacyStabilityWindowFromPolicies(t *testing.T) {
+func TestChannelSmartScheduleSettingsRetentionCoversLargestPolicyStabilityWindow(t *testing.T) {
 	shortWindow := 5
 	longWindow := 90
 	shortPolicy := channelSmartScheduleTestGroupPolicy(
@@ -633,14 +633,12 @@ func TestChannelSmartScheduleSettingsDeriveLegacyStabilityWindowFromPolicies(t *
 		channelMonitorSmartScheduleEnabledOption:             "true",
 		channelMonitorSmartScheduleGroupPoliciesOption:       string(serializedPolicies),
 		channelMonitorSmartSchedulePerformanceWindowOption:   "60",
-		channelMonitorSmartScheduleStabilityWindowOption:     "5",
 		channelMonitorSmartScheduleRealtimeRetentionOption:   "60",
 		channelMonitorSmartScheduleRealtimeSampleLimitOption: "20000",
 		channelMonitorSmartScheduleRateLimitCooldownOption:   "30",
 	})
 
 	assert.True(t, settings.SmartScheduleEnabled)
-	assert.Equal(t, 90, settings.SmartScheduleStabilityWindowMinutes)
 	assert.Equal(t, 90, settings.SmartScheduleRealtimeRetentionMinutes)
 	require.Len(t, settings.SmartScheduleGroupPolicies, 2)
 	assert.Equal(t, 5, *settings.SmartScheduleGroupPolicies[0].StabilityWindowMinutes)
@@ -1057,8 +1055,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		}},
 		{"smart_schedule_performance_window_minutes": 0},
 		{"smart_schedule_performance_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
-		{"smart_schedule_stability_window_minutes": 0},
-		{"smart_schedule_stability_window_minutes": maxChannelMonitorSmartScheduleWindowMinutes + 1},
 		{"smart_schedule_realtime_retention_minutes": minChannelMonitorSmartScheduleRealtimeRetentionMinutes - 1},
 		{"smart_schedule_realtime_retention_minutes": maxChannelMonitorSmartScheduleRealtimeRetentionMinutes + 1},
 		{"smart_schedule_realtime_sample_limit": minChannelMonitorSmartScheduleRealtimeSampleLimit - 1},
@@ -1098,7 +1094,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"smart_schedule_group_policies": []map[string]any{
 			{
 				"group": " vip ", "strategy": channelMonitorSmartScheduleStrategyRatio,
-				"stability_enabled": false, "scoring": validScoring,
+				"stability_enabled": false, "stability_window_minutes": 15, "scoring": validScoring,
 				"apply_mode":  channelMonitorSmartScheduleApplyWeight,
 				"models":      []string{" gpt-4o-mini ", "gpt-4o-mini"},
 				"min_samples": 8, "recovery_stability_score": 95,
@@ -1120,7 +1116,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 			},
 			{
 				"group": "default", "strategy": channelMonitorSmartScheduleStrategySmart,
-				"stability_enabled": true, "scoring": validScoring,
+				"stability_enabled": true, "stability_window_minutes": 120, "scoring": validScoring,
 				"apply_mode":  channelMonitorSmartScheduleApplyPriorityWeight,
 				"models":      []string{"claude-3-5-sonnet", "gpt-4o-mini"},
 				"model_order": []string{" gpt-4o-mini ", "claude-3-5-sonnet", "gpt-4o-mini"},
@@ -1147,7 +1143,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 			},
 		},
 		"smart_schedule_performance_window_minutes":  360,
-		"smart_schedule_stability_window_minutes":    120,
 		"smart_schedule_realtime_retention_minutes":  720,
 		"smart_schedule_realtime_sample_limit":       50000,
 		"smart_schedule_rate_limit_cooldown_seconds": 300,
@@ -1190,6 +1185,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 5, *defaultGroupPolicy.ProbeIntervalMinutes)
 	require.NotNil(t, defaultGroupPolicy.StabilityEnabled)
 	assert.True(t, *defaultGroupPolicy.StabilityEnabled)
+	require.NotNil(t, defaultGroupPolicy.StabilityWindowMinutes)
+	assert.Equal(t, 120, *defaultGroupPolicy.StabilityWindowMinutes)
 	require.NotNil(t, defaultGroupPolicy.Scoring)
 	assert.Equal(t, validScoring, *defaultGroupPolicy.Scoring)
 	require.NotNil(t, defaultGroupPolicy.ApplyMode)
@@ -1242,6 +1239,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, channelMonitorSmartScheduleSamplingOrderRatio, *groupPolicy.SamplingOrder)
 	require.NotNil(t, groupPolicy.StabilityEnabled)
 	assert.False(t, *groupPolicy.StabilityEnabled)
+	require.NotNil(t, groupPolicy.StabilityWindowMinutes)
+	assert.Equal(t, 15, *groupPolicy.StabilityWindowMinutes)
 	require.NotNil(t, groupPolicy.Scoring)
 	assert.Equal(t, validScoring, *groupPolicy.Scoring)
 	require.NotNil(t, groupPolicy.ApplyMode)
@@ -1281,7 +1280,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotNil(t, groupPolicy.AdaptiveSamplingWindowSeconds)
 	assert.Equal(t, 600, *groupPolicy.AdaptiveSamplingWindowSeconds)
 	assert.Equal(t, 360, response.Data.SmartSchedulePerformanceWindowMinutes)
-	assert.Equal(t, 120, response.Data.SmartScheduleStabilityWindowMinutes)
 	assert.Equal(t, 720, response.Data.SmartScheduleRealtimeRetentionMinutes)
 	assert.Equal(t, 50000, response.Data.SmartScheduleRealtimeSampleLimit)
 	assert.Equal(t, 300, response.Data.SmartScheduleRateLimitCooldownSeconds)
@@ -1351,9 +1349,6 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartSchedulePerformanceWindowOption).First(&option).Error)
 	assert.Equal(t, "360", option.Value)
-	option = model.Option{}
-	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleStabilityWindowOption).First(&option).Error)
-	assert.Equal(t, "120", option.Value)
 	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorSmartScheduleRealtimeRetentionOption).First(&option).Error)
 	assert.Equal(t, "720", option.Value)

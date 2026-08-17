@@ -447,7 +447,7 @@ func runChannelSmartScheduleOnce(ctx context.Context, reportProgress func(proces
 		ForceReset:               forceReset,
 		GroupPolicies:            settings.SmartScheduleGroupPolicies,
 		PerformanceWindowMinutes: settings.SmartSchedulePerformanceWindowMinutes,
-		StabilityWindowMinutes:   settings.SmartScheduleStabilityWindowMinutes,
+		StabilityWindowMinutes:   settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	}
 	if len(settings.SmartScheduleGroupPolicies) == 0 {
 		return result, fmt.Errorf("智能调度已禁用，请先配置至少一个完整的分组策略")

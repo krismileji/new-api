@@ -59,6 +59,7 @@ function createGroupPolicy(
     group,
     strategy: 'smart',
     stability_enabled: true,
+    stability_window_minutes: 15,
     jitter_enabled: true,
     jitter_tolerance_percent: 5,
     jitter_slow_threshold_seconds: 10,

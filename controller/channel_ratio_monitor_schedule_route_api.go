@@ -86,12 +86,13 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	}
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
+	stabilityWindowMinutes := settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes()
 	responseRoutes := channelSmartScheduleRouteResponses(routes)
 	if !loadMetrics {
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                  generatedAt,
 			"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
-			"stability_window_minutes":      settings.SmartScheduleStabilityWindowMinutes,
+			"stability_window_minutes":      stabilityWindowMinutes,
 			"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
 			"enabled":                       settings.SmartScheduleEnabled,
 			"metrics_included":              false,
@@ -233,7 +234,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"stream_trim_failure_active":    redisStatus.StreamTrimFailureActive,
 		"realtime_degraded":             windowIncomplete || redisStatus.RealtimeDegraded,
 		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
-		"stability_window_minutes":      settings.SmartScheduleStabilityWindowMinutes,
+		"stability_window_minutes":      stabilityWindowMinutes,
 		"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
 		"enabled":                       settings.SmartScheduleEnabled,
 		"metrics_included":              true,

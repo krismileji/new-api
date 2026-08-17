@@ -261,7 +261,7 @@ func runChannelSmartScheduleProbeOnce(
 	now := common.GetTimestamp()
 	retentionMinutes := max(
 		settings.SmartSchedulePerformanceWindowMinutes,
-		settings.SmartScheduleStabilityWindowMinutes,
+		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	)
 	retentionStart := now - int64(retentionMinutes*60)
 	type dueProbe struct {

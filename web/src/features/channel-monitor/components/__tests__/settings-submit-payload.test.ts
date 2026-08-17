@@ -153,7 +153,6 @@ const formValues = {
     },
   ],
   smartSchedulePerformanceWindowMinutes: 60,
-  smartScheduleStabilityWindowMinutes: 120,
   smartScheduleRealtimeRetentionMinutes: 120,
   smartScheduleRealtimeSampleLimit: 20_000,
   smartScheduleRateLimitCooldownSeconds: 30,
@@ -246,7 +245,6 @@ describe('channel monitor settings submit payload', () => {
       10
     )
     assert.equal(payload.smart_schedule_performance_window_minutes, 60)
-    assert.equal(payload.smart_schedule_stability_window_minutes, undefined)
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.stability_window_minutes,
       15

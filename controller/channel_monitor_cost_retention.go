@@ -193,7 +193,6 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		StatusProbeHistoryRetentionDays:       defaultChannelMonitorStatusProbeHistoryRetentionDays,
 		ModelDetectionRetentionDays:           model.ChannelModelDetectionDefaultRetentionDays,
 		SmartSchedulePerformanceWindowMinutes: defaultChannelMonitorSmartSchedulePerformanceWindowMinutes,
-		SmartScheduleStabilityWindowMinutes:   defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
 	}
 	var options []model.Option
 	retentionOptionKeys := []string{
@@ -206,7 +205,7 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		channelMonitorStatusProbeHistoryRetentionDaysOption,
 		channelMonitorModelDetectionRetentionDaysOption,
 		channelMonitorSmartSchedulePerformanceWindowOption,
-		channelMonitorSmartScheduleStabilityWindowOption,
+		channelMonitorSmartScheduleGroupPoliciesOption,
 	}
 	if err := model.DB.WithContext(ctx).
 		Select("key", "value").
@@ -271,11 +270,12 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
 				settings.SmartSchedulePerformanceWindowMinutes = minutes
 			}
-		case channelMonitorSmartScheduleStabilityWindowOption:
-			minutes, err := strconv.Atoi(option.Value)
-			if err == nil && isChannelMonitorSmartScheduleWindowSupported(minutes) {
-				settings.SmartScheduleStabilityWindowMinutes = minutes
+		case channelMonitorSmartScheduleGroupPoliciesOption:
+			policies, err := parseChannelSmartScheduleGroupPoliciesWithError(option.Value)
+			if err != nil {
+				return channelMonitorSettings{}, fmt.Errorf("读取分组调度策略失败: %w", err)
 			}
+			settings.SmartScheduleGroupPolicies = policies
 		}
 	}
 	if settings.TaskRetentionDays < settings.ExecutionDetailRetentionDays {
@@ -320,7 +320,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		now,
 		routeMetricConfiguredCutoff,
 		settings.SmartSchedulePerformanceWindowMinutes,
-		settings.SmartScheduleStabilityWindowMinutes,
+		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	)
 	apiKeyMetricCutoff := channelMonitorHistoryRetentionCutoff(now, settings.APIKeyMetricRetentionDays)
 	historyCutoffs := model.ChannelMonitorHistoryRetentionCutoffs{

@@ -40,9 +40,12 @@ func TestChannelSmartScheduleRemainingAdaptiveWindowRequestsPreventsCombinedWind
 
 func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(t *testing.T) {
 	generatedAt := common.GetTimestamp() + 2*60*60
+	stabilityWindowMinutes := 60
 	settings := channelMonitorSettings{
 		SmartSchedulePerformanceWindowMinutes: 60,
-		SmartScheduleStabilityWindowMinutes:   60,
+		SmartScheduleGroupPolicies: smartScheduleGroupPolicies{{
+			StabilityWindowMinutes: &stabilityWindowMinutes,
+		}},
 		SmartScheduleRealtimeRetentionMinutes: 60,
 		SmartScheduleRealtimeSampleLimit:      1000,
 	}
@@ -685,16 +688,17 @@ func TestGetChannelMonitorSmartScheduleRoutesReturnsWindowedSharedSamples(t *tes
 		common.LogConsumeEnabled = originalLogConsumeEnabled
 		constant.ErrorLogEnabled = originalErrorLogEnabled
 	})
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 90, 30,
+	)
+	stabilityWindowMinutes := 1
+	policy.StabilityWindowMinutes = &stabilityWindowMinutes
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartSchedulePerformanceWindowOption: "5",
-		channelMonitorSmartScheduleStabilityWindowOption:   "1",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
-			t,
-			channelSmartScheduleTestGroupPolicy(
-				"vip", channelMonitorSmartScheduleStrategyRatio, false,
-				channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 90, 30,
-			),
+			t, policy,
 		),
 	})
 	priority := int64(80)
@@ -878,10 +882,11 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyWeight, []string{exactModel}, 1, 90, 30,
 	)
+	stabilityWindowMinutes := 60
+	policy.StabilityWindowMinutes = &stabilityWindowMinutes
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartSchedulePerformanceWindowOption: "60",
-		channelMonitorSmartScheduleStabilityWindowOption:   "60",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
 			t, policy,
 		),

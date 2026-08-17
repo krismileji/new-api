@@ -334,7 +334,7 @@ func runChannelSmartScheduleByRouteOnce(
 			groupRatio,
 			groupRatioAvailable,
 		)
-		routeStabilityWindowStart := now - int64(policy.stabilityWindowMinutes()*60)
+		routeStabilityWindowStart := now - int64(policy.StabilityWindowMinutes*60)
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince

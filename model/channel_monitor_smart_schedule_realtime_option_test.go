@@ -29,11 +29,10 @@ func TestChannelMonitorSmartScheduleRealtimeSettingsFromOptions(t *testing.T) {
 			want: ChannelMonitorSmartScheduleRealtimeSettings{RetentionMinutes: 180, SampleLimit: 50000},
 		},
 		{
-			name: "retention covers configured windows",
+			name: "retention covers performance window",
 			options: map[string]string{
 				ChannelMonitorSmartScheduleRealtimeRetentionOption: "60",
 				ChannelMonitorSmartSchedulePerformanceWindowOption: "120",
-				ChannelMonitorSmartScheduleStabilityWindowOption:   "90",
 			},
 			want: ChannelMonitorSmartScheduleRealtimeSettings{
 				RetentionMinutes: 120,

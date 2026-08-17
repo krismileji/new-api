@@ -12,7 +12,6 @@ type channelMonitorRuntimeSettingsRaw struct {
 	enabled           string
 	groupPolicies     string
 	performanceWindow string
-	stabilityWindow   string
 	rateLimitCooldown string
 	controlRevision   string
 }
@@ -31,7 +30,6 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 		enabled:           common.OptionMap[channelMonitorSmartScheduleEnabledOption],
 		groupPolicies:     common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption],
 		performanceWindow: common.OptionMap[channelMonitorSmartSchedulePerformanceWindowOption],
-		stabilityWindow:   common.OptionMap[channelMonitorSmartScheduleStabilityWindowOption],
 		rateLimitCooldown: common.OptionMap[channelMonitorSmartScheduleRateLimitCooldownOption],
 		controlRevision:   common.OptionMap[channelMonitorSmartScheduleControlRevisionOption],
 	}
@@ -54,18 +52,11 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(performanceWindow) {
 		performanceWindow = defaultChannelMonitorSmartSchedulePerformanceWindowMinutes
 	}
-	stabilityWindow, err := strconv.Atoi(raw.stabilityWindow)
-	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(stabilityWindow) {
-		stabilityWindow = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
-	}
 	rateLimitCooldown, err := strconv.Atoi(raw.rateLimitCooldown)
 	if err != nil || rateLimitCooldown < 0 || rateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
 		rateLimitCooldown = defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds
 	}
-	groupPolicies, _ := parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
-		raw.groupPolicies, stabilityWindow,
-	)
-	stabilityWindow = smartScheduleGroupPolicies(groupPolicies).maxStabilityWindowMinutes(stabilityWindow)
+	groupPolicies, _ := parseChannelSmartScheduleGroupPoliciesWithError(raw.groupPolicies)
 	if len(groupPolicies) == 0 {
 		enabled = false
 	}
@@ -73,7 +64,6 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 		SmartScheduleEnabled:                  enabled,
 		SmartScheduleGroupPolicies:            groupPolicies,
 		SmartSchedulePerformanceWindowMinutes: performanceWindow,
-		SmartScheduleStabilityWindowMinutes:   stabilityWindow,
 		SmartScheduleRateLimitCooldownSeconds: rateLimitCooldown,
 		SmartScheduleControlRevision:          raw.controlRevision,
 	}

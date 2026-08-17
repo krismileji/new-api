@@ -27,7 +27,7 @@ type channelMonitorSmartScheduleGroupPolicyRetention struct {
 	StabilityWindowMinutes *int `json:"stability_window_minutes"`
 }
 
-func channelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(raw string) int {
+func ChannelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(raw string) int {
 	if raw == "" {
 		return 0
 	}
@@ -59,10 +59,7 @@ func ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(
 		sampleLimit > ChannelMonitorSmartScheduleMaxRealtimeSampleLimit {
 		sampleLimit = ChannelMonitorSmartScheduleDefaultRealtimeSampleLimit
 	}
-	for _, key := range []string{
-		ChannelMonitorSmartSchedulePerformanceWindowOption,
-		ChannelMonitorSmartScheduleStabilityWindowOption,
-	} {
+	for _, key := range []string{ChannelMonitorSmartSchedulePerformanceWindowOption} {
 		windowMinutes, parseErr := strconv.Atoi(options[key])
 		if parseErr == nil && windowMinutes > retentionMinutes &&
 			windowMinutes <= ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes {
@@ -71,7 +68,7 @@ func ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(
 	}
 	retentionMinutes = max(
 		retentionMinutes,
-		channelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(
+		ChannelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(
 			options[channelMonitorSmartScheduleGroupPoliciesOption],
 		),
 	)
@@ -87,7 +84,6 @@ func GetChannelMonitorSmartScheduleRealtimeSettings() ChannelMonitorSmartSchedul
 		ChannelMonitorSmartScheduleRealtimeRetentionOption:   common.OptionMap[ChannelMonitorSmartScheduleRealtimeRetentionOption],
 		ChannelMonitorSmartScheduleRealtimeSampleLimitOption: common.OptionMap[ChannelMonitorSmartScheduleRealtimeSampleLimitOption],
 		ChannelMonitorSmartSchedulePerformanceWindowOption:   common.OptionMap[ChannelMonitorSmartSchedulePerformanceWindowOption],
-		ChannelMonitorSmartScheduleStabilityWindowOption:     common.OptionMap[ChannelMonitorSmartScheduleStabilityWindowOption],
 		channelMonitorSmartScheduleGroupPoliciesOption:       common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption],
 	}
 	common.OptionMapRWMutex.RUnlock()

@@ -1021,7 +1021,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 	settings := getChannelMonitorRuntimeSettings()
 	adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
 	performanceWindowStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
-	stabilityWindowStart := now - int64(policy.stabilityWindowMinutes()*60)
+	stabilityWindowStart := now - int64(policy.StabilityWindowMinutes*60)
 	healthByChannel := make(map[int]channelSmartScheduleHealthUpdate, len(routes))
 	metricByChannel := make(map[int]model.ChannelSmartScheduleAdaptiveHealthMetric, len(routes))
 	cooldownUntilByChannel := make(map[int]int64, len(routes))

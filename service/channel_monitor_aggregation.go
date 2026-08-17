@@ -495,18 +495,14 @@ func channelMonitorAggregationBackfillLimits() (int, time.Duration, time.Duratio
 func channelMonitorAggregationBackfillWindowMinutes() int {
 	common.OptionMapRWMutex.RLock()
 	rawPerformanceWindow := common.OptionMap[model.ChannelMonitorSmartSchedulePerformanceWindowOption]
-	rawStabilityWindow := common.OptionMap[model.ChannelMonitorSmartScheduleStabilityWindowOption]
+	rawGroupPolicies := common.OptionMap[model.ChannelMonitorSmartScheduleGroupPoliciesOption]
 	common.OptionMapRWMutex.RUnlock()
 
 	performanceWindow, err := strconv.Atoi(rawPerformanceWindow)
 	if err != nil || performanceWindow <= 0 || performanceWindow > model.ChannelMonitorSmartScheduleMaxWindowMinutes {
 		performanceWindow = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
 	}
-	stabilityWindow, err := strconv.Atoi(rawStabilityWindow)
-	if err != nil || stabilityWindow <= 0 || stabilityWindow > model.ChannelMonitorSmartScheduleMaxWindowMinutes {
-		stabilityWindow = model.ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes
-	}
-	return max(performanceWindow, stabilityWindow)
+	return max(performanceWindow, model.ChannelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(rawGroupPolicies))
 }
 
 func channelMonitorAggregationWindow(now int64, startup bool) (int64, int64, string) {

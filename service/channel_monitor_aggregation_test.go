@@ -282,7 +282,7 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 	originalOptionMap := common.OptionMap
 	common.OptionMap = map[string]string{
 		model.ChannelMonitorSmartSchedulePerformanceWindowOption: "180",
-		model.ChannelMonitorSmartScheduleStabilityWindowOption:   "60",
+		model.ChannelMonitorSmartScheduleGroupPoliciesOption:     `[{"stability_window_minutes":60}]`,
 	}
 	common.OptionMapRWMutex.Unlock()
 	t.Cleanup(func() {

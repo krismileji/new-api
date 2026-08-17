@@ -17,10 +17,8 @@ import (
 const (
 	ChannelMonitorGroupCoefficientsOption                      = "ChannelMonitorGroupCoefficients"
 	ChannelMonitorSmartSchedulePerformanceWindowOption         = "ChannelMonitorSmartSchedulePerformanceWindowMinutes"
-	ChannelMonitorSmartScheduleStabilityWindowOption           = "ChannelMonitorSmartScheduleStabilityWindowMinutes"
 	ChannelMonitorSmartScheduleMaxWindowMinutes                = ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes
 	ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes = 60
-	ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes   = 5
 )
 
 const channelMonitorGroupRatioEpsilon = 1e-9
