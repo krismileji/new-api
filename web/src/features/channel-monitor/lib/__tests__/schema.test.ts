@@ -775,7 +775,7 @@ describe('channel monitor settings schema', () => {
         smartScheduleStabilityWindowMinutes: 120,
         smartScheduleRealtimeRetentionMinutes: 60,
       }).success,
-      false
+      true
     )
     for (const windowMinutes of [
       MIN_SMART_SCHEDULE_WINDOW_MINUTES - 1,
@@ -845,6 +845,7 @@ describe('channel monitor settings schema', () => {
       group: 'vip',
       strategy: 'smart' as const,
       stabilityEnabled: true,
+      stabilityWindowMinutes: 60,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
       jitterSlowThresholdSeconds: 10,
@@ -922,6 +923,30 @@ describe('channel monitor settings schema', () => {
     const schema = createChannelMonitorSettingsSchema()
 
     assert.equal(schema.safeParse(baseSettings).success, true)
+    assert.equal(
+      schema.safeParse({
+        ...baseSettings,
+        smartScheduleGroupPolicies: [
+          { ...groupPolicy, stabilityWindowMinutes: 120 },
+        ],
+      }).success,
+      false
+    )
+    for (const stabilityWindowMinutes of [
+      MIN_SMART_SCHEDULE_WINDOW_MINUTES - 1,
+      1.5,
+      MAX_SMART_SCHEDULE_WINDOW_MINUTES + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({
+          ...baseSettings,
+          smartScheduleGroupPolicies: [
+            { ...groupPolicy, stabilityWindowMinutes },
+          ],
+        }).success,
+        false
+      )
+    }
     for (const jitterTolerancePercent of [0, 50]) {
       assert.equal(
         schema.safeParse({

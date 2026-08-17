@@ -95,6 +95,7 @@ const formValues = {
       group: 'vip',
       strategy: 'smart',
       stabilityEnabled: true,
+      stabilityWindowMinutes: 15,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
       jitterSlowThresholdSeconds: 10,
@@ -181,7 +182,6 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_rate_limit_cooldown_seconds',
       'smart_schedule_realtime_retention_minutes',
       'smart_schedule_realtime_sample_limit',
-      'smart_schedule_stability_window_minutes',
     ])
     assert.equal(payload.smart_schedule_control_revision, 'revision-a')
     assert.equal(payload.smart_schedule_group_policies?.[0]?.group, 'vip')
@@ -246,7 +246,11 @@ describe('channel monitor settings submit payload', () => {
       10
     )
     assert.equal(payload.smart_schedule_performance_window_minutes, 60)
-    assert.equal(payload.smart_schedule_stability_window_minutes, 120)
+    assert.equal(payload.smart_schedule_stability_window_minutes, undefined)
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.stability_window_minutes,
+      15
+    )
     assert.equal(payload.smart_schedule_realtime_retention_minutes, 120)
     assert.equal(payload.smart_schedule_realtime_sample_limit, 20_000)
     assert.equal(payload.smart_schedule_rate_limit_cooldown_seconds, 30)

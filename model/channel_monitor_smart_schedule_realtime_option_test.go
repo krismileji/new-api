@@ -41,6 +41,17 @@ func TestChannelMonitorSmartScheduleRealtimeSettingsFromOptions(t *testing.T) {
 			},
 		},
 		{
+			name: "retention covers the largest group stability window",
+			options: map[string]string{
+				ChannelMonitorSmartScheduleRealtimeRetentionOption: "60",
+				channelMonitorSmartScheduleGroupPoliciesOption:     `[{"stability_window_minutes":5},{"stability_window_minutes":90}]`,
+			},
+			want: ChannelMonitorSmartScheduleRealtimeSettings{
+				RetentionMinutes: 90,
+				SampleLimit:      ChannelMonitorSmartScheduleDefaultRealtimeSampleLimit,
+			},
+		},
+		{
 			name: "out of range values use defaults",
 			options: map[string]string{
 				ChannelMonitorSmartScheduleRealtimeRetentionOption:   strconv.Itoa(ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes + 1),

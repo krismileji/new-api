@@ -62,7 +62,10 @@ func getChannelMonitorRuntimeSettings() channelMonitorSettings {
 	if err != nil || rateLimitCooldown < 0 || rateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
 		rateLimitCooldown = defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds
 	}
-	groupPolicies := parseChannelSmartScheduleGroupPolicies(raw.groupPolicies)
+	groupPolicies, _ := parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
+		raw.groupPolicies, stabilityWindow,
+	)
+	stabilityWindow = smartScheduleGroupPolicies(groupPolicies).maxStabilityWindowMinutes(stabilityWindow)
 	if len(groupPolicies) == 0 {
 		enabled = false
 	}

@@ -23,6 +23,29 @@ type ChannelMonitorSmartScheduleRealtimeSettings struct {
 	SampleLimit      int
 }
 
+type channelMonitorSmartScheduleGroupPolicyRetention struct {
+	StabilityWindowMinutes *int `json:"stability_window_minutes"`
+}
+
+func channelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	var policies []channelMonitorSmartScheduleGroupPolicyRetention
+	if err := common.UnmarshalJsonStr(raw, &policies); err != nil {
+		return 0
+	}
+	maximum := 0
+	for _, policy := range policies {
+		if policy.StabilityWindowMinutes != nil &&
+			*policy.StabilityWindowMinutes >= 1 &&
+			*policy.StabilityWindowMinutes <= ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes {
+			maximum = max(maximum, *policy.StabilityWindowMinutes)
+		}
+	}
+	return maximum
+}
+
 func ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(
 	options map[string]string,
 ) ChannelMonitorSmartScheduleRealtimeSettings {
@@ -46,6 +69,12 @@ func ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(
 			retentionMinutes = windowMinutes
 		}
 	}
+	retentionMinutes = max(
+		retentionMinutes,
+		channelMonitorSmartScheduleMaxPolicyStabilityWindowMinutes(
+			options[channelMonitorSmartScheduleGroupPoliciesOption],
+		),
+	)
 	return ChannelMonitorSmartScheduleRealtimeSettings{
 		RetentionMinutes: retentionMinutes,
 		SampleLimit:      sampleLimit,
@@ -59,6 +88,7 @@ func GetChannelMonitorSmartScheduleRealtimeSettings() ChannelMonitorSmartSchedul
 		ChannelMonitorSmartScheduleRealtimeSampleLimitOption: common.OptionMap[ChannelMonitorSmartScheduleRealtimeSampleLimitOption],
 		ChannelMonitorSmartSchedulePerformanceWindowOption:   common.OptionMap[ChannelMonitorSmartSchedulePerformanceWindowOption],
 		ChannelMonitorSmartScheduleStabilityWindowOption:     common.OptionMap[ChannelMonitorSmartScheduleStabilityWindowOption],
+		channelMonitorSmartScheduleGroupPoliciesOption:       common.OptionMap[channelMonitorSmartScheduleGroupPoliciesOption],
 	}
 	common.OptionMapRWMutex.RUnlock()
 	return ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(options)

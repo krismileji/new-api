@@ -197,7 +197,7 @@ describe('smart schedule task adjustment history', () => {
     )
 
     assert.ok(markup.includes('3 个分组策略 · vip、default、batch'))
-    assert.ok(markup.includes('性能窗口 60 分钟 · 稳定性评分窗口 30 分钟'))
+    assert.ok(markup.includes('性能窗口 60 分钟 · 最长稳定性评分窗口 30 分钟'))
     assert.ok(markup.includes('强制重算'))
     assert.equal(markup.includes('只调整权重'), false)
   })
@@ -217,7 +217,7 @@ describe('smart schedule task adjustment history', () => {
     )
 
     assert.ok(markup.includes('未记录分组策略'))
-    assert.ok(markup.includes('性能窗口 30 分钟 · 稳定性评分窗口 15 分钟'))
+    assert.ok(markup.includes('性能窗口 30 分钟 · 最长稳定性评分窗口 15 分钟'))
   })
 
   test('shows route changes, scores, actions, and full adjustment reasons', () => {

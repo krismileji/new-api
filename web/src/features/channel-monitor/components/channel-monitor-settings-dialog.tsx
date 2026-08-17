@@ -583,7 +583,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       smartScheduleEnabled: props.settings.smart_schedule_enabled,
       smartScheduleGroupPolicies:
         channelMonitorSmartScheduleGroupPoliciesToForm(
-          props.settings.smart_schedule_group_policies
+          props.settings.smart_schedule_group_policies,
+          props.settings.smart_schedule_stability_window_minutes
         ),
       smartSchedulePerformanceWindowMinutes:
         props.settings.smart_schedule_performance_window_minutes,

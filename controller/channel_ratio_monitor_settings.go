@@ -471,20 +471,25 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || !isChannelMonitorSmartScheduleWindowSupported(smartScheduleStabilityWindow) {
 		smartScheduleStabilityWindow = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
 	}
-	realtimeSettings := model.ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(map[string]string{
-		channelMonitorSmartSchedulePerformanceWindowOption:   rawSmartSchedulePerformanceWindow,
-		channelMonitorSmartScheduleStabilityWindowOption:     rawSmartScheduleStabilityWindow,
-		channelMonitorSmartScheduleRealtimeRetentionOption:   rawSmartScheduleRealtimeRetention,
-		channelMonitorSmartScheduleRealtimeSampleLimitOption: rawSmartScheduleRealtimeSampleLimit,
-	})
 	smartScheduleRateLimitCooldown, err := strconv.Atoi(rawSmartScheduleRateLimitCooldown)
 	if err != nil || smartScheduleRateLimitCooldown < 0 || smartScheduleRateLimitCooldown > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
 		smartScheduleRateLimitCooldown = defaultChannelMonitorSmartScheduleRateLimitCooldownSeconds
 	}
-	smartScheduleGroupPolicies, smartScheduleConfigErr := parseChannelSmartScheduleGroupPoliciesWithError(
-		rawSmartScheduleGroupPolicies,
+	smartSchedulePolicies, smartScheduleConfigErr := parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
+		rawSmartScheduleGroupPolicies, smartScheduleStabilityWindow,
 	)
-	if smartScheduleConfigErr == nil && smartScheduleEnabled && len(smartScheduleGroupPolicies) == 0 {
+	if smartScheduleConfigErr == nil {
+		smartScheduleStabilityWindow = smartScheduleGroupPolicies(smartSchedulePolicies).maxStabilityWindowMinutes(
+			smartScheduleStabilityWindow,
+		)
+	}
+	realtimeSettings := model.ChannelMonitorSmartScheduleRealtimeSettingsFromOptions(map[string]string{
+		channelMonitorSmartSchedulePerformanceWindowOption:   strconv.Itoa(smartSchedulePerformanceWindow),
+		channelMonitorSmartScheduleStabilityWindowOption:     strconv.Itoa(smartScheduleStabilityWindow),
+		channelMonitorSmartScheduleRealtimeRetentionOption:   rawSmartScheduleRealtimeRetention,
+		channelMonitorSmartScheduleRealtimeSampleLimitOption: rawSmartScheduleRealtimeSampleLimit,
+	})
+	if smartScheduleConfigErr == nil && smartScheduleEnabled && len(smartSchedulePolicies) == 0 {
 		smartScheduleConfigErr = errors.New("智能调度已启用，但分组调度策略为空")
 	}
 	smartScheduleConfigError := ""
@@ -529,7 +534,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		RelayHeaderTimeoutSeconds:             relayResponseHeaderTimeoutSeconds,
 		SmartScheduleEnabled:                  smartScheduleEnabled,
 		SmartScheduleConfigError:              smartScheduleConfigError,
-		SmartScheduleGroupPolicies:            smartScheduleGroupPolicies,
+		SmartScheduleGroupPolicies:            smartSchedulePolicies,
 		SmartSchedulePerformanceWindowMinutes: smartSchedulePerformanceWindow,
 		SmartScheduleStabilityWindowMinutes:   smartScheduleStabilityWindow,
 		SmartScheduleRealtimeRetentionMinutes: realtimeSettings.RetentionMinutes,
@@ -1261,9 +1266,37 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "智能调度稳定性评分窗口必须在 1 到 1440 分钟之间"})
 		return
 	}
+	legacyStabilityWindowMinutes := settings.SmartScheduleStabilityWindowMinutes
 	if request.SmartScheduleStabilityWindowMinutes != nil {
-		settings.SmartScheduleStabilityWindowMinutes = *request.SmartScheduleStabilityWindowMinutes
+		legacyStabilityWindowMinutes = *request.SmartScheduleStabilityWindowMinutes
+	}
+	if request.SmartScheduleGroupPolicies != nil {
+		groupPolicies, err := normalizeChannelSmartScheduleGroupPoliciesWithLegacyStabilityWindow(
+			*request.SmartScheduleGroupPolicies, legacyStabilityWindowMinutes,
+		)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.SmartScheduleGroupPolicies = groupPolicies
+	} else if request.SmartScheduleStabilityWindowMinutes != nil {
+		for index := range settings.SmartScheduleGroupPolicies {
+			value := legacyStabilityWindowMinutes
+			settings.SmartScheduleGroupPolicies[index].StabilityWindowMinutes = &value
+		}
+	}
+	if request.SmartScheduleGroupPolicies != nil || request.SmartScheduleStabilityWindowMinutes != nil {
+		serializedGroupPolicies, err := common.Marshal(settings.SmartScheduleGroupPolicies)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		settings.SmartScheduleStabilityWindowMinutes = settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(
+			legacyStabilityWindowMinutes,
+		)
+		values[channelMonitorSmartScheduleGroupPoliciesOption] = string(serializedGroupPolicies)
 		values[channelMonitorSmartScheduleStabilityWindowOption] = strconv.Itoa(settings.SmartScheduleStabilityWindowMinutes)
+		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
 	if request.SmartScheduleRealtimeRetentionMinutes != nil &&
 		(*request.SmartScheduleRealtimeRetentionMinutes < minChannelMonitorSmartScheduleRealtimeRetentionMinutes ||
@@ -1327,21 +1360,6 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.SmartScheduleRateLimitCooldownSeconds != nil {
 		settings.SmartScheduleRateLimitCooldownSeconds = *request.SmartScheduleRateLimitCooldownSeconds
 		values[channelMonitorSmartScheduleRateLimitCooldownOption] = strconv.Itoa(settings.SmartScheduleRateLimitCooldownSeconds)
-	}
-	if request.SmartScheduleGroupPolicies != nil {
-		groupPolicies, err := normalizeChannelSmartScheduleGroupPolicies(*request.SmartScheduleGroupPolicies)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-		serializedGroupPolicies, err := common.Marshal(groupPolicies)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		settings.SmartScheduleGroupPolicies = groupPolicies
-		values[channelMonitorSmartScheduleGroupPoliciesOption] = string(serializedGroupPolicies)
-		values[channelMonitorSmartScheduleEnabledOption] = strconv.FormatBool(settings.SmartScheduleEnabled)
 	}
 	if forceResetSmartSchedule && !settings.SmartScheduleEnabled {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "启用智能调度后才能强制重置"})

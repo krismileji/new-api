@@ -373,10 +373,7 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="smartSchedulePerformanceWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="60")[^>]*>/
     )
-    assert.match(
-      markup,
-      /<input(?=[^>]*name="smartScheduleStabilityWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="120")[^>]*>/
-    )
+    assert.doesNotMatch(markup, /name="smartScheduleStabilityWindowMinutes"/)
     assert.match(
       markup,
       /<input(?=[^>]*name="smartScheduleRealtimeRetentionMinutes")(?=[^>]*min="5")(?=[^>]*max="1440")(?=[^>]*value="120")[^>]*>/
@@ -398,7 +395,7 @@ describe('channel monitor settings dialog', () => {
       )
     )
     assert.ok(markup.includes('用于首字、TPS 和业务性能评分'))
-    assert.ok(markup.includes('用于成功率、失败耗时和首字抖动'))
+    assert.equal(markup.includes('用于成功率、失败耗时和首字抖动'), false)
     assert.match(
       markup,
       /<div(?=[^>]*data-slot="smart-schedule-runtime-fields")(?=[^>]*class="[^"]*\bitems-start\b[^"]*")[^>]*>/
@@ -415,7 +412,7 @@ describe('channel monitor settings dialog', () => {
 
     assert.ok(runtimeSettingsIndex >= 0)
     assert.ok(runtimeSettingsIndex < groupPolicyIndex)
-    assert.ok(markup.includes('控制所有已配置分组的统计窗口'))
+    assert.ok(markup.includes('控制全局性能窗口'))
     assert.equal(markup.includes('执行频率'), false)
     assert.ok(forceResetIndex > groupPolicyIndex)
   })
@@ -460,7 +457,6 @@ describe('channel monitor settings dialog', () => {
     for (const label of [
       '智能调度',
       '性能窗口',
-      '稳定性评分窗口',
       '429 冷却时间',
       '上游响应等待时间',
       '强制重置优先级和权重',
@@ -477,6 +473,7 @@ describe('channel monitor settings dialog', () => {
       '目标探索流量',
       '探索请求上限',
       '稳定性保护',
+      '稳定性评分窗口',
       '降级期间定时探测',
       '稳定性占比',
       '恢复稳定性得分',
@@ -784,6 +781,10 @@ describe('channel monitor settings dialog', () => {
     )
 
     assert.ok(markup.includes('成功延迟抖动'))
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="stabilityWindowMinutes")(?=[^>]*min="1")(?=[^>]*max="1440")(?=[^>]*value="5")[^>]*>/
+    )
     assert.ok(markup.includes('aria-label="成功延迟抖动"'))
     assert.ok(markup.includes('允许偶发的慢成功'))
     assert.match(

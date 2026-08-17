@@ -30,6 +30,7 @@ import {
 const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   strategy: 'smart',
   stabilityEnabled: true,
+  stabilityWindowMinutes: 15,
   jitterEnabled: true,
   jitterTolerancePercent: 5,
   jitterSlowThresholdSeconds: 10,
@@ -119,6 +120,7 @@ describe('smart schedule group policy', () => {
         group: 'vip',
         strategy: defaultPolicy.strategy,
         stability_enabled: false,
+        stability_window_minutes: defaultPolicy.stabilityWindowMinutes,
         jitter_enabled: defaultPolicy.jitterEnabled,
         jitter_tolerance_percent: defaultPolicy.jitterTolerancePercent,
         jitter_slow_threshold_seconds: defaultPolicy.jitterSlowThresholdSeconds,
@@ -192,11 +194,13 @@ describe('smart schedule group policy', () => {
       channelMonitorSmartScheduleGroupPoliciesToApi(formPolicies)
 
     assert.equal(formPolicies[0]?.stabilityEnabled, false)
+    assert.equal(formPolicies[0]?.stabilityWindowMinutes, 15)
     assert.equal(formPolicies[0]?.degradedProbeEnabled, false)
     assert.deepEqual(formPolicies[0]?.models, [])
     assert.deepEqual(formPolicies[0]?.modelOrder, ['model-c', 'model-a'])
     assert.equal(apiPolicies[0]?.strategy, 'smart')
     assert.equal(apiPolicies[0]?.stability_enabled, false)
+    assert.equal(apiPolicies[0]?.stability_window_minutes, 15)
     assert.equal(apiPolicies[0]?.degraded_probe_enabled, false)
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
@@ -307,6 +311,10 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterEnabled,
       true
+    )
+    assert.equal(
+      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.stabilityWindowMinutes,
+      5
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterTolerancePercent,

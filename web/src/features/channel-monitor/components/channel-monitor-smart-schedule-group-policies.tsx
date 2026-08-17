@@ -357,7 +357,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
                   <dt className='text-muted-foreground text-xs'>稳定性</dt>
                   <dd className='mt-1 min-w-0 break-words'>
                     {policy.stabilityEnabled
-                      ? `保护 ${policy.burstFailureWindowMinutes} 分钟 / 最近 ${policy.burstFailureWindowRequests} 次 · 连续 ${policy.consecutiveFailureThreshold} 次 / 失败 ${policy.burstFailureThresholdPercent}% · 恢复 ${policy.recoverySuccessThreshold} 次`
+                      ? `评分 ${policy.stabilityWindowMinutes} 分钟 · 保护 ${policy.burstFailureWindowMinutes} 分钟 / 最近 ${policy.burstFailureWindowRequests} 次 · 连续 ${policy.consecutiveFailureThreshold} 次 / 失败 ${policy.burstFailureThresholdPercent}% · 恢复 ${policy.recoverySuccessThreshold} 次`
                       : '关闭'}
                   </dd>
                 </div>

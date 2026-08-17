@@ -250,6 +250,12 @@ const smartScheduleStabilityScoreSchema = z.coerce
   .min(0, '稳定性得分不能小于 0%')
   .max(100, '稳定性得分不能超过 100%')
 
+const smartScheduleStabilityWindowMinutesSchema = z.coerce
+  .number()
+  .int('稳定性评分窗口必须是整数')
+  .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性评分窗口不能小于 1 分钟')
+  .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性评分窗口不能超过 1440 分钟')
+
 const smartScheduleFastFailurePenaltySchema = z.coerce
   .number()
   .finite('快速失败惩罚必须是有效数字')
@@ -468,6 +474,7 @@ const smartScheduleAdaptiveSamplingComparableChannelsSchema = z.preprocess(
 const smartSchedulePolicyShape = {
   strategy: z.enum(channelMonitorSmartScheduleStrategies),
   stabilityEnabled: z.boolean(),
+  stabilityWindowMinutes: smartScheduleStabilityWindowMinutesSchema,
   jitterEnabled: z.boolean(),
   jitterTolerancePercent: smartScheduleJitterToleranceSchema,
   jitterSlowThresholdSeconds: smartScheduleJitterSlowThresholdSchema,
@@ -1088,14 +1095,8 @@ export function createChannelMonitorSettingsSchema() {
         .int('性能窗口必须是整数')
         .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能小于 1 分钟')
         .max(MAX_SMART_SCHEDULE_WINDOW_MINUTES, '性能窗口不能超过 1440 分钟'),
-      smartScheduleStabilityWindowMinutes: z.coerce
-        .number()
-        .int('稳定性评分窗口必须是整数')
-        .min(MIN_SMART_SCHEDULE_WINDOW_MINUTES, '稳定性评分窗口不能小于 1 分钟')
-        .max(
-          MAX_SMART_SCHEDULE_WINDOW_MINUTES,
-          '稳定性评分窗口不能超过 1440 分钟'
-        ),
+      smartScheduleStabilityWindowMinutes:
+        smartScheduleStabilityWindowMinutesSchema,
       smartScheduleRealtimeRetentionMinutes: z.coerce
         .number()
         .int('实时样本保留时间必须是整数')
@@ -1176,9 +1177,14 @@ export function createChannelMonitorSettingsSchema() {
           message: '实时样本保留时间不能短于性能窗口',
         })
       }
+      const maxStabilityWindowMinutes = Math.max(
+        0,
+        ...values.smartScheduleGroupPolicies.map(
+          (policy) => policy.stabilityWindowMinutes
+        )
+      )
       if (
-        values.smartScheduleRealtimeRetentionMinutes <
-        values.smartScheduleStabilityWindowMinutes
+        values.smartScheduleRealtimeRetentionMinutes < maxStabilityWindowMinutes
       ) {
         context.addIssue({
           code: 'custom',

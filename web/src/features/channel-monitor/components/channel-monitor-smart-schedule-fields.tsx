@@ -106,9 +106,7 @@ function ChannelMonitorSmartScheduleRealtimeStorageField(props: {
 
 function ChannelMonitorSmartScheduleWindowField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
-  name:
-    | 'smartSchedulePerformanceWindowMinutes'
-    | 'smartScheduleStabilityWindowMinutes'
+  name: 'smartSchedulePerformanceWindowMinutes'
   label: string
   description: string
   helpKey: ChannelMonitorSettingHelpKey
@@ -273,7 +271,8 @@ export function ChannelMonitorSmartScheduleFields(
             运行设置
           </h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            控制所有已配置分组的统计窗口、实时样本、429 临时冷却和响应等待时间
+            控制全局性能窗口、实时样本、429
+            临时冷却和响应等待时间；稳定性评分窗口在各分组策略中配置
           </p>
         </div>
         <div
@@ -308,14 +307,6 @@ export function ChannelMonitorSmartScheduleFields(
             min={MIN_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT}
             max={MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT}
             unit='条'
-          />
-
-          <ChannelMonitorSmartScheduleWindowField
-            form={props.form}
-            name='smartScheduleStabilityWindowMinutes'
-            label='稳定性评分窗口'
-            description='用于成功率、失败耗时和首字抖动的软评分'
-            helpKey='stabilityRange'
           />
 
           <ChannelMonitorRateLimitCooldownField form={props.form} />

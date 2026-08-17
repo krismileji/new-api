@@ -97,7 +97,6 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 		responses,
 		routes,
 		policyByGroup,
-		0,
 		now,
 	)
 
@@ -136,4 +135,38 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 	assert.Nil(t, byChannel[4].CurrentWindowScoreDetails)
 	assert.Nil(t, byChannel[5].CurrentWindowScore)
 	assert.Nil(t, byChannel[5].CurrentWindowScoreDetails)
+}
+
+func TestChannelSmartScheduleRealtimeRouteMetricViewUsesPolicyStabilityWindow(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		31, "vip", "model-a", now-10*60, true, nil, nil, nil, false,
+	))
+	route := model.ChannelSmartScheduleRoute{
+		ChannelId: 31,
+		Group:     "vip",
+		Model:     "model-a",
+		State:     model.ChannelSmartScheduleRouteState{ParticipationSet: true},
+	}
+	configured := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 1, 80, 30,
+	)
+	policy := configured.policy()
+	policy.StabilityWindowMinutes = 5
+
+	shortView, err := channelSmartScheduleRealtimeRouteMetricView(
+		context.Background(), route, policy, now-60*60, now,
+	)
+	require.NoError(t, err)
+	assert.Nil(t, shortView.stability)
+
+	policy.StabilityWindowMinutes = 15
+	longView, err := channelSmartScheduleRealtimeRouteMetricView(
+		context.Background(), route, policy, now-60*60, now,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, longView.stability)
+	assert.Equal(t, int64(1), longView.stability.SuccessCount)
 }

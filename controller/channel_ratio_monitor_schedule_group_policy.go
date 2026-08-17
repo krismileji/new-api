@@ -47,6 +47,7 @@ type channelSmartScheduleGroupPolicy struct {
 	Group                                           string                       `json:"group"`
 	Strategy                                        *string                      `json:"strategy,omitempty"`
 	StabilityEnabled                                *bool                        `json:"stability_enabled,omitempty"`
+	StabilityWindowMinutes                          *int                         `json:"stability_window_minutes,omitempty"`
 	Scoring                                         *channelSmartScheduleScoring `json:"scoring,omitempty"`
 	ApplyMode                                       *string                      `json:"apply_mode,omitempty"`
 	Models                                          *[]string                    `json:"models,omitempty"`
@@ -172,6 +173,22 @@ func (policy channelSmartScheduleGroupPolicy) MarshalJSON() ([]byte, error) {
 
 type smartScheduleGroupPolicies []channelSmartScheduleGroupPolicy
 
+func (policies smartScheduleGroupPolicies) maxStabilityWindowMinutes(fallback int) int {
+	maximum := 0
+	for _, policy := range policies {
+		if policy.StabilityWindowMinutes != nil && *policy.StabilityWindowMinutes > maximum {
+			maximum = *policy.StabilityWindowMinutes
+		}
+	}
+	if maximum == 0 {
+		maximum = fallback
+	}
+	if !isChannelMonitorSmartScheduleWindowSupported(maximum) {
+		maximum = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
+	}
+	return maximum
+}
+
 func channelSmartScheduleMinutesFromSeconds(seconds int) int {
 	if seconds <= 0 {
 		return 1
@@ -186,6 +203,7 @@ func channelSmartScheduleMinutesFromSeconds(seconds int) int {
 type channelSmartSchedulePolicy struct {
 	Strategy                                        string
 	StabilityEnabled                                bool
+	StabilityWindowMinutes                          int
 	Scoring                                         channelSmartScheduleScoring
 	ApplyMode                                       string
 	Models                                          []string
@@ -232,11 +250,22 @@ type channelSmartSchedulePolicy struct {
 }
 
 func parseChannelSmartScheduleGroupPolicies(raw string) []channelSmartScheduleGroupPolicy {
-	policies, _ := parseChannelSmartScheduleGroupPoliciesWithError(raw)
+	policies, _ := parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
+		raw, defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
+	)
 	return policies
 }
 
 func parseChannelSmartScheduleGroupPoliciesWithError(raw string) ([]channelSmartScheduleGroupPolicy, error) {
+	return parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
+		raw, defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
+	)
+}
+
+func parseChannelSmartScheduleGroupPoliciesWithErrorAndLegacyStabilityWindow(
+	raw string,
+	legacyStabilityWindowMinutes int,
+) ([]channelSmartScheduleGroupPolicy, error) {
 	if strings.TrimSpace(raw) == "" {
 		return []channelSmartScheduleGroupPolicy{}, nil
 	}
@@ -244,7 +273,9 @@ func parseChannelSmartScheduleGroupPoliciesWithError(raw string) ([]channelSmart
 	if err := common.UnmarshalJsonStr(raw, &policies); err != nil {
 		return []channelSmartScheduleGroupPolicy{}, fmt.Errorf("分组调度策略 JSON 无效: %w", err)
 	}
-	normalized, err := normalizeChannelSmartScheduleGroupPolicies(policies)
+	normalized, err := normalizeChannelSmartScheduleGroupPoliciesWithLegacyStabilityWindow(
+		policies, legacyStabilityWindowMinutes,
+	)
 	if err != nil {
 		return []channelSmartScheduleGroupPolicy{}, err
 	}
@@ -252,6 +283,18 @@ func parseChannelSmartScheduleGroupPoliciesWithError(raw string) ([]channelSmart
 }
 
 func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleGroupPolicy) ([]channelSmartScheduleGroupPolicy, error) {
+	return normalizeChannelSmartScheduleGroupPoliciesWithLegacyStabilityWindow(
+		policies, defaultChannelMonitorSmartScheduleStabilityWindowMinutes,
+	)
+}
+
+func normalizeChannelSmartScheduleGroupPoliciesWithLegacyStabilityWindow(
+	policies []channelSmartScheduleGroupPolicy,
+	legacyStabilityWindowMinutes int,
+) ([]channelSmartScheduleGroupPolicy, error) {
+	if !isChannelMonitorSmartScheduleWindowSupported(legacyStabilityWindowMinutes) {
+		legacyStabilityWindowMinutes = defaultChannelMonitorSmartScheduleStabilityWindowMinutes
+	}
 	if len(policies) > maxChannelMonitorSmartScheduleGroupCount {
 		return nil, errors.New("分组调度策略不能超过 100 个")
 	}
@@ -275,6 +318,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.BurstFailureThreshold != nil
 		policy.legacyAdaptiveSamplingWindow = policy.AdaptiveSamplingWindowMinutes == nil &&
 			policy.AdaptiveSamplingWindowSeconds != nil
+		if policy.StabilityWindowMinutes == nil {
+			value := legacyStabilityWindowMinutes
+			policy.StabilityWindowMinutes = &value
+		}
 		if policy.BurstFailureWindowMinutes == nil {
 			value := defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes
 			if policy.BurstFailureWindowSeconds != nil {
@@ -337,7 +384,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			value := defaultChannelMonitorSmartScheduleAdaptiveSamplingWindowRequests
 			policy.AdaptiveSamplingWindowRequests = &value
 		}
-		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.Scoring == nil ||
+		if policy.Strategy == nil || policy.StabilityEnabled == nil || policy.StabilityWindowMinutes == nil || policy.Scoring == nil ||
 			policy.ApplyMode == nil || policy.Models == nil || policy.MinSamples == nil ||
 			policy.RecoveryStabilityScore == nil ||
 			policy.FastFailurePenaltyPercent == nil || policy.FastFailureSeconds == nil ||
@@ -385,6 +432,9 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 		policy.ModelOrder = modelOrder
 		if *policy.MinSamples <= 0 || *policy.MinSamples > maxChannelMonitorSmartScheduleMinSamples {
 			return nil, errors.New("分组调度最少样本数必须在 1 到 100000 之间")
+		}
+		if !isChannelMonitorSmartScheduleWindowSupported(*policy.StabilityWindowMinutes) {
+			return nil, errors.New("分组调度稳定性评分窗口必须在 1 到 1440 分钟之间")
 		}
 		if math.IsNaN(*policy.RecoveryStabilityScore) || math.IsInf(*policy.RecoveryStabilityScore, 0) ||
 			*policy.RecoveryStabilityScore < 0 ||
@@ -569,6 +619,11 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 }
 
 func (configured channelSmartScheduleGroupPolicy) policy() channelSmartSchedulePolicy {
+	stabilityWindowMinutes := defaultChannelMonitorSmartScheduleStabilityWindowMinutes
+	if configured.StabilityWindowMinutes != nil &&
+		isChannelMonitorSmartScheduleWindowSupported(*configured.StabilityWindowMinutes) {
+		stabilityWindowMinutes = *configured.StabilityWindowMinutes
+	}
 	fastFailureSameChannelRetryCount := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
 	if configured.FastFailureSameChannelRetryCount != nil {
 		fastFailureSameChannelRetryCount = *configured.FastFailureSameChannelRetryCount
@@ -635,6 +690,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	return channelSmartSchedulePolicy{
 		Strategy:                                        *configured.Strategy,
 		StabilityEnabled:                                *configured.StabilityEnabled,
+		StabilityWindowMinutes:                          stabilityWindowMinutes,
 		Scoring:                                         *configured.Scoring,
 		ApplyMode:                                       *configured.ApplyMode,
 		Models:                                          *configured.Models,
@@ -679,6 +735,13 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 		AdaptiveSamplingSwitchConfirmRequestPercent:     *configured.AdaptiveSamplingSwitchConfirmRequestPercent,
 		AdaptiveSamplingMinComparableChannels:           *configured.AdaptiveSamplingMinComparableChannels,
 	}
+}
+
+func (policy channelSmartSchedulePolicy) stabilityWindowMinutes() int {
+	if isChannelMonitorSmartScheduleWindowSupported(policy.StabilityWindowMinutes) {
+		return policy.StabilityWindowMinutes
+	}
+	return defaultChannelMonitorSmartScheduleStabilityWindowMinutes
 }
 
 func isChannelMonitorSmartScheduleSampleModeSupported(mode string) bool {

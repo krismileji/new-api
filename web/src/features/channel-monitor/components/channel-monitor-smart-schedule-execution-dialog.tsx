@@ -631,7 +631,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                     ? `按 ${result.group_policy_count ?? result.group_policies?.length} 个分组策略执行`
                     : '未记录分组策略'}{' '}
                   · 性能窗口 {result.performance_window_minutes ?? 0} 分钟 ·
-                  稳定性评分窗口 {result.stability_window_minutes ?? 0} 分钟
+                  最长稳定性评分窗口 {result.stability_window_minutes ?? 0} 分钟
                 </p>
               ) : null}
             </div>

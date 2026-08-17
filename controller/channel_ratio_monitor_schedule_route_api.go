@@ -108,7 +108,6 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		return
 	}
 	performanceStart := generatedAt - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
-	stabilityStart := generatedAt - int64(settings.SmartScheduleStabilityWindowMinutes*60)
 	policyByGroup := make(map[string]channelSmartSchedulePolicy, len(settings.SmartScheduleGroupPolicies))
 	selectedRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(routes))
 	needsPerformance := false
@@ -136,7 +135,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		policy := policyByGroup[route.Group]
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		view, err := channelSmartScheduleRealtimeRouteMetricView(
-			c.Request.Context(), route, policy, performanceStart, stabilityStart,
+			c.Request.Context(), route, policy, performanceStart, generatedAt,
 		)
 		if err != nil {
 			common.ApiError(c, err)
@@ -196,7 +195,6 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		responseRoutes,
 		selectedRoutes,
 		policyByGroup,
-		stabilityStart,
 		generatedAt,
 	); err != nil {
 		common.ApiError(c, err)

@@ -66,9 +66,11 @@ import {
   MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT,
   MAX_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
   MAX_SMART_SCHEDULE_PROBE_INTERVAL_MINUTES,
+  MAX_SMART_SCHEDULE_WINDOW_MINUTES,
   MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES,
   MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES,
   MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT,
+  MIN_SMART_SCHEDULE_WINDOW_MINUTES,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
 import {
@@ -940,7 +942,45 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             {degradedProbeEnabled && sampleMode !== 'probe'
               ? probeIntervalField
               : null}
-            <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+            <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+              <FormField
+                control={props.form.control}
+                name='stabilityWindowMinutes'
+                render={({ field }) => (
+                  <FormItem>
+                    <ChannelMonitorSettingLabel
+                      label='稳定性评分窗口'
+                      helpKey='stabilityRange'
+                    />
+                    <FormControl>
+                      <InputGroup>
+                        <InputGroupInput
+                          type='number'
+                          min={MIN_SMART_SCHEDULE_WINDOW_MINUTES}
+                          max={MAX_SMART_SCHEDULE_WINDOW_MINUTES}
+                          step={1}
+                          inputMode='numeric'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={field.onChange}
+                          name={field.name}
+                          ref={field.ref}
+                          aria-invalid={Boolean(
+                            props.form.formState.errors.stabilityWindowMinutes
+                          )}
+                        />
+                        <InputGroupAddon align='inline-end'>
+                          分钟
+                        </InputGroupAddon>
+                      </InputGroup>
+                    </FormControl>
+                    <FormDescription>
+                      当前分组各模型独立按此时间范围统计
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <GroupPolicyPercentField
                 form={props.form}
                 name='scoring.stabilityPercent'

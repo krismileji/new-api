@@ -312,7 +312,6 @@ func runChannelSmartScheduleByRouteOnce(
 
 	now := common.GetTimestamp()
 	performanceStart := now - int64(settings.SmartSchedulePerformanceWindowMinutes*60)
-	stabilityStart := now - int64(settings.SmartScheduleStabilityWindowMinutes*60)
 
 	poolCandidates := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	poolRoutes := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRoute)
@@ -335,7 +334,7 @@ func runChannelSmartScheduleByRouteOnce(
 			groupRatio,
 			groupRatioAvailable,
 		)
-		routeStabilityWindowStart := stabilityStart
+		routeStabilityWindowStart := now - int64(policy.stabilityWindowMinutes()*60)
 		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince

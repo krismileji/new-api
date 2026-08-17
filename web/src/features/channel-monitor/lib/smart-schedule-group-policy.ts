@@ -100,12 +100,15 @@ export function channelMonitorSmartScheduleScoringToApi(
 }
 
 export function channelMonitorSmartScheduleGroupPoliciesToForm(
-  policies: ChannelMonitorSmartScheduleGroupPolicy[] = []
+  policies: ChannelMonitorSmartScheduleGroupPolicy[] = [],
+  legacyStabilityWindowMinutes: number = DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.stabilityWindowMinutes
 ): ChannelMonitorSmartScheduleGroupPolicyFormValues[] {
   return policies.map((policy) => ({
     group: policy.group,
     strategy: policy.strategy,
     stabilityEnabled: policy.stability_enabled,
+    stabilityWindowMinutes:
+      policy.stability_window_minutes ?? legacyStabilityWindowMinutes,
     jitterEnabled: policy.jitter_enabled,
     jitterTolerancePercent: policy.jitter_tolerance_percent,
     jitterSlowThresholdSeconds: policy.jitter_slow_threshold_seconds,
@@ -199,6 +202,7 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     group: policy.group,
     strategy: policy.strategy,
     stability_enabled: policy.stabilityEnabled,
+    stability_window_minutes: policy.stabilityWindowMinutes,
     jitter_enabled: policy.jitterEnabled,
     jitter_tolerance_percent: policy.jitterTolerancePercent,
     jitter_slow_threshold_seconds: policy.jitterSlowThresholdSeconds,
@@ -265,6 +269,7 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     group,
     strategy: policy.strategy,
     stabilityEnabled: policy.stabilityEnabled,
+    stabilityWindowMinutes: policy.stabilityWindowMinutes,
     jitterEnabled: policy.jitterEnabled,
     jitterTolerancePercent: policy.jitterTolerancePercent,
     jitterSlowThresholdSeconds: policy.jitterSlowThresholdSeconds,

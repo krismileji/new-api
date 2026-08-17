@@ -15,7 +15,6 @@ func channelSmartScheduleApplyCurrentWindowScores(
 	responses []channelSmartScheduleRouteResponse,
 	routes []model.ChannelSmartScheduleRoute,
 	policyByGroup map[string]channelSmartSchedulePolicy,
-	stabilityStart int64,
 	now int64,
 ) error {
 	settings := getChannelMonitorRuntimeSettings()
@@ -53,6 +52,7 @@ func channelSmartScheduleApplyCurrentWindowScores(
 			currentWeight = route.State.BaseWeight
 		}
 		adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
+		stabilityStart := now - int64(policy.stabilityWindowMinutes()*60)
 		readWindowStart := min(adaptiveWindowStart, performanceStart, stabilityStart)
 		routeEvents, snapshot, err := channelSmartScheduleRealtimeEvents(
 			ctx, route.ChannelId, route.Model, readWindowStart,

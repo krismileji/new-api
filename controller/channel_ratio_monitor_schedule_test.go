@@ -107,6 +107,62 @@ func channelSmartScheduleTestGroupPolicy(
 	}
 }
 
+func TestNormalizeChannelSmartScheduleGroupPolicyInheritsLegacyStabilityWindow(t *testing.T) {
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	policy.StabilityWindowMinutes = nil
+
+	normalized, err := normalizeChannelSmartScheduleGroupPoliciesWithLegacyStabilityWindow(
+		[]channelSmartScheduleGroupPolicy{policy}, 37,
+	)
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	require.NotNil(t, normalized[0].StabilityWindowMinutes)
+	assert.Equal(t, 37, *normalized[0].StabilityWindowMinutes)
+	assert.Equal(t, 37, normalized[0].policy().StabilityWindowMinutes)
+}
+
+func TestNormalizeChannelSmartScheduleGroupPoliciesKeepsIndependentStabilityWindows(t *testing.T) {
+	shortWindow := 5
+	longWindow := 90
+	shortPolicy := channelSmartScheduleTestGroupPolicy(
+		"standard", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	shortPolicy.StabilityWindowMinutes = &shortWindow
+	longPolicy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	longPolicy.StabilityWindowMinutes = &longWindow
+
+	normalized, err := normalizeChannelSmartScheduleGroupPolicies(
+		[]channelSmartScheduleGroupPolicy{longPolicy, shortPolicy},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 90, smartScheduleGroupPolicies(normalized).maxStabilityWindowMinutes(5))
+	assert.Equal(t, 5, normalized[0].policy().StabilityWindowMinutes)
+	assert.Equal(t, 90, normalized[1].policy().StabilityWindowMinutes)
+}
+
+func TestNormalizeChannelSmartScheduleGroupPolicyRejectsInvalidStabilityWindow(t *testing.T) {
+	for _, windowMinutes := range []int{0, maxChannelMonitorSmartScheduleWindowMinutes + 1} {
+		policy := channelSmartScheduleTestGroupPolicy(
+			"vip", channelMonitorSmartScheduleStrategySmart, true,
+			channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+		)
+		policy.StabilityWindowMinutes = &windowMinutes
+
+		_, err := normalizeChannelSmartScheduleGroupPolicies(
+			[]channelSmartScheduleGroupPolicy{policy},
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "稳定性评分窗口")
+	}
+}
+
 func TestNormalizeChannelSmartScheduleGroupPolicySamplingOrder(t *testing.T) {
 	tests := []struct {
 		name       string

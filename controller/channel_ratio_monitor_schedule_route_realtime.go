@@ -38,9 +38,9 @@ func channelSmartScheduleRealtimeRouteMetricView(
 	route model.ChannelSmartScheduleRoute,
 	policy channelSmartSchedulePolicy,
 	performanceStart int64,
-	stabilityStart int64,
+	generatedAt int64,
 ) (channelSmartScheduleRealtimeRouteMetrics, error) {
-	routeStabilityStart := stabilityStart
+	routeStabilityStart := generatedAt - int64(policy.stabilityWindowMinutes()*60)
 	if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
 		route.State.StabilitySince > routeStabilityStart {
 		routeStabilityStart = route.State.StabilitySince

@@ -611,6 +611,42 @@ func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {
 	assert.False(t, scheduled)
 }
 
+func TestChannelSmartScheduleSettingsDeriveLegacyStabilityWindowFromPolicies(t *testing.T) {
+	shortWindow := 5
+	longWindow := 90
+	shortPolicy := channelSmartScheduleTestGroupPolicy(
+		"standard", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	shortPolicy.StabilityWindowMinutes = &shortWindow
+	longPolicy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+	)
+	longPolicy.StabilityWindowMinutes = &longWindow
+	serializedPolicies, err := common.Marshal([]channelSmartScheduleGroupPolicy{
+		shortPolicy, longPolicy,
+	})
+	require.NoError(t, err)
+
+	settings := channelMonitorSettingsFromOptions(map[string]string{
+		channelMonitorSmartScheduleEnabledOption:             "true",
+		channelMonitorSmartScheduleGroupPoliciesOption:       string(serializedPolicies),
+		channelMonitorSmartSchedulePerformanceWindowOption:   "60",
+		channelMonitorSmartScheduleStabilityWindowOption:     "5",
+		channelMonitorSmartScheduleRealtimeRetentionOption:   "60",
+		channelMonitorSmartScheduleRealtimeSampleLimitOption: "20000",
+		channelMonitorSmartScheduleRateLimitCooldownOption:   "30",
+	})
+
+	assert.True(t, settings.SmartScheduleEnabled)
+	assert.Equal(t, 90, settings.SmartScheduleStabilityWindowMinutes)
+	assert.Equal(t, 90, settings.SmartScheduleRealtimeRetentionMinutes)
+	require.Len(t, settings.SmartScheduleGroupPolicies, 2)
+	assert.Equal(t, 5, *settings.SmartScheduleGroupPolicies[0].StabilityWindowMinutes)
+	assert.Equal(t, 90, *settings.SmartScheduleGroupPolicies[1].StabilityWindowMinutes)
+}
+
 func TestChannelSmartScheduleSettingsRejectIncompleteStoredPolicies(t *testing.T) {
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
