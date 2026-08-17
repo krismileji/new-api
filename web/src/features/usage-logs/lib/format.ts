@@ -167,18 +167,6 @@ export function parseLogOther(other: string): LogOtherData | null {
   }
 }
 
-export function getLogTokensPerSecond(
-  log: Pick<UsageLog, 'completion_tokens' | 'use_time'>,
-  other: LogOtherData | null
-): number | null {
-  if ((other?.performance_timing_version ?? 0) >= 1) {
-    const value = other?.tokens_per_second
-    return value != null && Number.isFinite(value) && value >= 0 ? value : null
-  }
-  if (log.use_time <= 0 || log.completion_tokens <= 0) return null
-  return log.completion_tokens / log.use_time
-}
-
 export function getReasoningEffortVariant(
   effort: string | undefined
 ): StatusBadgeProps['variant'] {

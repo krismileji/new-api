@@ -109,7 +109,6 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		require.NoError(t, result.localErr)
 		require.NotNil(t, result.context)
 		assert.Nil(t, result.firstResponseMilliseconds)
-		assert.Nil(t, result.tokensPerSecond)
 		assert.Equal(t, "vip", common.GetContextKeyString(result.context, constant.ContextKeyUsingGroup))
 		var consumeLog model.Log
 		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
@@ -119,9 +118,8 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		var other map[string]any
 		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
 		assert.Equal(t, true, other[model.ChannelMonitorSmartScheduleProbeLogKey])
-		assert.Equal(t, float64(1), other["performance_timing_version"])
-		assert.Contains(t, other, "tokens_per_second")
-		assert.Nil(t, other["tokens_per_second"])
+		assert.NotContains(t, other, "performance_timing_version")
+		assert.NotContains(t, other, "tokens_per_second")
 	})
 }
 

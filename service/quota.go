@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -242,12 +243,6 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
-	performanceTiming := BuildRelayPerformanceTiming(
-		relayInfo,
-		RelayPerformanceOutputTokens(usage.OutputTokens, usage.OutputTokenDetails),
-		time.Now(),
-	)
-	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -264,10 +259,9 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Other:            other,
 	})
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:      usage.InputTokens,
-		CompletionTokens:  usage.OutputTokens,
-		InputTokens:       usage.InputTokens,
-		PerformanceTiming: &performanceTiming,
+		PromptTokens:     usage.InputTokens,
+		CompletionTokens: usage.OutputTokens,
+		InputTokens:      usage.InputTokens,
 	})
 }
 
@@ -379,12 +373,6 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
-	performanceTiming := BuildRelayPerformanceTiming(
-		relayInfo,
-		RelayPerformanceOutputTokens(usage.CompletionTokens, usage.CompletionTokenDetails),
-		time.Now(),
-	)
-	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -400,6 +388,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
 	})
+	gopool.Go(func() {
+		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
+	})
 	cacheReadTokens := usage.PromptTokensDetails.CachedTokens
 	cacheWriteTokens := usage.PromptTokensDetails.CacheCreationTokensTotal()
 	inputTokens := usage.InputTokens
@@ -407,12 +398,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		inputTokens = usage.PromptTokens
 	}
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:      usage.PromptTokens,
-		CompletionTokens:  usage.CompletionTokens,
-		CacheReadTokens:   cacheReadTokens,
-		CacheWriteTokens:  cacheWriteTokens,
-		InputTokens:       inputTokens,
-		PerformanceTiming: &performanceTiming,
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		InputTokens:      inputTokens,
 	})
 }
 

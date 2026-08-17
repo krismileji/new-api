@@ -71,7 +71,6 @@ func TestEmitChannelMonitorSuccessEventUsesAttemptPerformanceTiming(t *testing.T
 	timing := RelayPerformanceTiming{
 		CompletedAt:       completedAt,
 		AttemptDurationMs: 9999,
-		OutputTokens:      40,
 	}
 	info := &relaycommon.RelayInfo{
 		OriginModelName:   "model-c",

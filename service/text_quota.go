@@ -12,12 +12,14 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
@@ -527,17 +529,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
-	performanceDetails := dto.OutputTokenDetails{}
-	if billingUsage != nil {
-		performanceDetails = billingUsage.CompletionTokenDetails
-	}
-	performanceTiming := BuildRelayPerformanceTiming(
-		relayInfo,
-		RelayPerformanceOutputTokens(summary.CompletionTokens, performanceDetails),
-		time.Now(),
-	)
-	AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
-
 	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -554,6 +545,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
 	})
+	gopool.Go(func() {
+		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
+	})
 	inputTokens := summary.PromptTokens
 	if billingUsage != nil && billingUsage.InputTokens > 0 {
 		inputTokens = billingUsage.InputTokens
@@ -561,11 +555,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		inputTokens += summary.CacheTokens + cacheWriteTokens
 	}
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:      summary.PromptTokens,
-		CompletionTokens:  summary.CompletionTokens,
-		CacheReadTokens:   summary.CacheTokens,
-		CacheWriteTokens:  cacheWriteTokens,
-		InputTokens:       inputTokens,
-		PerformanceTiming: &performanceTiming,
+		PromptTokens:     summary.PromptTokens,
+		CompletionTokens: summary.CompletionTokens,
+		CacheReadTokens:  summary.CacheTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		InputTokens:      inputTokens,
 	})
 }

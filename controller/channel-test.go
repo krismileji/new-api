@@ -561,15 +561,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
 	completedAt := time.Now()
-	performanceTiming := service.BuildRelayPerformanceTiming(
-		info,
-		service.RelayPerformanceOutputTokens(usage.CompletionTokens, usage.CompletionTokenDetails),
-		completedAt,
-	)
 	monitorPerformanceTiming := service.BuildChannelMonitorPerformanceTiming(
 		c,
 		info,
-		performanceTiming.OutputTokens,
+		usage.CompletionTokens,
 		completedAt,
 	)
 	attemptDuration := completedAt.Sub(attemptStartedAt)
@@ -581,7 +576,6 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	consumedTime := time.Since(tik).Seconds()
 	if isAutomatedProbe || !channelprobe.IsChannelMonitorProbeResponseEnabled() {
 		other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-		service.AppendRelayPerformanceTimingLogInfo(other, performanceTiming)
 		tokenName := "模型测试"
 		content := "模型测试"
 		if isSmartScheduleProbe {

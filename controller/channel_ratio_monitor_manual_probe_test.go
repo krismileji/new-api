@@ -382,7 +382,9 @@ func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *te
 	assert.True(t, response.Success, recorder.Body.String())
 	assert.GreaterOrEqual(t, response.Data.ResponseTimeMs, 0.0)
 	assert.Nil(t, response.Data.FirstTokenMs)
-	assert.Nil(t, response.Data.TokensPerSecond)
+	if response.Data.TokensPerSecond != nil {
+		assert.Positive(t, *response.Data.TokensPerSecond)
+	}
 	assert.True(t, response.Data.UsageAvailable)
 	assert.Equal(t, 1, response.Data.InputTokens)
 	assert.Equal(t, 1, response.Data.OutputTokens)
@@ -400,7 +402,14 @@ func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *te
 	assert.Equal(t, int64(1), state.SampleCount)
 	assert.Equal(t, int64(1), state.SuccessCount)
 	assert.Zero(t, state.FirstTokenSampleCount)
-	assert.Zero(t, state.TPSSampleCount)
+	if response.Data.TokensPerSecond == nil {
+		assert.Zero(t, state.TPSSampleCount)
+		assert.Nil(t, state.AverageTPS)
+	} else {
+		assert.Equal(t, int64(1), state.TPSSampleCount)
+		require.NotNil(t, state.AverageTPS)
+		assert.Positive(t, *state.AverageTPS)
+	}
 
 	var consumeLogCount int64
 	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
