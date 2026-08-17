@@ -1330,24 +1330,13 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 			}
 			minimumComparable := max(policy.AdaptiveSamplingMinComparableChannels, 2)
 			if currentPrimaryScored && len(scoredItems) >= minimumComparable {
-				ranked := channelSmartScheduleRankedItemIndexes(scoredItems, primaryRoute.ChannelId)
-				if len(ranked) > 0 {
-					rawWinnerId := scoredItems[ranked[0]].ChannelId
-					effectivePrimaryId := channelSmartScheduleEffectivePrimaryId(
-						scoredItems,
-						primaryRoute.ChannelId,
-						policy.Scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
-						false,
-					)
-					winner := candidateByChannel[rawWinnerId]
-					if rawWinnerId != primaryRoute.ChannelId && effectivePrimaryId == rawWinnerId &&
-						winner.SampleDebt == 0 && winner.HealthEvidence &&
-						winner.HealthState == channelSmartScheduleHealthHealthy &&
-						winner.HealthHealthyRequestPercent+channelMonitorRatioEpsilon >=
-							policy.AdaptiveSamplingSwitchConfirmRequestPercent {
-						normalPrimaryChannelId = rawWinnerId
-					}
-				}
+				normalPrimaryChannelId = channelSmartScheduleConfirmedPrimaryId(
+					scoredItems,
+					candidateByChannel,
+					primaryRoute.ChannelId,
+					policy.Scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
+					policy.AdaptiveSamplingSwitchConfirmRequestPercent,
+				)
 			}
 		}
 		if normalPrimaryChannelId != primaryRoute.ChannelId &&

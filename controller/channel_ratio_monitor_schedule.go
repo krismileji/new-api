@@ -1227,6 +1227,52 @@ func channelSmartScheduleEffectivePrimaryId(
 	return currentPrimaryId
 }
 
+func channelSmartScheduleConfirmedPrimaryId(
+	items []channelSmartSchedulePlanItem,
+	candidateByChannel map[int]channelSmartScheduleCandidate,
+	currentPrimaryId int,
+	switchThreshold float64,
+	switchConfirmPercent float64,
+) int {
+	if len(items) == 0 || currentPrimaryId <= 0 {
+		return currentPrimaryId
+	}
+	if math.IsNaN(switchThreshold) || math.IsInf(switchThreshold, 0) || switchThreshold < 0 {
+		switchThreshold = 0
+	}
+	if math.IsNaN(switchConfirmPercent) || math.IsInf(switchConfirmPercent, 0) || switchConfirmPercent < 0 {
+		switchConfirmPercent = 0
+	}
+	currentScore := 0.0
+	currentScored := false
+	for _, item := range items {
+		if item.ChannelId == currentPrimaryId {
+			currentScore = item.Score
+			currentScored = true
+			break
+		}
+	}
+	for _, index := range channelSmartScheduleRankedItemIndexes(items, currentPrimaryId) {
+		item := items[index]
+		if item.ChannelId == currentPrimaryId {
+			return currentPrimaryId
+		}
+		if currentScored && item.Score-currentScore+channelMonitorRatioEpsilon < switchThreshold {
+			return currentPrimaryId
+		}
+		candidate, exists := candidateByChannel[item.ChannelId]
+		if !exists || candidate.SampleDebt > 0 || !candidate.HealthEvidence ||
+			candidate.HealthState != channelSmartScheduleHealthHealthy ||
+			math.IsNaN(candidate.HealthHealthyRequestPercent) ||
+			math.IsInf(candidate.HealthHealthyRequestPercent, 0) ||
+			candidate.HealthHealthyRequestPercent+channelMonitorRatioEpsilon < switchConfirmPercent {
+			continue
+		}
+		return item.ChannelId
+	}
+	return currentPrimaryId
+}
+
 func channelSmartScheduleRankedItemIndexes(items []channelSmartSchedulePlanItem, preferredChannelId int) []int {
 	ranked := make([]int, len(items))
 	for index := range items {
@@ -1520,10 +1566,9 @@ func channelSmartScheduleAdaptiveCandidateRank(candidate channelSmartScheduleCan
 	}
 }
 
-// channelSmartScheduleApplySwitchConfirmation keeps the current primary in
-// place until a newly winning backup has enough healthy requests in the
-// configured adaptive window. Hard stability protection is handled before
-// scoring and is therefore the only path that bypasses this confirmation.
+// channelSmartScheduleApplySwitchConfirmation selects the highest-scoring
+// challenger that passes the configured adaptive health confirmation. Hard
+// stability protection is handled before scoring and bypasses this check.
 func channelSmartScheduleApplySwitchConfirmation(
 	plan *channelSmartSchedulePlan,
 	candidates []channelSmartScheduleCandidate,
@@ -1543,22 +1588,63 @@ func channelSmartScheduleApplySwitchConfirmation(
 			manualPrimary = manualPrimary || item.ScoreDetails.Decision.ManualPrimaryChannelId > 0
 		}
 	}
-	if manualPrimary || plan.RawWinnerId <= 0 || plan.RawWinnerId == currentPrimaryId || currentPrimaryId <= 0 {
+	if manualPrimary || plan.RawWinnerId <= 0 || plan.RawWinnerId == currentPrimaryId || currentPrimaryId <= 0 ||
+		plan.ActualPrimaryId == currentPrimaryId {
 		return
 	}
-	var rawWinner *channelSmartScheduleCandidate
-	for index := range candidates {
-		switch candidates[index].ChannelId {
-		case plan.RawWinnerId:
-			rawWinner = &candidates[index]
-		}
+	candidateByChannel := make(map[int]channelSmartScheduleCandidate, len(candidates))
+	for _, candidate := range candidates {
+		candidateByChannel[candidate.ChannelId] = candidate
 	}
-	if rawWinner == nil {
+	rawWinner, exists := candidateByChannel[plan.RawWinnerId]
+	if !exists {
+		return
+	}
+	rawWinnerIsFallback := rawWinner.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback
+	scoredItems := make([]channelSmartSchedulePlanItem, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		candidate, exists := candidateByChannel[item.ChannelId]
+		if !item.Scored || !exists ||
+			(candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback) != rawWinnerIsFallback {
+			continue
+		}
+		scoredItems = append(scoredItems, item)
+	}
+	confirmedPrimaryId := channelSmartScheduleConfirmedPrimaryId(
+		scoredItems,
+		candidateByChannel,
+		currentPrimaryId,
+		policy.Scoring.PrimarySwitchThresholdPercent/channelMonitorScorePercentageTotal,
+		policy.AdaptiveSamplingSwitchConfirmRequestPercent,
+	)
+	if confirmedPrimaryId != currentPrimaryId {
+		if confirmedPrimaryId == plan.RawWinnerId {
+			return
+		}
+		plan.ActualPrimaryId = confirmedPrimaryId
+		channelSmartScheduleAssignPriorityWeightTargets(plan.Items, confirmedPrimaryId)
+		selectionReason := fmt.Sprintf(
+			"评分第一渠道 ID %d 未通过备用健康确认，选择评分顺序中首个已确认健康的渠道 ID %d",
+			plan.RawWinnerId,
+			confirmedPrimaryId,
+		)
+		for index := range plan.Items {
+			item := &plan.Items[index]
+			if item.ScoreDetails == nil {
+				continue
+			}
+			item.ScoreDetails.Decision.SelectedPrimaryChannelId = confirmedPrimaryId
+			item.ScoreDetails.Decision.ActualPrimaryChannelId = confirmedPrimaryId
+			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == confirmedPrimaryId
+			item.ScoreDetails.Decision.SelectionReason = selectionReason
+			channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, selectionReason)
+		}
 		return
 	}
 	// An unverified or already deteriorating backup is only eligible for
 	// sampling; it cannot become the primary on a relative score alone.
-	if !rawWinner.HealthEvidence || rawWinner.HealthState != channelSmartScheduleHealthHealthy ||
+	if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
+		rawWinner.HealthState != channelSmartScheduleHealthHealthy ||
 		rawWinner.HealthHealthyRequestPercent+channelMonitorRatioEpsilon < policy.AdaptiveSamplingSwitchConfirmRequestPercent {
 		plan.ActualPrimaryId = currentPrimaryId
 		channelSmartScheduleAssignPriorityWeightTargets(plan.Items, currentPrimaryId)
@@ -1570,7 +1656,8 @@ func channelSmartScheduleApplySwitchConfirmation(
 			item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
 			item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
 			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
-			if !rawWinner.HealthEvidence || rawWinner.HealthState != channelSmartScheduleHealthHealthy {
+			if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
+				rawWinner.HealthState != channelSmartScheduleHealthHealthy {
 				item.ScoreDetails.Decision.SelectionReason =
 					"备用渠道样本不足或健康状态未确认，仅允许自适应采样，继续保留当前主渠道"
 			} else {
