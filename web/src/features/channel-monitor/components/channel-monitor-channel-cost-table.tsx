@@ -43,6 +43,7 @@ import {
 } from '../lib/format'
 import type { ChannelMonitorCostChannel } from '../types'
 import {
+  ChannelMonitorSortButton,
   ChannelMonitorSortableTableHead,
   type ChannelMonitorSortDirection,
 } from './channel-monitor-sortable-table-head'
@@ -157,25 +158,26 @@ export function ChannelMonitorChannelCostTable(
         </span>
       </div>
       <div className='overflow-hidden rounded-md border'>
-        <Table className='min-w-[980px] table-fixed'>
-          <TableHeader>
+        <Table className='min-w-[960px] table-fixed'>
+          <TableHeader className='bg-muted/30'>
             <TableRow>
               <ChannelMonitorSortableTableHead
                 label='渠道'
-                className='w-[18%]'
+                className='w-[28%]'
                 direction={sortDirection('channel_name')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleChannelCostSort(current, 'channel_name')
                   )
                 }
               />
-              <TableHead className='w-[18%] whitespace-normal'>备注</TableHead>
               <ChannelMonitorSortableTableHead
                 label='成本倍率'
                 align='right'
                 className='w-[10%]'
                 direction={sortDirection('cost_ratio')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleChannelCostSort(current, 'cost_ratio')
@@ -187,6 +189,7 @@ export function ChannelMonitorChannelCostTable(
                 align='right'
                 className='w-[14%]'
                 direction={sortDirection('cost_cny')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleChannelCostSort(current, 'cost_cny')
@@ -196,8 +199,9 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='探测成本'
                 align='right'
-                className='w-[12%]'
+                className='w-[13%]'
                 direction={sortDirection('probe_cost_cny')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleChannelCostSort(current, 'probe_cost_cny')
@@ -207,25 +211,55 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='模型检测成本'
                 align='right'
-                className='w-[14%]'
+                className='w-[15%]'
                 direction={sortDirection('model_detection_cost_cny')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleChannelCostSort(current, 'model_detection_cost_cny')
                   )
                 }
               />
-              <ChannelMonitorSortableTableHead
-                label='成本覆盖'
-                align='right'
-                className='w-[14%]'
-                direction={sortDirection('resolution_rate')}
-                onSort={() =>
-                  setSort((current) =>
-                    toggleChannelCostSort(current, 'resolution_rate')
-                  )
-                }
-              />
+              <TableHead className='w-[20%] p-0'>
+                <div className='grid grid-cols-3'>
+                  <ChannelMonitorSortButton
+                    label='结算'
+                    align='right'
+                    className='rounded-none px-1 text-xs'
+                    direction={sortDirection('settled_count')}
+                    subtleUnsortedIcon
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleChannelCostSort(current, 'settled_count')
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortButton
+                    label='未解析'
+                    align='right'
+                    className='rounded-none px-1 text-xs'
+                    direction={sortDirection('unresolved_count')}
+                    subtleUnsortedIcon
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleChannelCostSort(current, 'unresolved_count')
+                      )
+                    }
+                  />
+                  <ChannelMonitorSortButton
+                    label='解析率'
+                    align='right'
+                    className='rounded-none px-1 text-xs'
+                    direction={sortDirection('resolution_rate')}
+                    subtleUnsortedIcon
+                    onSort={() =>
+                      setSort((current) =>
+                        toggleChannelCostSort(current, 'resolution_rate')
+                      )
+                    }
+                  />
+                </div>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -242,22 +276,18 @@ export function ChannelMonitorChannelCostTable(
                         className='shrink-0'
                       />
                     </div>
-                    <span className='text-muted-foreground text-xs'>
-                      ID {channel.channel_id}
-                    </span>
+                    <div className='text-muted-foreground flex min-w-0 items-center gap-2 text-xs'>
+                      <span className='shrink-0'>ID {channel.channel_id}</span>
+                      {channel.channel_remark ? (
+                        <span
+                          className='truncate border-l pl-2'
+                          title={channel.channel_remark}
+                        >
+                          {channel.channel_remark}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </TableCell>
-                <TableCell className='whitespace-normal'>
-                  {channel.channel_remark ? (
-                    <span
-                      className='text-muted-foreground break-words'
-                      title={channel.channel_remark}
-                    >
-                      {channel.channel_remark}
-                    </span>
-                  ) : (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
                 </TableCell>
                 <TableCell className='text-right font-mono font-medium tabular-nums'>
                   {channel.cost_ratio == null ? (
@@ -275,14 +305,18 @@ export function ChannelMonitorChannelCostTable(
                 <TableCell className='text-right font-mono tabular-nums'>
                   {formatChannelMonitorCost(channel.model_detection_cost_cny)}
                 </TableCell>
-                <TableCell className='text-right'>
-                  <div className='flex flex-col items-end gap-0.5 text-xs'>
-                    <span className='font-mono tabular-nums'>
-                      已结算 {channel.settled_count} · 未解析{' '}
+                <TableCell>
+                  <div className='grid grid-cols-3 gap-2 text-right font-mono text-xs tabular-nums'>
+                    <span aria-label={`已结算 ${channel.settled_count}`}>
+                      {channel.settled_count}
+                    </span>
+                    <span aria-label={`未解析 ${channel.unresolved_count}`}>
                       {channel.unresolved_count}
                     </span>
-                    <span className='text-muted-foreground'>
-                      解析率{' '}
+                    <span
+                      className='text-muted-foreground'
+                      aria-label={`解析率 ${formatChannelMonitorResolutionRate(channel.settled_count, channel.unresolved_count)}`}
+                    >
                       {formatChannelMonitorResolutionRate(
                         channel.settled_count,
                         channel.unresolved_count

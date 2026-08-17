@@ -36,6 +36,7 @@ type ChannelMonitorSortableTableHeadProps = {
   onSort: () => void
   align?: 'left' | 'right'
   className?: string
+  subtleUnsortedIcon?: boolean
 }
 
 type ChannelMonitorSortButtonProps = Omit<
@@ -62,7 +63,7 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
       variant='ghost'
       size='sm'
       className={cn(
-        'h-auto min-h-7 w-full py-1 whitespace-nowrap',
+        'group/sort h-auto min-h-7 w-full py-1 whitespace-nowrap',
         props.align === 'right'
           ? 'justify-end text-right'
           : 'justify-start text-left',
@@ -74,7 +75,12 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
       <span className='min-w-0 whitespace-nowrap'>{props.label}</span>
       <HugeiconsIcon
         icon={sortIcon}
-        className='text-muted-foreground'
+        className={cn(
+          'text-muted-foreground transition-opacity',
+          props.subtleUnsortedIcon && !props.direction
+            ? 'opacity-0 group-hover/sort:opacity-60 group-focus-visible/sort:opacity-60'
+            : 'opacity-100'
+        )}
         data-icon='inline-end'
         aria-hidden='true'
       />

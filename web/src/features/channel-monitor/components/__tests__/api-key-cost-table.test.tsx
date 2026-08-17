@@ -17,15 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { formatChannelMonitorCost } from '../../lib/format'
 import { ChannelMonitorAPIKeyCostTable } from '../channel-monitor-api-key-cost-table'
 
 describe('channel monitor API key cost table', () => {
-  test('uses fixed columns and exposes truncated masked values on hover', () => {
+  test('uses balanced columns and exposes truncated masked values on hover', () => {
     const channelName = '这是一个用于验证列宽与省略展示的特别长渠道名称'
     const channelRemark = '这是一个用于验证备注省略展示的特别长渠道备注'
     const maskedKey = 'sk-a**********lpha'
@@ -74,7 +74,13 @@ describe('channel monitor API key cost table', () => {
     )
 
     assert.match(markup, /table-fixed/)
+    assert.ok(markup.includes('min-w-[840px]'))
+    assert.ok(markup.includes('minmax(14rem,2.2fr)'))
     assert.match(markup, /truncate/)
+    assert.ok(markup.includes('API Key 成本明细'))
+    assert.ok(markup.includes('关联渠道'))
+    assert.ok(markup.includes('结算请求'))
+    assert.ok(markup.includes('结算成本'))
     assert.ok(markup.includes('主 API Key'))
     assert.ok(markup.includes(`title="${channelName}"`))
     assert.ok(markup.includes(`备注：${channelRemark}`))
@@ -89,7 +95,7 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('0%'))
     assert.ok(markup.indexOf('主 API Key') < markup.indexOf('仅未确认 API Key'))
     assert.ok(markup.includes('按API Key排序'))
-    assert.ok(markup.includes('按成本排序'))
+    assert.ok(markup.includes('按结算成本排序'))
   })
 
   test('explains that API key costs start with newly settled requests', () => {
@@ -173,8 +179,8 @@ describe('channel monitor API key cost table', () => {
       />
     )
 
-    assert.ok(markup.includes('按渠道数排序'))
-    assert.ok(markup.includes('按已结算排序'))
+    assert.ok(markup.includes('按关联渠道排序'))
+    assert.ok(markup.includes('按结算请求排序'))
     assert.ok(markup.includes('按未解析排序'))
     assert.ok(markup.includes('按解析率排序'))
   })

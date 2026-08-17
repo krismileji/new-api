@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { test } from 'vitest'
 
 import { ChannelMonitorSortButton } from '../channel-monitor-sortable-table-head'
 
@@ -38,4 +38,20 @@ test('keeps sortable table labels horizontal when a metric column is narrow', ()
   assert.equal(button.includes('whitespace-normal'), false)
   assert.ok(label.includes('whitespace-nowrap'))
   assert.equal(label.includes('break-words'), false)
+})
+
+test('can keep inactive sort indicators quiet until the header is focused', () => {
+  const markup = renderToStaticMarkup(
+    <ChannelMonitorSortButton
+      label='解析率'
+      align='right'
+      subtleUnsortedIcon
+      onSort={() => undefined}
+    />
+  )
+  const icon = markup.match(/<svg\b[^>]*>/)?.[0] ?? ''
+
+  assert.ok(icon.includes('opacity-0'))
+  assert.ok(icon.includes('group-hover/sort:opacity-60'))
+  assert.ok(icon.includes('group-focus-visible/sort:opacity-60'))
 })

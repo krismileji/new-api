@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 import {
   formatChannelMonitorCost,
@@ -61,6 +62,9 @@ type APIKeyCostSort = {
   key: APIKeyCostSortKey
   direction: ChannelMonitorSortDirection
 }
+
+const apiKeyCostGridClassName =
+  'grid grid-cols-[minmax(14rem,2.2fr)_minmax(6rem,0.8fr)_minmax(6rem,0.9fr)_minmax(6rem,0.9fr)_minmax(6rem,0.8fr)_minmax(8rem,1.2fr)]'
 
 function getAPIKeyName(item: ChannelMonitorCostAPIKey) {
   if (item.api_key_name) return item.api_key_name
@@ -145,11 +149,11 @@ export function ChannelMonitorAPIKeyCostTable(
 
   return (
     <section
-      className='flex flex-col gap-2'
+      className='flex min-w-0 flex-col gap-2'
       aria-labelledby='api-key-cost-title'
     >
       <h3 id='api-key-cost-title' className='text-sm font-medium'>
-        API Key 成本（按名称）
+        API Key 成本明细
       </h3>
       {costItems.length === 0 ? (
         <Empty className='min-h-32 border'>
@@ -162,11 +166,17 @@ export function ChannelMonitorAPIKeyCostTable(
         </Empty>
       ) : (
         <div className='max-h-[min(30rem,50dvh)] overflow-auto rounded-md border'>
-          <div className='min-w-[760px]'>
-            <div className='bg-muted/30 grid min-h-10 grid-cols-[minmax(15rem,1fr)_5rem_5.5rem_5.5rem_6.5rem_7rem] items-center border-b px-3'>
+          <div className='min-w-[840px]'>
+            <div
+              className={cn(
+                apiKeyCostGridClassName,
+                'bg-muted/30 min-h-10 items-center border-b px-3'
+              )}
+            >
               <ChannelMonitorSortButton
                 label='API Key'
                 direction={sortDirection('api_key_name')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'api_key_name')
@@ -174,9 +184,10 @@ export function ChannelMonitorAPIKeyCostTable(
                 }
               />
               <ChannelMonitorSortButton
-                label='渠道数'
+                label='关联渠道'
                 align='right'
                 direction={sortDirection('channel_count')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'channel_count')
@@ -184,9 +195,10 @@ export function ChannelMonitorAPIKeyCostTable(
                 }
               />
               <ChannelMonitorSortButton
-                label='已结算'
+                label='结算请求'
                 align='right'
                 direction={sortDirection('settled_count')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'settled_count')
@@ -197,6 +209,7 @@ export function ChannelMonitorAPIKeyCostTable(
                 label='未解析'
                 align='right'
                 direction={sortDirection('unresolved_count')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'unresolved_count')
@@ -207,6 +220,7 @@ export function ChannelMonitorAPIKeyCostTable(
                 label='解析率'
                 align='right'
                 direction={sortDirection('resolution_rate')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'resolution_rate')
@@ -214,9 +228,10 @@ export function ChannelMonitorAPIKeyCostTable(
                 }
               />
               <ChannelMonitorSortButton
-                label='成本'
+                label='结算成本'
                 align='right'
                 direction={sortDirection('cost_cny')}
+                subtleUnsortedIcon
                 onSort={() =>
                   setSort((current) =>
                     toggleAPIKeyCostSort(current, 'cost_cny')
@@ -231,7 +246,12 @@ export function ChannelMonitorAPIKeyCostTable(
                     key={`${item.api_key_id}:${item.id}:${item.display_name}`}
                     className='group'
                   >
-                    <summary className='hover:bg-muted/40 grid cursor-pointer list-none grid-cols-[minmax(15rem,1fr)_5rem_5.5rem_5.5rem_6.5rem_7rem] items-center gap-0 px-3 py-2.5 [&::-webkit-details-marker]:hidden'>
+                    <summary
+                      className={cn(
+                        apiKeyCostGridClassName,
+                        'hover:bg-muted/40 focus-visible:ring-ring/50 cursor-pointer list-none items-center px-3 py-3 outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'
+                      )}
+                    >
                       <span className='flex min-w-0 items-center pl-1'>
                         <HugeiconsIcon
                           icon={ArrowRight01Icon}
@@ -261,22 +281,22 @@ export function ChannelMonitorAPIKeyCostTable(
                         </span>
                       </span>
                       <span
-                        className='text-right font-mono text-xs tabular-nums'
+                        className='text-right font-mono text-sm tabular-nums'
                         aria-label={`${item.channels.length} 个渠道`}
                       >
                         {item.channels.length}
                       </span>
-                      <span className='text-right font-mono text-xs tabular-nums'>
+                      <span className='text-right font-mono text-sm tabular-nums'>
                         {item.settled_count}
                       </span>
                       <span
-                        className='text-right font-mono text-xs tabular-nums'
+                        className='text-right font-mono text-sm tabular-nums'
                         aria-label={`未解析 ${item.unresolved_count}`}
                       >
                         {item.unresolved_count}
                       </span>
                       <span
-                        className='text-right font-mono text-xs tabular-nums'
+                        className='text-right font-mono text-sm tabular-nums'
                         aria-label={`解析率 ${formatChannelMonitorResolutionRate(item.settled_count, item.unresolved_count)}`}
                       >
                         {formatChannelMonitorResolutionRate(
@@ -304,7 +324,7 @@ export function ChannelMonitorAPIKeyCostTable(
                                 已结算成本
                               </TableHead>
                               <TableHead className='w-[12%] text-right'>
-                                已结算
+                                结算请求
                               </TableHead>
                               <TableHead className='w-[12%] text-right'>
                                 未解析
