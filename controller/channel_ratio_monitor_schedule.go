@@ -1358,6 +1358,63 @@ func channelSmartScheduleAssignPriorityWeightTargets(items []channelSmartSchedul
 	}
 }
 
+func channelSmartSchedulePromoteConfirmedPrimary(
+	items []channelSmartSchedulePlanItem,
+	candidateByChannel map[int]channelSmartScheduleCandidate,
+	primaryChannelId int,
+) {
+	primaryCandidate, exists := candidateByChannel[primaryChannelId]
+	if !exists {
+		return
+	}
+	primaryIsFallback := primaryCandidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback
+	type routingTarget struct {
+		Priority int64
+		Weight   uint
+	}
+	layerItems := make([]channelSmartSchedulePlanItem, 0, len(items))
+	targets := make([]routingTarget, 0, len(items))
+	itemIndexByChannel := make(map[int]int, len(items))
+	for index, item := range items {
+		candidate, exists := candidateByChannel[item.ChannelId]
+		if !exists ||
+			(candidate.EconomicRole == channelSmartScheduleEconomicRoleBreakEvenFallback) != primaryIsFallback {
+			continue
+		}
+		layerItems = append(layerItems, item)
+		targets = append(targets, routingTarget{Priority: item.TargetPriority, Weight: item.TargetWeight})
+		itemIndexByChannel[item.ChannelId] = index
+	}
+	if len(layerItems) == 0 {
+		return
+	}
+	if _, exists := itemIndexByChannel[primaryChannelId]; !exists {
+		return
+	}
+	sort.Slice(targets, func(i int, j int) bool {
+		if targets[i].Priority != targets[j].Priority {
+			return targets[i].Priority > targets[j].Priority
+		}
+		return targets[i].Weight > targets[j].Weight
+	})
+	orderedChannels := make([]int, 0, len(layerItems))
+	orderedChannels = append(orderedChannels, primaryChannelId)
+	for _, index := range channelSmartScheduleRankedItemIndexes(layerItems, primaryChannelId) {
+		channelId := layerItems[index].ChannelId
+		if channelId != primaryChannelId {
+			orderedChannels = append(orderedChannels, channelId)
+		}
+	}
+	for index, channelId := range orderedChannels {
+		itemIndex, exists := itemIndexByChannel[channelId]
+		if !exists || index >= len(targets) {
+			continue
+		}
+		items[itemIndex].TargetPriority = targets[index].Priority
+		items[itemIndex].TargetWeight = targets[index].Weight
+	}
+}
+
 func channelSmartScheduleAssignProportionalWeights(
 	items []channelSmartSchedulePlanItem,
 	indexes []int,
@@ -1622,7 +1679,7 @@ func channelSmartScheduleApplySwitchConfirmation(
 			return
 		}
 		plan.ActualPrimaryId = confirmedPrimaryId
-		channelSmartScheduleAssignPriorityWeightTargets(plan.Items, confirmedPrimaryId)
+		channelSmartSchedulePromoteConfirmedPrimary(plan.Items, candidateByChannel, confirmedPrimaryId)
 		selectionReason := fmt.Sprintf(
 			"评分第一渠道 ID %d 未通过备用健康确认，选择评分顺序中首个已确认健康的渠道 ID %d",
 			plan.RawWinnerId,
@@ -1636,6 +1693,8 @@ func channelSmartScheduleApplySwitchConfirmation(
 			item.ScoreDetails.Decision.SelectedPrimaryChannelId = confirmedPrimaryId
 			item.ScoreDetails.Decision.ActualPrimaryChannelId = confirmedPrimaryId
 			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == confirmedPrimaryId
+			item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
+			item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
 			item.ScoreDetails.Decision.SelectionReason = selectionReason
 			channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, selectionReason)
 		}
@@ -1643,33 +1702,32 @@ func channelSmartScheduleApplySwitchConfirmation(
 	}
 	// An unverified or already deteriorating backup is only eligible for
 	// sampling; it cannot become the primary on a relative score alone.
-	if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
-		rawWinner.HealthState != channelSmartScheduleHealthHealthy ||
-		rawWinner.HealthHealthyRequestPercent+channelMonitorRatioEpsilon < policy.AdaptiveSamplingSwitchConfirmRequestPercent {
-		plan.ActualPrimaryId = currentPrimaryId
-		channelSmartScheduleAssignPriorityWeightTargets(plan.Items, currentPrimaryId)
-		for index := range plan.Items {
-			item := &plan.Items[index]
-			if item.ScoreDetails == nil {
-				continue
-			}
-			item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
-			item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
-			item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
-			if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
-				rawWinner.HealthState != channelSmartScheduleHealthHealthy {
-				item.ScoreDetails.Decision.SelectionReason =
-					"备用渠道样本不足或健康状态未确认，仅允许自适应采样，继续保留当前主渠道"
-			} else {
-				item.ScoreDetails.Decision.SelectionReason = fmt.Sprintf(
-					"备用渠道窗口内健康请求占比 %.1f%%，低于切换确认要求 %.1f%%，继续保留当前主渠道",
-					rawWinner.HealthHealthyRequestPercent,
-					policy.AdaptiveSamplingSwitchConfirmRequestPercent,
-				)
-			}
-			channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, item.ScoreDetails.Decision.SelectionReason)
+	plan.ActualPrimaryId = currentPrimaryId
+	channelSmartSchedulePromoteConfirmedPrimary(plan.Items, candidateByChannel, currentPrimaryId)
+	invalidHealthyPercent := math.IsNaN(rawWinner.HealthHealthyRequestPercent) ||
+		math.IsInf(rawWinner.HealthHealthyRequestPercent, 0)
+	for index := range plan.Items {
+		item := &plan.Items[index]
+		if item.ScoreDetails == nil {
+			continue
 		}
-		return
+		item.ScoreDetails.Decision.SelectedPrimaryChannelId = currentPrimaryId
+		item.ScoreDetails.Decision.ActualPrimaryChannelId = currentPrimaryId
+		item.ScoreDetails.Decision.SelectedPrimary = item.ChannelId == currentPrimaryId
+		item.ScoreDetails.Decision.AppliedPriority = item.TargetPriority
+		item.ScoreDetails.Decision.AppliedWeight = item.TargetWeight
+		if rawWinner.SampleDebt > 0 || !rawWinner.HealthEvidence ||
+			rawWinner.HealthState != channelSmartScheduleHealthHealthy || invalidHealthyPercent {
+			item.ScoreDetails.Decision.SelectionReason =
+				"备用渠道样本不足或健康状态未确认，仅允许自适应采样，继续保留当前主渠道"
+		} else {
+			item.ScoreDetails.Decision.SelectionReason = fmt.Sprintf(
+				"备用渠道窗口内健康请求占比 %.1f%%，低于切换确认要求 %.1f%%，继续保留当前主渠道",
+				rawWinner.HealthHealthyRequestPercent,
+				policy.AdaptiveSamplingSwitchConfirmRequestPercent,
+			)
+		}
+		channelSmartScheduleSetAdjustmentReason(item.ScoreDetails, item.ScoreDetails.Decision.SelectionReason)
 	}
 }
 
