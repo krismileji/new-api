@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import { renderAuditContent } from '../format'
@@ -32,6 +33,8 @@ describe('channel monitor audit content', () => {
             action: 'channel.monitor_smart_schedule_group_pause_update',
             params: {
               id: 7,
+              channel_name: '测试渠道',
+              channel_label: '测试渠道（ID: 7）',
               group: 'vip',
               model: 'gpt-test',
               duration_minutes: 30,
@@ -40,7 +43,7 @@ describe('channel monitor audit content', () => {
         },
         passthrough
       ),
-      '已将渠道 7 在分组 vip、模型 gpt-test 的流量暂停时间更新为 30 分钟'
+      '已将渠道 测试渠道（ID: 7）在分组 vip、模型 gpt-test 的流量暂停时间更新为 30 分钟'
     )
 
     assert.equal(
@@ -50,6 +53,8 @@ describe('channel monitor audit content', () => {
             action: 'channel.model_detection_config_update',
             params: {
               channel_id: 7,
+              channel_name: '测试渠道',
+              channel_label: '测试渠道（ID: 7）',
               schedule_status: '关闭',
               target_count: 3,
             },
@@ -57,7 +62,7 @@ describe('channel monitor audit content', () => {
         },
         passthrough
       ),
-      '已更新渠道 7 的模型检测配置（定时检测：关闭，3 个目标）'
+      '已更新渠道 测试渠道（ID: 7）的模型检测配置（定时检测：关闭，3 个目标）'
     )
 
     assert.equal(
