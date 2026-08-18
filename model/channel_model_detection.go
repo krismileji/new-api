@@ -1041,7 +1041,7 @@ func (event *ChannelModelDetectionCostEvent) MarkSettled(now int64, settledQuota
 	if event.SettlementStatus == ChannelModelDetectionSettlementSettled {
 		return ErrChannelModelDetectionInvalidCost
 	}
-	if settledQuota < 0 || costBasisQuota < 0 || inputTokens < 0 || outputTokens < 0 || totalTokens < 0 || !IsChannelModelDetectionUsageSource(usageSource) || usageSource == ChannelModelDetectionUsageUnavailable {
+	if settledQuota < 0 || costBasisQuota < 0 || inputTokens < 0 || outputTokens < 0 || totalTokens < 0 || usageSource != ChannelModelDetectionUsageUpstreamAuthoritative {
 		return ErrChannelModelDetectionInvalidCost
 	}
 	if err := validateChannelModelDetectionNullableNonNegative(costNanoCNY); err != nil {
@@ -1068,18 +1068,16 @@ func (event *ChannelModelDetectionCostEvent) MarkUnresolved(now int64, unresolve
 	if event.DispatchState != ChannelModelDetectionDispatchDispatched || event.SettlementStatus != ChannelModelDetectionSettlementPending {
 		return ErrChannelModelDetectionInvalidCost
 	}
-	if usageSource != ChannelModelDetectionUsageLocalEstimate && usageSource != ChannelModelDetectionUsageUnavailable {
+	if usageSource != ChannelModelDetectionUsageUnavailable {
 		return ErrChannelModelDetectionInvalidCost
 	}
-	if err := validateChannelModelDetectionNullableNonNegative(unresolvedCostNanoCNY); err != nil {
-		return err
+	if unresolvedCostNanoCNY != nil {
+		return ErrChannelModelDetectionInvalidCost
 	}
 	event.SettlementStatus = ChannelModelDetectionSettlementUnresolved
 	event.UsageSource = usageSource
 	event.UsageAvailable = false
-	if unresolvedCostNanoCNY != nil {
-		event.EstimatedCostNanoCNY = unresolvedCostNanoCNY
-	}
+	event.EstimatedCostNanoCNY = nil
 	if now <= 0 {
 		now = channelModelDetectionNow()
 	}
@@ -1093,9 +1091,10 @@ func (event *ChannelModelDetectionCostEvent) IsCostKnown() bool {
 	}
 	switch event.SettlementStatus {
 	case ChannelModelDetectionSettlementSettled:
-		return event.SettledCostNanoCNY != nil
+		return event.UsageSource == ChannelModelDetectionUsageUpstreamAuthoritative &&
+			event.UsageAvailable && event.SettledCostNanoCNY != nil
 	case ChannelModelDetectionSettlementUnresolved:
-		return event.EstimatedCostNanoCNY != nil
+		return false
 	default:
 		return false
 	}

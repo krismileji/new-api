@@ -11,12 +11,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	hosttypes "github.com/QuantumNous/new-api/types"
-
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -405,98 +399,15 @@ func EstimateChannelModelDetectionCost(ctx context.Context, tx *gorm.DB, channel
 		fixed32k = &value
 	}
 	officialResponse := ChannelModelDetectionPresetEstimateResponse{Preset: preset, Available: true, LogicalRequests: &logical, Fixed32KRequests: fixed32k, ConfigHash: official.ConfigHash}
-	snapshot, snapshotErr := CaptureChannelModelDetectionCostSnapshot(channelID)
-	if snapshotErr != nil {
-		snapshot = ChannelModelDetectionCostSnapshot{}
-	}
-
 	results := make([]ChannelModelDetectionTargetEstimateResponse, 0, len(targets))
-	var aggregateQuota decimal.Decimal
-	var aggregateCost decimal.Decimal
-	quotaUnknown := false
-	costUnknown := false
-	unknownCount := int64(0)
 	for _, target := range targets {
-		info, pricingKnown := channelModelDetectionPricingInfo(channelID, target.RequestModel)
-		quota, quotaKnown := EstimateChannelModelDetectionQuota(info, 0, snapshot)
-		if !pricingKnown {
-			quotaKnown = false
-		}
-		var totalQuota *int64
-		if quotaKnown {
-			total, clamp := common.QuotaFromDecimalChecked(decimal.NewFromInt(quota).Mul(decimal.NewFromInt(logical)))
-			if clamp == nil && total >= 0 {
-				value := int64(total)
-				totalQuota = &value
-				aggregateQuota = aggregateQuota.Add(decimal.NewFromInt(value))
-			} else {
-				quotaKnown = false
-			}
-		}
-		var costNano *int64
-		if quotaKnown && snapshot.CostRatioCNY != nil && snapshot.QuotaPerUnit != nil && totalQuota != nil {
-			value, costErr := CalculateChannelModelDetectionUnresolvedCostNanoCNY(*totalQuota, *snapshot.CostRatioCNY, *snapshot.QuotaPerUnit)
-			if costErr == nil {
-				costNano = &value
-				aggregateCost = aggregateCost.Add(decimal.NewFromInt(value))
-			} else {
-				costUnknown = true
-			}
-		} else {
-			costUnknown = true
-		}
-		if !quotaKnown {
-			quotaUnknown = true
-		}
-		if costNano == nil {
-			unknownCount += logical
-		}
 		results = append(results, ChannelModelDetectionTargetEstimateResponse{
 			TargetKey: target.TargetKey, RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel,
-			EstimatedLogicalRequests: logical, EstimatedHTTPAttempts: logical, EstimatedQuota: totalQuota,
-			EstimatedCostNanoCNY: costNano, EstimatedCostCNY: FormatChannelModelDetectionCostCNY(costNano), CostEstimateUnknown: costNano == nil,
-			EstimateBasis: "官方 estimate 请求量 × 渠道测试保守额度 × 当前渠道成本快照",
+			EstimatedLogicalRequests: logical, EstimatedHTTPAttempts: logical,
+			EstimateBasis: "官方 estimate 请求量；实际成本以请求完成后的上游 Usage 结算",
 		})
 	}
-	var totalQuotaPtr *int64
-	if !quotaUnknown {
-		value := int64(aggregateQuota.IntPart())
-		totalQuotaPtr = &value
-	}
-	var totalCostPtr *int64
-	if !costUnknown {
-		value := int64(aggregateCost.IntPart())
-		totalCostPtr = &value
-	}
-	return ChannelModelDetectionEstimateResponse{Preset: preset, OfficialEstimate: officialResponse, Targets: results, EstimatedQuota: totalQuotaPtr, EstimatedCostNanoCNY: totalCostPtr, EstimatedCostCNY: FormatChannelModelDetectionCostCNY(totalCostPtr), CostEstimateUnknownCount: unknownCount}, nil
-}
-
-func channelModelDetectionPricingInfo(channelID int, modelName string) (*relaycommon.RelayInfo, bool) {
-	groupRatio := ratio_setting.GetGroupRatio("default")
-	if groupRatio <= 0 || math.IsNaN(groupRatio) || math.IsInf(groupRatio, 0) {
-		groupRatio = 1
-	}
-	price, usePrice := ratio_setting.GetModelPrice(modelName, false)
-	info := &relaycommon.RelayInfo{OriginModelName: modelName, RelayMode: relayconstant.RelayModeResponses}
-	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelId: channelID}
-	info.SetEstimatePromptTokens(common.PreConsumedQuota)
-	info.PriceData = hosttypes.PriceData{UsePrice: usePrice, ModelPrice: price, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: groupRatio}, CompletionRatio: ratio_setting.GetCompletionRatio(modelName)}
-	if usePrice {
-		return info, true
-	}
-	ratio, ok := channelModelDetectionConfiguredModelRatio(modelName)
-	if !ok || ratio < 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
-		return info, false
-	}
-	info.PriceData.ModelRatio = ratio
-	return info, true
-}
-
-func channelModelDetectionConfiguredModelRatio(modelName string) (float64, bool) {
-	matched := ratio_setting.FormatMatchingModelName(modelName)
-	ratios := ratio_setting.GetModelRatioCopy()
-	if value, ok := ratios[matched]; ok {
-		return value, true
-	}
-	return 0, false
+	return ChannelModelDetectionEstimateResponse{
+		Preset: preset, OfficialEstimate: officialResponse, Targets: results,
+	}, nil
 }

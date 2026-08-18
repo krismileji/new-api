@@ -166,36 +166,29 @@ function modelDetectionCostSummary(
   let settledValue: string | null = null
   if (cost?.settled_request_count && cost.settled_cost_cny != null) {
     settledValue = formatChannelMonitorCost(Number(cost.settled_cost_cny))
-  } else if (fallbackSettledCostCNY != null && fallbackSettledCostCNY > 0) {
+  } else if (
+    cost == null &&
+    fallbackSettledCostCNY != null &&
+    fallbackSettledCostCNY > 0
+  ) {
     settledValue = formatChannelMonitorCost(fallbackSettledCostCNY)
   }
 
   let unresolvedValue: string | null = null
   if (cost?.unresolved_request_count) {
-    unresolvedValue =
-      cost.unresolved_cost_cny == null
-        ? t('Pending verification')
-        : t('Pending verification {{cost}}', {
-            cost: formatChannelMonitorCost(Number(cost.unresolved_cost_cny)),
-          })
+    unresolvedValue = t('Pending verification')
   }
 
   if (settledValue) {
     return { value: settledValue, detail: unresolvedValue }
   }
   if (unresolvedValue) {
-    const unknownCount = cost?.unresolved_cost_unknown_count ?? 0
     return {
       value: unresolvedValue,
-      detail:
-        cost?.unresolved_cost_cny == null && unknownCount > 0
-          ? t('{{count}} requests cannot be estimated yet', {
-              count: unknownCount,
-            })
-          : null,
+      detail: null,
     }
   }
-  if (fallbackSettledCostCNY != null) {
+  if (cost == null && fallbackSettledCostCNY != null) {
     return {
       value: formatChannelMonitorCost(fallbackSettledCostCNY),
       detail: null,

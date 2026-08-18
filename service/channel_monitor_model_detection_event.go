@@ -51,9 +51,6 @@ func emitChannelModelDetectionMonitorEvent(costEvent model.ChannelModelDetection
 		}
 	} else {
 		event.CostStatus = model.ChannelMonitorEventCostUnresolved
-		if costEvent.EstimatedCostNanoCNY != nil {
-			event.UnresolvedCostNanoCNY = *costEvent.EstimatedCostNanoCNY
-		}
 	}
 	_, _ = PublishChannelMonitorEvent(context.Background(), event)
 }

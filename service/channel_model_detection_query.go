@@ -881,16 +881,12 @@ func channelModelDetectionStoredCostAggregate(estimatedQuota int64, estimatedCos
 }
 
 func channelModelDetectionCostResponse(aggregate ChannelModelDetectionCostAggregate) ChannelModelDetectionCostResponse {
-	estimatedQuota := aggregate.EstimatedQuota
-	var estimatedQuotaPointer *int64
-	if aggregate.EstimatedQuota != 0 || aggregate.CostEstimateUnknownCount == 0 || aggregate.EstimatedCostNanoCNY != nil {
-		estimatedQuotaPointer = &estimatedQuota
-	}
 	return ChannelModelDetectionCostResponse{
-		Currency: "CNY", EstimatedQuota: estimatedQuotaPointer,
-		EstimatedCostNanoCNY:     aggregate.EstimatedCostNanoCNY,
-		EstimatedCostCNY:         FormatChannelModelDetectionCostCNY(aggregate.EstimatedCostNanoCNY),
-		CostEstimateUnknownCount: aggregate.CostEstimateUnknownCount,
+		Currency:                 "CNY",
+		EstimatedQuota:           nil,
+		EstimatedCostNanoCNY:     nil,
+		EstimatedCostCNY:         nil,
+		CostEstimateUnknownCount: 0,
 		SettledQuota:             aggregate.SettledQuota, CostBasisQuota: aggregate.CostBasisQuota,
 		SettledCostNanoCNY:         aggregate.SettledCostNanoCNY,
 		SettledCostCNY:             FormatChannelModelDetectionCostCNY(aggregate.SettledCostNanoCNY),

@@ -183,7 +183,7 @@ describe('模型检测展示工具', () => {
       })
     )
 
-    assert.deepEqual(lines, ['暂无法估算 · 1 次请求'])
+    assert.deepEqual(lines, ['成本待核实 · 1 次请求'])
     assert.equal(
       lines.some((line) => line.includes('0.000000000')),
       false

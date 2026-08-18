@@ -505,7 +505,7 @@ export function ChannelModelDetectionConfigSheet(
                 <SideDrawerSectionHeader title='保存说明' />
                 <div className='text-muted-foreground space-y-1 text-xs leading-5'>
                   <p>已有目标的内部标识会原样保留；新目标由服务端生成标识。</p>
-                  <p>成本估算只读取保存后的目标，未保存修改不会进入估算。</p>
+                  <p>请求量预览只读取保存后的目标，未保存修改不会进入预览。</p>
                 </div>
               </SideDrawerSection>
             </form>

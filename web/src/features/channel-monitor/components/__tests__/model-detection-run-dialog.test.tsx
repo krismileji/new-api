@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { afterEach, describe, test } from 'vitest'
 
 import { domWindow } from './test-dom'
@@ -281,7 +282,7 @@ afterEach(async () => {
   document.body.replaceChildren()
 })
 
-describe('模型检测手动估算 Dialog', () => {
+describe('模型检测手动请求量预览 Dialog', () => {
   test('每次打开都要求重新选择档位，且只调用 estimate 接口', async () => {
     const calls: Array<{ url: string; data: unknown }> = []
     apiClient.post = async (url, data) => {
@@ -298,8 +299,8 @@ describe('模型检测手动估算 Dialog', () => {
       waitForCondition(
         () =>
           calls.length === 1 &&
-          document.body.textContent?.includes('¥1.250000000') === true,
-        'estimate was not shown'
+          document.body.textContent?.includes('预计总逻辑请求12') === true,
+        'request count preview was not shown'
       )
     )
     assert.deepEqual(calls, [
@@ -341,14 +342,14 @@ describe('模型检测手动估算 Dialog', () => {
       waitForCondition(
         () =>
           requests.length === 1 &&
-          document.body.textContent?.includes('估算档位高档') === true,
-        'high estimate was not shown'
+          document.body.textContent?.includes('检测档位高档') === true,
+        'high request count preview was not shown'
       )
     )
     assert.deepEqual(requests, [{ preset: 'high' }])
   })
 
-  test('未知成本明确显示暂无法估算而不是 0', async () => {
+  test('兼容旧成本字段但不展示估算金额或额度', async () => {
     apiClient.post = async () =>
       success(
         estimate({
@@ -378,15 +379,14 @@ describe('模型检测手动估算 Dialog', () => {
     await submitForm()
     await act(async () =>
       waitForCondition(
-        () =>
-          document.body.textContent?.includes('部分请求暂无法估算成本') ===
-          true,
-        'unknown cost warning was not shown'
+        () => document.body.textContent?.includes('预计总逻辑请求12') === true,
+        'request count preview was not shown'
       )
     )
     const text = document.body.textContent ?? ''
-    assert.equal(text.includes('暂无法估算'), true)
-    assert.equal(text.includes('预计总成本¥0'), false)
+    assert.equal(text.includes('预计总成本'), false)
+    assert.equal(text.includes('预计总额度'), false)
+    assert.equal(text.includes('暂无法估算'), false)
   })
 
   test('存在未保存配置时不允许对旧目标估算', async () => {
@@ -447,7 +447,7 @@ describe('模型检测手动估算 Dialog', () => {
     await rerenderRunDialogWithRevision(8)
 
     assert.equal(getStartButton().disabled, true)
-    assert.equal(document.body.textContent?.includes('成本估算已失效'), true)
+    assert.equal(document.body.textContent?.includes('请求量预览已失效'), true)
     assert.equal(calls.length, 1)
   })
 

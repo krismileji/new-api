@@ -72,11 +72,10 @@ type ChannelModelDetectionCostSettlementInput struct {
 	SettledAt         int64
 }
 
-// ChannelModelDetectionCostUnresolvedInput records the best evidence that is
-// available after a dispatched request cannot be fully settled. When
-// UsageSource is empty, the frozen estimate determines local_estimate versus
-// unavailable. Authoritative usage may still be stored when only the cost
-// snapshot is unavailable.
+// ChannelModelDetectionCostUnresolvedInput records the best evidence available
+// after a dispatched request cannot be fully settled. An empty UsageSource
+// means no authoritative upstream Usage was available. Authoritative Usage may
+// still be stored when only the frozen cost snapshot is unavailable.
 type ChannelModelDetectionCostUnresolvedInput struct {
 	CostEventId           string
 	UsageSource           string
@@ -175,14 +174,10 @@ func CaptureChannelModelDetectionCostSnapshot(channelId int) (ChannelModelDetect
 }
 
 func CalculateChannelModelDetectionSettledCostNanoCNY(costBasisQuota int64, costRatioCNY string, quotaPerUnit int64) (int64, error) {
-	return calculateChannelModelDetectionCostNanoCNY(costBasisQuota, costRatioCNY, quotaPerUnit, false)
+	return calculateChannelModelDetectionCostNanoCNY(costBasisQuota, costRatioCNY, quotaPerUnit)
 }
 
-func CalculateChannelModelDetectionUnresolvedCostNanoCNY(estimatedQuota int64, costRatioCNY string, quotaPerUnit int64) (int64, error) {
-	return calculateChannelModelDetectionCostNanoCNY(estimatedQuota, costRatioCNY, quotaPerUnit, true)
-}
-
-func calculateChannelModelDetectionCostNanoCNY(quota int64, costRatioCNY string, quotaPerUnit int64, roundUp bool) (int64, error) {
+func calculateChannelModelDetectionCostNanoCNY(quota int64, costRatioCNY string, quotaPerUnit int64) (int64, error) {
 	if quota < 0 || quotaPerUnit <= 0 {
 		return 0, model.ErrChannelModelDetectionInvalidCost
 	}
@@ -194,11 +189,7 @@ func calculateChannelModelDetectionCostNanoCNY(quota int64, costRatioCNY string,
 		Div(decimal.NewFromInt(quotaPerUnit)).
 		Mul(ratio).
 		Mul(decimal.NewFromInt(model.ChannelModelDetectionNanoPerCNY))
-	if roundUp {
-		cost = cost.Ceil()
-	} else {
-		cost = cost.Round(0)
-	}
+	cost = cost.Round(0)
 	if cost.IsNegative() {
 		return 0, model.ErrChannelModelDetectionInvalidCost
 	}
@@ -258,14 +249,6 @@ func PrepareChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inp
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, false, err
 	}
-	var estimatedCost *int64
-	if snapshot.CostRatioCNY != nil && snapshot.QuotaPerUnit != nil {
-		cost, err := CalculateChannelModelDetectionUnresolvedCostNanoCNY(input.EstimatedQuota, *snapshot.CostRatioCNY, *snapshot.QuotaPerUnit)
-		if err != nil {
-			return model.ChannelModelDetectionCostEvent{}, false, err
-		}
-		estimatedCost = &cost
-	}
 	event := model.ChannelModelDetectionCostEvent{
 		CostEventId:            strings.TrimSpace(input.CostEventId),
 		RunId:                  strings.TrimSpace(input.RunId),
@@ -285,7 +268,7 @@ func PrepareChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inp
 		SettlementStatus:       model.ChannelModelDetectionSettlementPending,
 		UsageSource:            model.ChannelModelDetectionUsageUnavailable,
 		EstimatedQuota:         input.EstimatedQuota,
-		EstimatedCostNanoCNY:   estimatedCost,
+		EstimatedCostNanoCNY:   nil,
 		CostRatioCNY:           snapshot.CostRatioCNY,
 		QuotaPerUnit:           snapshot.QuotaPerUnit,
 		CostScope:              model.ChannelModelDetectionCostScopeChannelUpstreamAPI,
@@ -480,8 +463,7 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 		input.UsageSource = model.ChannelModelDetectionUsageUpstreamAuthoritative
 		input.UsageAvailable = true
 	}
-	if (input.UsageSource != model.ChannelModelDetectionUsageUpstreamAuthoritative && input.UsageSource != model.ChannelModelDetectionUsageLocalEstimate) ||
-		(input.UsageSource == model.ChannelModelDetectionUsageUpstreamAuthoritative) != input.UsageAvailable {
+	if input.UsageSource != model.ChannelModelDetectionUsageUpstreamAuthoritative || !input.UsageAvailable {
 		return model.ChannelModelDetectionCostEvent{}, model.ErrChannelModelDetectionInvalidCost
 	}
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
@@ -655,13 +637,9 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
 	if input.UsageSource == "" {
-		if event.EstimatedQuota > 0 || event.EstimatedCostNanoCNY != nil {
-			input.UsageSource = model.ChannelModelDetectionUsageLocalEstimate
-		} else {
-			input.UsageSource = model.ChannelModelDetectionUsageUnavailable
-		}
+		input.UsageSource = model.ChannelModelDetectionUsageUnavailable
 	}
-	if !model.IsChannelModelDetectionUsageSource(input.UsageSource) ||
+	if (input.UsageSource != model.ChannelModelDetectionUsageUpstreamAuthoritative && input.UsageSource != model.ChannelModelDetectionUsageUnavailable) ||
 		(input.UsageSource == model.ChannelModelDetectionUsageUpstreamAuthoritative) != input.UsageAvailable {
 		return model.ChannelModelDetectionCostEvent{}, model.ErrChannelModelDetectionInvalidCost
 	}
@@ -699,16 +677,17 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 		input.UpdatedAt = common.GetTimestamp()
 	}
 	values := map[string]any{
-		"settlement_status":   model.ChannelModelDetectionSettlementUnresolved,
-		"usage_source":        input.UsageSource,
-		"usage_available":     input.UsageAvailable,
-		"input_tokens":        input.InputTokens,
-		"output_tokens":       input.OutputTokens,
-		"total_tokens":        input.TotalTokens,
-		"upstream_request_id": upstreamRequestId,
-		"error_code":          errorCode,
-		"error_message":       errorMessage,
-		"updated_at":          input.UpdatedAt,
+		"settlement_status":       model.ChannelModelDetectionSettlementUnresolved,
+		"estimated_cost_nano_cny": nil,
+		"usage_source":            input.UsageSource,
+		"usage_available":         input.UsageAvailable,
+		"input_tokens":            input.InputTokens,
+		"output_tokens":           input.OutputTokens,
+		"total_tokens":            input.TotalTokens,
+		"upstream_request_id":     upstreamRequestId,
+		"error_code":              errorCode,
+		"error_message":           errorMessage,
+		"updated_at":              input.UpdatedAt,
 	}
 	if input.SettledQuota != nil {
 		values["settled_quota"] = *input.SettledQuota
@@ -817,8 +796,6 @@ func AggregateChannelModelDetectionCostEvents(ctx context.Context, tx *gorm.DB, 
 
 func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDetectionCostEvent) (ChannelModelDetectionCostAggregate, error) {
 	result := ChannelModelDetectionCostAggregate{Status: ChannelModelDetectionCostStatusNotStarted}
-	estimatedKnownCount := int64(0)
-	unresolvedKnownCount := int64(0)
 	dispatchedCount := int64(0)
 	dispatchedUsageCount := int64(0)
 	for i := range events {
@@ -839,18 +816,12 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 		}
 		switch event.DispatchState {
 		case model.ChannelModelDetectionDispatchPrepared:
-			if err := addChannelModelDetectionCostEstimate(&result, event, &estimatedKnownCount); err != nil {
-				return ChannelModelDetectionCostAggregate{}, err
-			}
 			result.PendingRequestCount++
 			continue
 		case model.ChannelModelDetectionDispatchNotStarted:
 			result.NotStartedRequestCount++
 			continue
 		case model.ChannelModelDetectionDispatchDispatched:
-			if err := addChannelModelDetectionCostEstimate(&result, event, &estimatedKnownCount); err != nil {
-				return ChannelModelDetectionCostAggregate{}, err
-			}
 			dispatchedCount++
 			if event.UsageAvailable {
 				dispatchedUsageCount++
@@ -862,6 +833,13 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 		case model.ChannelModelDetectionSettlementPending:
 			result.PendingRequestCount++
 		case model.ChannelModelDetectionSettlementSettled:
+			// Older records may have been settled from a local estimate. Keep
+			// them visible as unresolved, but never report them as actual cost.
+			if event.UsageSource != model.ChannelModelDetectionUsageUpstreamAuthoritative || !event.UsageAvailable {
+				result.UnresolvedRequestCount++
+				result.UnresolvedCostUnknownCount++
+				continue
+			}
 			if event.SettledQuota == nil || event.CostBasisQuota == nil || event.SettledCostNanoCNY == nil {
 				return ChannelModelDetectionCostAggregate{}, model.ErrChannelModelDetectionInvalidCost
 			}
@@ -883,30 +861,14 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 			result.SettledRequestCount++
 		case model.ChannelModelDetectionSettlementUnresolved:
 			result.UnresolvedRequestCount++
-			if event.EstimatedCostNanoCNY == nil {
-				result.UnresolvedCostUnknownCount++
-				continue
-			}
-			if result.UnresolvedCostNanoCNY == nil {
-				zero := int64(0)
-				result.UnresolvedCostNanoCNY = &zero
-			}
-			if err := addChannelModelDetectionCostValue(result.UnresolvedCostNanoCNY, *event.EstimatedCostNanoCNY); err != nil {
-				return ChannelModelDetectionCostAggregate{}, err
-			}
-			unresolvedKnownCount++
+			result.UnresolvedCostUnknownCount++
 		default:
 			return ChannelModelDetectionCostAggregate{}, model.ErrChannelModelDetectionInvalidCost
 		}
 	}
-	if estimatedKnownCount == 0 {
-		if result.CostEstimateUnknownCount > 0 {
-			result.EstimatedCostNanoCNY = nil
-		} else {
-			zero := int64(0)
-			result.EstimatedCostNanoCNY = &zero
-		}
-	}
+	result.EstimatedQuota = 0
+	result.EstimatedCostNanoCNY = nil
+	result.CostEstimateUnknownCount = 0
 	if result.SettledRequestCount == 0 {
 		zero := int64(0)
 		result.SettledCostNanoCNY = &zero
@@ -914,7 +876,7 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 	if result.UnresolvedRequestCount == 0 {
 		zero := int64(0)
 		result.UnresolvedCostNanoCNY = &zero
-	} else if unresolvedKnownCount == 0 {
+	} else {
 		result.UnresolvedCostNanoCNY = nil
 	}
 	result.UsageAvailable = dispatchedCount > 0 && dispatchedUsageCount == dispatchedCount
@@ -931,25 +893,6 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 		result.Status = ChannelModelDetectionCostStatusPartial
 	}
 	return result, nil
-}
-
-func addChannelModelDetectionCostEstimate(result *ChannelModelDetectionCostAggregate, event *model.ChannelModelDetectionCostEvent, knownCount *int64) error {
-	if err := addChannelModelDetectionCostValue(&result.EstimatedQuota, event.EstimatedQuota); err != nil {
-		return err
-	}
-	if event.EstimatedCostNanoCNY == nil {
-		result.CostEstimateUnknownCount++
-		return nil
-	}
-	if result.EstimatedCostNanoCNY == nil {
-		zero := int64(0)
-		result.EstimatedCostNanoCNY = &zero
-	}
-	if err := addChannelModelDetectionCostValue(result.EstimatedCostNanoCNY, *event.EstimatedCostNanoCNY); err != nil {
-		return err
-	}
-	*knownCount++
-	return nil
 }
 
 func RebuildChannelModelDetectionExecutionCost(ctx context.Context, tx *gorm.DB, executionId int64) (ChannelModelDetectionCostAggregate, error) {
@@ -1012,7 +955,6 @@ func RebuildChannelModelDetectionBatchCost(ctx context.Context, tx *gorm.DB, bat
 	}
 	aggregate := ChannelModelDetectionCostAggregate{Status: ChannelModelDetectionCostStatusNotStarted}
 	zero := int64(0)
-	aggregate.EstimatedCostNanoCNY = &zero
 	aggregate.SettledCostNanoCNY = &zero
 	aggregate.UnresolvedCostNanoCNY = &zero
 	if len(runIds) > 0 {

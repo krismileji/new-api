@@ -125,24 +125,6 @@ func TestChannelModelDetectionQuotaKeepsFrozenQuotaPerUnit(t *testing.T) {
 	assert.Equal(t, int64(5_000), result.CostBasisQuota)
 }
 
-func TestChannelModelDetectionRequestQuotaExcludesPreviewSafetyMargin(t *testing.T) {
-	quotaPerUnit := int64(500_000)
-	snapshot := ChannelModelDetectionCostSnapshot{QuotaPerUnit: &quotaPerUnit}
-	info := &relaycommon.RelayInfo{PriceData: types.PriceData{
-		ModelPrice:     0.01,
-		UsePrice:       true,
-		GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
-	}}
-
-	requestQuota, requestKnown := CalculateChannelModelDetectionRequestQuota(info, 0, snapshot)
-	estimatedQuota, estimateKnown := EstimateChannelModelDetectionQuota(info, 0, snapshot)
-
-	require.True(t, requestKnown)
-	require.True(t, estimateKnown)
-	assert.Equal(t, int64(5_000), requestQuota)
-	assert.Equal(t, int64(5_250), estimatedQuota)
-}
-
 func TestAlignChannelModelDetectionCostSnapshotUsesTieredBillingQuotaUnit(t *testing.T) {
 	costQuotaPerUnit := int64(1_000_000)
 	snapshot, err := AlignChannelModelDetectionCostSnapshot(&relaycommon.RelayInfo{
@@ -158,10 +140,6 @@ func TestChannelModelDetectionCostConversionUsesDecimalRoundingAndRejectsInvalid
 	settled, err := CalculateChannelModelDetectionSettledCostNanoCNY(1, "0.25", 3)
 	require.NoError(t, err)
 	assert.Equal(t, int64(83_333_333), settled)
-
-	unresolved, err := CalculateChannelModelDetectionUnresolvedCostNanoCNY(1, "0.25", 3)
-	require.NoError(t, err)
-	assert.Equal(t, int64(83_333_334), unresolved)
 
 	zero, err := CalculateChannelModelDetectionSettledCostNanoCNY(0, "0", 500_000)
 	require.NoError(t, err)
@@ -187,7 +165,7 @@ func TestChannelModelDetectionCostConversionUsesDecimalRoundingAndRejectsInvalid
 	assert.ErrorIs(t, err, ErrChannelModelDetectionCostOverflow)
 }
 
-func TestChannelModelDetectionCostPrepareIsIdempotentAndFreezesUnknownCost(t *testing.T) {
+func TestChannelModelDetectionCostPrepareIsIdempotentAndDoesNotEstimateCost(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
 	known := channelModelDetectionCostAttemptForTest("cost-known", 1, channelModelDetectionCostSnapshotForTest("0.8", 500_000))
@@ -195,8 +173,7 @@ func TestChannelModelDetectionCostPrepareIsIdempotentAndFreezesUnknownCost(t *te
 	event, created, err := PrepareChannelModelDetectionCostEvent(ctx, db, known)
 	require.NoError(t, err)
 	assert.True(t, created)
-	require.NotNil(t, event.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *event.EstimatedCostNanoCNY)
+	assert.Nil(t, event.EstimatedCostNanoCNY)
 	assert.Equal(t, model.ChannelModelDetectionDispatchPrepared, event.DispatchState)
 	assert.Equal(t, model.ChannelModelDetectionSettlementPending, event.SettlementStatus)
 
@@ -310,7 +287,7 @@ func TestChannelModelDetectionSettlementUsesOriginalDayAndDefaultsSettlementTime
 	assert.Equal(t, input.CreatedAt, dailyCost.UpdatedAt)
 }
 
-func TestChannelModelDetectionCostUnresolvedKeepsKnownEstimateOrNull(t *testing.T) {
+func TestChannelModelDetectionCostUnresolvedNeverUsesEstimatedCost(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
 
@@ -326,9 +303,8 @@ func TestChannelModelDetectionCostUnresolvedKeepsKnownEstimateOrNull(t *testing.
 		UpdatedAt:             102,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, model.ChannelModelDetectionUsageLocalEstimate, known.UsageSource)
-	require.NotNil(t, known.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *known.EstimatedCostNanoCNY)
+	assert.Equal(t, model.ChannelModelDetectionUsageUnavailable, known.UsageSource)
+	assert.Nil(t, known.EstimatedCostNanoCNY)
 
 	replayedKnown, err := MarkChannelModelDetectionCostEventUnresolved(ctx, db, ChannelModelDetectionCostUnresolvedInput{
 		CostEventId:           knownInput.CostEventId,
@@ -347,20 +323,18 @@ func TestChannelModelDetectionCostUnresolvedKeepsKnownEstimateOrNull(t *testing.
 	require.NoError(t, err)
 	unknown, err := MarkChannelModelDetectionCostEventUnresolved(ctx, db, ChannelModelDetectionCostUnresolvedInput{CostEventId: unknownInput.CostEventId, UpdatedAt: 105})
 	require.NoError(t, err)
-	assert.Equal(t, model.ChannelModelDetectionUsageLocalEstimate, unknown.UsageSource)
+	assert.Equal(t, model.ChannelModelDetectionUsageUnavailable, unknown.UsageSource)
 	assert.Nil(t, unknown.EstimatedCostNanoCNY)
 
 	aggregate, err := AggregateChannelModelDetectionCostEvents(ctx, db, ChannelModelDetectionCostFilter{RunId: "run-1"})
 	require.NoError(t, err)
 	assert.Equal(t, ChannelModelDetectionCostStatusUnresolved, aggregate.Status)
 	assert.Equal(t, int64(2), aggregate.UnresolvedRequestCount)
-	assert.Equal(t, int64(1), aggregate.UnresolvedCostUnknownCount)
-	require.NotNil(t, aggregate.UnresolvedCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *aggregate.UnresolvedCostNanoCNY)
-	assert.Equal(t, int64(1_000_000), aggregate.EstimatedQuota)
-	require.NotNil(t, aggregate.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *aggregate.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(1), aggregate.CostEstimateUnknownCount)
+	assert.Equal(t, int64(2), aggregate.UnresolvedCostUnknownCount)
+	assert.Nil(t, aggregate.UnresolvedCostNanoCNY)
+	assert.Zero(t, aggregate.EstimatedQuota)
+	assert.Nil(t, aggregate.EstimatedCostNanoCNY)
+	assert.Zero(t, aggregate.CostEstimateUnknownCount)
 }
 
 func TestChannelModelDetectionCostMissingSnapshotFallsBackToUnresolvedAndCanReconcile(t *testing.T) {
@@ -411,7 +385,7 @@ func TestChannelModelDetectionCostMissingSnapshotFallsBackToUnresolvedAndCanReco
 	assert.Equal(t, int64(480_000), *settled.SettledCostNanoCNY)
 }
 
-func TestChannelModelDetectionCostSettlesExplicitLocalEstimateWithoutClaimingAuthoritativeUsage(t *testing.T) {
+func TestChannelModelDetectionCostRejectsLocalEstimateSettlement(t *testing.T) {
 	db := setupChannelModelDetectionCostTest(t)
 	ctx := context.Background()
 	input := channelModelDetectionCostAttemptForTest("cost-local-estimate", 1, channelModelDetectionCostSnapshotForTest("0.8", 500_000))
@@ -420,7 +394,7 @@ func TestChannelModelDetectionCostSettlesExplicitLocalEstimateWithoutClaimingAut
 	_, err = MarkChannelModelDetectionCostEventDispatched(ctx, db, input.CostEventId, 101)
 	require.NoError(t, err)
 
-	settled, err := SettleChannelModelDetectionCostEvent(ctx, db, ChannelModelDetectionCostSettlementInput{
+	_, err = SettleChannelModelDetectionCostEvent(ctx, db, ChannelModelDetectionCostSettlementInput{
 		CostEventId:    input.CostEventId,
 		SettledQuota:   400,
 		CostBasisQuota: 300,
@@ -431,11 +405,31 @@ func TestChannelModelDetectionCostSettlesExplicitLocalEstimateWithoutClaimingAut
 		UsageAvailable: false,
 		SettledAt:      102,
 	})
+	assert.ErrorIs(t, err, model.ErrChannelModelDetectionInvalidCost)
+}
+
+func TestChannelModelDetectionCostAggregationDoesNotTrustLegacyLocalEstimate(t *testing.T) {
+	settledQuota := int64(400)
+	costBasisQuota := int64(300)
+	settledCost := int64(480_000)
+	events := []model.ChannelModelDetectionCostEvent{{
+		CostEventId: "legacy-local-estimate", RunId: "run-legacy", TargetId: 1, ExecutionId: 1, ChannelId: 1,
+		Preset: model.ChannelModelDetectionPresetMedium, AttemptNo: 1,
+		DispatchState: model.ChannelModelDetectionDispatchDispatched, SettlementStatus: model.ChannelModelDetectionSettlementSettled,
+		UsageSource: model.ChannelModelDetectionUsageLocalEstimate, UsageAvailable: false,
+		SettledQuota: &settledQuota, CostBasisQuota: &costBasisQuota, SettledCostNanoCNY: &settledCost,
+		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 100, SettledAt: 101, UpdatedAt: 101,
+	}}
+
+	aggregate, err := aggregateChannelModelDetectionCostEventList(events)
 	require.NoError(t, err)
-	assert.Equal(t, model.ChannelModelDetectionSettlementSettled, settled.SettlementStatus)
-	assert.Equal(t, model.ChannelModelDetectionUsageLocalEstimate, settled.UsageSource)
-	assert.False(t, settled.UsageAvailable)
-	require.NotNil(t, settled.SettledCostNanoCNY)
+	assert.Equal(t, ChannelModelDetectionCostStatusUnresolved, aggregate.Status)
+	assert.Zero(t, aggregate.SettledRequestCount)
+	require.NotNil(t, aggregate.SettledCostNanoCNY)
+	assert.Zero(t, *aggregate.SettledCostNanoCNY)
+	assert.Equal(t, int64(1), aggregate.UnresolvedRequestCount)
+	assert.Equal(t, int64(1), aggregate.UnresolvedCostUnknownCount)
+	assert.Nil(t, aggregate.UnresolvedCostNanoCNY)
 }
 
 func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDailyCost(t *testing.T) {
@@ -500,11 +494,10 @@ func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDail
 	assert.False(t, aggregate.UsageAvailable)
 	require.NotNil(t, aggregate.SettledCostNanoCNY)
 	assert.Equal(t, int64(400_000_000), *aggregate.SettledCostNanoCNY)
-	require.NotNil(t, aggregate.UnresolvedCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *aggregate.UnresolvedCostNanoCNY)
-	assert.Equal(t, int64(1_000_000), aggregate.EstimatedQuota)
-	require.NotNil(t, aggregate.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(1_600_000_000), *aggregate.EstimatedCostNanoCNY)
+	assert.Nil(t, aggregate.UnresolvedCostNanoCNY)
+	assert.Equal(t, int64(1), aggregate.UnresolvedCostUnknownCount)
+	assert.Zero(t, aggregate.EstimatedQuota)
+	assert.Nil(t, aggregate.EstimatedCostNanoCNY)
 
 	firstRun, err := RebuildChannelModelDetectionRunCost(ctx, db, "run-1")
 	require.NoError(t, err)
@@ -522,24 +515,24 @@ func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDail
 	require.NoError(t, db.Where("run_id = ?", "run-1").First(&run).Error)
 	assert.Equal(t, int64(1), run.SettledRequestCount)
 	assert.Equal(t, int64(1), run.UnresolvedRequestCount)
-	assert.Equal(t, int64(1_000_000), run.EstimatedQuota)
-	require.NotNil(t, run.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(1_600_000_000), *run.EstimatedCostNanoCNY)
+	assert.Zero(t, run.EstimatedQuota)
+	assert.Nil(t, run.EstimatedCostNanoCNY)
 	assert.Zero(t, run.CostEstimateUnknownCount)
 	assert.Equal(t, int64(400_000_000), *run.SettledCostNanoCNY)
-	assert.Equal(t, int64(800_000_000), *run.UnresolvedCostNanoCNY)
+	assert.Nil(t, run.UnresolvedCostNanoCNY)
+	assert.Equal(t, int64(1), run.UnresolvedCostUnknownCount)
 
 	var storedExecution model.ChannelModelDetectionExecution
 	require.NoError(t, db.First(&storedExecution, execution.Id).Error)
-	assert.Equal(t, int64(1_000_000), storedExecution.EstimatedQuota)
-	require.NotNil(t, storedExecution.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(1_600_000_000), *storedExecution.EstimatedCostNanoCNY)
+	assert.Zero(t, storedExecution.EstimatedQuota)
+	assert.Nil(t, storedExecution.EstimatedCostNanoCNY)
+	assert.Nil(t, storedExecution.UnresolvedCostNanoCNY)
 
 	var batch model.ChannelModelDetectionBatch
 	require.NoError(t, db.Where("batch_id = ?", batchId).First(&batch).Error)
-	assert.Equal(t, int64(1_000_000), batch.EstimatedQuota)
-	require.NotNil(t, batch.EstimatedCostNanoCNY)
-	assert.Equal(t, int64(1_600_000_000), *batch.EstimatedCostNanoCNY)
+	assert.Zero(t, batch.EstimatedQuota)
+	assert.Nil(t, batch.EstimatedCostNanoCNY)
+	assert.Nil(t, batch.UnresolvedCostNanoCNY)
 
 	var dailyCosts []model.ChannelDailyCost
 	require.NoError(t, db.Order("id ASC").Find(&dailyCosts).Error)
@@ -552,22 +545,26 @@ func TestChannelModelDetectionCostAggregationIsReplaySafeAndDoesNotDuplicateDail
 
 func TestChannelModelDetectionCostAggregationRejectsOverflow(t *testing.T) {
 	max := int64(math.MaxInt64)
+	zero := int64(0)
+	one := int64(1)
 	events := []model.ChannelModelDetectionCostEvent{
 		{
 			CostEventId: "one", RunId: "run", TargetId: 1, ExecutionId: 1, ChannelId: 1,
 			RequestModel: "model", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
 			Preset: model.ChannelModelDetectionPresetLow, DetectorRequestId: "request-1", AttemptNo: 1,
-			DispatchState: model.ChannelModelDetectionDispatchDispatched, SettlementStatus: model.ChannelModelDetectionSettlementUnresolved,
-			UsageSource: model.ChannelModelDetectionUsageLocalEstimate, EstimatedQuota: max,
-			EstimatedCostNanoCNY: &max, CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI,
+			DispatchState: model.ChannelModelDetectionDispatchDispatched, SettlementStatus: model.ChannelModelDetectionSettlementSettled,
+			UsageSource: model.ChannelModelDetectionUsageUpstreamAuthoritative, UsageAvailable: true,
+			SettledQuota: &zero, CostBasisQuota: &zero, SettledCostNanoCNY: &max,
+			CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI,
 		},
 		{
 			CostEventId: "two", RunId: "run", TargetId: 1, ExecutionId: 1, ChannelId: 1,
 			RequestModel: "model", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
 			Preset: model.ChannelModelDetectionPresetLow, DetectorRequestId: "request-2", AttemptNo: 1,
-			DispatchState: model.ChannelModelDetectionDispatchDispatched, SettlementStatus: model.ChannelModelDetectionSettlementUnresolved,
-			UsageSource: model.ChannelModelDetectionUsageLocalEstimate, EstimatedQuota: 1,
-			EstimatedCostNanoCNY: func() *int64 { value := int64(1); return &value }(), CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI,
+			DispatchState: model.ChannelModelDetectionDispatchDispatched, SettlementStatus: model.ChannelModelDetectionSettlementSettled,
+			UsageSource: model.ChannelModelDetectionUsageUpstreamAuthoritative, UsageAvailable: true,
+			SettledQuota: &zero, CostBasisQuota: &zero, SettledCostNanoCNY: &one,
+			CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI,
 		},
 	}
 

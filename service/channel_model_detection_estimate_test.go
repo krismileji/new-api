@@ -113,7 +113,7 @@ func TestChannelModelDetectionEstimateAPICallsOfficialEndpointsOnceAndReusesEsti
 	assert.Zero(t, events)
 }
 
-func TestChannelModelDetectionEstimateAPIKnownAndUnknownCostPreserveNullSemantics(t *testing.T) {
+func TestChannelModelDetectionEstimateAPIReturnsRequestVolumeWithoutCostEstimate(t *testing.T) {
 	t.Run("known", func(t *testing.T) {
 		db := setupChannelModelDetectionEstimateTestDB(t)
 		var bootstrapCalls, estimateCalls atomic.Int64
@@ -125,12 +125,15 @@ func TestChannelModelDetectionEstimateAPIKnownAndUnknownCostPreserveNullSemantic
 		response, err := EstimateChannelModelDetectionCost(context.Background(), db, 702, model.ChannelModelDetectionPresetLow, ChannelModelDetectorClientOptions{HTTPClient: server.Client()})
 		require.NoError(t, err)
 		require.Len(t, response.Targets, 1)
-		require.NotNil(t, response.Targets[0].EstimatedQuota)
-		require.NotNil(t, response.Targets[0].EstimatedCostNanoCNY)
-		require.NotNil(t, response.Targets[0].EstimatedCostCNY)
-		assert.Regexp(t, `^\d+\.\d{9}$`, *response.Targets[0].EstimatedCostCNY)
+		assert.Nil(t, response.Targets[0].EstimatedQuota)
+		assert.Nil(t, response.Targets[0].EstimatedCostNanoCNY)
+		assert.Nil(t, response.Targets[0].EstimatedCostCNY)
 		assert.False(t, response.Targets[0].CostEstimateUnknown)
 		assert.Zero(t, response.CostEstimateUnknownCount)
+		assert.Contains(t, response.Targets[0].EstimateBasis, "上游 Usage")
+		assert.Nil(t, response.EstimatedQuota)
+		assert.Nil(t, response.EstimatedCostNanoCNY)
+		assert.Nil(t, response.EstimatedCostCNY)
 	})
 
 	t.Run("unknown", func(t *testing.T) {
@@ -143,8 +146,8 @@ func TestChannelModelDetectionEstimateAPIKnownAndUnknownCostPreserveNullSemantic
 		require.Len(t, response.Targets, 1)
 		assert.Nil(t, response.Targets[0].EstimatedCostNanoCNY)
 		assert.Nil(t, response.Targets[0].EstimatedCostCNY)
-		assert.True(t, response.Targets[0].CostEstimateUnknown)
-		assert.Equal(t, int64(2), response.CostEstimateUnknownCount)
+		assert.False(t, response.Targets[0].CostEstimateUnknown)
+		assert.Zero(t, response.CostEstimateUnknownCount)
 		encoded, err := common.Marshal(response)
 		require.NoError(t, err)
 		assert.Contains(t, string(encoded), `"estimated_cost_nano_cny":null`)
@@ -170,7 +173,8 @@ func TestChannelModelDetectionEstimateAPIKnownAndUnknownCostPreserveNullSemantic
 		require.Len(t, response.Targets, 1)
 		assert.Nil(t, response.Targets[0].EstimatedQuota)
 		assert.Nil(t, response.Targets[0].EstimatedCostNanoCNY)
-		assert.Equal(t, int64(3), response.CostEstimateUnknownCount)
+		assert.False(t, response.Targets[0].CostEstimateUnknown)
+		assert.Zero(t, response.CostEstimateUnknownCount)
 	})
 }
 

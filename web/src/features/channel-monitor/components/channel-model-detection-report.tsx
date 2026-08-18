@@ -1083,7 +1083,7 @@ function ProgressAndUsage(props: {
 }
 
 function moneyText(value: string | null) {
-  if (value == null || value.trim() === '') return '暂无法估算'
+  if (value == null || value.trim() === '') return '金额不可用'
   return `¥${value}`
 }
 
@@ -1099,7 +1099,7 @@ function unresolvedCostText(cost: ChannelModelDetectionCost) {
   ) {
     return '无待核实请求'
   }
-  return moneyText(cost.unresolved_cost_cny)
+  return '等待可核验 Usage'
 }
 
 function CostSummary(props: { cost: ChannelModelDetectionCost }) {
@@ -1111,7 +1111,7 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
   return (
     <ReportSection
       title='渠道成本详情'
-      description='运行前估算、已结算成本和待核实预计成本分别展示，不合并为总实付。'
+      description='仅按真实上游请求的 Usage 结算成本；缺少可核验 Usage 的请求保持待核实。'
     >
       <div className='mb-3 flex min-w-0 flex-wrap items-center gap-2'>
         <Badge variant={status.variant}>{status.label}</Badge>
@@ -1131,17 +1131,6 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
       ) : null}
 
       <dl className='grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4'>
-        <DetailItem label='运行前预计渠道成本'>
-          {moneyText(cost.estimated_cost_cny)}
-        </DetailItem>
-        <DetailItem label='运行前预计等价额度'>
-          {cost.estimated_quota == null
-            ? '暂无法估算'
-            : formatCount(cost.estimated_quota)}
-        </DetailItem>
-        <DetailItem label='运行前估算未知数'>
-          {formatCount(cost.cost_estimate_unknown_count)}
-        </DetailItem>
         <DetailItem label='等价已结算额度'>
           {formatCount(cost.settled_quota)}
         </DetailItem>
@@ -1149,10 +1138,8 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
           {formatCount(cost.cost_basis_quota)}
         </DetailItem>
         <DetailItem label='已结算渠道成本'>{settledCostText(cost)}</DetailItem>
-        <DetailItem label='待核实预计成本'>
-          {unresolvedCostText(cost)}
-        </DetailItem>
-        <DetailItem label='无法估算请求数'>
+        <DetailItem label='待核实成本'>{unresolvedCostText(cost)}</DetailItem>
+        <DetailItem label='成本待核实请求数'>
           {formatCount(cost.unresolved_cost_unknown_count)}
         </DetailItem>
         <DetailItem label='真实上游请求数'>

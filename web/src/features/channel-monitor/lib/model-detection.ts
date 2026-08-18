@@ -277,7 +277,7 @@ export function channelModelDetectionCostLines(
   const lines: string[] = []
   if (cost.settled_request_count > 0) {
     if (cost.settled_cost_cny == null) {
-      lines.push(`已结算请求 ${cost.settled_request_count} 次 · 金额暂无法估算`)
+      lines.push(`已结算请求 ${cost.settled_request_count} 次 · 金额不可用`)
     } else {
       const quota = cost.settled_quota.toLocaleString('zh-CN')
       lines.push(`已结算成本 ¥${cost.settled_cost_cny} · 额度 ${quota}`)
@@ -285,21 +285,14 @@ export function channelModelDetectionCostLines(
   }
 
   if (cost.unresolved_request_count > 0) {
-    if (cost.unresolved_cost_cny == null) {
-      lines.push(`暂无法估算 · ${cost.unresolved_request_count} 次请求`)
-    } else {
-      const unknown = cost.unresolved_cost_unknown_count
-        ? ` · ${cost.unresolved_cost_unknown_count} 次暂无法估算`
-        : ''
-      lines.push(`待核实预计成本 ¥${cost.unresolved_cost_cny}${unknown}`)
-    }
+    lines.push(`成本待核实 · ${cost.unresolved_request_count} 次请求`)
   }
 
   if (
     cost.unresolved_cost_unknown_count > 0 &&
     cost.unresolved_request_count === 0
   ) {
-    lines.push(`暂无法估算 · ${cost.unresolved_cost_unknown_count} 次请求`)
+    lines.push(`成本待核实 · ${cost.unresolved_cost_unknown_count} 次请求`)
   }
 
   if (lines.length > 0) return lines

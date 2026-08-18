@@ -513,7 +513,7 @@ describe('模型检测渠道卡片', () => {
     const html = renderCard(channel)
 
     assert.match(html, /检测器返回了新结论，请升级主系统适配/)
-    assert.match(html, /暂无法估算 · 1 次请求/)
+    assert.match(html, /成本待核实 · 1 次请求/)
     assert.doesNotMatch(html, /已结算成本 ¥0\.000000000/)
   })
 
@@ -532,10 +532,12 @@ describe('模型检测渠道卡片', () => {
     })
     channel.latest_run_cost = unresolvedCost
     channel.today_model_detection_cost = unresolvedCost
+    channel.today_model_detection_cost_cny = 0.759054
 
     const html = renderCard(channel)
 
-    assert.equal((html.match(/待核实 ¥0\.7591/g) ?? []).length, 2)
+    assert.equal((html.match(/>待核实</g) ?? []).length, 2)
+    assert.doesNotMatch(html, /0\.7591/)
     assert.doesNotMatch(html, /最近模型检测成本<\/dt><dd[^>]*>-<\/dd>/)
   })
 })

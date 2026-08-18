@@ -21,7 +21,6 @@ import {
   Alert02Icon,
   Calculator01Icon,
   FingerPrintScanIcon,
-  MoneyNotFound01Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -108,14 +107,6 @@ export type ChannelModelDetectionRunDialogProps = {
   onRefreshRequested?: () => void
 }
 
-function formatQuota(value: number | null) {
-  return value == null ? '暂无法估算' : value.toLocaleString('zh-CN')
-}
-
-function formatCost(value: string | null) {
-  return value == null ? '暂无法估算' : `¥${value}`
-}
-
 function TargetEstimateRow(props: {
   target: ChannelModelDetectionTargetEstimate
 }) {
@@ -135,14 +126,6 @@ function TargetEstimateRow(props: {
       </TableCell>
       <TableCell className='text-right'>
         {props.target.estimated_http_attempts.toLocaleString('zh-CN')}
-      </TableCell>
-      <TableCell className='text-right'>
-        {formatQuota(props.target.estimated_quota)}
-      </TableCell>
-      <TableCell className='text-right font-medium'>
-        {props.target.cost_estimate_unknown
-          ? '暂无法估算'
-          : formatCost(props.target.estimated_cost_cny)}
       </TableCell>
     </TableRow>
   )
@@ -166,7 +149,7 @@ export function ChannelModelDetectionRunDialog(
       preset: ChannelModelDetectionPreset
       revision: number
     }) => {
-      if (!props.channel) throw new Error('未选择需要估算的渠道')
+      if (!props.channel) throw new Error('未选择需要预览请求量的渠道')
       return estimateChannelModelDetectionCost(
         variables.channelId,
         createChannelModelDetectionEstimateRequest(variables.preset)
@@ -174,7 +157,7 @@ export function ChannelModelDetectionRunDialog(
     },
     onSuccess: (estimate, variables) => {
       setEstimatedRevision(variables.revision)
-      toast.success('手动检测成本估算已更新')
+      toast.success('手动检测请求量已更新')
       props.onEstimate?.(estimate)
     },
     onError: (error) => {
@@ -208,7 +191,7 @@ export function ChannelModelDetectionRunDialog(
         return
       }
       toast.error(
-        `启动结果未确认，请刷新任务状态后重新估算：${channelModelDetectionRequestErrorMessage(error)}`
+        `启动结果未确认，请刷新任务状态后重新获取请求量：${channelModelDetectionRequestErrorMessage(error)}`
       )
     },
   })
@@ -272,7 +255,7 @@ export function ChannelModelDetectionRunDialog(
       estimateMutation.reset()
       setEstimatedRevision(null)
       props.onRefreshRequested?.()
-      toast.error('渠道配置或检测档位已变化，请刷新后重新估算')
+      toast.error('渠道配置或检测档位已变化，请刷新后重新获取请求量')
       return
     }
     runMutation.mutate({
@@ -301,8 +284,8 @@ export function ChannelModelDetectionRunDialog(
           </DialogTitle>
           <DialogDescription>
             {props.channel
-              ? `${props.channel.name} #${props.channel.id} · 先确认成本，再启动本次检测`
-              : '选择渠道后估算并启动手动检测'}
+              ? `${props.channel.name} #${props.channel.id} · 先确认请求量，再启动本次检测`
+              : '选择渠道后查看请求量并启动手动检测'}
           </DialogDescription>
         </DialogHeader>
 
@@ -311,7 +294,7 @@ export function ChannelModelDetectionRunDialog(
             <HugeiconsIcon icon={Alert02Icon} />
             <AlertTitle>存在未保存的渠道目标修改</AlertTitle>
             <AlertDescription>
-              后端估算只读取已保存目标。请先保存或放弃修改，再重新打开成本预览。
+              后端预览只读取已保存目标。请先保存或放弃修改，再重新打开请求量预览。
             </AlertDescription>
           </Alert>
         ) : null}
@@ -321,7 +304,7 @@ export function ChannelModelDetectionRunDialog(
             <HugeiconsIcon icon={Alert02Icon} />
             <AlertTitle>尚未保存检测目标</AlertTitle>
             <AlertDescription>
-              配置并保存至少一个目标后才能估算手动检测成本。
+              配置并保存至少一个目标后才能查看手动检测请求量。
             </AlertDescription>
           </Alert>
         ) : null}
@@ -385,7 +368,7 @@ export function ChannelModelDetectionRunDialog(
                 <HugeiconsIcon icon={Alert02Icon} />
                 <AlertTitle>高档会产生更多请求和成本</AlertTitle>
                 <AlertDescription>
-                  本确认只对当前手动估算有效，与统一定时高档确认互不复用。
+                  本确认只对当前手动检测有效，与统一定时高档确认互不复用。
                 </AlertDescription>
                 <FormField
                   control={form.control}
@@ -417,9 +400,9 @@ export function ChannelModelDetectionRunDialog(
         {staleEstimate ? (
           <Alert variant='destructive'>
             <HugeiconsIcon icon={Alert02Icon} />
-            <AlertTitle>成本估算已失效</AlertTitle>
+            <AlertTitle>请求量预览已失效</AlertTitle>
             <AlertDescription>
-              渠道配置或本次档位已发生变化，请刷新渠道数据后重新估算。
+              渠道配置或本次档位已发生变化，请刷新渠道数据后重新获取请求量。
             </AlertDescription>
           </Alert>
         ) : null}
@@ -427,41 +410,26 @@ export function ChannelModelDetectionRunDialog(
         {validEstimate ? (
           <section
             className='flex min-w-0 flex-col gap-3'
-            aria-label='成本估算结果'
+            aria-label='请求量预览结果'
           >
-            <div className='grid gap-2 sm:grid-cols-3'>
+            <div className='grid gap-2 sm:grid-cols-2'>
               <div className='border-border/60 rounded-lg border p-3'>
-                <div className='text-muted-foreground text-xs'>估算档位</div>
+                <div className='text-muted-foreground text-xs'>检测档位</div>
                 <div className='mt-1 font-medium'>
                   {channelModelDetectionPresetLabel(validEstimate.preset)}
                 </div>
               </div>
               <div className='border-border/60 rounded-lg border p-3'>
-                <div className='text-muted-foreground text-xs'>预计总额度</div>
-                <div className='mt-1 font-medium tabular-nums'>
-                  {formatQuota(validEstimate.estimated_quota)}
+                <div className='text-muted-foreground text-xs'>
+                  预计总逻辑请求
                 </div>
-              </div>
-              <div className='border-border/60 rounded-lg border p-3'>
-                <div className='text-muted-foreground text-xs'>预计总成本</div>
                 <div className='mt-1 font-medium tabular-nums'>
-                  {formatCost(validEstimate.estimated_cost_cny)}
+                  {validEstimate.official_estimate.logical_requests?.toLocaleString(
+                    'zh-CN'
+                  ) ?? '暂不可用'}
                 </div>
               </div>
             </div>
-
-            {validEstimate.cost_estimate_unknown_count > 0 ? (
-              <Alert>
-                <HugeiconsIcon icon={MoneyNotFound01Icon} />
-                <AlertTitle>部分请求暂无法估算成本</AlertTitle>
-                <AlertDescription>
-                  {validEstimate.cost_estimate_unknown_count.toLocaleString(
-                    'zh-CN'
-                  )}{' '}
-                  次逻辑请求缺少价格、Token 或渠道成本快照，金额不会按 0 展示。
-                </AlertDescription>
-              </Alert>
-            ) : null}
 
             <div className='border-border/60 overflow-hidden rounded-lg border'>
               <Table>
@@ -470,8 +438,6 @@ export function ChannelModelDetectionRunDialog(
                     <TableHead>目标</TableHead>
                     <TableHead className='text-right'>逻辑请求</TableHead>
                     <TableHead className='text-right'>HTTP 尝试</TableHead>
-                    <TableHead className='text-right'>预计额度</TableHead>
-                    <TableHead className='text-right'>预计成本</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -493,7 +459,7 @@ export function ChannelModelDetectionRunDialog(
                 ) ?? '暂不可用'}
               </Badge>
               <span>
-                估算用于检测前决策；实际成本以渠道上游请求结算记录为准。
+                这里只预览请求量；实际成本仅按请求完成后的上游 Usage 结算。
               </span>
             </div>
           </section>
@@ -524,7 +490,7 @@ export function ChannelModelDetectionRunDialog(
             ) : (
               <HugeiconsIcon icon={Calculator01Icon} data-icon='inline-start' />
             )}
-            估算成本
+            查看请求量
           </Button>
           <Button
             type='button'

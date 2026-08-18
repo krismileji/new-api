@@ -627,12 +627,13 @@ describe('模型检测目标报告', () => {
     assert.match(settled, /真实上游请求数63/)
 
     const unresolved = executionNode('unresolved-cost').textContent ?? ''
-    assert.match(unresolved, /待核实预计成本¥0\.008000000/)
+    assert.match(unresolved, /待核实成本等待可核验 Usage/)
     assert.match(unresolved, /待核实请求数2/)
+    assert.doesNotMatch(unresolved, /0\.008000000/)
 
     const unknown = executionNode('unknown-cost').textContent ?? ''
-    assert.match(unknown, /待核实预计成本暂无法估算/)
-    assert.match(unknown, /无法估算请求数3/)
+    assert.match(unknown, /待核实成本等待可核验 Usage/)
+    assert.match(unknown, /成本待核实请求数3/)
 
     const notStarted = executionNode('not-started-cost').textContent ?? ''
     assert.match(notStarted, /尚未发出上游请求/)
@@ -659,10 +660,10 @@ describe('模型检测目标报告', () => {
     ])
 
     const text = document.body.textContent ?? ''
-    assert.match(text, /运行前预计渠道成本暂无法估算/)
-    assert.match(text, /运行前预计等价额度暂无法估算/)
-    assert.match(text, /已结算渠道成本暂无法估算/)
-    assert.match(text, /待核实预计成本暂无法估算/)
+    assert.doesNotMatch(text, /运行前预计渠道成本/)
+    assert.doesNotMatch(text, /运行前预计等价额度/)
+    assert.match(text, /已结算渠道成本金额不可用/)
+    assert.match(text, /待核实成本等待可核验 Usage/)
     assert.doesNotMatch(text, /¥0\.000000000/)
   })
 

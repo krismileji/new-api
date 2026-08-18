@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { afterEach, beforeEach, describe, test } from 'vitest'
 
 import { formatTimestampToDate } from '@/lib/format'
@@ -311,7 +312,7 @@ describe('模型检测历史 Sheet', () => {
     )
   })
 
-  test('已结算和待核实成本分开显示并保留等价额度与计价基数', async () => {
+  test('只展示实际结算成本并保留等价额度与计价基数', async () => {
     await renderHistory({
       channel: createChannel(),
       initialQuery: createQuery(),
@@ -319,16 +320,17 @@ describe('模型检测历史 Sheet', () => {
     })
 
     const text = document.body.textContent ?? ''
-    assert.match(text, /预计成本 ¥0\.040000000/)
-    assert.match(text, /预计额度 20,000/)
+    assert.doesNotMatch(text, /预计成本/)
+    assert.doesNotMatch(text, /预计额度/)
     assert.match(text, /等价已结算额度 12,840/)
     assert.match(text, /计价基数 13,200/)
     assert.match(text, /已结算渠道成本 ¥0\.025680000/)
-    assert.match(text, /待核实预计成本 ¥0\.008000000/)
-    assert.match(text, /无法估算请求数 1/)
+    assert.match(text, /等待可核验 Usage，不计入已结算成本/)
+    assert.match(text, /待核实请求数 1/)
+    assert.doesNotMatch(text, /0\.008000000/)
   })
 
-  test('未知金额显示暂无法估算且不会把空值格式化为零', async () => {
+  test('缺少 Usage 的请求保持待核实且不会把空值格式化为零', async () => {
     const cost = createCost({
       estimated_quota: null,
       estimated_cost_nano_cny: null,
@@ -352,9 +354,10 @@ describe('模型检测历史 Sheet', () => {
     })
 
     const text = document.body.textContent ?? ''
-    assert.match(text, /预计成本暂无法估算/)
-    assert.match(text, /预计额度暂无法估算/)
-    assert.match(text, /待核实预计成本暂无法估算/)
+    assert.match(text, /等待可核验 Usage，不计入已结算成本/)
+    assert.match(text, /待核实请求数 2/)
+    assert.doesNotMatch(text, /预计成本/)
+    assert.doesNotMatch(text, /预计额度/)
     assert.doesNotMatch(text, /¥0\.000000000/)
   })
 

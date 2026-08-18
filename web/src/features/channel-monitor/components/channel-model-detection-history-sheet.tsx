@@ -201,20 +201,11 @@ function errorSummary(message: string) {
 
 function CostSummary(props: { cost: ChannelModelDetectionCost }) {
   const cost = props.cost
-  const estimateCost =
-    cost.estimated_cost_cny == null
-      ? '预计成本暂无法估算'
-      : `预计成本 ¥${cost.estimated_cost_cny}`
-  const estimateQuota =
-    cost.estimated_quota == null
-      ? '预计额度暂无法估算'
-      : `预计额度 ${formatQuota(cost.estimated_quota)}`
-
   let settledCost = '尚无已结算渠道成本'
   if (cost.settled_request_count > 0) {
     settledCost =
       cost.settled_cost_cny == null
-        ? '已结算渠道成本暂无法估算'
+        ? '已结算渠道成本金额不可用'
         : `已结算渠道成本 ¥${cost.settled_cost_cny}`
   }
 
@@ -223,10 +214,7 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
     cost.unresolved_request_count > 0 ||
     cost.unresolved_cost_unknown_count > 0
   ) {
-    unresolvedCost =
-      cost.unresolved_cost_cny == null
-        ? '待核实预计成本暂无法估算'
-        : `待核实预计成本 ¥${cost.unresolved_cost_cny}`
+    unresolvedCost = '等待可核验 Usage，不计入已结算成本'
   }
 
   return (
@@ -240,13 +228,6 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
         <div className='text-muted-foreground mb-2 text-xs'>成本结算中</div>
       )}
       <dl className='grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 text-xs sm:grid-cols-2'>
-        <div className='min-w-0'>
-          <dt className='text-muted-foreground'>运行前估算</dt>
-          <dd className='mt-0.5 font-medium'>{estimateCost}</dd>
-          <dd className='text-muted-foreground mt-0.5 tabular-nums'>
-            {estimateQuota} · 无法估算请求数 {cost.cost_estimate_unknown_count}
-          </dd>
-        </div>
         <div className='min-w-0'>
           <dt className='text-muted-foreground'>等价计费额度</dt>
           <dd className='mt-0.5 font-medium tabular-nums'>
@@ -267,8 +248,7 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
           <dt className='text-muted-foreground'>待核实</dt>
           <dd className='mt-0.5 font-medium'>{unresolvedCost}</dd>
           <dd className='text-muted-foreground mt-0.5 tabular-nums'>
-            待核实请求数 {cost.unresolved_request_count} · 无法估算请求数{' '}
-            {cost.unresolved_cost_unknown_count}
+            待核实请求数 {cost.unresolved_request_count}
           </dd>
         </div>
       </dl>

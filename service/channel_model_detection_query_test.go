@@ -100,7 +100,7 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 		CostEventId: "cost-overview-unresolved", RunId: "run-102", TargetId: secondExecution.TargetId, ExecutionId: secondExecution.Id, ChannelId: 102,
 		RequestModel: secondExecution.RequestModel, ClaimedModel: secondExecution.ClaimedModel, Preset: secondExecution.Preset,
 		DetectorRequestId: "detector-request-unresolved", AttemptNo: 1, DispatchState: model.ChannelModelDetectionDispatchDispatched,
-		SettlementStatus: model.ChannelModelDetectionSettlementUnresolved, UsageSource: model.ChannelModelDetectionUsageLocalEstimate,
+		SettlementStatus: model.ChannelModelDetectionSettlementUnresolved, UsageSource: model.ChannelModelDetectionUsageUnavailable,
 		EstimatedQuota: 1, EstimatedCostNanoCNY: &unresolvedCost,
 		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 201, UpdatedAt: 202,
 	}).Error)
@@ -138,8 +138,8 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	require.NotNil(t, response.Channels[0].TodayModelDetectionCost.SettledCostCNY)
 	assert.Equal(t, "0.025680000", *response.Channels[0].TodayModelDetectionCost.SettledCostCNY)
 	require.NotNil(t, response.Channels[1].TodayModelDetectionCost)
-	require.NotNil(t, response.Channels[1].TodayModelDetectionCost.UnresolvedCostCNY)
-	assert.Equal(t, "0.759054000", *response.Channels[1].TodayModelDetectionCost.UnresolvedCostCNY)
+	assert.Nil(t, response.Channels[1].TodayModelDetectionCost.UnresolvedCostCNY)
+	assert.EqualValues(t, 1, response.Channels[1].TodayModelDetectionCost.UnresolvedCostUnknownCount)
 	assert.EqualValues(t, 1, response.Channels[1].TodayModelDetectionCost.UnresolvedRequestCount)
 
 	encoded, err := common.Marshal(response)
