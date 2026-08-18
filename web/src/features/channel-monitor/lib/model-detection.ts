@@ -345,10 +345,7 @@ export function filterChannelModelDetectionChannels(
 ) {
   const search = filters.search.trim().toLocaleLowerCase()
   return channels.filter((channel) => {
-    if (
-      filters.onlyConfigured &&
-      (!channel.config || !channel.targets.some((target) => target.enabled))
-    ) {
+    if (filters.onlyEnabled && channel.config?.schedule_enabled !== true) {
       return false
     }
     if (!matchesStatus(channel.health_status, filters.status)) return false

@@ -221,7 +221,7 @@ describe('模型检测展示工具', () => {
       model: 'gpt-5.6-terra',
       search: '备用',
       sort: 'latest_desc',
-      onlyConfigured: false,
+      onlyEnabled: false,
     })
 
     assert.deepEqual(
@@ -234,15 +234,15 @@ describe('模型检测展示工具', () => {
       model: 'gpt-5.6-sol',
       search: '',
       sort: 'latest_desc',
-      onlyConfigured: false,
+      onlyEnabled: false,
     })
     assert.deepEqual(noClaimedModelMatch, [])
   })
 
-  test('仅查看已配置时要求渠道存在启用的检测目标', () => {
+  test('仅查看已启用时要求渠道参加统一定时检测', () => {
     const config = {
       channel_id: 1,
-      schedule_enabled: false,
+      schedule_enabled: true,
       revision: 1,
       created_at: 1,
       updated_at: 1,
@@ -251,7 +251,7 @@ describe('模型检测展示工具', () => {
       { ...createChannel(1), config },
       {
         ...createChannel(2),
-        config: { ...config, channel_id: 2 },
+        config: { ...config, channel_id: 2, schedule_enabled: false },
         targets: [],
       },
       { ...createChannel(3), config: null },
@@ -264,7 +264,7 @@ describe('模型检测展示工具', () => {
       model: '',
       search: '',
       sort: 'ratio_asc' as const,
-      onlyConfigured: true,
+      onlyEnabled: true,
     }
     assert.deepEqual(
       filterChannelModelDetectionChannels(channels, filters).map(
@@ -275,7 +275,7 @@ describe('模型检测展示工具', () => {
     assert.deepEqual(
       filterChannelModelDetectionChannels(channels, {
         ...filters,
-        onlyConfigured: false,
+        onlyEnabled: false,
       }).map((channel) => channel.id),
       [1, 2, 3]
     )

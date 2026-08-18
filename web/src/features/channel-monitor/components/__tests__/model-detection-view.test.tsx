@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import type {
@@ -112,7 +113,7 @@ describe('模型检测视图骨架', () => {
           model: '',
           search: '',
           sort: 'ratio_asc',
-          onlyConfigured: false,
+          onlyEnabled: false,
         }}
       />
     )
@@ -190,7 +191,17 @@ describe('模型检测视图骨架', () => {
     } as ChannelModelDetectionChannel
 
     domWindow.document.body.innerHTML = renderToStaticMarkup(
-      <ChannelModelDetectionView overview={overview} />
+      <ChannelModelDetectionView
+        overview={overview}
+        filters={{
+          status: 'all',
+          group: '',
+          model: '',
+          search: '',
+          sort: 'ratio_asc',
+          onlyEnabled: false,
+        }}
+      />
     )
 
     const cards = [
@@ -218,7 +229,7 @@ describe('模型检测视图骨架', () => {
           model: '',
           search: '',
           sort: 'ratio_desc',
-          onlyConfigured: false,
+          onlyEnabled: false,
         }}
       />
     )
@@ -270,7 +281,7 @@ describe('模型检测视图骨架', () => {
             model: '',
             search: '不存在',
             sort: 'latest_desc',
-            onlyConfigured: false,
+            onlyEnabled: false,
           }}
         />
       ),
@@ -278,17 +289,23 @@ describe('模型检测视图骨架', () => {
     )
   })
 
-  test('没有参加定时检测的渠道时禁用暂停所有按钮', () => {
+  test('没有已配置渠道时禁用启用所有和暂停所有按钮', () => {
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <ChannelModelDetectionView
         overview={createOverview()}
+        onEnableAll={() => {}}
         onPauseAll={() => {}}
       />
     )
 
+    const enableAll = domWindow.document.querySelector(
+      '[aria-label="启用所有模型定时检测"]'
+    ) as HTMLButtonElement | null
     const pauseAll = domWindow.document.querySelector(
       '[aria-label="暂停所有模型定时检测"]'
     ) as HTMLButtonElement | null
+    assert.ok(enableAll)
+    assert.equal(enableAll.disabled, true)
     assert.ok(pauseAll)
     assert.equal(pauseAll.disabled, true)
   })

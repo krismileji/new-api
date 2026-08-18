@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { afterEach, beforeEach, describe, test } from 'vitest'
 
 import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
+import { afterEach, beforeEach, describe, test } from 'vitest'
 
 import type {
   ChannelModelDetectionChannel,
@@ -153,7 +153,7 @@ function createChannel(
     health_status: 'healthy',
     config: {
       channel_id: 801,
-      schedule_enabled: false,
+      schedule_enabled: true,
       revision: 7,
       created_at: 1_775_000_000,
       updated_at: 1_775_000_000,
@@ -252,7 +252,10 @@ function settingsResponse() {
   }
 }
 
-async function renderWorkspace(overview = createOverview()) {
+async function renderWorkspace(
+  overview = createOverview(),
+  onlyEnabled = true
+) {
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
@@ -271,7 +274,17 @@ async function renderWorkspace(overview = createOverview()) {
     root.render(
       <QueryClientProvider client={queryClient}>
         <I18nextProvider i18n={i18n}>
-          <ChannelModelDetectionWorkspace overview={overview} />
+          <ChannelModelDetectionWorkspace
+            overview={overview}
+            filters={{
+              status: 'all',
+              group: '',
+              model: '',
+              search: '',
+              sort: 'ratio_asc',
+              onlyEnabled,
+            }}
+          />
         </I18nextProvider>
       </QueryClientProvider>
     )
@@ -402,7 +415,18 @@ describe('模型检测工作区', () => {
         config,
       }
     }) as AxiosAdapter
-    await renderWorkspace()
+    await renderWorkspace(
+      createOverview({
+        config: {
+          channel_id: 801,
+          schedule_enabled: false,
+          revision: 7,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+      false
+    )
 
     await act(async () => findButton('参加统一定时检测').click())
     await waitForCondition(() => requests.length === 1, '定时配置请求未发出')
@@ -575,6 +599,117 @@ describe('模型检测工作区', () => {
     await waitForCondition(
       () => !document.body.textContent?.includes('暂停全部模型定时检测？'),
       '批量暂停确认未关闭'
+    )
+    assert.equal(
+      renderedWorkspace?.queryClient.getQueryState([
+        'channel-monitor',
+        'model-detection',
+        'overview',
+      ])?.isInvalidated,
+      true
+    )
+  })
+
+  test('启用所有先确认，仅更新已配置但暂停的渠道', async () => {
+    const overview = createOverview()
+    overview.channels = [
+      createChannel({
+        config: {
+          channel_id: 801,
+          schedule_enabled: false,
+          revision: 7,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+      createChannel({
+        id: 802,
+        name: '无效目标渠道',
+        config: {
+          channel_id: 802,
+          schedule_enabled: false,
+          revision: 11,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+        targets: [
+          {
+            target_key: 'disabled-target',
+            request_model: 'gpt-5.6-sol',
+            claimed_model: 'gpt-5.6-sol',
+            enabled: false,
+            position: 0,
+            latest: null,
+            recent_window: [],
+          },
+        ],
+      }),
+    ]
+    const requests: AxiosRequestConfig[] = []
+    const settleRequests: Array<() => void> = []
+    api.defaults.adapter = ((config) => {
+      requests.push(config)
+      return new Promise((resolve) => {
+        settleRequests.push(() =>
+          resolve({
+            ...success({
+              channel_id: Number(config.url?.match(/channel\/(\d+)/)?.[1]),
+              schedule_enabled: true,
+              revision: 8,
+              created_at: 1_775_000_000,
+              updated_at: 1_775_000_100,
+              targets: [],
+            }),
+            config,
+          })
+        )
+      })
+    }) as AxiosAdapter
+
+    await renderWorkspace(overview)
+
+    const enableAllButton = findButton('启用所有模型定时检测')
+    assert.equal(enableAllButton.disabled, false)
+    await act(async () => enableAllButton.click())
+    assert.equal(requests.length, 0)
+    assert.match(document.body.textContent ?? '', /启用全部模型定时检测？/)
+
+    const confirmButton = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.includes('确认启用')
+    )
+    assert.ok(confirmButton)
+    await act(async () => confirmButton.click())
+    await waitForCondition(() => requests.length === 1, '批量启用请求未发出')
+    assert.deepEqual(
+      requests.map((request) => ({
+        url: request.url,
+        body: JSON.parse(String(request.data)),
+      })),
+      [
+        {
+          url: '/api/channel_monitor/model_detection/channel/801/config',
+          body: {
+            schedule_enabled: true,
+            targets: [
+              {
+                target_key: 'target-sol',
+                request_model: 'gpt-5.6-sol',
+                claimed_model: 'gpt-5.6-sol',
+              },
+            ],
+            revision: 7,
+          },
+        },
+      ]
+    )
+
+    await act(async () => {
+      for (const settleRequest of settleRequests) settleRequest()
+      await Promise.resolve()
+    })
+    await waitForCondition(
+      () => !document.body.textContent?.includes('启用全部模型定时检测？'),
+      '批量启用确认未关闭'
     )
     assert.equal(
       renderedWorkspace?.queryClient.getQueryState([

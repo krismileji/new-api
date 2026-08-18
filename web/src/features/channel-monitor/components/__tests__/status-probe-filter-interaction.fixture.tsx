@@ -79,6 +79,8 @@ function createChannel(
   }
 }
 
+const pausedChannel = createChannel(3, '已暂停渠道', ['default'], ['model-a'])
+
 const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
   success: true,
   message: '',
@@ -87,7 +89,7 @@ const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
     scan_interval_seconds: 1,
     summary: {
       unconfigured: 1,
-      paused: 0,
+      paused: 1,
       pending: 2,
       healthy: 0,
       partial: 0,
@@ -105,7 +107,30 @@ const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
       createChannel(1, '默认渠道', ['default'], ['model-a']),
       createChannel(2, 'VIP 渠道', ['vip'], ['model-b', 'model-c']),
       {
-        ...createChannel(3, '未配置渠道', ['default'], []),
+        ...pausedChannel,
+        config: {
+          id: 3,
+          channel_id: 3,
+          enabled: false,
+          models: ['model-a'],
+          interval_seconds: 300,
+          display_value: 60,
+          display_unit: 'minute',
+          record_sample: false,
+          next_run_at: 0,
+          manual_request_id: '',
+          manual_requested_at: 0,
+          revision: 1,
+          running_trigger: '',
+          running_run_id: '',
+          running_started_at: 0,
+          created_at: 1,
+          updated_at: 1,
+        },
+        health_status: 'paused',
+      },
+      {
+        ...createChannel(4, '未配置渠道', ['default'], []),
         config: null,
         health_status: 'unconfigured',
         configured_model_count: 0,
@@ -182,14 +207,16 @@ try {
   )
   assert.ok(groupTrigger)
   assert.ok(modelTrigger)
-  const onlyConfigured = container.querySelector<HTMLElement>(
-    '[aria-label="仅展示已配置的状态探测卡片"]'
+  const onlyEnabled = container.querySelector<HTMLElement>(
+    '[aria-label="仅展示已启用的状态探测卡片"]'
   )
-  assert.ok(onlyConfigured)
-  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+  assert.ok(onlyEnabled)
+  assert.equal(onlyEnabled.getAttribute('aria-checked'), 'true')
+  assert.equal(container.textContent?.includes('已暂停渠道'), false)
   assert.equal(container.textContent?.includes('未配置渠道'), false)
-  await act(async () => onlyConfigured.click())
-  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'false')
+  await act(async () => onlyEnabled.click())
+  assert.equal(onlyEnabled.getAttribute('aria-checked'), 'false')
+  assert.ok(container.textContent?.includes('已暂停渠道'))
   assert.ok(container.textContent?.includes('未配置渠道'))
   assert.equal(modelTrigger.disabled, true)
   assert.ok(modelTrigger.textContent?.includes('请先选择分组'))
@@ -259,13 +286,13 @@ try {
     ['全部模型', 'model-a']
   )
 
-  const pauseRequests: AxiosRequestConfig[] = []
-  const finishPauseRequests: Array<() => void> = []
+  const updateRequests: AxiosRequestConfig[] = []
+  const finishUpdateRequests: Array<() => void> = []
   api.defaults.adapter = ((config) => {
     if (config.method === 'put') {
-      pauseRequests.push(config)
+      updateRequests.push(config)
       return new Promise((resolve) => {
-        finishPauseRequests.push(() => {
+        finishUpdateRequests.push(() => {
           const request = JSON.parse(String(config.data))
           resolve({
             config,
@@ -298,13 +325,63 @@ try {
     })
   }) as AxiosAdapter
 
+  const enableAllButton = container.querySelector<HTMLButtonElement>(
+    '[aria-label="启用所有状态探测"]'
+  )
+  assert.ok(enableAllButton)
+  assert.equal(enableAllButton.disabled, false)
+  await act(async () => enableAllButton.click())
+  assert.equal(updateRequests.length, 0)
+  assert.match(document.body.textContent ?? '', /启用全部周期探测？/)
+
+  const confirmEnableButton = [
+    ...document.querySelectorAll<HTMLButtonElement>('button'),
+  ].find((button) => button.textContent?.includes('确认启用'))
+  assert.ok(confirmEnableButton)
+  await act(async () => {
+    confirmEnableButton.click()
+    await Promise.resolve()
+  })
+  assert.deepEqual(
+    updateRequests.map((request) => ({
+      url: request.url,
+      body: JSON.parse(String(request.data)),
+    })),
+    [
+      {
+        url: '/api/channel_monitor/status/channel/3/config',
+        body: {
+          enabled: true,
+          models: ['model-a'],
+          interval_seconds: 300,
+          display_value: 60,
+          display_unit: 'minute',
+          record_sample: false,
+          revision: 1,
+        },
+      },
+    ]
+  )
+  await act(async () => {
+    finishUpdateRequests[0]?.()
+    await Promise.resolve()
+  })
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!document.body.textContent?.includes('启用全部周期探测？')) break
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+  updateRequests.length = 0
+  finishUpdateRequests.length = 0
+
   const pauseAllButton = container.querySelector<HTMLButtonElement>(
     '[aria-label="暂停所有状态探测"]'
   )
   assert.ok(pauseAllButton)
   assert.equal(pauseAllButton.disabled, false)
   await act(async () => pauseAllButton.click())
-  assert.equal(pauseRequests.length, 0)
+  assert.equal(updateRequests.length, 0)
   assert.match(document.body.textContent ?? '', /暂停全部周期探测？/)
 
   const confirmPauseButton = [
@@ -315,7 +392,7 @@ try {
     confirmPauseButton.click()
     await Promise.resolve()
   })
-  assert.equal(pauseRequests.length, 2)
+  assert.equal(updateRequests.length, 2)
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const currentPauseAllButton = container.querySelector<HTMLButtonElement>(
       '[aria-label="暂停所有状态探测"]'
@@ -337,7 +414,7 @@ try {
     assert.equal(button.disabled, true)
   }
   assert.deepEqual(
-    pauseRequests.map((request) => ({
+    updateRequests.map((request) => ({
       url: request.url,
       body: JSON.parse(String(request.data)),
     })),
@@ -370,7 +447,7 @@ try {
   )
 
   await act(async () => {
-    for (const finishRequest of finishPauseRequests) finishRequest()
+    for (const finishRequest of finishUpdateRequests) finishRequest()
     await Promise.resolve()
   })
 } finally {

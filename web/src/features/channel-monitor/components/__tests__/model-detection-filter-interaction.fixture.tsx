@@ -49,7 +49,7 @@ function channel(
     config: configured
       ? {
           channel_id: id,
-          schedule_enabled: false,
+          schedule_enabled: id === 1,
           revision: 1,
           created_at: 1,
           updated_at: 1,
@@ -151,14 +151,17 @@ try {
     root.render(<ChannelModelDetectionView overview={overview} />)
   })
 
-  const onlyConfigured = container.querySelector<HTMLElement>(
-    '[aria-label="仅展示已配置的模型检测卡片"]'
+  const onlyEnabled = container.querySelector<HTMLElement>(
+    '[aria-label="仅展示已启用的模型检测卡片"]'
   )
-  assert.ok(onlyConfigured)
-  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+  assert.ok(onlyEnabled)
+  assert.equal(onlyEnabled.getAttribute('aria-checked'), 'true')
+  assert.ok(container.textContent?.includes('默认渠道'))
+  assert.equal(container.textContent?.includes('VIP 渠道'), false)
   assert.equal(container.textContent?.includes('未配置渠道'), false)
-  await act(async () => onlyConfigured.click())
-  assert.equal(onlyConfigured.getAttribute('aria-checked'), 'false')
+  await act(async () => onlyEnabled.click())
+  assert.equal(onlyEnabled.getAttribute('aria-checked'), 'false')
+  assert.ok(container.textContent?.includes('VIP 渠道'))
   assert.ok(container.textContent?.includes('未配置渠道'))
 
   const groupTrigger = container.querySelector<HTMLButtonElement>(

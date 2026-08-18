@@ -17,11 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { ChannelStatusProbeView } from '../channel-status-probe-view'
 
@@ -120,16 +120,15 @@ describe('状态监测筛选布局', () => {
       domWindow.document.querySelector('[aria-label="按样本设置筛选渠道"]'),
       null
     )
-    const onlyConfigured = domWindow.document.querySelector(
-      '[aria-label="仅展示已配置的状态探测卡片"]'
+    const onlyEnabled = domWindow.document.querySelector(
+      '[aria-label="仅展示已启用的状态探测卡片"]'
     )
-    assert.ok(onlyConfigured)
-    assert.equal(onlyConfigured.getAttribute('aria-checked'), 'true')
+    assert.ok(onlyEnabled)
+    assert.equal(onlyEnabled.getAttribute('aria-checked'), 'true')
     assert.equal(
-      domWindow.document.querySelector(
-        'label[for="status-probe-only-configured"]'
-      )?.textContent,
-      '仅展示已配置'
+      domWindow.document.querySelector('label[for="status-probe-only-enabled"]')
+        ?.textContent,
+      '仅展示已启用'
     )
 
     const search = domWindow.document.querySelector(
@@ -143,5 +142,10 @@ describe('状态监测筛选布局', () => {
     ) as HTMLButtonElement | null
     assert.ok(pauseAll)
     assert.equal(pauseAll.disabled, true)
+    const enableAll = domWindow.document.querySelector(
+      '[aria-label="启用所有状态探测"]'
+    ) as HTMLButtonElement | null
+    assert.ok(enableAll)
+    assert.equal(enableAll.disabled, true)
   })
 })

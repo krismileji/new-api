@@ -22,6 +22,7 @@ import {
   FingerPrintScanIcon,
   InformationCircleIcon,
   PauseIcon,
+  PlayIcon,
   Refresh01Icon,
   Search01Icon,
   Settings02Icon,
@@ -91,7 +92,7 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
   model: '',
   search: '',
   sort: 'ratio_asc',
-  onlyConfigured: true,
+  onlyEnabled: true,
 }
 
 export type ChannelModelDetectionViewProps = {
@@ -101,8 +102,8 @@ export type ChannelModelDetectionViewProps = {
   error?: string | null
   actionPendingChannelId?: number | null
   actionPendingAll?: boolean
-  pauseAllPending?: boolean
-  pauseAllDisabled?: boolean
+  bulkActionPending?: 'enable' | 'pause' | null
+  bulkActionDisabled?: boolean
   filters?: ChannelModelDetectionFilters
   onFiltersChange?: (filters: ChannelModelDetectionFilters) => void
   onRefresh?: () => void
@@ -113,6 +114,7 @@ export type ChannelModelDetectionViewProps = {
   onOpenManualRun?: (channel: ChannelModelDetectionChannel) => void
   onCancelRun?: (channel: ChannelModelDetectionChannel) => void
   onToggleSchedule?: (channel: ChannelModelDetectionChannel) => void
+  onEnableAll?: () => void
   onPauseAll?: () => void
   settingsSurface?: ReactNode
   channelSurface?: ReactNode
@@ -313,6 +315,11 @@ export function ChannelModelDetectionView(
   const scheduledChannelCount = overview.channels.filter(
     (channel) => channel.config?.schedule_enabled === true
   ).length
+  const pausedChannelCount = overview.channels.filter(
+    (channel) =>
+      channel.config?.schedule_enabled === false &&
+      channel.targets.some((target) => target.enabled)
+  ).length
   let channelGridContent: ReactNode
   if (overview.channels.length === 0) {
     channelGridContent = (
@@ -407,6 +414,28 @@ export function ChannelModelDetectionView(
           </span>
         </div>
         <div className='flex w-full shrink-0 gap-2 sm:w-auto'>
+          {props.onEnableAll && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='flex-1 sm:flex-none'
+              onClick={props.onEnableAll}
+              disabled={
+                pausedChannelCount === 0 ||
+                props.bulkActionPending != null ||
+                props.bulkActionDisabled
+              }
+              aria-label='启用所有模型定时检测'
+            >
+              {props.bulkActionPending === 'enable' ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <HugeiconsIcon icon={PlayIcon} data-icon='inline-start' />
+              )}
+              启用所有
+            </Button>
+          )}
           {props.onPauseAll && (
             <Button
               type='button'
@@ -416,12 +445,12 @@ export function ChannelModelDetectionView(
               onClick={props.onPauseAll}
               disabled={
                 scheduledChannelCount === 0 ||
-                props.pauseAllPending ||
-                props.pauseAllDisabled
+                props.bulkActionPending != null ||
+                props.bulkActionDisabled
               }
               aria-label='暂停所有模型定时检测'
             >
-              {props.pauseAllPending ? (
+              {props.bulkActionPending === 'pause' ? (
                 <Spinner data-icon='inline-start' />
               ) : (
                 <HugeiconsIcon icon={PauseIcon} data-icon='inline-start' />
@@ -477,18 +506,18 @@ export function ChannelModelDetectionView(
         >
           <div className='flex h-9 shrink-0 items-center gap-2 px-1'>
             <Checkbox
-              id='model-detection-only-configured'
-              checked={filters.onlyConfigured}
+              id='model-detection-only-enabled'
+              checked={filters.onlyEnabled}
               onCheckedChange={(checked) =>
-                setFilters({ ...filters, onlyConfigured: checked === true })
+                setFilters({ ...filters, onlyEnabled: checked === true })
               }
-              aria-label='仅展示已配置的模型检测卡片'
+              aria-label='仅展示已启用的模型检测卡片'
             />
             <Label
-              htmlFor='model-detection-only-configured'
+              htmlFor='model-detection-only-enabled'
               className='text-muted-foreground cursor-pointer text-sm font-normal whitespace-nowrap'
             >
-              仅展示已配置
+              仅展示已启用
             </Label>
           </div>
           <Select
