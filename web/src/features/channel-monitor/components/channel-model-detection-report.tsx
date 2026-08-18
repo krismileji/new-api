@@ -38,6 +38,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import {
   Table,
@@ -197,11 +198,79 @@ const MODEL_MATCH_ORDER = [
   { key: 'luna', label: 'Luna' },
 ] as const
 
+const FINGERPRINT_REFERENCE_ROWS = [
+  {
+    preset: '低',
+    model: 'Sol',
+    simulatedAverage: '91.297%',
+    lowerBound99: '54.645%',
+    threshold: '>54%',
+  },
+  {
+    preset: '低',
+    model: 'Terra',
+    simulatedAverage: '92.842%',
+    lowerBound99: '58.805%',
+    threshold: '>58%',
+  },
+  {
+    preset: '低',
+    model: 'Luna',
+    simulatedAverage: '98.406%',
+    lowerBound99: '77.505%',
+    threshold: '>77%',
+  },
+  {
+    preset: '中',
+    model: 'Sol',
+    simulatedAverage: '93.658%',
+    lowerBound99: '82.995%',
+    threshold: '>82%',
+  },
+  {
+    preset: '中',
+    model: 'Terra',
+    simulatedAverage: '94.532%',
+    lowerBound99: '84.835%',
+    threshold: '>84%',
+  },
+  {
+    preset: '中',
+    model: 'Luna',
+    simulatedAverage: '99.452%',
+    lowerBound99: '97.135%',
+    threshold: '>97%',
+  },
+  {
+    preset: '高',
+    model: 'Sol',
+    simulatedAverage: '99.214%',
+    lowerBound99: '98.645%',
+    threshold: '>98%',
+  },
+  {
+    preset: '高',
+    model: 'Terra',
+    simulatedAverage: '98.529%',
+    lowerBound99: '97.505%',
+    threshold: '>97%',
+  },
+  {
+    preset: '高',
+    model: 'Luna',
+    simulatedAverage: '99.877%',
+    lowerBound99: '99.365%',
+    threshold: '>99%',
+  },
+] as const
+
 const SUPPORTED_REPORT_SCHEMA_MIN = 3
 const SUPPORTED_REPORT_SCHEMA_MAX = 4
 const VERIFIED_SCORING_VERSIONS = new Set(['trusted-fingerprint-v3'])
 
 const EFFORT_LABELS: Record<string, string> = {
+  none: '无',
+  minimal: '极低',
   low: '低',
   medium: '中',
   high: '高',
@@ -613,13 +682,23 @@ function OutcomeSummary(props: {
   const description = props.compatibility.compatible
     ? detectorDescription || execution.subtitle_cn || presentation.description
     : presentation.description
+  const fingerprintModel =
+    execution.fingerprint_model || stringValue(props.report.fingerprint_model)
+  const fingerprintClaimMismatch =
+    execution.fingerprint_claim_mismatch === true ||
+    props.report.fingerprint_claim_mismatch === true
+  const customPreset = props.report.custom_preset === true
+  const customChanges = arrayValue(props.report.custom_changes)
+    .map(compactValue)
+    .filter(Boolean)
   const unknownCode =
     Boolean(execution.outcome_code) &&
     !isKnownChannelModelDetectionOutcome(execution.outcome_code)
 
   return (
     <div className='min-w-0 py-4'>
-      <div className='flex min-w-0 items-start gap-3'>
+      <span className='text-muted-foreground text-xs'>综合结论</span>
+      <div className='mt-2 flex min-w-0 items-start gap-3'>
         <HugeiconsIcon
           icon={presentation.icon}
           className={cn(
@@ -647,6 +726,13 @@ function OutcomeSummary(props: {
           <p className='text-muted-foreground mt-1 text-sm break-words'>
             {description}
           </p>
+          <p className='text-muted-foreground mt-2 text-sm break-words'>
+            申报模型：{modelLabel(execution.claimed_model)}；实际请求模型：
+            {execution.request_model || execution.claimed_model || '-'}
+            {fingerprintClaimMismatch && fingerprintModel
+              ? `；行为指纹强烈指向 ${modelLabel(fingerprintModel)}，与申报不一致。`
+              : ''}
+          </p>
           {description !== presentation.description ? (
             <p className='text-muted-foreground mt-2 text-xs break-words'>
               系统归纳：{presentation.description}
@@ -654,6 +740,17 @@ function OutcomeSummary(props: {
           ) : null}
         </div>
       </div>
+
+      {customPreset ? (
+        <Alert className='mt-3'>
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>自定义档位测试结果仅供参考</AlertTitle>
+          <AlertDescription className='break-words'>
+            修改项目：{customChanges.join('、') || '自定义探针'}。
+            匹配度只能用于参考，不能据此判定是否通过。
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {unknownCode ? (
         <Alert className='mt-3'>
@@ -745,32 +842,62 @@ function EvidenceSummary(props: {
   )
 }
 
-function ModelMatchSummary(props: { report: Record<string, unknown> }) {
+function ModelMatchSummary(props: {
+  execution: ChannelModelDetectionExecutionDetail
+  report: Record<string, unknown>
+}) {
   const matches = modelMatches(props.report)
+  const fingerprint = recordValue(props.report.fingerprint_summary)
+  const reasons = arrayValue(fingerprint?.fingerprint_unclear_reasons_cn)
+  const fingerprintState =
+    props.execution.fingerprint_verdict_state ||
+    stringValue(props.report.fingerprint_verdict_state)
+  const fingerprintModel =
+    props.execution.fingerprint_model ||
+    stringValue(props.report.fingerprint_model)
+  const strongMatch = fingerprintState === 'strong_match' && fingerprintModel
   return (
     <ReportSection
-      title='型号匹配度'
+      title='指纹匹配度'
       description='匹配度表示本批答案分布与可信基线的相对接近程度，不是真实路由概率或混用比例。'
     >
+      <div className='mb-3 flex min-w-0 justify-end'>
+        <Badge variant={strongMatch ? 'secondary' : 'warning'}>
+          {strongMatch
+            ? `强烈指向 ${modelLabel(fingerprintModel)}`
+            : '证据不明确'}
+        </Badge>
+      </div>
       <div
         className='min-w-0 border-y'
         role='table'
-        aria-label='Sol、Terra、Luna 型号匹配度'
+        aria-label='Sol、Terra、Luna 指纹匹配度'
       >
         {MODEL_MATCH_ORDER.map((model) => {
           const match = matches.get(model.key)
+          const percentage =
+            match?.match == null
+              ? 0
+              : Math.max(0, Math.min(100, match.match * 100))
           return (
             <div
               key={model.key}
-              className='grid min-w-0 grid-cols-1 gap-1 border-b py-2.5 text-sm last:border-b-0 sm:grid-cols-[5rem_repeat(2,minmax(0,1fr))] sm:gap-3'
+              className='grid min-w-0 grid-cols-1 gap-2 border-b py-2.5 text-sm last:border-b-0 sm:grid-cols-[5rem_minmax(8rem,1fr)_6rem_9rem] sm:items-center sm:gap-3'
               role='row'
               data-model-match={model.label}
             >
               <span className='font-medium' role='cell'>
                 {model.label}
               </span>
+              <div className='min-w-0' role='cell'>
+                <Progress
+                  value={percentage}
+                  aria-label={`${model.label} 指纹匹配度 ${formatPercentage(match?.match ?? null)}`}
+                  className='min-w-0'
+                />
+              </div>
               <span className='min-w-0 break-words tabular-nums' role='cell'>
-                匹配度 {formatPercentage(match?.match ?? null)}
+                {formatPercentage(match?.match ?? null)}
               </span>
               <span className='min-w-0 break-words tabular-nums' role='cell'>
                 {match?.threshold == null
@@ -781,6 +908,69 @@ function ModelMatchSummary(props: { report: Record<string, unknown> }) {
           )
         })}
       </div>
+
+      <Accordion defaultValue={[]} className='mt-3 min-w-0 border'>
+        <AccordionItem value='fingerprint-reference' className='px-3'>
+          <AccordionTrigger
+            className='min-w-0 py-3'
+            data-report-section='fingerprint-reference'
+          >
+            <span className='min-w-0 break-words'>现有验证参考与适用边界</span>
+          </AccordionTrigger>
+          <AccordionContent className='min-w-0 pb-3'>
+            <p className='text-muted-foreground text-sm break-words'>
+              指纹匹配度只表示这批固定答案的分布更像哪一个可信模型，不是真实路由概率，也不是账号有多少比例用了该模型。低档每题
+              3 次，波动最大；中档每题 10 次更稳；高档比较四种请求格式，最稳定。
+            </p>
+            <Table className='mt-3 min-w-[36rem]'>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>档位</TableHead>
+                  <TableHead>真实模型</TableHead>
+                  <TableHead>历史模拟平均</TableHead>
+                  <TableHead>约 99% 高于</TableHead>
+                  <TableHead>正式线</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {FINGERPRINT_REFERENCE_ROWS.map((row) => (
+                  <TableRow key={`${row.preset}-${row.model}`}>
+                    <TableCell>{row.preset}</TableCell>
+                    <TableCell>{row.model}</TableCell>
+                    <TableCell>{row.simulatedAverage}</TableCell>
+                    <TableCell>{row.lowerBound99}</TableCell>
+                    <TableCell>{row.threshold}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className='text-muted-foreground mt-3 text-sm break-words'>
+              阈值来自 Stage C 中与三个探针相关的 3840 条记录：低档模拟 1000
+              万轮，中档 500 万轮，高档 100 万轮。低档仍有约 0.07% 至 0.26%
+              的错误强指向；中高档在这批模拟中为 0，但不代表现实中永远零误报。
+            </p>
+            <p className='text-muted-foreground mt-3 text-sm break-words'>
+              独立本地 Plus 正式池验证了 Sol 方向；Terra/Luna
+              没有完整同契约独立池。官方风控、限流、临时路由和请求契约变化都可能改变结果。
+            </p>
+            {reasons.length > 0 ? (
+              <div className='mt-3 min-w-0'>
+                <h5 className='text-sm font-medium'>本次证据不明确原因</h5>
+                <ul className='text-muted-foreground mt-1 list-disc space-y-1 pl-5 text-sm'>
+                  {reasons.map((reason, index) => (
+                    <li
+                      key={listItemKey('fingerprint-reason', reason, index)}
+                      className='break-words'
+                    >
+                      {compactValue(reason)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </ReportSection>
   )
 }
@@ -852,6 +1042,12 @@ function DeterministicSummary(props: { report: Record<string, unknown> }) {
   const coverageAlarm =
     booleanValue(coverage?.hard_anomaly) === true ||
     booleanValue(coverage?.sticky_hard_anomaly) === true
+  const outputStickyHistory =
+    booleanValue(output?.sticky_hard_anomaly) === true &&
+    booleanValue(output?.hard_anomaly) !== true
+  const coverageStickyHistory =
+    booleanValue(coverage?.sticky_hard_anomaly) === true &&
+    booleanValue(coverage?.hard_anomaly) !== true
 
   return (
     <ReportSection title='输出完整性与覆盖检测'>
@@ -863,7 +1059,7 @@ function DeterministicSummary(props: { report: Record<string, unknown> }) {
             {formatOptionalCount(output?.exact)} 条，格式无效{' '}
             {formatOptionalCount(output?.invalid)} 条。
             {outputAlarm
-              ? '检测到 40 或 40 开头的输出改写。'
+              ? `检测到 40 或 40 开头的输出改写${outputStickyHistory ? '（来自本会话历史粘性事件）' : ''}。`
               : '没有检测到 40 或 40 开头的输出改写。'}
           </p>
         </div>
@@ -872,7 +1068,7 @@ function DeterministicSummary(props: { report: Record<string, unknown> }) {
           <p className='text-muted-foreground mt-1 text-sm break-words'>
             成功响应 {formatOptionalCount(coverage?.requests)} 条。
             {coverageAlarm
-              ? '检测到显式定义可能被隐藏提示覆盖。'
+              ? `检测到显式定义可能被隐藏提示覆盖${coverageStickyHistory ? '（来自本会话历史粘性事件）' : ''}。`
               : '没有检测到明确的隐藏覆盖。'}
           </p>
         </div>
@@ -926,61 +1122,97 @@ function FingerprintProbeSummary(props: { report: Record<string, unknown> }) {
   const fingerprint = recordValue(props.report.fingerprint_summary)
   const cellDetails = recordValue(fingerprint?.cell_details)
   const familyContributions = recordValue(fingerprint?.family_contributions)
-  if (!cellDetails) return null
-  const cells = Object.entries(cellDetails).filter(
+  const cells = Object.entries(cellDetails ?? {}).filter(
     (entry): entry is [string, Record<string, unknown>] => isRecord(entry[1])
   )
-  if (cells.length === 0) return null
+  const referenceResults = arrayValue(
+    props.report.reference_fingerprint_results
+  ).filter(isRecord)
+  if (cells.length === 0 && referenceResults.length === 0) return null
 
   return (
     <ReportSection title='行为指纹探针'>
-      <Table className='min-w-[70rem]'>
-        <TableHeader>
-          <TableRow>
-            <TableHead>探针</TableHead>
-            <TableHead>请求方式</TableHead>
-            <TableHead>完成/计划</TableHead>
-            <TableHead>主要答案</TableHead>
-            <TableHead>贡献方向</TableHead>
-            <TableHead>模型差异 S</TableHead>
-            <TableHead>时间漂移 D</TableHead>
-            <TableHead>权重 w</TableHead>
-            <TableHead>90% 门禁</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {cells.map(([cellKey, cell]) => {
-            const probe = stringValue(cell.probe_id)
-            const profile = stringValue(cell.profile)
+      {cells.length > 0 ? (
+        <Table className='min-w-[70rem]'>
+          <TableHeader>
+            <TableRow>
+              <TableHead>探针</TableHead>
+              <TableHead>请求方式</TableHead>
+              <TableHead>完成/计划</TableHead>
+              <TableHead>主要答案</TableHead>
+              <TableHead>贡献方向</TableHead>
+              <TableHead>模型差异 S</TableHead>
+              <TableHead>时间漂移 D</TableHead>
+              <TableHead>权重 w</TableHead>
+              <TableHead>90% 门禁</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {cells.map(([cellKey, cell]) => {
+              const probe = stringValue(cell.probe_id)
+              const profile = stringValue(cell.profile)
+              return (
+                <TableRow key={cellKey}>
+                  <TableCell>{probeLabel(probe)}</TableCell>
+                  <TableCell>{profileLabel(profile)}</TableCell>
+                  <TableCell>
+                    {formatOptionalCount(cell.sample_count)} /{' '}
+                    {formatOptionalCount(cell.planned_samples)}
+                  </TableCell>
+                  <TableCell className='max-w-64 break-words whitespace-normal'>
+                    {answerCountsText(cell.counts)}
+                  </TableCell>
+                  <TableCell>
+                    {contributionDirection(cell, familyContributions)}
+                  </TableCell>
+                  <TableCell>
+                    {formatDecimal(numberValue(cell.between_model_jsd))}
+                  </TableCell>
+                  <TableCell>
+                    {formatDecimal(numberValue(cell.within_model_jsd))}
+                  </TableCell>
+                  <TableCell>
+                    {formatDecimal(numberValue(cell.weight))}
+                  </TableCell>
+                  <TableCell>
+                    {booleanValue(cell.complete) === true ? '达到' : '未达到'}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      ) : null}
+
+      {referenceResults.length > 0 ? (
+        <div className='mt-3 min-w-0 border-y'>
+          {referenceResults.map((result, index) => {
+            const probe = stringValue(result.probe_id)
+            const matches = recordValue(result.fingerprint_match)
+            const matchText = Object.entries(matches ?? {})
+              .map(([model, value]) => {
+                return `${modelLabel(model)} ${formatPercentage(numberValue(value))}`
+              })
+              .join('；')
             return (
-              <TableRow key={cellKey}>
-                <TableCell>{probeLabel(probe)}</TableCell>
-                <TableCell>{profileLabel(profile)}</TableCell>
-                <TableCell>
-                  {formatOptionalCount(cell.sample_count)} /{' '}
-                  {formatOptionalCount(cell.planned_samples)}
-                </TableCell>
-                <TableCell className='max-w-64 break-words whitespace-normal'>
-                  {answerCountsText(cell.counts)}
-                </TableCell>
-                <TableCell>
-                  {contributionDirection(cell, familyContributions)}
-                </TableCell>
-                <TableCell>
-                  {formatDecimal(numberValue(cell.between_model_jsd))}
-                </TableCell>
-                <TableCell>
-                  {formatDecimal(numberValue(cell.within_model_jsd))}
-                </TableCell>
-                <TableCell>{formatDecimal(numberValue(cell.weight))}</TableCell>
-                <TableCell>
-                  {booleanValue(cell.complete) === true ? '达到' : '未达到'}
-                </TableCell>
-              </TableRow>
+              <div
+                key={listItemKey('reference-fingerprint', result, index)}
+                className='min-w-0 border-b py-3 last:border-b-0'
+              >
+                <h5 className='text-sm font-medium break-words'>
+                  {probeLabel(probe)}（自定义参考）
+                </h5>
+                <p className='text-muted-foreground mt-1 text-sm break-words'>
+                  {matchText || '没有可计算的参考匹配度'}
+                </p>
+                <p className='text-muted-foreground mt-1 text-xs break-words'>
+                  自定义探针不参与正式强指向，每个探针单独显示。
+                </p>
+              </div>
             )
           })}
-        </TableBody>
-      </Table>
+        </div>
+      ) : null}
     </ReportSection>
   )
 }
@@ -1035,13 +1267,15 @@ function ProgressAndUsage(props: {
   const httpAttempts = numberValue(network?.http_attempts)
   const retries = numberValue(network?.retries)
   return (
-    <ReportSection title='线路质量与 Usage'>
+    <ReportSection title='线路质量'>
       <dl className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4'>
-        <DetailItem label='逻辑请求'>
+        <DetailItem label='逻辑任务'>
+          {formatCount(logicalTasks ?? execution.progress.planned)}
+        </DetailItem>
+        <DetailItem label='逻辑完成'>
           {formatCount(
             logicalCompleted ?? execution.progress.logical_completed
-          )}{' '}
-          / {formatCount(logicalTasks ?? execution.progress.planned)}
+          )}
         </DetailItem>
         <DetailItem label='成功'>
           {formatCount(successful ?? execution.progress.successful)}
@@ -1058,8 +1292,12 @@ function ProgressAndUsage(props: {
         <DetailItem label='重试'>
           {formatCount(retries ?? execution.progress.retries)}
         </DetailItem>
+      </dl>
+
+      <div className='mt-4 min-w-0 border-t pt-4'>
+        <h5 className='mb-3 text-sm font-medium'>调用 Usage</h5>
         {execution.usage_available ? (
-          <>
+          <dl className='grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3'>
             <DetailItem label='输入 Token'>
               {formatCount(execution.input_tokens)}
             </DetailItem>
@@ -1069,15 +1307,11 @@ function ProgressAndUsage(props: {
             <DetailItem label='总 Token'>
               {formatCount(execution.total_tokens)}
             </DetailItem>
-          </>
+          </dl>
         ) : (
-          <div className='col-span-2 min-w-0 sm:col-span-4'>
-            <span className='text-muted-foreground text-sm'>
-              Usage 暂不可用
-            </span>
-          </div>
+          <p className='text-muted-foreground text-sm'>Usage 暂不可用</p>
         )}
-      </dl>
+      </div>
     </ReportSection>
   )
 }
@@ -1170,14 +1404,34 @@ function FailedItemSummary(props: { item: unknown; index: number }) {
     stringValue(item.reason_cn) ||
     stringValue(item.reason_code) ||
     `失败项目 ${props.index + 1}`
+  const incompleteCells = arrayValue(item.incomplete_cells)
+  const structuredIncompleteCells = incompleteCells.filter(isRecord)
+  const unstructuredIncompleteCells = incompleteCells.filter(
+    (value) => !isRecord(value)
+  )
   const details = [
     { label: '证据', value: item.evidence },
-    { label: '未完成探针格', value: item.incomplete_cells },
+    {
+      label: '未完成探针格',
+      value:
+        unstructuredIncompleteCells.length > 0
+          ? unstructuredIncompleteCells
+          : null,
+    },
     {
       label: '缺少当前成功 effort',
-      value: item.missing_current_success_efforts,
+      value:
+        arrayValue(item.missing_current_success_efforts).length > 0
+          ? item.missing_current_success_efforts
+          : null,
     },
-    { label: '有效 effort 不足', value: item.insufficient_valid_efforts },
+    {
+      label: '有效 effort 不足',
+      value:
+        arrayValue(item.insufficient_valid_efforts).length > 0
+          ? item.insufficient_valid_efforts
+          : numberValue(item.insufficient_valid_efforts),
+    },
   ].filter((detail) => compactValue(detail.value) !== '')
 
   return (
@@ -1201,6 +1455,32 @@ function FailedItemSummary(props: { item: unknown; index: number }) {
           {detail.label}：{compactValue(detail.value)}
         </p>
       ))}
+      {structuredIncompleteCells.length > 0 ? (
+        <ul className='text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-xs'>
+          {structuredIncompleteCells.map((cell, index) => {
+            const [probe, profile] = stringValue(cell.cell).split('|')
+            const planned = numberValue(cell.planned)
+            const completed = numberValue(cell.completed)
+            const minimum = numberValue(cell.minimum)
+            const missing =
+              completed == null || minimum == null
+                ? null
+                : Math.max(0, minimum - completed)
+            return (
+              <li
+                key={listItemKey('incomplete-cell', cell, index)}
+                className='break-words'
+              >
+                {probeLabel(probe)} · {profileLabel(profile)}：计划{' '}
+                {planned == null ? '未提供' : formatCount(planned)}，完成{' '}
+                {completed == null ? '未提供' : formatCount(completed)}
+                ，至少需要 {minimum == null ? '未提供' : formatCount(minimum)}
+                ，缺少 {missing == null ? '未提供' : formatCount(missing)}
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
     </li>
   )
 }
@@ -1231,7 +1511,20 @@ function NetworkErrorSummary(props: { item: unknown; index: number }) {
   const category = stringValue(item.category_cn) || '线路错误'
   const status = numberValue(item.http_status)
   const attempt = numberValue(item.attempt)
-  const message = redactSensitiveText(stringValue(item.safe_message))
+  const rawMessage = redactSensitiveText(stringValue(item.safe_message))
+  const upstreamHTTPError = rawMessage.match(
+    /^upstream_http_error \(HTTP (\d+)\)$/
+  )
+  let message = rawMessage
+  if (upstreamHTTPError) {
+    message = `上游返回 HTTP 错误（HTTP ${upstreamHTTPError[1]}）`
+  } else if (rawMessage === 'truncated_or_invalid_stream') {
+    message = '流式响应不完整或格式错误'
+  } else if (rawMessage === 'connection_or_transport_error') {
+    message = '网络连接或传输失败'
+  } else if (rawMessage === 'timeout') {
+    message = '等待上游响应超时'
+  }
 
   return (
     <li className='min-w-0 border-b py-2.5 last:border-b-0'>
@@ -1246,6 +1539,9 @@ function NetworkErrorSummary(props: { item: unknown; index: number }) {
         {attempt == null ? props.index + 1 : attempt} 次尝试。
         {message ? ` ${message}` : ''}
       </p>
+      <p className='text-muted-foreground mt-1 text-xs break-words'>
+        常见原因包括地址或权限配置错误、上游限流、线路中断、响应流未完整结束。
+      </p>
     </li>
   )
 }
@@ -1257,13 +1553,12 @@ function FailureAndErrorSummary(props: {
   const failedItems = reportArray(props.report, 'failed_items')
   const networkErrors = arrayValue(props.report.network_error_details)
   const commonCauses = arrayValue(props.report.common_causes)
-  const limitations = arrayValue(props.report.limitations)
   const errorCode =
     props.execution.final_error_code || props.execution.error_code
   const errorMessage = redactSensitiveText(props.execution.error_message)
 
   return (
-    <ReportSection title='失败项目与错误摘要'>
+    <ReportSection title='未通过或未完成项目'>
       {failedItems.length > 0 || networkErrors.length > 0 ? (
         <ul className='min-w-0 border-y'>
           {failedItems.map((item, index) => (
@@ -1286,7 +1581,6 @@ function FailureAndErrorSummary(props: {
       )}
 
       <TextList title='常见原因' values={commonCauses} />
-      <TextList title='报告限制' values={limitations} />
 
       {errorCode || errorMessage ? (
         <Alert className='mt-3'>
@@ -1354,14 +1648,21 @@ function MetadataSummary(props: {
   )
 }
 
-function TechnicalJson(props: { report: unknown; targetKey: string }) {
+function TechnicalSummary(props: { report: unknown; targetKey: string }) {
+  const report = reportRoot(props.report)
+  const limitations = arrayValue(report.limitations)
   return (
     <Accordion defaultValue={[]} className='min-w-0 border-t'>
       <AccordionItem value={`technical-json-${props.targetKey}`}>
-        <AccordionTrigger className='min-w-0 py-3'>
-          <span className='min-w-0 break-words'>技术 JSON（已脱敏）</span>
+        <AccordionTrigger
+          className='min-w-0 py-3'
+          data-report-section='model-detection-technical'
+        >
+          <span className='min-w-0 break-words'>方法、限制和 JSON 摘要</span>
         </AccordionTrigger>
         <AccordionContent className='min-w-0'>
+          <TextList title='限制与适用边界' values={limitations} />
+          <h5 className='mt-3 mb-2 text-xs font-medium'>JSON 摘要（已脱敏）</h5>
           <pre
             className='bg-muted/40 max-w-full min-w-0 rounded-md p-3 text-xs break-all whitespace-pre-wrap'
             data-slot='model-detection-technical-json'
@@ -1430,9 +1731,7 @@ function ExecutionReport(props: {
         </>
       ) : null}
       <Separator />
-      <EvidenceSummary execution={execution} report={report} />
-      <Separator />
-      <ModelMatchSummary report={report} />
+      <ModelMatchSummary execution={execution} report={report} />
       <Separator />
       <JuiceSummary report={report} />
       <Separator />
@@ -1440,16 +1739,18 @@ function ExecutionReport(props: {
       <Separator />
       <ProgressAndUsage execution={execution} report={report} />
       <Separator />
+      <FailureAndErrorSummary execution={execution} report={report} />
+      <Separator />
       <FingerprintProbeSummary report={report} />
       <Separator />
       <ProfileSummary report={report} />
       <Separator />
+      <EvidenceSummary execution={execution} report={report} />
+      <Separator />
       <CostSummary cost={execution.cost} />
       <Separator />
-      <FailureAndErrorSummary execution={execution} report={report} />
-      <Separator />
       <MetadataSummary execution={execution} report={report} />
-      <TechnicalJson
+      <TechnicalSummary
         report={sanitizedReport}
         targetKey={execution.target_key}
       />

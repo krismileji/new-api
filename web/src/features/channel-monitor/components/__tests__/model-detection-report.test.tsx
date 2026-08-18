@@ -415,9 +415,19 @@ describe('模型检测目标报告', () => {
     ])
 
     const text = document.body.textContent ?? ''
-    assert.match(text, /Sol匹配度 92\.055%强指向线 >80%/)
-    assert.match(text, /Terra匹配度 6\.990%强指向线 >75%/)
-    assert.match(text, /Luna匹配度 未提供当前模式仅参考/)
+    const sol = document.querySelector<HTMLElement>('[data-model-match="Sol"]')
+    const terra = document.querySelector<HTMLElement>(
+      '[data-model-match="Terra"]'
+    )
+    const luna = document.querySelector<HTMLElement>(
+      '[data-model-match="Luna"]'
+    )
+    assert.ok(sol)
+    assert.ok(terra)
+    assert.ok(luna)
+    assert.match(sol.textContent ?? '', /92\.055%强指向线 >80%/)
+    assert.match(terra.textContent ?? '', /6\.990%强指向线 >75%/)
+    assert.match(luna.textContent ?? '', /未提供当前模式仅参考/)
     assert.doesNotMatch(text, /-2\.2916/)
     assert.doesNotMatch(text, /-4\.8695/)
     assert.match(text, /有效探针格不足/)
@@ -425,6 +435,118 @@ describe('模型检测目标报告', () => {
     assert.match(text, /effort_4\/cell_2/)
     assert.match(text, /缺少当前成功 effort/)
     assert.match(text, /有效 effort 不足/)
+  })
+
+  test('指纹匹配区展示检测器结论、验证参考、不明确原因和自定义参考探针', async () => {
+    await renderReport([
+      createExecution({
+        fingerprint_verdict_state: 'unclear',
+        fingerprint_model: '',
+        report: {
+          custom_preset: true,
+          custom_changes: ['增加自定义天气探针'],
+          fingerprint_verdict_state: 'unclear',
+          fingerprint_details: [
+            {
+              model: 'gpt-5.6-sol',
+              label_cn: 'Sol',
+              match: 0.02968,
+              threshold: 0.82,
+            },
+            {
+              model: 'gpt-5.6-terra',
+              label_cn: 'Terra',
+              match: 0.00513,
+              threshold: 0.84,
+            },
+            {
+              model: 'gpt-5.6-luna',
+              label_cn: 'Luna',
+              match: 0.96519,
+              threshold: 0.97,
+            },
+          ],
+          fingerprint_summary: {
+            fingerprint_unclear_reasons_cn: [
+              '三个模型都没有越过当前档位的强指向线。',
+            ],
+          },
+          reference_fingerprint_results: [
+            {
+              probe_id: 'custom_weather_probe',
+              fingerprint_match: {
+                'gpt-5.6-sol': 0.7,
+                'gpt-5.6-terra': 0.2,
+                'gpt-5.6-luna': 0.1,
+              },
+            },
+          ],
+        },
+      }),
+    ])
+
+    const referenceTrigger = document.querySelector<HTMLButtonElement>(
+      '[data-report-section="fingerprint-reference"]'
+    )
+    assert.ok(referenceTrigger)
+    assert.equal(referenceTrigger.getAttribute('aria-expanded'), 'false')
+    await act(async () => {
+      referenceTrigger.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const text = document.body.textContent ?? ''
+    assert.match(text, /指纹匹配度/)
+    assert.match(text, /证据不明确/)
+    assert.match(text, /自定义档位测试结果仅供参考/)
+    assert.match(text, /修改项目：增加自定义天气探针/)
+    assert.match(text, /现有验证参考与适用边界/)
+    assert.match(text, /历史模拟平均/)
+    assert.match(text, /低Sol91\.297%54\.645%>54%/)
+    assert.match(text, /三个模型都没有越过当前档位的强指向线/)
+    assert.match(text, /custom weather probe（自定义参考）/)
+    assert.match(text, /Sol 70\.000%/)
+  })
+
+  test('粘性确定性异常和未完成探针格按检测器报告语义展开', async () => {
+    await renderReport([
+      createExecution({
+        report: {
+          output_integrity_summary: {
+            requests: 2,
+            exact: 1,
+            invalid: 0,
+            hard_anomaly: false,
+            sticky_hard_anomaly: true,
+          },
+          coverage_summary: {
+            requests: 2,
+            hard_anomaly: false,
+            sticky_hard_anomaly: true,
+          },
+          failed_items: [
+            {
+              layer: '指纹匹配',
+              reason_code: 'candidate_samples_incomplete',
+              reason_cn: '至少一个探针格未完成计划请求数的90%。',
+              incomplete_cells: [
+                {
+                  cell: 'rand_country|normal+no_history',
+                  planned: 10,
+                  completed: 7,
+                  minimum: 9,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ])
+
+    const text = document.body.textContent ?? ''
+    assert.match(text, /来自本会话历史粘性事件/)
+    assert.match(text, /固定随机国家 · 普通请求 · 无历史/)
+    assert.match(text, /计划 10，完成 7，至少需要 9，缺少 2/)
   })
 
   test('展示 session、官方标记和所有报告版本身份', async () => {
@@ -529,7 +651,9 @@ describe('模型检测目标报告', () => {
     assert.match(text, /高6660000/)
     assert.match(text, /32\/48 输出完整性/)
     assert.match(text, /成功响应 2 条，精确返回 2 条，格式无效 0 条/)
-    assert.match(text, /逻辑请求49 \/ 49/)
+    assert.match(text, /线路质量/)
+    assert.match(text, /逻辑任务49/)
+    assert.match(text, /逻辑完成49/)
     assert.match(text, /行为指纹探针/)
     assert.match(text, /固定随机国家/)
     assert.match(text, /uruguay 5；portugal 3；madagascar 1/)
@@ -672,6 +796,7 @@ describe('模型检测目标报告', () => {
       createExecution({
         report: {
           session_id: 'official-session-visible',
+          limitations: ['指纹匹配度不是真实路由概率'],
           authorization: 'Bearer top-secret-token',
           api_key: 'sk-super-secret-key',
           nested: {
@@ -686,10 +811,11 @@ describe('模型检测目标报告', () => {
     ])
 
     const trigger = document.querySelector<HTMLButtonElement>(
-      '[data-slot="accordion-trigger"]'
+      '[data-report-section="model-detection-technical"]'
     )
     assert.ok(trigger)
     assert.equal(trigger.getAttribute('aria-expanded'), 'false')
+    assert.match(trigger.textContent ?? '', /方法、限制和 JSON 摘要/)
 
     await act(async () => {
       trigger.click()
@@ -707,6 +833,7 @@ describe('模型检测目标报告', () => {
     assert.doesNotMatch(text, /super-secret-key/)
     assert.doesNotMatch(text, /session-secret/)
     assert.doesNotMatch(text, /detector\.internal\.example/)
+    assert.match(document.body.textContent ?? '', /指纹匹配度不是真实路由概率/)
     assert.doesNotMatch(document.body.textContent ?? '', /runtime-secret/)
   })
 
