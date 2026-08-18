@@ -71,6 +71,18 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			wantDailyCost:    1,
 		},
 		{
+			name:             "chat-style usage aliases settle after real http dispatch",
+			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-chat-alias\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}}\n\ndata: [DONE]\n\n",
+			contentType:      "text/event-stream",
+			requestBody:      `{"model":"detector-fixed-model","input":"hello","stream":true}`,
+			baseURL:          func(serverURL string) string { return serverURL },
+			wantRequestCount: 1,
+			wantDispatch:     model.ChannelModelDetectionDispatchDispatched,
+			wantSettlement:   model.ChannelModelDetectionSettlementSettled,
+			wantUsageSource:  model.ChannelModelDetectionUsageUpstreamAuthoritative,
+			wantDailyCost:    1,
+		},
+		{
 			name:             "missing usage stays unresolved without an estimated cost",
 			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-no-usage\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[]}}\n\ndata: [DONE]\n\n",
 			contentType:      "text/event-stream",

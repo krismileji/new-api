@@ -61,11 +61,15 @@ type ChannelModelDetectorRelayExecution struct {
 // OpenAI Responses or Chat Completions usage. Source is authoritative only
 // when Available is true.
 type ChannelModelDetectorUsage struct {
-	Available    bool   `json:"available"`
-	Source       string `json:"source"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	TotalTokens  int64  `json:"total_tokens"`
+	Available                  bool   `json:"available"`
+	Source                     string `json:"source"`
+	InputTokens                int64  `json:"input_tokens"`
+	OutputTokens               int64  `json:"output_tokens"`
+	TotalTokens                int64  `json:"total_tokens"`
+	InputTokenDetailsAvailable bool   `json:"input_token_details_available,omitempty"`
+	CachedTokens               int64  `json:"cached_tokens,omitempty"`
+	CachedCreationTokens       int64  `json:"cached_creation_tokens,omitempty"`
+	CacheWriteTokens           int64  `json:"cache_write_tokens,omitempty"`
 }
 
 // ChannelModelDetectorRelayUpstreamResult contains protocol data returned by
@@ -319,11 +323,20 @@ func NormalizeChannelModelDetectorDTOUsage(usage *relaydto.Usage) (ChannelModelD
 }
 
 type channelModelDetectorWireUsage struct {
-	InputTokens      *int64 `json:"input_tokens"`
-	OutputTokens     *int64 `json:"output_tokens"`
-	PromptTokens     *int64 `json:"prompt_tokens"`
-	CompletionTokens *int64 `json:"completion_tokens"`
-	TotalTokens      *int64 `json:"total_tokens"`
+	InputTokens         *int64                                `json:"input_tokens"`
+	OutputTokens        *int64                                `json:"output_tokens"`
+	PromptTokens        *int64                                `json:"prompt_tokens"`
+	CompletionTokens    *int64                                `json:"completion_tokens"`
+	TotalTokens         *int64                                `json:"total_tokens"`
+	InputTokensDetails  *channelModelDetectorWireTokenDetails `json:"input_tokens_details"`
+	PromptTokensDetails *channelModelDetectorWireTokenDetails `json:"prompt_tokens_details"`
+}
+
+type channelModelDetectorWireTokenDetails struct {
+	CachedTokens         *int64 `json:"cached_tokens"`
+	CachedCreationTokens *int64 `json:"cached_creation_tokens"`
+	CacheWriteTokens     *int64 `json:"cache_write_tokens"`
+	CacheCreationTokens  *int64 `json:"cache_creation_tokens"`
 }
 
 func channelModelDetectorUsageJSON(payload []byte) ([]byte, bool, error) {
@@ -371,6 +384,10 @@ func normalizeChannelModelDetectorUsageObject(payload []byte) (ChannelModelDetec
 	if wire.OutputTokens != nil && wire.CompletionTokens != nil && *wire.OutputTokens != 0 && *wire.CompletionTokens != 0 && *wire.OutputTokens != *wire.CompletionTokens {
 		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageInvalid
 	}
+	details, detailsAvailable, err := normalizeChannelModelDetectorTokenDetails(wire.InputTokensDetails, wire.PromptTokensDetails)
+	if err != nil {
+		return ChannelModelDetectorUsage{}, err
+	}
 
 	var inputTokens, outputTokens int64
 	if wire.InputTokens != nil && *wire.InputTokens != 0 {
@@ -399,12 +416,74 @@ func normalizeChannelModelDetectorUsageObject(payload []byte) (ChannelModelDetec
 		}
 	}
 	return ChannelModelDetectorUsage{
-		Available:    true,
-		Source:       model.ChannelModelDetectionUsageUpstreamAuthoritative,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		TotalTokens:  totalTokens,
+		Available:                  true,
+		Source:                     model.ChannelModelDetectionUsageUpstreamAuthoritative,
+		InputTokens:                inputTokens,
+		OutputTokens:               outputTokens,
+		TotalTokens:                totalTokens,
+		InputTokenDetailsAvailable: detailsAvailable,
+		CachedTokens:               channelModelDetectorTokenDetailValue(details.CachedTokens),
+		CachedCreationTokens:       channelModelDetectorTokenDetailValue(details.CachedCreationTokens),
+		CacheWriteTokens:           channelModelDetectorTokenDetailValue(details.CacheWriteTokens),
 	}, nil
+}
+
+func channelModelDetectorTokenDetailValue(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func normalizeChannelModelDetectorTokenDetails(input, prompt *channelModelDetectorWireTokenDetails) (channelModelDetectorWireTokenDetails, bool, error) {
+	if input == nil && prompt == nil {
+		return channelModelDetectorWireTokenDetails{}, false, nil
+	}
+	if input == nil {
+		input = prompt
+	} else if prompt != nil {
+		merged := *input
+		for _, pair := range []struct {
+			left  **int64
+			right *int64
+		}{
+			{&merged.CachedTokens, prompt.CachedTokens},
+			{&merged.CachedCreationTokens, prompt.CachedCreationTokens},
+			{&merged.CacheWriteTokens, prompt.CacheWriteTokens},
+			{&merged.CacheCreationTokens, prompt.CacheCreationTokens},
+		} {
+			if *pair.left != nil && pair.right != nil && **pair.left != *pair.right {
+				return channelModelDetectorWireTokenDetails{}, false, ErrChannelModelDetectorUsageInvalid
+			}
+			if *pair.left == nil {
+				*pair.left = pair.right
+			}
+		}
+		input = &merged
+	}
+
+	for _, value := range []*int64{
+		input.CachedTokens,
+		input.CachedCreationTokens,
+		input.CacheWriteTokens,
+		input.CacheCreationTokens,
+	} {
+		if value != nil && *value < 0 {
+			return channelModelDetectorWireTokenDetails{}, false, ErrChannelModelDetectorUsageInvalid
+		}
+	}
+
+	details := channelModelDetectorWireTokenDetails{
+		CachedTokens:         input.CachedTokens,
+		CachedCreationTokens: input.CachedCreationTokens,
+		CacheWriteTokens:     input.CacheWriteTokens,
+	}
+	if details.CacheWriteTokens == nil {
+		details.CacheWriteTokens = input.CacheCreationTokens
+	} else if input.CacheCreationTokens != nil && *details.CacheWriteTokens != *input.CacheCreationTokens {
+		return channelModelDetectorWireTokenDetails{}, false, ErrChannelModelDetectorUsageInvalid
+	}
+	return details, true, nil
 }
 
 func normalizeChannelModelDetectorSSEUsage(payload []byte) (ChannelModelDetectorUsage, error) {
@@ -451,7 +530,7 @@ func validateChannelModelDetectorUsage(usage ChannelModelDetectorUsage) (Channel
 	if usage.Source == "" {
 		usage.Source = model.ChannelModelDetectionUsageUpstreamAuthoritative
 	}
-	if usage.Source != model.ChannelModelDetectionUsageUpstreamAuthoritative || usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 {
+	if usage.Source != model.ChannelModelDetectionUsageUpstreamAuthoritative || usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 || usage.CachedTokens < 0 || usage.CachedCreationTokens < 0 || usage.CacheWriteTokens < 0 {
 		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageInvalid
 	}
 	if usage.InputTokens > math.MaxInt64-usage.OutputTokens || usage.TotalTokens != usage.InputTokens+usage.OutputTokens {

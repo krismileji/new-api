@@ -272,7 +272,14 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 	usage, ok := usageValue.(*dto.Usage)
 	authoritativeUsage, usageErr := service.NormalizeChannelModelDetectorUsage(result.ResponseBody)
-	if !ok || usage == nil || usageErr != nil {
+	if usageErr != nil {
+		return result, nil
+	}
+	if !ok {
+		usage = nil
+	}
+	usage, usageErr = service.MergeChannelModelDetectorAuthoritativeUsage(usage, authoritativeUsage)
+	if usageErr != nil {
 		return result, nil
 	}
 	quota := service.CalculateChannelModelDetectionQuotaWithSnapshot(c, info, usage, snapshot)

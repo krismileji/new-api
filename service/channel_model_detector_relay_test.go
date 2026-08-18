@@ -299,6 +299,37 @@ func TestChannelModelDetectorRelayDTOUsageNormalizesResponsesAndChatFields(t *te
 	assert.ErrorIs(t, err, ErrChannelModelDetectorUsageInvalid)
 }
 
+func TestChannelModelDetectorRelayUsageNormalizesCacheDetailsAndMergesAliases(t *testing.T) {
+	payload := `{"type":"response.completed","response":{"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12,"prompt_tokens_details":{"cached_tokens":4,"cached_creation_tokens":2}}}}`
+	authoritative, err := NormalizeChannelModelDetectorUsage([]byte(payload))
+	require.NoError(t, err)
+	assert.True(t, authoritative.InputTokenDetailsAvailable)
+	assert.Equal(t, int64(4), authoritative.CachedTokens)
+	assert.Equal(t, int64(2), authoritative.CachedCreationTokens)
+
+	usage, err := MergeChannelModelDetectorAuthoritativeUsage(&relaydto.Usage{
+		PromptTokens:     1,
+		CompletionTokens: 1,
+		TotalTokens:      2,
+		BillingUsage: relaydto.NewEstimatedGeminiChatBillingUsage(&relaydto.Usage{
+			PromptTokens:     1,
+			CompletionTokens: 1,
+			TotalTokens:      2,
+		}),
+	}, authoritative)
+	require.NoError(t, err)
+	assert.Equal(t, 9, usage.PromptTokens)
+	assert.Equal(t, 3, usage.CompletionTokens)
+	assert.Equal(t, 12, usage.TotalTokens)
+	assert.Equal(t, 4, usage.PromptTokensDetails.CachedTokens)
+	assert.Equal(t, 2, usage.PromptTokensDetails.CachedCreationTokens)
+	assert.NotNil(t, usage.BillingUsage)
+	assert.False(t, usage.BillingUsage.Estimated)
+	assert.Equal(t, 9, usage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
+	assert.Equal(t, 3, usage.BillingUsage.GeminiUsageMetadata.CandidatesTokenCount)
+	assert.Equal(t, 12, usage.BillingUsage.GeminiUsageMetadata.TotalTokenCount)
+}
+
 func authoritativeChannelModelDetectorUsage(input, output int64) ChannelModelDetectorUsage {
 	return ChannelModelDetectorUsage{
 		Available: true, Source: model.ChannelModelDetectionUsageUpstreamAuthoritative,
