@@ -707,108 +707,26 @@ describe('模型检测目标报告', () => {
     assert.doesNotMatch(unavailable, /输出 Token0/)
   })
 
-  test('settled、unresolved、unknown 和 not_started 成本语义严格分开', async () => {
+  test('详情不展示主系统渠道成本字段', async () => {
     await renderReport([
       createExecution({
-        target_key: 'settled-cost',
+        target_key: 'hidden-cost',
         cost: createCost({
-          unresolved_cost_nano_cny: 0,
-          unresolved_cost_cny: '0.000000000',
-          unresolved_cost_unknown_count: 0,
-          unresolved_request_count: 0,
-          status: 'settled',
-        }),
-      }),
-      createExecution({
-        target_key: 'unresolved-cost',
-        cost: createCost({
-          settled_quota: 0,
-          cost_basis_quota: 0,
-          settled_cost_nano_cny: 0,
-          settled_cost_cny: '0.000000000',
-          settled_request_count: 0,
           unresolved_cost_nano_cny: 8_000_000,
           unresolved_cost_cny: '0.008000000',
-          unresolved_cost_unknown_count: 0,
-          unresolved_request_count: 2,
-          status: 'unresolved',
-        }),
-      }),
-      createExecution({
-        target_key: 'unknown-cost',
-        cost: createCost({
-          settled_request_count: 0,
-          settled_cost_nano_cny: 0,
-          settled_cost_cny: '0.000000000',
-          unresolved_cost_nano_cny: null,
-          unresolved_cost_cny: null,
           unresolved_cost_unknown_count: 3,
-          unresolved_request_count: 3,
-          status: 'unresolved',
-        }),
-      }),
-      createExecution({
-        target_key: 'not-started-cost',
-        cost: createCost({
-          settled_quota: 0,
-          cost_basis_quota: 0,
-          settled_cost_nano_cny: 0,
-          settled_cost_cny: '0.000000000',
-          settled_request_count: 0,
-          unresolved_cost_nano_cny: 0,
-          unresolved_cost_cny: '0.000000000',
-          unresolved_cost_unknown_count: 0,
-          unresolved_request_count: 0,
-          status: 'not_started',
-        }),
-      }),
-    ])
-
-    const settled = executionNode('settled-cost').textContent ?? ''
-    assert.match(settled, /等价已结算额度12,840/)
-    assert.match(settled, /计价基数13,200/)
-    assert.match(settled, /已结算渠道成本¥0\.025680000/)
-    assert.match(settled, /真实上游请求数63/)
-
-    const unresolved = executionNode('unresolved-cost').textContent ?? ''
-    assert.match(unresolved, /待核实成本等待可核验 Usage/)
-    assert.match(unresolved, /待核实请求数2/)
-    assert.doesNotMatch(unresolved, /0\.008000000/)
-
-    const unknown = executionNode('unknown-cost').textContent ?? ''
-    assert.match(unknown, /待核实成本等待可核验 Usage/)
-    assert.match(unknown, /成本待核实请求数3/)
-
-    const notStarted = executionNode('not-started-cost').textContent ?? ''
-    assert.match(notStarted, /尚未发出上游请求/)
-    assert.match(notStarted, /真实上游请求数0/)
-  })
-
-  test('空金额不会被格式化为零成本', async () => {
-    await renderReport([
-      createExecution({
-        cost: createCost({
-          estimated_quota: null,
-          estimated_cost_nano_cny: null,
-          estimated_cost_cny: null,
-          settled_request_count: 1,
-          settled_cost_nano_cny: null,
-          settled_cost_cny: null,
-          unresolved_request_count: 1,
-          unresolved_cost_nano_cny: null,
-          unresolved_cost_cny: null,
-          unresolved_cost_unknown_count: 1,
+          unresolved_request_count: 2,
           status: 'partial',
         }),
       }),
     ])
 
-    const text = document.body.textContent ?? ''
-    assert.doesNotMatch(text, /运行前预计渠道成本/)
-    assert.doesNotMatch(text, /运行前预计等价额度/)
-    assert.match(text, /已结算渠道成本金额不可用/)
-    assert.match(text, /待核实成本等待可核验 Usage/)
-    assert.doesNotMatch(text, /¥0\.000000000/)
+    const text = executionNode('hidden-cost').textContent ?? ''
+    assert.doesNotMatch(text, /渠道成本详情/)
+    assert.doesNotMatch(text, /等价已结算额度/)
+    assert.doesNotMatch(text, /已结算渠道成本/)
+    assert.doesNotMatch(text, /待核实成本/)
+    assert.doesNotMatch(text, /0\.008000000/)
   })
 
   test('技术 JSON 默认收起并再次隐藏敏感键和值但保留 session_id', async () => {

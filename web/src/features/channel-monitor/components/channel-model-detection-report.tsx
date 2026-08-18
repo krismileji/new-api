@@ -58,7 +58,6 @@ import {
   isKnownChannelModelDetectionOutcome,
 } from '../lib/model-detection'
 import type {
-  ChannelModelDetectionCost,
   ChannelModelDetectionExecutionDetail,
   ChannelModelDetectionExecutionStatus,
   ChannelModelDetectionKnownOutcomeCode,
@@ -179,17 +178,6 @@ const EXECUTION_STATUS: Record<
   failed: { label: '执行失败', variant: 'destructive' },
   canceled: { label: '已取消', variant: 'outline' },
   skipped: { label: '已跳过', variant: 'outline' },
-}
-
-const COST_STATUS: Record<
-  ChannelModelDetectionCost['status'],
-  { label: string; variant: BadgeVariant }
-> = {
-  pending: { label: '结算中', variant: 'outline' },
-  not_started: { label: '未发出', variant: 'outline' },
-  settled: { label: '已结算', variant: 'secondary' },
-  unresolved: { label: '待核实', variant: 'warning' },
-  partial: { label: '部分待核实', variant: 'warning' },
 }
 
 const MODEL_MATCH_ORDER = [
@@ -1274,80 +1262,6 @@ function ProgressAndUsage(props: {
   )
 }
 
-function moneyText(value: string | null) {
-  if (value == null || value.trim() === '') return '金额不可用'
-  return `¥${value}`
-}
-
-function settledCostText(cost: ChannelModelDetectionCost) {
-  if (cost.settled_request_count === 0) return '尚无已结算请求'
-  return moneyText(cost.settled_cost_cny)
-}
-
-function unresolvedCostText(cost: ChannelModelDetectionCost) {
-  if (
-    cost.unresolved_request_count === 0 &&
-    cost.unresolved_cost_unknown_count === 0
-  ) {
-    return '无待核实请求'
-  }
-  return '等待可核验 Usage'
-}
-
-function CostSummary(props: { cost: ChannelModelDetectionCost }) {
-  const cost = props.cost
-  const status = COST_STATUS[cost.status]
-  const realRequests =
-    cost.settled_request_count + cost.unresolved_request_count
-
-  return (
-    <ReportSection
-      title='渠道成本详情'
-      description='仅按真实上游请求的 Usage 结算成本；缺少可核验 Usage 的请求保持待核实。'
-    >
-      <div className='mb-3 flex min-w-0 flex-wrap items-center gap-2'>
-        <Badge variant={status.variant}>{status.label}</Badge>
-        <span className='text-muted-foreground text-xs'>
-          仅统计渠道上游 API，不表示用户余额扣款
-        </span>
-      </div>
-
-      {cost.status === 'not_started' ? (
-        <Alert className='mb-3'>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>尚未发出上游请求</AlertTitle>
-          <AlertDescription>
-            当前目标没有跨过上游传输边界，因此没有产生渠道请求成本。
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      <dl className='grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4'>
-        <DetailItem label='等价已结算额度'>
-          {formatCount(cost.settled_quota)}
-        </DetailItem>
-        <DetailItem label='计价基数'>
-          {formatCount(cost.cost_basis_quota)}
-        </DetailItem>
-        <DetailItem label='已结算渠道成本'>{settledCostText(cost)}</DetailItem>
-        <DetailItem label='待核实成本'>{unresolvedCostText(cost)}</DetailItem>
-        <DetailItem label='成本待核实请求数'>
-          {formatCount(cost.unresolved_cost_unknown_count)}
-        </DetailItem>
-        <DetailItem label='真实上游请求数'>
-          {formatCount(realRequests)}
-        </DetailItem>
-        <DetailItem label='已结算请求数'>
-          {formatCount(cost.settled_request_count)}
-        </DetailItem>
-        <DetailItem label='待核实请求数'>
-          {formatCount(cost.unresolved_request_count)}
-        </DetailItem>
-      </dl>
-    </ReportSection>
-  )
-}
-
 function FailedItemSummary(props: { item: unknown; index: number }) {
   const item = recordValue(props.item)
   if (!item) {
@@ -1704,8 +1618,6 @@ function ExecutionReport(props: {
       <ProfileSummary report={report} />
       <Separator />
       <EvidenceSummary execution={execution} report={report} />
-      <Separator />
-      <CostSummary cost={execution.cost} />
       <Separator />
       <MetadataSummary execution={execution} report={report} />
       <TechnicalSummary
