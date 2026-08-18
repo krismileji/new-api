@@ -218,6 +218,7 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	if err != nil {
 		return result, types.NewError(err, types.ErrorCodeConvertRequestFailed)
 	}
+	convertedRequest = ensureChannelModelDetectorStreamUsage(convertedRequest)
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 	jsonData, err := common.Marshal(convertedRequest)
 	if err != nil {
@@ -300,6 +301,29 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		UpstreamRequestId: c.GetString(common.UpstreamRequestIdKey),
 	})
 	return result, err
+}
+
+func ensureChannelModelDetectorStreamUsage(request any) any {
+	switch value := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if value == nil || value.Stream == nil || !*value.Stream {
+			return request
+		}
+		if value.StreamOptions == nil {
+			value.StreamOptions = &dto.StreamOptions{}
+		}
+		value.StreamOptions.IncludeUsage = true
+	case dto.GeneralOpenAIRequest:
+		if value.Stream == nil || !*value.Stream {
+			return request
+		}
+		if value.StreamOptions == nil {
+			value.StreamOptions = &dto.StreamOptions{}
+		}
+		value.StreamOptions.IncludeUsage = true
+		return value
+	}
+	return request
 }
 
 func channelModelDetectorChannelAllowed(trigger string, status int) bool {

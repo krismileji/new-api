@@ -10,12 +10,65 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEnsureChannelModelDetectorStreamUsage(t *testing.T) {
+	stream := true
+	nonStream := false
+
+	tests := []struct {
+		name          string
+		request       any
+		wantUsage     bool
+		wantObfuscate bool
+	}{
+		{
+			name:      "streamed chat request enables usage",
+			request:   &dto.GeneralOpenAIRequest{Stream: &stream},
+			wantUsage: true,
+		},
+		{
+			name:          "streamed chat request preserves existing options",
+			request:       &dto.GeneralOpenAIRequest{Stream: &stream, StreamOptions: &dto.StreamOptions{IncludeObfuscation: true}},
+			wantUsage:     true,
+			wantObfuscate: true,
+		},
+		{
+			name:    "non streamed chat request is unchanged",
+			request: &dto.GeneralOpenAIRequest{Stream: &nonStream},
+		},
+		{
+			name:    "native responses request is unchanged",
+			request: &dto.OpenAIResponsesRequest{Stream: &stream},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := ensureChannelModelDetectorStreamUsage(test.request)
+			responsesRequest, isResponsesRequest := got.(*dto.OpenAIResponsesRequest)
+			if isResponsesRequest {
+				assert.Nil(t, responsesRequest.StreamOptions)
+				return
+			}
+			chatRequest, ok := got.(*dto.GeneralOpenAIRequest)
+			require.True(t, ok)
+			if test.wantUsage || test.wantObfuscate {
+				require.NotNil(t, chatRequest.StreamOptions)
+			}
+			if chatRequest.StreamOptions != nil {
+				assert.Equal(t, test.wantUsage, chatRequest.StreamOptions.IncludeUsage)
+				assert.Equal(t, test.wantObfuscate, chatRequest.StreamOptions.IncludeObfuscation)
+			}
+		})
+	}
+}
 
 func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
