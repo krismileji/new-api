@@ -47,6 +47,57 @@ func TestChannelMonitorEventRoundTripPreservesExplicitZeroMeasurements(t *testin
 	assert.Zero(t, *decoded.CacheReadTokens)
 }
 
+func TestChannelMonitorEventTPSMeasurement(t *testing.T) {
+	normalTokens := int64(33)
+	normalTPS := 8.25
+	zeroTPS := 0.0
+	shortTokens := int64(1)
+	shortTPS := 2000.0
+
+	tests := []struct {
+		name               string
+		event              ChannelMonitorEvent
+		wantTokens         int64
+		wantGenerationTime int64
+		wantOK             bool
+	}{
+		{
+			name:               "normal measurement",
+			event:              ChannelMonitorEvent{CompletionTokens: &normalTokens, TPS: &normalTPS},
+			wantTokens:         33,
+			wantGenerationTime: 4000,
+			wantOK:             true,
+		},
+		{
+			name:   "zero tps",
+			event:  ChannelMonitorEvent{CompletionTokens: &normalTokens, TPS: &zeroTPS},
+			wantOK: false,
+		},
+		{
+			name:   "missing completion tokens",
+			event:  ChannelMonitorEvent{TPS: &normalTPS},
+			wantOK: false,
+		},
+		{
+			name:               "sub-millisecond generation time",
+			event:              ChannelMonitorEvent{CompletionTokens: &shortTokens, TPS: &shortTPS},
+			wantTokens:         1,
+			wantGenerationTime: 1,
+			wantOK:             true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tokens, generationTime, ok := test.event.TPSMeasurement()
+
+			assert.Equal(t, test.wantOK, ok)
+			assert.Equal(t, test.wantTokens, tokens)
+			assert.Equal(t, test.wantGenerationTime, generationTime)
+		})
+	}
+}
+
 func TestNewChannelMonitorEventCreatesValidIdentity(t *testing.T) {
 	event := NewChannelMonitorEvent(9, ChannelMonitorEventSourceManualTest, ChannelMonitorEventOutcomeFailure, 1_700_000_000)
 

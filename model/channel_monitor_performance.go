@@ -6,16 +6,18 @@ import (
 )
 
 type ChannelMonitorPerformanceMetric struct {
-	ChannelId             int      `json:"channel_id"`
-	ModelName             string   `json:"model_name"`
-	SampleCount           int      `json:"sample_count"`
-	FirstTokenSampleCount int      `json:"first_token_sample_count"`
-	TPSSampleCount        int      `json:"tps_sample_count"`
-	AverageFirstTokenMs   *float64 `json:"average_first_token_ms"`
-	AverageTPS            *float64 `json:"average_tps"`
-	LatestFirstTokenMs    *float64 `json:"latest_first_token_ms"`
-	LatestTPS             *float64 `json:"latest_tps"`
-	LastUsedTime          int64    `json:"last_used_time"`
+	ChannelId               int      `json:"channel_id"`
+	ModelName               string   `json:"model_name"`
+	SampleCount             int      `json:"sample_count"`
+	FirstTokenSampleCount   int      `json:"first_token_sample_count"`
+	TPSSampleCount          int      `json:"tps_sample_count"`
+	TPSOutputTokens         int64    `json:"tps_output_tokens"`
+	TPSGenerationDurationMs int64    `json:"tps_generation_duration_ms"`
+	AverageFirstTokenMs     *float64 `json:"average_first_token_ms"`
+	AverageTPS              *float64 `json:"average_tps"`
+	LatestFirstTokenMs      *float64 `json:"latest_first_token_ms"`
+	LatestTPS               *float64 `json:"latest_tps"`
+	LastUsedTime            int64    `json:"last_used_time"`
 }
 
 type ChannelMonitorStabilityMetric struct {

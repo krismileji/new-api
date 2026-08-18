@@ -100,6 +100,8 @@ type ChannelSmartScheduleAdaptiveHealthMetric struct {
 	FirstTokenTotalMs           float64
 	TPSSampleCount              int64
 	TPSTotal                    float64
+	TPSOutputTokens             int64
+	TPSGenerationDurationMs     int64
 	LatencyPressure             float64
 	LastUsedTime                int64
 	StabilitySuccessCount       int64

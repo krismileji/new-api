@@ -112,6 +112,7 @@ import {
   formatMonitorRatio,
 } from './lib/format'
 import { isChannelModelDetectionRunActive } from './lib/model-detection'
+import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
@@ -158,7 +159,6 @@ import {
 } from './lib/smart-schedule-summary'
 import { sortChannelMonitorItems } from './lib/sort'
 import type {
-  ChannelMonitorChannelPerformance,
   ChannelMonitorItem,
   ChannelMonitorPerformanceMetric,
   ChannelMonitorPerformanceRangeMinutes,
@@ -760,64 +760,10 @@ export function ChannelMonitor() {
         )
     )
   }, [groups, normalizedSearch])
-  const performanceByChannel = useMemo(() => {
-    type PerformanceAggregate = {
-      sampleCount: number
-      firstTokenSampleCount: number
-      tpsSampleCount: number
-      firstTokenTotalMs: number
-      tpsTotal: number
-      lastUsedTime: number
-    }
-    const aggregates = new Map<number, PerformanceAggregate>()
-    for (const metric of performanceMetrics) {
-      const aggregate = aggregates.get(metric.channel_id) ?? {
-        sampleCount: 0,
-        firstTokenSampleCount: 0,
-        tpsSampleCount: 0,
-        firstTokenTotalMs: 0,
-        tpsTotal: 0,
-        lastUsedTime: 0,
-      }
-      aggregate.sampleCount += metric.sample_count
-      if (
-        metric.average_first_token_ms != null &&
-        metric.first_token_sample_count > 0
-      ) {
-        aggregate.firstTokenSampleCount += metric.first_token_sample_count
-        aggregate.firstTokenTotalMs +=
-          metric.average_first_token_ms * metric.first_token_sample_count
-      }
-      if (metric.average_tps != null && metric.tps_sample_count > 0) {
-        aggregate.tpsSampleCount += metric.tps_sample_count
-        aggregate.tpsTotal += metric.average_tps * metric.tps_sample_count
-      }
-      aggregate.lastUsedTime = Math.max(
-        aggregate.lastUsedTime,
-        metric.last_used_time
-      )
-      aggregates.set(metric.channel_id, aggregate)
-    }
-
-    const result = new Map<number, ChannelMonitorChannelPerformance>()
-    for (const [channelId, aggregate] of aggregates) {
-      result.set(channelId, {
-        sample_count: aggregate.sampleCount,
-        first_token_sample_count: aggregate.firstTokenSampleCount,
-        tps_sample_count: aggregate.tpsSampleCount,
-        average_first_token_ms:
-          aggregate.firstTokenSampleCount > 0
-            ? aggregate.firstTokenTotalMs / aggregate.firstTokenSampleCount
-            : null,
-        average_tps:
-          aggregate.tpsSampleCount > 0
-            ? aggregate.tpsTotal / aggregate.tpsSampleCount
-            : null,
-        last_used_time: aggregate.lastUsedTime,
-      })
-    }
-    return result
-  }, [performanceMetrics])
+  const performanceByChannel = useMemo(
+    () => aggregateChannelMonitorPerformanceByChannel(performanceMetrics),
+    [performanceMetrics]
+  )
   const successByChannel = useMemo(() => {
     const result = new Map<number, ChannelMonitorSuccessSummary>()
     for (const metric of successMetrics) {

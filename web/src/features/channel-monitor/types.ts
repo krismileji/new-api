@@ -345,6 +345,8 @@ export type ChannelMonitorPerformanceMetric = {
   sample_count: number
   first_token_sample_count: number
   tps_sample_count: number
+  tps_output_tokens: number
+  tps_generation_duration_ms: number
   average_first_token_ms: number | null
   average_tps: number | null
   latest_first_token_ms: number | null

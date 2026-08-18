@@ -104,16 +104,18 @@ func channelMonitorRealtimePerformanceMetrics(
 	success := make([]model.ChannelMonitorSuccessMetric, 0, len(view.Routes))
 	for _, route := range view.Routes {
 		performance = append(performance, model.ChannelMonitorPerformanceMetric{
-			ChannelId:             route.ChannelId,
-			ModelName:             route.ModelName,
-			SampleCount:           route.SampleCount,
-			FirstTokenSampleCount: route.FirstTokenSampleCount,
-			TPSSampleCount:        route.TPSSampleCount,
-			AverageFirstTokenMs:   route.AverageFirstTokenMs,
-			AverageTPS:            route.AverageTPS,
-			LatestFirstTokenMs:    route.LatestFirstTokenMs,
-			LatestTPS:             route.LatestTPS,
-			LastUsedTime:          route.LastUsedTime,
+			ChannelId:               route.ChannelId,
+			ModelName:               route.ModelName,
+			SampleCount:             route.SampleCount,
+			FirstTokenSampleCount:   route.FirstTokenSampleCount,
+			TPSSampleCount:          route.TPSSampleCount,
+			TPSOutputTokens:         route.TPSOutputTokens,
+			TPSGenerationDurationMs: route.TPSGenerationDurationMs,
+			AverageFirstTokenMs:     route.AverageFirstTokenMs,
+			AverageTPS:              route.AverageTPS,
+			LatestFirstTokenMs:      route.LatestFirstTokenMs,
+			LatestTPS:               route.LatestTPS,
+			LastUsedTime:            route.LastUsedTime,
 		})
 		success = append(success, model.ChannelMonitorSuccessMetric{
 			ChannelId:                    route.ChannelId,

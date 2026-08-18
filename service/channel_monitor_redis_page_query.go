@@ -16,20 +16,22 @@ type ChannelMonitorRealtimePageAggregate struct {
 	APIKeyId   int    `json:"api_key_id,omitempty"`
 	APIKeyName string `json:"api_key_name,omitempty"`
 
-	Summary                model.ChannelMonitorSuccessSummary `json:"summary"`
-	SampleCount            int                                `json:"sample_count"`
-	FirstTokenSampleCount  int                                `json:"first_token_sample_count"`
-	TPSSampleCount         int                                `json:"tps_sample_count"`
-	AverageFirstTokenMs    *float64                           `json:"average_first_token_ms"`
-	AverageTPS             *float64                           `json:"average_tps"`
-	LatestFirstTokenMs     *float64                           `json:"latest_first_token_ms"`
-	LatestTPS              *float64                           `json:"latest_tps"`
-	LastUsedTime           int64                              `json:"last_used_time"`
-	CacheWriteRequestCount int64                              `json:"cache_write_request_count"`
-	SettledCostNanoCNY     int64                              `json:"settled_cost_nano_cny"`
-	SettledRequestCount    int64                              `json:"settled_request_count"`
-	UnresolvedCostNanoCNY  int64                              `json:"unresolved_cost_nano_cny"`
-	UnresolvedRequestCount int64                              `json:"unresolved_request_count"`
+	Summary                 model.ChannelMonitorSuccessSummary `json:"summary"`
+	SampleCount             int                                `json:"sample_count"`
+	FirstTokenSampleCount   int                                `json:"first_token_sample_count"`
+	TPSSampleCount          int                                `json:"tps_sample_count"`
+	TPSOutputTokens         int64                              `json:"tps_output_tokens"`
+	TPSGenerationDurationMs int64                              `json:"tps_generation_duration_ms"`
+	AverageFirstTokenMs     *float64                           `json:"average_first_token_ms"`
+	AverageTPS              *float64                           `json:"average_tps"`
+	LatestFirstTokenMs      *float64                           `json:"latest_first_token_ms"`
+	LatestTPS               *float64                           `json:"latest_tps"`
+	LastUsedTime            int64                              `json:"last_used_time"`
+	CacheWriteRequestCount  int64                              `json:"cache_write_request_count"`
+	SettledCostNanoCNY      int64                              `json:"settled_cost_nano_cny"`
+	SettledRequestCount     int64                              `json:"settled_request_count"`
+	UnresolvedCostNanoCNY   int64                              `json:"unresolved_cost_nano_cny"`
+	UnresolvedRequestCount  int64                              `json:"unresolved_request_count"`
 }
 
 type ChannelMonitorRealtimePageView struct {
@@ -326,26 +328,31 @@ func channelMonitorRedisSharedPageAggregate(aggregate ChannelMonitorRedisSharedA
 		return ChannelMonitorRealtimePageAggregate{}, err
 	}
 	result := ChannelMonitorRealtimePageAggregate{
-		Summary:                summary,
-		SampleCount:            sampleCount,
-		FirstTokenSampleCount:  firstTokenSampleCount,
-		TPSSampleCount:         tPSSampleCount,
-		LatestFirstTokenMs:     aggregate.LatestFirstTokenMs,
-		LatestTPS:              aggregate.LatestTPS,
-		LastUsedTime:           aggregate.LastUsedTime,
-		CacheWriteRequestCount: aggregate.CacheWriteRequestCount,
-		SettledCostNanoCNY:     aggregate.SettledCostNanoCNY,
-		SettledRequestCount:    aggregate.SettledRequestCount,
-		UnresolvedCostNanoCNY:  aggregate.UnresolvedCostNanoCNY,
-		UnresolvedRequestCount: aggregate.UnresolvedRequestCount,
+		Summary:                 summary,
+		SampleCount:             sampleCount,
+		FirstTokenSampleCount:   firstTokenSampleCount,
+		TPSSampleCount:          tPSSampleCount,
+		TPSOutputTokens:         aggregate.TPSOutputTokens,
+		TPSGenerationDurationMs: aggregate.TPSGenerationDurationMs,
+		LatestFirstTokenMs:      aggregate.LatestFirstTokenMs,
+		LatestTPS:               aggregate.LatestTPS,
+		LastUsedTime:            aggregate.LastUsedTime,
+		CacheWriteRequestCount:  aggregate.CacheWriteRequestCount,
+		SettledCostNanoCNY:      aggregate.SettledCostNanoCNY,
+		SettledRequestCount:     aggregate.SettledRequestCount,
+		UnresolvedCostNanoCNY:   aggregate.UnresolvedCostNanoCNY,
+		UnresolvedRequestCount:  aggregate.UnresolvedRequestCount,
 	}
 	if aggregate.FirstTokenSampleCount > 0 {
 		value := aggregate.FirstTokenTotalMs / float64(aggregate.FirstTokenSampleCount)
 		result.AverageFirstTokenMs = &value
 	}
 	if aggregate.TPSSampleCount > 0 {
-		value := aggregate.TPSTotal / float64(aggregate.TPSSampleCount)
-		result.AverageTPS = &value
+		if aggregate.TPSOutputTokens > 0 && aggregate.TPSGenerationDurationMs > 0 {
+			value := float64(aggregate.TPSOutputTokens) /
+				(float64(aggregate.TPSGenerationDurationMs) / 1000.0)
+			result.AverageTPS = &value
+		}
 	}
 	return result, nil
 }

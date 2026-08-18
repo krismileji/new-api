@@ -1201,10 +1201,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 					}
 				}
 			}
-			if metric.TPSSampleCount > 0 {
-				value := metric.TPSTotal / float64(metric.TPSSampleCount)
-				candidate.TPS = &value
-			}
+			_, candidate.TPS = channelSmartScheduleRealtimeAverage(metric)
 			if rolling != nil {
 				candidate.Stability = rolling.Stability
 				candidate.StabilitySampleCount = rolling.StabilitySampleCount

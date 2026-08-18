@@ -95,6 +95,25 @@ type ChannelMonitorEvent struct {
 	OtherJson             string `json:"other_json,omitempty"`
 }
 
+// TPSMeasurement returns the output-token and generation-time totals needed
+// for the upstream performance aggregation formula. Older events did not
+// persist generation time, so derive it from their per-request TPS.
+func (event ChannelMonitorEvent) TPSMeasurement() (int64, int64, bool) {
+	if event.TPS == nil || event.CompletionTokens == nil || *event.CompletionTokens <= 0 ||
+		*event.TPS <= 0 || math.IsNaN(*event.TPS) || math.IsInf(*event.TPS, 0) {
+		return 0, 0, false
+	}
+	durationMs := float64(*event.CompletionTokens) / *event.TPS * 1000
+	if math.IsNaN(durationMs) || math.IsInf(durationMs, 0) || durationMs <= 0 || durationMs > float64(math.MaxInt64) {
+		return 0, 0, false
+	}
+	convertedDurationMs := int64(math.Round(durationMs))
+	if convertedDurationMs <= 0 {
+		return 0, 0, false
+	}
+	return *event.CompletionTokens, convertedDurationMs, true
+}
+
 func NewChannelMonitorEvent(channelId int, source ChannelMonitorEventSource, outcome ChannelMonitorEventOutcome, occurredAt int64) ChannelMonitorEvent {
 	now := time.Now().Unix()
 	return ChannelMonitorEvent{

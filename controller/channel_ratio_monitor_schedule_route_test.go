@@ -38,6 +38,25 @@ func TestChannelSmartScheduleRemainingAdaptiveWindowRequestsPreventsCombinedWind
 	}
 }
 
+func TestChannelSmartScheduleMergeAdaptiveHealthMetricPrefersWeightedTPS(t *testing.T) {
+	legacy := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		TPSSampleCount: 3,
+		TPSTotal:       90,
+	}
+	weighted := model.ChannelSmartScheduleAdaptiveHealthMetric{
+		TPSSampleCount:          2,
+		TPSOutputTokens:         101,
+		TPSGenerationDurationMs: 10_010,
+	}
+
+	merged := channelSmartScheduleMergeAdaptiveHealthMetric(legacy, weighted)
+	_, tps := channelSmartScheduleRealtimeAverage(merged)
+
+	assert.Equal(t, int64(2), merged.TPSSampleCount)
+	require.NotNil(t, tps)
+	assert.InDelta(t, 101.0/10.01, *tps, 1e-9)
+}
+
 func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(t *testing.T) {
 	generatedAt := common.GetTimestamp() + 2*60*60
 	stabilityWindowMinutes := 60

@@ -39,6 +39,7 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	now := time.Now().Unix()
 	firstToken := 1500.0
 	tPS := 30.0
+	completionTokens := int64(30)
 	inputTokens := int64(100)
 	cacheReadTokens := int64(20)
 	success := model.NewChannelMonitorEvent(700007, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now-10)
@@ -49,6 +50,7 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	success.IsFinalAttempt = true
 	success.FirstTokenMs = &firstToken
 	success.TPS = &tPS
+	success.CompletionTokens = &completionTokens
 	success.InputTokens = &inputTokens
 	success.CacheReadTokens = &cacheReadTokens
 	failure := model.NewChannelMonitorEvent(700007, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeFailure, now-5)
@@ -98,6 +100,8 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.InDelta(t, 1500, *performanceItem.AverageFirstTokenMs, 0.001)
 	require.NotNil(t, performanceItem.AverageTPS)
 	assert.InDelta(t, 30, *performanceItem.AverageTPS, 0.001)
+	assert.Equal(t, completionTokens, performanceItem.TPSOutputTokens)
+	assert.Equal(t, int64(1000), performanceItem.TPSGenerationDurationMs)
 	assert.True(t, response.Data.SuccessMetricsAvailable)
 	var successItem model.ChannelMonitorSuccessMetric
 	for _, item := range response.Data.SuccessItems {

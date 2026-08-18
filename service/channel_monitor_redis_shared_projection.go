@@ -51,8 +51,9 @@ const (
 	channelMonitorRedisSharedMetricFirstTokenTotalMs      = "first_token_total_ms"
 	channelMonitorRedisSharedMetricAttemptDurationSamples = "attempt_duration_sample_count"
 	channelMonitorRedisSharedMetricAttemptDurationTotalMs = "attempt_duration_total_ms"
-	channelMonitorRedisSharedMetricTPSSamples             = "tps_sample_count"
-	channelMonitorRedisSharedMetricTPSTotal               = "tps_total"
+	channelMonitorRedisSharedMetricTPSSamples             = "tps_sample_count_v2"
+	channelMonitorRedisSharedMetricTPSOutputTokens        = "tps_output_tokens_v2"
+	channelMonitorRedisSharedMetricTPSGenerationMs        = "tps_generation_duration_ms_v2"
 	channelMonitorRedisSharedMetricCacheSamples           = "cache_sample_count"
 	channelMonitorRedisSharedMetricCacheHits              = "cache_hit_count"
 	channelMonitorRedisSharedMetricCacheReadTokens        = "cache_read_tokens"
@@ -115,7 +116,8 @@ type ChannelMonitorRedisSharedAggregate struct {
 	AttemptDurationSampleCount int64   `json:"attempt_duration_sample_count"`
 	AttemptDurationTotalMs     int64   `json:"attempt_duration_total_ms"`
 	TPSSampleCount             int64   `json:"tps_sample_count"`
-	TPSTotal                   float64 `json:"tps_total"`
+	TPSOutputTokens            int64   `json:"tps_output_tokens"`
+	TPSGenerationDurationMs    int64   `json:"tps_generation_duration_ms"`
 
 	CacheSampleCount       int64 `json:"cache_sample_count"`
 	CacheHitCount          int64 `json:"cache_hit_count"`
@@ -727,9 +729,10 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 		delta.Integers[channelMonitorRedisSharedMetricAttemptDurationSamples] = 1
 		delta.Integers[channelMonitorRedisSharedMetricAttemptDurationTotalMs] = *event.AttemptDurationMs
 	}
-	if event.TPS != nil {
+	if outputTokens, generationDurationMs, ok := event.TPSMeasurement(); ok {
 		delta.Integers[channelMonitorRedisSharedMetricTPSSamples] = 1
-		delta.Floats[channelMonitorRedisSharedMetricTPSTotal] = *event.TPS
+		delta.Integers[channelMonitorRedisSharedMetricTPSOutputTokens] = outputTokens
+		delta.Integers[channelMonitorRedisSharedMetricTPSGenerationMs] = generationDurationMs
 	}
 	inputTokens := int64(0)
 	if event.InputTokens != nil {
@@ -1228,6 +1231,8 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 		{&target.AttemptDurationSampleCount, source.AttemptDurationSampleCount},
 		{&target.AttemptDurationTotalMs, source.AttemptDurationTotalMs},
 		{&target.TPSSampleCount, source.TPSSampleCount},
+		{&target.TPSOutputTokens, source.TPSOutputTokens},
+		{&target.TPSGenerationDurationMs, source.TPSGenerationDurationMs},
 		{&target.CacheSampleCount, source.CacheSampleCount},
 		{&target.CacheHitCount, source.CacheHitCount},
 		{&target.CacheReadTokens, source.CacheReadTokens},
@@ -1256,7 +1261,8 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 	target.AttemptDurationSampleCount += source.AttemptDurationSampleCount
 	target.AttemptDurationTotalMs += source.AttemptDurationTotalMs
 	target.TPSSampleCount += source.TPSSampleCount
-	target.TPSTotal += source.TPSTotal
+	target.TPSOutputTokens += source.TPSOutputTokens
+	target.TPSGenerationDurationMs += source.TPSGenerationDurationMs
 	target.CacheSampleCount += source.CacheSampleCount
 	target.CacheHitCount += source.CacheHitCount
 	target.CacheReadTokens += source.CacheReadTokens
@@ -1512,7 +1518,7 @@ func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAg
 	case channelMonitorRedisSharedMetricAPIKeyName:
 		aggregate.APIKeyName = raw
 		return nil
-	case channelMonitorRedisSharedMetricFirstTokenTotalMs, channelMonitorRedisSharedMetricTPSTotal,
+	case channelMonitorRedisSharedMetricFirstTokenTotalMs,
 		channelMonitorRedisSharedMetricLatestFirstToken, channelMonitorRedisSharedMetricLatestTPS:
 		value, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
@@ -1521,8 +1527,6 @@ func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAg
 		switch metric {
 		case channelMonitorRedisSharedMetricFirstTokenTotalMs:
 			aggregate.FirstTokenTotalMs += value
-		case channelMonitorRedisSharedMetricTPSTotal:
-			aggregate.TPSTotal += value
 		case channelMonitorRedisSharedMetricLatestFirstToken:
 			aggregate.LatestFirstTokenMs = &value
 		case channelMonitorRedisSharedMetricLatestTPS:
@@ -1589,6 +1593,10 @@ func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAg
 		aggregate.AttemptDurationSampleCount += value
 	case channelMonitorRedisSharedMetricTPSSamples:
 		aggregate.TPSSampleCount += value
+	case channelMonitorRedisSharedMetricTPSOutputTokens:
+		aggregate.TPSOutputTokens += value
+	case channelMonitorRedisSharedMetricTPSGenerationMs:
+		aggregate.TPSGenerationDurationMs += value
 	case channelMonitorRedisSharedMetricCacheSamples:
 		aggregate.CacheSampleCount += value
 	case channelMonitorRedisSharedMetricCacheHits:

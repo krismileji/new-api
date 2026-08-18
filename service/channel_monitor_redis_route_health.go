@@ -118,40 +118,43 @@ type ChannelMonitorRedisRouteHealthSample struct {
 	ErrorMessage              string                           `json:"error_message,omitempty"`
 	FirstTokenMs              *float64                         `json:"first_token_ms,omitempty"`
 	TPS                       *float64                         `json:"tps,omitempty"`
+	TPSOutputTokens           *int64                           `json:"tps_output_tokens,omitempty"`
+	TPSGenerationDurationMs   *int64                           `json:"tps_generation_duration_ms,omitempty"`
 	AttemptDurationMs         *int64                           `json:"attempt_duration_ms,omitempty"`
 }
 
 type ChannelMonitorRedisRouteHealthSnapshot struct {
-	ChannelID             int                                       `json:"channel_id"`
-	ModelName             string                                    `json:"model"`
-	EventCount            int64                                     `json:"event_count"`
-	BusinessRequestCount  int64                                     `json:"business_request_count"`
-	ActualSuccessCount    int64                                     `json:"actual_success_count"`
-	ActualFailureCount    int64                                     `json:"actual_failure_count"`
-	ActualSampleCount     int64                                     `json:"actual_sample_count"`
-	ActualSuccessRate     float64                                   `json:"actual_success_rate"`
-	FinalSuccessCount     int64                                     `json:"final_success_count"`
-	FinalFailureCount     int64                                     `json:"final_failure_count"`
-	FinalSampleCount      int64                                     `json:"final_sample_count"`
-	FinalSuccessRate      float64                                   `json:"final_success_rate"`
-	FirstTokenSampleCount int64                                     `json:"first_token_sample_count"`
-	FirstTokenTotalMs     float64                                   `json:"first_token_total_ms"`
-	AverageFirstTokenMs   *float64                                  `json:"average_first_token_ms"`
-	TPSSampleCount        int64                                     `json:"tps_sample_count"`
-	TPSTotal              float64                                   `json:"tps_total"`
-	AverageTPS            *float64                                  `json:"average_tps"`
-	SourceCounts          map[model.ChannelMonitorEventSource]int64 `json:"source_counts"`
-	WindowStart           int64                                     `json:"window_start"`
-	WindowEnd             int64                                     `json:"window_end"`
-	CoverageStart         int64                                     `json:"coverage_start"`
-	ProjectionStartedAt   int64                                     `json:"projection_started_at"`
-	RetentionMinutes      int                                       `json:"retention_minutes"`
-	SampleLimit           int                                       `json:"sample_limit"`
-	SampleLimitTruncated  bool                                      `json:"sample_limit_truncated"`
-	SampleLimitCutoffAt   int64                                     `json:"sample_limit_cutoff_at"`
-	DataCutoffAt          int64                                     `json:"data_cutoff_at"`
-	ProcessedAt           int64                                     `json:"processed_at"`
-	EventWatermark        uint64                                    `json:"event_watermark"`
+	ChannelID               int                                       `json:"channel_id"`
+	ModelName               string                                    `json:"model"`
+	EventCount              int64                                     `json:"event_count"`
+	BusinessRequestCount    int64                                     `json:"business_request_count"`
+	ActualSuccessCount      int64                                     `json:"actual_success_count"`
+	ActualFailureCount      int64                                     `json:"actual_failure_count"`
+	ActualSampleCount       int64                                     `json:"actual_sample_count"`
+	ActualSuccessRate       float64                                   `json:"actual_success_rate"`
+	FinalSuccessCount       int64                                     `json:"final_success_count"`
+	FinalFailureCount       int64                                     `json:"final_failure_count"`
+	FinalSampleCount        int64                                     `json:"final_sample_count"`
+	FinalSuccessRate        float64                                   `json:"final_success_rate"`
+	FirstTokenSampleCount   int64                                     `json:"first_token_sample_count"`
+	FirstTokenTotalMs       float64                                   `json:"first_token_total_ms"`
+	AverageFirstTokenMs     *float64                                  `json:"average_first_token_ms"`
+	TPSSampleCount          int64                                     `json:"tps_sample_count"`
+	TPSOutputTokens         int64                                     `json:"tps_output_tokens"`
+	TPSGenerationDurationMs int64                                     `json:"tps_generation_duration_ms"`
+	AverageTPS              *float64                                  `json:"average_tps"`
+	SourceCounts            map[model.ChannelMonitorEventSource]int64 `json:"source_counts"`
+	WindowStart             int64                                     `json:"window_start"`
+	WindowEnd               int64                                     `json:"window_end"`
+	CoverageStart           int64                                     `json:"coverage_start"`
+	ProjectionStartedAt     int64                                     `json:"projection_started_at"`
+	RetentionMinutes        int                                       `json:"retention_minutes"`
+	SampleLimit             int                                       `json:"sample_limit"`
+	SampleLimitTruncated    bool                                      `json:"sample_limit_truncated"`
+	SampleLimitCutoffAt     int64                                     `json:"sample_limit_cutoff_at"`
+	DataCutoffAt            int64                                     `json:"data_cutoff_at"`
+	ProcessedAt             int64                                     `json:"processed_at"`
+	EventWatermark          uint64                                    `json:"event_watermark"`
 }
 
 type ChannelMonitorRedisRouteHealthWindow struct {
@@ -643,6 +646,10 @@ func channelMonitorRedisRouteHealthSampleFromEvent(event model.ChannelMonitorEve
 		value := *event.TPS
 		sample.TPS = &value
 	}
+	if outputTokens, generationDurationMs, ok := event.TPSMeasurement(); ok {
+		sample.TPSOutputTokens = &outputTokens
+		sample.TPSGenerationDurationMs = &generationDurationMs
+	}
 	if event.AttemptDurationMs != nil {
 		value := *event.AttemptDurationMs
 		sample.AttemptDurationMs = &value
@@ -720,9 +727,11 @@ func buildChannelMonitorRedisRouteHealthSnapshot(
 			snapshot.FirstTokenSampleCount++
 			snapshot.FirstTokenTotalMs = channelMonitorRealtimeAddFloat64(snapshot.FirstTokenTotalMs, *sample.FirstTokenMs)
 		}
-		if sample.TPS != nil {
+		if sample.TPSOutputTokens != nil && sample.TPSGenerationDurationMs != nil &&
+			*sample.TPSOutputTokens > 0 && *sample.TPSGenerationDurationMs > 0 {
 			snapshot.TPSSampleCount++
-			snapshot.TPSTotal = channelMonitorRealtimeAddFloat64(snapshot.TPSTotal, *sample.TPS)
+			snapshot.TPSOutputTokens += *sample.TPSOutputTokens
+			snapshot.TPSGenerationDurationMs += *sample.TPSGenerationDurationMs
 		}
 	}
 	snapshot.ActualSampleCount = snapshot.ActualSuccessCount + snapshot.ActualFailureCount
@@ -738,8 +747,11 @@ func buildChannelMonitorRedisRouteHealthSnapshot(
 		snapshot.AverageFirstTokenMs = &average
 	}
 	if snapshot.TPSSampleCount > 0 {
-		average := snapshot.TPSTotal / float64(snapshot.TPSSampleCount)
-		snapshot.AverageTPS = &average
+		if snapshot.TPSOutputTokens > 0 && snapshot.TPSGenerationDurationMs > 0 {
+			average := float64(snapshot.TPSOutputTokens) /
+				(float64(snapshot.TPSGenerationDurationMs) / 1000.0)
+			snapshot.AverageTPS = &average
+		}
 	}
 	if len(samples) > 0 {
 		snapshot.WindowStart = samples[0].OccurredAt

@@ -77,6 +77,9 @@ func channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
 	metric := model.ChannelSmartScheduleAdaptiveHealthMetric{}
 	failureBuckets := [6]int64{}
 	firstTokenBuckets := make(map[int64]model.ChannelMonitorDurationBucket)
+	weightedTPSSampleCount := int64(0)
+	legacyTPSSampleCount := int64(0)
+	legacyTPSTotal := float64(0)
 	for _, event := range events {
 		metric.RequestCount++
 		metric.LastUsedTime = max(metric.LastUsedTime, event.OccurredAt)
@@ -110,9 +113,16 @@ func channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
 		}
 		metric.StabilitySuccessCount++
 		metric.HealthyRequestCount++
-		if event.TPS != nil && *event.TPS >= 0 && !math.IsNaN(*event.TPS) && !math.IsInf(*event.TPS, 0) {
-			metric.TPSSampleCount++
-			metric.TPSTotal += *event.TPS
+		if outputTokens, generationDurationMs, ok := event.TPSMeasurement(); ok {
+			weightedTPSSampleCount++
+			metric.TPSOutputTokens += outputTokens
+			metric.TPSGenerationDurationMs += generationDurationMs
+		} else if event.TPS != nil && *event.TPS > 0 &&
+			!math.IsNaN(*event.TPS) && !math.IsInf(*event.TPS, 0) {
+			// Legacy probe samples predate completion-token persistence. Keep
+			// their arithmetic fallback until the rolling window expires.
+			legacyTPSSampleCount++
+			legacyTPSTotal += *event.TPS
 		}
 		if event.FirstTokenMs == nil || *event.FirstTokenMs < 0 ||
 			math.IsNaN(*event.FirstTokenMs) || math.IsInf(*event.FirstTokenMs, 0) {
@@ -136,6 +146,12 @@ func channelSmartScheduleRealtimeAdaptiveMetricFromEvents(
 			metric.SlowRequestCount++
 			metric.HealthyRequestCount--
 		}
+	}
+	if weightedTPSSampleCount > 0 {
+		metric.TPSSampleCount = weightedTPSSampleCount
+	} else {
+		metric.TPSSampleCount = legacyTPSSampleCount
+		metric.TPSTotal = legacyTPSTotal
 	}
 	metric.RetryFailureDurationBuckets = []model.ChannelMonitorFailureDurationBucket{
 		{LowerBoundMs: 0, UpperBoundMs: 1000, Count: failureBuckets[0]},
@@ -183,7 +199,10 @@ func channelSmartScheduleRealtimeAverage(metric model.ChannelSmartScheduleAdapti
 		firstTokenMs = &value
 	}
 	var tps *float64
-	if metric.TPSSampleCount > 0 {
+	if metric.TPSOutputTokens > 0 && metric.TPSGenerationDurationMs > 0 {
+		value := float64(metric.TPSOutputTokens) / (float64(metric.TPSGenerationDurationMs) / 1000.0)
+		tps = &value
+	} else if metric.TPSSampleCount > 0 {
 		value := metric.TPSTotal / float64(metric.TPSSampleCount)
 		tps = &value
 	}

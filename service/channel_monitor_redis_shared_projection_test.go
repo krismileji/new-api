@@ -49,6 +49,7 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	occurredAt := int64(1_750_000_000)
 	firstToken := 120.5
 	tps := 8.25
+	completionTokens := int64(33)
 	inputTokens := int64(900)
 	cacheReadTokens := int64(300)
 	cacheWriteTokens := int64(40)
@@ -56,6 +57,7 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	event := newChannelMonitorRedisSharedProjectionTestEvent("event-1", occurredAt)
 	event.FirstTokenMs = &firstToken
 	event.TPS = &tps
+	event.CompletionTokens = &completionTokens
 	event.InputTokens = &inputTokens
 	event.CacheReadTokens = &cacheReadTokens
 	event.CacheWriteTokens = &cacheWriteTokens
@@ -78,6 +80,8 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	assert.Equal(t, firstToken, firstView.Performance.FirstTokenTotalMs)
 	assert.Equal(t, int64(1), firstView.Performance.AttemptDurationSampleCount)
 	assert.Equal(t, duration, firstView.Performance.AttemptDurationTotalMs)
+	assert.Equal(t, completionTokens, firstView.Performance.TPSOutputTokens)
+	assert.Equal(t, int64(4000), firstView.Performance.TPSGenerationDurationMs)
 	assert.Equal(t, inputTokens, firstView.Summary.InputTokens)
 	assert.Equal(t, cacheReadTokens, firstView.Summary.CacheReadTokens)
 	assert.Equal(t, int64(1), firstView.Summary.CacheWriteRequestCount)
@@ -101,6 +105,38 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	require.NoError(t, err)
 	assert.NotEmpty(t, minuteValues)
 	assert.Equal(t, event.APIKeyName, minuteValues[channelMonitorRedisSharedScopeAPIKey+":42:"+channelMonitorRedisSharedMetricAPIKeyName])
+}
+
+func TestChannelMonitorRedisSharedProjectionUsesUpstreamTPSAggregation(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	occurredAt := int64(1_750_000_000)
+
+	fastTokens := int64(1)
+	fastTPS := 100.0
+	fast := newChannelMonitorRedisSharedProjectionTestEvent("tps-fast", occurredAt)
+	fast.CompletionTokens = &fastTokens
+	fast.TPS = &fastTPS
+
+	slowTokens := int64(100)
+	slowTPS := 10.0
+	slow := newChannelMonitorRedisSharedProjectionTestEvent("tps-slow", occurredAt+1)
+	slow.EventSequence = 2
+	slow.CompletionTokens = &slowTokens
+	slow.TPS = &slowTPS
+
+	require.NoError(t, projection.HandleChannelMonitorEvents(
+		context.Background(), []model.ChannelMonitorEvent{fast, slow},
+	))
+	shared, err := projection.Query(context.Background(), occurredAt-1, occurredAt+2)
+	require.NoError(t, err)
+	view, err := channelMonitorRedisSharedPageView(shared)
+	require.NoError(t, err)
+	require.Len(t, view.Routes, 1)
+	require.NotNil(t, view.Routes[0].AverageTPS)
+	assert.Equal(t, int64(101), view.Routes[0].TPSOutputTokens)
+	assert.Equal(t, int64(10_010), view.Routes[0].TPSGenerationDurationMs)
+	assert.InDelta(t, 101.0/10.01, *view.Routes[0].AverageTPS, 1e-9)
 }
 
 func TestMergeChannelMonitorRedisSharedAggregateRejectsInt64Overflow(t *testing.T) {

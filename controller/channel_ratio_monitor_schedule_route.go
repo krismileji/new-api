@@ -136,8 +136,22 @@ func channelSmartScheduleMergeAdaptiveHealthMetric(
 	production.HealthyRequestCount += samples.HealthyRequestCount
 	production.FirstTokenCount += samples.FirstTokenCount
 	production.FirstTokenTotalMs += samples.FirstTokenTotalMs
-	production.TPSSampleCount += samples.TPSSampleCount
-	production.TPSTotal += samples.TPSTotal
+	productionHasWeightedTPS := production.TPSOutputTokens > 0 && production.TPSGenerationDurationMs > 0
+	samplesHaveWeightedTPS := samples.TPSOutputTokens > 0 && samples.TPSGenerationDurationMs > 0
+	switch {
+	case productionHasWeightedTPS && samplesHaveWeightedTPS:
+		production.TPSSampleCount += samples.TPSSampleCount
+		production.TPSOutputTokens += samples.TPSOutputTokens
+		production.TPSGenerationDurationMs += samples.TPSGenerationDurationMs
+	case samplesHaveWeightedTPS:
+		production.TPSSampleCount = samples.TPSSampleCount
+		production.TPSTotal = 0
+		production.TPSOutputTokens = samples.TPSOutputTokens
+		production.TPSGenerationDurationMs = samples.TPSGenerationDurationMs
+	case !productionHasWeightedTPS:
+		production.TPSSampleCount += samples.TPSSampleCount
+		production.TPSTotal += samples.TPSTotal
+	}
 	production.LatencyPressure += samples.LatencyPressure
 	production.LastUsedTime = max(production.LastUsedTime, samples.LastUsedTime)
 	production.StabilitySuccessCount += samples.StabilitySuccessCount
