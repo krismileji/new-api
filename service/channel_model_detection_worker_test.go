@@ -269,8 +269,6 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 		JuiceVerdictState: "pass", FingerprintVerdictState: "strong_match",
 		FingerprintModel: model.ChannelModelDetectionClaimedModelLuna,
 	}
-	schemaVersion := int64(3)
-	report.SchemaVersion = &schemaVersion
 	stub := &channelModelDetectionDetectorStub{
 		statuses: []ChannelModelDetectorStatusResponse{{Status: "complete", SessionID: "owned-session", ConfigHash: "report-hash"}},
 		report:   report,
@@ -296,12 +294,14 @@ func TestChannelModelDetectionRecoveryReadsOnlyMatchingReportAndCompletesRun(t *
 	assert.Equal(t, model.ChannelModelDetectionClaimedModelLuna, storedExecution.FingerprintModel)
 	assert.Equal(t, "Juice通过；指纹强烈指向 Sol", storedExecution.TitleCN)
 	assert.Equal(t, "检测器原始说明", storedExecution.SubtitleCN)
+	assert.Zero(t, storedExecution.SchemaVersion)
+	assert.Empty(t, storedExecution.ErrorCode)
 	var config model.ChannelModelDetectionConfig
 	require.NoError(t, db.Where("channel_id = ?", run.ChannelId).First(&config).Error)
 	assert.Empty(t, config.RunningRunId)
 }
 
-func TestChannelModelDetectionRecoveryPreservesUnsupportedReportAndMarksExecutionFailed(t *testing.T) {
+func TestChannelModelDetectionRecoveryAcceptsNewerReportSchemaAndCompletesRun(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
 	now := time.Date(2026, time.August, 17, 8, 0, 0, 0, time.UTC)
 	run, execution := seedChannelModelDetectionWorkerRun(t, db, now, "future-session", model.ChannelModelDetectionExecutionStatusRunning)
@@ -311,7 +311,7 @@ func TestChannelModelDetectionRecoveryPreservesUnsupportedReportAndMarksExecutio
 	report := ChannelModelDetectorReportResponse{
 		SessionID: "future-session", ConfigHash: execution.ConfigHash, SchemaVersion: &schemaVersion,
 		OutcomeCode: "juice_pass_fingerprint_strong", OverallVerdict: "未来版本结论",
-		ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, RequestModel: execution.RequestModel,
 	}
 	stub := &channelModelDetectionDetectorStub{
 		statuses: []ChannelModelDetectorStatusResponse{{Status: "complete", SessionID: "future-session", ConfigHash: execution.ConfigHash}},
@@ -323,20 +323,19 @@ func TestChannelModelDetectionRecoveryPreservesUnsupportedReportAndMarksExecutio
 	result, err := worker.RunOnce(context.Background())
 	require.NoError(t, err)
 	assert.True(t, result.Completed)
-	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, result.Status)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusCompleted, result.Status)
 
 	var storedExecution model.ChannelModelDetectionExecution
 	require.NoError(t, db.Where("id = ?", execution.Id).First(&storedExecution).Error)
-	assert.Equal(t, model.ChannelModelDetectionExecutionStatusFailed, storedExecution.Status)
-	assert.Equal(t, "report_contract_incompatible", storedExecution.ErrorCode)
-	assert.Contains(t, storedExecution.ErrorMessage, "schema_version 5 不受支持")
-	assert.Empty(t, storedExecution.OutcomeCode)
+	assert.Equal(t, model.ChannelModelDetectionExecutionStatusCompleted, storedExecution.Status)
+	assert.Empty(t, storedExecution.ErrorCode)
+	assert.Equal(t, "juice_pass_fingerprint_strong", storedExecution.OutcomeCode)
 	assert.NotEmpty(t, storedExecution.ReportJSON)
 	assert.Equal(t, 5, storedExecution.SchemaVersion)
 
 	var storedRun model.ChannelModelDetectionRun
 	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&storedRun).Error)
-	assert.Equal(t, model.ChannelModelDetectionRunStatusFailed, storedRun.Status)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusCompleted, storedRun.Status)
 }
 
 func TestChannelModelDetectionRecoveryRejectsReportWithDifferentRequestModel(t *testing.T) {

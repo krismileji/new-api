@@ -264,10 +264,6 @@ const FINGERPRINT_REFERENCE_ROWS = [
   },
 ] as const
 
-const SUPPORTED_REPORT_SCHEMA_MIN = 3
-const SUPPORTED_REPORT_SCHEMA_MAX = 4
-const VERIFIED_SCORING_VERSIONS = new Set(['trusted-fingerprint-v3'])
-
 const EFFORT_LABELS: Record<string, string> = {
   none: '无',
   minimal: '极低',
@@ -431,54 +427,16 @@ function reportCompatibility(
   report: Record<string, unknown>
 ): ReportCompatibility {
   const messages: string[] = []
-  const reportSchema = numberValue(report.schema_version)
-  const storedSchema =
-    execution.schema_version > 0 ? execution.schema_version : null
-  const schemaVersion = reportSchema ?? storedSchema
   let compatible = true
   let severity: ReportCompatibility['severity'] = 'none'
 
-  if (schemaVersion == null) {
-    compatible = false
-    severity = 'incompatible'
-    messages.push('报告未声明 Schema 版本，无法确认字段含义。')
-  } else if (
-    !Number.isInteger(schemaVersion) ||
-    schemaVersion < SUPPORTED_REPORT_SCHEMA_MIN ||
-    schemaVersion > SUPPORTED_REPORT_SCHEMA_MAX
-  ) {
-    compatible = false
-    severity = 'incompatible'
-    messages.push(
-      `报告 Schema ${schemaVersion} 不受支持，主系统当前支持 ${SUPPORTED_REPORT_SCHEMA_MIN}-${SUPPORTED_REPORT_SCHEMA_MAX}。`
-    )
-  }
-
-  if (
-    reportSchema != null &&
-    storedSchema != null &&
-    reportSchema !== storedSchema
-  ) {
-    compatible = false
-    severity = 'incompatible'
-    messages.push(
-      `报告内 Schema ${reportSchema} 与执行记录 Schema ${storedSchema} 不一致。`
-    )
-  }
-
   const reportScoring = stringValue(report.scoring_version)
   const storedScoring = execution.scoring_version.trim()
-  const scoringVersion = reportScoring || storedScoring
   if (reportScoring && storedScoring && reportScoring !== storedScoring) {
     compatible = false
     severity = 'incompatible'
     messages.push(
       `报告内评分版本 ${reportScoring} 与执行记录 ${storedScoring} 不一致。`
-    )
-  } else if (scoringVersion && !VERIFIED_SCORING_VERSIONS.has(scoringVersion)) {
-    severity = severity === 'incompatible' ? severity : 'warning'
-    messages.push(
-      `评分版本 ${scoringVersion} 尚未由当前主系统验证，数值按检测器原样展示。`
     )
   }
 

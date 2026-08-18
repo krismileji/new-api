@@ -327,11 +327,32 @@ describe('模型检测目标报告', () => {
     assert.doesNotMatch(text, /数据库旧说明/)
   })
 
-  test('不支持的报告 Schema 明确提示版本不兼容且不归类为正常', async () => {
+  test('缺少报告 Schema 时不提示不兼容并展示检测器结论', async () => {
+    await renderReport([
+      createExecution({
+        target_key: 'missing-schema',
+        schema_version: 0,
+        report: {
+          scoring_version: 'trusted-fingerprint-v3',
+          outcome_code: 'juice_pass_fingerprint_strong',
+          title_cn: '无 Schema 的检测器结论',
+        },
+      }),
+    ])
+
+    const node = executionNode('missing-schema')
+    assert.equal(node.dataset.outcomeLevel, 'normal')
+    assert.match(node.textContent ?? '', /无 Schema 的检测器结论/)
+    assert.doesNotMatch(node.textContent ?? '', /报告未声明 Schema/)
+    assert.doesNotMatch(node.textContent ?? '', /报告版本不兼容/)
+  })
+
+  test('新版报告 Schema 不阻断检测器结论', async () => {
     await renderReport([
       createExecution({
         target_key: 'unsupported-schema',
         schema_version: 5,
+        scoring_version: 'trusted-fingerprint-v4',
         report: {
           schema_version: 5,
           scoring_version: 'trusted-fingerprint-v4',
@@ -343,12 +364,11 @@ describe('模型检测目标报告', () => {
     ])
 
     const node = executionNode('unsupported-schema')
-    assert.equal(node.dataset.outcomeLevel, 'unknown')
-    assert.match(node.textContent ?? '', /报告版本不兼容/)
-    assert.match(node.textContent ?? '', /Schema 5 不受支持/)
-    assert.match(node.textContent ?? '', /主系统当前支持 3-4/)
-    assert.doesNotMatch(node.textContent ?? '', /未来版本声称检测正常/)
-    assert.doesNotMatch(node.textContent ?? '', /此字段语义未经当前主系统验证/)
+    assert.equal(node.dataset.outcomeLevel, 'normal')
+    assert.match(node.textContent ?? '', /未来版本声称检测正常/)
+    assert.match(node.textContent ?? '', /此字段语义未经当前主系统验证/)
+    assert.doesNotMatch(node.textContent ?? '', /Schema 5 不受支持/)
+    assert.doesNotMatch(node.textContent ?? '', /报告版本提示/)
   })
 
   test('报告请求模型与执行快照不一致时停止解释检测结论', async () => {

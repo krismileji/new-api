@@ -42,8 +42,6 @@ const (
 	channelModelDetectorDefaultMaxReportBytes   int64 = 1 << 20
 
 	channelModelDetectorBootstrapSchemaVersion = 2
-	channelModelDetectorReportSchemaMin        = 3
-	channelModelDetectorReportSchemaMax        = 4
 )
 
 // ChannelModelDetectorPresetConfig is an opaque official detector preset.
@@ -282,17 +280,6 @@ type ChannelModelDetectorReportResponse struct {
 }
 
 func channelModelDetectorReportCompatibilityError(report ChannelModelDetectorReportResponse, expectedClaimedModel, expectedRequestModel string) error {
-	if report.SchemaVersion == nil {
-		return errors.New("检测报告未返回 schema_version")
-	}
-	if *report.SchemaVersion < channelModelDetectorReportSchemaMin || *report.SchemaVersion > channelModelDetectorReportSchemaMax {
-		return fmt.Errorf(
-			"检测报告 schema_version %d 不受支持，主系统当前支持版本 %d-%d",
-			*report.SchemaVersion,
-			channelModelDetectorReportSchemaMin,
-			channelModelDetectorReportSchemaMax,
-		)
-	}
 	if report.ClaimedModel == "" || report.ClaimedModel != expectedClaimedModel {
 		return fmt.Errorf("检测报告 claimed_model %q 与执行快照 %q 不一致", report.ClaimedModel, expectedClaimedModel)
 	}
