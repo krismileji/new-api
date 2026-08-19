@@ -912,6 +912,12 @@ func (worker *ChannelModelDetectionWorker) CancelRun(ctx context.Context, runID 
 		if err := worker.renewDBLease(ctx, db); err != nil {
 			return err
 		}
+		if _, err := detector.Bootstrap(ctx); err != nil {
+			return err
+		}
+		if err := worker.renewDBLease(ctx, db); err != nil {
+			return err
+		}
 		status, err := detector.Status(ctx)
 		if err != nil {
 			return err

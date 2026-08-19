@@ -15,20 +15,26 @@ import (
 )
 
 type channelModelDetectionDetectorStub struct {
-	mu            sync.Mutex
-	bootstrap     ChannelModelDetectorBootstrapResponse
-	estimate      ChannelModelDetectorEstimateResponse
-	statuses      []ChannelModelDetectorStatusResponse
-	report        ChannelModelDetectorReportResponse
-	start         ChannelModelDetectorStartResponse
-	startErr      error
-	statusErr     error
-	startHook     func(ChannelModelDetectorStartRequest)
-	startCalls    int
-	startRequests []ChannelModelDetectorStartRequest
+	mu                    sync.Mutex
+	bootstrap             ChannelModelDetectorBootstrapResponse
+	estimate              ChannelModelDetectorEstimateResponse
+	statuses              []ChannelModelDetectorStatusResponse
+	report                ChannelModelDetectorReportResponse
+	start                 ChannelModelDetectorStartResponse
+	startErr              error
+	statusErr             error
+	stopRequiresBootstrap bool
+	startHook             func(ChannelModelDetectorStartRequest)
+	bootstrapCalls        int
+	startCalls            int
+	stopCalls             int
+	startRequests         []ChannelModelDetectorStartRequest
 }
 
 func (stub *channelModelDetectionDetectorStub) Bootstrap(context.Context) (ChannelModelDetectorBootstrapResponse, error) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.bootstrapCalls++
 	return stub.bootstrap, nil
 }
 
@@ -68,6 +74,12 @@ func (stub *channelModelDetectionDetectorStub) Report(context.Context) (ChannelM
 }
 
 func (stub *channelModelDetectionDetectorStub) Stop(context.Context) (ChannelModelDetectorStopResponse, error) {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	stub.stopCalls++
+	if stub.stopRequiresBootstrap && stub.bootstrapCalls == 0 {
+		return ChannelModelDetectorStopResponse{}, errors.New("请先获取检测器 bootstrap 会话")
+	}
 	return ChannelModelDetectorStopResponse{}, nil
 }
 
@@ -544,6 +556,26 @@ func TestChannelModelDetectionWorkerCancelQueuedRunDoesNotCallDetector(t *testin
 	require.NoError(t, worker.CancelRun(context.Background(), run.RunId))
 	require.NoError(t, worker.CancelRun(context.Background(), run.RunId))
 	assert.Zero(t, stub.startCalls)
+	var stored model.ChannelModelDetectionRun
+	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&stored).Error)
+	assert.Equal(t, model.ChannelModelDetectionRunStatusCanceled, stored.Status)
+}
+
+func TestChannelModelDetectionWorkerCancelRunningRunBootstrapsBeforeStop(t *testing.T) {
+	db := setupChannelModelDetectionSchedulerTestDB(t)
+	now := time.Date(2026, time.August, 13, 10, 45, 0, 0, time.UTC)
+	run, _ := seedChannelModelDetectionWorkerRun(t, db, now, "owned-session", model.ChannelModelDetectionExecutionStatusRunning)
+	stub := &channelModelDetectionDetectorStub{
+		statuses:              []ChannelModelDetectorStatusResponse{{Status: "running", SessionID: "owned-session"}},
+		stopRequiresBootstrap: true,
+	}
+	worker := NewChannelModelDetectionWorker(db, func(string) (ChannelModelDetectionDetector, error) { return stub, nil }, nil)
+	worker.Now = func() time.Time { return now }
+
+	require.NoError(t, worker.CancelRun(context.Background(), run.RunId))
+	assert.Equal(t, 1, stub.bootstrapCalls)
+	assert.Equal(t, 1, stub.stopCalls)
+
 	var stored model.ChannelModelDetectionRun
 	require.NoError(t, db.Where("run_id = ?", run.RunId).First(&stored).Error)
 	assert.Equal(t, model.ChannelModelDetectionRunStatusCanceled, stored.Status)
