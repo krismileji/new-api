@@ -336,6 +336,7 @@ describe('channel monitor channel view timestamps', () => {
         name: longChannelName,
         groups: [longGroup],
         last_fetch_status: 'failed',
+        last_fetch_error: 'Sub2API 当前账号不可见分组',
         consecutive_failures: 942,
         upstream: {
           ...channel.upstream,
@@ -350,6 +351,8 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(cells[0]?.includes(`title="${longChannelName}"`))
     assert.ok(cells[1]?.includes(`title="更新：${balanceTimestamp}"`))
     assert.ok(cells[2]?.includes(`title="更新：${ratioTimestamp}"`))
+    assert.ok(cells[2]?.includes('更新失败'))
+    assert.ok(cells[2]?.includes('title="Sub2API 当前账号不可见分组"'))
     assert.ok(cells[2]?.includes(`title="上游分组：${longUpstreamGroup}"`))
     assert.ok(cells[3]?.includes(`title="${longGroup}"`))
     assert.doesNotMatch(cells[0] ?? '', /truncate/)

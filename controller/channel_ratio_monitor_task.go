@@ -137,6 +137,29 @@ func channelRatioMonitorFailureAlertReady(monitor model.ChannelRatioMonitor, fai
 	return active && failureCount >= failureLimit && !notified
 }
 
+func channelRatioMonitorStoppedSyncFailure(monitor model.ChannelRatioMonitor, failureLimit int) error {
+	if failureLimit <= 0 {
+		return nil
+	}
+	if !monitor.UpstreamRatioSyncDisabled &&
+		monitor.ConsecutiveFailures >= failureLimit {
+		message := strings.TrimSpace(monitor.LastFetchError)
+		if message == "" {
+			message = "上游倍率获取失败"
+		}
+		return errors.New(message)
+	}
+	if !monitor.UpstreamBalanceSyncDisabled &&
+		monitor.BalanceConsecutiveFailures >= failureLimit {
+		message := strings.TrimSpace(monitor.LastBalanceError)
+		if message == "" {
+			message = "上游余额获取失败"
+		}
+		return errors.New(message)
+	}
+	return nil
+}
+
 func appendReadyChannelRatioMonitorFailureNotification(
 	notifications *[]channelRatioMonitorFailureNotification,
 	monitor model.ChannelRatioMonitor,
@@ -401,6 +424,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
 		balanceAutoFetchEnabled := !monitor.UpstreamBalanceSyncDisabled &&
 			monitor.BalanceConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
+		stoppedSyncFailure := channelRatioMonitorStoppedSyncFailure(
+			monitor,
+			settings.AutoUpdateConsecutiveFailureLimit,
+		)
 		pendingChannelName := ""
 		pendingChannelRemark := ""
 		pendingRatioFailure := !ratioAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
@@ -432,7 +459,11 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			failureNotificationsTruncated = failureNotificationsTruncated || truncated
 		}
 		if !ratioAutoFetchEnabled && !balanceAutoFetchEnabled {
-			summary.Skipped++
+			if stoppedSyncFailure != nil {
+				summary.recordFailure(monitor.ChannelId, pendingChannelName, pendingChannelRemark, stoppedSyncFailure)
+			} else {
+				summary.Skipped++
+			}
 			reportProgress(index+1, summary.Total)
 			continue
 		}
@@ -604,10 +635,15 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				})
 			}
 		}
-		if err != nil {
+		stoppedSyncOnly := err == nil && stoppedSyncFailure != nil
+		updateFailed := err != nil || stoppedSyncOnly
+		if updateFailed {
 			failureErr := err
+			if failureErr == nil {
+				failureErr = stoppedSyncFailure
+			}
 			if retriesUsed > 0 {
-				failureErr = fmt.Errorf("重试 %d 次后仍失败: %w", retriesUsed, err)
+				failureErr = fmt.Errorf("重试 %d 次后仍失败: %w", retriesUsed, failureErr)
 			}
 			summary.recordFailure(monitor.ChannelId, channel.Name, channelRemark, failureErr)
 			if upstreamSyncFailed {
@@ -652,6 +688,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 			}
 			logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d update failed: %v", monitor.ChannelId, failureErr))
+			if stoppedSyncOnly {
+				summary.Updated++
+				if retriesUsed > 0 {
+					summary.RecoveredAfterRetry++
+				}
+			}
 		} else {
 			summary.Updated++
 			if retriesUsed > 0 {

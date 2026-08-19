@@ -51,8 +51,10 @@ func TestRunChannelRatioMonitorTaskStopsRatioAtConfiguredConsecutiveFailureLimit
 
 	secondSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, secondSummary.Skipped)
-	assert.Zero(t, secondSummary.Failed)
+	assert.Zero(t, secondSummary.Skipped)
+	assert.Equal(t, 1, secondSummary.Failed)
+	require.Len(t, secondSummary.Failures, 1)
+	assert.Contains(t, secondSummary.Failures[0].Error, "502 Bad Gateway")
 	assert.Equal(t, requestsAfterFailureLimit, requestCount.Load())
 }
 
@@ -91,9 +93,54 @@ func TestRunChannelRatioMonitorTaskStopsBalanceAtConfiguredConsecutiveFailureLim
 
 	secondSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, secondSummary.Skipped)
-	assert.Zero(t, secondSummary.Failed)
+	assert.Zero(t, secondSummary.Skipped)
+	assert.Equal(t, 1, secondSummary.Failed)
 	assert.EqualValues(t, 3, requestCount.Load())
+}
+
+func TestRunChannelRatioMonitorTaskAutoDisablesChannelWhenStoppedRatioSyncFails(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorAutoUpdateRetryCountOption:              "0",
+		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "3",
+		channelMonitorAutoDisableOnUpdateFailureOption:        "true",
+	})
+	disableChannelMonitorSSRFProtection(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":500}}`))
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Name: "stopped ratio sync", Key: "test-key", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+		UpstreamUserId: 42, UpstreamAccessToken: "test-token",
+		ConsecutiveFailures: 3,
+	}).Error)
+
+	summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Updated)
+	assert.Equal(t, 1, summary.Failed)
+	assert.Equal(t, 1, summary.BalanceUpdated)
+	assert.Equal(t, 1, summary.ChannelsDisabled)
+
+	channel, err := model.GetChannelById(1, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	assert.Equal(t, channelMonitorUpdateFailureDisableReason, channel.GetOtherInfo()["status_reason"])
 }
 
 func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.T) {
@@ -150,7 +197,7 @@ func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, 2, summary.Updated)
 	assert.Equal(t, 1, summary.BalanceUpdated)
-	assert.Zero(t, summary.Failed)
+	assert.Equal(t, 2, summary.Failed)
 	assert.EqualValues(t, 1, ratioRequests.Load())
 	assert.EqualValues(t, 1, balanceRequests.Load())
 	assert.EqualValues(t, 1, statusRequests.Load())

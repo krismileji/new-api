@@ -471,6 +471,14 @@ export function ChannelMonitorChannelView(
                         timestamp={channel.updated_time}
                         className='mt-0.5'
                       />
+                      {channel.last_fetch_error ? (
+                        <span
+                          className='text-warning mt-0.5 block text-xs whitespace-nowrap'
+                          title={channel.last_fetch_error}
+                        >
+                          更新失败
+                        </span>
+                      ) : null}
                       {channel.upstream ? (
                         <span
                           className='text-muted-foreground mt-0.5 block text-xs whitespace-nowrap'

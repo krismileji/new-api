@@ -4952,8 +4952,8 @@ func TestRunChannelRatioMonitorTaskEmailsOnlyAtFailureLimitAndRetriesUnacknowled
 	emailSendError = nil
 	summary, err = runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
 	require.NoError(t, err)
-	assert.Zero(t, summary.Failed)
-	assert.Equal(t, 1, summary.Skipped)
+	assert.Equal(t, 1, summary.Failed)
+	assert.Zero(t, summary.Skipped)
 	assert.Equal(t, "sent", summary.EmailStatus)
 	assert.Equal(t, 2, emailCalls)
 	monitor, err = model.GetChannelRatioMonitor(1)
@@ -4962,8 +4962,8 @@ func TestRunChannelRatioMonitorTaskEmailsOnlyAtFailureLimitAndRetriesUnacknowled
 
 	summary, err = runChannelRatioMonitorTaskOnce(context.Background(), nil, sendEmail)
 	require.NoError(t, err)
-	assert.Zero(t, summary.Failed)
-	assert.Equal(t, 1, summary.Skipped)
+	assert.Equal(t, 1, summary.Failed)
+	assert.Zero(t, summary.Skipped)
 	assert.Empty(t, summary.EmailStatus)
 	assert.Equal(t, 2, emailCalls)
 }
