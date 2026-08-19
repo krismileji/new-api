@@ -61,6 +61,38 @@ func TestValidateChannelModelDetectorTargetAllowsLoopbackAndRejectsPublicOrDynam
 	}
 }
 
+func TestNormalizeChannelModelDetectionRelayURLRequiresInternalRelayPath(t *testing.T) {
+	normalized, err := NormalizeChannelModelDetectionRelayURL(" https://relay.example.com/private/internal/model-detector/v1/ ")
+	require.NoError(t, err)
+	assert.Equal(t, "https://relay.example.com/private/internal/model-detector/v1", normalized)
+
+	for _, value := range []string{
+		"https://relay.example.com",
+		"https://relay.example.com/internal/model-detector/v1?token=secret",
+		"ftp://relay.example.com/internal/model-detector/v1",
+	} {
+		_, err := NormalizeChannelModelDetectionRelayURL(value)
+		assert.Error(t, err, value)
+	}
+}
+
+func TestResolveChannelModelDetectionRelayBaseURLRequiresDatabaseSetting(t *testing.T) {
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
+	databaseURL := "https://saved.example.com/internal/model-detector/v1"
+	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).
+		Where("id = ?", seed.Id).Update("relay_url", databaseURL).Error)
+
+	resolved, err := ResolveChannelModelDetectionRelayBaseURL(context.Background(), db)
+	require.NoError(t, err)
+	assert.Equal(t, databaseURL, resolved)
+
+	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).
+		Where("id = ?", seed.Id).Update("relay_url", "").Error)
+	_, err = ResolveChannelModelDetectionRelayBaseURL(context.Background(), db)
+	assert.EqualError(t, err, "尚未配置模型检测内部 Relay 地址")
+}
+
 func TestUpdateChannelModelDetectionSettingsUsesRevisionAndHighConfirmation(t *testing.T) {
 	db := setupChannelModelDetectionSettingsTestDB(t)
 	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
@@ -84,6 +116,32 @@ func TestUpdateChannelModelDetectionSettingsUsesRevisionAndHighConfirmation(t *t
 	base.ConfirmHighCost = false
 	_, err = UpdateChannelModelDetectionSettings(context.Background(), db, base, now)
 	assert.ErrorIs(t, err, ErrChannelModelDetectionSettingsConflict)
+}
+
+func TestUpdateChannelModelDetectionSettingsPersistsAndClearsRelayURL(t *testing.T) {
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seed := seedChannelModelDetectionSettings(t, db, "http://127.0.0.1:18080")
+	relayURL := "https://platform.example.com/internal/model-detector/v1/"
+
+	updated, err := UpdateChannelModelDetectionSettings(context.Background(), db, ChannelModelDetectionSettingsUpdate{
+		RelayURL: &relayURL, ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalMinutes: 60, ExpectedRevision: seed.Revision,
+	}, time.Unix(1_700_000_000, 0).UTC())
+	require.NoError(t, err)
+	assert.True(t, updated.RelayURLConfigured)
+	assert.Equal(t, "https://platform.example.com/internal/model-detector/v1", updated.RelayURL)
+
+	cleared, err := UpdateChannelModelDetectionSettings(context.Background(), db, ChannelModelDetectionSettingsUpdate{
+		ClearRelayURL: true, ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalMinutes: 60, ExpectedRevision: updated.Revision,
+	}, time.Unix(1_700_000_100, 0).UTC())
+	require.NoError(t, err)
+	assert.False(t, cleared.RelayURLConfigured)
+	assert.Empty(t, cleared.RelayURL)
+
+	var stored model.ChannelModelDetectionGlobalConfig
+	require.NoError(t, db.First(&stored, seed.Id).Error)
+	assert.Empty(t, stored.RelayURL)
 }
 
 func TestUpdateChannelModelDetectionSettingsAlignsNextBatchToIntervalBoundary(t *testing.T) {

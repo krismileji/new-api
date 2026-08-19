@@ -213,6 +213,7 @@ func decodeChannelModelDetectionJSON(data string, value any) error {
 type ChannelModelDetectionGlobalConfig struct {
 	Id              int64  `json:"id" gorm:"primaryKey"`
 	DetectorURL     string `json:"-" gorm:"type:varchar(1024)"`
+	RelayURL        string `json:"-" gorm:"type:varchar(1024)"`
 	ScheduledPreset string `json:"scheduled_preset" gorm:"type:varchar(16);not null"`
 	ScheduleEnabled bool   `json:"schedule_enabled" gorm:"not null"`
 	// A zero value is a migration sentinel for rows created before minute
@@ -338,6 +339,10 @@ func (c *ChannelModelDetectionGlobalConfig) ApplyScheduledHighCostConfirmation(c
 
 func (c ChannelModelDetectionGlobalConfig) DetectorURLConfigured() bool {
 	return strings.TrimSpace(c.DetectorURL) != ""
+}
+
+func (c ChannelModelDetectionGlobalConfig) RelayURLConfigured() bool {
+	return strings.TrimSpace(c.RelayURL) != ""
 }
 
 func (c *ChannelModelDetectionGlobalConfig) TryAcquireLease(tx *gorm.DB, expectedRevision, now int64, leaseToken string) (bool, error) {

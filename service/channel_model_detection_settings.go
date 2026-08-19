@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -26,6 +27,8 @@ var (
 type ChannelModelDetectionSettingsUpdate struct {
 	DetectorURL      *string
 	ClearDetectorURL bool
+	RelayURL         *string
+	ClearRelayURL    bool
 	ScheduledPreset  string
 	ConfirmHighCost  bool
 	ScheduleEnabled  bool
@@ -48,6 +51,8 @@ type ChannelModelDetectionSettingsResponse struct {
 	PendingDetectorURL           string `json:"pending_detector_url"`
 	PendingDetectorURLMasked     string `json:"pending_detector_url_masked"`
 	DetectorURLSwitchPending     bool   `json:"detector_url_switch_pending"`
+	RelayURLConfigured           bool   `json:"relay_url_configured"`
+	RelayURL                     string `json:"relay_url"`
 	ScheduledPreset              string `json:"scheduled_preset"`
 	ScheduleEnabled              bool   `json:"schedule_enabled"`
 	IntervalMinutes              int    `json:"interval_minutes"`
@@ -129,6 +134,9 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 	if input.ClearDetectorURL && input.DetectorURL != nil {
 		return ChannelModelDetectionSettingsResponse{}, errors.New("检测器地址与清除命令不能同时提交")
 	}
+	if input.ClearRelayURL && input.RelayURL != nil {
+		return ChannelModelDetectionSettingsResponse{}, errors.New("内部 Relay 地址与清除命令不能同时提交")
+	}
 	var normalizedURL *string
 	if input.DetectorURL != nil {
 		value := strings.TrimSpace(*input.DetectorURL)
@@ -140,6 +148,18 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 			return ChannelModelDetectionSettingsResponse{}, err
 		}
 		normalizedURL = &normalized
+	}
+	var normalizedRelayURL *string
+	if input.RelayURL != nil {
+		value := strings.TrimSpace(*input.RelayURL)
+		if value == "" {
+			return ChannelModelDetectionSettingsResponse{}, errors.New("内部 Relay 地址不能为空；如需删除请使用清除命令")
+		}
+		normalized, err := NormalizeChannelModelDetectionRelayURL(value)
+		if err != nil {
+			return ChannelModelDetectionSettingsResponse{}, err
+		}
+		normalizedRelayURL = &normalized
 	}
 
 	var saved model.ChannelModelDetectionGlobalConfig
@@ -234,6 +254,11 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 			}
 		}
 		activeDetectorChanged = candidate.DetectorURL != previousDetectorURL
+		if input.ClearRelayURL {
+			candidate.RelayURL = ""
+		} else if normalizedRelayURL != nil {
+			candidate.RelayURL = *normalizedRelayURL
+		}
 
 		scheduleChanged := candidate.ScheduleEnabled != current.ScheduleEnabled ||
 			candidate.IntervalMinutes != current.EffectiveIntervalMinutes()
@@ -254,6 +279,7 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 
 		updates := map[string]any{
 			"detector_url": candidate.DetectorURL, "pending_detector_url": candidate.PendingDetectorURL,
+			"relay_url":        candidate.RelayURL,
 			"scheduled_preset": candidate.ScheduledPreset, "schedule_enabled": candidate.ScheduleEnabled,
 			"interval_minutes": candidate.IntervalMinutes, "interval_hours": candidate.IntervalHours,
 			"display_value": candidate.DisplayValue, "display_unit": candidate.DisplayUnit,
@@ -325,6 +351,52 @@ func ValidateChannelModelDetectorTarget(ctx context.Context, raw string) (string
 		}
 	}
 	return normalized, nil
+}
+
+func NormalizeChannelModelDetectionRelayURL(raw string) (string, error) {
+	normalized, err := NormalizeChannelModelDetectorURL(raw)
+	if err != nil {
+		return "", fmt.Errorf("模型检测内部 Relay 地址无效: %w", err)
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed == nil {
+		return "", errors.New("模型检测内部 Relay 地址格式无效")
+	}
+	if !strings.HasSuffix(parsed.Path, "/internal/model-detector/v1") {
+		return "", errors.New("模型检测内部 Relay 地址必须以 /internal/model-detector/v1 结尾")
+	}
+	return normalized, nil
+}
+
+func ResolveChannelModelDetectionRelayBaseURL(ctx context.Context, tx *gorm.DB) (string, error) {
+	db := tx
+	if db == nil {
+		db = model.DB
+	}
+	if db == nil {
+		return "", errors.New("模型检测统一设置数据库不可用")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var config model.ChannelModelDetectionGlobalConfig
+	err := db.WithContext(ctx).
+		Select("relay_url").
+		Where("id = ?", model.ChannelModelDetectionConfigID).
+		First(&config).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", errors.New("尚未配置模型检测内部 Relay 地址")
+	}
+	if err != nil {
+		return "", err
+	}
+
+	value := strings.TrimSpace(config.RelayURL)
+	if value == "" {
+		return "", errors.New("尚未配置模型检测内部 Relay 地址")
+	}
+	return NormalizeChannelModelDetectionRelayURL(value)
 }
 
 func GetChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.Time) (ChannelModelDetectionServiceResponse, error) {
@@ -510,7 +582,8 @@ func channelModelDetectionSettingsResponse(config model.ChannelModelDetectionGlo
 		DetectorURLConfigured: strings.TrimSpace(config.DetectorURL) != "", DetectorURL: strings.TrimSpace(config.DetectorURL), DetectorURLMasked: MaskChannelModelDetectorURL(config.DetectorURL),
 		PendingDetectorURLConfigured: strings.TrimSpace(config.PendingDetectorURL) != "", PendingDetectorURL: strings.TrimSpace(config.PendingDetectorURL), PendingDetectorURLMasked: MaskChannelModelDetectorURL(config.PendingDetectorURL),
 		DetectorURLSwitchPending: strings.TrimSpace(config.PendingDetectorURL) != "",
-		ScheduledPreset:          config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(), DisplayValue: displayValue, DisplayUnit: displayUnit,
+		RelayURLConfigured:       config.RelayURLConfigured(), RelayURL: strings.TrimSpace(config.RelayURL),
+		ScheduledPreset: config.ScheduledPreset, ScheduleEnabled: config.ScheduleEnabled, IntervalMinutes: config.EffectiveIntervalMinutes(), DisplayValue: displayValue, DisplayUnit: displayUnit,
 		IntervalHours: config.IntervalHours, ScheduleTime: config.ScheduleTime, Timezone: config.Timezone, ScheduleAnchorAt: config.ScheduleAnchorAt,
 		NextBatchAt: config.NextBatchAt, Revision: config.Revision, ConnectionTestRequired: connectionTestRequired,
 		CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt,

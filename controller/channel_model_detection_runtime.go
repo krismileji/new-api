@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"gorm.io/gorm"
 )
@@ -239,7 +237,7 @@ func (runtime *channelModelDetectionRuntime) issueCredential(ctx context.Context
 		}
 	}
 
-	relayBaseURL, err := channelModelDetectionRelayBaseURL()
+	relayBaseURL, err := service.ResolveChannelModelDetectionRelayBaseURL(ctx, model.DB)
 	if err != nil {
 		return "", "", err
 	}
@@ -262,22 +260,6 @@ func (runtime *channelModelDetectionRuntime) issueCredential(ctx context.Context
 		return "", "", err
 	}
 	return credential.BearerToken(), relayBaseURL, nil
-}
-
-func channelModelDetectionRelayBaseURL() (string, error) {
-	value := strings.TrimSpace(os.Getenv("GPT56_INTERNAL_RELAY_URL"))
-	if value == "" {
-		serverAddress := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
-		if serverAddress == "" {
-			return "", errors.New("尚未配置模型检测内部 Relay 地址")
-		}
-		value = serverAddress + "/internal/model-detector/v1"
-	}
-	normalized, err := service.NormalizeChannelModelDetectorURL(value)
-	if err != nil {
-		return "", fmt.Errorf("模型检测内部 Relay 地址无效: %w", err)
-	}
-	return normalized, nil
 }
 
 func (runtime *channelModelDetectionRuntime) revokeTerminalCredential(result service.ChannelModelDetectionWorkerResult) {

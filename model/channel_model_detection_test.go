@@ -106,6 +106,7 @@ func TestChannelModelDetectionMigrationCreatesPortableTablesAndIndexes(t *testin
 	}
 	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "worker_lease_token"))
 	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "scheduled_high_confirmed_revision"))
+	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionGlobalConfig{}, "relay_url"))
 	assert.True(t, db.Migrator().HasColumn(&ChannelModelDetectionExecution{}, "detector_url_snapshot"))
 }
 
@@ -197,7 +198,10 @@ func TestChannelModelDetectionModelsDoNotPersistDetectorCredentials(t *testing.T
 
 func TestChannelModelDetectionGlobalConfigDefaultsAndSingleRow(t *testing.T) {
 	db := setupChannelModelDetectionTestDB(t)
-	config := ChannelModelDetectionGlobalConfig{DetectorURL: "http://127.0.0.1:3000"}
+	config := ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:3000",
+		RelayURL:    "http://127.0.0.1:3000/internal/model-detector/v1",
+	}
 	require.NoError(t, db.Create(&config).Error)
 	assert.EqualValues(t, ChannelModelDetectionConfigID, config.Id)
 	assert.Equal(t, ChannelModelDetectionPresetMedium, config.ScheduledPreset)
@@ -207,6 +211,7 @@ func TestChannelModelDetectionGlobalConfigDefaultsAndSingleRow(t *testing.T) {
 	assert.Equal(t, ChannelModelDetectionDefaultTimezone, config.Timezone)
 	assert.EqualValues(t, 1, config.Revision)
 	assert.True(t, config.DetectorURLConfigured())
+	assert.True(t, config.RelayURLConfigured())
 	require.Error(t, db.Create(&ChannelModelDetectionGlobalConfig{DetectorURL: "http://127.0.0.1:3001"}).Error)
 
 	invalid := ChannelModelDetectionGlobalConfig{

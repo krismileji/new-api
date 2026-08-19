@@ -238,6 +238,8 @@ function settingsResponse() {
     pending_detector_url_configured: false,
     pending_detector_url_masked: '',
     detector_url_switch_pending: false,
+    relay_url_configured: false,
+    relay_url: '',
     scheduled_preset: 'medium',
     schedule_enabled: true,
     interval_minutes: 1440,

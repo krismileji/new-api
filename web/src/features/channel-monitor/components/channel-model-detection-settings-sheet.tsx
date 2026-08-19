@@ -171,6 +171,7 @@ export function ChannelModelDetectionSettingsSheet(
   const settings = query.data
   const detectorURL = form.watch('detectorURL')
   const clearDetectorURL = form.watch('clearDetectorURL')
+  const clearRelayURL = form.watch('clearRelayURL')
   const scheduleEnabled = form.watch('scheduleEnabled')
   const scheduledPreset = form.watch('scheduledPreset')
   const displayValue = form.watch('displayValue')
@@ -414,6 +415,13 @@ export function ChannelModelDetectionSettingsSheet(
                 label='配置状态'
                 value={detectorConfigurationStatus}
               />
+              <SettingSummary
+                label='内部 Relay'
+                value={
+                  settings.relay_url_configured ? settings.relay_url : '未配置'
+                }
+                valueTitle={settings.relay_url || undefined}
+              />
             </div>
 
             <FormField
@@ -529,6 +537,79 @@ export function ChannelModelDetectionSettingsSheet(
                 </AlertDescription>
               </Alert>
             ) : null}
+
+            <div className='border-border/60 space-y-4 border-t pt-4'>
+              <div className='space-y-1'>
+                <p className='text-sm font-medium'>检测器访问平台</p>
+                <p className='text-muted-foreground text-xs'>
+                  检测器通过内部 Relay 请求指定渠道，平台据此统计真实上游成本
+                </p>
+              </div>
+              <FormField
+                control={form.control}
+                name='relayURL'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>内部 Relay 地址</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type='url'
+                        inputMode='url'
+                        autoComplete='off'
+                        spellCheck={false}
+                        disabled={controlsDisabled || clearRelayURL}
+                        placeholder='https://api.example.com/internal/model-detector/v1'
+                        aria-label='内部 Relay 地址'
+                        onChange={(event) => {
+                          field.onChange(event)
+                          if (event.target.value) {
+                            form.setValue('clearRelayURL', false, {
+                              shouldValidate: true,
+                            })
+                          }
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      必须以 /internal/model-detector/v1
+                      结尾；留空会保留当前设置
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='clearRelayURL'
+                render={({ field }) => (
+                  <FormItem className='border-border/60 flex flex-row items-center justify-between gap-3 rounded-lg border p-3'>
+                    <div className='min-w-0 space-y-1'>
+                      <FormLabel>清除已保存 Relay 地址</FormLabel>
+                      <FormDescription>
+                        清除后将无法启动新的模型检测任务
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Checkbox
+                        checked={field.value}
+                        disabled={controlsDisabled}
+                        onCheckedChange={(checked) => {
+                          field.onChange(checked === true)
+                          if (checked === true) {
+                            form.setValue('relayURL', '', {
+                              shouldValidate: true,
+                            })
+                          }
+                        }}
+                        aria-label='清除已保存内部 Relay 地址'
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
           </SideDrawerSection>
 
           <SideDrawerSection>
@@ -824,7 +905,7 @@ export function ChannelModelDetectionSettingsSheet(
   let saveStartIcon = null
   if (saveMutation.isPending || savedServiceTestMutation.isPending) {
     saveStartIcon = <Spinner data-icon='inline-start' />
-  } else if (clearDetectorURL) {
+  } else if (clearDetectorURL || clearRelayURL) {
     saveStartIcon = (
       <HugeiconsIcon icon={Delete02Icon} data-icon='inline-start' />
     )

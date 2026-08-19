@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { afterEach, describe, test } from 'vitest'
 
 import { domWindow } from './test-dom'
@@ -82,6 +83,8 @@ function settings(overrides: Record<string, unknown> = {}) {
     pending_detector_url: '',
     pending_detector_url_masked: '',
     detector_url_switch_pending: false,
+    relay_url_configured: true,
+    relay_url: 'https://platform.example.com/internal/model-detector/v1',
     scheduled_preset: 'medium',
     schedule_enabled: true,
     interval_minutes: 1440,
@@ -159,6 +162,14 @@ function getSaveButton() {
 function getNewDetectorURLInput() {
   const input = document.querySelector<HTMLInputElement>(
     'input[aria-label="新检测器地址"]'
+  )
+  assert.ok(input)
+  return input
+}
+
+function getRelayURLInput() {
+  const input = document.querySelector<HTMLInputElement>(
+    'input[aria-label="内部 Relay 地址"]'
   )
   assert.ok(input)
   return input
@@ -263,6 +274,8 @@ describe('模型检测统一设置规则', () => {
         channelModelDetectionSettingsSchema.safeParse({
           detectorURL: '',
           clearDetectorURL: false,
+          relayURL: '',
+          clearRelayURL: false,
           scheduledPreset: 'medium',
           scheduleEnabled: true,
           ...interval,
@@ -283,9 +296,15 @@ describe('模型检测统一设置规则', () => {
       { displayValue: 25, displayUnit: 'hour' },
       { displayValue: 31, displayUnit: 'day' },
       { detectorURL: 'ftp://10.0.0.8:8000' },
+      { relayURL: 'https://platform.example.com/v1' },
+      { relayURL: 'ftp://platform.example.com/internal/model-detector/v1' },
       {
         detectorURL: 'http://10.0.0.8:8000',
         clearDetectorURL: true,
+      },
+      {
+        relayURL: 'https://platform.example.com/internal/model-detector/v1',
+        clearRelayURL: true,
       },
       {
         scheduledPreset: 'high',
@@ -299,6 +318,8 @@ describe('模型检测统一设置规则', () => {
         channelModelDetectionSettingsSchema.safeParse({
           detectorURL: '',
           clearDetectorURL: false,
+          relayURL: '',
+          clearRelayURL: false,
           scheduledPreset: 'medium',
           scheduleEnabled: true,
           intervalValue: 24,
@@ -317,6 +338,8 @@ describe('模型检测统一设置规则', () => {
       channelModelDetectionSettingsSchema.safeParse({
         detectorURL: '',
         clearDetectorURL: false,
+        relayURL: '',
+        clearRelayURL: false,
         scheduledPreset: 'high',
         scheduleEnabled: false,
         intervalValue: 24,
@@ -334,6 +357,8 @@ describe('模型检测统一设置规则', () => {
     const unchanged = createChannelModelDetectionSettingsUpdateRequest({
       detectorURL: '   ',
       clearDetectorURL: false,
+      relayURL: '   ',
+      clearRelayURL: false,
       scheduledPreset: 'medium',
       scheduleEnabled: true,
       intervalValue: 90,
@@ -344,11 +369,14 @@ describe('模型检测统一设置规则', () => {
       revision: 7,
     })
     assert.equal('detector_url' in unchanged, false)
+    assert.equal('relay_url' in unchanged, false)
     assert.equal(unchanged.confirm_high_cost, false)
 
     const high = createChannelModelDetectionSettingsUpdateRequest({
       detectorURL: ' http://10.0.0.9:8000 ',
       clearDetectorURL: false,
+      relayURL: ' https://platform.example.com/internal/model-detector/v1 ',
+      clearRelayURL: false,
       scheduledPreset: 'high',
       scheduleEnabled: true,
       intervalValue: 48,
@@ -359,6 +387,10 @@ describe('模型检测统一设置规则', () => {
       revision: 8,
     })
     assert.equal(high.detector_url, 'http://10.0.0.9:8000')
+    assert.equal(
+      high.relay_url,
+      'https://platform.example.com/internal/model-detector/v1'
+    )
     assert.equal(high.interval_minutes, 2880)
     assert.equal(high.display_value, 12)
     assert.equal(high.display_unit, 'hour')
@@ -386,6 +418,11 @@ describe('模型检测统一设置 Sheet', () => {
 
     const addressInput = getNewDetectorURLInput()
     assert.equal(addressInput.value, 'http://10.0.0.8:8000/private')
+    const relayInput = getRelayURLInput()
+    assert.equal(
+      relayInput.value,
+      'https://platform.example.com/internal/model-detector/v1'
+    )
     assert.equal(
       document.body.textContent?.includes('http://10.0.0.8:8000/private'),
       true
@@ -396,6 +433,10 @@ describe('模型检测统一设置 Sheet', () => {
     assert.ok(displayInput)
     assert.equal(displayInput.value, '30')
     await changeInput(displayInput, '12')
+    await changeInput(
+      relayInput,
+      'https://relay.example.com/internal/model-detector/v1'
+    )
     await act(async () => getControl('模型检测展示范围单位：小时').click())
 
     await submitForm()
@@ -406,6 +447,10 @@ describe('模型检测统一设置 Sheet', () => {
       )
     )
     assert.equal(updates[0]?.detector_url, 'http://10.0.0.8:8000/private')
+    assert.equal(
+      updates[0]?.relay_url,
+      'https://relay.example.com/internal/model-detector/v1'
+    )
     assert.equal(updates[0]?.revision, 7)
     assert.equal(updates[0]?.display_value, 12)
     assert.equal(updates[0]?.display_unit, 'hour')
@@ -440,6 +485,11 @@ describe('模型检测统一设置 Sheet', () => {
     assert.equal(getNewDetectorURLInput().value, '')
     assert.equal(getNewDetectorURLInput().disabled, true)
     assert.equal(findButton('测试连接', true).disabled, true)
+
+    const clearRelay = getControl('清除已保存内部 Relay 地址')
+    await act(async () => clearRelay.click())
+    assert.equal(getRelayURLInput().value, '')
+    assert.equal(getRelayURLInput().disabled, true)
   })
 
   test('未保存的新地址可以直接测试且不会先触发保存', async () => {

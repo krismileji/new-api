@@ -42,6 +42,7 @@ func TestChannelModelDetectionSettingsAPIShowsConfiguredURLAndReturnsRevisionCon
 	db := setupChannelModelDetectionSettingsControllerTest(t)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
 		Id: model.ChannelModelDetectionConfigID, DetectorURL: "http://127.0.0.1:18080/private",
+		RelayURL:        "https://platform.example.com/internal/model-detector/v1",
 		ScheduledPreset: model.ChannelModelDetectionPresetMedium, IntervalHours: 24,
 		ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 3,
 	}).Error)
@@ -51,6 +52,8 @@ func TestChannelModelDetectionSettingsAPIShowsConfiguredURLAndReturnsRevisionCon
 	require.Equal(t, http.StatusOK, getRecorder.Code)
 	assert.Contains(t, getRecorder.Body.String(), `"detector_url":"http://127.0.0.1:18080/private"`)
 	assert.Contains(t, getRecorder.Body.String(), `"detector_url_masked":"http://127.0.0.1:18080/private"`)
+	assert.Contains(t, getRecorder.Body.String(), `"relay_url":"https://platform.example.com/internal/model-detector/v1"`)
+	assert.Contains(t, getRecorder.Body.String(), `"relay_url_configured":true`)
 	assert.Contains(t, getRecorder.Body.String(), `"display_value":30`)
 	assert.Contains(t, getRecorder.Body.String(), `"display_unit":"day"`)
 
@@ -76,6 +79,15 @@ func TestChannelModelDetectionSettingsAPIRejectsAmbiguousAddressAndUnconfirmedHi
 			"detector_url": "http://127.0.0.1:18081", "clear_detector_url": true,
 			"scheduled_preset": "medium", "schedule_enabled": false, "interval_hours": 24,
 			"schedule_time": "02:30", "timezone": "Asia/Shanghai", "revision": 1,
+		},
+		{
+			"relay_url": "https://platform.example.com/internal/model-detector/v1", "clear_relay_url": true,
+			"scheduled_preset": "medium", "schedule_enabled": false, "interval_hours": 24,
+			"schedule_time": "02:30", "timezone": "Asia/Shanghai", "revision": 1,
+		},
+		{
+			"relay_url": "https://platform.example.com/v1", "scheduled_preset": "medium",
+			"schedule_enabled": false, "interval_hours": 24, "revision": 1,
 		},
 		{
 			"scheduled_preset": "high", "schedule_enabled": true, "interval_hours": 24,

@@ -153,7 +153,6 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	relayServer := httptest.NewServer(relayEngine)
 	defer relayServer.Close()
 	relayBaseURL := relayServer.URL + "/internal/model-detector/v1"
-	t.Setenv("GPT56_INTERNAL_RELAY_URL", relayBaseURL)
 
 	var detectorStarted atomic.Bool
 	var detectorStartCalls atomic.Int64
@@ -242,7 +241,7 @@ func TestChannelModelDetectionIntegrationRecoversCompletedSessionWithFixedChanne
 	defer detectorServer.Close()
 
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
-		DetectorURL: detectorServer.URL, ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		DetectorURL: detectorServer.URL, RelayURL: relayBaseURL, ScheduledPreset: model.ChannelModelDetectionPresetMedium,
 		ScheduleEnabled: false, IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai",
 	}).Error)
 	config := model.ChannelModelDetectionConfig{ChannelId: boundChannelID, ScheduleEnabled: true}

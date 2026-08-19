@@ -16,6 +16,8 @@ import (
 type channelModelDetectionSettingsUpdateRequest struct {
 	DetectorURL      *string `json:"detector_url"`
 	ClearDetectorURL bool    `json:"clear_detector_url"`
+	RelayURL         *string `json:"relay_url"`
+	ClearRelayURL    bool    `json:"clear_relay_url"`
 	ScheduledPreset  string  `json:"scheduled_preset"`
 	ConfirmHighCost  bool    `json:"confirm_high_cost"`
 	ScheduleEnabled  bool    `json:"schedule_enabled"`
@@ -51,6 +53,7 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 	}
 	response, err := service.UpdateChannelModelDetectionSettings(c.Request.Context(), nil, service.ChannelModelDetectionSettingsUpdate{
 		DetectorURL: request.DetectorURL, ClearDetectorURL: request.ClearDetectorURL,
+		RelayURL: request.RelayURL, ClearRelayURL: request.ClearRelayURL,
 		ScheduledPreset: request.ScheduledPreset, ConfirmHighCost: request.ConfirmHighCost,
 		ScheduleEnabled: request.ScheduleEnabled, IntervalMinutes: request.IntervalMinutes, IntervalHours: request.IntervalHours,
 		DisplayValue: request.DisplayValue, DisplayUnit: request.DisplayUnit,
@@ -76,6 +79,7 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 		"scheduled_preset":    response.ScheduledPreset,
 		"interval_minutes":    response.IntervalMinutes,
 		"detector_configured": response.DetectorURLConfigured,
+		"relay_configured":    response.RelayURLConfigured,
 	})
 	common.ApiSuccess(c, response)
 }

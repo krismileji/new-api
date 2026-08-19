@@ -64,10 +64,28 @@ const detectorURLSchema = z
     }
   })
 
+const relayURLSchema = detectorURLSchema.superRefine((value, context) => {
+  if (!value) return
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return
+  }
+  if (!parsed.pathname.endsWith('/internal/model-detector/v1')) {
+    context.addIssue({
+      code: 'custom',
+      message: '内部 Relay 地址必须以 /internal/model-detector/v1 结尾',
+    })
+  }
+})
+
 export const channelModelDetectionSettingsSchema = z
   .object({
     detectorURL: detectorURLSchema,
     clearDetectorURL: z.boolean(),
+    relayURL: relayURLSchema,
+    clearRelayURL: z.boolean(),
     scheduledPreset: z.enum(['low', 'medium', 'high']),
     scheduleEnabled: z.boolean(),
     intervalValue: z
@@ -88,6 +106,13 @@ export const channelModelDetectionSettingsSchema = z
       context.addIssue({
         code: 'custom',
         path: ['detectorURL'],
+        message: '新地址与清除地址不能同时提交',
+      })
+    }
+    if (value.clearRelayURL && value.relayURL) {
+      context.addIssue({
+        code: 'custom',
+        path: ['relayURL'],
         message: '新地址与清除地址不能同时提交',
       })
     }
@@ -138,6 +163,8 @@ export const CHANNEL_MODEL_DETECTION_SETTINGS_EMPTY_VALUES: ChannelModelDetectio
   {
     detectorURL: '',
     clearDetectorURL: false,
+    relayURL: '',
+    clearRelayURL: false,
     scheduledPreset: 'medium',
     scheduleEnabled: false,
     intervalValue: 24,
@@ -160,6 +187,8 @@ export function channelModelDetectionSettingsToFormValues(
       settings.pending_detector_url_masked ||
       settings.detector_url_masked,
     clearDetectorURL: false,
+    relayURL: settings.relay_url,
+    clearRelayURL: false,
     scheduledPreset: settings.scheduled_preset,
     scheduleEnabled: settings.schedule_enabled,
     intervalValue: useHours ? intervalMinutes / 60 : intervalMinutes,
@@ -175,11 +204,14 @@ export function createChannelModelDetectionSettingsUpdateRequest(
   values: ChannelModelDetectionSettingsFormValues
 ): ChannelModelDetectionSettingsUpdateRequest {
   const detectorURL = values.detectorURL.trim()
+  const relayURL = values.relayURL.trim()
   const intervalMinutes =
     values.intervalValue * (values.intervalUnit === 'hour' ? 60 : 1)
   return {
     ...(detectorURL ? { detector_url: detectorURL } : {}),
     clear_detector_url: values.clearDetectorURL,
+    ...(relayURL ? { relay_url: relayURL } : {}),
+    clear_relay_url: values.clearRelayURL,
     scheduled_preset: values.scheduledPreset,
     confirm_high_cost:
       values.scheduleEnabled && values.scheduledPreset === 'high'

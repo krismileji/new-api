@@ -275,6 +275,8 @@ export type ChannelModelDetectionSettings = {
   pending_detector_url: string
   pending_detector_url_masked: string
   detector_url_switch_pending: boolean
+  relay_url_configured: boolean
+  relay_url: string
   scheduled_preset: ChannelModelDetectionPreset
   schedule_enabled: boolean
   interval_minutes: number
@@ -339,6 +341,8 @@ export type ChannelModelDetectionApiResponse<T> = {
 export type ChannelModelDetectionSettingsUpdateRequest = {
   detector_url?: string
   clear_detector_url: boolean
+  relay_url?: string
+  clear_relay_url: boolean
   scheduled_preset: ChannelModelDetectionPreset
   confirm_high_cost: boolean
   schedule_enabled: boolean
