@@ -292,6 +292,13 @@ func NormalizeChannelModelDetectorDTOUsage(usage *relaydto.Usage) (ChannelModelD
 	if usage == nil {
 		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageUnavailable
 	}
+	if usage.BillingUsage != nil && usage.BillingUsage.Estimated {
+		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageUnavailable
+	}
+	if usage.InputTokens == 0 && usage.PromptTokens == 0 &&
+		usage.OutputTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageUnavailable
+	}
 	if usage.InputTokens != 0 && usage.PromptTokens != 0 && usage.InputTokens != usage.PromptTokens {
 		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageInvalid
 	}
@@ -346,6 +353,18 @@ func channelModelDetectorUsageJSON(payload []byte) ([]byte, bool, error) {
 	}
 	if usage, exists := object["usage"]; exists {
 		return usage, true, nil
+	}
+	// Claude Messages streams put input usage under message_start.message,
+	// while output usage arrives later under message_delta. The stream
+	// normalizer merges those partial records below.
+	if message, exists := object["message"]; exists {
+		var messageObject map[string]json.RawMessage
+		if err := common.Unmarshal(message, &messageObject); err != nil || messageObject == nil {
+			return nil, false, ErrChannelModelDetectorUsageInvalid
+		}
+		if usage, exists := messageObject["usage"]; exists {
+			return usage, true, nil
+		}
 	}
 	if response, exists := object["response"]; exists {
 		var responseObject map[string]json.RawMessage
@@ -511,7 +530,28 @@ func normalizeChannelModelDetectorSSEUsage(payload []byte) (ChannelModelDetector
 		if err != nil {
 			return ChannelModelDetectorUsage{}, err
 		}
-		lastUsage = usage
+		if !found {
+			lastUsage = usage
+		} else {
+			// Claude Messages streams split input and output usage across
+			// message_start and message_delta. Keep each non-zero component
+			// while allowing a later event to provide the authoritative total.
+			if usage.InputTokens != 0 {
+				lastUsage.InputTokens = usage.InputTokens
+			}
+			if usage.OutputTokens != 0 {
+				lastUsage.OutputTokens = usage.OutputTokens
+			}
+			if usage.TotalTokens != 0 {
+				lastUsage.TotalTokens = usage.TotalTokens
+			}
+			if usage.InputTokenDetailsAvailable {
+				lastUsage.InputTokenDetailsAvailable = true
+				lastUsage.CachedTokens = usage.CachedTokens
+				lastUsage.CachedCreationTokens = usage.CachedCreationTokens
+				lastUsage.CacheWriteTokens = usage.CacheWriteTokens
+			}
+		}
 		found = true
 	}
 	if err := scanner.Err(); err != nil {
@@ -520,7 +560,11 @@ func normalizeChannelModelDetectorSSEUsage(payload []byte) (ChannelModelDetector
 	if !found {
 		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageUnavailable
 	}
-	return lastUsage, nil
+	if lastUsage.InputTokens > math.MaxInt64-lastUsage.OutputTokens {
+		return ChannelModelDetectorUsage{}, ErrChannelModelDetectorUsageInvalid
+	}
+	lastUsage.TotalTokens = lastUsage.InputTokens + lastUsage.OutputTokens
+	return validateChannelModelDetectorUsage(lastUsage)
 }
 
 func validateChannelModelDetectorUsage(usage ChannelModelDetectorUsage) (ChannelModelDetectorUsage, error) {

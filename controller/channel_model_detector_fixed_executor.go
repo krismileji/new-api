@@ -273,6 +273,13 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 	usage, ok := usageValue.(*dto.Usage)
 	authoritativeUsage, usageErr := service.NormalizeChannelModelDetectorUsage(result.ResponseBody)
+	if errors.Is(usageErr, service.ErrChannelModelDetectorUsageUnavailable) && ok && usage != nil &&
+		!common.GetContextKeyBool(c, constant.ContextKeyLocalCountTokens) {
+		// A converted adaptor can parse authoritative provider usage but emit a
+		// response envelope that does not retain the provider's original shape.
+		// Reuse that non-estimated DTO rather than dropping a billable request.
+		authoritativeUsage, usageErr = service.NormalizeChannelModelDetectorDTOUsage(usage)
+	}
 	if usageErr != nil {
 		return result, nil
 	}
@@ -288,7 +295,6 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		return result, nil
 	}
 	result.Usage = &quota.Usage
-	costFinalized = true
 	_, err = service.SettleChannelModelDetectionCostEvent(ctx, db, service.ChannelModelDetectionCostSettlementInput{
 		CostEventId:       prepared.CostEventId,
 		SettledQuota:      quota.SettledQuota,
@@ -300,6 +306,9 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 		UsageAvailable:    true,
 		UpstreamRequestId: c.GetString(common.UpstreamRequestIdKey),
 	})
+	if err == nil {
+		costFinalized = true
+	}
 	return result, err
 }
 

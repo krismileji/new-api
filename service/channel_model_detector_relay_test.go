@@ -232,6 +232,11 @@ func TestChannelModelDetectorRelayUsageNormalization(t *testing.T) {
 			want:    authoritativeChannelModelDetectorUsage(20, 4),
 		},
 		{
+			name:    "claude message envelope",
+			payload: `{"type":"message_start","message":{"usage":{"input_tokens":8,"output_tokens":0}}}`,
+			want:    authoritativeChannelModelDetectorUsage(8, 0),
+		},
+		{
 			name:    "direct chat usage computes total",
 			payload: `{"prompt_tokens":2,"completion_tokens":1}`,
 			want:    authoritativeChannelModelDetectorUsage(2, 1),
@@ -252,6 +257,14 @@ func TestChannelModelDetectorRelayUsageNormalization(t *testing.T) {
 				"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":6,\"output_tokens\":2,\"total_tokens\":8}}}\n\n" +
 				"data: [DONE]\n\n",
 			want: authoritativeChannelModelDetectorUsage(6, 2),
+		},
+		{
+			name: "claude split usage sse",
+			payload: "event: message_start\n" +
+				"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":8}}}\n\n" +
+				"event: message_delta\n" +
+				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n",
+			want: authoritativeChannelModelDetectorUsage(8, 3),
 		},
 	}
 	for _, test := range tests {
@@ -297,6 +310,14 @@ func TestChannelModelDetectorRelayDTOUsageNormalizesResponsesAndChatFields(t *te
 
 	_, err = NormalizeChannelModelDetectorDTOUsage(&relaydto.Usage{InputTokens: 1, PromptTokens: 2, OutputTokens: 1, TotalTokens: 2})
 	assert.ErrorIs(t, err, ErrChannelModelDetectorUsageInvalid)
+
+	_, err = NormalizeChannelModelDetectorDTOUsage(&relaydto.Usage{
+		PromptTokens: 5, CompletionTokens: 4, TotalTokens: 9,
+		BillingUsage: relaydto.NewEstimatedGeminiChatBillingUsage(&relaydto.Usage{
+			PromptTokens: 5, CompletionTokens: 4, TotalTokens: 9,
+		}),
+	})
+	assert.ErrorIs(t, err, ErrChannelModelDetectorUsageUnavailable)
 }
 
 func TestChannelModelDetectorRelayUsageNormalizesCacheDetailsAndMergesAliases(t *testing.T) {
