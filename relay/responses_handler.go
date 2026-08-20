@@ -65,6 +65,12 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	if err != nil {
 		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
+	normalizedInput, normalizeErr := dto.NormalizeResponsesInput(request.Input)
+	if normalizeErr != nil {
+		logger.LogWarn(c, "responses compatibility normalization skipped: "+normalizeErr.Error())
+	} else {
+		request.Input = normalizedInput
+	}
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
@@ -82,7 +88,22 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = common.NewReplayableBodyReader(storage)
+		jsonData, err := storage.Bytes()
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
+		normalizedJSON, normalizeErr := dto.NormalizeResponsesJSON(jsonData)
+		if normalizeErr != nil {
+			logger.LogWarn(c, "responses compatibility normalization skipped: "+normalizeErr.Error())
+		} else {
+			jsonData = normalizedJSON
+		}
+		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		requestBody = body
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {

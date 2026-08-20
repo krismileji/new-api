@@ -33,6 +33,12 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
+	normalizedBody, normalizeErr := dto.NormalizeResponsesJSON(responseBody)
+	if normalizeErr != nil {
+		logger.LogWarn(c, "responses compatibility normalization skipped: "+normalizeErr.Error())
+	} else {
+		responseBody = normalizedBody
+	}
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
@@ -101,6 +107,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		normalizedData, normalizeErr := dto.NormalizeResponsesJSON([]byte(data))
+		if normalizeErr != nil {
+			logger.LogWarn(c, "responses compatibility normalization skipped: "+normalizeErr.Error())
+		} else if string(normalizedData) != data {
+			var normalizedResponse dto.ResponsesStreamResponse
+			if err := common.Unmarshal(normalizedData, &normalizedResponse); err != nil {
+				logger.LogWarn(c, "responses compatibility output skipped: "+err.Error())
+			} else {
+				data = string(normalizedData)
+				streamResponse = normalizedResponse
+			}
 		}
 		if streamResponse.Type == "response.failed" && streamResponse.Response != nil {
 			if oaiError := streamResponse.Response.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "" || oaiError.Code != nil) {
