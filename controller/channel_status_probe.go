@@ -174,14 +174,13 @@ func normalizeChannelStatusProbeModels(channel *model.Channel, rawModels []strin
 
 func channelStatusProbeHealth(
 	config *channelStatusProbeConfigResponse,
-	channelStatus int,
 	states map[string]model.ChannelStatusProbeState,
 	now int64,
 ) string {
 	if config == nil || len(config.Models) == 0 {
 		return channelStatusProbeHealthUnconfigured
 	}
-	if !config.Enabled || channelStatus == common.ChannelStatusManuallyDisabled || channelStatus == common.ChannelStatusAutoDisabled {
+	if !config.Enabled {
 		return channelStatusProbeHealthPaused
 	}
 	staleBefore := now - int64(config.IntervalSeconds*2)
@@ -496,7 +495,7 @@ func buildChannelStatusProbeOverview(
 			}
 			modelConfig := *configResponse
 			modelConfig.Models = []string{modelName}
-			modelHealth := channelStatusProbeHealth(&modelConfig, channel.Status, stateByModel, now)
+			modelHealth := channelStatusProbeHealth(&modelConfig, stateByModel, now)
 			var modelAvgFirstTokenMs *float64
 			if windowSummary.FirstTokenSampleCount > 0 {
 				value := windowSummary.FirstTokenTotalMs / float64(windowSummary.FirstTokenSampleCount)
@@ -536,7 +535,7 @@ func buildChannelStatusProbeOverview(
 			selectedConfig.Models = []string{selectedModel}
 			healthConfig = &selectedConfig
 		}
-		health := channelStatusProbeHealth(healthConfig, channel.Status, stateByModel, now)
+		health := channelStatusProbeHealth(healthConfig, stateByModel, now)
 		summary[health]++
 		remark := ""
 		if channel.Remark != nil {

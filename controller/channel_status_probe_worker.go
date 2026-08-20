@@ -195,7 +195,7 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 	if err != nil {
 		return err
 	}
-	if !channelStatusProbeChannelAllowed(claim.Trigger, channel.Status) {
+	if !channelStatusProbeChannelAllowed(channel.Status) {
 		return nil
 	}
 	testUserId, testUserErr := resolveChannelTestUserID(nil)
@@ -250,12 +250,10 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 	return nil
 }
 
-func channelStatusProbeChannelAllowed(trigger string, status int) bool {
-	if status == common.ChannelStatusEnabled {
-		return true
-	}
-	return trigger == model.ChannelStatusProbeTriggerManual &&
-		(status == common.ChannelStatusManuallyDisabled || status == common.ChannelStatusAutoDisabled)
+func channelStatusProbeChannelAllowed(status int) bool {
+	return status == common.ChannelStatusEnabled ||
+		status == common.ChannelStatusManuallyDisabled ||
+		status == common.ChannelStatusAutoDisabled
 }
 
 func channelStatusProbeCanceledOutcome(message string) channelStatusProbeOutcome {

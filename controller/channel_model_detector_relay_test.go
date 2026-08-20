@@ -207,20 +207,17 @@ func TestChannelModelDetectorRelayEndpointSanitizesExecutionErrors(t *testing.T)
 func TestChannelModelDetectorChannelAllowed(t *testing.T) {
 	tests := []struct {
 		name    string
-		trigger string
 		status  int
 		allowed bool
 	}{
-		{name: "scheduled enabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusEnabled, allowed: true},
-		{name: "scheduled manual disabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusManuallyDisabled, allowed: false},
-		{name: "scheduled auto disabled", trigger: model.ChannelModelDetectionTriggerScheduled, status: common.ChannelStatusAutoDisabled, allowed: false},
-		{name: "manual enabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusEnabled, allowed: true},
-		{name: "manual manually disabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusManuallyDisabled, allowed: true},
-		{name: "manual auto disabled", trigger: model.ChannelModelDetectionTriggerManual, status: common.ChannelStatusAutoDisabled, allowed: true},
+		{name: "enabled", status: common.ChannelStatusEnabled, allowed: true},
+		{name: "manually disabled", status: common.ChannelStatusManuallyDisabled, allowed: true},
+		{name: "automatically disabled", status: common.ChannelStatusAutoDisabled, allowed: true},
+		{name: "unknown", status: common.ChannelStatusUnknown, allowed: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.allowed, channelModelDetectorChannelAllowed(test.trigger, test.status))
+			assert.Equal(t, test.allowed, channelModelDetectorChannelAllowed(test.status))
 		})
 	}
 }

@@ -72,7 +72,7 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 
 	var channel model.Channel
-	if err := db.WithContext(ctx).Where("id = ?", execution.ChannelID).First(&channel).Error; err != nil || !channelModelDetectorChannelAllowed(run.Trigger, channel.Status) {
+	if err := db.WithContext(ctx).Where("id = ?", execution.ChannelID).First(&channel).Error; err != nil || !channelModelDetectorChannelAllowed(channel.Status) {
 		return result, ErrChannelModelDetectorFixedChannelUnavailable
 	}
 	pricingUserID := run.PricingContextUserId
@@ -335,12 +335,10 @@ func ensureChannelModelDetectorStreamUsage(request any) any {
 	return request
 }
 
-func channelModelDetectorChannelAllowed(trigger string, status int) bool {
-	if status == common.ChannelStatusEnabled {
-		return true
-	}
-	return trigger == model.ChannelModelDetectionTriggerManual &&
-		(status == common.ChannelStatusManuallyDisabled || status == common.ChannelStatusAutoDisabled)
+func channelModelDetectorChannelAllowed(status int) bool {
+	return status == common.ChannelStatusEnabled ||
+		status == common.ChannelStatusManuallyDisabled ||
+		status == common.ChannelStatusAutoDisabled
 }
 
 type channelModelDetectorResponseWriter struct {

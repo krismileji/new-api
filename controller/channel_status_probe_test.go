@@ -122,23 +122,55 @@ func TestChannelStatusProbeDispatchesDuringActive429Cooldown(t *testing.T) {
 	assert.Positive(t, service.ChannelRateLimitCooldownUntilMatching(channel.Id, "gpt-3.5-turbo"))
 }
 
+func TestChannelStatusProbeDispatchesForDisabledChannels(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+
+	user := model.User{
+		Username: "disabled-status-probe-user", Password: "disabled-status-probe-password",
+		Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	var requestCount atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, err := w.Write([]byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
+
+	statuses := []int{common.ChannelStatusManuallyDisabled, common.ChannelStatusAutoDisabled}
+	for index, status := range statuses {
+		channel := &model.Channel{
+			Id: 451 + index, Type: constant.ChannelTypeOpenAI, Key: "sk-disabled-status-probe",
+			Name: "disabled status probe", Status: status,
+			BaseURL: common.GetPointer(upstream.URL), Models: "gpt-3.5-turbo", Group: "default",
+		}
+		outcome := executeChannelStatusProbeModel(context.Background(), channel, user.Id, "gpt-3.5-turbo")
+		assert.Equal(t, model.ChannelStatusProbeResultRateLimited, outcome.Result)
+		assert.True(t, outcome.ProbeResult.requestDispatched)
+	}
+	assert.Equal(t, int64(len(statuses)), requestCount.Load())
+}
+
 func TestChannelStatusProbeChannelAllowed(t *testing.T) {
 	tests := []struct {
 		name    string
-		trigger string
 		status  int
 		allowed bool
 	}{
-		{name: "scheduled enabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusEnabled, allowed: true},
-		{name: "scheduled manual disabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusManuallyDisabled, allowed: false},
-		{name: "scheduled auto disabled", trigger: model.ChannelStatusProbeTriggerScheduled, status: common.ChannelStatusAutoDisabled, allowed: false},
-		{name: "manual enabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusEnabled, allowed: true},
-		{name: "manual manually disabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusManuallyDisabled, allowed: true},
-		{name: "manual auto disabled", trigger: model.ChannelStatusProbeTriggerManual, status: common.ChannelStatusAutoDisabled, allowed: true},
+		{name: "enabled", status: common.ChannelStatusEnabled, allowed: true},
+		{name: "manually disabled", status: common.ChannelStatusManuallyDisabled, allowed: true},
+		{name: "automatically disabled", status: common.ChannelStatusAutoDisabled, allowed: true},
+		{name: "unknown", status: common.ChannelStatusUnknown, allowed: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.allowed, channelStatusProbeChannelAllowed(test.trigger, test.status))
+			assert.Equal(t, test.allowed, channelStatusProbeChannelAllowed(test.status))
 		})
 	}
 }
@@ -166,9 +198,10 @@ func TestChannelStatusProbeHealthSeparatesPausedStaleAndPartial(t *testing.T) {
 			LastHealthFinishedAt: now - 10,
 		},
 	}
-	assert.Equal(t, channelStatusProbeHealthPartial, channelStatusProbeHealth(config, common.ChannelStatusEnabled, states, now))
-	assert.Equal(t, channelStatusProbeHealthPaused, channelStatusProbeHealth(config, common.ChannelStatusManuallyDisabled, states, now))
-	assert.Equal(t, channelStatusProbeHealthPaused, channelStatusProbeHealth(config, common.ChannelStatusAutoDisabled, states, now))
+	assert.Equal(t, channelStatusProbeHealthPartial, channelStatusProbeHealth(config, states, now))
+	config.Enabled = false
+	assert.Equal(t, channelStatusProbeHealthPaused, channelStatusProbeHealth(config, states, now))
+	config.Enabled = true
 
 	states["model-a"] = model.ChannelStatusProbeState{
 		ModelName: "model-a", LastHealthResult: model.ChannelStatusProbeResultSuccess,
@@ -178,7 +211,7 @@ func TestChannelStatusProbeHealthSeparatesPausedStaleAndPartial(t *testing.T) {
 		ModelName: "model-b", LastHealthResult: model.ChannelStatusProbeResultSuccess,
 		LastHealthFinishedAt: now - 121,
 	}
-	assert.Equal(t, channelStatusProbeHealthStale, channelStatusProbeHealth(config, common.ChannelStatusEnabled, states, now))
+	assert.Equal(t, channelStatusProbeHealthStale, channelStatusProbeHealth(config, states, now))
 }
 
 func TestMergeChannelStatusProbeRecentWindowReturnsConfiguredWindowAndWorstMinuteResult(t *testing.T) {

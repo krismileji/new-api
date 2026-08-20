@@ -426,20 +426,15 @@ func channelModelDetectionActiveScheduledRunsQuery(tx *gorm.DB, activeStatuses [
 }
 
 func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelModelDetectionGlobalConfig, batch *model.ChannelModelDetectionBatch, now int64) ([]string, error) {
-	type scheduledConfig struct {
-		model.ChannelModelDetectionConfig
-		ChannelStatus int `gorm:"column:channel_status"`
-	}
 	targetTable := tx.NamingStrategy.TableName("ChannelModelDetectionTarget")
 	channelTable := tx.NamingStrategy.TableName("Channel")
-	var configs []scheduledConfig
+	var configs []model.ChannelModelDetectionConfig
 	if err := tx.Table(tx.NamingStrategy.TableName("ChannelModelDetectionConfig")+" AS detection_config").
-		Select("detection_config.*, channel.status AS channel_status").
+		Select("detection_config.*").
 		Joins("JOIN "+channelTable+" AS channel ON channel.id = detection_config.channel_id").
 		Joins("JOIN "+targetTable+" AS detection_target ON detection_target.config_id = detection_config.id AND detection_target.channel_id = detection_config.channel_id AND detection_target.enabled = ?", true).
 		Where("detection_config.schedule_enabled = ?", true).
 		Where("detection_config.running_run_id = ?", "").
-		Where("channel.status <> ?", common.ChannelStatusManuallyDisabled).
 		Group("detection_config.id").
 		Order("detection_config.channel_id ASC").
 		Limit(channelModelDetectionScheduleMaxCandidateRuns).

@@ -99,6 +99,8 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 
 	tests := []struct {
 		name             string
+		channelStatus    int
+		trigger          string
 		responseBody     string
 		responseStatus   int
 		contentType      string
@@ -113,6 +115,8 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 	}{
 		{
 			name:             "authoritative usage settles after real http dispatch",
+			channelStatus:    common.ChannelStatusManuallyDisabled,
+			trigger:          model.ChannelModelDetectionTriggerScheduled,
 			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-settled\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[],\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6}}}\n\ndata: [DONE]\n\n",
 			contentType:      "text/event-stream",
 			requestBody:      `{"model":"detector-fixed-model","input":"hello","stream":true}`,
@@ -125,6 +129,8 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 		},
 		{
 			name:             "chat-style usage aliases settle after real http dispatch",
+			channelStatus:    common.ChannelStatusAutoDisabled,
+			trigger:          model.ChannelModelDetectionTriggerScheduled,
 			responseBody:     "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-chat-alias\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"detector-fixed-model\",\"output\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}}\n\ndata: [DONE]\n\n",
 			contentType:      "text/event-stream",
 			requestBody:      `{"model":"detector-fixed-model","input":"hello","stream":true}`,
@@ -172,6 +178,14 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			channelStatus := test.channelStatus
+			if channelStatus == common.ChannelStatusUnknown {
+				channelStatus = common.ChannelStatusEnabled
+			}
+			trigger := test.trigger
+			if trigger == "" {
+				trigger = model.ChannelModelDetectionTriggerManual
+			}
 			var upstreamRequests atomic.Int64
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 				upstreamRequests.Add(1)
@@ -199,7 +213,7 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 			baseURL := test.baseURL(upstream.URL)
 			channel := model.Channel{
 				Id: channelID, Type: constant.ChannelTypeOpenAI, Key: "detector-upstream-secret",
-				Status: common.ChannelStatusEnabled, Name: test.name, BaseURL: &baseURL,
+				Status: channelStatus, Name: test.name, BaseURL: &baseURL,
 				Models: "detector-fixed-model", Group: "default",
 			}
 			require.NoError(t, db.Create(&channel).Error)
@@ -207,7 +221,7 @@ func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 				ChannelId: channelID, Ratio: 0.8, UpdatedTime: common.GetTimestamp(),
 			}).Error)
 			run := model.ChannelModelDetectionRun{
-				RunId: runID, ChannelId: channelID, Trigger: model.ChannelModelDetectionTriggerManual,
+				RunId: runID, ChannelId: channelID, Trigger: trigger,
 				Preset: model.ChannelModelDetectionPresetLow, PricingContextUserId: pricingUser.Id,
 			}
 			require.NoError(t, db.Create(&run).Error)

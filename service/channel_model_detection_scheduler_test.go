@@ -104,7 +104,7 @@ func TestNextChannelModelDetectionScheduleMinutesAlignsToIntervalBoundaries(t *t
 	assert.ErrorIs(t, err, ErrChannelModelDetectionScheduleInvalid)
 }
 
-func TestChannelModelDetectionScheduleCreatesFrozenRunsAndSkipsManualDisabled(t *testing.T) {
+func TestChannelModelDetectionScheduleCreatesRunsForDisabledChannels(t *testing.T) {
 	db := setupChannelModelDetectionSchedulerTestDB(t)
 	now := time.Date(2026, time.August, 13, 0, 0, 0, 0, time.UTC)
 	global := seedChannelModelDetectionSchedule(t, db, 101, common.ChannelStatusAutoDisabled, model.ChannelModelDetectionPresetMedium, now.Add(-72*time.Hour).Unix())
@@ -120,21 +120,24 @@ func TestChannelModelDetectionScheduleCreatesFrozenRunsAndSkipsManualDisabled(t 
 	result, err := RunChannelModelDetectionScheduleOnce(context.Background(), db, now)
 	require.NoError(t, err)
 	assert.True(t, result.Created)
-	assert.Len(t, result.RunIDs, 1)
+	assert.Len(t, result.RunIDs, 2)
 	assert.Equal(t, now.Unix(), result.ScheduledFor)
 	assert.Equal(t, now.Add(24*time.Hour).Unix(), result.NextBatchAt)
 
-	var run model.ChannelModelDetectionRun
-	require.NoError(t, db.Where("run_id = ?", result.RunIDs[0]).First(&run).Error)
-	assert.Equal(t, 101, run.ChannelId)
-	assert.Equal(t, global.Revision, run.GlobalConfigRevision)
-	assert.Equal(t, model.ChannelModelDetectionPresetMedium, run.Preset)
-	assert.Equal(t, model.ChannelModelDetectionPresetSourceScheduledDefault, run.PresetSource)
+	var runs []model.ChannelModelDetectionRun
+	require.NoError(t, db.Order("channel_id ASC").Find(&runs).Error)
+	require.Len(t, runs, 2)
+	assert.Equal(t, []int{101, 102}, []int{runs[0].ChannelId, runs[1].ChannelId})
+	for _, run := range runs {
+		assert.Equal(t, global.Revision, run.GlobalConfigRevision)
+		assert.Equal(t, model.ChannelModelDetectionPresetMedium, run.Preset)
+		assert.Equal(t, model.ChannelModelDetectionPresetSourceScheduledDefault, run.PresetSource)
+	}
 
 	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).Where("id = ?", global.Id).
 		Updates(map[string]any{"scheduled_preset": model.ChannelModelDetectionPresetHigh, "revision": global.Revision + 1}).Error)
-	require.NoError(t, db.First(&run, run.Id).Error)
-	assert.Equal(t, model.ChannelModelDetectionPresetMedium, run.Preset)
+	require.NoError(t, db.First(&runs[0], runs[0].Id).Error)
+	assert.Equal(t, model.ChannelModelDetectionPresetMedium, runs[0].Preset)
 }
 
 func TestChannelModelDetectionScheduleLeaseAndUniqueBatchPreventDuplicateCreation(t *testing.T) {
