@@ -193,6 +193,7 @@ func TestExcludeChannelSmartScheduleRoutePrimaryRestoresPoolTemporaryTraffic(t *
 		ChannelId: 4102, GroupName: "vip", ModelName: "model-a",
 	}).First(&temporaryState).Error)
 	assert.Empty(t, temporaryState.TemporaryTrafficKind)
+
 }
 
 func TestExpireChannelSmartScheduleRoutePrimaryRestoresPoolTemporaryTraffic(t *testing.T) {
@@ -240,6 +241,51 @@ func TestDisableFixedPrimaryWithdrawsTemporaryTrafficAndKeepsIntent(t *testing.T
 	assert.True(t, fixedAbility.Enabled)
 	assert.Greater(t, abilityPriority(fixedAbility), abilityPriority(temporaryAbility))
 	assert.Equal(t, uint(1000), fixedAbility.Weight)
+}
+
+func TestAutoDisableFixedPrimaryCancelsIntentAndRestoresRouting(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	createChannelSmartSchedulePrimaryCleanupFixture(t, db)
+
+	assert.True(t, UpdateChannelStatus(
+		4101, "", common.ChannelStatusAutoDisabled, "自动禁用固定主渠道",
+	))
+
+	var fixedState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 4101, GroupName: "vip", ModelName: "model-a",
+	}).First(&fixedState).Error)
+	assert.Zero(t, fixedState.ManualPrimaryUntil)
+	assert.False(t, fixedState.ManualPrimarySaved)
+
+	var fixedAbility Ability
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: 4101, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.False(t, fixedAbility.Enabled)
+	assert.Equal(t, int64(80), abilityPriority(fixedAbility))
+	assert.Equal(t, uint(40), fixedAbility.Weight)
+
+	var temporaryState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 4102, GroupName: "vip", ModelName: "model-a",
+	}).First(&temporaryState).Error)
+	assert.Empty(t, temporaryState.TemporaryTrafficKind)
+
+	assert.True(t, UpdateChannelStatus(
+		4101, "", common.ChannelStatusEnabled, "自动恢复固定主渠道",
+	))
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 4101, GroupName: "vip", ModelName: "model-a",
+	}).First(&fixedState).Error)
+	assert.Zero(t, fixedState.ManualPrimaryUntil)
+	assert.False(t, fixedState.ManualPrimarySaved)
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: 4101, Group: "vip", Model: "model-a",
+	}).First(&fixedAbility).Error)
+	assert.True(t, fixedAbility.Enabled)
+	assert.Equal(t, int64(80), abilityPriority(fixedAbility))
+	assert.Equal(t, uint(40), fixedAbility.Weight)
 }
 
 func TestDisableFixedPrimaryAbilityWithdrawsTemporaryTrafficAndKeepsIntent(t *testing.T) {

@@ -91,27 +91,12 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			Find(&abilities).Error; err != nil {
 			return err
 		}
-		var primaryState *ChannelSmartScheduleRouteState
-		for index := range states {
-			if states[index].ManualPrimaryUntil <= now {
-				continue
-			}
-			if primaryState != nil {
-				return errors.New("同一分组和模型存在多个有效的固定主渠道")
-			}
-			primaryState = &states[index]
-		}
-		if primaryState == nil {
-			continue
-		}
-
-		var primaryAbility *Ability
+		abilityByKey := make(map[ChannelSmartScheduleRouteKey]*Ability, len(abilities))
 		channelIds := make([]int, 0, len(abilities))
 		for index := range abilities {
-			channelIds = append(channelIds, abilities[index].ChannelId)
-			if abilities[index].ChannelId == primaryState.ChannelId {
-				primaryAbility = &abilities[index]
-			}
+			ab := &abilities[index]
+			abilityByKey[channelSmartScheduleRouteKey(ab.ChannelId, ab.Group, ab.Model)] = ab
+			channelIds = append(channelIds, ab.ChannelId)
 		}
 		var channels []Channel
 		if err := tx.
@@ -126,6 +111,46 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 		for _, channel := range channels {
 			channelStatusById[channel.Id] = channel.Status
 			channelById[channel.Id] = channel
+		}
+		var primaryState *ChannelSmartScheduleRouteState
+		autoDisabledPrimaryCleared := false
+		for index := range states {
+			state := &states[index]
+			if state.ManualPrimaryUntil > now &&
+				channelStatusById[state.ChannelId] == common.ChannelStatusAutoDisabled {
+				if _, err := restoreChannelSmartScheduleRoutePrimaryTx(
+					tx,
+					state,
+					abilityByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)],
+				); err != nil {
+					return err
+				}
+				autoDisabledPrimaryCleared = true
+			}
+			if states[index].ManualPrimaryUntil <= now {
+				continue
+			}
+			if primaryState != nil {
+				return errors.New("同一分组和模型存在多个有效的固定主渠道")
+			}
+			primaryState = &states[index]
+		}
+		if primaryState == nil {
+			if autoDisabledPrimaryCleared {
+				if _, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
+					tx, states, abilities, pool.group, pool.model, now,
+				); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		var primaryAbility *Ability
+		for index := range abilities {
+			if abilities[index].ChannelId == primaryState.ChannelId {
+				primaryAbility = &abilities[index]
+			}
 		}
 		primaryAvailable := primaryState.Participates() && primaryState.StabilityState == "" &&
 			primaryAbility != nil && primaryAbility.Enabled &&

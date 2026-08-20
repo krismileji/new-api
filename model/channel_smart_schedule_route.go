@@ -1660,7 +1660,7 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 			state.StabilityReleaseMaxPromptTokens = 0
 		}
 		if savedPriority <= 0 {
-			if channel, ok := channelById[channelId]; ok {
+			if _, ok := channelById[channelId]; ok {
 				savedPriority, savedWeight = channelSmartScheduleAbilityRouting(*ability)
 			} else {
 				savedPriority = abilityPriority(*ability)
@@ -1671,7 +1671,7 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 			savedPriority = channelSmartScheduleRuntimeFallbackPriority
 		}
 		if savedWeight == 0 {
-			if channel, ok := channelById[channelId]; ok {
+			if _, ok := channelById[channelId]; ok {
 				_, savedWeight = channelSmartScheduleAbilityRouting(*ability)
 			} else {
 				savedWeight = ability.Weight
