@@ -277,17 +277,47 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			UserID:      config.UserID,
 			AccessToken: config.AccessToken,
 		}
-		result, err = fetchNewAPIGroupRatio(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+		if config.SkipBalance {
+			result, err = fetchNewAPIGroupRatio(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+			if err != nil {
+				return result, err
+			}
+			break
+		}
+
+		ratioResultCh := make(chan struct {
+			result NewAPIGroupRatioResult
+			err    error
+		}, 1)
+		balanceResultCh := make(chan struct {
+			result ChannelMonitorUpstreamBalanceResult
+			err    error
+		}, 1)
+		go func() {
+			ratio, ratioErr := fetchNewAPIGroupRatio(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+			ratioResultCh <- struct {
+				result NewAPIGroupRatioResult
+				err    error
+			}{result: ratio, err: ratioErr}
+		}()
+		go func() {
+			balance, balanceErr := fetchNewAPIUpstreamBalance(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
+			balanceResultCh <- struct {
+				result ChannelMonitorUpstreamBalanceResult
+				err    error
+			}{result: balance, err: balanceErr}
+		}()
+
+		ratioResult := <-ratioResultCh
+		balanceResult := <-balanceResultCh
+		result, err = ratioResult.result, ratioResult.err
+		if balanceResult.err != nil {
+			result.Balance.Error = balanceResult.err.Error()
+		} else {
+			result.Balance = balanceResult.result
+		}
 		if err != nil {
 			return result, err
-		}
-		if !config.SkipBalance {
-			balance, balanceErr := fetchNewAPIUpstreamBalance(requestContext, client, newAPIConfig, ValidateSSRFProtectedFetchURL)
-			if balanceErr != nil {
-				result.Balance.Error = balanceErr.Error()
-			} else {
-				result.Balance = balance
-			}
 		}
 	case Sub2APIUpstreamType:
 		result, err = fetchSub2APIGroupRatio(requestContext, client, Sub2APIGroupRatioConfig{
@@ -1035,17 +1065,47 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 			return NewAPIGroupRatioResult{}, errors.New("Sub2API API Key 认证需要当前渠道配置上游 API Key")
 		}
 		config.ChannelKeys = keys
-		result, err := fetchSub2APIKeyGroupRatio(ctx, client, config, validateURL)
+		if config.SkipBalance {
+			result, err := fetchSub2APIKeyGroupRatio(ctx, client, config, validateURL)
+			if err != nil {
+				return result, redactUpstreamGroupRatioSecrets(err, keys...)
+			}
+			return result, nil
+		}
+
+		ratioResultCh := make(chan struct {
+			result NewAPIGroupRatioResult
+			err    error
+		}, 1)
+		balanceResultCh := make(chan struct {
+			result ChannelMonitorUpstreamBalanceResult
+			err    error
+		}, 1)
+		go func() {
+			ratio, ratioErr := fetchSub2APIKeyGroupRatio(ctx, client, config, validateURL)
+			ratioResultCh <- struct {
+				result NewAPIGroupRatioResult
+				err    error
+			}{result: ratio, err: ratioErr}
+		}()
+		go func() {
+			balance, balanceErr := fetchSub2APIKeyBalance(ctx, client, config, validateURL)
+			balanceResultCh <- struct {
+				result ChannelMonitorUpstreamBalanceResult
+				err    error
+			}{result: balance, err: balanceErr}
+		}()
+
+		ratioResult := <-ratioResultCh
+		balanceResult := <-balanceResultCh
+		result, err := ratioResult.result, ratioResult.err
+		if balanceResult.err != nil {
+			result.Balance.Error = redactUpstreamGroupRatioSecrets(balanceResult.err, keys...).Error()
+		} else {
+			result.Balance = balanceResult.result
+		}
 		if err != nil {
 			return result, redactUpstreamGroupRatioSecrets(err, keys...)
-		}
-		if !config.SkipBalance {
-			balance, balanceErr := fetchSub2APIKeyBalance(ctx, client, config, validateURL)
-			if balanceErr != nil {
-				result.Balance.Error = redactUpstreamGroupRatioSecrets(balanceErr, keys...).Error()
-			} else {
-				result.Balance = balance
-			}
 		}
 		return result, nil
 	case Sub2APIAuthToken:

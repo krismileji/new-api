@@ -466,27 +466,87 @@ func fetchChannelMonitorCustomUpstreamRatio(ctx context.Context, client *http.Cl
 		return NewAPIGroupRatioResult{}, err
 	}
 	result := NewAPIGroupRatioResult{}
-	var ratioResponse channelMonitorCustomHTTPResponse
 	var balanceErr error
-	if normalized.Ratio.Source == ChannelMonitorCustomSourceFixed {
-		result.Ratio = *normalized.Ratio.FixedValue
-		result.Endpoint = "固定输入"
-	} else {
-		ratioResponse, err = requestChannelMonitorCustomUpstream(ctx, client, baseURL, *normalized.Ratio.Request, includeDebug)
-		if err == nil {
-			result.Ratio, err = extractChannelMonitorCustomValue(ratioResponse.body, *normalized.Ratio.Result)
-			result.Endpoint = normalized.Ratio.Request.Path
-			result.Debug = ratioResponse.debug
-		}
-	}
 
-	if !skipBalance {
-		var balanceResult ChannelMonitorUpstreamBalanceResult
-		balanceResult, balanceErr = fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, ratioResponse, includeDebug)
+	// Independent custom ratio and balance endpoints get separate requests in
+	// parallel. Reuse mode still has to wait for the ratio response because the
+	// balance value is extracted from that same response body.
+	if !skipBalance &&
+		normalized.Ratio.Source == ChannelMonitorCustomSourceHTTP &&
+		normalized.Balance.Source == ChannelMonitorCustomSourceHTTP &&
+		!normalized.BalanceReuseRatioRequest {
+		type ratioFetchResult struct {
+			response channelMonitorCustomHTTPResponse
+			ratio    float64
+			err      error
+		}
+		ratioResultCh := make(chan ratioFetchResult, 1)
+		balanceResultCh := make(chan struct {
+			result ChannelMonitorUpstreamBalanceResult
+			err    error
+		}, 1)
+		go func() {
+			response, requestErr := requestChannelMonitorCustomUpstream(ctx, client, baseURL, *normalized.Ratio.Request, includeDebug)
+			if requestErr != nil {
+				ratioResultCh <- ratioFetchResult{response: response, err: requestErr}
+				return
+			}
+			ratio, extractErr := extractChannelMonitorCustomValue(response.body, *normalized.Ratio.Result)
+			ratioResultCh <- ratioFetchResult{
+				response: response,
+				ratio:    ratio,
+				err:      extractErr,
+			}
+		}()
+		go func() {
+			balance, balanceFetchErr := fetchChannelMonitorCustomBalanceWithResponse(
+				ctx,
+				client,
+				baseURL,
+				normalized,
+				channelMonitorCustomHTTPResponse{},
+				includeDebug,
+			)
+			balanceResultCh <- struct {
+				result ChannelMonitorUpstreamBalanceResult
+				err    error
+			}{result: balance, err: balanceFetchErr}
+		}()
+
+		ratioResult := <-ratioResultCh
+		balanceResult := <-balanceResultCh
+		result.Ratio = ratioResult.ratio
+		result.Endpoint = normalized.Ratio.Request.Path
+		result.Debug = ratioResult.response.debug
+		err = ratioResult.err
+		balanceErr = balanceResult.err
 		if balanceErr != nil {
 			result.Balance.Error = balanceErr.Error()
 		} else {
-			result.Balance = balanceResult
+			result.Balance = balanceResult.result
+		}
+	} else {
+		var ratioResponse channelMonitorCustomHTTPResponse
+		if normalized.Ratio.Source == ChannelMonitorCustomSourceFixed {
+			result.Ratio = *normalized.Ratio.FixedValue
+			result.Endpoint = "固定输入"
+		} else {
+			ratioResponse, err = requestChannelMonitorCustomUpstream(ctx, client, baseURL, *normalized.Ratio.Request, includeDebug)
+			if err == nil {
+				result.Ratio, err = extractChannelMonitorCustomValue(ratioResponse.body, *normalized.Ratio.Result)
+				result.Endpoint = normalized.Ratio.Request.Path
+				result.Debug = ratioResponse.debug
+			}
+		}
+
+		if !skipBalance {
+			var balanceResult ChannelMonitorUpstreamBalanceResult
+			balanceResult, balanceErr = fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, ratioResponse, includeDebug)
+			if balanceErr != nil {
+				result.Balance.Error = balanceErr.Error()
+			} else {
+				result.Balance = balanceResult
+			}
 		}
 	}
 	if err != nil {

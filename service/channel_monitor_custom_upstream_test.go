@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/assert"
@@ -257,6 +258,84 @@ func TestFetchChannelMonitorCustomUpstreamRatioReusesRequest(t *testing.T) {
 	assert.Equal(t, http.StatusOK, result.Debug.StatusCode)
 	assert.NotContains(t, result.Debug.ResponsePreview, "Bearer secret")
 	assert.Contains(t, result.Debug.ResponsePreview, "[REDACTED]")
+}
+
+func TestFetchChannelMonitorCustomUpstreamRatioFetchesIndependentBalanceInParallel(t *testing.T) {
+	useChannelMonitorCustomTestFetchSettings(t)
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case started <- r.URL.Path:
+		case <-r.Context().Done():
+			return
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/ratio":
+			_, _ = w.Write([]byte(`{"data":{"ratio":2}}`))
+		case "/balance":
+			_, _ = w.Write([]byte(`{"data":{"balance":1234}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	config := ChannelMonitorCustomUpstreamConfig{
+		Ratio: ChannelMonitorCustomMetricConfig{
+			Source:  ChannelMonitorCustomSourceHTTP,
+			Request: &ChannelMonitorCustomRequestConfig{Method: http.MethodGet, Path: "/ratio", BodyType: ChannelMonitorCustomBodyNone},
+			Result:  &ChannelMonitorCustomResultConfig{ResponseType: ChannelMonitorCustomResponseJSON, ValuePath: "data.ratio", Multiplier: 1},
+		},
+		Balance: ChannelMonitorCustomMetricConfig{
+			Source:  ChannelMonitorCustomSourceHTTP,
+			Request: &ChannelMonitorCustomRequestConfig{Method: http.MethodGet, Path: "/balance", BodyType: ChannelMonitorCustomBodyNone},
+			Result:  &ChannelMonitorCustomResultConfig{ResponseType: ChannelMonitorCustomResponseJSON, ValuePath: "data.balance", Multiplier: 0.01},
+		},
+	}
+
+	type fetchResult struct {
+		result NewAPIGroupRatioResult
+		err    error
+	}
+	resultCh := make(chan fetchResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() {
+		result, err := fetchChannelMonitorCustomUpstreamRatio(ctx, server.Client(), server.URL, config, false, false)
+		resultCh <- fetchResult{result: result, err: err}
+	}()
+
+	seen := make(map[string]bool, 2)
+	startTimer := time.NewTimer(200 * time.Millisecond)
+	for len(seen) < 2 {
+		select {
+		case path := <-started:
+			seen[path] = true
+		case <-startTimer.C:
+			close(release)
+			require.Fail(t, "ratio and balance requests were not started together")
+		}
+	}
+	if !startTimer.Stop() {
+		select {
+		case <-startTimer.C:
+		default:
+		}
+	}
+	close(release)
+
+	fetched := <-resultCh
+	require.NoError(t, fetched.err)
+	assert.Equal(t, 2.0, fetched.result.Ratio)
+	require.NotNil(t, fetched.result.Balance.Amount)
+	assert.InDelta(t, 12.34, *fetched.result.Balance.Amount, 1e-9)
 }
 
 func TestFetchChannelMonitorCustomUpstreamRatioStillReturnsIndependentBalance(t *testing.T) {
