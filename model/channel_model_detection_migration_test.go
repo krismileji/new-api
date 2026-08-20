@@ -41,6 +41,24 @@ func (recorder *channelModelDetectionMigrationSQLRecorder) Trace(
 	recorder.statements = append(recorder.statements, statement)
 }
 
+func TestChannelModelDetectionReportJSONUsesCrossDatabaseTextType(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialector gorm.Dialector
+		want      string
+	}{
+		{name: "sqlite", dialector: sqlite.Open(":memory:"), want: "TEXT"},
+		{name: "mysql", dialector: mysql.Open(""), want: "LONGTEXT"},
+		{name: "postgres", dialector: postgres.Open(""), want: "TEXT"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := &gorm.DB{Config: &gorm.Config{Dialector: test.dialector}}
+			assert.Equal(t, test.want, ChannelModelDetectionReportJSON("").GormDBDataType(db, nil))
+		})
+	}
+}
+
 // legacyChannelModelDetectionGlobalConfig mirrors the pre-minute schema. It
 // lets the migration test exercise an existing populated table rather than
 // only an empty AutoMigrate target.
@@ -203,6 +221,10 @@ func TestChannelModelDetectionSchemaMigrationDialectDDL(t *testing.T) {
 			))
 
 			ddl := strings.ToUpper(strings.Join(recorder.statements, "\n"))
+			reportType := " TEXT"
+			if test.name == "mysql57" {
+				reportType = " LONGTEXT"
+			}
 			assert.Equal(t, 7, strings.Count(ddl, "CREATE TABLE "), "all model-detection tables must be emitted")
 			for _, table := range []string{
 				"channel_model_detection_global_configs",
@@ -234,7 +256,7 @@ func TestChannelModelDetectionSchemaMigrationDialectDDL(t *testing.T) {
 				test.quote + "batch_id" + test.quote + " VARCHAR(64)",
 				test.quote + "estimated_quota" + test.quote + " BIGINT",
 				test.quote + "official_config_json" + test.quote + " TEXT",
-				test.quote + "report_json" + test.quote + " TEXT",
+				test.quote + "report_json" + test.quote + reportType,
 			} {
 				assert.Contains(t, ddl, strings.ToUpper(fragment), fragment)
 			}

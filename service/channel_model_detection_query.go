@@ -535,8 +535,8 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 			return ChannelModelDetectionRunDetailResponse{}, fmt.Errorf("%w: %s", ErrChannelModelDetectionReportTooLarge, execution.TargetKey)
 		}
 		var report any
-		if strings.TrimSpace(execution.ReportJSON) != "" {
-			if err := common.UnmarshalJsonStr(execution.ReportJSON, &report); err != nil {
+		if strings.TrimSpace(string(execution.ReportJSON)) != "" {
+			if err := common.UnmarshalJsonStr(string(execution.ReportJSON), &report); err != nil {
 				return ChannelModelDetectionRunDetailResponse{}, err
 			}
 			report = redactChannelModelDetectionReportSecrets(report)
@@ -1063,7 +1063,7 @@ func channelModelDetectionExecutionEvidence(execution model.ChannelModelDetectio
 		FingerprintModel:        strings.TrimSpace(execution.FingerprintModel),
 	}
 	explicitMismatch := false
-	if execution.OutcomeCode == "juice_pass_fingerprint_strong" && strings.TrimSpace(execution.ReportJSON) != "" &&
+	if execution.OutcomeCode == "juice_pass_fingerprint_strong" && strings.TrimSpace(string(execution.ReportJSON)) != "" &&
 		(evidence.JuiceVerdictState == "" || evidence.FingerprintVerdictState == "" || evidence.FingerprintModel == "") {
 		var report struct {
 			JuiceVerdictState        string `json:"juice_verdict_state"`
@@ -1071,7 +1071,7 @@ func channelModelDetectionExecutionEvidence(execution model.ChannelModelDetectio
 			FingerprintModel         string `json:"fingerprint_model"`
 			FingerprintClaimMismatch *bool  `json:"fingerprint_claim_mismatch"`
 		}
-		if common.UnmarshalJsonStr(execution.ReportJSON, &report) == nil {
+		if common.UnmarshalJsonStr(string(execution.ReportJSON), &report) == nil {
 			if evidence.JuiceVerdictState == "" {
 				evidence.JuiceVerdictState = strings.TrimSpace(report.JuiceVerdictState)
 			}

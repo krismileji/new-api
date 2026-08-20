@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 const (
@@ -206,6 +207,22 @@ func decodeChannelModelDetectionJSON(data string, value any) error {
 		return nil
 	}
 	return common.UnmarshalJsonStr(data, value)
+}
+
+// ChannelModelDetectionReportJSON stores detector reports. MySQL TEXT is
+// limited to 64 KiB, while the validated report limit is 1 MiB, so MySQL
+// needs LONGTEXT while SQLite and PostgreSQL can use TEXT.
+type ChannelModelDetectionReportJSON string
+
+func (ChannelModelDetectionReportJSON) GormDataType() string {
+	return "text"
+}
+
+func (ChannelModelDetectionReportJSON) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	if db != nil && db.Dialector != nil && db.Dialector.Name() == "mysql" {
+		return "LONGTEXT"
+	}
+	return "TEXT"
 }
 
 // ChannelModelDetectionGlobalConfig stores the single global scheduling row.
@@ -770,59 +787,59 @@ func (run ChannelModelDetectionRun) Validate() error {
 }
 
 type ChannelModelDetectionExecution struct {
-	Id                         int64  `json:"id" gorm:"primaryKey"`
-	RunId                      string `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
-	TargetKey                  string `json:"target_key" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
-	TargetId                   int64  `json:"target_id" gorm:"not null;index"`
-	ChannelId                  int    `json:"channel_id" gorm:"not null;index"`
-	RequestModel               string `json:"request_model" gorm:"type:varchar(255);not null"`
-	ClaimedModel               string `json:"claimed_model" gorm:"type:varchar(32);not null"`
-	Preset                     string `json:"preset" gorm:"type:varchar(16);not null"`
-	Status                     string `json:"status" gorm:"type:varchar(32);not null;index"`
-	OutcomeCode                string `json:"outcome_code" gorm:"type:varchar(96);index"`
-	TitleCN                    string `json:"title_cn" gorm:"column:title_cn;type:varchar(255)"`
-	SubtitleCN                 string `json:"subtitle_cn" gorm:"column:subtitle_cn;type:varchar(512)"`
-	JuiceVerdictState          string `json:"juice_verdict_state" gorm:"type:varchar(32)"`
-	FingerprintVerdictState    string `json:"fingerprint_verdict_state" gorm:"type:varchar(32)"`
-	FingerprintModel           string `json:"fingerprint_model" gorm:"type:varchar(255)"`
-	OfficialSessionId          string `json:"official_session_id" gorm:"type:varchar(128);index"`
-	Official                   bool   `json:"official" gorm:"not null"`
-	ConfigHash                 string `json:"config_hash" gorm:"type:varchar(128)"`
-	OfficialConfigJSON         string `json:"-" gorm:"column:official_config_json;type:text"`
-	DetectorURLSnapshot        string `json:"-" gorm:"column:detector_url_snapshot;type:varchar(1024)"`
-	SchemaVersion              int    `json:"schema_version" gorm:"not null"`
-	ScoringVersion             string `json:"scoring_version" gorm:"type:varchar(128)"`
-	BaselineId                 string `json:"baseline_id" gorm:"type:varchar(128)"`
-	BaselineSHA256             string `json:"baseline_sha256" gorm:"type:varchar(128)"`
-	BuildHash                  string `json:"build_hash" gorm:"type:varchar(128)"`
-	PlannedLogicalRequests     int64  `json:"planned_logical_requests" gorm:"bigint;not null"`
-	CompletedLogicalRequests   int64  `json:"completed_logical_requests" gorm:"bigint;not null"`
-	HTTPAttempts               int64  `json:"http_attempts" gorm:"column:http_attempts;bigint;not null"`
-	RetryCount                 int64  `json:"retry_count" gorm:"bigint;not null"`
-	FinalErrorCode             string `json:"final_error_code" gorm:"type:varchar(128)"`
-	Canceled                   bool   `json:"canceled" gorm:"not null"`
-	UsageAvailable             bool   `json:"usage_available" gorm:"not null"`
-	InputTokens                int64  `json:"input_tokens" gorm:"bigint;not null"`
-	OutputTokens               int64  `json:"output_tokens" gorm:"bigint;not null"`
-	TotalTokens                int64  `json:"total_tokens" gorm:"bigint;not null"`
-	EstimatedQuota             int64  `json:"estimated_quota" gorm:"bigint;not null"`
-	EstimatedCostNanoCNY       *int64 `json:"estimated_cost_nano_cny" gorm:"bigint"`
-	CostEstimateUnknownCount   int64  `json:"cost_estimate_unknown_count" gorm:"bigint;not null"`
-	SettledQuota               int64  `json:"settled_quota" gorm:"bigint;not null"`
-	CostBasisQuota             int64  `json:"cost_basis_quota" gorm:"bigint;not null"`
-	SettledCostNanoCNY         *int64 `json:"settled_cost_nano_cny" gorm:"bigint"`
-	UnresolvedCostNanoCNY      *int64 `json:"unresolved_cost_nano_cny" gorm:"bigint"`
-	UnresolvedCostUnknownCount int64  `json:"unresolved_cost_unknown_count" gorm:"bigint;not null"`
-	SettledRequestCount        int64  `json:"settled_request_count" gorm:"bigint;not null"`
-	UnresolvedRequestCount     int64  `json:"unresolved_request_count" gorm:"bigint;not null"`
-	ReportJSON                 string `json:"-" gorm:"column:report_json;type:text"`
-	ReportSHA256               string `json:"report_sha256" gorm:"type:varchar(128)"`
-	StartedAt                  int64  `json:"started_at" gorm:"bigint;index"`
-	FinishedAt                 int64  `json:"finished_at" gorm:"bigint;index"`
-	ErrorCode                  string `json:"error_code" gorm:"type:varchar(128)"`
-	ErrorMessage               string `json:"error_message" gorm:"type:varchar(512)"`
-	CreatedAt                  int64  `json:"created_at" gorm:"bigint;not null;index"`
-	UpdatedAt                  int64  `json:"updated_at" gorm:"bigint;not null"`
+	Id                         int64                           `json:"id" gorm:"primaryKey"`
+	RunId                      string                          `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
+	TargetKey                  string                          `json:"target_key" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
+	TargetId                   int64                           `json:"target_id" gorm:"not null;index"`
+	ChannelId                  int                             `json:"channel_id" gorm:"not null;index"`
+	RequestModel               string                          `json:"request_model" gorm:"type:varchar(255);not null"`
+	ClaimedModel               string                          `json:"claimed_model" gorm:"type:varchar(32);not null"`
+	Preset                     string                          `json:"preset" gorm:"type:varchar(16);not null"`
+	Status                     string                          `json:"status" gorm:"type:varchar(32);not null;index"`
+	OutcomeCode                string                          `json:"outcome_code" gorm:"type:varchar(96);index"`
+	TitleCN                    string                          `json:"title_cn" gorm:"column:title_cn;type:varchar(255)"`
+	SubtitleCN                 string                          `json:"subtitle_cn" gorm:"column:subtitle_cn;type:varchar(512)"`
+	JuiceVerdictState          string                          `json:"juice_verdict_state" gorm:"type:varchar(32)"`
+	FingerprintVerdictState    string                          `json:"fingerprint_verdict_state" gorm:"type:varchar(32)"`
+	FingerprintModel           string                          `json:"fingerprint_model" gorm:"type:varchar(255)"`
+	OfficialSessionId          string                          `json:"official_session_id" gorm:"type:varchar(128);index"`
+	Official                   bool                            `json:"official" gorm:"not null"`
+	ConfigHash                 string                          `json:"config_hash" gorm:"type:varchar(128)"`
+	OfficialConfigJSON         string                          `json:"-" gorm:"column:official_config_json;type:text"`
+	DetectorURLSnapshot        string                          `json:"-" gorm:"column:detector_url_snapshot;type:varchar(1024)"`
+	SchemaVersion              int                             `json:"schema_version" gorm:"not null"`
+	ScoringVersion             string                          `json:"scoring_version" gorm:"type:varchar(128)"`
+	BaselineId                 string                          `json:"baseline_id" gorm:"type:varchar(128)"`
+	BaselineSHA256             string                          `json:"baseline_sha256" gorm:"type:varchar(128)"`
+	BuildHash                  string                          `json:"build_hash" gorm:"type:varchar(128)"`
+	PlannedLogicalRequests     int64                           `json:"planned_logical_requests" gorm:"bigint;not null"`
+	CompletedLogicalRequests   int64                           `json:"completed_logical_requests" gorm:"bigint;not null"`
+	HTTPAttempts               int64                           `json:"http_attempts" gorm:"column:http_attempts;bigint;not null"`
+	RetryCount                 int64                           `json:"retry_count" gorm:"bigint;not null"`
+	FinalErrorCode             string                          `json:"final_error_code" gorm:"type:varchar(128)"`
+	Canceled                   bool                            `json:"canceled" gorm:"not null"`
+	UsageAvailable             bool                            `json:"usage_available" gorm:"not null"`
+	InputTokens                int64                           `json:"input_tokens" gorm:"bigint;not null"`
+	OutputTokens               int64                           `json:"output_tokens" gorm:"bigint;not null"`
+	TotalTokens                int64                           `json:"total_tokens" gorm:"bigint;not null"`
+	EstimatedQuota             int64                           `json:"estimated_quota" gorm:"bigint;not null"`
+	EstimatedCostNanoCNY       *int64                          `json:"estimated_cost_nano_cny" gorm:"bigint"`
+	CostEstimateUnknownCount   int64                           `json:"cost_estimate_unknown_count" gorm:"bigint;not null"`
+	SettledQuota               int64                           `json:"settled_quota" gorm:"bigint;not null"`
+	CostBasisQuota             int64                           `json:"cost_basis_quota" gorm:"bigint;not null"`
+	SettledCostNanoCNY         *int64                          `json:"settled_cost_nano_cny" gorm:"bigint"`
+	UnresolvedCostNanoCNY      *int64                          `json:"unresolved_cost_nano_cny" gorm:"bigint"`
+	UnresolvedCostUnknownCount int64                           `json:"unresolved_cost_unknown_count" gorm:"bigint;not null"`
+	SettledRequestCount        int64                           `json:"settled_request_count" gorm:"bigint;not null"`
+	UnresolvedRequestCount     int64                           `json:"unresolved_request_count" gorm:"bigint;not null"`
+	ReportJSON                 ChannelModelDetectionReportJSON `json:"-" gorm:"column:report_json"`
+	ReportSHA256               string                          `json:"report_sha256" gorm:"type:varchar(128)"`
+	StartedAt                  int64                           `json:"started_at" gorm:"bigint;index"`
+	FinishedAt                 int64                           `json:"finished_at" gorm:"bigint;index"`
+	ErrorCode                  string                          `json:"error_code" gorm:"type:varchar(128)"`
+	ErrorMessage               string                          `json:"error_message" gorm:"type:varchar(512)"`
+	CreatedAt                  int64                           `json:"created_at" gorm:"bigint;not null;index"`
+	UpdatedAt                  int64                           `json:"updated_at" gorm:"bigint;not null"`
 }
 
 func (execution *ChannelModelDetectionExecution) BeforeCreate(_ *gorm.DB) error {
@@ -881,7 +898,7 @@ func (execution *ChannelModelDetectionExecution) SetOfficialConfig(value any) er
 
 func (execution ChannelModelDetectionExecution) Report() (map[string]any, error) {
 	value := map[string]any{}
-	if err := decodeChannelModelDetectionJSON(execution.ReportJSON, &value); err != nil {
+	if err := decodeChannelModelDetectionJSON(string(execution.ReportJSON), &value); err != nil {
 		return nil, err
 	}
 	return value, nil
@@ -895,7 +912,7 @@ func (execution *ChannelModelDetectionExecution) SetReport(value any) error {
 	if len(encoded) > ChannelModelDetectionMaxReportBytes {
 		return fmt.Errorf("模型检测报告超过 %d 字节", ChannelModelDetectionMaxReportBytes)
 	}
-	execution.ReportJSON = encoded
+	execution.ReportJSON = ChannelModelDetectionReportJSON(encoded)
 	return nil
 }
 
