@@ -102,9 +102,55 @@ func TestUpdateAbilitiesPreservesExistingSmartScheduleRouteRouting(t *testing.T)
 	assert.Zero(t, byGroup["vip"].Weight)
 	assert.Nil(t, byGroup["standard"].Priority)
 	assert.Zero(t, byGroup["standard"].Weight)
-	require.NotNil(t, byGroup["new"].Priority)
-	assert.Equal(t, defaultPriority, *byGroup["new"].Priority)
-	assert.Equal(t, defaultWeight, byGroup["new"].Weight)
+	assert.Nil(t, byGroup["new"].Priority)
+	assert.Zero(t, byGroup["new"].Weight)
+}
+
+func TestUpdateAbilitiesNewGroupParticipatesInSmartSchedule(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	priority := int64(80)
+	weight := uint(50)
+	channel := Channel{
+		Id: 1004, Name: "new group", Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "model-a,model-b", Priority: &priority, Weight: &weight,
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: channel.Id, Group: "default", Model: "model-a", Enabled: true},
+		{ChannelId: channel.Id, Group: "default", Model: "model-b", Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: channel.Id, GroupName: "default", ModelName: "model-a", ParticipationSet: true, Excluded: true},
+		{ChannelId: channel.Id, GroupName: "default", ModelName: "model-b", ParticipationSet: true, Excluded: true},
+	}).Error)
+
+	channel.Group = "default,vip"
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channel.Id).Update("group", channel.Group).Error)
+	require.NoError(t, channel.UpdateAbilities(nil))
+
+	var states []ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).
+		Order("group_name ASC, model_name ASC").Find(&states).Error)
+	require.Len(t, states, 4)
+	for _, state := range states {
+		if state.GroupName == "default" {
+			assert.True(t, state.Excluded)
+			continue
+		}
+		assert.Equal(t, "vip", state.GroupName)
+		assert.True(t, state.ParticipationSet)
+		assert.False(t, state.Excluded)
+		assert.Equal(t, int64(1), state.Revision)
+	}
+
+	var abilities []Ability
+	require.NoError(t, db.Where("channel_id = ? AND "+commonGroupCol+" = ?", channel.Id, "vip").
+		Order("model ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+	for _, ability := range abilities {
+		assert.Nil(t, ability.Priority)
+		assert.Zero(t, ability.Weight)
+	}
 }
 
 func TestUpdateAbilitiesDoesNotCreateAbilitiesForDeletedChannel(t *testing.T) {
@@ -464,12 +510,11 @@ func TestUpdateAbilitiesRemovesDeletedRouteScheduleState(t *testing.T) {
 	assert.Nil(t, ability.Priority)
 	assert.Zero(t, ability.Weight)
 
-	require.NoError(t, InitializeChannelSmartScheduleRouteStates())
 	var recreatedState ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
 		ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a",
 	}).First(&recreatedState).Error)
-	assert.False(t, recreatedState.Participates())
+	assert.True(t, recreatedState.Participates())
 	assert.Empty(t, recreatedState.StabilityState)
 	assert.Empty(t, recreatedState.TemporaryTrafficKind)
 }

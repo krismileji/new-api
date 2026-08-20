@@ -138,18 +138,16 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			}
 			continue
 		}
-		primaryChannel, primaryChannelExists := channelById[primaryState.ChannelId]
-		if !primaryChannelExists {
+		if _, primaryChannelExists := channelById[primaryState.ChannelId]; !primaryChannelExists {
 			return gorm.ErrRecordNotFound
 		}
-		primaryPriority, _ := channelSmartScheduleAbilityRouting(*primaryAbility, &primaryChannel)
+		primaryPriority, _ := channelSmartScheduleAbilityRouting(*primaryAbility)
 		priority, err := channelSmartScheduleManualPrimaryPriority(
 			abilities,
 			states,
 			channelStatusById,
 			primaryState.ChannelId,
 			max(primaryPriority, primaryState.LastSchedulePriority),
-			channelById,
 		)
 		if err != nil {
 			return err

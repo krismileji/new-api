@@ -41,8 +41,8 @@ func TestExcludeChannelSmartScheduleRouteAlwaysClearsOverride(t *testing.T) {
 	routes, err := GetChannelSmartScheduleRoutes()
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
-	assert.Equal(t, channelPriority, routes[0].Priority)
-	assert.Equal(t, channelWeight, routes[0].Weight)
+	assert.Zero(t, routes[0].Priority)
+	assert.Zero(t, routes[0].Weight)
 
 	channelPriority = 65
 	channelWeight = 25
@@ -53,8 +53,8 @@ func TestExcludeChannelSmartScheduleRouteAlwaysClearsOverride(t *testing.T) {
 	routes, err = GetChannelSmartScheduleRoutes()
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
-	assert.Equal(t, channelPriority, routes[0].Priority)
-	assert.Equal(t, channelWeight, routes[0].Weight)
+	assert.Zero(t, routes[0].Priority)
+	assert.Zero(t, routes[0].Weight)
 
 	stalePriority := int64(999)
 	require.NoError(t, db.Model(&Ability{}).
@@ -71,9 +71,8 @@ func TestExcludeChannelSmartScheduleRouteAlwaysClearsOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, routingChanged)
 	require.NoError(t, db.Where(&Ability{ChannelId: 5101, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, channelPriority, *ability.Priority)
-	assert.Equal(t, channelWeight, ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 
 	require.NoError(t, db.Model(&Ability{}).
 		Where(&Ability{ChannelId: 5101, Group: "vip", Model: "model-a"}).
@@ -112,9 +111,8 @@ func TestIncludeChannelSmartScheduleRouteCreatesAndPreservesOverride(t *testing.
 
 	var ability Ability
 	require.NoError(t, db.Where(&Ability{ChannelId: 5102, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, channelPriority, *ability.Priority)
-	assert.Equal(t, channelWeight, ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 
 	scheduledPriority := int64(95)
 	require.NoError(t, db.Model(&Ability{}).
@@ -135,9 +133,8 @@ func TestIncludeChannelSmartScheduleRouteCreatesAndPreservesOverride(t *testing.
 	require.NoError(t, err)
 	assert.True(t, routingChanged)
 	require.NoError(t, db.Where(&Ability{ChannelId: 5102, Group: "vip", Model: "model-a"}).First(&ability).Error)
-	require.NotNil(t, ability.Priority)
-	assert.Equal(t, channelPriority, *ability.Priority)
-	assert.Equal(t, channelWeight, ability.Weight)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
 }
 
 func TestDatabaseSelectionUsesChannelRoutingWhenGroupOverrideIsMissing(t *testing.T) {

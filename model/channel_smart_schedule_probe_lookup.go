@@ -63,7 +63,7 @@ func LookupChannelSmartScheduleProbeRoute(
 		return ChannelSmartScheduleRoute{}, nil, false, err
 	}
 
-	priority, weight := channelSmartScheduleAbilityRouting(ability, channel)
+	priority, weight := channelSmartScheduleAbilityRouting(ability)
 	return ChannelSmartScheduleRoute{
 		ChannelId:       ability.ChannelId,
 		ChannelName:     channel.Name,

@@ -81,6 +81,34 @@ func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionScopesParticipationTo
 	assert.Equal(t, 5205, channel.Id)
 }
 
+func TestChannelSmartScheduleManagedPoolIgnoresChannelDefaultRouting(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useDatabaseChannelSelection(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
+	defaultPriority := int64(1000)
+	defaultWeight := uint(1000)
+	lowDefaultPriority := int64(1)
+	lowDefaultWeight := uint(1)
+	abilityPriority := int64(0)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 5221, Name: "高默认值", Status: common.ChannelStatusEnabled, Priority: &defaultPriority, Weight: &defaultWeight},
+		{Id: 5222, Name: "智能调度值", Status: common.ChannelStatusEnabled, Priority: &lowDefaultPriority, Weight: &lowDefaultWeight},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 5221, Group: "vip", Model: "model-a", Enabled: true},
+		{ChannelId: 5222, Group: "vip", Model: "model-a", Enabled: true, Priority: &abilityPriority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 5221, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 5222, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 5222, channel.Id)
+}
+
 func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackToEligibleWildcard(t *testing.T) {
 	setupChannelSmartScheduleRouteTestDB(t)
 	const exactModel = "gemini-2.5-pro-thinking-2048"

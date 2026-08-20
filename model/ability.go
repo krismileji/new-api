@@ -177,7 +177,7 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if tx != nil {
 		useDB = tx
 	}
-	routingByKey, err := getChannelSmartScheduleRouteRouting(useDB, channel.Id, channel)
+	routingByKey, err := getChannelSmartScheduleRouteRouting(useDB, channel.Id)
 	if err != nil {
 		return err
 	}
@@ -275,8 +275,14 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}
 		return err
 	}
-	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id, channel)
+	routingByKey, err := getChannelSmartScheduleRouteRouting(tx, channel.Id)
 	if err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if err := admitNewChannelSmartScheduleGroupsTx(tx, channel, currentAbilities); err != nil {
 		if isNewTx {
 			tx.Rollback()
 		}

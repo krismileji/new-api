@@ -146,9 +146,9 @@ func TestUpdateAbilitiesKeepsActivePrimaryAboveParticipatingRoutes(t *testing.T)
 	assert.Equal(t, uint(1000), abilities[0].Weight)
 	assert.Nil(t, abilities[1].Priority)
 	assert.Zero(t, abilities[1].Weight)
-	priority, effectiveWeight := channelSmartScheduleAbilityRouting(abilities[1], &newRouteChannel)
-	assert.Equal(t, newRoutePriority, priority)
-	assert.Equal(t, uint(100), effectiveWeight)
+	priority, effectiveWeight := channelSmartScheduleAbilityRouting(abilities[1])
+	assert.Zero(t, priority)
+	assert.Zero(t, effectiveWeight)
 }
 
 func TestUpdateAbilityStatusKeepsActivePrimaryAboveEnabledParticipatingRoute(t *testing.T) {

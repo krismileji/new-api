@@ -209,7 +209,7 @@ func channelSmartScheduleAffinityEligibilityFromDatabase(
 		preferredPriority := int64(0)
 		preferredFound := false
 		for _, ability := range available {
-			priority, _ := channelSmartScheduleAbilityRouting(ability, channelByID[ability.ChannelId])
+			priority, _ := channelSmartScheduleAbilityRouting(ability)
 			if !highestPrioritySet || priority > highestPriority {
 				highestPriority = priority
 				highestPrioritySet = true

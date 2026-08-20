@@ -1,19 +1,20 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"strings"
+
+	"gorm.io/gorm"
+)
 
 type channelSmartScheduleRouteRouting struct {
 	priority *int64
 	weight   uint
 }
 
-func channelSmartScheduleAbilityRouting(
+func channelAbilityRouting(
 	ability Ability,
 	channel *Channel,
 ) (int64, uint) {
-	// A nil group priority is the inheritance marker. Weight is deliberately
-	// ignored in that case because the zero written while clearing an override
-	// is not an effective group weight.
 	if ability.Priority != nil {
 		return *ability.Priority, ability.Weight
 	}
@@ -23,17 +24,24 @@ func channelSmartScheduleAbilityRouting(
 	return channel.GetPriority(), uint(channel.GetWeight())
 }
 
-func applyChannelSmartScheduleAbilityRoutingTx(
-	tx *gorm.DB,
-	key ChannelSmartScheduleRouteKey,
-	channel *Channel,
-) error {
-	if channel == nil {
-		return gorm.ErrRecordNotFound
+func channelSmartScheduleAbilityRouting(ability Ability) (int64, uint) {
+	if ability.Priority == nil {
+		return 0, 0
 	}
-	priority := channel.GetPriority()
-	weight := uint(channel.GetWeight())
-	return updateAbilitySmartSchedulePriorityWeightTx(tx, key, &priority, &weight)
+	return *ability.Priority, ability.Weight
+}
+
+func channelRoutingForTrafficPolicy(
+	ability Ability,
+	channel *Channel,
+	group string,
+	modelName string,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+) (int64, uint) {
+	if trafficPolicy != nil && trafficPolicy.managesPool(group, modelName) {
+		return channelSmartScheduleAbilityRouting(ability)
+	}
+	return channelAbilityRouting(ability, channel)
 }
 
 func clearChannelSmartScheduleAbilityRoutingTx(
@@ -66,7 +74,6 @@ func clearChannelSmartScheduleAbilityRoutingTx(
 func getChannelSmartScheduleRouteRouting(
 	tx *gorm.DB,
 	channelId int,
-	channel *Channel,
 ) (map[ChannelSmartScheduleRouteKey]channelSmartScheduleRouteRouting, error) {
 	routingByKey := make(map[ChannelSmartScheduleRouteKey]channelSmartScheduleRouteRouting)
 	if !tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
@@ -86,19 +93,12 @@ func getChannelSmartScheduleRouteRouting(
 		key := channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)
 		if state.Participates() {
 			participating[key] = struct{}{}
-			priority := int64(0)
-			weight := uint(0)
-			if channel != nil {
-				priority = channel.GetPriority()
-				weight = uint(channel.GetWeight())
-			}
 			if state.LastScheduleTime > 0 {
-				priority = state.LastSchedulePriority
-				weight = state.LastScheduleWeight
-			}
-			routingByKey[key] = channelSmartScheduleRouteRouting{
-				priority: &priority,
-				weight:   weight,
+				priority := state.LastSchedulePriority
+				routingByKey[key] = channelSmartScheduleRouteRouting{
+					priority: &priority,
+					weight:   state.LastScheduleWeight,
+				}
 			}
 		}
 	}
@@ -114,25 +114,79 @@ func getChannelSmartScheduleRouteRouting(
 		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
 		if _, ok := participating[key]; ok {
 			// A participating ability is the authoritative current routing value.
-			// When an old database row is missing its override, the default or the
-			// last schedule value seeded above repairs it on rebuild.
-			priority := routingByKey[key].priority
-			weight := routingByKey[key].weight
+			// A scheduled value is preserved; an unscheduled route keeps its
+			// empty smart-scheduling routing until the next scheduler run.
 			if ability.Priority != nil {
 				value := *ability.Priority
-				priority = &value
-				weight = ability.Weight
+				routingByKey[key] = channelSmartScheduleRouteRouting{
+					priority: &value,
+					weight:   ability.Weight,
+				}
 			}
-			routingByKey[key] = channelSmartScheduleRouteRouting{priority: priority, weight: weight}
 			continue
 		}
 	}
 	return routingByKey, nil
 }
 
+// admitNewChannelSmartScheduleGroupsTx makes routes from newly associated
+// groups immediately eligible for scheduling without changing existing route
+// participation choices.
+func admitNewChannelSmartScheduleGroupsTx(
+	tx *gorm.DB,
+	channel *Channel,
+	previousAbilities []Ability,
+) error {
+	if !tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
+		return nil
+	}
+
+	previousGroups := make(map[string]struct{}, len(previousAbilities))
+	for _, ability := range previousAbilities {
+		previousGroups[ability.Group] = struct{}{}
+	}
+
+	var states []ChannelSmartScheduleRouteState
+	if err := lockForUpdate(tx).
+		Where("channel_id = ?", channel.Id).
+		Order("group_name ASC, model_name ASC").
+		Find(&states).Error; err != nil {
+		return err
+	}
+	existingRoutes := make(map[ChannelSmartScheduleRouteKey]struct{}, len(states))
+	for _, state := range states {
+		existingRoutes[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = struct{}{}
+	}
+
+	newStates := make([]ChannelSmartScheduleRouteState, 0)
+	for _, group := range strings.Split(channel.Group, ",") {
+		if _, existed := previousGroups[group]; existed {
+			continue
+		}
+		for _, modelName := range strings.Split(channel.Models, ",") {
+			key := channelSmartScheduleRouteKey(channel.Id, group, modelName)
+			if _, exists := existingRoutes[key]; exists {
+				continue
+			}
+			existingRoutes[key] = struct{}{}
+			newStates = append(newStates, ChannelSmartScheduleRouteState{
+				ChannelId:        channel.Id,
+				GroupName:        group,
+				ModelName:        modelName,
+				ParticipationSet: true,
+				Revision:         1,
+			})
+		}
+	}
+	if len(newStates) == 0 {
+		return nil
+	}
+	return tx.CreateInBatches(newStates, 50).Error
+}
+
 // deleteObsoleteChannelSmartScheduleRouteStates removes state belonging to
-// routes no longer exposed by the channel. A later re-added route must begin
-// as a new, explicitly configured scheduling participant.
+// routes no longer exposed by the channel. A later re-added group starts with
+// fresh scheduling state through admitNewChannelSmartScheduleGroupsTx.
 func deleteObsoleteChannelSmartScheduleRouteStates(
 	tx *gorm.DB,
 	channelId int,

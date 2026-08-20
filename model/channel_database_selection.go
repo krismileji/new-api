@@ -149,9 +149,8 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	priorities := make([]int64, 0, len(available))
 	seenPriorities := make(map[int64]struct{}, len(available))
 	for _, ability := range available {
-		priority, _ := channelSmartScheduleAbilityRouting(
-			ability,
-			channelById[ability.ChannelId],
+		priority, _ := channelRoutingForTrafficPolicy(
+			ability, channelById[ability.ChannelId], group, poolModelName, trafficPolicy,
 		)
 		if _, exists := seenPriorities[priority]; exists {
 			continue
@@ -170,9 +169,8 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	channelIds = channelIds[:0]
 	weights := make([]uint, 0, len(available))
 	for _, ability := range available {
-		priority, weight := channelSmartScheduleAbilityRouting(
-			ability,
-			channelById[ability.ChannelId],
+		priority, weight := channelRoutingForTrafficPolicy(
+			ability, channelById[ability.ChannelId], group, poolModelName, trafficPolicy,
 		)
 		if priority != targetPriority {
 			continue

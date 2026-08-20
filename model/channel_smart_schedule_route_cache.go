@@ -13,6 +13,9 @@ type channelSmartScheduleCachedRoute struct {
 	channelId                       int
 	priority                        int64
 	weight                          uint
+	officialPriority                int64
+	officialWeight                  uint
+	officialInherited               bool
 	participates                    bool
 	trafficPausedUntil              int64
 	temporaryTrafficKind            string
@@ -21,6 +24,27 @@ type channelSmartScheduleCachedRoute struct {
 	stabilitySince                  int64
 	explorationMaxPromptTokens      int
 	stabilityReleaseMaxPromptTokens int
+}
+
+func channelSmartScheduleCachedRouteRouting(
+	route channelSmartScheduleCachedRoute,
+	managedPool bool,
+) (int64, uint) {
+	if managedPool {
+		return route.priority, route.weight
+	}
+	if route.officialInherited {
+		if channel := channelsIDM[route.channelId]; channel != nil {
+			return channel.GetPriority(), uint(channel.GetWeight())
+		}
+	}
+	if route.officialPriority == 0 && route.officialWeight == 0 &&
+		(route.priority != 0 || route.weight != 0) {
+		// Keep hand-built/legacy cache entries usable until the next full cache
+		// rebuild populates the separate official routing fields.
+		return route.priority, route.weight
+	}
+	return route.officialPriority, route.officialWeight
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
@@ -177,14 +201,15 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 		}
 		pool := channelSmartScheduleRoutePool{group: ability.Group, model: ability.Model}
 		state := statesByPool[pool][ability.ChannelId]
-		priority, weight := channelSmartScheduleAbilityRouting(
-			*ability,
-			channel,
-		)
+		priority, weight := channelSmartScheduleAbilityRouting(*ability)
+		officialPriority, officialWeight := channelAbilityRouting(*ability, channel)
 		modelRoutes[ability.Model] = append(modelRoutes[ability.Model], channelSmartScheduleCachedRoute{
 			channelId:             ability.ChannelId,
 			priority:              priority,
 			weight:                weight,
+			officialPriority:     officialPriority,
+			officialWeight:       officialWeight,
+			officialInherited:   ability.Priority == nil,
 			participates:          state.Participates(),
 			temporaryTrafficSince: state.TemporaryTrafficSince,
 			stabilitySince:        state.StabilitySince,
@@ -210,8 +235,9 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 	return cache
 }
 
-// getRandomSatisfiedChannelByAbility uses the route-specific priority and
-// weight stored on Ability. Caller must hold channelSyncLock for reading.
+// getRandomSatisfiedChannelByAbility uses smart-scheduling routing for managed
+// pools and official channel routing for pools outside the smart-scheduling
+// policy. Caller must hold channelSyncLock for reading.
 func getRandomSatisfiedChannelByAbility(group string, modelName string, retry int, requestPath string, options ChannelSelectionOptions) (*Channel, bool, error) {
 	return getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		group, modelName, retry, requestPath, options, currentChannelSmartScheduleTrafficPolicy(),
@@ -234,12 +260,14 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		}
 		return nil, false, nil
 	}
-	routes := channelSmartScheduleRouteCache[group][modelName]
-	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, modelName, trafficPolicy, retry > 0)
+	selectionModelName := modelName
+	routes := channelSmartScheduleRouteCache[group][selectionModelName]
+	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, selectionModelName, trafficPolicy, retry > 0)
 	routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	if len(routes) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
-		routes = channelSmartScheduleRouteCache[group][normalizedModel]
+		selectionModelName = normalizedModel
+		routes = channelSmartScheduleRouteCache[group][selectionModelName]
 		routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, normalizedModel, trafficPolicy, retry > 0)
 		routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
 	}
@@ -247,14 +275,16 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		return nil, true, nil
 	}
 
+	managedPool := trafficPolicy != nil && trafficPolicy.managesPool(group, selectionModelName)
 	priorities := make([]int64, 0)
 	seenPriorities := make(map[int64]struct{})
 	for _, route := range routes {
-		if _, exists := seenPriorities[route.priority]; exists {
+		priority, _ := channelSmartScheduleCachedRouteRouting(route, managedPool)
+		if _, exists := seenPriorities[priority]; exists {
 			continue
 		}
-		seenPriorities[route.priority] = struct{}{}
-		priorities = append(priorities, route.priority)
+		seenPriorities[priority] = struct{}{}
+		priorities = append(priorities, priority)
 	}
 	sort.Slice(priorities, func(i int, j int) bool { return priorities[i] > priorities[j] })
 	if retry >= len(priorities) {
@@ -263,7 +293,8 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	targetPriority := priorities[retry]
 	targetRoutes := make([]channelSmartScheduleCachedRoute, 0, len(routes))
 	for _, route := range routes {
-		if route.priority != targetPriority {
+		priority, _ := channelSmartScheduleCachedRouteRouting(route, managedPool)
+		if priority != targetPriority {
 			continue
 		}
 		targetRoutes = append(targetRoutes, route)
@@ -275,7 +306,7 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	weights := make([]uint, len(targetRoutes))
 	for index, route := range targetRoutes {
 		channelIDs[index] = route.channelId
-		weights[index] = route.weight
+		_, weights[index] = channelSmartScheduleCachedRouteRouting(route, managedPool)
 	}
 	channelId, selectionErr := chooseChannelByWeights(channelIDs, weights)
 	if selectionErr != nil {
