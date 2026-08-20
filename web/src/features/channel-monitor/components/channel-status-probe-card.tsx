@@ -25,6 +25,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { memo } from 'react'
 
+import { textColorMap } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
@@ -102,6 +103,11 @@ function formatDuration(value: number | null) {
   if (value == null) return '-'
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`
   return `${Math.round(value)} ms`
+}
+
+function firstTokenColorClass(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return undefined
+  return textColorMap[value < 10_000 ? 'success' : 'warning']
 }
 
 function formatTPS(value: number | null) {
@@ -398,7 +404,12 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
           <dl className='grid w-full grid-cols-2 gap-x-4 gap-y-2'>
             <div className='min-w-0'>
               <dt className='text-muted-foreground text-xs'>最近首字</dt>
-              <dd className='mt-0.5 truncate font-mono text-base font-semibold tabular-nums'>
+              <dd
+                className={cn(
+                  'mt-0.5 truncate font-mono text-base font-semibold tabular-nums',
+                  firstTokenColorClass(latest?.first_token_ms ?? null)
+                )}
+              >
                 {formatDuration(latest?.first_token_ms ?? null)}
               </dd>
             </div>
@@ -424,7 +435,12 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
               <dt className='text-muted-foreground text-xs'>
                 {displayRangeLabelValue}平均首字
               </dt>
-              <dd className='mt-0.5 truncate font-mono text-base font-semibold tabular-nums'>
+              <dd
+                className={cn(
+                  'mt-0.5 truncate font-mono text-base font-semibold tabular-nums',
+                  firstTokenColorClass(props.channel.avg_first_token_ms)
+                )}
+              >
                 {formatDuration(props.channel.avg_first_token_ms)}
               </dd>
             </div>

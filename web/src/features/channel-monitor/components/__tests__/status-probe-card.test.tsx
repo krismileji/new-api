@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { areChannelStatusProbeCardPropsEqual } from '../../lib/status-probe-card-render'
 import type { ChannelStatusProbeChannel } from '../../types'
@@ -270,6 +270,45 @@ describe('状态探测卡片', () => {
     assert.match(html, />42\.5</)
     assert.doesNotMatch(html, /总响应/)
     assert.doesNotMatch(html, />1\.25 s</)
+  })
+
+  test('首字小于10秒显示绿色，达到10秒显示黄色', () => {
+    const channel = createChannel()
+    if (!channel.latest) throw new Error('测试渠道缺少最近探测结果')
+    channel.latest.first_token_ms = 9_999
+    channel.avg_first_token_ms = 9_999
+
+    const greenHtml = renderToStaticMarkup(
+      <ChannelStatusProbeCard
+        channel={channel}
+        serverNow={1_754_000_000}
+        actionPending={false}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onRun={noop}
+        onToggleEnabled={noop}
+      />
+    )
+
+    assert.equal((greenHtml.match(/text-success/g) ?? []).length, 2)
+
+    channel.latest.first_token_ms = 10_000
+    channel.avg_first_token_ms = 10_000
+
+    const html = renderToStaticMarkup(
+      <ChannelStatusProbeCard
+        channel={channel}
+        serverNow={1_754_000_000}
+        actionPending={false}
+        onOpenHistory={noop}
+        onOpenConfig={noop}
+        onRun={noop}
+        onToggleEnabled={noop}
+      />
+    )
+
+    assert.equal((html.match(/text-warning/g) ?? []).length, 2)
+    assert.doesNotMatch(html, /text-destructive[^"]*[^>]*>10\.00 s</)
   })
 
   test('成本字段增加后状态列表受限且下次执行信息保留独立底栏', () => {
