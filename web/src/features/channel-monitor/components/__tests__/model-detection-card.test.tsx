@@ -450,7 +450,10 @@ describe('模型检测渠道卡片', () => {
       domWindow.document.body.innerHTML,
       /aria-label=".*近 6 分钟模型检测结果"/
     )
-    assert.match(domWindow.document.body.innerHTML, /正常 1 · 关注 0 · 异常 0/)
+    assert.match(
+      domWindow.document.body.innerHTML,
+      /检测 1 · 正常 1 · 关注 0 · 异常 0 · 执行失败 0 · 进行中 0 · 跳过 0/
+    )
   })
 
   test('统一定时检测已开启但时间格未执行时使用灰色状态', () => {

@@ -218,6 +218,10 @@ describe('状态探测卡片', () => {
     assert.match(html, /aria-label="配置状态探测"/)
     assert.match(html, /aria-label="打开 低倍率渠道 状态探测记录"/)
     assert.match(html, /aria-label="不计入智能调度样本"/)
+    assert.match(
+      html,
+      /上游失败 1 · 限流 0 · 本地失败 0 · 跳过或取消 0 · 模型 gpt-4\.1-mini/
+    )
     assert.match(html, />不计入样本</)
   })
 

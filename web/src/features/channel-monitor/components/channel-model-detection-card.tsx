@@ -52,7 +52,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { formatChannelMonitorCost } from '../lib/format'
@@ -66,6 +65,7 @@ import {
   formatChannelModelDetectionRelativeTime,
   isKnownChannelModelDetectionOutcome,
 } from '../lib/model-detection'
+import { formatChannelMonitorStatusWindowRange } from '../lib/status-window'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionDetectorState,
@@ -76,6 +76,11 @@ import type {
   ChannelModelDetectionResultBucket,
   ChannelModelDetectionTargetSummary,
 } from '../types-model-detection'
+import {
+  ChannelMonitorStatusWindow,
+  ChannelMonitorStatusWindowDetails,
+  type ChannelMonitorStatusWindowPresentation,
+} from './channel-monitor-status-window'
 
 type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['variant']>
 
@@ -280,21 +285,97 @@ function outcomePresentation(target: ChannelModelDetectionTargetSummary) {
   return { label, icon: CheckmarkCircle02Icon, tone: 'text-success' }
 }
 
-function modelDetectionBucketTooltip(
+function modelDetectionBucketPresentation(
   bucket: ChannelModelDetectionResultBucket,
   displayUnit: ChannelModelDetectionDisplayUnit,
   automaticDetectionEnabled: boolean
-) {
-  const timestamp = formatTimestampToDate(bucket.started_at)
-  let time = timestamp.slice(11, 16)
-  if (displayUnit === 'day') time = timestamp.slice(0, 10)
-  if (displayUnit === 'hour') time = timestamp.slice(5, 13)
+): ChannelMonitorStatusWindowPresentation & {
+  status: string
+  statusVariant: BadgeVariant
+  description?: string
+} {
+  const timeRange = formatChannelMonitorStatusWindowRange(
+    bucket.started_at,
+    displayUnit
+  )
   if (!bucket.result) {
-    return automaticDetectionEnabled
-      ? `${time} · 定时检测已开启但未执行`
-      : `${time} · 定时检测未开启`
+    if (automaticDetectionEnabled) {
+      return {
+        ariaLabel: `${timeRange} · 定时检测已开启但未执行`,
+        className: 'bg-muted-foreground/35',
+        state: 'not-executed',
+        status: '未执行',
+        statusVariant: 'secondary',
+        description: '定时检测已开启，但本时间格内没有检测任务。',
+      }
+    }
+    return {
+      ariaLabel: `${timeRange} · 定时检测未开启`,
+      className: 'bg-muted/60',
+      state: 'not-scheduled',
+      status: '未安排',
+      statusVariant: 'outline',
+      description: '该渠道当前未参加统一定时检测。',
+    }
   }
-  return `${time} · 正常 ${bucket.success} · 关注 ${bucket.attention} · 异常 ${bucket.unhealthy} · 执行失败 ${bucket.failed} · 进行中 ${bucket.running} · 跳过 ${bucket.inactive}`
+  const status = {
+    success: '正常',
+    attention: '需关注',
+    unhealthy: '异常',
+    failed: '执行失败',
+    running: '进行中',
+    inactive: '跳过',
+  }[bucket.result]
+  let statusVariant: BadgeVariant = 'outline'
+  if (bucket.result === 'success' || bucket.result === 'running') {
+    statusVariant = 'secondary'
+  } else if (bucket.result === 'unhealthy') {
+    statusVariant = 'destructive'
+  } else if (bucket.result === 'attention' || bucket.result === 'failed') {
+    statusVariant = 'warning'
+  }
+  return {
+    ariaLabel: `${timeRange} · 检测 ${bucket.detection_count} · 正常 ${bucket.success} · 关注 ${bucket.attention} · 异常 ${bucket.unhealthy} · 执行失败 ${bucket.failed} · 进行中 ${bucket.running} · 跳过 ${bucket.inactive}`,
+    className: RESULT_BUCKET_COLOR[bucket.result],
+    state: 'executed',
+    status,
+    statusVariant,
+  }
+}
+
+function ModelDetectionBucketDetails(props: {
+  bucket: ChannelModelDetectionResultBucket
+  displayUnit: ChannelModelDetectionDisplayUnit
+  automaticDetectionEnabled: boolean
+}) {
+  const presentation = modelDetectionBucketPresentation(
+    props.bucket,
+    props.displayUnit,
+    props.automaticDetectionEnabled
+  )
+  const details = props.bucket.result
+    ? [
+        { label: '检测总数', value: props.bucket.detection_count },
+        { label: '正常', value: props.bucket.success },
+        { label: '需关注', value: props.bucket.attention },
+        { label: '异常', value: props.bucket.unhealthy },
+        { label: '执行失败', value: props.bucket.failed },
+        { label: '进行中', value: props.bucket.running },
+        { label: '跳过', value: props.bucket.inactive },
+      ]
+    : undefined
+  return (
+    <ChannelMonitorStatusWindowDetails
+      timeRange={formatChannelMonitorStatusWindowRange(
+        props.bucket.started_at,
+        props.displayUnit
+      )}
+      status={presentation.status}
+      statusVariant={presentation.statusVariant}
+      description={presentation.description}
+      details={details}
+    />
+  )
 }
 
 function ModelDetectionTarget(props: {
@@ -351,44 +432,31 @@ function ModelDetectionTarget(props: {
           <span>{displayRange}检测</span>
           <span className='tabular-nums'>{recentWindow.length} 个时间格</span>
         </div>
-        <div
-          className='grid h-2.5 min-w-0 gap-px overflow-hidden rounded-sm'
-          style={{
-            gridTemplateColumns: `repeat(${recentWindow.length}, minmax(0, 1fr))`,
+        <ChannelMonitorStatusWindow
+          buckets={recentWindow}
+          bucketSlot='model-detection-bucket'
+          bucketStateDataAttribute='data-model-detection-bucket-state'
+          gridProps={{
+            'aria-label': `${props.target.request_model} ${displayRange}模型检测结果`,
+            'data-window-buckets': recentWindow.length,
+            'data-model-detection-window-value': props.displayValue,
+            'data-model-detection-window-unit': props.displayUnit,
           }}
-          aria-label={`${props.target.request_model} ${displayRange}模型检测结果`}
-          data-window-buckets={recentWindow.length}
-          data-model-detection-window-value={props.displayValue}
-          data-model-detection-window-unit={props.displayUnit}
-        >
-          {recentWindow.map((bucket) => {
-            const tooltip = modelDetectionBucketTooltip(
+          getBucketPresentation={(bucket) =>
+            modelDetectionBucketPresentation(
               bucket,
               props.displayUnit,
               props.automaticDetectionEnabled
             )
-            let bucketState = 'executed'
-            let bucketColor = bucket.result
-              ? RESULT_BUCKET_COLOR[bucket.result]
-              : 'bg-muted/60'
-            if (!bucket.result && props.automaticDetectionEnabled) {
-              bucketState = 'not-executed'
-              bucketColor = 'bg-muted-foreground/35'
-            } else if (!bucket.result) {
-              bucketState = 'not-scheduled'
-            }
-            return (
-              <span
-                key={bucket.started_at}
-                className={cn('h-2.5 min-w-0', bucketColor)}
-                title={tooltip}
-                aria-label={tooltip}
-                data-slot='model-detection-bucket'
-                data-model-detection-bucket-state={bucketState}
-              />
-            )
-          })}
-        </div>
+          }
+          renderDetails={(bucket) => (
+            <ModelDetectionBucketDetails
+              bucket={bucket}
+              displayUnit={props.displayUnit}
+              automaticDetectionEnabled={props.automaticDetectionEnabled}
+            />
+          )}
+        />
       </div>
 
       {progress && (
@@ -672,9 +740,9 @@ export const ChannelModelDetectionCard = memo(
               </Empty>
             </div>
           ) : (
-            <button
-              type='button'
-              className='focus-visible:ring-ring/50 flex min-h-0 w-full min-w-0 flex-col gap-3 px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset'
+            <div
+              role='group'
+              className='flex min-h-0 w-full min-w-0 cursor-pointer flex-col gap-3 px-3 py-3 text-left'
               onClick={() => props.onOpenHistory(props.channel)}
               aria-label={`打开 ${props.channel.name} 模型检测记录`}
             >
@@ -702,7 +770,7 @@ export const ChannelModelDetectionCard = memo(
                   ))}
                 </div>
               </div>
-            </button>
+            </div>
           )}
         </CardContent>
 

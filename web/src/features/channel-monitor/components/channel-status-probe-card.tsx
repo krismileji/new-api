@@ -43,6 +43,7 @@ import {
   formatChannelStatusProbeNextRun,
   type ChannelStatusProbeCardRenderProps,
 } from '../lib/status-probe-card-render'
+import { formatChannelMonitorStatusWindowRange } from '../lib/status-window'
 import type {
   ChannelStatusProbeDisplayUnit,
   ChannelStatusProbeHealth,
@@ -50,6 +51,11 @@ import type {
   ChannelStatusProbeModelStatus,
   ChannelStatusProbeResult,
 } from '../types'
+import {
+  ChannelMonitorStatusWindow,
+  ChannelMonitorStatusWindowDetails,
+  type ChannelMonitorStatusWindowPresentation,
+} from './channel-monitor-status-window'
 
 const HEALTH_PRESENTATION: Record<
   ChannelStatusProbeHealth,
@@ -119,29 +125,95 @@ function displayRangeLabel(value: number, unit: ChannelStatusProbeDisplayUnit) {
   return `近 ${value} ${DISPLAY_UNIT_LABEL[unit]}`
 }
 
-function bucketTimeLabel(
-  bucket: ChannelStatusProbeBucket,
-  unit: ChannelStatusProbeDisplayUnit
-) {
-  const timestamp = formatTimestampToDate(bucket.started_at)
-  if (unit === 'day') return timestamp.slice(0, 10)
-  if (unit === 'hour') return timestamp.slice(5, 13)
-  return timestamp.slice(11, 16)
-}
-
-function bucketTooltip(
+function statusProbeBucketPresentation(
   bucket: ChannelStatusProbeBucket,
   unit: ChannelStatusProbeDisplayUnit,
   automaticProbeEnabled: boolean
-) {
-  const time = bucketTimeLabel(bucket, unit)
+): ChannelMonitorStatusWindowPresentation & {
+  status: string
+  statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline'
+  description?: string
+} {
+  const timeRange = formatChannelMonitorStatusWindowRange(
+    bucket.started_at,
+    unit
+  )
   const models = bucket.models?.join('、') || '无'
   if (!bucket.result) {
-    return automaticProbeEnabled
-      ? `${time} · 周期探测已开启但未执行`
-      : `${time} · 周期探测未开启`
+    if (automaticProbeEnabled) {
+      return {
+        ariaLabel: `${timeRange} · 周期探测已开启但未执行`,
+        className: 'bg-muted-foreground/35',
+        state: 'not-executed',
+        status: '未执行',
+        statusVariant: 'secondary',
+        description: '周期探测已开启，但本时间格内没有执行。',
+      }
+    }
+    return {
+      ariaLabel: `${timeRange} · 周期探测未开启`,
+      className: 'bg-muted/60',
+      state: 'not-scheduled',
+      status: '未安排',
+      statusVariant: 'outline',
+      description: '该渠道当前未开启周期探测。',
+    }
   }
-  return `${time} · 成功 ${bucket.success} · 失败 ${bucket.upstream_failure + bucket.local_failure} · 限流 ${bucket.rate_limited} · 跳过 ${bucket.skipped + bucket.canceled} · 模型 ${models}`
+  let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
+    'outline'
+  if (bucket.result === 'success') statusVariant = 'secondary'
+  else if (bucket.result === 'upstream_failure') statusVariant = 'destructive'
+  else if (
+    bucket.result === 'rate_limited' ||
+    bucket.result === 'local_failure'
+  ) {
+    statusVariant = 'warning'
+  }
+  return {
+    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 跳过或取消 ${bucket.skipped + bucket.canceled} · 模型 ${models}`,
+    className: BUCKET_COLOR[bucket.result],
+    state: 'executed',
+    status: RESULT_LABEL[bucket.result],
+    statusVariant,
+  }
+}
+
+function StatusProbeBucketDetails(props: {
+  bucket: ChannelStatusProbeBucket
+  unit: ChannelStatusProbeDisplayUnit
+  automaticProbeEnabled: boolean
+}) {
+  const presentation = statusProbeBucketPresentation(
+    props.bucket,
+    props.unit,
+    props.automaticProbeEnabled
+  )
+  const details = props.bucket.result
+    ? [
+        { label: '成功', value: props.bucket.success },
+        { label: '上游失败', value: props.bucket.upstream_failure },
+        { label: '限流', value: props.bucket.rate_limited },
+        { label: '本地失败', value: props.bucket.local_failure },
+        {
+          label: '跳过 / 取消',
+          value: props.bucket.skipped + props.bucket.canceled,
+        },
+      ]
+    : undefined
+  return (
+    <ChannelMonitorStatusWindowDetails
+      timeRange={formatChannelMonitorStatusWindowRange(
+        props.bucket.started_at,
+        props.unit
+      )}
+      status={presentation.status}
+      statusVariant={presentation.statusVariant}
+      description={presentation.description}
+      details={details}
+      footerLabel={props.bucket.result ? '涉及模型' : undefined}
+      footerValue={props.bucket.models?.join('、')}
+    />
+  )
 }
 
 const ChannelStatusProbeModelStatuses = memo(
@@ -210,44 +282,31 @@ const ChannelStatusProbeModelStatuses = memo(
                           : modelPresentation.label}
                       </span>
                     </div>
-                    <div
-                      className='grid h-2.5 min-w-0 gap-px overflow-hidden rounded-sm'
-                      style={{
-                        gridTemplateColumns: `repeat(${modelStatus.recent_window.length}, minmax(0, 1fr))`,
+                    <ChannelMonitorStatusWindow
+                      buckets={modelStatus.recent_window}
+                      bucketSlot='status-probe-bucket'
+                      bucketStateDataAttribute='data-probe-bucket-state'
+                      gridProps={{
+                        'aria-label': `${props.channelName} ${modelStatus.model_name} ${props.displayRangeLabel}探测结果`,
+                        'data-window-buckets': modelStatus.recent_window.length,
+                        'data-status-window-value': props.displayValue,
+                        'data-status-window-unit': props.displayUnit,
                       }}
-                      aria-label={`${props.channelName} ${modelStatus.model_name} ${props.displayRangeLabel}探测结果`}
-                      data-window-buckets={modelStatus.recent_window.length}
-                      data-status-window-value={props.displayValue}
-                      data-status-window-unit={props.displayUnit}
-                    >
-                      {modelStatus.recent_window.map((bucket) => {
-                        const tooltip = bucketTooltip(
+                      getBucketPresentation={(bucket) =>
+                        statusProbeBucketPresentation(
                           bucket,
                           props.displayUnit,
                           props.automaticProbeEnabled
                         )
-                        let bucketState = 'executed'
-                        let bucketColor = bucket.result
-                          ? BUCKET_COLOR[bucket.result]
-                          : 'bg-muted/60'
-                        if (!bucket.result && props.automaticProbeEnabled) {
-                          bucketState = 'not-executed'
-                          bucketColor = 'bg-muted-foreground/35'
-                        } else if (!bucket.result) {
-                          bucketState = 'not-scheduled'
-                        }
-                        return (
-                          <span
-                            key={bucket.started_at}
-                            className={cn('h-2.5 min-w-0', bucketColor)}
-                            title={tooltip}
-                            aria-label={tooltip}
-                            data-slot='status-probe-bucket'
-                            data-probe-bucket-state={bucketState}
-                          />
-                        )
-                      })}
-                    </div>
+                      }
+                      renderDetails={(bucket) => (
+                        <StatusProbeBucketDetails
+                          bucket={bucket}
+                          unit={props.displayUnit}
+                          automaticProbeEnabled={props.automaticProbeEnabled}
+                        />
+                      )}
+                    />
                   </div>
                 )
               })}
@@ -388,9 +447,9 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
       </CardHeader>
 
       <CardContent className='flex min-h-0 flex-1 overflow-hidden px-0 py-0'>
-        <button
-          type='button'
-          className='focus-visible:ring-ring/50 flex min-h-0 w-full flex-col gap-3 overflow-hidden px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset'
+        <div
+          role='group'
+          className='flex min-h-0 w-full cursor-pointer flex-col gap-3 overflow-hidden px-3 py-3 text-left'
           onClick={() => props.onOpenHistory(props.channel.id)}
           aria-label={`打开 ${props.channel.name} 状态探测记录`}
         >
@@ -485,7 +544,7 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             displayRangeLabel={displayRangeLabelValue}
             automaticProbeEnabled={Boolean(config?.enabled)}
           />
-        </button>
+        </div>
       </CardContent>
       <CardFooter className='min-h-11 justify-between gap-2 px-3 py-2 text-[11px]'>
         <Badge
