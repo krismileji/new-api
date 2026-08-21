@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
+
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
@@ -364,6 +366,12 @@ export function sortChannelModelDetectionChannels(
   sort: ChannelModelDetectionFilters['sort']
 ) {
   return [...channels].sort((left, right) => {
+    const channelStatusComparison = compareChannelStatusesEnabledFirst(
+      left.channel_status,
+      right.channel_status
+    )
+    if (channelStatusComparison !== 0) return channelStatusComparison
+
     if (sort === 'ratio_asc' || sort === 'ratio_desc') {
       const leftRatio = Number.isFinite(left.cost_ratio)
         ? left.cost_ratio

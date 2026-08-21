@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
+
 import type {
   ChannelStatusProbeChannel,
   ChannelStatusProbeHealth,
@@ -63,6 +65,12 @@ export function sortChannelStatusProbeChannels(
   mode: ChannelStatusProbeSortMode
 ) {
   return [...channels].sort((first, second) => {
+    const statusComparison = compareChannelStatusesEnabledFirst(
+      first.channel_status,
+      second.channel_status
+    )
+    if (statusComparison !== 0) return statusComparison
+
     let compared = 0
     switch (mode) {
       case 'ratio_asc':

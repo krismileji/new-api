@@ -20,6 +20,8 @@ import assert from 'node:assert/strict'
 
 import { describe, test } from 'vitest'
 
+import { CHANNEL_STATUS } from '@/features/channels/constants'
+
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
@@ -57,12 +59,15 @@ function createCost(overrides: Partial<ChannelModelDetectionCost> = {}) {
   } satisfies ChannelModelDetectionCost
 }
 
-function createChannel(id: number): ChannelModelDetectionChannel {
+function createChannel(
+  id: number,
+  channelStatus: number = CHANNEL_STATUS.ENABLED
+): ChannelModelDetectionChannel {
   return {
     id,
     name: id === 1 ? '主渠道' : '备用渠道',
     type: 1,
-    channel_status: 1,
+    channel_status: channelStatus,
     remark: id === 1 ? '华东主线路' : '华北备用',
     groups: id === 1 ? ['default'] : ['vip'],
     cost_ratio: null,
@@ -303,5 +308,30 @@ describe('模型检测展示工具', () => {
       ),
       [4, 1, 2, 3, 5, 6]
     )
+  })
+
+  test('所有排序模式都将启用渠道置于停用渠道之前', () => {
+    const disabled = {
+      ...createChannel(1, CHANNEL_STATUS.MANUAL_DISABLED),
+      cost_ratio: 0.5,
+    }
+    const enabled = { ...createChannel(2), cost_ratio: 1.5 }
+    const channels = [disabled, enabled]
+
+    for (const sort of [
+      'ratio_asc',
+      'ratio_desc',
+      'latest_desc',
+      'latest_asc',
+      'issue_first',
+      'schedule_first',
+      'channel_id_asc',
+    ] as const) {
+      assert.equal(
+        sortChannelModelDetectionChannels(channels, sort)[0]?.id,
+        2,
+        sort
+      )
+    }
   })
 })

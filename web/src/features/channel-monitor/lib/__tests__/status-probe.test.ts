@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
+
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 
 import type { ChannelStatusProbeChannel } from '../../types'
 import {
@@ -31,13 +34,14 @@ import {
 function createChannel(
   id: number,
   name: string,
-  costRatio: number | null
+  costRatio: number | null,
+  channelStatus: number = CHANNEL_STATUS.ENABLED
 ): ChannelStatusProbeChannel {
   return {
     id,
     name,
     type: 1,
-    channel_status: 1,
+    channel_status: channelStatus,
     remark: '',
     groups: ['default'],
     cost_ratio: costRatio,
@@ -118,6 +122,24 @@ function withProbeData(
 }
 
 describe('状态探测排序', () => {
+  test('所有排序模式都将启用渠道置于停用渠道之前', () => {
+    const channels = [
+      createChannel(1, '停用低倍率', 0.5, CHANNEL_STATUS.MANUAL_DISABLED),
+      createChannel(2, '启用高倍率', 1.5, CHANNEL_STATUS.ENABLED),
+    ]
+
+    for (const mode of [
+      'ratio_asc',
+      'ratio_desc',
+      'first_token_asc',
+      'first_token_desc',
+      'tps_asc',
+      'tps_desc',
+    ] as const) {
+      assert.equal(sortChannelStatusProbeChannels(channels, mode)[0]?.id, 2)
+    }
+  })
+
   test('默认按成本倍率升序并把缺失倍率放在最后', () => {
     assert.equal(DEFAULT_CHANNEL_STATUS_PROBE_SORT, 'ratio_asc')
     const channels = [
