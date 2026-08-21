@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
 
 import type { AxiosAdapter, AxiosRequestConfig } from 'axios'
+import { test } from 'vitest'
 
 import { api } from '@/lib/api'
 
@@ -72,8 +72,12 @@ test('saves monitoring groups in the configured order with revision control', as
     await updateChannelGroupMonitorSettings({
       enabled: false,
       groups: [
-        { group_name: 'vip', probe_model: 'gpt-4.1' },
-        { group_name: 'default', probe_model: 'gpt-4.1-mini' },
+        { group_name: 'vip', probe_model: 'gpt-4.1', display_initial: 'V' },
+        {
+          group_name: 'default',
+          probe_model: 'gpt-4.1-mini',
+          display_initial: '',
+        },
       ],
       intervalSeconds: 300,
       displayValue: 12,
@@ -84,13 +88,20 @@ test('saves monitoring groups in the configured order with revision control', as
     api.defaults.adapter = originalAdapter
   }
 
-  assert.equal(requestConfig?.url, '/api/channel_monitor/group_monitor/settings')
+  assert.equal(
+    requestConfig?.url,
+    '/api/channel_monitor/group_monitor/settings'
+  )
   assert.equal(requestConfig?.method, 'put')
   assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
     enabled: false,
     groups: [
-      { group_name: 'vip', probe_model: 'gpt-4.1' },
-      { group_name: 'default', probe_model: 'gpt-4.1-mini' },
+      { group_name: 'vip', probe_model: 'gpt-4.1', display_initial: 'V' },
+      {
+        group_name: 'default',
+        probe_model: 'gpt-4.1-mini',
+        display_initial: '',
+      },
     ],
     interval_seconds: 300,
     display_value: 12,

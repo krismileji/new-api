@@ -605,11 +605,13 @@ func TestChannelStatusProbeOverviewReturnsOneStatusWindowPerConfiguredModelAndWi
 	bucketsA, err := common.Marshal([]model.ChannelStatusProbeBucket{{
 		StartedAt: minute, Success: 1, Models: []string{"model-a"},
 		FirstTokenTotalMs: 100, FirstTokenSampleCount: 1, TPSTotal: 20, TPSSampleCount: 1,
+		ResponseTimeTotalMs: 900, ResponseTimeSampleCount: 1,
 	}})
 	require.NoError(t, err)
 	bucketsB, err := common.Marshal([]model.ChannelStatusProbeBucket{{
 		StartedAt: minute, Success: 1, UpstreamFailure: 1, Models: []string{"model-b"},
 		FirstTokenTotalMs: 300, FirstTokenSampleCount: 1, TPSTotal: 40, TPSSampleCount: 1,
+		ResponseTimeTotalMs: 1_500, ResponseTimeSampleCount: 1,
 	}})
 	require.NoError(t, err)
 	firstTokenA := 100.0
@@ -645,11 +647,14 @@ func TestChannelStatusProbeOverviewReturnsOneStatusWindowPerConfiguredModelAndWi
 	assert.Equal(t, model.ChannelStatusProbeResultSuccess, item.ModelStatuses[0].RecentWindow[14].Result)
 	require.NotNil(t, item.ModelStatuses[0].AvgFirstTokenMs)
 	assert.InDelta(t, 100, *item.ModelStatuses[0].AvgFirstTokenMs, 0.001)
+	assert.InDelta(t, 900, item.ModelStatuses[0].RecentWindow[14].ResponseTimeTotalMs, 0.001)
+	assert.EqualValues(t, 1, item.ModelStatuses[0].RecentWindow[14].ResponseTimeSampleCount)
 	assert.Equal(t, "model-b", item.ModelStatuses[1].ModelName)
 	require.Len(t, item.ModelStatuses[1].RecentWindow, 15)
 	assert.Equal(t, model.ChannelStatusProbeResultUpstreamFailure, item.ModelStatuses[1].RecentWindow[14].Result)
 	require.NotNil(t, item.ModelStatuses[1].AvgTPS)
 	assert.InDelta(t, 40, *item.ModelStatuses[1].AvgTPS, 0.001)
+	assert.InDelta(t, 1_500, item.ModelStatuses[1].RecentWindow[14].ResponseTimeTotalMs, 0.001)
 	require.NotNil(t, item.AvgFirstTokenMs)
 	assert.InDelta(t, 200, *item.AvgFirstTokenMs, 0.001)
 	require.NotNil(t, item.AvgTPS)

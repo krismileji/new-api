@@ -37,21 +37,43 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  ChannelMonitorStatusWindow,
+  ChannelMonitorStatusWindowDetails,
+  type ChannelMonitorStatusWindowPresentation,
+} from '@/features/channel-monitor/components/channel-monitor-status-window'
+import { formatChannelMonitorStatusWindowRange } from '@/features/channel-monitor/lib/status-window'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { getPricingGroupMonitor } from './api'
-import type { ChannelGroupMonitorStatus, PricingGroupMonitor } from './types'
+import type {
+  ChannelGroupMonitorBucket,
+  ChannelGroupMonitorStatus,
+  PricingGroupMonitor,
+} from './types'
 
 const STATUS_PRESENTATION: Record<
   ChannelGroupMonitorStatus,
   { label: string; dot: string; badge: 'secondary' | 'warning' | 'destructive' }
 > = {
-  unconfigured: { label: '未配置', dot: 'bg-muted-foreground/60', badge: 'secondary' },
-  paused: { label: '已停用', dot: 'bg-muted-foreground/60', badge: 'secondary' },
+  unconfigured: {
+    label: '未配置',
+    dot: 'bg-muted-foreground/60',
+    badge: 'secondary',
+  },
+  paused: {
+    label: '已停用',
+    dot: 'bg-muted-foreground/60',
+    badge: 'secondary',
+  },
   pending: { label: '待检测', dot: 'bg-primary', badge: 'secondary' },
   healthy: { label: '正常', dot: 'bg-success', badge: 'secondary' },
-  unavailable: { label: '无可用路由', dot: 'bg-destructive', badge: 'destructive' },
+  unavailable: {
+    label: '无可用路由',
+    dot: 'bg-destructive',
+    badge: 'destructive',
+  },
   unhealthy: { label: '异常', dot: 'bg-destructive', badge: 'destructive' },
   rate_limited: { label: '波动', dot: 'bg-warning', badge: 'warning' },
   stale: { label: '数据过期', dot: 'bg-warning', badge: 'warning' },
@@ -72,6 +94,124 @@ function formatLatency(value: number | null): string {
 function formatRate(value: number | null): string {
   if (value == null) return '--'
   return `${value.toFixed(1)}%`
+}
+
+const BUCKET_RESULT_LABEL: Record<
+  Exclude<ChannelGroupMonitorBucket['result'], ''>,
+  string
+> = {
+  success: '成功',
+  upstream_failure: '上游失败',
+  rate_limited: '限流',
+  local_failure: '本地失败',
+  unavailable: '无可用路由',
+  skipped: '跳过',
+}
+
+const BUCKET_RESULT_COLOR: Record<
+  Exclude<ChannelGroupMonitorBucket['result'], ''>,
+  string
+> = {
+  success: 'bg-success',
+  upstream_failure: 'bg-destructive',
+  rate_limited: 'bg-warning',
+  local_failure: 'bg-warning/70',
+  unavailable: 'bg-destructive/70',
+  skipped: 'bg-muted-foreground/50',
+}
+
+function groupMonitorBucketPresentation(
+  bucket: ChannelGroupMonitorBucket,
+  displayUnit: PricingGroupMonitor['display_unit'],
+  enabled: boolean
+): ChannelMonitorStatusWindowPresentation & {
+  status: string
+  statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline'
+  description?: string
+} {
+  const timeRange = formatChannelMonitorStatusWindowRange(
+    bucket.started_at,
+    displayUnit
+  )
+  if (!bucket.result) {
+    return {
+      ariaLabel: `${timeRange} · ${enabled ? '已开启但未执行' : '未安排探测'}`,
+      className: enabled ? 'bg-muted-foreground/35' : 'bg-muted/60',
+      state: enabled ? 'not-executed' : 'not-scheduled',
+      status: enabled ? '未执行' : '未安排',
+      statusVariant: enabled ? 'secondary' : 'outline',
+      description: enabled
+        ? '周期探测已开启，但本时间格内没有执行。'
+        : '分组监控当前未开启周期探测。',
+    }
+  }
+  let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
+    'destructive'
+  if (bucket.result === 'success') {
+    statusVariant = 'secondary'
+  } else if (
+    bucket.result === 'rate_limited' ||
+    bucket.result === 'local_failure'
+  ) {
+    statusVariant = 'warning'
+  } else if (bucket.result === 'skipped') {
+    statusVariant = 'outline'
+  }
+  return {
+    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 无可用路由 ${bucket.unavailable} · 跳过 ${bucket.skipped}`,
+    className: BUCKET_RESULT_COLOR[bucket.result],
+    state: 'executed',
+    status: BUCKET_RESULT_LABEL[bucket.result],
+    statusVariant,
+  }
+}
+
+function GroupMonitorBucketDetails(props: {
+  bucket: ChannelGroupMonitorBucket
+  displayUnit: PricingGroupMonitor['display_unit']
+  enabled: boolean
+}) {
+  const presentation = groupMonitorBucketPresentation(
+    props.bucket,
+    props.displayUnit,
+    props.enabled
+  )
+  const completed =
+    props.bucket.success +
+    props.bucket.upstream_failure +
+    props.bucket.rate_limited +
+    props.bucket.local_failure +
+    props.bucket.unavailable
+  return (
+    <ChannelMonitorStatusWindowDetails
+      timeRange={formatChannelMonitorStatusWindowRange(
+        props.bucket.started_at,
+        props.displayUnit
+      )}
+      status={presentation.status}
+      statusVariant={presentation.statusVariant}
+      description={presentation.description}
+      details={
+        props.bucket.result
+          ? [
+              { label: '成功', value: props.bucket.success },
+              { label: '上游失败', value: props.bucket.upstream_failure },
+              { label: '限流', value: props.bucket.rate_limited },
+              { label: '本地失败', value: props.bucket.local_failure },
+              { label: '无可用路由', value: props.bucket.unavailable },
+              { label: '跳过', value: props.bucket.skipped },
+              {
+                label: '成功率',
+                value:
+                  completed > 0
+                    ? `${((props.bucket.success / completed) * 100).toFixed(1)}%`
+                    : '--',
+              },
+            ]
+          : undefined
+      }
+    />
+  )
 }
 
 function GroupMonitorSkeleton() {
@@ -104,6 +244,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
       {props.result.items.map((item) => {
         const presentation = STATUS_PRESENTATION[item.status]
         const updatedAt = formatTimestampToDate(item.last_finished_at)
+        const recentWindow = item.recent_window ?? []
         return (
           <article
             key={item.group}
@@ -118,7 +259,10 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                 <span className='bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-md text-base font-semibold'>
                   {item.initial || '?'}
                 </span>
-                <h2 className='truncate text-base font-semibold' title={item.group}>
+                <h2
+                  className='truncate text-base font-semibold'
+                  title={item.group}
+                >
                   {item.group}
                 </h2>
               </div>
@@ -140,11 +284,50 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
               </div>
               <div className='col-span-2 min-w-0'>
                 <dt className='text-muted-foreground text-xs'>更新时间</dt>
-                <dd className='mt-1 truncate font-mono text-xs tabular-nums' title={updatedAt}>
+                <dd
+                  className='mt-1 truncate font-mono text-xs tabular-nums'
+                  title={updatedAt}
+                >
                   {updatedAt}
                 </dd>
               </div>
             </dl>
+            <div className='mt-5 pl-2'>
+              <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px]'>
+                <span>
+                  近 {props.result.display_value}{' '}
+                  {DISPLAY_UNIT_LABEL[props.result.display_unit]} 状态
+                </span>
+                <span className='tabular-nums'>
+                  {recentWindow.length} 个时间格
+                </span>
+              </div>
+              <ChannelMonitorStatusWindow
+                buckets={recentWindow}
+                bucketSlot='group-monitor-bucket'
+                bucketStateDataAttribute='data-group-monitor-bucket-state'
+                gridProps={{
+                  'aria-label': `${item.group} 近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}分组监控结果`,
+                  'data-window-buckets': recentWindow.length,
+                  'data-group-monitor-window-value': props.result.display_value,
+                  'data-group-monitor-window-unit': props.result.display_unit,
+                }}
+                getBucketPresentation={(bucket) =>
+                  groupMonitorBucketPresentation(
+                    bucket,
+                    props.result.display_unit,
+                    props.result.enabled
+                  )
+                }
+                renderDetails={(bucket) => (
+                  <GroupMonitorBucketDetails
+                    bucket={bucket}
+                    displayUnit={props.result.display_unit}
+                    enabled={props.result.enabled}
+                  />
+                )}
+              />
+            </div>
           </article>
         )
       })}
@@ -170,7 +353,9 @@ export function GroupMonitor() {
               <HugeiconsIcon icon={Activity01Icon} aria-hidden='true' />
               服务状态
             </div>
-            <h1 className='mt-2 text-3xl font-semibold tracking-normal'>分组监控</h1>
+            <h1 className='mt-2 text-3xl font-semibold tracking-normal'>
+              分组监控
+            </h1>
             {result ? (
               <div className='mt-2 flex flex-wrap items-center gap-2'>
                 <p className='text-muted-foreground text-sm'>

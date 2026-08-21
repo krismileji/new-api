@@ -1244,6 +1244,12 @@ export type ChannelStatusProbeBucket = {
   skipped: number
   canceled: number
   models?: string[]
+  first_token_total_ms?: number
+  first_token_sample_count?: number
+  tps_total?: number
+  tps_sample_count?: number
+  response_time_total_ms?: number
+  response_time_sample_count?: number
 }
 
 export type ChannelStatusProbeModelStatus = {

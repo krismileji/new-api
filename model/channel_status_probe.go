@@ -133,18 +133,20 @@ func ChannelStatusProbeDisplayBucketStart(timestamp int64, unit string) int64 {
 }
 
 type ChannelStatusProbeBucket struct {
-	StartedAt             int64    `json:"started_at"`
-	Success               int      `json:"success"`
-	UpstreamFailure       int      `json:"upstream_failure"`
-	RateLimited           int      `json:"rate_limited"`
-	LocalFailure          int      `json:"local_failure"`
-	Skipped               int      `json:"skipped"`
-	Canceled              int      `json:"canceled"`
-	Models                []string `json:"models,omitempty"`
-	FirstTokenTotalMs     float64  `json:"first_token_total_ms,omitempty"`
-	FirstTokenSampleCount int64    `json:"first_token_sample_count,omitempty"`
-	TPSTotal              float64  `json:"tps_total,omitempty"`
-	TPSSampleCount        int64    `json:"tps_sample_count,omitempty"`
+	StartedAt               int64    `json:"started_at"`
+	Success                 int      `json:"success"`
+	UpstreamFailure         int      `json:"upstream_failure"`
+	RateLimited             int      `json:"rate_limited"`
+	LocalFailure            int      `json:"local_failure"`
+	Skipped                 int      `json:"skipped"`
+	Canceled                int      `json:"canceled"`
+	Models                  []string `json:"models,omitempty"`
+	FirstTokenTotalMs       float64  `json:"first_token_total_ms,omitempty"`
+	FirstTokenSampleCount   int64    `json:"first_token_sample_count,omitempty"`
+	TPSTotal                float64  `json:"tps_total,omitempty"`
+	TPSSampleCount          int64    `json:"tps_sample_count,omitempty"`
+	ResponseTimeTotalMs     float64  `json:"response_time_total_ms,omitempty"`
+	ResponseTimeSampleCount int64    `json:"response_time_sample_count,omitempty"`
 }
 
 func (bucket *ChannelStatusProbeBucket) Add(
@@ -152,6 +154,7 @@ func (bucket *ChannelStatusProbeBucket) Add(
 	modelName string,
 	firstTokenMs *float64,
 	tokensPerSecond *float64,
+	responseTimeMs *float64,
 ) {
 	switch result {
 	case ChannelStatusProbeResultSuccess:
@@ -174,6 +177,10 @@ func (bucket *ChannelStatusProbeBucket) Add(
 		bucket.Skipped++
 	case ChannelStatusProbeResultCanceled:
 		bucket.Canceled++
+	}
+	if responseTimeMs != nil {
+		bucket.ResponseTimeTotalMs += *responseTimeMs
+		bucket.ResponseTimeSampleCount++
 	}
 	for _, existing := range bucket.Models {
 		if existing == modelName {
@@ -670,6 +677,7 @@ func accumulateChannelStatusProbeBuckets(
 			execution.ModelName,
 			execution.FirstTokenMs,
 			execution.TPS,
+			execution.ResponseTimeMs,
 		)
 	}
 	sort.Slice(retained, func(i, j int) bool { return retained[i].StartedAt < retained[j].StartedAt })

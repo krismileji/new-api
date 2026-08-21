@@ -76,7 +76,6 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-
 import {
   runChannelGroupMonitorNow,
   updateChannelGroupMonitorSettings,
@@ -92,8 +91,16 @@ import type {
   ChannelGroupMonitorDisplayUnit,
 } from '@/features/group-monitor/types'
 
-const OVERVIEW_QUERY_KEY = ['channel-monitor', 'group-monitor', 'overview'] as const
-const SETTINGS_QUERY_KEY = ['channel-monitor', 'group-monitor', 'settings'] as const
+const OVERVIEW_QUERY_KEY = [
+  'channel-monitor',
+  'group-monitor',
+  'overview',
+] as const
+const SETTINGS_QUERY_KEY = [
+  'channel-monitor',
+  'group-monitor',
+  'settings',
+] as const
 const QUICK_INTERVALS = [60, 300, 900, 3600]
 const EMPTY_CANDIDATE_MODELS_BY_GROUP: Record<string, string[]> = {}
 const DISPLAY_UNITS: Array<{
@@ -121,6 +128,7 @@ function dataToFormValues(
       settings?.groups.map((group) => ({
         groupName: group.group_name,
         probeModel: group.probe_model,
+        displayInitial: group.display_initial ?? '',
       })) ?? [],
     intervalSeconds:
       settings?.interval_seconds ??
@@ -191,6 +199,7 @@ export function ChannelGroupMonitorSettingsSheet(
         groups: values.groups.map((group) => ({
           group_name: group.groupName,
           probe_model: group.probeModel,
+          display_initial: group.displayInitial.trim(),
         })),
         intervalSeconds: values.intervalSeconds,
         displayValue: values.displayValue,
@@ -215,7 +224,9 @@ export function ChannelGroupMonitorSettingsSheet(
         setConflictMessage('配置已被其他管理员更新，请刷新后重试')
         return
       }
-      toast.error(error instanceof Error ? error.message : '分组监控配置保存失败')
+      toast.error(
+        error instanceof Error ? error.message : '分组监控配置保存失败'
+      )
     },
   })
   const runMutation = useMutation({
@@ -301,7 +312,9 @@ export function ChannelGroupMonitorSettingsSheet(
                 control={form.control}
                 name='enabled'
                 render={({ field }) => (
-                  <FormItem className={sideDrawerSwitchItemClassName('border-t-0')}>
+                  <FormItem
+                    className={sideDrawerSwitchItemClassName('border-t-0')}
+                  >
                     <div className='min-w-0 space-y-1'>
                       <FormLabel>启用周期探测</FormLabel>
                       <FormDescription>
@@ -325,7 +338,9 @@ export function ChannelGroupMonitorSettingsSheet(
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>探测间隔</FormLabel>
-                    <FormDescription>单位为秒，范围 30 到 86400</FormDescription>
+                    <FormDescription>
+                      单位为秒，范围 30 到 86400
+                    </FormDescription>
                     <FormControl>
                       <Input
                         type='number'
@@ -333,7 +348,9 @@ export function ChannelGroupMonitorSettingsSheet(
                         max={86400}
                         step={1}
                         value={Number.isFinite(field.value) ? field.value : ''}
-                        onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
                         disabled={controlsDisabled}
                         className='font-mono tabular-nums'
                       />
@@ -374,7 +391,9 @@ export function ChannelGroupMonitorSettingsSheet(
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>状态展示范围</FormLabel>
-                    <FormDescription>成功率按此范围内的有效逻辑探测统计</FormDescription>
+                    <FormDescription>
+                      成功率按此范围内的有效逻辑探测统计
+                    </FormDescription>
                     <FormControl>
                       <div className='flex min-w-0 flex-wrap items-center gap-2'>
                         <Input
@@ -382,8 +401,12 @@ export function ChannelGroupMonitorSettingsSheet(
                           min={1}
                           max={displayLimit}
                           step={1}
-                          value={Number.isFinite(field.value) ? field.value : ''}
-                          onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                          value={
+                            Number.isFinite(field.value) ? field.value : ''
+                          }
+                          onChange={(event) =>
+                            field.onChange(event.target.valueAsNumber)
+                          }
                           disabled={controlsDisabled}
                           className='w-28 font-mono tabular-nums'
                           aria-label='状态展示数值'
@@ -424,7 +447,9 @@ export function ChannelGroupMonitorSettingsSheet(
                             </ToggleGroupItem>
                           ))}
                         </ToggleGroup>
-                        <span className='text-muted-foreground text-xs'>上限 {displayLimit}</span>
+                        <span className='text-muted-foreground text-xs'>
+                          上限 {displayLimit}
+                        </span>
                       </div>
                     </FormControl>
                     <FormMessage />
@@ -434,7 +459,11 @@ export function ChannelGroupMonitorSettingsSheet(
               <div className='bg-muted/50 flex items-center justify-between gap-4 rounded-lg px-3 py-2.5 text-sm'>
                 <span className='text-muted-foreground'>负载预估</span>
                 <span className='font-mono font-medium tabular-nums'>
-                  每小时约 {Number.isFinite(requestsPerHour) ? requestsPerHour.toFixed(1) : '0'} 次请求
+                  每小时约{' '}
+                  {Number.isFinite(requestsPerHour)
+                    ? requestsPerHour.toFixed(1)
+                    : '0'}{' '}
+                  次请求
                 </span>
               </div>
             </SideDrawerSection>
@@ -452,13 +481,18 @@ export function ChannelGroupMonitorSettingsSheet(
                   type='button'
                   variant='outline'
                   size='sm'
-                  disabled={controlsDisabled || availableGroupItems.length === 0 || groups.fields.length >= 100}
+                  disabled={
+                    controlsDisabled ||
+                    availableGroupItems.length === 0 ||
+                    groups.fields.length >= 100
+                  }
                   onClick={() => {
                     const groupName = availableGroupItems[0]?.value
                     if (!groupName) return
                     groups.append({
                       groupName,
                       probeModel: candidateModelsByGroup[groupName]?.[0] ?? '',
+                      displayInitial: '',
                     })
                   }}
                 >
@@ -470,7 +504,9 @@ export function ChannelGroupMonitorSettingsSheet(
                 <Alert>
                   <HugeiconsIcon icon={Alert02Icon} />
                   <AlertTitle>尚未配置监控分组</AlertTitle>
-                  <AlertDescription>保存后用户侧才会展示已配置且有效的分组。</AlertDescription>
+                  <AlertDescription>
+                    保存后用户侧才会展示已配置且有效的分组。
+                  </AlertDescription>
                 </Alert>
               ) : null}
               <div className='flex min-w-0 flex-col gap-3'>
@@ -482,15 +518,17 @@ export function ChannelGroupMonitorSettingsSheet(
                   ].filter(
                     (option, optionIndex, options) =>
                       option.value &&
-                      options.findIndex((candidate) => candidate.value === option.value) === optionIndex
+                      options.findIndex(
+                        (candidate) => candidate.value === option.value
+                      ) === optionIndex
                   )
-                  const modelItems = (candidateModelsByGroup[currentGroupName] ?? []).map(
-                    (modelName) => ({ value: modelName, label: modelName })
-                  )
+                  const modelItems = (
+                    candidateModelsByGroup[currentGroupName] ?? []
+                  ).map((modelName) => ({ value: modelName, label: modelName }))
                   return (
                     <article
                       key={group.id}
-                      className='border-border/60 bg-muted/10 grid min-w-0 gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'
+                      className='border-border/60 bg-muted/10 grid min-w-0 gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_auto]'
                     >
                       <FormField
                         control={form.control}
@@ -513,14 +551,22 @@ export function ChannelGroupMonitorSettingsSheet(
                               }}
                             >
                               <FormControl>
-                                <SelectTrigger className='w-full min-w-0' aria-label={`第 ${index + 1} 个监控分组`}>
+                                <SelectTrigger
+                                  className='w-full min-w-0'
+                                  aria-label={`第 ${index + 1} 个监控分组`}
+                                >
                                   <SelectValue placeholder='选择分组' />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent alignItemWithTrigger={false}>
                                 <SelectGroup>
                                   {groupItems.map((item) => (
-                                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                                    <SelectItem
+                                      key={item.value}
+                                      value={item.value}
+                                    >
+                                      {item.label}
+                                    </SelectItem>
                                   ))}
                                 </SelectGroup>
                               </SelectContent>
@@ -538,24 +584,59 @@ export function ChannelGroupMonitorSettingsSheet(
                             <Select
                               items={modelItems}
                               value={field.value || null}
-                              disabled={controlsDisabled || modelItems.length === 0}
+                              disabled={
+                                controlsDisabled || modelItems.length === 0
+                              }
                               onValueChange={(value) => {
                                 if (value !== null) field.onChange(value)
                               }}
                             >
                               <FormControl>
-                                <SelectTrigger className='w-full min-w-0' aria-label={`${currentGroupName || '当前分组'}的探测模型`}>
+                                <SelectTrigger
+                                  className='w-full min-w-0'
+                                  aria-label={`${currentGroupName || '当前分组'}的探测模型`}
+                                >
                                   <SelectValue placeholder='选择具体模型' />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent alignItemWithTrigger={false}>
                                 <SelectGroup>
                                   {modelItems.map((item) => (
-                                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                                    <SelectItem
+                                      key={item.value}
+                                      value={item.value}
+                                    >
+                                      {item.label}
+                                    </SelectItem>
                                   ))}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`groups.${index}.displayInitial`}
+                        render={({ field }) => (
+                          <FormItem className='min-w-0'>
+                            <FormLabel>展示字</FormLabel>
+                            <FormControl>
+                              <Input
+                                value={field.value}
+                                maxLength={2}
+                                placeholder='默认'
+                                disabled={controlsDisabled}
+                                aria-label={`${currentGroupName || '当前分组'}的展示字`}
+                                onChange={(event) => {
+                                  const value = event.target.value.trim()
+                                  field.onChange(
+                                    [...value].slice(0, 1).join('')
+                                  )
+                                }}
+                              />
+                            </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -576,7 +657,10 @@ export function ChannelGroupMonitorSettingsSheet(
                           variant='outline'
                           size='icon-sm'
                           onClick={() => moveGroup(index, 1)}
-                          disabled={controlsDisabled || index === groups.fields.length - 1}
+                          disabled={
+                            controlsDisabled ||
+                            index === groups.fields.length - 1
+                          }
                           aria-label={`下移 ${currentGroupName}`}
                         >
                           <HugeiconsIcon icon={ArrowDown01Icon} />
@@ -599,7 +683,11 @@ export function ChannelGroupMonitorSettingsSheet(
               <FormField
                 control={form.control}
                 name='groups'
-                render={() => <FormItem><FormMessage /></FormItem>}
+                render={() => (
+                  <FormItem>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
             </SideDrawerSection>
           </form>
@@ -617,15 +705,31 @@ export function ChannelGroupMonitorSettingsSheet(
               groups.fields.length === 0
             }
           >
-            {runMutation.isPending ? <Spinner data-icon='inline-start' /> : <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />}
+            {runMutation.isPending ? (
+              <Spinner data-icon='inline-start' />
+            ) : (
+              <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
+            )}
             立即探测
           </Button>
           {conflictMessage ? (
-            <Button type='button' variant='outline' onClick={refreshConfiguration} disabled={saveMutation.isPending}>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={refreshConfiguration}
+              disabled={saveMutation.isPending}
+            >
               刷新配置
             </Button>
           ) : (
-            <SheetClose render={<Button variant='outline' disabled={saveMutation.isPending || runMutation.isPending} />}>
+            <SheetClose
+              render={
+                <Button
+                  variant='outline'
+                  disabled={saveMutation.isPending || runMutation.isPending}
+                />
+              }
+            >
               取消
             </SheetClose>
           )}
@@ -634,7 +738,9 @@ export function ChannelGroupMonitorSettingsSheet(
             type='submit'
             disabled={controlsDisabled}
           >
-            {saveMutation.isPending ? <Spinner data-icon='inline-start' /> : null}
+            {saveMutation.isPending ? (
+              <Spinner data-icon='inline-start' />
+            ) : null}
             保存配置
           </Button>
         </SheetFooter>

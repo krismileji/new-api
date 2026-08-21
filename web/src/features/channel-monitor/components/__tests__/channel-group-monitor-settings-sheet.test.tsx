@@ -96,8 +96,15 @@ describe('分组监控配置', () => {
 
   test('已保存配置且没有未保存修改时允许立即探测', async () => {
     const rendered = await renderSheet(
-      settingsResponse([{ group_name: 'default', probe_model: 'gpt-4.1' }])
+      settingsResponse([
+        { group_name: 'default', probe_model: 'gpt-4.1', display_initial: 'D' },
+      ])
     )
+    const displayInitialInput = document.querySelector(
+      'input[aria-label="default的展示字"]'
+    )
+    assert.ok(displayInitialInput)
+    assert.equal((displayInitialInput as HTMLInputElement).value, 'D')
     const immediateProbeButton = [...document.querySelectorAll('button')].find(
       (button) => button.textContent?.includes('立即探测')
     )

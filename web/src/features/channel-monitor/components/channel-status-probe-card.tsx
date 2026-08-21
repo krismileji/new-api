@@ -106,7 +106,7 @@ const DISPLAY_UNIT_LABEL: Record<ChannelStatusProbeDisplayUnit, string> = {
 }
 
 function formatDuration(value: number | null) {
-  if (value == null) return '-'
+  if (value == null || !Number.isFinite(value)) return '-'
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`
   return `${Math.round(value)} ms`
 }
@@ -117,8 +117,24 @@ function firstTokenColorClass(value: number | null) {
 }
 
 function formatTPS(value: number | null) {
-  if (value == null) return '-'
+  if (value == null || !Number.isFinite(value)) return '-'
   return value.toFixed(value >= 100 ? 0 : 1)
+}
+
+function averageBucketMetric(
+  total: number | undefined,
+  sampleCount: number | undefined
+) {
+  if (
+    sampleCount == null ||
+    sampleCount <= 0 ||
+    !Number.isFinite(sampleCount)
+  ) {
+    return null
+  }
+  const normalizedTotal = total ?? 0
+  if (!Number.isFinite(normalizedTotal)) return null
+  return normalizedTotal / sampleCount
 }
 
 function displayRangeLabel(value: number, unit: ChannelStatusProbeDisplayUnit) {
@@ -159,6 +175,21 @@ function statusProbeBucketPresentation(
       description: '该渠道当前未开启周期探测。',
     }
   }
+  const firstToken = formatDuration(
+    averageBucketMetric(
+      bucket.first_token_total_ms,
+      bucket.first_token_sample_count
+    )
+  )
+  const tps = formatTPS(
+    averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
+  )
+  const duration = formatDuration(
+    averageBucketMetric(
+      bucket.response_time_total_ms,
+      bucket.response_time_sample_count
+    )
+  )
   let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
     'outline'
   if (bucket.result === 'success') statusVariant = 'secondary'
@@ -170,7 +201,7 @@ function statusProbeBucketPresentation(
     statusVariant = 'warning'
   }
   return {
-    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 跳过或取消 ${bucket.skipped + bucket.canceled} · 模型 ${models}`,
+    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 跳过或取消 ${bucket.skipped + bucket.canceled} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${duration} · 模型 ${models}`,
     className: BUCKET_COLOR[bucket.result],
     state: 'executed',
     status: RESULT_LABEL[bucket.result],
@@ -190,6 +221,33 @@ function StatusProbeBucketDetails(props: {
   )
   const details = props.bucket.result
     ? [
+        {
+          label: '首字',
+          value: formatDuration(
+            averageBucketMetric(
+              props.bucket.first_token_total_ms,
+              props.bucket.first_token_sample_count
+            )
+          ),
+        },
+        {
+          label: 'TPS',
+          value: formatTPS(
+            averageBucketMetric(
+              props.bucket.tps_total,
+              props.bucket.tps_sample_count
+            )
+          ),
+        },
+        {
+          label: '耗时',
+          value: formatDuration(
+            averageBucketMetric(
+              props.bucket.response_time_total_ms,
+              props.bucket.response_time_sample_count
+            )
+          ),
+        },
         { label: '成功', value: props.bucket.success },
         { label: '上游失败', value: props.bucket.upstream_failure },
         { label: '限流', value: props.bucket.rate_limited },

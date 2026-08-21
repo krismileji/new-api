@@ -36,9 +36,25 @@ export type ChannelGroupMonitorResult =
   | 'unavailable'
   | 'skipped'
 
+export type ChannelGroupMonitorBucketResult = '' | ChannelGroupMonitorResult
+
 export type ChannelGroupMonitorGroup = {
   group_name: string
   probe_model: string
+  display_initial?: string
+}
+
+export type ChannelGroupMonitorBucket = {
+  started_at: number
+  success: number
+  upstream_failure: number
+  rate_limited: number
+  local_failure: number
+  unavailable: number
+  skipped: number
+  first_token_total_ms?: number
+  first_token_sample_count?: number
+  result: ChannelGroupMonitorBucketResult
 }
 
 export type ChannelGroupMonitorSettings = {
@@ -66,6 +82,7 @@ export type ChannelGroupMonitorItem = {
   success_count: number
   completed_count: number
   last_finished_at: number
+  recent_window: ChannelGroupMonitorBucket[]
 }
 
 export type PricingGroupMonitorItem = Pick<
@@ -76,6 +93,7 @@ export type PricingGroupMonitorItem = Pick<
   | 'latest_first_token_ms'
   | 'success_rate'
   | 'last_finished_at'
+  | 'recent_window'
 >
 
 export type ChannelGroupMonitorAdminItem = ChannelGroupMonitorItem & {

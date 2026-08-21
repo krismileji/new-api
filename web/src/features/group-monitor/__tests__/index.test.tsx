@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, test } from 'vitest'
 
@@ -40,6 +41,18 @@ describe('group monitor content', () => {
               latest_first_token_ms: 215,
               success_rate: 100,
               last_finished_at: 1_752_777_840,
+              recent_window: [
+                {
+                  started_at: 1_752_777_840,
+                  success: 1,
+                  upstream_failure: 0,
+                  rate_limited: 0,
+                  local_failure: 0,
+                  unavailable: 0,
+                  skipped: 0,
+                  result: 'success',
+                },
+              ],
             },
           ],
         }}
@@ -49,5 +62,7 @@ describe('group monitor content', () => {
     assert.ok(markup.includes('default'))
     assert.ok(markup.includes('已停用'))
     assert.ok(!markup.includes('分组监控暂未启用'))
+    assert.match(markup, /data-slot="group-monitor-bucket"/)
+    assert.match(markup, /data-group-monitor-window-value="60"/)
   })
 })

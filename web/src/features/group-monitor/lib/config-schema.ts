@@ -52,6 +52,14 @@ export const channelGroupMonitorConfigSchema = z
             .min(1, '请选择探测模型')
             .max(255, '探测模型不能超过 255 个字符')
             .refine((value) => !value.includes('*'), '必须选择具体模型'),
+          displayInitial: z
+            .string()
+            .trim()
+            .refine(
+              (value) => [...value].length <= 1,
+              '分组展示字只能配置一个字符'
+            )
+            .default(''),
         })
       )
       .max(100, '最多配置 100 个监控分组'),

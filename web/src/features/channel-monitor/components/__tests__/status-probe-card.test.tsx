@@ -42,6 +42,14 @@ function createRecentWindow(
     skipped: 0,
     canceled: 0,
     models: index === 59 ? [modelName] : [],
+    first_token_total_ms:
+      index === 59 && result === 'success' ? 240 : undefined,
+    first_token_sample_count:
+      index === 59 && result === 'success' ? 1 : undefined,
+    tps_total: index === 59 && result === 'success' ? 42.5 : undefined,
+    tps_sample_count: index === 59 && result === 'success' ? 1 : undefined,
+    response_time_total_ms: index === 59 ? 1250 : undefined,
+    response_time_sample_count: index === 59 ? 1 : undefined,
   }))
 }
 
@@ -220,8 +228,9 @@ describe('状态探测卡片', () => {
     assert.match(html, /aria-label="不计入智能调度样本"/)
     assert.match(
       html,
-      /上游失败 1 · 限流 0 · 本地失败 0 · 跳过或取消 0 · 模型 gpt-4\.1-mini/
+      /上游失败 1 · 限流 0 · 本地失败 0 · 跳过或取消 0 · 首字 - · TPS - · 耗时 1\.25 s · 模型 gpt-4\.1-mini/
     )
+    assert.match(html, /首字 240 ms · TPS 42\.5 · 耗时 1\.25 s/)
     assert.match(html, />不计入样本</)
   })
 

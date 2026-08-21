@@ -49,15 +49,21 @@ type channelStatusProbeConfigResponse struct {
 }
 
 type channelStatusProbeBucketResponse struct {
-	StartedAt       int64    `json:"started_at"`
-	Success         int      `json:"success"`
-	UpstreamFailure int      `json:"upstream_failure"`
-	RateLimited     int      `json:"rate_limited"`
-	LocalFailure    int      `json:"local_failure"`
-	Skipped         int      `json:"skipped"`
-	Canceled        int      `json:"canceled"`
-	Models          []string `json:"models,omitempty"`
-	Result          string   `json:"result"`
+	StartedAt               int64    `json:"started_at"`
+	Success                 int      `json:"success"`
+	UpstreamFailure         int      `json:"upstream_failure"`
+	RateLimited             int      `json:"rate_limited"`
+	LocalFailure            int      `json:"local_failure"`
+	Skipped                 int      `json:"skipped"`
+	Canceled                int      `json:"canceled"`
+	Models                  []string `json:"models,omitempty"`
+	Result                  string   `json:"result"`
+	FirstTokenTotalMs       float64  `json:"first_token_total_ms,omitempty"`
+	FirstTokenSampleCount   int64    `json:"first_token_sample_count,omitempty"`
+	TPSTotal                float64  `json:"tps_total,omitempty"`
+	TPSSampleCount          int64    `json:"tps_sample_count,omitempty"`
+	ResponseTimeTotalMs     float64  `json:"response_time_total_ms,omitempty"`
+	ResponseTimeSampleCount int64    `json:"response_time_sample_count,omitempty"`
 }
 
 type channelStatusProbeModelResponse struct {
@@ -268,11 +274,13 @@ func channelStatusProbeBucketResult(bucket model.ChannelStatusProbeBucket) strin
 }
 
 type channelStatusProbeWindowSummary struct {
-	Buckets               []channelStatusProbeBucketResponse
-	FirstTokenTotalMs     float64
-	FirstTokenSampleCount int64
-	TPSTotal              float64
-	TPSSampleCount        int64
+	Buckets                 []channelStatusProbeBucketResponse
+	FirstTokenTotalMs       float64
+	FirstTokenSampleCount   int64
+	TPSTotal                float64
+	TPSSampleCount          int64
+	ResponseTimeTotalMs     float64
+	ResponseTimeSampleCount int64
 }
 
 func mergeChannelStatusProbeRecentWindow(
@@ -307,8 +315,10 @@ func mergeChannelStatusProbeRecentWindow(
 			current.FirstTokenSampleCount += bucket.FirstTokenSampleCount
 			current.TPSTotal += bucket.TPSTotal
 			current.TPSSampleCount += bucket.TPSSampleCount
+			current.ResponseTimeTotalMs += bucket.ResponseTimeTotalMs
+			current.ResponseTimeSampleCount += bucket.ResponseTimeSampleCount
 			for _, modelName := range bucket.Models {
-				current.Add("", modelName, nil, nil)
+				current.Add("", modelName, nil, nil, nil)
 			}
 			merged[bucket.StartedAt] = current
 		}
@@ -324,11 +334,16 @@ func mergeChannelStatusProbeRecentWindow(
 			UpstreamFailure: bucket.UpstreamFailure, RateLimited: bucket.RateLimited,
 			LocalFailure: bucket.LocalFailure, Skipped: bucket.Skipped, Canceled: bucket.Canceled,
 			Models: bucket.Models, Result: channelStatusProbeBucketResult(bucket),
+			FirstTokenTotalMs: bucket.FirstTokenTotalMs, FirstTokenSampleCount: bucket.FirstTokenSampleCount,
+			TPSTotal: bucket.TPSTotal, TPSSampleCount: bucket.TPSSampleCount,
+			ResponseTimeTotalMs: bucket.ResponseTimeTotalMs, ResponseTimeSampleCount: bucket.ResponseTimeSampleCount,
 		})
 		summary.FirstTokenTotalMs += bucket.FirstTokenTotalMs
 		summary.FirstTokenSampleCount += bucket.FirstTokenSampleCount
 		summary.TPSTotal += bucket.TPSTotal
 		summary.TPSSampleCount += bucket.TPSSampleCount
+		summary.ResponseTimeTotalMs += bucket.ResponseTimeTotalMs
+		summary.ResponseTimeSampleCount += bucket.ResponseTimeSampleCount
 	}
 	return summary, nil
 }

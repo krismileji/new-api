@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -58,6 +59,23 @@ func TestApplyChannelGroupMonitorFinalOutcomeAppliesUpstreamOutcomeWhenUnset(t *
 	assert.Equal(t, "上游限流", execution.ErrorMessage)
 }
 
+func TestNormalizeChannelGroupMonitorGroupsValidatesCustomDisplayInitial(t *testing.T) {
+	candidates := map[string][]string{"default": {"gpt-4.1"}}
+
+	normalized, err := normalizeChannelGroupMonitorGroups([]model.ChannelGroupMonitorGroup{{
+		GroupName: " default ", ProbeModel: " gpt-4.1 ", DisplayInitial: " 组 ",
+	}}, candidates)
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.Equal(t, "组", normalized[0].DisplayInitial)
+
+	_, err = normalizeChannelGroupMonitorGroups([]model.ChannelGroupMonitorGroup{{
+		GroupName: "default", ProbeModel: "gpt-4.1", DisplayInitial: "AB",
+	}}, candidates)
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "展示字只能配置一个字符"))
+}
+
 func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
@@ -76,7 +94,7 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	config, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 		Enabled: true,
 		Groups: []model.ChannelGroupMonitorGroup{{
-			GroupName: "default", ProbeModel: "gpt-4.1",
+			GroupName: "default", ProbeModel: "gpt-4.1", DisplayInitial: "D",
 		}},
 		IntervalSeconds: 300, DisplayValue: 60,
 		DisplayUnit: model.ChannelStatusProbeDisplayUnitMinute,
@@ -106,6 +124,7 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	items, err := buildChannelGroupMonitorItems(config, false, map[string]string{"default": "默认分组"}, 1_000)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
+	assert.Equal(t, "D", items[0].Initial)
 	assert.Equal(t, channelGroupMonitorHealthRateLimited, items[0].Status)
 	assert.Equal(t, model.ChannelGroupMonitorResultRateLimited, items[0].LatestResult)
 	assert.EqualValues(t, 1, items[0].SuccessCount)
@@ -113,6 +132,18 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	require.NotNil(t, items[0].SuccessRate)
 	assert.InDelta(t, 50, *items[0].SuccessRate, 0.001)
 	assert.Nil(t, items[0].LatestFirstTokenMs)
+	require.Len(t, items[0].RecentWindow, 60)
+	var populatedBucket *channelGroupMonitorBucketResponse
+	for index := range items[0].RecentWindow {
+		if items[0].RecentWindow[index].Success > 0 || items[0].RecentWindow[index].RateLimited > 0 {
+			populatedBucket = &items[0].RecentWindow[index]
+			break
+		}
+	}
+	require.NotNil(t, populatedBucket)
+	assert.Equal(t, 1, populatedBucket.Success)
+	assert.Equal(t, 1, populatedBucket.RateLimited)
+	assert.Equal(t, model.ChannelGroupMonitorResultRateLimited, populatedBucket.Result)
 }
 
 func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {

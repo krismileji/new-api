@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { test } from 'vitest'
 
 import { channelGroupMonitorConfigSchema } from '../config-schema'
@@ -56,6 +57,49 @@ test('rejects duplicate groups while allowing their configured order', () => {
   assert.equal(result.success, false)
   assert.ok(
     !result.success &&
-      result.error.issues.some((issue) => issue.message.includes('只能配置一次'))
+      result.error.issues.some((issue) =>
+        issue.message.includes('只能配置一次')
+      )
+  )
+})
+
+test('accepts one Unicode display character and defaults an omitted value', () => {
+  const result = channelGroupMonitorConfigSchema.safeParse({
+    enabled: true,
+    groups: [
+      { groupName: 'default', probeModel: 'gpt-4.1', displayInitial: '组' },
+      { groupName: 'vip', probeModel: 'gpt-4.1-mini' },
+    ],
+    intervalSeconds: 300,
+    displayValue: 60,
+    displayUnit: 'minute',
+    revision: 0,
+  })
+
+  assert.equal(result.success, true)
+  if (result.success) {
+    assert.equal(result.data.groups[0].displayInitial, '组')
+    assert.equal(result.data.groups[1].displayInitial, '')
+  }
+})
+
+test('rejects a display value containing multiple Unicode characters', () => {
+  const result = channelGroupMonitorConfigSchema.safeParse({
+    enabled: true,
+    groups: [
+      { groupName: 'default', probeModel: 'gpt-4.1', displayInitial: 'AB' },
+    ],
+    intervalSeconds: 300,
+    displayValue: 60,
+    displayUnit: 'minute',
+    revision: 0,
+  })
+
+  assert.equal(result.success, false)
+  assert.ok(
+    !result.success &&
+      result.error.issues.some((issue) =>
+        issue.message.includes('展示字只能配置一个字符')
+      )
   )
 })

@@ -355,6 +355,8 @@ func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *test
 	assert.EqualValues(t, 1, buckets[0].FirstTokenSampleCount)
 	assert.InDelta(t, tps, buckets[0].TPSTotal, 0.001)
 	assert.EqualValues(t, 1, buckets[0].TPSSampleCount)
+	assert.InDelta(t, 2400, buckets[0].ResponseTimeTotalMs, 0.001)
+	assert.EqualValues(t, 2, buckets[0].ResponseTimeSampleCount)
 
 	hourBuckets, err := state.Buckets(ChannelStatusProbeDisplayUnitHour)
 	require.NoError(t, err)

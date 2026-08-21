@@ -55,32 +55,47 @@ type channelGroupMonitorConfigRequest struct {
 }
 
 type channelGroupMonitorItemResponse struct {
-	Group              string   `json:"group"`
-	Initial            string   `json:"initial"`
-	Status             string   `json:"status"`
-	LatestFirstTokenMs *float64 `json:"latest_first_token_ms"`
-	SuccessRate        *float64 `json:"success_rate"`
-	SuccessCount       int      `json:"success_count"`
-	CompletedCount     int      `json:"completed_count"`
-	LastFinishedAt     int64    `json:"last_finished_at"`
-	ProbeModel         string   `json:"probe_model,omitempty"`
-	ConfigValid        bool     `json:"config_valid,omitempty"`
-	LatestResult       string   `json:"latest_result,omitempty"`
-	LastSuccessAt      int64    `json:"last_success_at,omitempty"`
-	LastFailureAt      int64    `json:"last_failure_at,omitempty"`
-	ConsecutiveSuccess int      `json:"consecutive_success,omitempty"`
-	ConsecutiveFailure int      `json:"consecutive_failure,omitempty"`
+	Group              string                              `json:"group"`
+	Initial            string                              `json:"initial"`
+	Status             string                              `json:"status"`
+	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
+	SuccessRate        *float64                            `json:"success_rate"`
+	SuccessCount       int                                 `json:"success_count"`
+	CompletedCount     int                                 `json:"completed_count"`
+	LastFinishedAt     int64                               `json:"last_finished_at"`
+	ProbeModel         string                              `json:"probe_model,omitempty"`
+	ConfigValid        bool                                `json:"config_valid,omitempty"`
+	LatestResult       string                              `json:"latest_result,omitempty"`
+	LastSuccessAt      int64                               `json:"last_success_at,omitempty"`
+	LastFailureAt      int64                               `json:"last_failure_at,omitempty"`
+	ConsecutiveSuccess int                                 `json:"consecutive_success,omitempty"`
+	ConsecutiveFailure int                                 `json:"consecutive_failure,omitempty"`
+	RecentWindow       []channelGroupMonitorBucketResponse `json:"recent_window"`
+}
+
+type channelGroupMonitorBucketResponse struct {
+	StartedAt             int64   `json:"started_at"`
+	Success               int     `json:"success"`
+	UpstreamFailure       int     `json:"upstream_failure"`
+	RateLimited           int     `json:"rate_limited"`
+	LocalFailure          int     `json:"local_failure"`
+	Unavailable           int     `json:"unavailable"`
+	Skipped               int     `json:"skipped"`
+	FirstTokenTotalMs     float64 `json:"first_token_total_ms,omitempty"`
+	FirstTokenSampleCount int64   `json:"first_token_sample_count,omitempty"`
+	Result                string  `json:"result"`
 }
 
 // pricingGroupMonitorItemResponse is the public subset of monitor state.
 // Administrative configuration and diagnostic fields remain on the admin API only.
 type pricingGroupMonitorItemResponse struct {
-	Group              string   `json:"group"`
-	Initial            string   `json:"initial"`
-	Status             string   `json:"status"`
-	LatestFirstTokenMs *float64 `json:"latest_first_token_ms"`
-	SuccessRate        *float64 `json:"success_rate"`
-	LastFinishedAt     int64    `json:"last_finished_at"`
+	Group              string                              `json:"group"`
+	Initial            string                              `json:"initial"`
+	Status             string                              `json:"status"`
+	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
+	SuccessRate        *float64                            `json:"success_rate"`
+	LastFinishedAt     int64                               `json:"last_finished_at"`
+	RecentWindow       []channelGroupMonitorBucketResponse `json:"recent_window"`
 }
 
 type channelGroupMonitorOverviewResponse struct {
@@ -203,11 +218,15 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 	for _, rawGroup := range rawGroups {
 		groupName := strings.TrimSpace(rawGroup.GroupName)
 		probeModel := strings.TrimSpace(rawGroup.ProbeModel)
+		displayInitial := strings.TrimSpace(rawGroup.DisplayInitial)
 		if groupName == "" || utf8.RuneCountInString(groupName) > 64 {
 			return nil, errors.New("分组名称不能为空且长度不能超过 64 个字符")
 		}
 		if probeModel == "" || utf8.RuneCountInString(probeModel) > 255 || strings.Contains(probeModel, "*") {
 			return nil, errors.New("探测模型必须是长度不超过 255 的具体文本模型")
+		}
+		if utf8.RuneCountInString(displayInitial) > 1 {
+			return nil, errors.New("分组展示字只能配置一个字符")
 		}
 		if _, exists := seen[groupName]; exists {
 			return nil, errors.New("同一个监控分组只能配置一次")
@@ -216,7 +235,9 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 			return nil, errors.New("探测模型 " + probeModel + " 不属于分组 " + groupName + " 的可用文本模型")
 		}
 		seen[groupName] = struct{}{}
-		groups = append(groups, model.ChannelGroupMonitorGroup{GroupName: groupName, ProbeModel: probeModel})
+		groups = append(groups, model.ChannelGroupMonitorGroup{
+			GroupName: groupName, ProbeModel: probeModel, DisplayInitial: displayInitial,
+		})
 	}
 	return groups, nil
 }
@@ -225,7 +246,106 @@ func channelGroupMonitorDisplaySeconds(value int, unit string) int64 {
 	return int64(value) * model.ChannelStatusProbeDisplayBucketSeconds(unit)
 }
 
-func channelGroupMonitorInitial(groupName string) string {
+func channelGroupMonitorBucketResult(bucket channelGroupMonitorBucketResponse) string {
+	switch {
+	case bucket.UpstreamFailure > 0:
+		return model.ChannelGroupMonitorResultUpstreamFailure
+	case bucket.Unavailable > 0:
+		return model.ChannelGroupMonitorResultUnavailable
+	case bucket.RateLimited > 0:
+		return model.ChannelGroupMonitorResultRateLimited
+	case bucket.LocalFailure > 0:
+		return model.ChannelGroupMonitorResultLocalFailure
+	case bucket.Skipped > 0:
+		return model.ChannelGroupMonitorResultSkipped
+	case bucket.Success > 0:
+		return model.ChannelGroupMonitorResultSuccess
+	default:
+		return ""
+	}
+}
+
+func mergeChannelGroupMonitorRecentWindow(
+	executions []model.ChannelGroupMonitorExecution,
+	now int64,
+	displayValue int,
+	displayUnit string,
+) map[string][]channelGroupMonitorBucketResponse {
+	displayValue, displayUnit = model.NormalizeChannelStatusProbeDisplay(displayValue, displayUnit)
+	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+	currentBucket := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit)
+	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
+	bucketsByGroup := make(map[string]map[int64]channelGroupMonitorBucketResponse)
+	for _, execution := range executions {
+		if execution.FinishedAt < minimumBucket || execution.FinishedAt > now {
+			continue
+		}
+		startedAt := model.ChannelStatusProbeDisplayBucketStart(execution.FinishedAt, displayUnit)
+		if startedAt < minimumBucket || startedAt > currentBucket {
+			continue
+		}
+		groupBuckets := bucketsByGroup[execution.GroupName]
+		if groupBuckets == nil {
+			groupBuckets = make(map[int64]channelGroupMonitorBucketResponse)
+			bucketsByGroup[execution.GroupName] = groupBuckets
+		}
+		bucket := groupBuckets[startedAt]
+		bucket.StartedAt = startedAt
+		switch execution.Result {
+		case model.ChannelGroupMonitorResultSuccess:
+			bucket.Success++
+			if execution.FirstTokenMs != nil {
+				bucket.FirstTokenTotalMs += *execution.FirstTokenMs
+				bucket.FirstTokenSampleCount++
+			}
+		case model.ChannelGroupMonitorResultUpstreamFailure:
+			bucket.UpstreamFailure++
+		case model.ChannelGroupMonitorResultRateLimited:
+			bucket.RateLimited++
+		case model.ChannelGroupMonitorResultLocalFailure:
+			bucket.LocalFailure++
+		case model.ChannelGroupMonitorResultUnavailable:
+			bucket.Unavailable++
+		case model.ChannelGroupMonitorResultSkipped:
+			bucket.Skipped++
+		}
+		bucket.Result = channelGroupMonitorBucketResult(bucket)
+		groupBuckets[startedAt] = bucket
+	}
+	result := make(map[string][]channelGroupMonitorBucketResponse, len(bucketsByGroup))
+	for groupName, groupBuckets := range bucketsByGroup {
+		buckets := make([]channelGroupMonitorBucketResponse, 0, displayValue)
+		for startedAt := minimumBucket; startedAt <= currentBucket; startedAt += bucketSeconds {
+			bucket := groupBuckets[startedAt]
+			bucket.StartedAt = startedAt
+			buckets = append(buckets, bucket)
+		}
+		result[groupName] = buckets
+	}
+	return result
+}
+
+func emptyChannelGroupMonitorRecentWindow(
+	now int64,
+	displayValue int,
+	displayUnit string,
+) []channelGroupMonitorBucketResponse {
+	displayValue, displayUnit = model.NormalizeChannelStatusProbeDisplay(displayValue, displayUnit)
+	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+	currentBucket := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit)
+	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
+	buckets := make([]channelGroupMonitorBucketResponse, 0, displayValue)
+	for startedAt := minimumBucket; startedAt <= currentBucket; startedAt += bucketSeconds {
+		buckets = append(buckets, channelGroupMonitorBucketResponse{StartedAt: startedAt})
+	}
+	return buckets
+}
+
+func channelGroupMonitorInitial(groupName string, displayInitial string) string {
+	displayInitial = strings.TrimSpace(displayInitial)
+	if displayInitial != "" && utf8.RuneCountInString(displayInitial) == 1 {
+		return displayInitial
+	}
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
 		return "?"
@@ -295,6 +415,18 @@ func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, inclu
 		}
 		summaryByGroup[item.GroupName] = current
 	}
+	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
+		int64(displayValue-1)*model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+	executions, err := model.GetChannelGroupMonitorExecutionWindowSince(windowStart)
+	if err != nil {
+		return nil, err
+	}
+	recentWindows := mergeChannelGroupMonitorRecentWindow(executions, now, displayValue, displayUnit)
+	for _, group := range groups {
+		if _, exists := recentWindows[group.GroupName]; !exists {
+			recentWindows[group.GroupName] = emptyChannelGroupMonitorRecentWindow(now, displayValue, displayUnit)
+		}
+	}
 	items := make([]channelGroupMonitorItemResponse, 0, len(groups))
 	for _, group := range groups {
 		if usableGroups != nil {
@@ -307,8 +439,8 @@ func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, inclu
 			continue
 		}
 		item := channelGroupMonitorItemResponse{
-			Group: group.GroupName, Initial: channelGroupMonitorInitial(group.GroupName), ProbeModel: group.ProbeModel,
-			ConfigValid: configValid,
+			Group: group.GroupName, Initial: channelGroupMonitorInitial(group.GroupName, group.DisplayInitial), ProbeModel: group.ProbeModel,
+			ConfigValid: configValid, RecentWindow: recentWindows[group.GroupName],
 		}
 		if !configValid {
 			item.Status = channelGroupMonitorHealthUnconfigured
@@ -508,11 +640,13 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,
 			LastFinishedAt:     item.LastFinishedAt,
+			RecentWindow:       item.RecentWindow,
 		})
 	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
-		"enabled": config.Enabled, "server_now": now, "data_cutoff_at": now,
-		"display_value": displayValue, "display_unit": displayUnit, "items": publicItems,
+		"enabled": config.Enabled, "server_now": now,
+		"data_cutoff_at": now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
+		"display_value":  displayValue, "display_unit": displayUnit, "items": publicItems,
 	}})
 }
