@@ -287,6 +287,29 @@ func runChannelGroupMonitorGroup(
 		}
 
 		probeError := channelGroupMonitorOutcomeError(outcome)
+		// Normal relay routing skips a channel with no usable key before dispatch
+		// and tries another candidate in the same round. This does not consume the
+		// configured upstream retry budget because no request reached upstream.
+		if !outcome.ProbeResult.requestDispatched &&
+			probeError != nil &&
+			types.IsChannelError(probeError) &&
+			probeError.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey &&
+			!types.IsSkipRetryError(probeError) {
+			retryRouting.exclude(channel.Id)
+			selected, _, selectionErr := retryRouting.selectChannelCurrentRound(retryParam)
+			if selectionErr != nil {
+				execution.Result = model.ChannelGroupMonitorResultLocalFailure
+				execution.ErrorCode = "route_selection_failed"
+				execution.ErrorMessage = truncateChannelGroupMonitorText(common.MaskSensitiveInfo(selectionErr.Error()), 512)
+				finalOutcome = nil
+				break
+			}
+			if selected == nil {
+				break
+			}
+			pendingChannel = selected
+			continue
+		}
 		ordinaryRetryable := shouldRetry(probeRoutingContext, probeError, common.RetryTimes-retryParam.GetRetry())
 		attemptDuration := time.Duration(0)
 		if outcome.ProbeResult.attemptDuration != nil {
