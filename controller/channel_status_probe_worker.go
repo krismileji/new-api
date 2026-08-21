@@ -281,6 +281,16 @@ func executeChannelStatusProbeModel(
 	testUserId int,
 	modelName string,
 ) channelStatusProbeOutcome {
+	return executeChannelStatusProbeModelWithEndpoint(ctx, channel, testUserId, modelName, "")
+}
+
+func executeChannelStatusProbeModelWithEndpoint(
+	ctx context.Context,
+	channel *model.Channel,
+	testUserId int,
+	modelName string,
+	endpointType string,
+) channelStatusProbeOutcome {
 	started := time.Now()
 	startedAt := started.Unix()
 	if _, err := normalizeChannelStatusProbeModels(channel, []string{modelName}); err != nil {
@@ -303,7 +313,7 @@ func executeChannelStatusProbeModel(
 			ErrorCode: "channel_busy", ErrorMessage: "渠道并发已满，本次未发送请求",
 		}
 	}
-	probeResult := testChannel(probeCtx, channel, testUserId, modelName, "", true)
+	probeResult := testChannel(probeCtx, channel, testUserId, modelName, endpointType, true)
 	settledCostNanoCNY := service.ChannelDailyCostAttemptSettledCost(probeResult.context, channel.Id)
 	lease.Release()
 	finished := time.Now()

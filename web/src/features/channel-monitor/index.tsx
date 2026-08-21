@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Analytics01Icon,
+  Activity01Icon,
   ArrangeIcon,
   HistoryIcon,
   MoneyBag02Icon,
@@ -71,6 +72,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ChannelTestDialogForChannel } from '@/features/channels/components/dialogs/channel-test-dialog'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { getChannelGroupMonitorSettings } from '@/features/group-monitor/api'
 import { cn } from '@/lib/utils'
 
 import {
@@ -83,6 +85,7 @@ import {
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
+import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
@@ -350,6 +353,8 @@ export function ChannelMonitor() {
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
+    useState(false)
   const [smartScheduleSettingsMounted, setSmartScheduleSettingsMounted] =
     useState(false)
   const [smartScheduleSettingsOpen, setSmartScheduleSettingsOpen] =
@@ -470,6 +475,13 @@ export function ChannelMonitor() {
           )
         }) ?? false
       ),
+  })
+  const groupMonitorSettingsQuery = useQuery({
+    queryKey: ['channel-monitor', 'group-monitor', 'settings'],
+    queryFn: getChannelGroupMonitorSettings,
+    enabled: groupMonitorSettingsOpen,
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
@@ -866,6 +878,8 @@ export function ChannelMonitor() {
     view === 'smart-schedule' ? smartScheduleResult : undefined,
   ])
   const todayProbeCost = costOverview?.today_probe_cost_cny ?? 0
+  const todayGroupProbeCost =
+    costOverview?.today_group_probe_cost_cny ?? 0
   const todayModelDetectionCost =
     costOverview?.today_model_detection_cost_cny ?? 0
   const todayBusinessCost = costOverview
@@ -888,7 +902,7 @@ export function ChannelMonitor() {
     costDescription = '暂无已记录的上游请求尝试'
     costSecondaryDescription = '按北京时间统计已结算成本'
   } else if (costOverview) {
-    costDescription = `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)} · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)}`
+    costDescription = `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)}（分组 ${formatChannelMonitorCost(todayGroupProbeCost)}） · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)}`
     costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 解析率 ${formatChannelMonitorResolutionRate(
       costOverview.coverage.settled_count,
       costOverview.coverage.unresolved_count
@@ -1495,6 +1509,21 @@ export function ChannelMonitor() {
                 <Button
                   variant='outline'
                   size='icon'
+                  onClick={() => setGroupMonitorSettingsOpen(true)}
+                  aria-label='分组监控设置'
+                >
+                  <HugeiconsIcon icon={Activity01Icon} />
+                </Button>
+              }
+            />
+            <TooltipContent>分组监控设置</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
                   onClick={openSmartScheduleSettings}
                   aria-label='智能调度设置'
                 >
@@ -1624,6 +1653,13 @@ export function ChannelMonitor() {
           settings={settings}
           open
           onOpenChange={setSettingsOpen}
+        />
+      )}
+      {groupMonitorSettingsOpen && (
+        <ChannelGroupMonitorSettingsSheet
+          data={groupMonitorSettingsQuery.data?.data}
+          open
+          onOpenChange={setGroupMonitorSettingsOpen}
         />
       )}
       {smartScheduleSettingsMounted && (

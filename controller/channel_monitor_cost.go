@@ -29,6 +29,7 @@ type channelMonitorCostDay struct {
 	StartAt               int64   `json:"start_at"`
 	CostCNY               float64 `json:"cost_cny"`
 	ProbeCostCNY          float64 `json:"probe_cost_cny"`
+	GroupProbeCostCNY     float64 `json:"group_probe_cost_cny"`
 	ModelDetectionCostCNY float64 `json:"model_detection_cost_cny"`
 	SettledCount          int64   `json:"settled_count"`
 	UnresolvedCount       int64   `json:"unresolved_count"`
@@ -42,6 +43,7 @@ type channelMonitorCostChannel struct {
 	CostRatio             *float64 `json:"cost_ratio"`
 	CostCNY               float64  `json:"cost_cny"`
 	ProbeCostCNY          float64  `json:"probe_cost_cny"`
+	GroupProbeCostCNY     float64  `json:"group_probe_cost_cny"`
 	ModelDetectionCostCNY float64  `json:"model_detection_cost_cny"`
 	SettledCount          int64    `json:"settled_count"`
 	UnresolvedCount       int64    `json:"unresolved_count"`
@@ -102,12 +104,15 @@ type channelMonitorCostOverview struct {
 	DetailDate                     string                      `json:"detail_date"`
 	TodayCostCNY                   float64                     `json:"today_cost_cny"`
 	TodayProbeCostCNY              float64                     `json:"today_probe_cost_cny"`
+	TodayGroupProbeCostCNY         float64                     `json:"today_group_probe_cost_cny"`
 	TodayModelDetectionCostCNY     float64                     `json:"today_model_detection_cost_cny"`
 	YesterdayCostCNY               float64                     `json:"yesterday_cost_cny"`
 	YesterdayProbeCostCNY          float64                     `json:"yesterday_probe_cost_cny"`
+	YesterdayGroupProbeCostCNY     float64                     `json:"yesterday_group_probe_cost_cny"`
 	YesterdayModelDetectionCostCNY float64                     `json:"yesterday_model_detection_cost_cny"`
 	TotalCostCNY                   float64                     `json:"total_cost_cny"`
 	TotalProbeCostCNY              float64                     `json:"total_probe_cost_cny"`
+	TotalGroupProbeCostCNY         float64                     `json:"total_group_probe_cost_cny"`
 	TotalModelDetectionCostCNY     float64                     `json:"total_model_detection_cost_cny"`
 	Coverage                       channelMonitorCostCoverage  `json:"coverage"`
 	Items                          []channelMonitorCostDay     `json:"items"`
@@ -216,6 +221,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 		}{
 			{&total.CostNanoCNY, row.CostNanoCNY},
 			{&total.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&total.GroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
 			{&total.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
 			{&total.SettledCount, row.SettledCount},
 			{&total.UnresolvedCount, row.UnresolvedCount},
@@ -239,6 +245,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	items := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, totals)
 	var totalCostNanoCNY int64
 	var totalProbeCostNanoCNY int64
+	var totalGroupProbeCostNanoCNY int64
 	var totalModelDetectionCostNanoCNY int64
 	var settledCount int64
 	var unresolvedCount int64
@@ -249,6 +256,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 		}{
 			{&totalCostNanoCNY, total.CostNanoCNY},
 			{&totalProbeCostNanoCNY, total.ProbeCostNanoCNY},
+			{&totalGroupProbeCostNanoCNY, total.GroupProbeCostNanoCNY},
 			{&totalModelDetectionCostNanoCNY, total.ModelDetectionCostNanoCNY},
 			{&settledCount, total.SettledCount},
 			{&unresolvedCount, total.UnresolvedCount},
@@ -263,6 +271,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 		GeneratedAt:                now,
 		TotalCostCNY:               channelMonitorCostCNY(totalCostNanoCNY),
 		TotalProbeCostCNY:          channelMonitorCostCNY(totalProbeCostNanoCNY),
+		TotalGroupProbeCostCNY:     channelMonitorCostCNY(totalGroupProbeCostNanoCNY),
 		TotalModelDetectionCostCNY: channelMonitorCostCNY(totalModelDetectionCostNanoCNY),
 		Items:                      items,
 		ChartItems:                 items,
@@ -282,11 +291,13 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	if len(items) > 0 {
 		overview.TodayCostCNY = items[len(items)-1].CostCNY
 		overview.TodayProbeCostCNY = items[len(items)-1].ProbeCostCNY
+		overview.TodayGroupProbeCostCNY = items[len(items)-1].GroupProbeCostCNY
 		overview.TodayModelDetectionCostCNY = items[len(items)-1].ModelDetectionCostCNY
 	}
 	if len(items) > 1 {
 		overview.YesterdayCostCNY = items[len(items)-2].CostCNY
 		overview.YesterdayProbeCostCNY = items[len(items)-2].ProbeCostCNY
+		overview.YesterdayGroupProbeCostCNY = items[len(items)-2].GroupProbeCostCNY
 		overview.YesterdayModelDetectionCostCNY = items[len(items)-2].ModelDetectionCostCNY
 	}
 	return overview, nil
@@ -366,6 +377,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	type channelCostSummary struct {
 		CostNanoCNY               int64
 		ProbeCostNanoCNY          int64
+		GroupProbeCostNanoCNY     int64
 		ModelDetectionCostNanoCNY int64
 		SettledCount              int64
 		UnresolvedCount           int64
@@ -408,6 +420,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		}{
 			{&summary.CostNanoCNY, row.CostNanoCNY},
 			{&summary.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&summary.GroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
 			{&summary.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
 			{&summary.SettledCount, row.SettledCount},
 			{&summary.UnresolvedCount, row.UnresolvedCount},
@@ -425,6 +438,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	chartItems := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, chartRows)
 	var totalCostNanoCNY int64
 	var totalProbeCostNanoCNY int64
+	var totalGroupProbeCostNanoCNY int64
 	var totalModelDetectionCostNanoCNY int64
 	for _, row := range chartRows {
 		for _, value := range []struct {
@@ -433,6 +447,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		}{
 			{&totalCostNanoCNY, row.CostNanoCNY},
 			{&totalProbeCostNanoCNY, row.ProbeCostNanoCNY},
+			{&totalGroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
 			{&totalModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
 		} {
 			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
@@ -459,6 +474,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			CostRatio:             costRatio,
 			CostCNY:               channelMonitorCostCNY(summary.CostNanoCNY),
 			ProbeCostCNY:          channelMonitorCostCNY(summary.ProbeCostNanoCNY),
+			GroupProbeCostCNY:     channelMonitorCostCNY(summary.GroupProbeCostNanoCNY),
 			ModelDetectionCostCNY: channelMonitorCostCNY(summary.ModelDetectionCostNanoCNY),
 			SettledCount:          summary.SettledCount,
 			UnresolvedCount:       summary.UnresolvedCount,
@@ -717,6 +733,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		GeneratedAt:                now,
 		TotalCostCNY:               channelMonitorCostCNY(totalCostNanoCNY),
 		TotalProbeCostCNY:          channelMonitorCostCNY(totalProbeCostNanoCNY),
+		TotalGroupProbeCostCNY:     channelMonitorCostCNY(totalGroupProbeCostNanoCNY),
 		TotalModelDetectionCostCNY: channelMonitorCostCNY(totalModelDetectionCostNanoCNY),
 		Coverage: channelMonitorCostCoverage{
 			IncludedChannelCount:          len(includedChannels),
@@ -740,11 +757,13 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	if len(chartItems) > 0 {
 		overview.TodayCostCNY = chartItems[len(chartItems)-1].CostCNY
 		overview.TodayProbeCostCNY = chartItems[len(chartItems)-1].ProbeCostCNY
+		overview.TodayGroupProbeCostCNY = chartItems[len(chartItems)-1].GroupProbeCostCNY
 		overview.TodayModelDetectionCostCNY = chartItems[len(chartItems)-1].ModelDetectionCostCNY
 	}
 	if len(chartItems) > 1 {
 		overview.YesterdayCostCNY = chartItems[len(chartItems)-2].CostCNY
 		overview.YesterdayProbeCostCNY = chartItems[len(chartItems)-2].ProbeCostCNY
+		overview.YesterdayGroupProbeCostCNY = chartItems[len(chartItems)-2].GroupProbeCostCNY
 		overview.YesterdayModelDetectionCostCNY = chartItems[len(chartItems)-2].ModelDetectionCostCNY
 	}
 	return overview, nil
@@ -758,6 +777,7 @@ func channelMonitorCostDaysFromTotals(startTimestamp int64, endTimestamp int64, 
 			StartAt:               row.DayStart,
 			CostCNY:               channelMonitorCostCNY(row.CostNanoCNY),
 			ProbeCostCNY:          channelMonitorCostCNY(row.ProbeCostNanoCNY),
+			GroupProbeCostCNY:     channelMonitorCostCNY(row.GroupProbeCostNanoCNY),
 			ModelDetectionCostCNY: channelMonitorCostCNY(row.ModelDetectionCostNanoCNY),
 			SettledCount:          row.SettledCount,
 			UnresolvedCount:       row.UnresolvedCount,

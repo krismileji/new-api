@@ -24,6 +24,7 @@ type ChannelMonitorEventSource string
 const (
 	ChannelMonitorEventSourceBusiness       ChannelMonitorEventSource = "business"
 	ChannelMonitorEventSourceStatusProbe    ChannelMonitorEventSource = "status_probe"
+	ChannelMonitorEventSourceGroupProbe     ChannelMonitorEventSource = "group_probe"
 	ChannelMonitorEventSourceSmartProbe     ChannelMonitorEventSource = "smart_probe"
 	ChannelMonitorEventSourceManualTest     ChannelMonitorEventSource = "manual_test"
 	ChannelMonitorEventSourceModelDetection ChannelMonitorEventSource = "model_detection"
@@ -286,6 +287,7 @@ func (source ChannelMonitorEventSource) valid() bool {
 	switch source {
 	case ChannelMonitorEventSourceBusiness,
 		ChannelMonitorEventSourceStatusProbe,
+		ChannelMonitorEventSourceGroupProbe,
 		ChannelMonitorEventSourceSmartProbe,
 		ChannelMonitorEventSourceManualTest,
 		ChannelMonitorEventSourceModelDetection:

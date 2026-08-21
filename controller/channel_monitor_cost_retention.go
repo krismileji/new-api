@@ -41,6 +41,7 @@ type channelMonitorCostRetentionTaskResult struct {
 	StatusProbeHistoryRetentionDays int   `json:"status_probe_history_retention_days"`
 	StatusProbeHistoryCutoff        int64 `json:"status_probe_history_cutoff"`
 	StatusProbeExecutionsDeleted    int64 `json:"status_probe_executions_deleted"`
+	GroupMonitorExecutionsDeleted   int64 `json:"group_monitor_executions_deleted"`
 	ModelDetectionRetentionDays     int   `json:"model_detection_retention_days"`
 	ModelDetectionCutoff            int64 `json:"model_detection_cutoff"`
 	BudgetExhausted                 bool  `json:"budget_exhausted"`
@@ -382,14 +383,25 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		return
 	}
 	result.BudgetExhausted = result.BudgetExhausted || historyDeleted.Incomplete
-	statusProbeBudget := cleanupBudget.Slice(2)
+	statusProbeBudget := cleanupBudget.Slice(3)
 	statusProbeDeleted, err := model.DeleteChannelStatusProbeExecutionsBefore(
 		ctx,
 		statusProbeHistoryCutoff,
 		batchSize,
-		statusProbeBudget,
+		statusProbeBudget.Slice(2),
 	)
 	result.StatusProbeExecutionsDeleted = statusProbeDeleted
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	groupMonitorDeleted, err := model.DeleteChannelGroupMonitorExecutionsBefore(
+		ctx,
+		statusProbeHistoryCutoff,
+		batchSize,
+		statusProbeBudget.Slice(1),
+	)
+	result.GroupMonitorExecutionsDeleted = groupMonitorDeleted
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return

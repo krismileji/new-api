@@ -33,7 +33,7 @@ const (
 
 	ChannelMonitorStatusProbeLogKey = "channel_monitor_status_probe"
 
-	ChannelStatusProbeDefaultIntervalSeconds = 300
+	ChannelStatusProbeDefaultIntervalSeconds = 60
 	ChannelStatusProbeMinIntervalSeconds     = 30
 	ChannelStatusProbeMaxIntervalSeconds     = 86400
 	ChannelStatusProbeDisplayUnitMinute      = "minute"

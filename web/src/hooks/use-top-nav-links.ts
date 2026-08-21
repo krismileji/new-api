@@ -77,6 +77,9 @@ export function useTopNavLinks(): TopNavLink[] {
   if (pricing && typeof pricing === 'object' && pricing.enabled) {
     const requiresAuth = pricing.requireAuth && !isAuthed
     links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
+    if (status?.group_monitor_enabled === true) {
+      links.push({ title: '分组监控', href: '/group-monitor', requiresAuth })
+    }
   }
 
   // Rankings

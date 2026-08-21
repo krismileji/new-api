@@ -118,7 +118,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			}
 		}
 	}
-	if !isChannelStatusProbeTest(ctx) && service.ChannelRateLimitCooldownUntilMatching(channel.Id, testModel) > 0 {
+	if !isChannelStatusProbeTest(ctx) && !isChannelGroupMonitorTest(ctx) &&
+		service.ChannelRateLimitCooldownUntilMatching(channel.Id, testModel) > 0 {
 		return testResult{
 			localErr:          errors.New("渠道模型处于 429 冷却中，本次测试未发送"),
 			originalModelName: testModel,
@@ -185,6 +186,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	group, _ := model.GetUserGroup(testUserID, false)
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	applyChannelSmartScheduleProbeTestContext(ctx, c)
+	applyChannelGroupMonitorTestContext(ctx, c)
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -246,12 +248,16 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 
 	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
+	isGroupMonitorProbe := isChannelGroupMonitorTest(ctx)
 	isStatusProbe := isChannelStatusProbeTest(ctx)
-	isAutomatedProbe := isSmartScheduleProbe || isStatusProbe
+	isAutomatedProbe := isSmartScheduleProbe || isGroupMonitorProbe || isStatusProbe
 	eventSource := model.ChannelMonitorEventSourceManualTest
 	if isSmartScheduleProbe {
 		eventSource = model.ChannelMonitorEventSourceSmartProbe
 		c.Set(model.ChannelMonitorSmartScheduleProbeLogKey, true)
+	} else if isGroupMonitorProbe {
+		eventSource = model.ChannelMonitorEventSourceGroupProbe
+		c.Set(model.ChannelMonitorGroupProbeLogKey, true)
 	} else if isStatusProbe {
 		eventSource = model.ChannelMonitorEventSourceStatusProbe
 	}
@@ -582,6 +588,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			other[model.ChannelMonitorSmartScheduleProbeLogKey] = true
 			tokenName = "智能调度探测"
 			content = "智能调度定时探测"
+		} else if isGroupMonitorProbe {
+			other[model.ChannelMonitorGroupProbeLogKey] = true
+			tokenName = "分组监控探测"
+			content = "分组监控探测"
 		} else if isStatusProbe {
 			other[model.ChannelMonitorStatusProbeLogKey] = true
 			tokenName = "状态探测"

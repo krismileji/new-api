@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+export const CHANNEL_STATUS_PROBE_DEFAULT_INTERVAL_SECONDS = 60
+
 export const CHANNEL_STATUS_PROBE_DISPLAY_LIMITS = {
   minute: 60,
   hour: 24,

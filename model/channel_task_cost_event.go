@@ -85,7 +85,7 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 			return err
 		}
 		if existing.RegistrationToken == registrationToken {
-			if err := addChannelDailyCost(tx, input.ChannelId, input.OccurredAt, input.CostNanoCNY, 0, 1, 0); err != nil {
+			if err := addChannelDailyCost(tx, input.ChannelId, input.OccurredAt, input.CostNanoCNY, 0, 0, 1, 0); err != nil {
 				return err
 			}
 			if input.KeyFingerprint != "" {

@@ -121,6 +121,25 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		assert.NotContains(t, other, "performance_timing_version")
 		assert.NotContains(t, other, "tokens_per_second")
 	})
+
+	t.Run("group monitor probe records a dedicated usage marker", func(t *testing.T) {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[channelprobe.OptionKey] = "true"
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Delete(&model.Log{}).Error)
+
+		probeCtx := withChannelGroupMonitorTestContext(context.Background(), "vip")
+		result := testChannel(probeCtx, channel, user.Id, "gpt-3.5-turbo", "", false)
+
+		require.NoError(t, result.localErr)
+		var consumeLog model.Log
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
+		assert.Equal(t, "分组监控探测", consumeLog.TokenName)
+		assert.Equal(t, "分组监控探测", consumeLog.Content)
+		var other map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
+		assert.Equal(t, true, other[model.ChannelMonitorGroupProbeLogKey])
+	})
 }
 
 func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {

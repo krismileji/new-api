@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,4 +100,13 @@ func TestEmitChannelMonitorSuccessEventUsesAttemptPerformanceTiming(t *testing.T
 	assert.InDelta(t, 50, *event.TPS, 1e-9)
 	require.NotNil(t, event.AttemptDurationMs)
 	assert.Equal(t, int64(2500), *event.AttemptDurationMs)
+}
+
+func TestChannelMonitorEventSourcePrefersGroupProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set(model.ChannelMonitorGroupProbeLogKey, true)
+	ctx.Set(model.ChannelMonitorStatusProbeLogKey, true)
+
+	assert.Equal(t, model.ChannelMonitorEventSourceGroupProbe, channelMonitorEventSource(ctx))
 }

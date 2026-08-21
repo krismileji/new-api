@@ -105,8 +105,9 @@ func GetStatus(c *gin.Context) {
 		"faq_enabled":           cs.FAQEnabled,
 
 		// 模块管理配置
-		"HeaderNavModules":    common.OptionMap["HeaderNavModules"],
-		"SidebarModulesAdmin": common.OptionMap["SidebarModulesAdmin"],
+		"HeaderNavModules":      common.OptionMap["HeaderNavModules"],
+		"SidebarModulesAdmin":   common.OptionMap["SidebarModulesAdmin"],
+		"group_monitor_enabled": channelGroupMonitorEnabled(),
 
 		"oidc_enabled":                system_setting.GetOIDCSettings().Enabled,
 		"oidc_client_id":              system_setting.GetOIDCSettings().ClientId,
@@ -170,6 +171,14 @@ func GetStatus(c *gin.Context) {
 		"data":    data,
 	})
 	return
+}
+
+func channelGroupMonitorEnabled() bool {
+	if model.DB == nil || !model.DB.Migrator().HasTable(&model.ChannelGroupMonitorConfig{}) {
+		return false
+	}
+	config, err := model.GetChannelGroupMonitorConfigOrDefault()
+	return err == nil && config.Enabled
 }
 
 func GetNotice(c *gin.Context) {

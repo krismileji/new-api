@@ -164,6 +164,22 @@ func TestChannelDailyCostAttributesStatusProbeAndExposesSettledAttemptCost(t *te
 	assert.Nil(t, ChannelDailyCostAttemptSettledCost(unresolved, 9))
 }
 
+func TestChannelDailyCostAttributesGroupProbeSeparately(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	createChannelDailyCostMonitor(t, db, 81, 0.5)
+	ctx := newChannelDailyCostTestContext()
+	ctx.Set(model.ChannelMonitorGroupProbeLogKey, true)
+	CaptureChannelDailyCostSnapshot(ctx, 81)
+	BeginChannelDailyCostAttempt(ctx, 81)
+
+	recordChannelDailyCostFromQuota(ctx, 81, 500_000)
+
+	var cost model.ChannelDailyCost
+	require.NoError(t, db.First(&cost, "channel_id = ?", 81).Error)
+	assert.Equal(t, cost.CostNanoCNY, cost.ProbeCostNanoCNY)
+	assert.Equal(t, cost.CostNanoCNY, cost.GroupProbeCostNanoCNY)
+}
+
 func TestChannelDailyCostUsesQuotaBeforeFreeGroup(t *testing.T) {
 	db := setupChannelDailyCostServiceTest(t)
 	createChannelDailyCostMonitor(t, db, 2, 0.2)

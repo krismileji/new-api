@@ -66,6 +66,7 @@ const (
 	channelMonitorRedisSharedMetricUnresolvedRequests     = "unresolved_request_count"
 	channelMonitorRedisSharedMetricAPIKeyName             = "api_key_name"
 	channelMonitorRedisSharedMetricProbeSettledCost       = "probe_settled_cost_nano_cny"
+	channelMonitorRedisSharedMetricGroupProbeSettledCost  = "group_probe_settled_cost_nano_cny"
 	channelMonitorRedisSharedMetricDetectionSettledCost   = "model_detection_settled_cost_nano_cny"
 	channelMonitorRedisSharedMetricLastUsedTime           = "last_used_time"
 	channelMonitorRedisSharedMetricLatestFirstToken       = "latest_first_token_ms"
@@ -131,6 +132,7 @@ type ChannelMonitorRedisSharedAggregate struct {
 	UnresolvedCostNanoCNY            int64 `json:"unresolved_cost_nano_cny"`
 	UnresolvedRequestCount           int64 `json:"unresolved_request_count"`
 	ProbeSettledCostNanoCNY          int64 `json:"probe_settled_cost_nano_cny"`
+	GroupProbeSettledCostNanoCNY     int64 `json:"group_probe_settled_cost_nano_cny"`
 	ModelDetectionSettledCostNanoCNY int64 `json:"model_detection_settled_cost_nano_cny"`
 
 	LatestFirstTokenMs *float64 `json:"latest_first_token_ms,omitempty"`
@@ -763,6 +765,9 @@ func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx conte
 		switch model.ChannelMonitorEventSource(state.Source) {
 		case model.ChannelMonitorEventSourceStatusProbe, model.ChannelMonitorEventSourceSmartProbe:
 			delta.Integers[channelMonitorRedisSharedMetricProbeSettledCost] = sign * state.SettledCost
+		case model.ChannelMonitorEventSourceGroupProbe:
+			delta.Integers[channelMonitorRedisSharedMetricProbeSettledCost] = sign * state.SettledCost
+			delta.Integers[channelMonitorRedisSharedMetricGroupProbeSettledCost] = sign * state.SettledCost
 		case model.ChannelMonitorEventSourceModelDetection:
 			delta.Integers[channelMonitorRedisSharedMetricDetectionSettledCost] = sign * state.SettledCost
 		}
@@ -1244,6 +1249,7 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 		{&target.UnresolvedCostNanoCNY, source.UnresolvedCostNanoCNY},
 		{&target.UnresolvedRequestCount, source.UnresolvedRequestCount},
 		{&target.ProbeSettledCostNanoCNY, source.ProbeSettledCostNanoCNY},
+		{&target.GroupProbeSettledCostNanoCNY, source.GroupProbeSettledCostNanoCNY},
 		{&target.ModelDetectionSettledCostNanoCNY, source.ModelDetectionSettledCostNanoCNY},
 	} {
 		if _, err := channelMonitorRedisSharedCheckedAddInt64(*value.target, value.delta); err != nil {
@@ -1274,6 +1280,7 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 	target.UnresolvedCostNanoCNY += source.UnresolvedCostNanoCNY
 	target.UnresolvedRequestCount += source.UnresolvedRequestCount
 	target.ProbeSettledCostNanoCNY += source.ProbeSettledCostNanoCNY
+	target.GroupProbeSettledCostNanoCNY += source.GroupProbeSettledCostNanoCNY
 	target.ModelDetectionSettledCostNanoCNY += source.ModelDetectionSettledCostNanoCNY
 	if source.APIKeyName != "" && (target.APIKeyName == "" || source.LastUsedTime >= target.LastUsedTime) {
 		target.APIKeyName = source.APIKeyName
@@ -1619,6 +1626,8 @@ func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAg
 		aggregate.UnresolvedRequestCount += value
 	case channelMonitorRedisSharedMetricProbeSettledCost:
 		aggregate.ProbeSettledCostNanoCNY += value
+	case channelMonitorRedisSharedMetricGroupProbeSettledCost:
+		aggregate.GroupProbeSettledCostNanoCNY += value
 	case channelMonitorRedisSharedMetricDetectionSettledCost:
 		aggregate.ModelDetectionSettledCostNanoCNY += value
 	default:

@@ -59,6 +59,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { updateChannelStatusProbeConfig } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
+  CHANNEL_STATUS_PROBE_DEFAULT_INTERVAL_SECONDS,
   CHANNEL_STATUS_PROBE_DISPLAY_LIMITS,
   channelStatusProbeConfigSchema,
   type ChannelStatusProbeConfigFormValues,
@@ -103,7 +104,9 @@ export function ChannelStatusProbeConfigSheet(
     defaultValues: {
       enabled: props.channel.config?.enabled ?? false,
       models: defaultModels,
-      intervalSeconds: props.channel.config?.interval_seconds ?? 300,
+      intervalSeconds:
+        props.channel.config?.interval_seconds ??
+        CHANNEL_STATUS_PROBE_DEFAULT_INTERVAL_SECONDS,
       displayValue: props.channel.config?.display_value ?? 60,
       displayUnit: props.channel.config?.display_unit ?? 'minute',
       recordSample: props.channel.config?.record_sample ?? false,

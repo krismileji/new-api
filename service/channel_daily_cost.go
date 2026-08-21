@@ -423,24 +423,31 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		return false
 	}
 	isStatusProbe := ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey)
+	isGroupProbe := ctx != nil && ctx.GetBool(model.ChannelMonitorGroupProbeLogKey)
+	isProbe := isStatusProbe || isGroupProbe
 	probeCostNanoCNY := int64(0)
-	if isStatusProbe && settledDelta > 0 {
+	groupProbeCostNanoCNY := int64(0)
+	if isProbe && settledDelta > 0 {
 		probeCostNanoCNY = costNanoCNY
+		if isGroupProbe {
+			groupProbeCostNanoCNY = costNanoCNY
+		}
 	}
 	delta := model.ChannelDailyCostDelta{
-		ChannelId:        snapshot.ChannelId,
-		OccurredAt:       common.GetTimestamp(),
-		CostNanoCNY:      costNanoCNY,
-		ProbeCostNanoCNY: probeCostNanoCNY,
-		SettledDelta:     settledDelta,
-		UnresolvedDelta:  unresolvedDelta,
-		APIKeyId:         snapshot.APIKeyId,
-		APIKeyName:       snapshot.APIKeyName,
-		KeyFingerprint:   snapshot.KeyFingerprint,
-		KeyDisplay:       snapshot.KeyDisplay,
+		ChannelId:             snapshot.ChannelId,
+		OccurredAt:            common.GetTimestamp(),
+		CostNanoCNY:           costNanoCNY,
+		ProbeCostNanoCNY:      probeCostNanoCNY,
+		GroupProbeCostNanoCNY: groupProbeCostNanoCNY,
+		SettledDelta:          settledDelta,
+		UnresolvedDelta:       unresolvedDelta,
+		APIKeyId:              snapshot.APIKeyId,
+		APIKeyName:            snapshot.APIKeyName,
+		KeyFingerprint:        snapshot.KeyFingerprint,
+		KeyDisplay:            snapshot.KeyDisplay,
 	}
 	var persisted bool
-	if isStatusProbe {
+	if isProbe {
 		persisted = writeChannelDailyCostSynchronously(delta)
 	} else {
 		persisted = enqueueChannelDailyCost(delta)

@@ -97,6 +97,12 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	require.NoError(t, model.AddChannelDailyCostWithModelDetection(context.Background(), db, 1, today+60, 150_000_000, 150_000_000, 1, 0))
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 2, today, 0, 0, 1))
 	require.NoError(t, model.AddChannelDailyCost(context.Background(), 3, today, 0, 1, 0))
+	require.NoError(t, db.Model(&model.ChannelDailyCost{}).
+		Where("channel_id = ? AND day_start = ?", 1, channelMonitorCostDayStart(yesterday)).
+		Update("group_probe_cost_nano_cny", int64(200_000_000)).Error)
+	require.NoError(t, db.Model(&model.ChannelDailyCost{}).
+		Where("channel_id = ? AND day_start = ?", 1, channelMonitorCostDayStart(today)).
+		Update("group_probe_cost_nano_cny", int64(100_000_000)).Error)
 
 	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
 	overview, err := getChannelMonitorCostOverview(context.Background(), 2, now)
@@ -110,11 +116,16 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	assert.InDelta(t, 0.5, overview.YesterdayProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.25, overview.TodayProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.75, overview.TotalProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.2, overview.YesterdayGroupProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.1, overview.TodayGroupProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.3, overview.TotalGroupProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.3, overview.YesterdayModelDetectionCostCNY, 1e-9)
 	assert.InDelta(t, 0.15, overview.TodayModelDetectionCostCNY, 1e-9)
 	assert.InDelta(t, 0.45, overview.TotalModelDetectionCostCNY, 1e-9)
 	assert.InDelta(t, 0.5, overview.Items[0].ProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.25, overview.Items[1].ProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.2, overview.Items[0].GroupProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.1, overview.Items[1].GroupProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.3, overview.Items[0].ModelDetectionCostCNY, 1e-9)
 	assert.InDelta(t, 0.15, overview.Items[1].ModelDetectionCostCNY, 1e-9)
 	assert.Equal(t, int64(3), overview.Items[0].SettledCount)
@@ -131,6 +142,7 @@ func TestGetChannelMonitorCostOverviewReadsSettledDailyFacts(t *testing.T) {
 	assert.Equal(t, "已结算渠道", overview.Channels[0].ChannelName)
 	assert.InDelta(t, 4.7, overview.Channels[0].CostCNY, 1e-9)
 	assert.InDelta(t, 0.75, overview.Channels[0].ProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.3, overview.Channels[0].GroupProbeCostCNY, 1e-9)
 	assert.InDelta(t, 0.45, overview.Channels[0].ModelDetectionCostCNY, 1e-9)
 	assert.Equal(t, int64(5), overview.Channels[0].SettledCount)
 	assert.Equal(t, 2, overview.Channels[1].ChannelId)

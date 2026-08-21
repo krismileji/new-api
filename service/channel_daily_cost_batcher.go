@@ -133,12 +133,13 @@ func (b *channelDailyCostBatcher) enqueueResult(delta model.ChannelDailyCostDelt
 		return channelDailyCostEnqueueStopped
 	}
 	if current, exists := b.pending[key]; exists {
-		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
+		if current.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || current.ProbeCostNanoCNY > math.MaxInt64-delta.ProbeCostNanoCNY || current.GroupProbeCostNanoCNY > math.MaxInt64-delta.GroupProbeCostNanoCNY || current.SettledDelta > math.MaxInt64-delta.SettledDelta || current.UnresolvedDelta > math.MaxInt64-delta.UnresolvedDelta {
 			b.mu.Unlock()
 			return channelDailyCostEnqueueOverflow
 		}
 		current.CostNanoCNY += delta.CostNanoCNY
 		current.ProbeCostNanoCNY += delta.ProbeCostNanoCNY
+		current.GroupProbeCostNanoCNY += delta.GroupProbeCostNanoCNY
 		current.SettledDelta += delta.SettledDelta
 		current.UnresolvedDelta += delta.UnresolvedDelta
 		if delta.OccurredAt >= current.OccurredAt {
@@ -174,6 +175,8 @@ func channelDailyCostDeltaIsValid(delta model.ChannelDailyCostDelta) bool {
 		delta.CostNanoCNY >= 0 &&
 		delta.ProbeCostNanoCNY >= 0 &&
 		delta.ProbeCostNanoCNY <= delta.CostNanoCNY &&
+		delta.GroupProbeCostNanoCNY >= 0 &&
+		delta.GroupProbeCostNanoCNY <= delta.ProbeCostNanoCNY &&
 		delta.SettledDelta >= 0 &&
 		delta.UnresolvedDelta >= 0 &&
 		(delta.SettledDelta > 0 || delta.UnresolvedDelta > 0)

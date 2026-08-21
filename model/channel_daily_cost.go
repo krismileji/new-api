@@ -25,6 +25,7 @@ type ChannelDailyCost struct {
 	DayStart                  int64 `gorm:"not null;uniqueIndex:idx_channel_daily_cost_day;index:idx_channel_daily_cost_day_start"`
 	CostNanoCNY               int64 `gorm:"not null"`
 	ProbeCostNanoCNY          int64 `gorm:"not null;default:0"`
+	GroupProbeCostNanoCNY     int64 `gorm:"not null;default:0"`
 	ModelDetectionCostNanoCNY int64 `gorm:"not null;default:0"`
 	SettledCount              int64 `gorm:"not null"`
 	UnresolvedCount           int64 `gorm:"not null"`
@@ -39,6 +40,7 @@ type ChannelDailyCostDayTotal struct {
 	DayStart                  int64 `gorm:"column:day_start"`
 	CostNanoCNY               int64 `gorm:"column:cost_nano_cny"`
 	ProbeCostNanoCNY          int64 `gorm:"column:probe_cost_nano_cny"`
+	GroupProbeCostNanoCNY     int64 `gorm:"column:group_probe_cost_nano_cny"`
 	ModelDetectionCostNanoCNY int64 `gorm:"column:model_detection_cost_nano_cny"`
 	SettledCount              int64 `gorm:"column:settled_count"`
 	UnresolvedCount           int64 `gorm:"column:unresolved_count"`
@@ -148,12 +150,12 @@ func AddChannelDailyCost(ctx context.Context, channelId int, occurredAt int64, c
 
 func AddChannelDailyCostWithProbe(ctx context.Context, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, 0, settledDelta, unresolvedDelta)
+		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, 0, 0, settledDelta, unresolvedDelta)
 	})
 }
 
-func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
-	return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, 0, settledDelta, unresolvedDelta)
+func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, groupProbeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
+	return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, groupProbeCostNanoCNY, 0, settledDelta, unresolvedDelta)
 }
 
 // AddChannelDailyCostWithModelDetection records a settled model-detection
@@ -168,7 +170,7 @@ func AddChannelDailyCostWithModelDetection(ctx context.Context, tx *gorm.DB, cha
 		return errors.New("channel daily cost database is unavailable")
 	}
 	return tx.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, 0, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta)
+		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, 0, 0, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta)
 	})
 }
 
@@ -225,7 +227,7 @@ func SettleUnresolvedChannelDailyModelDetectionCost(ctx context.Context, tx *gor
 	})
 }
 
-func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
+func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, groupProbeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
 	if channelId <= 0 {
 		return errors.New("channel id must be positive")
 	}
@@ -234,6 +236,9 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	}
 	if probeCostNanoCNY < 0 || probeCostNanoCNY > costNanoCNY {
 		return errors.New("daily probe cost must be between zero and total cost")
+	}
+	if groupProbeCostNanoCNY < 0 || groupProbeCostNanoCNY > probeCostNanoCNY {
+		return errors.New("daily group probe cost must be between zero and probe cost")
 	}
 	if modelDetectionCostNanoCNY < 0 || modelDetectionCostNanoCNY > costNanoCNY {
 		return errors.New("daily model detection cost must be between zero and total cost")
@@ -261,7 +266,7 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	}
 	updated, err := updateChannelDailyCostIfWithinBounds(
 		tx, channelId, record.DayStart, occurredAt,
-		costNanoCNY, probeCostNanoCNY, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta,
+		costNanoCNY, probeCostNanoCNY, groupProbeCostNanoCNY, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta,
 	)
 	if err != nil || updated {
 		return err
@@ -269,17 +274,19 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	return errors.New("渠道日成本累计超过 int64 范围")
 }
 
-func updateChannelDailyCostIfWithinBounds(tx *gorm.DB, channelId int, dayStart int64, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) (bool, error) {
+func updateChannelDailyCostIfWithinBounds(tx *gorm.DB, channelId int, dayStart int64, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, groupProbeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) (bool, error) {
 	update := tx.Model(&ChannelDailyCost{}).
 		Where("channel_id = ? AND day_start = ?", channelId, dayStart).
 		Where("cost_nano_cny <= ?", math.MaxInt64-costNanoCNY).
 		Where("probe_cost_nano_cny <= ?", math.MaxInt64-probeCostNanoCNY).
+		Where("group_probe_cost_nano_cny <= ?", math.MaxInt64-groupProbeCostNanoCNY).
 		Where("model_detection_cost_nano_cny <= ?", math.MaxInt64-modelDetectionCostNanoCNY).
 		Where("settled_count <= ?", math.MaxInt64-settledDelta).
 		Where("unresolved_count <= ?", math.MaxInt64-unresolvedDelta).
 		Updates(map[string]interface{}{
 			"cost_nano_cny":                 gorm.Expr("cost_nano_cny + ?", costNanoCNY),
 			"probe_cost_nano_cny":           gorm.Expr("probe_cost_nano_cny + ?", probeCostNanoCNY),
+			"group_probe_cost_nano_cny":     gorm.Expr("group_probe_cost_nano_cny + ?", groupProbeCostNanoCNY),
 			"model_detection_cost_nano_cny": gorm.Expr("model_detection_cost_nano_cny + ?", modelDetectionCostNanoCNY),
 			"settled_count":                 gorm.Expr("settled_count + ?", settledDelta),
 			"unresolved_count":              gorm.Expr("unresolved_count + ?", unresolvedDelta),
@@ -355,6 +362,7 @@ func addChannelDailyCostTotal(total *ChannelDailyCostDayTotal, row ChannelDailyC
 	}{
 		{&total.CostNanoCNY, row.CostNanoCNY},
 		{&total.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
+		{&total.GroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
 		{&total.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
 		{&total.SettledCount, row.SettledCount},
 		{&total.UnresolvedCount, row.UnresolvedCount},

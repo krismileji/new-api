@@ -41,12 +41,15 @@ function createOverview(): ChannelMonitorCostOverview {
     realtime_degraded: false,
     today_cost_cny: 1.2,
     today_probe_cost_cny: 0.3,
+    today_group_probe_cost_cny: 0.12,
     today_model_detection_cost_cny: 0.2,
     yesterday_cost_cny: 0.8,
     yesterday_probe_cost_cny: 0.1,
+    yesterday_group_probe_cost_cny: 0.04,
     yesterday_model_detection_cost_cny: 0.05,
     total_cost_cny: 2,
     total_probe_cost_cny: 0.4,
+    total_group_probe_cost_cny: 0.16,
     total_model_detection_cost_cny: 0.25,
     detail_date: '2026-07-23',
     coverage: {
@@ -63,6 +66,7 @@ function createOverview(): ChannelMonitorCostOverview {
         start_at: 1_752_681_600,
         cost_cny: 1.2,
         probe_cost_cny: 0.3,
+        group_probe_cost_cny: 0.12,
         model_detection_cost_cny: 0.2,
         settled_count: 1,
         unresolved_count: 0,
@@ -74,6 +78,7 @@ function createOverview(): ChannelMonitorCostOverview {
         start_at: 1_752_681_600,
         cost_cny: 1.2,
         probe_cost_cny: 0.3,
+        group_probe_cost_cny: 0.12,
         model_detection_cost_cny: 0.2,
         settled_count: 1,
         unresolved_count: 0,
@@ -92,6 +97,7 @@ function createOverview(): ChannelMonitorCostOverview {
         cost_ratio: 0.5,
         cost_cny: 2,
         probe_cost_cny: 0.5,
+        group_probe_cost_cny: 0.2,
         model_detection_cost_cny: 0.25,
         settled_count: 1,
         unresolved_count: 0,
@@ -183,6 +189,8 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('0.5'))
     assert.ok(markup.includes('探测成本'))
     assert.ok(markup.includes('0.5000'))
+    assert.ok(markup.includes('分组探测成本'))
+    assert.ok(markup.includes('0.2000'))
     assert.ok(markup.includes('模型检测成本'))
     assert.ok(markup.includes('0.2500'))
     assert.ok(markup.includes('仅未确认渠道'))
@@ -191,7 +199,7 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('aria-label="未解析 3"'))
     assert.ok(markup.includes('aria-label="解析率 0%"'))
     assert.ok(markup.includes('配置缺失'))
-    assert.ok(markup.includes('min-w-[960px]'))
+    assert.ok(markup.includes('min-w-[1080px]'))
     assert.ok(markup.includes('grid-cols-3'))
     assert.ok(markup.includes('按渠道排序'))
     assert.ok(markup.includes('按已结算成本排序'))
@@ -221,6 +229,7 @@ describe('channel monitor cost history dialog layout', () => {
     assert.ok(markup.includes('其中 1 个渠道缺少有效成本配置'))
     assert.ok(markup.includes('已结算成本'))
     assert.ok(markup.includes('探测成本'))
+    assert.ok(markup.includes('分组探测成本'))
     assert.ok(markup.includes('模型检测成本'))
     assert.ok(markup.includes('0.3000'))
     assert.ok(markup.includes('未解析'))

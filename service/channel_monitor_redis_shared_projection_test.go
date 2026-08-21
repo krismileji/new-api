@@ -393,17 +393,24 @@ func TestChannelMonitorRedisSharedProjectionSplitsProbeAndDetectionCosts(t *test
 	manual.Source = model.ChannelMonitorEventSourceManualTest
 	manual.SettledCostNanoCNY = 330
 	manual.OtherJson = `{"cost_event_id":"manual-cost"}`
+	groupProbe := probe
+	groupProbe.EventId = "group-probe-cost"
+	groupProbe.EventSequence = 24
+	groupProbe.Source = model.ChannelMonitorEventSourceGroupProbe
+	groupProbe.SettledCostNanoCNY = 120
+	groupProbe.OtherJson = `{"cost_event_id":"group-probe-cost"}`
 
-	require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{probe, detectionUnresolved, manual}))
+	require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{probe, detectionUnresolved, manual, groupProbe}))
 	require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{detectionSettled}))
 	view, err := projection.Query(context.Background(), base, base+60)
 	require.NoError(t, err)
 	costs := view.DailyCosts[model.ChannelDailyCostDayStart(base)]
-	assert.Equal(t, int64(660), costs.Global.SettledCostNanoCNY)
-	assert.Equal(t, int64(110), costs.Global.ProbeSettledCostNanoCNY)
+	assert.Equal(t, int64(780), costs.Global.SettledCostNanoCNY)
+	assert.Equal(t, int64(230), costs.Global.ProbeSettledCostNanoCNY)
+	assert.Equal(t, int64(120), costs.Global.GroupProbeSettledCostNanoCNY)
 	assert.Equal(t, int64(220), costs.Global.ModelDetectionSettledCostNanoCNY)
 	assert.Zero(t, costs.Global.UnresolvedCostNanoCNY)
-	assert.Equal(t, int64(660), costs.Channels[probe.ChannelId].SettledCostNanoCNY)
+	assert.Equal(t, int64(780), costs.Channels[probe.ChannelId].SettledCostNanoCNY)
 }
 
 func intPointer(value int) *int {

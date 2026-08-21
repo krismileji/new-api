@@ -1,0 +1,223 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { Activity01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useQuery } from '@tanstack/react-query'
+
+import { PublicLayout } from '@/components/layout'
+import { PageTransition } from '@/components/page-transition'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
+import { getPricingGroupMonitor } from './api'
+import type { ChannelGroupMonitorStatus, PricingGroupMonitor } from './types'
+
+const STATUS_PRESENTATION: Record<
+  ChannelGroupMonitorStatus,
+  { label: string; dot: string; badge: 'secondary' | 'warning' | 'destructive' }
+> = {
+  unconfigured: { label: '未配置', dot: 'bg-muted-foreground/60', badge: 'secondary' },
+  paused: { label: '已停用', dot: 'bg-muted-foreground/60', badge: 'secondary' },
+  pending: { label: '待检测', dot: 'bg-primary', badge: 'secondary' },
+  healthy: { label: '正常', dot: 'bg-success', badge: 'secondary' },
+  unavailable: { label: '无可用路由', dot: 'bg-destructive', badge: 'destructive' },
+  unhealthy: { label: '异常', dot: 'bg-destructive', badge: 'destructive' },
+  rate_limited: { label: '波动', dot: 'bg-warning', badge: 'warning' },
+  stale: { label: '数据过期', dot: 'bg-warning', badge: 'warning' },
+}
+
+const DISPLAY_UNIT_LABEL = {
+  minute: '分钟',
+  hour: '小时',
+  day: '天',
+} as const
+
+function formatLatency(value: number | null): string {
+  if (value == null) return '--'
+  if (value >= 1000) return `${(value / 1000).toFixed(2)} 秒`
+  return `${Math.round(value)} 毫秒`
+}
+
+function formatRate(value: number | null): string {
+  if (value == null) return '--'
+  return `${value.toFixed(1)}%`
+}
+
+function GroupMonitorSkeleton() {
+  return (
+    <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
+      {Array.from({ length: 6 }, (_, index) => (
+        <Skeleton key={index} className='h-44 rounded-lg' />
+      ))}
+    </div>
+  )
+}
+
+export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
+  if (props.result.items.length === 0) {
+    return (
+      <Empty className='min-h-80 border border-dashed'>
+        <EmptyHeader>
+          <EmptyMedia variant='icon'>
+            <HugeiconsIcon icon={Activity01Icon} />
+          </EmptyMedia>
+          <EmptyTitle>暂无分组监控</EmptyTitle>
+          <EmptyDescription>当前账号没有可展示的分组状态</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+
+  return (
+    <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
+      {props.result.items.map((item) => {
+        const presentation = STATUS_PRESENTATION[item.status]
+        const updatedAt = formatTimestampToDate(item.last_finished_at)
+        return (
+          <article
+            key={item.group}
+            className='border-border/70 bg-card relative min-w-0 overflow-hidden rounded-lg border p-4 shadow-xs'
+          >
+            <div
+              aria-hidden
+              className={cn('absolute inset-y-0 left-0 w-1', presentation.dot)}
+            />
+            <div className='flex min-w-0 items-start justify-between gap-3 pl-2'>
+              <div className='flex min-w-0 items-center gap-3'>
+                <span className='bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-md text-base font-semibold'>
+                  {item.initial || '?'}
+                </span>
+                <h2 className='truncate text-base font-semibold' title={item.group}>
+                  {item.group}
+                </h2>
+              </div>
+              <Badge variant={presentation.badge}>{presentation.label}</Badge>
+            </div>
+
+            <dl className='mt-5 grid grid-cols-2 gap-x-4 gap-y-4 pl-2'>
+              <div className='min-w-0'>
+                <dt className='text-muted-foreground text-xs'>首字响应</dt>
+                <dd className='mt-1 truncate font-mono text-sm font-medium tabular-nums'>
+                  {formatLatency(item.latest_first_token_ms)}
+                </dd>
+              </div>
+              <div className='min-w-0'>
+                <dt className='text-muted-foreground text-xs'>成功率</dt>
+                <dd className='mt-1 font-mono text-sm font-medium tabular-nums'>
+                  {formatRate(item.success_rate)}
+                </dd>
+              </div>
+              <div className='col-span-2 min-w-0'>
+                <dt className='text-muted-foreground text-xs'>更新时间</dt>
+                <dd className='mt-1 truncate font-mono text-xs tabular-nums' title={updatedAt}>
+                  {updatedAt}
+                </dd>
+              </div>
+            </dl>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+export function GroupMonitor() {
+  const query = useQuery({
+    queryKey: ['pricing', 'group-monitor'],
+    queryFn: getPricingGroupMonitor,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+  const result = query.data?.data
+
+  return (
+    <PublicLayout showMainContainer={false}>
+      <PageTransition className='mx-auto w-full max-w-[1320px] px-4 pt-20 pb-10 sm:px-6 sm:pt-24 lg:px-8'>
+        <header className='mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between'>
+          <div>
+            <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+              <HugeiconsIcon icon={Activity01Icon} aria-hidden='true' />
+              服务状态
+            </div>
+            <h1 className='mt-2 text-3xl font-semibold tracking-normal'>分组监控</h1>
+            {result ? (
+              <div className='mt-2 flex flex-wrap items-center gap-2'>
+                <p className='text-muted-foreground text-sm'>
+                  成功率按近 {result.display_value}{' '}
+                  {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
+                </p>
+                {!result.enabled ? (
+                  <Badge variant='secondary'>分组监控已停用</Badge>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={() => void query.refetch()}
+                  disabled={query.isFetching}
+                  aria-label='刷新分组监控'
+                >
+                  <HugeiconsIcon
+                    icon={Refresh01Icon}
+                    className={query.isFetching ? 'animate-spin' : undefined}
+                  />
+                </Button>
+              }
+            />
+            <TooltipContent>刷新</TooltipContent>
+          </Tooltip>
+        </header>
+
+        {query.isLoading ? <GroupMonitorSkeleton /> : null}
+        {query.isError && !result ? (
+          <Empty className='min-h-80 border border-dashed'>
+            <EmptyHeader>
+              <EmptyMedia variant='icon'>
+                <HugeiconsIcon icon={Activity01Icon} />
+              </EmptyMedia>
+              <EmptyTitle>分组监控加载失败</EmptyTitle>
+              <EmptyDescription>请刷新后重试</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
+        {result ? <GroupMonitorContent result={result} /> : null}
+      </PageTransition>
+    </PublicLayout>
+  )
+}

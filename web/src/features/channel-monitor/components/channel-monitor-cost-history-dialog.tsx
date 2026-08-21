@@ -222,18 +222,21 @@ function CostSummary(props: {
         label='今日已结算成本'
         value={props.overview?.today_cost_cny}
         probeValue={props.overview?.today_probe_cost_cny}
+        groupProbeValue={props.overview?.today_group_probe_cost_cny}
         modelDetectionValue={props.overview?.today_model_detection_cost_cny}
       />
       <CostSummaryValue
         label='昨日已结算成本'
         value={props.overview?.yesterday_cost_cny}
         probeValue={props.overview?.yesterday_probe_cost_cny}
+        groupProbeValue={props.overview?.yesterday_group_probe_cost_cny}
         modelDetectionValue={props.overview?.yesterday_model_detection_cost_cny}
       />
       <CostSummaryValue
         label='区间已结算成本'
         value={props.overview?.total_cost_cny}
         probeValue={props.overview?.total_probe_cost_cny}
+        groupProbeValue={props.overview?.total_group_probe_cost_cny}
         modelDetectionValue={props.overview?.total_model_detection_cost_cny}
       />
     </div>
@@ -244,6 +247,7 @@ function CostSummaryValue(props: {
   label: string
   value: number | undefined
   probeValue: number | undefined
+  groupProbeValue: number | undefined
   modelDetectionValue: number | undefined
 }) {
   return (
@@ -253,7 +257,8 @@ function CostSummaryValue(props: {
         {formatChannelMonitorCost(props.value)}
       </span>
       <span className='text-muted-foreground truncate text-xs'>
-        其中探测 {formatChannelMonitorCost(props.probeValue)} · 模型检测{' '}
+        其中探测 {formatChannelMonitorCost(props.probeValue)}（分组{' '}
+        {formatChannelMonitorCost(props.groupProbeValue)}） · 模型检测{' '}
         {formatChannelMonitorCost(props.modelDetectionValue)}
       </span>
     </div>
@@ -354,6 +359,7 @@ export function CostHistoryData(props: {
             date: item.date,
             cost: item.cost_cny,
             probeCost: item.probe_cost_cny ?? 0,
+            groupProbeCost: item.group_probe_cost_cny ?? 0,
             modelDetectionCost: item.model_detection_cost_cny ?? 0,
             settledCount: item.settled_count,
             unresolvedCount: item.unresolved_count,
@@ -389,6 +395,11 @@ export function CostHistoryData(props: {
               key: '探测成本',
               value: (datum: { probeCost: number }) =>
                 formatChannelMonitorCost(datum.probeCost),
+            },
+            {
+              key: '分组探测成本',
+              value: (datum: { groupProbeCost: number }) =>
+                formatChannelMonitorCost(datum.groupProbeCost),
             },
             {
               key: '模型检测成本',
@@ -478,12 +489,13 @@ export function CostHistoryData(props: {
           <section className='flex min-w-0 flex-col gap-2'>
             <h3 className='text-sm font-medium'>按日成本</h3>
             <div className='overflow-auto rounded-md border'>
-              <Table className='min-w-[860px]'>
+              <Table className='min-w-[980px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead>日期</TableHead>
                     <TableHead className='text-right'>已结算成本</TableHead>
                     <TableHead className='text-right'>探测成本</TableHead>
+                    <TableHead className='text-right'>分组探测成本</TableHead>
                     <TableHead className='text-right'>模型检测成本</TableHead>
                     <TableHead className='text-right'>已结算</TableHead>
                     <TableHead className='text-right'>未解析</TableHead>
@@ -506,6 +518,9 @@ export function CostHistoryData(props: {
                         </TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {formatChannelMonitorCost(item.probe_cost_cny)}
+                        </TableCell>
+                        <TableCell className='text-right font-mono tabular-nums'>
+                          {formatChannelMonitorCost(item.group_probe_cost_cny)}
                         </TableCell>
                         <TableCell className='text-right font-mono tabular-nums'>
                           {formatChannelMonitorCost(

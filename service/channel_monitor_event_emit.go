@@ -192,6 +192,9 @@ func channelMonitorEventSource(ctx *gin.Context) model.ChannelMonitorEventSource
 	if channelModelDetectionTransportStateFromContext(ctx) != nil {
 		return model.ChannelMonitorEventSourceModelDetection
 	}
+	if ctx != nil && ctx.GetBool(model.ChannelMonitorGroupProbeLogKey) {
+		return model.ChannelMonitorEventSourceGroupProbe
+	}
 	if ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey) {
 		return model.ChannelMonitorEventSourceStatusProbe
 	}
