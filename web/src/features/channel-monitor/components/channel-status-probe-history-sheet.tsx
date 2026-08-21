@@ -127,8 +127,7 @@ function resultVariant(result: ChannelStatusProbeResult) {
 function formatMetric(value: number | null, unit: 'ms' | 'tps') {
   if (value == null) return '-'
   if (unit === 'tps') return value.toFixed(value >= 100 ? 0 : 1)
-  if (value >= 1000) return `${(value / 1000).toFixed(2)} s`
-  return `${Math.round(value)} ms`
+  return `${(value / 1000).toFixed(2)} 秒`
 }
 
 function ChannelStatusProbeExecutionRow(props: {

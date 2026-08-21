@@ -59,6 +59,32 @@ func TestApplyChannelGroupMonitorFinalOutcomeAppliesUpstreamOutcomeWhenUnset(t *
 	assert.Equal(t, "上游限流", execution.ErrorMessage)
 }
 
+func TestGroupMonitorExecutionFromOutcomePersistsPerformanceMetrics(t *testing.T) {
+	responseTime := 1_480.0
+	firstToken := 220.0
+	tps := 38.5
+	execution := model.ChannelGroupMonitorExecution{}
+	groupMonitorExecutionFromOutcome(&execution, channelStatusProbeOutcome{
+		Result:       model.ChannelStatusProbeResultSuccess,
+		StartedAt:    100,
+		FinishedAt:   102,
+		DurationMs:   &responseTime,
+		TestExecuted: true,
+		ProbeResult: testResult{
+			requestDispatched:         true,
+			firstResponseMilliseconds: &firstToken,
+			tokensPerSecond:           &tps,
+		},
+	}, 901)
+
+	require.NotNil(t, execution.ResponseTimeMs)
+	require.NotNil(t, execution.FirstTokenMs)
+	require.NotNil(t, execution.TPS)
+	assert.InDelta(t, responseTime, *execution.ResponseTimeMs, 0.001)
+	assert.InDelta(t, firstToken, *execution.FirstTokenMs, 0.001)
+	assert.InDelta(t, tps, *execution.TPS, 0.001)
+}
+
 func TestNormalizeChannelGroupMonitorGroupsValidatesCustomDisplayInitial(t *testing.T) {
 	candidates := map[string][]string{"default": {"gpt-4.1"}}
 
@@ -101,10 +127,13 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	}, 1_000)
 	require.NoError(t, err)
 	firstToken := 215.0
+	responseTime := 1_680.0
+	tps := 44.0
 	for _, execution := range []model.ChannelGroupMonitorExecution{
 		{
 			RunId: "group-success", GroupName: "default", ProbeModel: "gpt-4.1",
-			Result: model.ChannelGroupMonitorResultSuccess, FirstTokenMs: &firstToken,
+			Result: model.ChannelGroupMonitorResultSuccess, ResponseTimeMs: &responseTime,
+			FirstTokenMs: &firstToken, TPS: &tps,
 			FinishedAt: 980, CreatedAt: 980,
 		},
 		{
@@ -144,6 +173,12 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	assert.Equal(t, 1, populatedBucket.Success)
 	assert.Equal(t, 1, populatedBucket.RateLimited)
 	assert.Equal(t, model.ChannelGroupMonitorResultRateLimited, populatedBucket.Result)
+	assert.InDelta(t, responseTime, populatedBucket.ResponseTimeTotalMs, 0.001)
+	assert.EqualValues(t, 1, populatedBucket.ResponseTimeSampleCount)
+	assert.InDelta(t, tps, populatedBucket.TPSTotal, 0.001)
+	assert.EqualValues(t, 1, populatedBucket.TPSSampleCount)
+	assert.InDelta(t, firstToken, populatedBucket.FirstTokenTotalMs, 0.001)
+	assert.EqualValues(t, 1, populatedBucket.FirstTokenSampleCount)
 }
 
 func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {

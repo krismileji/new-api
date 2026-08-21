@@ -87,7 +87,9 @@ type ChannelGroupMonitorState struct {
 	ProbeModel         string   `json:"probe_model" gorm:"type:varchar(255)"`
 	Result             string   `json:"result" gorm:"type:varchar(32)"`
 	RequestDispatched  bool     `json:"request_dispatched"`
+	ResponseTimeMs     *float64 `json:"response_time_ms"`
 	FirstTokenMs       *float64 `json:"first_token_ms"`
+	TPS                *float64 `json:"tps"`
 	FinishedAt         int64    `json:"finished_at" gorm:"bigint;index"`
 	LastSuccessAt      int64    `json:"last_success_at" gorm:"bigint"`
 	LastFailureAt      int64    `json:"last_failure_at" gorm:"bigint"`
@@ -111,7 +113,9 @@ type ChannelGroupMonitorExecution struct {
 	RequestId          string   `json:"request_id" gorm:"type:varchar(64)"`
 	Result             string   `json:"result" gorm:"type:varchar(32);index"`
 	RequestDispatched  bool     `json:"request_dispatched"`
+	ResponseTimeMs     *float64 `json:"response_time_ms"`
 	FirstTokenMs       *float64 `json:"first_token_ms"`
+	TPS                *float64 `json:"tps"`
 	SettledCostNanoCNY *int64   `json:"settled_cost_nano_cny"`
 	ErrorCode          string   `json:"error_code" gorm:"type:varchar(128)"`
 	ErrorMessage       string   `json:"error_message" gorm:"type:varchar(512)"`
@@ -418,9 +422,13 @@ func SaveChannelGroupMonitorExecution(execution *ChannelGroupMonitorExecution) (
 			state.Result = execution.Result
 			state.RequestDispatched = execution.RequestDispatched
 			if execution.Result == ChannelGroupMonitorResultSuccess {
+				state.ResponseTimeMs = execution.ResponseTimeMs
 				state.FirstTokenMs = execution.FirstTokenMs
+				state.TPS = execution.TPS
 			} else {
+				state.ResponseTimeMs = nil
 				state.FirstTokenMs = nil
+				state.TPS = nil
 			}
 			state.FinishedAt = execution.FinishedAt
 			if execution.Result == ChannelGroupMonitorResultSuccess {
@@ -462,7 +470,7 @@ func GetChannelGroupMonitorExecutionsSince(startedAt int64) ([]ChannelGroupMonit
 // historical non-skipped semantics.
 func GetChannelGroupMonitorExecutionWindowSince(startedAt int64) ([]ChannelGroupMonitorExecution, error) {
 	var executions []ChannelGroupMonitorExecution
-	err := DB.Select("group_name, result, first_token_ms, finished_at").
+	err := DB.Select("group_name, result, response_time_ms, first_token_ms, tps, finished_at").
 		Where("finished_at >= ?", startedAt).
 		Order("group_name ASC, finished_at ASC, id ASC").Find(&executions).Error
 	return executions, err

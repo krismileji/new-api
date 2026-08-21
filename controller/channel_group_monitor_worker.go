@@ -372,7 +372,9 @@ func groupMonitorExecutionFromOutcome(execution *model.ChannelGroupMonitorExecut
 	execution.ErrorMessage = truncateChannelGroupMonitorText(outcome.ErrorMessage, 512)
 	if outcome.TestExecuted {
 		execution.RequestDispatched = outcome.ProbeResult.requestDispatched
+		execution.ResponseTimeMs = outcome.DurationMs
 		execution.FirstTokenMs = outcome.ProbeResult.firstResponseMilliseconds
+		execution.TPS = outcome.ProbeResult.tokensPerSecond
 		if outcome.ProbeResult.context != nil {
 			execution.ChannelId = outcome.ProbeResult.context.GetInt("channel_id")
 			execution.RequestId = strings.TrimSpace(outcome.ProbeResult.context.GetString(common.RequestIdKey))

@@ -91,9 +91,35 @@ function formatLatency(value: number | null): string {
   return `${Math.round(value)} 毫秒`
 }
 
+function formatHoverDuration(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '--'
+  return `${(value / 1000).toFixed(2)} 秒`
+}
+
 function formatRate(value: number | null): string {
   if (value == null) return '--'
   return `${value.toFixed(1)}%`
+}
+
+function formatTPS(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '--'
+  return value.toFixed(value >= 100 ? 0 : 1)
+}
+
+function averageBucketMetric(
+  total: number | undefined,
+  sampleCount: number | undefined
+): number | null {
+  if (
+    sampleCount == null ||
+    sampleCount <= 0 ||
+    !Number.isFinite(sampleCount)
+  ) {
+    return null
+  }
+  const normalizedTotal = total ?? 0
+  if (!Number.isFinite(normalizedTotal)) return null
+  return normalizedTotal / sampleCount
 }
 
 const BUCKET_RESULT_LABEL: Record<
@@ -157,8 +183,23 @@ function groupMonitorBucketPresentation(
   } else if (bucket.result === 'skipped') {
     statusVariant = 'outline'
   }
+  const firstToken = formatHoverDuration(
+    averageBucketMetric(
+      bucket.first_token_total_ms,
+      bucket.first_token_sample_count
+    )
+  )
+  const tps = formatTPS(
+    averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
+  )
+  const responseTime = formatHoverDuration(
+    averageBucketMetric(
+      bucket.response_time_total_ms,
+      bucket.response_time_sample_count
+    )
+  )
   return {
-    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 无可用路由 ${bucket.unavailable} · 跳过 ${bucket.skipped}`,
+    ariaLabel: `${timeRange} · ${BUCKET_RESULT_LABEL[bucket.result]} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${responseTime}`,
     className: BUCKET_RESULT_COLOR[bucket.result],
     state: 'executed',
     status: BUCKET_RESULT_LABEL[bucket.result],
@@ -166,7 +207,7 @@ function groupMonitorBucketPresentation(
   }
 }
 
-function GroupMonitorBucketDetails(props: {
+export function GroupMonitorBucketDetails(props: {
   bucket: ChannelGroupMonitorBucket
   displayUnit: PricingGroupMonitor['display_unit']
   enabled: boolean
@@ -176,12 +217,6 @@ function GroupMonitorBucketDetails(props: {
     props.displayUnit,
     props.enabled
   )
-  const completed =
-    props.bucket.success +
-    props.bucket.upstream_failure +
-    props.bucket.rate_limited +
-    props.bucket.local_failure +
-    props.bucket.unavailable
   return (
     <ChannelMonitorStatusWindowDetails
       timeRange={formatChannelMonitorStatusWindowRange(
@@ -194,18 +229,32 @@ function GroupMonitorBucketDetails(props: {
       details={
         props.bucket.result
           ? [
-              { label: '成功', value: props.bucket.success },
-              { label: '上游失败', value: props.bucket.upstream_failure },
-              { label: '限流', value: props.bucket.rate_limited },
-              { label: '本地失败', value: props.bucket.local_failure },
-              { label: '无可用路由', value: props.bucket.unavailable },
-              { label: '跳过', value: props.bucket.skipped },
               {
-                label: '成功率',
-                value:
-                  completed > 0
-                    ? `${((props.bucket.success / completed) * 100).toFixed(1)}%`
-                    : '--',
+                label: '首字',
+                value: formatHoverDuration(
+                  averageBucketMetric(
+                    props.bucket.first_token_total_ms,
+                    props.bucket.first_token_sample_count
+                  )
+                ),
+              },
+              {
+                label: 'TPS',
+                value: formatTPS(
+                  averageBucketMetric(
+                    props.bucket.tps_total,
+                    props.bucket.tps_sample_count
+                  )
+                ),
+              },
+              {
+                label: '耗时',
+                value: formatHoverDuration(
+                  averageBucketMetric(
+                    props.bucket.response_time_total_ms,
+                    props.bucket.response_time_sample_count
+                  )
+                ),
               },
             ]
           : undefined

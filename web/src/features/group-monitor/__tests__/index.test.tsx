@@ -21,9 +21,44 @@ import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, test } from 'vitest'
 
-import { GroupMonitorContent } from '../index'
+import { GroupMonitorBucketDetails, GroupMonitorContent } from '../index'
 
 describe('group monitor content', () => {
+  test('hover details show only first token, TPS, and response time', () => {
+    const markup = renderToStaticMarkup(
+      <GroupMonitorBucketDetails
+        bucket={{
+          started_at: 1_752_777_840,
+          success: 1,
+          upstream_failure: 1,
+          rate_limited: 0,
+          local_failure: 0,
+          unavailable: 0,
+          skipped: 0,
+          first_token_total_ms: 220,
+          first_token_sample_count: 1,
+          tps_total: 38.5,
+          tps_sample_count: 1,
+          response_time_total_ms: 1_480,
+          response_time_sample_count: 1,
+          result: 'success',
+        }}
+        displayUnit='minute'
+        enabled
+      />
+    )
+
+    assert.ok(markup.includes('首字'))
+    assert.ok(markup.includes('0.22 秒'))
+    assert.ok(markup.includes('TPS'))
+    assert.ok(markup.includes('38.5'))
+    assert.ok(markup.includes('耗时'))
+    assert.ok(markup.includes('1.48 秒'))
+    assert.ok(!markup.includes('毫秒'))
+    assert.ok(!markup.includes('上游失败'))
+    assert.ok(!markup.includes('成功率'))
+  })
+
   test('keeps visible configured groups when monitoring is paused', () => {
     const markup = renderToStaticMarkup(
       <GroupMonitorContent

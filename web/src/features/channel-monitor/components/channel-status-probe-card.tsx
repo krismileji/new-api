@@ -107,8 +107,7 @@ const DISPLAY_UNIT_LABEL: Record<ChannelStatusProbeDisplayUnit, string> = {
 
 function formatDuration(value: number | null) {
   if (value == null || !Number.isFinite(value)) return '-'
-  if (value >= 1000) return `${(value / 1000).toFixed(2)} s`
-  return `${Math.round(value)} ms`
+  return `${(value / 1000).toFixed(2)} 秒`
 }
 
 function firstTokenColorClass(value: number | null) {

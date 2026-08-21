@@ -228,9 +228,9 @@ describe('状态探测卡片', () => {
     assert.match(html, /aria-label="不计入智能调度样本"/)
     assert.match(
       html,
-      /上游失败 1 · 限流 0 · 本地失败 0 · 跳过或取消 0 · 首字 - · TPS - · 耗时 1\.25 s · 模型 gpt-4\.1-mini/
+      /上游失败 1 · 限流 0 · 本地失败 0 · 跳过或取消 0 · 首字 - · TPS - · 耗时 1\.25 秒 · 模型 gpt-4\.1-mini/
     )
-    assert.match(html, /首字 240 ms · TPS 42\.5 · 耗时 1\.25 s/)
+    assert.match(html, /首字 0\.24 秒 · TPS 42\.5 · 耗时 1\.25 秒/)
     assert.match(html, />不计入样本</)
   })
 
@@ -270,7 +270,7 @@ describe('状态探测卡片', () => {
 
     assert.match(html, /备注：低成本验收渠道/)
     assert.match(html, /最近首字/)
-    assert.match(html, />180 ms</)
+    assert.match(html, />0\.18 秒</)
     assert.match(html, /最近 TPS/)
     assert.match(html, />55\.0</)
     assert.match(html, /最近探测成本/)
@@ -278,11 +278,11 @@ describe('状态探测卡片', () => {
     assert.match(html, /今日探测成本/)
     assert.match(html, /0\.0800/)
     assert.match(html, /近 60 分钟平均首字/)
-    assert.match(html, />240 ms</)
+    assert.match(html, />0\.24 秒</)
     assert.match(html, /近 60 分钟平均 TPS/)
     assert.match(html, />42\.5</)
     assert.doesNotMatch(html, /总响应/)
-    assert.doesNotMatch(html, />1\.25 s</)
+    assert.doesNotMatch(html, />1\.25 秒</)
   })
 
   test('首字小于10秒显示绿色，达到10秒显示黄色', () => {
@@ -321,7 +321,7 @@ describe('状态探测卡片', () => {
     )
 
     assert.equal((html.match(/text-warning/g) ?? []).length, 2)
-    assert.doesNotMatch(html, /text-destructive[^"]*[^>]*>10\.00 s</)
+    assert.doesNotMatch(html, /text-destructive[^"]*[^>]*>10\.00 秒</)
   })
 
   test('成本字段增加后状态列表受限且下次执行信息保留独立底栏', () => {

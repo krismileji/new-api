@@ -75,13 +75,25 @@ func TestSaveChannelGroupMonitorConfigRejectsStaleRevisionAndPreservesOrder(t *t
 func TestSaveChannelGroupMonitorExecutionKeepsLatestNonSkippedResult(t *testing.T) {
 	setupChannelGroupMonitorTestDB(t)
 	firstToken := 184.0
+	responseTime := 1_240.0
+	tps := 42.5
 	created, err := SaveChannelGroupMonitorExecution(&ChannelGroupMonitorExecution{
 		RunId: "run-success", GroupName: "vip", ProbeModel: "model-vip",
-		Result: ChannelGroupMonitorResultSuccess, FirstTokenMs: &firstToken,
+		Result: ChannelGroupMonitorResultSuccess, ResponseTimeMs: &responseTime,
+		FirstTokenMs: &firstToken, TPS: &tps,
 		FinishedAt: 1_000, CreatedAt: 1_000,
 	})
 	require.NoError(t, err)
 	assert.True(t, created)
+	states, err := GetChannelGroupMonitorStates()
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	require.NotNil(t, states[0].ResponseTimeMs)
+	require.NotNil(t, states[0].FirstTokenMs)
+	require.NotNil(t, states[0].TPS)
+	assert.InDelta(t, responseTime, *states[0].ResponseTimeMs, 0.001)
+	assert.InDelta(t, firstToken, *states[0].FirstTokenMs, 0.001)
+	assert.InDelta(t, tps, *states[0].TPS, 0.001)
 
 	created, err = SaveChannelGroupMonitorExecution(&ChannelGroupMonitorExecution{
 		RunId: "run-rate-limited", GroupName: "vip", ProbeModel: "model-vip",
@@ -98,7 +110,7 @@ func TestSaveChannelGroupMonitorExecutionKeepsLatestNonSkippedResult(t *testing.
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	states, err := GetChannelGroupMonitorStates()
+	states, err = GetChannelGroupMonitorStates()
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	assert.Equal(t, ChannelGroupMonitorResultRateLimited, states[0].Result)
@@ -106,6 +118,8 @@ func TestSaveChannelGroupMonitorExecutionKeepsLatestNonSkippedResult(t *testing.
 	assert.EqualValues(t, 1, states[0].ConsecutiveFailure)
 	assert.Zero(t, states[0].ConsecutiveSuccess)
 	assert.Nil(t, states[0].FirstTokenMs)
+	assert.Nil(t, states[0].ResponseTimeMs)
+	assert.Nil(t, states[0].TPS)
 
 	executions, err := GetChannelGroupMonitorExecutionsSince(0)
 	require.NoError(t, err)

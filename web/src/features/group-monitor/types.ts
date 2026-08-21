@@ -54,6 +54,10 @@ export type ChannelGroupMonitorBucket = {
   skipped: number
   first_token_total_ms?: number
   first_token_sample_count?: number
+  tps_total?: number
+  tps_sample_count?: number
+  response_time_total_ms?: number
+  response_time_sample_count?: number
   result: ChannelGroupMonitorBucketResult
 }
 
@@ -138,7 +142,9 @@ export type ChannelGroupMonitorExecution = {
   request_id: string
   result: ChannelGroupMonitorResult
   request_dispatched: boolean
+  response_time_ms: number | null
   first_token_ms: number | null
+  tps: number | null
   settled_cost_nano_cny: number | null
   error_code: string
   error_message: string

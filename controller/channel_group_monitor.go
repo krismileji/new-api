@@ -74,16 +74,20 @@ type channelGroupMonitorItemResponse struct {
 }
 
 type channelGroupMonitorBucketResponse struct {
-	StartedAt             int64   `json:"started_at"`
-	Success               int     `json:"success"`
-	UpstreamFailure       int     `json:"upstream_failure"`
-	RateLimited           int     `json:"rate_limited"`
-	LocalFailure          int     `json:"local_failure"`
-	Unavailable           int     `json:"unavailable"`
-	Skipped               int     `json:"skipped"`
-	FirstTokenTotalMs     float64 `json:"first_token_total_ms,omitempty"`
-	FirstTokenSampleCount int64   `json:"first_token_sample_count,omitempty"`
-	Result                string  `json:"result"`
+	StartedAt               int64   `json:"started_at"`
+	Success                 int     `json:"success"`
+	UpstreamFailure         int     `json:"upstream_failure"`
+	RateLimited             int     `json:"rate_limited"`
+	LocalFailure            int     `json:"local_failure"`
+	Unavailable             int     `json:"unavailable"`
+	Skipped                 int     `json:"skipped"`
+	FirstTokenTotalMs       float64 `json:"first_token_total_ms,omitempty"`
+	FirstTokenSampleCount   int64   `json:"first_token_sample_count,omitempty"`
+	TPSTotal                float64 `json:"tps_total,omitempty"`
+	TPSSampleCount          int64   `json:"tps_sample_count,omitempty"`
+	ResponseTimeTotalMs     float64 `json:"response_time_total_ms,omitempty"`
+	ResponseTimeSampleCount int64   `json:"response_time_sample_count,omitempty"`
+	Result                  string  `json:"result"`
 }
 
 // pricingGroupMonitorItemResponse is the public subset of monitor state.
@@ -298,6 +302,10 @@ func mergeChannelGroupMonitorRecentWindow(
 				bucket.FirstTokenTotalMs += *execution.FirstTokenMs
 				bucket.FirstTokenSampleCount++
 			}
+			if execution.TPS != nil {
+				bucket.TPSTotal += *execution.TPS
+				bucket.TPSSampleCount++
+			}
 		case model.ChannelGroupMonitorResultUpstreamFailure:
 			bucket.UpstreamFailure++
 		case model.ChannelGroupMonitorResultRateLimited:
@@ -308,6 +316,10 @@ func mergeChannelGroupMonitorRecentWindow(
 			bucket.Unavailable++
 		case model.ChannelGroupMonitorResultSkipped:
 			bucket.Skipped++
+		}
+		if execution.ResponseTimeMs != nil {
+			bucket.ResponseTimeTotalMs += *execution.ResponseTimeMs
+			bucket.ResponseTimeSampleCount++
 		}
 		bucket.Result = channelGroupMonitorBucketResult(bucket)
 		groupBuckets[startedAt] = bucket
