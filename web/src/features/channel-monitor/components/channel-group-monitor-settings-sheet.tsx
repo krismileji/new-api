@@ -231,6 +231,8 @@ export function ChannelGroupMonitorSettingsSheet(
   })
   const controlsDisabled =
     !props.data || saveMutation.isPending || Boolean(conflictMessage)
+  const canRunSavedConfiguration =
+    (props.data?.settings.groups.length ?? 0) > 0 && !form.formState.isDirty
   const requestsPerHour =
     intervalSeconds > 0 ? (groupValues.length * 3600) / intervalSeconds : 0
 
@@ -608,7 +610,12 @@ export function ChannelGroupMonitorSettingsSheet(
             type='button'
             variant='outline'
             onClick={() => runMutation.mutate()}
-            disabled={controlsDisabled || runMutation.isPending || groups.fields.length === 0}
+            disabled={
+              controlsDisabled ||
+              runMutation.isPending ||
+              !canRunSavedConfiguration ||
+              groups.fields.length === 0
+            }
           >
             {runMutation.isPending ? <Spinner data-icon='inline-start' /> : <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />}
             立即探测
