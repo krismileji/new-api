@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,28 @@ type channelSmartScheduleTrafficPolicySnapshot struct {
 var channelSmartScheduleTrafficPolicyCache atomic.Pointer[channelSmartScheduleTrafficPolicySnapshot]
 var channelSmartScheduleTrafficPolicyCacheMu sync.Mutex
 
+type channelSmartScheduleTrafficPolicyValidator struct {
+	validate func(enabled string, policies string) bool
+}
+
+var channelSmartScheduleTrafficPolicyValidatorRef atomic.Pointer[channelSmartScheduleTrafficPolicyValidator]
+
+// RegisterChannelSmartScheduleTrafficPolicyValidator lets the controller share
+// its complete policy contract with the model package without creating an
+// import cycle. A nil validator restores the model-only fallback used by
+// standalone consumers and tests.
+func RegisterChannelSmartScheduleTrafficPolicyValidator(
+	validate func(enabled string, policies string) bool,
+) {
+	if validate == nil {
+		channelSmartScheduleTrafficPolicyValidatorRef.Store(nil)
+		return
+	}
+	channelSmartScheduleTrafficPolicyValidatorRef.Store(&channelSmartScheduleTrafficPolicyValidator{
+		validate: validate,
+	})
+}
+
 func currentChannelSmartScheduleTrafficPolicy() *channelSmartScheduleTrafficPolicy {
 	common.OptionMapRWMutex.RLock()
 	rawEnabled := common.OptionMap[channelMonitorSmartScheduleEnabledOption]
@@ -61,12 +84,20 @@ func currentChannelSmartScheduleTrafficPolicy() *channelSmartScheduleTrafficPoli
 }
 
 func parseChannelSmartScheduleTrafficPolicy(rawEnabled string, rawPolicies string) *channelSmartScheduleTrafficPolicy {
+	enabled, err := strconv.ParseBool(rawEnabled)
+	if err != nil {
+		enabled = false
+	}
 	policy := &channelSmartScheduleTrafficPolicy{
-		enabled:       rawEnabled == "true",
+		enabled:       enabled,
 		allModels:     make(map[string]struct{}),
 		modelsByGroup: make(map[string]map[string]struct{}),
 	}
 	if !policy.enabled {
+		return policy
+	}
+	if validator := channelSmartScheduleTrafficPolicyValidatorRef.Load(); validator != nil && validator.validate != nil && !validator.validate(rawEnabled, rawPolicies) {
+		policy.faulted = true
 		return policy
 	}
 

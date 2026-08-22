@@ -614,7 +614,7 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		for _, route := range routes {
 			if route.ChannelId == fixedChannelId || route.ChannelStatus != common.ChannelStatusEnabled ||
-				!route.Enabled || route.TrafficPaused(now) {
+				!route.Enabled || !route.State.Participates() || route.TrafficPaused(now) {
 				continue
 			}
 			if route.Priority == math.MaxInt64 {

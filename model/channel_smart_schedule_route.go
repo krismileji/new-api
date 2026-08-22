@@ -2029,6 +2029,20 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			}
 			outcomes[index].Applied = true
 		}
+		if poolGuarded && !adaptiveOverlayOnly {
+			changedKeys, reapplyErr := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
+				tx,
+				[]channelSmartScheduleRoutePool{{group: group, model: modelName}},
+			)
+			if reapplyErr != nil {
+				return reapplyErr
+			}
+			for index := range outcomes {
+				if _, changed := changedKeys[outcomes[index].Key]; changed {
+					outcomes[index].RoutingChanged = true
+				}
+			}
+		}
 		return advanceChannelMonitorRedisEffectStateTx(
 			tx,
 			redisEffectState,

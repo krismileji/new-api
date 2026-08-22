@@ -96,8 +96,8 @@ func TestSaveChannelSmartScheduleRouteConfigReportsParticipationChange(t *testin
 		ChannelId: 4201, Group: "vip", Model: "model-a",
 	}).First(&ability).Error)
 	require.NotNil(t, ability.Priority)
-	assert.Equal(t, channelPriority, *ability.Priority)
-	assert.Equal(t, channelWeight, ability.Weight)
+	assert.Equal(t, priority, *ability.Priority)
+	assert.Equal(t, uint(40), ability.Weight)
 }
 
 func TestSaveChannelSmartScheduleChannelConfigReportsParticipationChange(t *testing.T) {

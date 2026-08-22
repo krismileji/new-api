@@ -333,6 +333,9 @@ func InitResources() error {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError("failed to migrate retired frontend options: " + err.Error())
 		}
+		if err := model.MigrateChannelSmartScheduleGroupPolicies(); err != nil {
+			common.SysError("failed to migrate smart schedule group policies: " + err.Error())
+		}
 	}
 	model.InitOptionMap()
 

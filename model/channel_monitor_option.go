@@ -19,6 +19,7 @@ const (
 	ChannelMonitorSmartSchedulePerformanceWindowOption         = "ChannelMonitorSmartSchedulePerformanceWindowMinutes"
 	ChannelMonitorSmartScheduleMaxWindowMinutes                = ChannelMonitorSmartScheduleMaxRealtimeRetentionMinutes
 	ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes = 60
+	ChannelMonitorSmartScheduleDefaultStabilityWindowMinutes   = 5
 )
 
 const channelMonitorGroupRatioEpsilon = 1e-9

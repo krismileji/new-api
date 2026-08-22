@@ -6,7 +6,19 @@ import (
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 )
+
+func init() {
+	model.RegisterChannelSmartScheduleTrafficPolicyValidator(func(enabled string, rawPolicies string) bool {
+		enabledValue, err := strconv.ParseBool(enabled)
+		if err != nil || !enabledValue {
+			return true
+		}
+		policies, err := parseChannelSmartScheduleGroupPoliciesWithError(rawPolicies)
+		return err == nil && len(policies) > 0
+	})
+}
 
 type channelMonitorRuntimeSettingsRaw struct {
 	enabled           string

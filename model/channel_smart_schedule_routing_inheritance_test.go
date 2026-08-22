@@ -131,7 +131,7 @@ func TestIncludeChannelSmartScheduleRouteCreatesAndPreservesOverride(t *testing.
 	))
 	_, routingChanged, err = SaveChannelSmartScheduleRouteConfig(5102, "vip", "model-a", false)
 	require.NoError(t, err)
-	assert.True(t, routingChanged)
+	assert.False(t, routingChanged)
 	require.NoError(t, db.Where(&Ability{ChannelId: 5102, Group: "vip", Model: "model-a"}).First(&ability).Error)
 	assert.Nil(t, ability.Priority)
 	assert.Zero(t, ability.Weight)

@@ -780,6 +780,89 @@ func TestApplyChannelSmartScheduleRouteResultsFullScheduleSnapshotPreservesRunti
 	assert.Equal(t, "priority_weight", state.SamplingOrder)
 }
 
+func TestApplyChannelSmartScheduleRouteResultsReappliesFixedPrimaryAfterPeerPriorityChanges(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	initialPriority := int64(2)
+	initialWeight := uint(1000)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1005, Name: "fixed primary", Status: common.ChannelStatusEnabled},
+		{Id: 1006, Name: "peer", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1005, Group: "vip", Model: "model-a", Enabled: true, Priority: &initialPriority, Weight: initialWeight},
+		{ChannelId: 1006, Group: "vip", Model: "model-a", Enabled: true, Priority: &initialPriority, Weight: initialWeight},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1005, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
+		{ChannelId: 1006, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 1},
+	}).Error)
+
+	fixed, err := SaveChannelSmartScheduleRoutePrimary(
+		1005,
+		"vip",
+		"model-a",
+		ChannelSmartScheduleRoutePrimaryOptions{DurationMinutes: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), fixed.State.LastSchedulePriority)
+
+	controlRevision, err := GetChannelSmartScheduleControlRevision()
+	require.NoError(t, err)
+	economicRevision, err := GetChannelMonitorEconomicRevision()
+	require.NoError(t, err)
+	results := []ChannelSmartScheduleRouteResultUpdate{
+		{
+			ChannelId: 1005, Group: "vip", Model: "model-a",
+			Status: ChannelSmartScheduleStatusSucceeded, Priority: 4, Weight: 1000,
+			PoolGuard: true, ExpectedRevision: fixed.State.Revision,
+			ExpectedControlRevision: controlRevision, ExpectedEconomicRevision: economicRevision,
+			ExpectedParticipationSet: true, ExpectedAbilityEnabled: true,
+			ExpectedChannelStatus: common.ChannelStatusEnabled,
+			ExpectedPriority:      3, ExpectedWeight: 1000,
+			ApplyPriorityWeight: false,
+			RoutingSnapshot: &ChannelSmartScheduleRoutingSnapshotUpdate{
+				BaseRank: 2, BasePriority: 2, BaseWeight: 1000,
+			},
+		},
+		{
+			ChannelId: 1006, Group: "vip", Model: "model-a",
+			Status: ChannelSmartScheduleStatusSucceeded, Priority: 3, Weight: 1000,
+			PoolGuard: true, ExpectedRevision: 1,
+			ExpectedControlRevision: controlRevision, ExpectedEconomicRevision: economicRevision,
+			ExpectedParticipationSet: true, ExpectedAbilityEnabled: true,
+			ExpectedChannelStatus: common.ChannelStatusEnabled,
+			ExpectedPriority:      2, ExpectedWeight: 1000,
+			ApplyPriorityWeight: true,
+			RoutingSnapshot: &ChannelSmartScheduleRoutingSnapshotUpdate{
+				BaseRank: 1, BasePriority: 3, BaseWeight: 1000,
+			},
+		},
+	}
+
+	outcomes, err := ApplyChannelSmartScheduleRouteResults(results)
+	require.NoError(t, err)
+	require.Len(t, outcomes, 2)
+	assert.True(t, outcomes[0].Applied)
+	assert.True(t, outcomes[0].RoutingChanged)
+	assert.True(t, outcomes[1].Applied)
+	assert.True(t, outcomes[1].RoutingChanged)
+
+	var fixedAbility Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 1005, Group: "vip", Model: "model-a"}).First(&fixedAbility).Error)
+	assert.Equal(t, int64(4), abilityPriority(fixedAbility))
+	assert.Equal(t, uint(1000), fixedAbility.Weight)
+	var peerAbility Ability
+	require.NoError(t, db.Where(&Ability{ChannelId: 1006, Group: "vip", Model: "model-a"}).First(&peerAbility).Error)
+	assert.Equal(t, int64(3), abilityPriority(peerAbility))
+	assert.Equal(t, uint(1000), peerAbility.Weight)
+
+	var fixedState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 1005, GroupName: "vip", ModelName: "model-a",
+	}).First(&fixedState).Error)
+	assert.Equal(t, int64(4), fixedState.LastSchedulePriority)
+}
+
 func TestApplyChannelSmartScheduleRouteResultsRejectsWholePoolOnGuardConflict(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	require.NoError(t, db.AutoMigrate(&Option{}))

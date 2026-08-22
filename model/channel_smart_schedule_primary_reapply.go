@@ -69,11 +69,67 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 	tx *gorm.DB,
 	pools []channelSmartScheduleRoutePool,
 ) error {
+	_, err := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(tx, pools)
+	return err
+}
+
+type channelSmartScheduleAbilityRoutingValue struct {
+	priority    int64
+	hasPriority bool
+	weight      uint
+}
+
+func channelSmartScheduleAbilityRoutingSnapshot(
+	abilities []Ability,
+) map[ChannelSmartScheduleRouteKey]channelSmartScheduleAbilityRoutingValue {
+	snapshot := make(map[ChannelSmartScheduleRouteKey]channelSmartScheduleAbilityRoutingValue, len(abilities))
+	for _, ability := range abilities {
+		priority, hasPriority := int64(0), ability.Priority != nil
+		if hasPriority {
+			priority = *ability.Priority
+		}
+		snapshot[channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)] =
+			channelSmartScheduleAbilityRoutingValue{
+				priority:    priority,
+				hasPriority: hasPriority,
+				weight:      ability.Weight,
+			}
+	}
+	return snapshot
+}
+
+func channelSmartScheduleRecordChangedAbilityRouting(
+	changedKeys map[ChannelSmartScheduleRouteKey]struct{},
+	before map[ChannelSmartScheduleRouteKey]channelSmartScheduleAbilityRoutingValue,
+	abilities []Ability,
+) {
+	for _, ability := range abilities {
+		key := channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)
+		priority, hasPriority := int64(0), ability.Priority != nil
+		if hasPriority {
+			priority = *ability.Priority
+		}
+		current := channelSmartScheduleAbilityRoutingValue{
+			priority:    priority,
+			hasPriority: hasPriority,
+			weight:      ability.Weight,
+		}
+		if current != before[key] {
+			changedKeys[key] = struct{}{}
+		}
+	}
+}
+
+func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
+	tx *gorm.DB,
+	pools []channelSmartScheduleRoutePool,
+) (map[ChannelSmartScheduleRouteKey]struct{}, error) {
+	changedKeys := make(map[ChannelSmartScheduleRouteKey]struct{})
 	if len(pools) == 0 || !tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
-		return nil
+		return changedKeys, nil
 	}
 	if err := lockChannelSmartScheduleRoutePoolsTx(tx, pools); err != nil {
-		return err
+		return nil, err
 	}
 	now := common.GetTimestamp()
 	for _, pool := range pools {
@@ -82,14 +138,14 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			Where("group_name = ? AND model_name = ?", pool.group, pool.model).
 			Order("channel_id ASC").
 			Find(&states).Error; err != nil {
-			return err
+			return nil, err
 		}
 		var abilities []Ability
 		if err := lockForUpdate(tx).
 			Where(&Ability{Group: pool.group, Model: pool.model}).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {
-			return err
+			return nil, err
 		}
 		abilityByKey := make(map[ChannelSmartScheduleRouteKey]*Ability, len(abilities))
 		channelIds := make([]int, 0, len(abilities))
@@ -104,7 +160,7 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			Where("id IN ?", channelIds).
 			Order("id ASC").
 			Find(&channels).Error; err != nil {
-			return err
+			return nil, err
 		}
 		channelStatusById := make(map[int]int, len(channels))
 		channelById := make(map[int]Channel, len(channels))
@@ -118,12 +174,16 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			state := &states[index]
 			if state.ManualPrimaryUntil > now &&
 				channelStatusById[state.ChannelId] == common.ChannelStatusAutoDisabled {
-				if _, err := restoreChannelSmartScheduleRoutePrimaryTx(
+				changed, err := restoreChannelSmartScheduleRoutePrimaryTx(
 					tx,
 					state,
 					abilityByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)],
-				); err != nil {
-					return err
+				)
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					changedKeys[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = struct{}{}
 				}
 				autoDisabledPrimaryCleared = true
 			}
@@ -131,16 +191,21 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 				continue
 			}
 			if primaryState != nil {
-				return errors.New("同一分组和模型存在多个有效的固定主渠道")
+				return nil, errors.New("同一分组和模型存在多个有效的固定主渠道")
 			}
 			primaryState = &states[index]
 		}
 		if primaryState == nil {
 			if autoDisabledPrimaryCleared {
-				if _, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
+				before := channelSmartScheduleAbilityRoutingSnapshot(abilities)
+				changed, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
 					tx, states, abilities, pool.group, pool.model, now,
-				); err != nil {
-					return err
+				)
+				if err != nil {
+					return nil, err
+				}
+				if changed {
+					channelSmartScheduleRecordChangedAbilityRouting(changedKeys, before, abilities)
 				}
 			}
 			continue
@@ -156,15 +221,20 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			primaryAbility != nil && primaryAbility.Enabled &&
 			channelStatusById[primaryState.ChannelId] == common.ChannelStatusEnabled
 		if !primaryAvailable {
-			if _, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
+			before := channelSmartScheduleAbilityRoutingSnapshot(abilities)
+			changed, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
 				tx, states, abilities, pool.group, pool.model, now,
-			); err != nil {
-				return err
+			)
+			if err != nil {
+				return nil, err
+			}
+			if changed {
+				channelSmartScheduleRecordChangedAbilityRouting(changedKeys, before, abilities)
 			}
 			continue
 		}
 		if _, primaryChannelExists := channelById[primaryState.ChannelId]; !primaryChannelExists {
-			return gorm.ErrRecordNotFound
+			return nil, gorm.ErrRecordNotFound
 		}
 		primaryPriority, _ := channelSmartScheduleAbilityRouting(*primaryAbility)
 		priority, err := channelSmartScheduleManualPrimaryPriority(
@@ -175,23 +245,25 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 			max(primaryPriority, primaryState.LastSchedulePriority),
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		weight := uint(1000)
 		if primaryAbility.Priority != nil && primaryPriority == priority && primaryAbility.Weight == weight {
 			continue
 		}
 		if primaryState.Revision == math.MaxInt64 {
-			return errors.New("智能调度路由修订号已达上限")
+			return nil, errors.New("智能调度路由修订号已达上限")
 		}
+		key := channelSmartScheduleRouteKey(primaryState.ChannelId, pool.group, pool.model)
 		if err := updateAbilitySmartSchedulePriorityWeightTx(
 			tx,
-			channelSmartScheduleRouteKey(primaryState.ChannelId, pool.group, pool.model),
+			key,
 			&priority,
 			&weight,
 		); err != nil {
-			return err
+			return nil, err
 		}
+		changedKeys[key] = struct{}{}
 		primaryState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		primaryState.LastScheduleError = "池内渠道能力已变化，固定主渠道已重新置顶"
 		primaryState.LastScheduleScore = nil
@@ -201,8 +273,8 @@ func reapplyChannelSmartScheduleRoutePrimariesTx(
 		primaryState.LastScheduleTime = now
 		primaryState.Revision++
 		if err := saveChannelSmartScheduleRouteStateTx(tx, primaryState); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return changedKeys, nil
 }
