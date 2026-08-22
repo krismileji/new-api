@@ -25,6 +25,22 @@ type channelConcurrencyLimitUpdateRequest struct {
 	ConcurrencyLimit *int `json:"concurrency_limit"`
 }
 
+func GetChannelMonitorConcurrency(c *gin.Context) {
+	snapshot, err := service.GetChannelConcurrencySnapshot(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"channels":     snapshot,
+			"generated_at": common.GetTimestamp(),
+		},
+	})
+}
+
 func UpdateChannelMonitorConcurrencyLimit(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil || channelID <= 0 {

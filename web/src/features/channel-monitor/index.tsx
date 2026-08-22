@@ -120,6 +120,7 @@ import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorActiveRefetchInterval,
+  getChannelMonitorConcurrencyQueryOptions,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
@@ -453,6 +454,9 @@ export function ChannelMonitor() {
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
+  const concurrencyQuery = useQuery(
+    getChannelMonitorConcurrencyQueryOptions(view === 'channels')
+  )
   const settings = overview?.settings ?? DEFAULT_CHANNEL_MONITOR_SETTINGS
   const smartSchedulePerformanceRangeActive =
     settings.smart_schedule_enabled &&
@@ -589,7 +593,20 @@ export function ChannelMonitor() {
       })
     },
   })
-  const channels = overview?.channels ?? EMPTY_CHANNELS
+  const overviewChannels = overview?.channels ?? EMPTY_CHANNELS
+  const channels = useMemo(() => {
+    const concurrencyByChannel = concurrencyQuery.data?.data.channels ?? null
+    if (!concurrencyByChannel) return overviewChannels
+    return overviewChannels.map((channel) => {
+      const status = concurrencyByChannel[String(channel.id)]
+      if (!status) return channel
+      return {
+        ...channel,
+        concurrency_active: status.active,
+        concurrency_limit: status.limit,
+      }
+    })
+  }, [concurrencyQuery.data?.data.channels, overviewChannels])
   const channelOrder = overview?.channel_order ?? EMPTY_CHANNEL_ORDER
   const groupRatios = overview?.group_ratios ?? EMPTY_GROUP_RATIOS
   const groupCoefficients =

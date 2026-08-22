@@ -1892,7 +1892,7 @@ func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t 
 	unlimitedLease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 16)
 	require.NoError(t, err)
 	require.True(t, acquired)
-	assert.Equal(t, service.ChannelConcurrencyStatus{}, status)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0}, status)
 	unlimitedLease.Release()
 }
 

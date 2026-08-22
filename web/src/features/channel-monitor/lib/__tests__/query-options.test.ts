@@ -29,6 +29,7 @@ import {
   CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS,
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   getChannelMonitorActiveRefetchInterval,
+  getChannelMonitorConcurrencyQueryOptions,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
@@ -59,6 +60,18 @@ describe('channel monitor query policy', () => {
     assert.equal(performanceOptions.refetchOnWindowFocus, false)
     assert.equal(overviewOptions.refetchOnReconnect, false)
     assert.equal(performanceOptions.refetchOnReconnect, false)
+  })
+
+  test('keeps the lightweight concurrency snapshot independent and manual', () => {
+    const enabled = getChannelMonitorConcurrencyQueryOptions()
+    const disabled = getChannelMonitorConcurrencyQueryOptions(false)
+
+    assert.equal(enabled.enabled, true)
+    assert.equal(enabled.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(enabled.refetchInterval, false)
+    assert.equal(enabled.refetchOnMount, false)
+    assert.equal(disabled.enabled, false)
+    assert.deepEqual(enabled.queryKey, ['channel-monitor', 'concurrency'])
   })
 
   test('deduplicates fresh reads while preserving an explicit refresh', async () => {
@@ -154,6 +167,7 @@ describe('channel monitor query policy', () => {
   test('manual refresh refetches every channel monitor query prefix', async () => {
     const queryKeys = [
       ['channel-monitor'],
+      ['channel-monitor', 'concurrency'],
       ['channel-monitor-performance'],
       ['channel-monitor-smart-schedule-executions'],
       ['channel-monitor-task-history'],

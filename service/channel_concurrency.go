@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -80,15 +81,12 @@ if redis.call('HGET', KEYS[1], ARGV[1]) ~= '1' then
   return {-1, 0, 0}
 end
 local limit = tonumber(redis.call('HGET', KEYS[1], ARGV[2]) or '0')
-if limit <= 0 then
-  return {2, 0, 0}
-end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
 local ttl = tonumber(ARGV[3])
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now - ttl)
 local active = redis.call('ZCARD', KEYS[2])
-if active >= limit then
+if limit > 0 and active >= limit then
   return {0, active, limit}
 end
 redis.call('ZADD', KEYS[2], now, ARGV[4])
@@ -124,18 +122,16 @@ local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
 local ttl = tonumber(ARGV[2])
 local prefix = ARGV[3]
-local config = redis.call('HGETALL', KEYS[1])
 local result = {}
-for i = 1, #config, 2 do
-  local channel_id = tonumber(config[i])
-  local limit = tonumber(config[i + 1])
-  if channel_id and limit and limit > 0 then
-    local active_key = prefix .. config[i]
-    redis.call('ZREMRANGEBYSCORE', active_key, '-inf', now - ttl)
-    table.insert(result, channel_id)
-    table.insert(result, redis.call('ZCARD', active_key))
-    table.insert(result, limit)
-  end
+for i = 4, #ARGV do
+  local channel_id = tonumber(ARGV[i])
+  local channel_id_string = ARGV[i]
+  local limit = tonumber(redis.call('HGET', KEYS[1], channel_id_string) or '0') or 0
+  local active_key = prefix .. channel_id_string
+  redis.call('ZREMRANGEBYSCORE', active_key, '-inf', now - ttl)
+  table.insert(result, channel_id)
+  table.insert(result, redis.call('ZCARD', active_key))
+  table.insert(result, limit)
 end
 return result
 `
@@ -239,13 +235,15 @@ func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConc
 	if err != nil {
 		return nil, false, ChannelConcurrencyStatus{}, err
 	}
-	channelConcurrency.Lock()
-	limit := channelConcurrency.configs[channelID].Limit
-	channelConcurrency.Unlock()
-	if limit <= 0 {
-		return &ChannelConcurrencyLease{}, true, ChannelConcurrencyStatus{}, nil
-	}
 	if common.RedisEnabled {
+		if common.RDB == nil {
+			channelConcurrency.Lock()
+			limit := channelConcurrency.configs[channelID].Limit
+			channelConcurrency.Unlock()
+			if limit <= 0 {
+				return acquireChannelConcurrencyLocal(channelID)
+			}
+		}
 		if refreshed {
 			if err = ensureChannelConcurrencyRedisConfig(ctx, common.RDB, getChannelConcurrencyConfigsSnapshot()); err != nil {
 				return nil, false, ChannelConcurrencyStatus{}, err
@@ -267,23 +265,59 @@ func GetChannelConcurrencySnapshot(ctx context.Context) (map[int]ChannelConcurre
 				return nil, err
 			}
 		}
-		return getChannelConcurrencyRedisSnapshot(ctx, common.RDB)
+		channelIDs, err := getChannelConcurrencyChannelIDs()
+		if err != nil {
+			return nil, err
+		}
+		return getChannelConcurrencyRedisSnapshot(ctx, common.RDB, channelIDs)
 	}
 
+	channelIDs, err := getChannelConcurrencyChannelIDs()
+	if err != nil {
+		return nil, err
+	}
 	channelConcurrency.Lock()
 	defer channelConcurrency.Unlock()
-	snapshot := make(map[int]ChannelConcurrencyStatus, len(channelConcurrency.configs))
-	for channelID, config := range channelConcurrency.configs {
-		limit := config.Limit
-		if limit <= 0 {
-			continue
-		}
+	snapshot := make(map[int]ChannelConcurrencyStatus, len(channelIDs))
+	for _, channelID := range channelIDs {
+		config := channelConcurrency.configs[channelID]
 		snapshot[channelID] = ChannelConcurrencyStatus{
 			Active: channelConcurrency.active[channelID],
-			Limit:  limit,
+			Limit:  config.Limit,
 		}
 	}
 	return snapshot, nil
+}
+
+func getChannelConcurrencyChannelIDs() ([]int, error) {
+	ids := make(map[int]struct{})
+	channelConcurrency.Lock()
+	for channelID := range channelConcurrency.configs {
+		ids[channelID] = struct{}{}
+	}
+	for channelID := range channelConcurrency.active {
+		ids[channelID] = struct{}{}
+	}
+	channelConcurrency.Unlock()
+
+	if model.DB != nil {
+		channels, err := model.GetAllChannelsForMonitor()
+		if err != nil {
+			return nil, err
+		}
+		for _, channel := range channels {
+			if channel != nil {
+				ids[channel.Id] = struct{}{}
+			}
+		}
+	}
+
+	channelIDs := make([]int, 0, len(ids))
+	for channelID := range ids {
+		channelIDs = append(channelIDs, channelID)
+	}
+	sort.Ints(channelIDs)
+	return channelIDs, nil
 }
 
 func loadChannelConcurrencyLimits(force bool) (bool, error) {
@@ -348,14 +382,9 @@ func copyChannelConcurrencyConfigs(configs map[int]model.ChannelConcurrencyConfi
 func acquireChannelConcurrencyLocal(channelID int) (*ChannelConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
 	channelConcurrency.Lock()
 	limit := channelConcurrency.configs[channelID].Limit
-	if limit <= 0 {
-		channelConcurrency.Unlock()
-		return &ChannelConcurrencyLease{}, true, ChannelConcurrencyStatus{}, nil
-	}
-
 	active := channelConcurrency.active[channelID]
 	status := ChannelConcurrencyStatus{Active: active, Limit: limit}
-	if active >= limit {
+	if limit > 0 && active >= limit {
 		channelConcurrency.Unlock()
 		return nil, false, status, nil
 	}
@@ -554,11 +583,11 @@ func shouldLogChannelConcurrencyRedisIssue(kind string, activeKey string) bool {
 	return true
 }
 
-func getChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Client) (map[int]ChannelConcurrencyStatus, error) {
+func getChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Client, channelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
 	if client == nil {
 		return nil, errors.New("Redis 客户端未初始化")
 	}
-	reply, err := queryChannelConcurrencyRedisSnapshot(ctx, client)
+	reply, err := queryChannelConcurrencyRedisSnapshot(ctx, client, channelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +600,7 @@ func getChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Clien
 			if err = ensureChannelConcurrencyRedisConfig(ctx, client, getChannelConcurrencyConfigsSnapshot()); err != nil {
 				return nil, err
 			}
-			reply, err = queryChannelConcurrencyRedisSnapshot(ctx, client)
+			reply, err = queryChannelConcurrencyRedisSnapshot(ctx, client, channelIDs)
 			if err != nil {
 				return nil, err
 			}
@@ -600,14 +629,21 @@ func getChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Clien
 	return snapshot, nil
 }
 
-func queryChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Client) ([]interface{}, error) {
+func queryChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Client, channelIDs []int) ([]interface{}, error) {
+	args := make([]interface{}, 0, 3+len(channelIDs))
+	args = append(args,
+		channelConcurrencyRedisLoadedField,
+		channelConcurrencyLeaseTTL.Milliseconds(),
+		channelConcurrencyRedisActivePrefix,
+	)
+	for _, channelID := range channelIDs {
+		args = append(args, channelID)
+	}
 	return client.Eval(
 		ctx,
 		channelConcurrencyRedisSnapshotScript,
 		[]string{channelConcurrencyRedisConfigKey},
-		channelConcurrencyRedisLoadedField,
-		channelConcurrencyLeaseTTL.Milliseconds(),
-		channelConcurrencyRedisActivePrefix,
+		args...,
 	).Slice()
 }
 

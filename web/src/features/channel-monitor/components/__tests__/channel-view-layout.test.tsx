@@ -519,7 +519,7 @@ describe('channel monitor channel view timestamps', () => {
     assert.ok(successCell.includes('缓存读取 50 / 输入 100 tokens'))
   })
 
-  test('shows unlimited concurrency and exposes the edit action', () => {
+  test('shows unlimited concurrency, its current count, and exposes the edit action', () => {
     const markup = renderView(
       createChannel({ concurrency_limit: 0, concurrency_active: 4 })
     )

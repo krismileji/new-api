@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
 
 import {
+  getChannelMonitorConcurrency,
   getChannelMonitorOverview,
   getChannelMonitorPerformance,
   getChannelMonitorSmartScheduleRoutes,
@@ -44,6 +45,11 @@ export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'channel-monitor',
   'smart-schedule',
   'routes',
+] as const
+
+export const CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY = [
+  'channel-monitor',
+  'concurrency',
 ] as const
 
 export const CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY = [
@@ -76,6 +82,17 @@ export function getChannelMonitorOverviewQueryOptions() {
   return queryOptions({
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
+    staleTime: Number.POSITIVE_INFINITY,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: false,
+  })
+}
+
+export function getChannelMonitorConcurrencyQueryOptions(enabled = true) {
+  return queryOptions({
+    queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY,
+    queryFn: getChannelMonitorConcurrency,
+    enabled,
     staleTime: Number.POSITIVE_INFINITY,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,

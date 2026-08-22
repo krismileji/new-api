@@ -54,6 +54,16 @@ export type ChannelMonitorItem = {
   upstream: ChannelMonitorUpstreamConfig | null
 }
 
+export type ChannelMonitorConcurrencyStatus = {
+  active: number
+  limit: number
+}
+
+export type ChannelMonitorConcurrencyOverview = {
+  channels: Record<string, ChannelMonitorConcurrencyStatus>
+  generated_at: number
+}
+
 export type ChannelMonitorUpstreamType = 'new_api' | 'sub2api' | 'custom'
 
 export type ChannelMonitorUpstreamAuthType =

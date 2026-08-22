@@ -21,6 +21,7 @@ import { api, type ApiRequestConfig } from '@/lib/api'
 import type {
   ChannelMonitorApplyGroupResult,
   ChannelMonitorApiResponse,
+  ChannelMonitorConcurrencyOverview,
   ChannelMonitorCostOverview,
   ChannelMonitorEmailNotificationType,
   ChannelMonitorEmailPreview,
@@ -82,6 +83,13 @@ export async function getChannelMonitorOverview() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorOverview>
   >('/api/channel_monitor/', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorConcurrency() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorConcurrencyOverview>
+  >('/api/channel_monitor/concurrency', channelMonitorRequestConfig())
   return ensureChannelMonitorSuccess(response.data)
 }
 

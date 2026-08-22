@@ -71,6 +71,42 @@ func TestAcquireRelayChannelConcurrencySelectsAnotherChannel(t *testing.T) {
 	assert.Equal(t, 102, ctx.GetInt("channel_id"))
 }
 
+func TestGetChannelMonitorConcurrencyReturnsActiveSnapshotForAllChannels(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create([]model.Channel{
+		{Id: 109, Name: "limited snapshot", Key: "key-1", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
+		{Id: 110, Name: "unlimited snapshot", Key: "key-2", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
+	}).Error)
+	_, err := service.SaveChannelConcurrencyLimit(t.Context(), 109, 1)
+	require.NoError(t, err)
+	lease, acquired, _, err := service.AcquireChannelConcurrency(t.Context(), 109)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	t.Cleanup(lease.Release)
+	unlimitedLease, acquired, _, err := service.AcquireChannelConcurrency(t.Context(), 110)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	t.Cleanup(unlimitedLease.Release)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/concurrency", nil)
+	GetChannelMonitorConcurrency(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Channels map[string]service.ChannelConcurrencyStatus `json:"channels"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Len(t, response.Data.Channels, 2)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1}, response.Data.Channels["109"])
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0}, response.Data.Channels["110"])
+}
+
 func TestAcquireRelayChannelConcurrencyDoesNotRerouteSpecificChannel(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.Create(&model.Channel{

@@ -131,14 +131,14 @@ func TestAcquireChannelConcurrencyLocalHonorsLimitAndIdempotentRelease(t *testin
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 2}, snapshot[7])
 }
 
-func TestAcquireChannelConcurrencyRedisSkipsUnlimitedChannel(t *testing.T) {
+func TestAcquireChannelConcurrencyRedisCountsUnlimitedChannelWhenRedisUnavailable(t *testing.T) {
 	useChannelConcurrencyTestState(t, nil)
 	useUnavailableChannelConcurrencyRedis(t)
 
 	lease, acquired, status, err := AcquireChannelConcurrency(t.Context(), 8)
 	require.NoError(t, err)
 	require.True(t, acquired)
-	assert.Equal(t, ChannelConcurrencyStatus{}, status)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 0}, status)
 	require.NotNil(t, lease)
 	lease.Release()
 }
@@ -226,6 +226,26 @@ func TestAcquireChannelConcurrencyRedisSharesLimitsAndActiveLeases(t *testing.T)
 	snapshot, err = GetChannelConcurrencySnapshot(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 2}, snapshot[9])
+}
+
+func TestAcquireChannelConcurrencyRedisHonorsLimitWhenLocalCacheIsStaleUnlimited(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	client := useChannelConcurrencyRedis(t)
+	require.NoError(t, ensureChannelConcurrencyRedisConfig(t.Context(), client, map[int]model.ChannelConcurrencyConfig{
+		17: {Limit: 1, Revision: 1},
+	}))
+
+	first, acquired, status, err := AcquireChannelConcurrency(t.Context(), 17)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 1}, status)
+	t.Cleanup(first.Release)
+
+	second, acquired, status, err := AcquireChannelConcurrency(t.Context(), 17)
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	assert.Nil(t, second)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 1}, status)
 }
 
 func TestAcquireChannelConcurrencyRedisReclaimsExpiredLease(t *testing.T) {

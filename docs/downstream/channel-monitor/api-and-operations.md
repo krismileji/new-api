@@ -27,6 +27,7 @@
 | `PUT` | `/channel/:id/schedule/route/primary` | 固定、续期或解除一条分组模型路由的主渠道状态；`group`、`model`、`duration_minutes` |
 | `POST` | `/channel/:id/schedule/route/stability/clear` | 手动解除一条分组模型路由的低成功率降级或稳定性试放；`group`、`model` |
 | `PUT` | `/channel/:id/concurrency` | 设置并发上限；`concurrency_limit` |
+| `GET` | `/concurrency` | 读取所有渠道当前并发快照；渠道页手动刷新时独立读取，包含并发上限为 `0` 的渠道 |
 | `GET` | `/channel/:id/history` | 查询倍率变更历史，支持通用分页 |
 | `PUT` | `/channel/:id/upstream` | 保存上游认证、同步、换算、余额和策略配置 |
 | `POST` | `/channel/:id/upstream/groups` | 用提交的上游配置读取分组列表 |
