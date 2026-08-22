@@ -162,10 +162,11 @@ func TestDeleteChannelMonitorCostsBeforeUsesIndependentMetricCutoffs(t *testing.
 	})
 
 	const (
-		costCutoff    = int64(1000)
-		routeCutoff   = int64(800)
-		apiKeyCutoff  = int64(500)
-		currentMinute = int64(900)
+		costCutoff     = int64(1000)
+		routeCutoff    = int64(800)
+		durationCutoff = int64(700)
+		apiKeyCutoff   = int64(500)
+		currentMinute  = int64(900)
 	)
 	require.NoError(t, db.Create(&[]ChannelDailyCost{
 		{ChannelId: 1, DayStart: costCutoff - 1, SettledCount: 1, CreatedAt: 1, UpdatedAt: 1},
@@ -188,15 +189,15 @@ func TestDeleteChannelMonitorCostsBeforeUsesIndependentMetricCutoffs(t *testing.
 		{MinuteStart: apiKeyCutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", APIKeyKey: "keep"},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelMonitorMinuteDurationBucket{
-		{MinuteStart: routeCutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", BucketIndex: 1, Count: 1, TotalMs: 30},
-		{MinuteStart: routeCutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", BucketIndex: 1, Count: 1, TotalMs: 30},
+		{MinuteStart: durationCutoff - 1, ChannelId: 1, ModelKey: "old", GroupKey: "old", BucketIndex: 1, Count: 1, TotalMs: 30},
+		{MinuteStart: durationCutoff, ChannelId: 2, ModelKey: "keep", GroupKey: "keep", BucketIndex: 1, Count: 1, TotalMs: 30},
 	}).Error)
 	require.NoError(t, db.Create(&ChannelMonitorAggregationState{
 		ID: channelMonitorAggregationStateID, CoveredFrom: 1, CompletedThrough: currentMinute,
 	}).Error)
 
-	result, err := DeleteChannelMonitorCostsBefore(
-		context.Background(), costCutoff, routeCutoff, apiKeyCutoff, 10, ChannelMonitorCleanupBudget{},
+	result, err := DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
+		context.Background(), costCutoff, routeCutoff, durationCutoff, apiKeyCutoff, 10, ChannelMonitorCleanupBudget{},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), result.ChannelRowsDeleted)

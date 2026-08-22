@@ -44,11 +44,20 @@ function CostRetentionFieldFixture() {
     defaultValues: {
       costRetentionDays: 30,
       routeMetricRetentionDays: 30,
+      durationBucketRetentionDays: 30,
       apiKeyMetricRetentionDays: 7,
       executionDetailRetentionDays: 3,
-      taskRetentionDays: 90,
+      taskRetentionDays: 7,
+      ratioMonitorTaskRetentionDays: 7,
+      smartScheduleTaskRetentionDays: 7,
+      smartScheduleProbeTaskRetentionDays: 3,
+      cleanupTaskRetentionDays: 7,
+      modelDetectionTaskRetentionDays: 7,
+      channelTestTaskRetentionDays: 7,
+      modelUpdateTaskRetentionDays: 7,
       ratioHistoryRetentionDays: 365,
       statusProbeHistoryRetentionDays: 7,
+      groupMonitorRetentionDays: 7,
       modelDetectionRetentionDays: 30,
       cleanupEnabled: true,
       cleanupBatchSize: 1000,
@@ -282,6 +291,7 @@ describe('channel monitor settings dialog', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
 
     assert.ok(markup.includes('日成本保留天数'))
+    assert.ok(markup.includes('aria-label="日成本保留天数说明"'))
     assert.ok(markup.includes('路由分钟指标保留天数'))
     assert.ok(markup.includes('API Key 分钟指标保留天数'))
     assert.ok(markup.includes('调度执行明细保留天数'))
@@ -294,7 +304,7 @@ describe('channel monitor settings dialog', () => {
       ['routeMetricRetentionDays', '30'],
       ['apiKeyMetricRetentionDays', '7'],
       ['executionDetailRetentionDays', '3'],
-      ['taskRetentionDays', '90'],
+      ['taskRetentionDays', '7'],
       ['ratioHistoryRetentionDays', '365'],
     ]) {
       const inputElement = markup.match(
@@ -306,9 +316,6 @@ describe('channel monitor settings dialog', () => {
       const inputId = inputElement.match(/\sid="([^"]+)"/)?.[1]
       assert.ok(inputId)
       assert.ok(markup.includes(`for="${inputId}"`))
-      assert.ok(
-        inputElement.includes(`aria-describedby="${inputId}-description"`)
-      )
     }
     assert.match(
       markup,
@@ -318,9 +325,6 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="modelDetectionRetentionDays")(?=[^>]*min="7")(?=[^>]*max="180")(?=[^>]*value="30")[^>]*>/
     )
-    assert.ok(markup.includes('仅用于兼容旧版本选项'))
-    assert.match(markup, /name="taskKeepLatestCount"/)
-    assert.ok(markup.includes('各类已结束任务至少保留的最新记录数量'))
     assert.ok(markup.includes('分组监控记录保留天数'))
     assert.ok(markup.includes('模型检测任务保留天数'))
     assert.ok(markup.includes('按配置周期分批清理到期数据'))

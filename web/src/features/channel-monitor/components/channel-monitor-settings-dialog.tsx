@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Route01Icon } from '@hugeicons/core-free-icons'
+import {
+  InformationCircleIcon,
+  Route01Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm, type Resolver, type UseFormReturn } from 'react-hook-form'
@@ -67,6 +70,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 import { updateChannelMonitorSettings } from '../api'
 import {
@@ -94,26 +102,30 @@ import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
   MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
   MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
   MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
-  MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
   MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
   MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
   MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
-  MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -165,6 +177,7 @@ const EMPTY_MODEL_OPTIONS_BY_GROUP: ReadonlyMap<string, string[]> = new Map()
 type ChannelMonitorRetentionFieldName =
   | 'costRetentionDays'
   | 'routeMetricRetentionDays'
+  | 'durationBucketRetentionDays'
   | 'apiKeyMetricRetentionDays'
   | 'executionDetailRetentionDays'
   | 'taskRetentionDays'
@@ -173,6 +186,8 @@ type ChannelMonitorRetentionFieldName =
   | 'smartScheduleProbeTaskRetentionDays'
   | 'cleanupTaskRetentionDays'
   | 'modelDetectionTaskRetentionDays'
+  | 'channelTestTaskRetentionDays'
+  | 'modelUpdateTaskRetentionDays'
   | 'ratioHistoryRetentionDays'
   | 'statusProbeHistoryRetentionDays'
   | 'groupMonitorRetentionDays'
@@ -183,7 +198,34 @@ type ChannelMonitorCleanupNumberFieldName =
   | 'cleanupBudgetSeconds'
   | 'cleanupContinuationSeconds'
   | 'cleanupIntervalMinutes'
-  | 'taskKeepLatestCount'
+
+function ChannelMonitorFieldInfo(props: {
+  label: string
+  description: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type='button'
+            className='text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-4 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none'
+            aria-label={`${props.label}说明`}
+          />
+        }
+      >
+        <HugeiconsIcon
+          icon={InformationCircleIcon}
+          className='size-3.5'
+          aria-hidden='true'
+        />
+      </TooltipTrigger>
+      <TooltipContent className='max-w-sm whitespace-normal leading-relaxed'>
+        {props.description}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -199,7 +241,13 @@ function ChannelMonitorRetentionDayField(props: {
       name={props.name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{props.label}</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>{props.label}</FormLabel>
+            <ChannelMonitorFieldInfo
+              label={props.label}
+              description={props.description}
+            />
+          </div>
           <InputGroup>
             <FormControl>
               <InputGroupInput
@@ -218,7 +266,6 @@ function ChannelMonitorRetentionDayField(props: {
             </FormControl>
             <InputGroupAddon align='inline-end'>天</InputGroupAddon>
           </InputGroup>
-          <FormDescription>{props.description}</FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -241,7 +288,13 @@ function ChannelMonitorCleanupNumberField(props: {
       name={props.name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{props.label}</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>{props.label}</FormLabel>
+            <ChannelMonitorFieldInfo
+              label={props.label}
+              description={props.description}
+            />
+          </div>
           <InputGroup>
             <FormControl>
               <InputGroupInput
@@ -260,7 +313,6 @@ function ChannelMonitorCleanupNumberField(props: {
             </FormControl>
             <InputGroupAddon align='inline-end'>{props.unit}</InputGroupAddon>
           </InputGroup>
-          <FormDescription>{props.description}</FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -276,7 +328,7 @@ export function ChannelMonitorCostRetentionField(props: {
       form={props.form}
       name='costRetentionDays'
       label='日成本保留天数'
-      description='保留渠道和 API Key 日成本；分钟指标使用下方独立保留期'
+      description='按天保留渠道和 API Key 的成本聚合记录；过期记录会被自动删除，不影响官方 logs 日志。'
     />
   )
 }
@@ -300,15 +352,23 @@ export function ChannelMonitorRetentionFields(props: {
           form={props.form}
           name='routeMetricRetentionDays'
           label='路由分钟指标保留天数'
-          description='保留路由分钟统计和延迟分桶，并受智能调度最长窗口保护'
+          description='保留路由维度的分钟成功、失败、缓存和请求统计；智能调度使用的最长窗口会额外保护这段数据。'
           min={MIN_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS}
           max={MAX_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS}
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
+          name='durationBucketRetentionDays'
+          label='延迟分桶保留天数'
+          description='保留首字延迟分布的分桶统计，用于观察延迟趋势；智能调度使用的最长窗口会额外保护这段数据。'
+          min={MIN_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
           name='apiKeyMetricRetentionDays'
           label='API Key 分钟指标保留天数'
-          description='保留 API Key 维度的分钟成功、失败和缓存统计'
+          description='保留 API Key 维度的分钟成功、失败、缓存和 token 统计；只影响聚合指标，不影响请求日志。'
           min={MIN_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS}
           max={MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS}
         />
@@ -316,79 +376,86 @@ export function ChannelMonitorRetentionFields(props: {
           form={props.form}
           name='executionDetailRetentionDays'
           label='调度执行明细保留天数'
-          description='保留每次自动调度的渠道评分、采样与决策明细'
+          description='保留智能调度每次执行的渠道评分、采样数据和最终决策，过期后删除完整明细。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='taskRetentionDays'
           label='未分类监控任务保留天数（兼容）'
-          description='仅用于兼容旧版本选项；已列出的任务类型使用各自独立保留期'
-        />
-        <ChannelMonitorCleanupNumberField
-          form={props.form}
-          name='taskKeepLatestCount'
-          label='每类监控任务最少保留数量'
-          description='各类已结束任务至少保留的最新记录数量'
-          min={MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT}
-          max={MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT}
-          unit='条'
+          description='仅用于兼容旧版本选项的兜底配置：只有 system_tasks.type 没有独立保留配置时才使用它；当前已列出的渠道监控任务都有各自的保留天数。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='ratioMonitorTaskRetentionDays'
           label='渠道比例监控任务保留天数'
-          description='保留渠道比例监控系统任务记录'
+          description='保留 channel_ratio_monitor 类型的系统任务记录；任务结束并超过天数后，任务及其关联明细会被删除。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='smartScheduleTaskRetentionDays'
           label='智能调度任务保留天数'
-          description='保留智能调度系统任务记录'
+          description='保留 channel_smart_schedule 类型的自动调度任务记录；只清理已结束且超过保留期的历史任务。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='smartScheduleProbeTaskRetentionDays'
           label='智能调度探测任务保留天数'
-          description='保留智能调度探测系统任务记录'
+          description='保留 channel_smart_schedule_probe 类型的探测任务记录；只清理已结束且超过保留期的历史任务。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='cleanupTaskRetentionDays'
           label='清理任务保留天数'
-          description='保留渠道监控清理系统任务记录'
+          description='保留 channel_monitor_cost_retention 清理任务本身的执行记录；不会改变清理周期或清理范围。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='modelDetectionTaskRetentionDays'
           label='模型检测任务保留天数'
-          description='保留模型检测系统任务记录'
+          description='保留 channel_model_detection 类型的系统任务记录；它只控制任务记录，不等同于下方的模型检测历史保留期。'
           min={MIN_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS}
           max={MAX_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS}
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
+          name='channelTestTaskRetentionDays'
+          label='渠道测试任务保留天数'
+          description='保留 channel_test 类型的渠道测试任务记录；只清理已结束且超过保留期的历史任务。'
+          min={MIN_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='modelUpdateTaskRetentionDays'
+          label='模型更新任务保留天数'
+          description='保留 model_update 类型的上游模型更新任务记录；只清理已结束且超过保留期的历史任务。'
+          min={MIN_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
           name='ratioHistoryRetentionDays'
           label='倍率历史保留天数'
-          description='保留渠道成本倍率的历史变更记录'
+          description='保留渠道成本倍率的变更历史，用于追溯倍率何时被调整；超过保留期的历史变更会被删除。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='statusProbeHistoryRetentionDays'
           label='状态探测记录保留天数'
-          description='保留状态探测执行明细'
+          description='保留渠道状态探测的执行记录，用于查看探测结果和失败原因；允许范围最多 90 天。'
           max={MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS}
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='groupMonitorRetentionDays'
           label='分组监控记录保留天数'
-          description='保留分组监控执行记录'
+          description='保留分组监控每次执行的记录，用于查看分组状态变化和探测结果。'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='modelDetectionRetentionDays'
           label='模型检测历史保留天数'
-          description='保留模型检测轮次、执行和成本事件历史'
+          description='保留模型检测轮次、执行结果和成本事件历史；这是模型检测业务历史，不是 system_tasks 任务记录。'
           min={MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS}
           max={MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS}
         />
@@ -399,10 +466,13 @@ export function ChannelMonitorRetentionFields(props: {
         render={({ field }) => (
           <FormItem className='flex items-center justify-between gap-4'>
             <div className='space-y-1'>
-              <FormLabel>启用自动清理</FormLabel>
-              <FormDescription>
-                关闭后不再创建或续排清理任务，已排队任务执行时会直接结束
-              </FormDescription>
+              <div className='flex items-center gap-1'>
+                <FormLabel>启用自动清理</FormLabel>
+                <ChannelMonitorFieldInfo
+                  label='启用自动清理'
+                  description='开启后按上面的保留天数定期清理历史数据；关闭后不会创建或续排清理任务，已经排队的清理任务会直接结束。'
+                />
+              </div>
             </div>
             <FormControl>
               <Switch
@@ -428,7 +498,7 @@ export function ChannelMonitorRetentionFields(props: {
             form={props.form}
             name='cleanupBatchSize'
             label='单批删除数'
-            description='每次删除语句处理的最大记录数'
+            description='每次删除操作最多处理的记录数；数值越大清理越快，但单次数据库压力也越高。'
             min={MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE}
             max={MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE}
             unit='条'
@@ -437,7 +507,7 @@ export function ChannelMonitorRetentionFields(props: {
             form={props.form}
             name='cleanupBudgetSeconds'
             label='单轮清理预算'
-            description='每轮任务可用于分批删除的最长时间'
+            description='单次清理任务最多运行的时间；超出预算会标记未完成，并按续跑间隔继续清理。'
             min={MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS}
             max={MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS}
             unit='秒'
@@ -446,7 +516,7 @@ export function ChannelMonitorRetentionFields(props: {
             form={props.form}
             name='cleanupIntervalMinutes'
             label='清理周期'
-            description='保存后从下一次调度周期开始生效'
+            description='自动清理任务的调度间隔；它只控制清理任务频率，不影响渠道监控每分钟执行。保存后从下一次调度周期开始生效。'
             min={MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES}
             max={MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES}
             unit='分钟'
@@ -455,7 +525,7 @@ export function ChannelMonitorRetentionFields(props: {
             form={props.form}
             name='cleanupContinuationSeconds'
             label='续跑间隔'
-            description='单轮未清完时，等待该时间后再次执行'
+            description='单轮清理因预算不足未完成时，等待多长时间再续跑；不会改变数据的保留天数。'
             min={MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS}
             max={MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS}
             unit='秒'
@@ -595,6 +665,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         props.settings.auto_enable_on_balance_recovery ?? false,
       costRetentionDays: props.settings.cost_retention_days,
       routeMetricRetentionDays: props.settings.route_metric_retention_days,
+      durationBucketRetentionDays:
+        props.settings.duration_bucket_retention_days,
       apiKeyMetricRetentionDays: props.settings.api_key_metric_retention_days,
       executionDetailRetentionDays:
         props.settings.execution_detail_retention_days,
@@ -608,7 +680,10 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       cleanupTaskRetentionDays: props.settings.cleanup_task_retention_days,
       modelDetectionTaskRetentionDays:
         props.settings.model_detection_task_retention_days,
-      taskKeepLatestCount: props.settings.task_keep_latest_count,
+      channelTestTaskRetentionDays:
+        props.settings.channel_test_task_retention_days,
+      modelUpdateTaskRetentionDays:
+        props.settings.model_update_task_retention_days,
       ratioHistoryRetentionDays: props.settings.ratio_history_retention_days,
       statusProbeHistoryRetentionDays:
         props.settings.status_probe_history_retention_days,

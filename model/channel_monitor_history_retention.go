@@ -30,7 +30,26 @@ func DeleteChannelMonitorHistoryBefore(
 	ctx context.Context,
 	cutoffs ChannelMonitorHistoryRetentionCutoffs,
 	taskTypes []string,
-	keepLatestTasks int,
+	batchSize int,
+	budget ChannelMonitorCleanupBudget,
+) (ChannelMonitorHistoryRetentionResult, error) {
+	return DeleteChannelMonitorHistoryBeforeWithTaskCutoffs(
+		ctx,
+		cutoffs,
+		taskTypes,
+		nil,
+		batchSize,
+		budget,
+	)
+}
+
+// DeleteChannelMonitorHistoryBeforeWithTaskCutoffs applies the common history
+// cutoffs while allowing selected system task types to use their own cutoff.
+func DeleteChannelMonitorHistoryBeforeWithTaskCutoffs(
+	ctx context.Context,
+	cutoffs ChannelMonitorHistoryRetentionCutoffs,
+	taskTypes []string,
+	taskTypeCutoffs map[string]int64,
 	batchSize int,
 	budget ChannelMonitorCleanupBudget,
 ) (ChannelMonitorHistoryRetentionResult, error) {
@@ -40,9 +59,6 @@ func DeleteChannelMonitorHistoryBefore(
 	}
 	if cutoffs.Task > cutoffs.ExecutionDetail {
 		return result, errors.New("渠道监控任务保留期不能短于调度执行明细保留期")
-	}
-	if keepLatestTasks <= 0 {
-		return result, errors.New("渠道监控任务最少保留数量必须为正数")
 	}
 	if batchSize <= 0 {
 		return result, errors.New("渠道监控历史数据清理批次必须为正数")
@@ -64,14 +80,35 @@ func DeleteChannelMonitorHistoryBefore(
 	if len(normalizedTaskTypes) == 0 {
 		return result, errors.New("渠道监控任务类型不能为空")
 	}
+	normalizedTaskCutoffs := make(map[string]int64, len(taskTypeCutoffs))
+	for taskType, cutoff := range taskTypeCutoffs {
+		taskType = strings.TrimSpace(taskType)
+		if taskType == "" || cutoff <= 0 {
+			return result, errors.New("渠道监控任务类型保留截止时间必须为正数")
+		}
+		normalizedTaskCutoffs[taskType] = cutoff
+	}
+
+	taskCutoffPredicate := func() (string, []any) {
+		conditions := make([]string, 0, len(normalizedTaskTypes))
+		args := make([]any, 0, len(normalizedTaskTypes)*2)
+		for _, taskType := range normalizedTaskTypes {
+			cutoff := cutoffs.Task
+			if configuredCutoff, ok := normalizedTaskCutoffs[taskType]; ok {
+				cutoff = configuredCutoff
+			}
+			conditions = append(conditions, "(type = ? AND updated_at < ?)")
+			args = append(args, taskType, cutoff)
+		}
+		return strings.Join(conditions, " OR "), args
+	}
 
 	db := DB.WithContext(ctx)
 	detailTableExists := db.Migrator().HasTable(&ChannelSmartScheduleExecutionDetail{})
 	terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
-	// Snapshots belonging to active tasks or each task type's newest terminal
-	// tasks are retained even when their timestamp is older than the detail
-	// cutoff. This keeps the execution-history guards effective after the
-	// detail table becomes one row per task.
+	// Snapshots belonging to active tasks are retained so an in-flight task is
+	// never deleted while it is still running. Completed task history follows
+	// the configured retention cutoff without a count-based floor.
 	protectedDetailTaskIDs := make(map[string]struct{})
 	if detailTableExists && db.Migrator().HasTable(&SystemTask{}) {
 		var activeTaskIDs []string
@@ -84,22 +121,6 @@ func DeleteChannelMonitorHistoryBefore(
 		for _, taskID := range activeTaskIDs {
 			if taskID != "" {
 				protectedDetailTaskIDs[taskID] = struct{}{}
-			}
-		}
-		for _, taskType := range normalizedTaskTypes {
-			var latestTaskIDs []string
-			if err := db.Model(&SystemTask{}).
-				Where("type = ?", taskType).
-				Where("status IN ?", terminalStatuses).
-				Order("id DESC").
-				Limit(keepLatestTasks).
-				Pluck("task_id", &latestTaskIDs).Error; err != nil {
-				return result, err
-			}
-			for _, taskID := range latestTaskIDs {
-				if taskID != "" {
-					protectedDetailTaskIDs[taskID] = struct{}{}
-				}
 			}
 		}
 	}
@@ -141,81 +162,58 @@ func DeleteChannelMonitorHistoryBefore(
 		if taskBudget.Exhausted() {
 			result.Incomplete = true
 		} else {
-			keptTaskIDs := make([]int64, 0, len(normalizedTaskTypes)*keepLatestTasks)
-			prepared := true
-			for _, taskType := range normalizedTaskTypes {
+			for {
 				if taskBudget.Exhausted() {
 					result.Incomplete = true
-					prepared = false
 					break
 				}
-				var ids []int64
-				if err := db.Model(&SystemTask{}).
-					Where("type = ?", taskType).
-					Where("status IN ?", terminalStatuses).
-					Order("id DESC").
-					Limit(keepLatestTasks).
-					Pluck("id", &ids).Error; err != nil {
+				var tasks []channelMonitorRetentionTask
+				query := db.Model(&SystemTask{}).
+					Select("id", "task_id").
+					Where("type IN ?", normalizedTaskTypes).
+					Where("status IN ?", terminalStatuses)
+				taskCutoffSQL, taskCutoffArgs := taskCutoffPredicate()
+				query = query.Where(taskCutoffSQL, taskCutoffArgs...)
+				if err := query.Order("updated_at ASC, id ASC").Limit(batchSize).Find(&tasks).Error; err != nil {
 					return result, err
 				}
-				keptTaskIDs = append(keptTaskIDs, ids...)
-			}
-
-			if prepared {
-				for {
-					if taskBudget.Exhausted() {
-						result.Incomplete = true
-						break
-					}
-					var tasks []channelMonitorRetentionTask
-					query := db.Model(&SystemTask{}).
-						Select("id", "task_id").
-						Where("type IN ?", normalizedTaskTypes).
-						Where("status IN ?", terminalStatuses).
-						Where("updated_at < ?", cutoffs.Task)
-					if len(keptTaskIDs) > 0 {
-						query = query.Where("id NOT IN ?", keptTaskIDs)
-					}
-					if err := query.Order("updated_at ASC, id ASC").Limit(batchSize).Find(&tasks).Error; err != nil {
-						return result, err
-					}
-					if len(tasks) == 0 {
-						break
-					}
-
-					taskIDs := make([]string, 0, len(tasks))
-					ids := make([]int64, 0, len(tasks))
-					for _, task := range tasks {
-						taskIDs = append(taskIDs, task.TaskID)
-						ids = append(ids, task.ID)
-					}
-					var detailRowsDeleted int64
-					var taskRowsDeleted int64
-					if err := db.Transaction(func(tx *gorm.DB) error {
-						if detailTableExists {
-							deletedDetails := tx.Where("task_id IN ?", taskIDs).
-								Delete(&ChannelSmartScheduleExecutionDetail{})
-							if deletedDetails.Error != nil {
-								return deletedDetails.Error
-							}
-							detailRowsDeleted = deletedDetails.RowsAffected
-						}
-						deletedTasks := tx.Where("id IN ?", ids).
-							Where("type IN ?", normalizedTaskTypes).
-							Where("status IN ?", terminalStatuses).
-							Where("updated_at < ?", cutoffs.Task).
-							Delete(&SystemTask{})
-						if deletedTasks.Error != nil {
-							return deletedTasks.Error
-						}
-						taskRowsDeleted = deletedTasks.RowsAffected
-						return nil
-					}); err != nil {
-						return result, err
-					}
-					result.ExecutionDetailRowsDeleted += detailRowsDeleted
-					result.TaskRowsDeleted += taskRowsDeleted
+				if len(tasks) == 0 {
+					break
 				}
+
+				taskIDs := make([]string, 0, len(tasks))
+				ids := make([]int64, 0, len(tasks))
+				for _, task := range tasks {
+					taskIDs = append(taskIDs, task.TaskID)
+					ids = append(ids, task.ID)
+				}
+				var detailRowsDeleted int64
+				var taskRowsDeleted int64
+				if err := db.Transaction(func(tx *gorm.DB) error {
+					if detailTableExists {
+						deletedDetails := tx.Where("task_id IN ?", taskIDs).
+							Delete(&ChannelSmartScheduleExecutionDetail{})
+						if deletedDetails.Error != nil {
+							return deletedDetails.Error
+						}
+						detailRowsDeleted = deletedDetails.RowsAffected
+					}
+					deletedTasks := tx.Where("id IN ?", ids).
+						Where("type IN ?", normalizedTaskTypes).
+						Where("status IN ?", terminalStatuses)
+					taskCutoffSQL, taskCutoffArgs := taskCutoffPredicate()
+					deletedTasks = deletedTasks.Where(taskCutoffSQL, taskCutoffArgs...)
+					deletedTasks = deletedTasks.Delete(&SystemTask{})
+					if deletedTasks.Error != nil {
+						return deletedTasks.Error
+					}
+					taskRowsDeleted = deletedTasks.RowsAffected
+					return nil
+				}); err != nil {
+					return result, err
+				}
+				result.ExecutionDetailRowsDeleted += detailRowsDeleted
+				result.TaskRowsDeleted += taskRowsDeleted
 			}
 		}
 	}

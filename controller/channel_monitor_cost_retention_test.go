@@ -40,64 +40,117 @@ func TestChannelMonitorCostRetentionSettingsUsePersistedDays(t *testing.T) {
 
 func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 	tests := []struct {
-		name                string
-		values              map[string]string
-		wantExecutionDetail int
-		wantTask            int
-		wantRatioHistory    int
-		wantStatusProbe     int
-		wantModelDetection  int
-		wantRouteMetric     int
-		wantAPIKeyMetric    int
+		name                       string
+		values                     map[string]string
+		wantExecutionDetail        int
+		wantTask                   int
+		wantRatioHistory           int
+		wantStatusProbe            int
+		wantModelDetection         int
+		wantRouteMetric            int
+		wantAPIKeyMetric           int
+		wantDurationBucket         int
+		wantRatioMonitorTask       int
+		wantSmartScheduleTask      int
+		wantSmartScheduleProbeTask int
+		wantCleanupTask            int
+		wantModelDetectionTask     int
+		wantChannelTestTask        int
+		wantModelUpdateTask        int
+		wantGroupMonitor           int
 	}{
 		{
-			name:                "missing uses defaults",
-			values:              map[string]string{},
-			wantExecutionDetail: defaultChannelMonitorExecutionDetailRetentionDays,
-			wantTask:            defaultChannelMonitorTaskRetentionDays,
-			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
-			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
-			wantModelDetection:  model.ChannelModelDetectionDefaultRetentionDays,
-			wantRouteMetric:     defaultChannelMonitorRouteMetricRetentionDays,
-			wantAPIKeyMetric:    defaultChannelMonitorAPIKeyMetricRetentionDays,
+			name:                       "missing uses defaults",
+			values:                     map[string]string{},
+			wantExecutionDetail:        defaultChannelMonitorExecutionDetailRetentionDays,
+			wantTask:                   defaultChannelMonitorTaskRetentionDays,
+			wantRatioHistory:           defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:            defaultChannelMonitorStatusProbeHistoryRetentionDays,
+			wantModelDetection:         model.ChannelModelDetectionDefaultRetentionDays,
+			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
+			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
+			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
+			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
+			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
+			wantCleanupTask:            defaultChannelMonitorCleanupTaskRetentionDays,
+			wantModelDetectionTask:     defaultChannelMonitorModelDetectionTaskRetentionDays,
+			wantChannelTestTask:        defaultChannelMonitorChannelTestTaskRetentionDays,
+			wantModelUpdateTask:        defaultChannelMonitorModelUpdateTaskRetentionDays,
+			wantGroupMonitor:           defaultChannelMonitorGroupMonitorRetentionDays,
 		},
 		{
 			name: "valid values",
 			values: map[string]string{
-				channelMonitorExecutionDetailRetentionDaysOption:    "30",
-				channelMonitorTaskRetentionDaysOption:               "180",
-				channelMonitorRatioHistoryRetentionDaysOption:       "730",
-				channelMonitorStatusProbeHistoryRetentionDaysOption: "21",
-				channelMonitorModelDetectionRetentionDaysOption:     "45",
-				channelMonitorRouteMetricRetentionDaysOption:        "21",
-				channelMonitorAPIKeyMetricRetentionDaysOption:       "5",
+				channelMonitorExecutionDetailRetentionDaysOption:        "30",
+				channelMonitorTaskRetentionDaysOption:                   "180",
+				channelMonitorRatioHistoryRetentionDaysOption:           "730",
+				channelMonitorStatusProbeHistoryRetentionDaysOption:     "21",
+				channelMonitorModelDetectionRetentionDaysOption:         "45",
+				channelMonitorRouteMetricRetentionDaysOption:            "21",
+				channelMonitorAPIKeyMetricRetentionDaysOption:           "5",
+				channelMonitorDurationBucketRetentionDaysOption:         "15",
+				channelMonitorRatioMonitorTaskRetentionDaysOption:       "11",
+				channelMonitorSmartScheduleTaskRetentionDaysOption:      "22",
+				channelMonitorSmartScheduleProbeTaskRetentionDaysOption: "33",
+				channelMonitorCleanupTaskRetentionDaysOption:            "44",
+				channelMonitorModelDetectionTaskRetentionDaysOption:     "66",
+				channelMonitorChannelTestTaskRetentionDaysOption:        "77",
+				channelMonitorModelUpdateTaskRetentionDaysOption:        "88",
+				channelMonitorGroupMonitorRetentionDaysOption:           "55",
 			},
-			wantExecutionDetail: 30,
-			wantTask:            180,
-			wantRatioHistory:    730,
-			wantStatusProbe:     21,
-			wantModelDetection:  45,
-			wantRouteMetric:     21,
-			wantAPIKeyMetric:    5,
+			wantExecutionDetail:        30,
+			wantTask:                   180,
+			wantRatioHistory:           730,
+			wantStatusProbe:            21,
+			wantModelDetection:         45,
+			wantRouteMetric:            21,
+			wantAPIKeyMetric:           5,
+			wantDurationBucket:         15,
+			wantRatioMonitorTask:       11,
+			wantSmartScheduleTask:      22,
+			wantSmartScheduleProbeTask: 33,
+			wantCleanupTask:            44,
+			wantModelDetectionTask:     66,
+			wantChannelTestTask:        77,
+			wantModelUpdateTask:        88,
+			wantGroupMonitor:           55,
 		},
 		{
 			name: "invalid values use defaults",
 			values: map[string]string{
-				channelMonitorExecutionDetailRetentionDaysOption:    "0",
-				channelMonitorTaskRetentionDaysOption:               "3651",
-				channelMonitorRatioHistoryRetentionDaysOption:       "invalid",
-				channelMonitorStatusProbeHistoryRetentionDaysOption: "91",
-				channelMonitorModelDetectionRetentionDaysOption:     "181",
-				channelMonitorRouteMetricRetentionDaysOption:        "0",
-				channelMonitorAPIKeyMetricRetentionDaysOption:       "3651",
+				channelMonitorExecutionDetailRetentionDaysOption:        "0",
+				channelMonitorTaskRetentionDaysOption:                   "3651",
+				channelMonitorRatioHistoryRetentionDaysOption:           "invalid",
+				channelMonitorStatusProbeHistoryRetentionDaysOption:     "91",
+				channelMonitorModelDetectionRetentionDaysOption:         "181",
+				channelMonitorRouteMetricRetentionDaysOption:            "0",
+				channelMonitorAPIKeyMetricRetentionDaysOption:           "3651",
+				channelMonitorRatioMonitorTaskRetentionDaysOption:       "0",
+				channelMonitorSmartScheduleTaskRetentionDaysOption:      "3651",
+				channelMonitorSmartScheduleProbeTaskRetentionDaysOption: "invalid",
+				channelMonitorCleanupTaskRetentionDaysOption:            "0",
+				channelMonitorModelDetectionTaskRetentionDaysOption:     "3651",
+				channelMonitorChannelTestTaskRetentionDaysOption:        "0",
+				channelMonitorModelUpdateTaskRetentionDaysOption:        "3651",
+				channelMonitorGroupMonitorRetentionDaysOption:           "0",
 			},
-			wantExecutionDetail: defaultChannelMonitorExecutionDetailRetentionDays,
-			wantTask:            defaultChannelMonitorTaskRetentionDays,
-			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
-			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
-			wantModelDetection:  model.ChannelModelDetectionDefaultRetentionDays,
-			wantRouteMetric:     defaultChannelMonitorRouteMetricRetentionDays,
-			wantAPIKeyMetric:    defaultChannelMonitorAPIKeyMetricRetentionDays,
+			wantExecutionDetail:        defaultChannelMonitorExecutionDetailRetentionDays,
+			wantTask:                   defaultChannelMonitorTaskRetentionDays,
+			wantRatioHistory:           defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:            defaultChannelMonitorStatusProbeHistoryRetentionDays,
+			wantModelDetection:         model.ChannelModelDetectionDefaultRetentionDays,
+			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
+			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
+			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
+			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
+			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
+			wantCleanupTask:            defaultChannelMonitorCleanupTaskRetentionDays,
+			wantModelDetectionTask:     defaultChannelMonitorModelDetectionTaskRetentionDays,
+			wantChannelTestTask:        defaultChannelMonitorChannelTestTaskRetentionDays,
+			wantModelUpdateTask:        defaultChannelMonitorModelUpdateTaskRetentionDays,
+			wantGroupMonitor:           defaultChannelMonitorGroupMonitorRetentionDays,
 		},
 		{
 			name: "task retention is raised to preserve execution details",
@@ -105,13 +158,22 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 				channelMonitorExecutionDetailRetentionDaysOption: "365",
 				channelMonitorTaskRetentionDaysOption:            "30",
 			},
-			wantExecutionDetail: 365,
-			wantTask:            365,
-			wantRatioHistory:    defaultChannelMonitorRatioHistoryRetentionDays,
-			wantStatusProbe:     defaultChannelMonitorStatusProbeHistoryRetentionDays,
-			wantModelDetection:  model.ChannelModelDetectionDefaultRetentionDays,
-			wantRouteMetric:     defaultChannelMonitorRouteMetricRetentionDays,
-			wantAPIKeyMetric:    defaultChannelMonitorAPIKeyMetricRetentionDays,
+			wantExecutionDetail:        365,
+			wantTask:                   365,
+			wantRatioHistory:           defaultChannelMonitorRatioHistoryRetentionDays,
+			wantStatusProbe:            defaultChannelMonitorStatusProbeHistoryRetentionDays,
+			wantModelDetection:         model.ChannelModelDetectionDefaultRetentionDays,
+			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
+			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
+			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
+			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
+			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
+			wantCleanupTask:            defaultChannelMonitorCleanupTaskRetentionDays,
+			wantModelDetectionTask:     defaultChannelMonitorModelDetectionTaskRetentionDays,
+			wantChannelTestTask:        defaultChannelMonitorChannelTestTaskRetentionDays,
+			wantModelUpdateTask:        defaultChannelMonitorModelUpdateTaskRetentionDays,
+			wantGroupMonitor:           defaultChannelMonitorGroupMonitorRetentionDays,
 		},
 	}
 
@@ -127,6 +189,15 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			assert.Equal(t, test.wantModelDetection, settings.ModelDetectionRetentionDays)
 			assert.Equal(t, test.wantRouteMetric, settings.RouteMetricRetentionDays)
 			assert.Equal(t, test.wantAPIKeyMetric, settings.APIKeyMetricRetentionDays)
+			assert.Equal(t, test.wantDurationBucket, settings.DurationBucketRetentionDays)
+			assert.Equal(t, test.wantRatioMonitorTask, settings.RatioMonitorTaskRetentionDays)
+			assert.Equal(t, test.wantSmartScheduleTask, settings.SmartScheduleTaskRetentionDays)
+			assert.Equal(t, test.wantSmartScheduleProbeTask, settings.SmartScheduleProbeTaskRetentionDays)
+			assert.Equal(t, test.wantCleanupTask, settings.CleanupTaskRetentionDays)
+			assert.Equal(t, test.wantModelDetectionTask, settings.ModelDetectionTaskRetentionDays)
+			assert.Equal(t, test.wantChannelTestTask, settings.ChannelTestTaskRetentionDays)
+			assert.Equal(t, test.wantModelUpdateTask, settings.ModelUpdateTaskRetentionDays)
+			assert.Equal(t, test.wantGroupMonitor, settings.GroupMonitorRetentionDays)
 		})
 	}
 }
@@ -213,7 +284,7 @@ func TestGetChannelMonitorOverviewReturnsRetentionDefaultsWhenOptionsAreMissing(
 	require.True(t, response.Success)
 	assert.Equal(t, 30, response.Data.Settings.CostRetentionDays)
 	assert.Equal(t, 3, response.Data.Settings.ExecutionDetailRetentionDays)
-	assert.Equal(t, 90, response.Data.Settings.TaskRetentionDays)
+	assert.Equal(t, 7, response.Data.Settings.TaskRetentionDays)
 	assert.Equal(t, 365, response.Data.Settings.RatioHistoryRetentionDays)
 	assert.Equal(t, 7, response.Data.Settings.StatusProbeHistoryRetentionDays)
 	assert.Equal(t, 30, response.Data.Settings.ModelDetectionRetentionDays)
@@ -272,6 +343,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 		channelMonitorStatusProbeHistoryRetentionDaysOption: "7",
 		channelMonitorModelDetectionRetentionDaysOption:     "7",
 		channelMonitorRouteMetricRetentionDaysOption:        "7",
+		channelMonitorDurationBucketRetentionDaysOption:     "7",
 		channelMonitorAPIKeyMetricRetentionDaysOption:       "7",
 	})
 	require.NoError(t, db.Create(&[]model.Option{
@@ -282,6 +354,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 		{Key: channelMonitorStatusProbeHistoryRetentionDaysOption, Value: "21"},
 		{Key: channelMonitorModelDetectionRetentionDaysOption, Value: "45"},
 		{Key: channelMonitorRouteMetricRetentionDaysOption, Value: "21"},
+		{Key: channelMonitorDurationBucketRetentionDaysOption, Value: "15"},
 		{Key: channelMonitorAPIKeyMetricRetentionDaysOption, Value: "5"},
 	}).Error)
 
@@ -295,6 +368,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 	assert.Equal(t, 21, settings.StatusProbeHistoryRetentionDays)
 	assert.Equal(t, 45, settings.ModelDetectionRetentionDays)
 	assert.Equal(t, 21, settings.RouteMetricRetentionDays)
+	assert.Equal(t, 15, settings.DurationBucketRetentionDays)
 	assert.Equal(t, 5, settings.APIKeyMetricRetentionDays)
 }
 
@@ -329,19 +403,28 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
-		"cost_retention_days":                 45,
-		"execution_detail_retention_days":     30,
-		"task_retention_days":                 180,
-		"ratio_history_retention_days":        730,
-		"status_probe_history_retention_days": 21,
-		"model_detection_retention_days":      45,
-		"route_metric_retention_days":         21,
-		"api_key_metric_retention_days":       5,
-		"cleanup_enabled":                     false,
-		"cleanup_batch_size":                  2500,
-		"cleanup_budget_seconds":              45,
-		"cleanup_continuation_seconds":        90,
-		"cleanup_interval_minutes":            360,
+		"cost_retention_days":                      45,
+		"execution_detail_retention_days":          30,
+		"task_retention_days":                      180,
+		"ratio_monitor_task_retention_days":        11,
+		"smart_schedule_task_retention_days":       22,
+		"smart_schedule_probe_task_retention_days": 33,
+		"cleanup_task_retention_days":              44,
+		"model_detection_task_retention_days":      66,
+		"channel_test_task_retention_days":         77,
+		"model_update_task_retention_days":         88,
+		"ratio_history_retention_days":             730,
+		"status_probe_history_retention_days":      21,
+		"group_monitor_retention_days":             55,
+		"model_detection_retention_days":           45,
+		"route_metric_retention_days":              21,
+		"duration_bucket_retention_days":           15,
+		"api_key_metric_retention_days":            5,
+		"cleanup_enabled":                          false,
+		"cleanup_batch_size":                       2500,
+		"cleanup_budget_seconds":                   45,
+		"cleanup_continuation_seconds":             90,
+		"cleanup_interval_minutes":                 360,
 	})
 
 	UpdateChannelMonitorSettings(ctx)
@@ -353,10 +436,19 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 	assert.Equal(t, 45, response.Data.CostRetentionDays)
 	assert.Equal(t, 30, response.Data.ExecutionDetailRetentionDays)
 	assert.Equal(t, 180, response.Data.TaskRetentionDays)
+	assert.Equal(t, 11, response.Data.RatioMonitorTaskRetentionDays)
+	assert.Equal(t, 22, response.Data.SmartScheduleTaskRetentionDays)
+	assert.Equal(t, 33, response.Data.SmartScheduleProbeTaskRetentionDays)
+	assert.Equal(t, 44, response.Data.CleanupTaskRetentionDays)
+	assert.Equal(t, 66, response.Data.ModelDetectionTaskRetentionDays)
+	assert.Equal(t, 77, response.Data.ChannelTestTaskRetentionDays)
+	assert.Equal(t, 88, response.Data.ModelUpdateTaskRetentionDays)
 	assert.Equal(t, 730, response.Data.RatioHistoryRetentionDays)
 	assert.Equal(t, 21, response.Data.StatusProbeHistoryRetentionDays)
+	assert.Equal(t, 55, response.Data.GroupMonitorRetentionDays)
 	assert.Equal(t, 45, response.Data.ModelDetectionRetentionDays)
 	assert.Equal(t, 21, response.Data.RouteMetricRetentionDays)
+	assert.Equal(t, 15, response.Data.DurationBucketRetentionDays)
 	assert.Equal(t, 5, response.Data.APIKeyMetricRetentionDays)
 	assert.False(t, response.Data.CleanupEnabled)
 	assert.Equal(t, 2500, response.Data.CleanupBatchSize)
@@ -365,19 +457,28 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 	assert.Equal(t, 360, response.Data.CleanupIntervalMinutes)
 
 	wantOptions := map[string]string{
-		channelMonitorCostRetentionDaysOption:               "45",
-		channelMonitorExecutionDetailRetentionDaysOption:    "30",
-		channelMonitorTaskRetentionDaysOption:               "180",
-		channelMonitorRatioHistoryRetentionDaysOption:       "730",
-		channelMonitorStatusProbeHistoryRetentionDaysOption: "21",
-		channelMonitorModelDetectionRetentionDaysOption:     "45",
-		channelMonitorRouteMetricRetentionDaysOption:        "21",
-		channelMonitorAPIKeyMetricRetentionDaysOption:       "5",
-		channelMonitorCleanupEnabledOption:                  "false",
-		channelMonitorCleanupBatchSizeOption:                "2500",
-		channelMonitorCleanupBudgetSecondsOption:            "45",
-		channelMonitorCleanupContinuationSecondsOption:      "90",
-		channelMonitorCleanupIntervalMinutesOption:          "360",
+		channelMonitorCostRetentionDaysOption:                   "45",
+		channelMonitorExecutionDetailRetentionDaysOption:        "30",
+		channelMonitorTaskRetentionDaysOption:                   "180",
+		channelMonitorRatioMonitorTaskRetentionDaysOption:       "11",
+		channelMonitorSmartScheduleTaskRetentionDaysOption:      "22",
+		channelMonitorSmartScheduleProbeTaskRetentionDaysOption: "33",
+		channelMonitorCleanupTaskRetentionDaysOption:            "44",
+		channelMonitorModelDetectionTaskRetentionDaysOption:     "66",
+		channelMonitorChannelTestTaskRetentionDaysOption:        "77",
+		channelMonitorModelUpdateTaskRetentionDaysOption:        "88",
+		channelMonitorRatioHistoryRetentionDaysOption:           "730",
+		channelMonitorStatusProbeHistoryRetentionDaysOption:     "21",
+		channelMonitorGroupMonitorRetentionDaysOption:           "55",
+		channelMonitorModelDetectionRetentionDaysOption:         "45",
+		channelMonitorRouteMetricRetentionDaysOption:            "21",
+		channelMonitorDurationBucketRetentionDaysOption:         "15",
+		channelMonitorAPIKeyMetricRetentionDaysOption:           "5",
+		channelMonitorCleanupEnabledOption:                      "false",
+		channelMonitorCleanupBatchSizeOption:                    "2500",
+		channelMonitorCleanupBudgetSecondsOption:                "45",
+		channelMonitorCleanupContinuationSecondsOption:          "90",
+		channelMonitorCleanupIntervalMinutesOption:              "360",
 	}
 	for key, want := range wantOptions {
 		var option model.Option

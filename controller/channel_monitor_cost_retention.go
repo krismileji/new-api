@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	channelMonitorCostRetentionTaskType   = "channel_monitor_cost_retention"
-	channelMonitorTaskRetentionKeepLatest = 100
+	channelMonitorCostRetentionTaskType = "channel_monitor_cost_retention"
 )
 
 var channelMonitorCleanupContinuationScheduler = func(delay time.Duration, callback func()) {
@@ -24,27 +23,45 @@ var channelMonitorCleanupContinuationScheduler = func(delay time.Duration, callb
 type channelMonitorCostRetentionTaskHandler struct{}
 
 type channelMonitorCostRetentionTaskResult struct {
-	RetentionDays                   int   `json:"retention_days"`
-	Cutoff                          int64 `json:"cutoff"`
-	MinuteCutoff                    int64 `json:"minute_cutoff"`
-	RouteMetricRetentionDays        int   `json:"route_metric_retention_days"`
-	RouteMetricCutoff               int64 `json:"route_metric_cutoff"`
-	APIKeyMetricRetentionDays       int   `json:"api_key_metric_retention_days"`
-	APIKeyMetricCutoff              int64 `json:"api_key_metric_cutoff"`
-	ProtectedWindowMinutes          int   `json:"protected_window_minutes"`
-	ExecutionDetailRetentionDays    int   `json:"execution_detail_retention_days"`
-	ExecutionDetailCutoff           int64 `json:"execution_detail_cutoff"`
-	TaskRetentionDays               int   `json:"task_retention_days"`
-	TaskCutoff                      int64 `json:"task_cutoff"`
-	RatioHistoryRetentionDays       int   `json:"ratio_history_retention_days"`
-	RatioHistoryCutoff              int64 `json:"ratio_history_cutoff"`
-	StatusProbeHistoryRetentionDays int   `json:"status_probe_history_retention_days"`
-	StatusProbeHistoryCutoff        int64 `json:"status_probe_history_cutoff"`
-	StatusProbeExecutionsDeleted    int64 `json:"status_probe_executions_deleted"`
-	GroupMonitorExecutionsDeleted   int64 `json:"group_monitor_executions_deleted"`
-	ModelDetectionRetentionDays     int   `json:"model_detection_retention_days"`
-	ModelDetectionCutoff            int64 `json:"model_detection_cutoff"`
-	BudgetExhausted                 bool  `json:"budget_exhausted"`
+	RetentionDays                       int   `json:"retention_days"`
+	Cutoff                              int64 `json:"cutoff"`
+	MinuteCutoff                        int64 `json:"minute_cutoff"`
+	RouteMetricRetentionDays            int   `json:"route_metric_retention_days"`
+	RouteMetricCutoff                   int64 `json:"route_metric_cutoff"`
+	DurationBucketRetentionDays         int   `json:"duration_bucket_retention_days"`
+	DurationBucketCutoff                int64 `json:"duration_bucket_cutoff"`
+	APIKeyMetricRetentionDays           int   `json:"api_key_metric_retention_days"`
+	APIKeyMetricCutoff                  int64 `json:"api_key_metric_cutoff"`
+	ProtectedWindowMinutes              int   `json:"protected_window_minutes"`
+	ExecutionDetailRetentionDays        int   `json:"execution_detail_retention_days"`
+	ExecutionDetailCutoff               int64 `json:"execution_detail_cutoff"`
+	TaskRetentionDays                   int   `json:"task_retention_days"`
+	TaskCutoff                          int64 `json:"task_cutoff"`
+	RatioMonitorTaskRetentionDays       int   `json:"ratio_monitor_task_retention_days"`
+	RatioMonitorTaskCutoff              int64 `json:"ratio_monitor_task_cutoff"`
+	SmartScheduleTaskRetentionDays      int   `json:"smart_schedule_task_retention_days"`
+	SmartScheduleTaskCutoff             int64 `json:"smart_schedule_task_cutoff"`
+	SmartScheduleProbeTaskRetentionDays int   `json:"smart_schedule_probe_task_retention_days"`
+	SmartScheduleProbeTaskCutoff        int64 `json:"smart_schedule_probe_task_cutoff"`
+	CleanupTaskRetentionDays            int   `json:"cleanup_task_retention_days"`
+	CleanupTaskCutoff                   int64 `json:"cleanup_task_cutoff"`
+	ModelDetectionTaskRetentionDays     int   `json:"model_detection_task_retention_days"`
+	ModelDetectionTaskCutoff            int64 `json:"model_detection_task_cutoff"`
+	ChannelTestTaskRetentionDays        int   `json:"channel_test_task_retention_days"`
+	ChannelTestTaskCutoff               int64 `json:"channel_test_task_cutoff"`
+	ModelUpdateTaskRetentionDays        int   `json:"model_update_task_retention_days"`
+	ModelUpdateTaskCutoff               int64 `json:"model_update_task_cutoff"`
+	RatioHistoryRetentionDays           int   `json:"ratio_history_retention_days"`
+	RatioHistoryCutoff                  int64 `json:"ratio_history_cutoff"`
+	StatusProbeHistoryRetentionDays     int   `json:"status_probe_history_retention_days"`
+	StatusProbeHistoryCutoff            int64 `json:"status_probe_history_cutoff"`
+	GroupMonitorRetentionDays           int   `json:"group_monitor_retention_days"`
+	GroupMonitorRetentionCutoff         int64 `json:"group_monitor_retention_cutoff"`
+	StatusProbeExecutionsDeleted        int64 `json:"status_probe_executions_deleted"`
+	GroupMonitorExecutionsDeleted       int64 `json:"group_monitor_executions_deleted"`
+	ModelDetectionRetentionDays         int   `json:"model_detection_retention_days"`
+	ModelDetectionCutoff                int64 `json:"model_detection_cutoff"`
+	BudgetExhausted                     bool  `json:"budget_exhausted"`
 	model.ChannelMonitorCostRetentionResult
 	model.ChannelMonitorHistoryRetentionResult
 	model.ChannelModelDetectionRetentionResult
@@ -187,11 +204,20 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 	settings := channelMonitorSettings{
 		CostRetentionDays:                     defaultChannelMonitorCostRetentionDays,
 		RouteMetricRetentionDays:              defaultChannelMonitorRouteMetricRetentionDays,
+		DurationBucketRetentionDays:           defaultChannelMonitorDurationBucketRetentionDays,
 		APIKeyMetricRetentionDays:             defaultChannelMonitorAPIKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          defaultChannelMonitorExecutionDetailRetentionDays,
 		TaskRetentionDays:                     defaultChannelMonitorTaskRetentionDays,
+		RatioMonitorTaskRetentionDays:         defaultChannelMonitorRatioMonitorTaskRetentionDays,
+		SmartScheduleTaskRetentionDays:        defaultChannelMonitorSmartScheduleTaskRetentionDays,
+		SmartScheduleProbeTaskRetentionDays:   defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
+		CleanupTaskRetentionDays:              defaultChannelMonitorCleanupTaskRetentionDays,
+		ModelDetectionTaskRetentionDays:       defaultChannelMonitorModelDetectionTaskRetentionDays,
+		ChannelTestTaskRetentionDays:          defaultChannelMonitorChannelTestTaskRetentionDays,
+		ModelUpdateTaskRetentionDays:          defaultChannelMonitorModelUpdateTaskRetentionDays,
 		RatioHistoryRetentionDays:             defaultChannelMonitorRatioHistoryRetentionDays,
 		StatusProbeHistoryRetentionDays:       defaultChannelMonitorStatusProbeHistoryRetentionDays,
+		GroupMonitorRetentionDays:             defaultChannelMonitorGroupMonitorRetentionDays,
 		ModelDetectionRetentionDays:           model.ChannelModelDetectionDefaultRetentionDays,
 		SmartSchedulePerformanceWindowMinutes: defaultChannelMonitorSmartSchedulePerformanceWindowMinutes,
 	}
@@ -199,11 +225,20 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 	retentionOptionKeys := []string{
 		channelMonitorCostRetentionDaysOption,
 		channelMonitorRouteMetricRetentionDaysOption,
+		channelMonitorDurationBucketRetentionDaysOption,
 		channelMonitorAPIKeyMetricRetentionDaysOption,
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
+		channelMonitorRatioMonitorTaskRetentionDaysOption,
+		channelMonitorSmartScheduleTaskRetentionDaysOption,
+		channelMonitorSmartScheduleProbeTaskRetentionDaysOption,
+		channelMonitorCleanupTaskRetentionDaysOption,
+		channelMonitorModelDetectionTaskRetentionDaysOption,
+		channelMonitorChannelTestTaskRetentionDaysOption,
+		channelMonitorModelUpdateTaskRetentionDaysOption,
 		channelMonitorRatioHistoryRetentionDaysOption,
 		channelMonitorStatusProbeHistoryRetentionDaysOption,
+		channelMonitorGroupMonitorRetentionDaysOption,
 		channelMonitorModelDetectionRetentionDaysOption,
 		channelMonitorSmartSchedulePerformanceWindowOption,
 		channelMonitorSmartScheduleGroupPoliciesOption,
@@ -228,6 +263,12 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.RouteMetricRetentionDays = days
+		case channelMonitorDurationBucketRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.DurationBucketRetentionDays = days
 		case channelMonitorAPIKeyMetricRetentionDaysOption:
 			days, err := strconv.Atoi(option.Value)
 			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
@@ -246,6 +287,48 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.TaskRetentionDays = days
+		case channelMonitorRatioMonitorTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.RatioMonitorTaskRetentionDays = days
+		case channelMonitorSmartScheduleTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.SmartScheduleTaskRetentionDays = days
+		case channelMonitorSmartScheduleProbeTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.SmartScheduleProbeTaskRetentionDays = days
+		case channelMonitorCleanupTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.CleanupTaskRetentionDays = days
+		case channelMonitorModelDetectionTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.ModelDetectionTaskRetentionDays = days
+		case channelMonitorChannelTestTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.ChannelTestTaskRetentionDays = days
+		case channelMonitorModelUpdateTaskRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.ModelUpdateTaskRetentionDays = days
 		case channelMonitorRatioHistoryRetentionDaysOption:
 			days, err := strconv.Atoi(option.Value)
 			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
@@ -259,6 +342,12 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.StatusProbeHistoryRetentionDays = days
+		case channelMonitorGroupMonitorRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.GroupMonitorRetentionDays = days
 		case channelMonitorModelDetectionRetentionDaysOption:
 			days, err := strconv.Atoi(option.Value)
 			if err != nil || days < model.ChannelModelDetectionMinRetentionDays ||
@@ -323,34 +412,67 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		settings.SmartSchedulePerformanceWindowMinutes,
 		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	)
+	durationBucketConfiguredCutoff := channelMonitorHistoryRetentionCutoff(now, settings.DurationBucketRetentionDays)
+	durationBucketCutoff, _ := channelMonitorMinuteRetentionCutoff(
+		now,
+		durationBucketConfiguredCutoff,
+		settings.SmartSchedulePerformanceWindowMinutes,
+		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
+	)
 	apiKeyMetricCutoff := channelMonitorHistoryRetentionCutoff(now, settings.APIKeyMetricRetentionDays)
 	historyCutoffs := model.ChannelMonitorHistoryRetentionCutoffs{
 		ExecutionDetail: channelMonitorHistoryRetentionCutoff(now, settings.ExecutionDetailRetentionDays),
 		Task:            channelMonitorHistoryRetentionCutoff(now, settings.TaskRetentionDays),
 		RatioHistory:    channelMonitorHistoryRetentionCutoff(now, settings.RatioHistoryRetentionDays),
 	}
+	ratioMonitorTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.RatioMonitorTaskRetentionDays)
+	smartScheduleTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.SmartScheduleTaskRetentionDays)
+	smartScheduleProbeTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.SmartScheduleProbeTaskRetentionDays)
+	cleanupTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.CleanupTaskRetentionDays)
+	modelDetectionTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.ModelDetectionTaskRetentionDays)
+	channelTestTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.ChannelTestTaskRetentionDays)
+	modelUpdateTaskCutoff := channelMonitorHistoryRetentionCutoff(now, settings.ModelUpdateTaskRetentionDays)
 	statusProbeHistoryCutoff := channelMonitorHistoryRetentionCutoff(now, settings.StatusProbeHistoryRetentionDays)
+	groupMonitorRetentionCutoff := channelMonitorHistoryRetentionCutoff(now, settings.GroupMonitorRetentionDays)
 	modelDetectionRetentionDays := settings.ModelDetectionRetentionDays
 	modelDetectionCutoff := channelMonitorHistoryRetentionCutoff(now, modelDetectionRetentionDays)
 	result := channelMonitorCostRetentionTaskResult{
-		RetentionDays:                   settings.CostRetentionDays,
-		Cutoff:                          costCutoff,
-		MinuteCutoff:                    routeMetricCutoff,
-		RouteMetricRetentionDays:        settings.RouteMetricRetentionDays,
-		RouteMetricCutoff:               routeMetricCutoff,
-		APIKeyMetricRetentionDays:       settings.APIKeyMetricRetentionDays,
-		APIKeyMetricCutoff:              apiKeyMetricCutoff,
-		ProtectedWindowMinutes:          protectedWindowMinutes,
-		ExecutionDetailRetentionDays:    settings.ExecutionDetailRetentionDays,
-		ExecutionDetailCutoff:           historyCutoffs.ExecutionDetail,
-		TaskRetentionDays:               settings.TaskRetentionDays,
-		TaskCutoff:                      historyCutoffs.Task,
-		RatioHistoryRetentionDays:       settings.RatioHistoryRetentionDays,
-		RatioHistoryCutoff:              historyCutoffs.RatioHistory,
-		StatusProbeHistoryRetentionDays: settings.StatusProbeHistoryRetentionDays,
-		StatusProbeHistoryCutoff:        statusProbeHistoryCutoff,
-		ModelDetectionRetentionDays:     modelDetectionRetentionDays,
-		ModelDetectionCutoff:            modelDetectionCutoff,
+		RetentionDays:                       settings.CostRetentionDays,
+		Cutoff:                              costCutoff,
+		MinuteCutoff:                        routeMetricCutoff,
+		RouteMetricRetentionDays:            settings.RouteMetricRetentionDays,
+		RouteMetricCutoff:                   routeMetricCutoff,
+		DurationBucketRetentionDays:         settings.DurationBucketRetentionDays,
+		DurationBucketCutoff:                durationBucketCutoff,
+		APIKeyMetricRetentionDays:           settings.APIKeyMetricRetentionDays,
+		APIKeyMetricCutoff:                  apiKeyMetricCutoff,
+		ProtectedWindowMinutes:              protectedWindowMinutes,
+		ExecutionDetailRetentionDays:        settings.ExecutionDetailRetentionDays,
+		ExecutionDetailCutoff:               historyCutoffs.ExecutionDetail,
+		TaskRetentionDays:                   settings.TaskRetentionDays,
+		TaskCutoff:                          historyCutoffs.Task,
+		RatioMonitorTaskRetentionDays:       settings.RatioMonitorTaskRetentionDays,
+		RatioMonitorTaskCutoff:              ratioMonitorTaskCutoff,
+		SmartScheduleTaskRetentionDays:      settings.SmartScheduleTaskRetentionDays,
+		SmartScheduleTaskCutoff:             smartScheduleTaskCutoff,
+		SmartScheduleProbeTaskRetentionDays: settings.SmartScheduleProbeTaskRetentionDays,
+		SmartScheduleProbeTaskCutoff:        smartScheduleProbeTaskCutoff,
+		CleanupTaskRetentionDays:            settings.CleanupTaskRetentionDays,
+		CleanupTaskCutoff:                   cleanupTaskCutoff,
+		ModelDetectionTaskRetentionDays:     settings.ModelDetectionTaskRetentionDays,
+		ChannelTestTaskRetentionDays:        settings.ChannelTestTaskRetentionDays,
+		ChannelTestTaskCutoff:               channelTestTaskCutoff,
+		ModelUpdateTaskRetentionDays:        settings.ModelUpdateTaskRetentionDays,
+		ModelUpdateTaskCutoff:               modelUpdateTaskCutoff,
+		ModelDetectionTaskCutoff:            modelDetectionTaskCutoff,
+		RatioHistoryRetentionDays:           settings.RatioHistoryRetentionDays,
+		RatioHistoryCutoff:                  historyCutoffs.RatioHistory,
+		StatusProbeHistoryRetentionDays:     settings.StatusProbeHistoryRetentionDays,
+		StatusProbeHistoryCutoff:            statusProbeHistoryCutoff,
+		GroupMonitorRetentionDays:           settings.GroupMonitorRetentionDays,
+		GroupMonitorRetentionCutoff:         groupMonitorRetentionCutoff,
+		ModelDetectionRetentionDays:         modelDetectionRetentionDays,
+		ModelDetectionCutoff:                modelDetectionCutoff,
 	}
 	modelDetectionDeleted, err := model.DeleteChannelModelDetectionHistoryBefore(
 		ctx,
@@ -364,16 +486,27 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		return
 	}
 	result.BudgetExhausted = modelDetectionDeleted.Incomplete
-	historyDeleted, err := model.DeleteChannelMonitorHistoryBefore(
+	historyDeleted, err := model.DeleteChannelMonitorHistoryBeforeWithTaskCutoffs(
 		ctx,
 		historyCutoffs,
 		[]string{
 			model.SystemTaskTypeChannelRatioMonitor,
+			model.SystemTaskTypeChannelModelDetection,
+			model.SystemTaskTypeChannelTest,
+			model.SystemTaskTypeModelUpdate,
 			channelMonitorSmartScheduleTaskType,
 			channelMonitorSmartScheduleProbeTaskType,
 			channelMonitorCostRetentionTaskType,
 		},
-		channelMonitorTaskRetentionKeepLatest,
+		map[string]int64{
+			model.SystemTaskTypeChannelRatioMonitor:   ratioMonitorTaskCutoff,
+			model.SystemTaskTypeChannelModelDetection: modelDetectionTaskCutoff,
+			model.SystemTaskTypeChannelTest:           channelTestTaskCutoff,
+			model.SystemTaskTypeModelUpdate:           modelUpdateTaskCutoff,
+			channelMonitorSmartScheduleTaskType:       smartScheduleTaskCutoff,
+			channelMonitorSmartScheduleProbeTaskType:  smartScheduleProbeTaskCutoff,
+			channelMonitorCostRetentionTaskType:       cleanupTaskCutoff,
+		},
 		batchSize,
 		cleanupBudget.Slice(3),
 	)
@@ -397,7 +530,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 	}
 	groupMonitorDeleted, err := model.DeleteChannelGroupMonitorExecutionsBefore(
 		ctx,
-		statusProbeHistoryCutoff,
+		groupMonitorRetentionCutoff,
 		batchSize,
 		statusProbeBudget.Slice(1),
 	)
@@ -407,8 +540,8 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		return
 	}
 	result.BudgetExhausted = result.BudgetExhausted || statusProbeBudget.Exhausted()
-	costDeleted, err := model.DeleteChannelMonitorCostsBefore(
-		ctx, costCutoff, routeMetricCutoff, apiKeyMetricCutoff, batchSize, cleanupBudget.Slice(1),
+	costDeleted, err := model.DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
+		ctx, costCutoff, routeMetricCutoff, durationBucketCutoff, apiKeyMetricCutoff, batchSize, cleanupBudget.Slice(1),
 	)
 	result.ChannelMonitorCostRetentionResult = costDeleted
 	if err != nil {

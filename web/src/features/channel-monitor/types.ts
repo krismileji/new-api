@@ -618,6 +618,7 @@ export type ChannelMonitorSettings = {
   auto_enable_on_balance_recovery: boolean
   cost_retention_days: number
   route_metric_retention_days: number
+  duration_bucket_retention_days: number
   api_key_metric_retention_days: number
   execution_detail_retention_days: number
   task_retention_days: number
@@ -626,7 +627,9 @@ export type ChannelMonitorSettings = {
   smart_schedule_probe_task_retention_days: number
   cleanup_task_retention_days: number
   model_detection_task_retention_days: number
-  task_keep_latest_count: number
+  channel_test_task_retention_days: number
+  model_update_task_retention_days: number
+  task_keep_latest_count?: number
   ratio_history_retention_days: number
   status_probe_history_retention_days: number
   group_monitor_retention_days: number

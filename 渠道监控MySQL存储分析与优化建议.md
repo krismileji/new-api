@@ -265,7 +265,7 @@ detailsByTask, err := model.GetChannelSmartScheduleExecutionDetails([]string{tas
 | 3 天 | 约 65～80 万 | 约 1.8～2.5GiB |
 | 1 天 | 约 25～32 万 | 约 0.7～0.9GiB |
 
-系统任务摘要仍可按 `ChannelMonitorTaskRetentionDays=90` 保留。缩短执行明细只改变可查询完整路由快照的时间窗口，不改变调度行为，也不删减保留期内任何路由或字段。
+系统任务摘要默认按 7 天保留，且渠道比例监控、智能调度、探测、清理、模型检测、渠道测试和模型更新分别使用独立保留配置。缩短执行明细只改变可查询完整路由快照的时间窗口，不改变调度行为，也不删减保留期内任何路由或字段。
 
 建议生产默认值调整为 3 天。3 天窗口内应完整保留每轮的全部路由详情，包括 `unchanged` 的评分、健康度、采样、稳定性和决策字段；超过窗口后再按统一保留策略清理。
 
@@ -359,7 +359,11 @@ created_at
 | --- | --- | ---: | --- |
 | 成本与聚合数据 | `ChannelMonitorCostRetentionDays` | 30 天 | 当前同时覆盖成本和分钟聚合；拆表后再细分 |
 | 调度执行详情 | `ChannelMonitorExecutionDetailRetentionDays` | 3 天 | 保存完整任务快照 |
-| 监控系统任务 | `ChannelMonitorTaskRetentionDays` | 90 天 | 必须不小于执行详情保留期 |
+| 未分类监控系统任务 | `ChannelMonitorTaskRetentionDays` | 7 天 | 必须不小于执行详情保留期 |
+| 渠道比例监控任务 | `ChannelMonitorRatioMonitorTaskRetentionDays` | 7 天 | 独立清理 |
+| 智能调度任务 | `ChannelMonitorSmartScheduleTaskRetentionDays` | 7 天 | 独立清理 |
+| 智能调度探测任务 | `ChannelMonitorSmartScheduleProbeTaskRetentionDays` | 3 天 | 高频任务，独立清理 |
+| 清理、模型检测、渠道测试、模型更新任务 | 对应 `ChannelMonitor*TaskRetentionDays` | 7 天 | 各类型独立清理 |
 | 倍率变化历史 | `ChannelMonitorRatioHistoryRetentionDays` | 365 天 | 当前数据量很小，可由管理员调整 |
 | 状态探测历史 | `ChannelMonitorStatusProbeHistoryRetentionDays` | 7 天 | 保留探测执行记录 |
 | 模型检测历史 | `ChannelMonitorModelDetectionRetentionDays` | 30 天 | 从环境变量迁移为数据库配置 |
@@ -688,7 +692,7 @@ config_id + channel_id + model_name + enabled + next_run_at
 
 ### 6.8 系统任务表
 
-`system_tasks` 当前 84,584 行、0.31GiB。完整调度约每天产生 2,100 个任务，按 90 天保留会形成约 19 万个调度任务，此外还包含其他系统任务。
+`system_tasks` 当前 84,584 行、0.31GiB。完整调度约每天产生 2,100 个任务，按当前高频任务默认 7 天保留，调度任务规模约控制在 1.5 万行量级，此外还包含其他系统任务。
 
 现有索引主要是单列 `type` 和 `status`，实际查询常见组合为：
 
@@ -796,9 +800,9 @@ config_id + channel_id + model_name + enabled + next_run_at
 
 #### SET-01：收敛现有默认保留期
 
-- 范围：只将成本与现有指标默认值从 120 天改为 30 天，执行详情从 14 天改为 3 天；任务 90 天、倍率历史 365 天、状态探测 7 天保持不变。
+- 范围：成本与路由分钟指标默认保留 30 天，API Key 分钟指标默认 7 天，执行详情默认 3 天；高频系统任务按类型默认保留 7 天，智能调度探测任务默认 3 天，倍率历史 365 天、状态探测 7 天保持不变。
 - 主要文件：`controller/channel_ratio_monitor_settings.go`、`web/src/features/channel-monitor/lib/schema.ts` 及现有保留配置测试。
-- 验收：`options` 缺失时 API 和 UI 返回 `30/3/90/365/7`，保存后正确落库；不修改设置页布局。
+- 验收：`options` 缺失时 API 和 UI 返回对应独立默认值，保存后正确落库；不修改设置页布局。
 - 依赖：无。
 
 #### SET-02：新增独立“数据保留”Tab

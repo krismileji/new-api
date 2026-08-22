@@ -31,6 +31,7 @@ type OptionalKeys<T> = {
 type StorageSettingKeys =
   | 'cost_retention_days'
   | 'route_metric_retention_days'
+  | 'duration_bucket_retention_days'
   | 'api_key_metric_retention_days'
   | 'execution_detail_retention_days'
   | 'task_retention_days'
@@ -39,7 +40,8 @@ type StorageSettingKeys =
   | 'smart_schedule_probe_task_retention_days'
   | 'cleanup_task_retention_days'
   | 'model_detection_task_retention_days'
-  | 'task_keep_latest_count'
+  | 'channel_test_task_retention_days'
+  | 'model_update_task_retention_days'
   | 'ratio_history_retention_days'
   | 'status_probe_history_retention_days'
   | 'model_detection_retention_days'
@@ -71,6 +73,7 @@ const formValues = {
   autoEnableOnBalanceRecovery: false,
   costRetentionDays: 90,
   routeMetricRetentionDays: 30,
+  durationBucketRetentionDays: 30,
   apiKeyMetricRetentionDays: 7,
   executionDetailRetentionDays: 14,
   taskRetentionDays: 90,
@@ -79,7 +82,8 @@ const formValues = {
   smartScheduleProbeTaskRetentionDays: 90,
   cleanupTaskRetentionDays: 90,
   modelDetectionTaskRetentionDays: 90,
-  taskKeepLatestCount: 100,
+  channelTestTaskRetentionDays: 90,
+  modelUpdateTaskRetentionDays: 90,
   ratioHistoryRetentionDays: 365,
   statusProbeHistoryRetentionDays: 7,
   groupMonitorRetentionDays: 7,
@@ -378,6 +382,7 @@ describe('channel monitor settings submit payload', () => {
       'auto_update_consecutive_failure_limit',
       'auto_update_interval_minutes',
       'auto_update_retry_count',
+      'channel_test_task_retention_days',
       'cleanup_batch_size',
       'cleanup_budget_seconds',
       'cleanup_continuation_seconds',
@@ -385,6 +390,7 @@ describe('channel monitor settings submit payload', () => {
       'cleanup_interval_minutes',
       'cleanup_task_retention_days',
       'cost_retention_days',
+      'duration_bucket_retention_days',
       'email_notification_enabled',
       'email_notification_types',
       'error_message_keywords',
@@ -393,6 +399,7 @@ describe('channel monitor settings submit payload', () => {
       'group_monitor_retention_days',
       'model_detection_retention_days',
       'model_detection_task_retention_days',
+      'model_update_task_retention_days',
       'notification_email',
       'probe_response_cache_write_tokens',
       'probe_response_cached_tokens',
@@ -409,13 +416,13 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_probe_task_retention_days',
       'smart_schedule_task_retention_days',
       'status_probe_history_retention_days',
-      'task_keep_latest_count',
       'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
     assert.equal(payload.execution_detail_retention_days, 14)
     assert.equal(payload.route_metric_retention_days, 30)
+    assert.equal(payload.duration_bucket_retention_days, 30)
     assert.equal(payload.api_key_metric_retention_days, 7)
     assert.equal(payload.task_retention_days, 90)
     assert.equal(payload.ratio_monitor_task_retention_days, 90)
@@ -423,7 +430,8 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(payload.smart_schedule_probe_task_retention_days, 90)
     assert.equal(payload.cleanup_task_retention_days, 90)
     assert.equal(payload.model_detection_task_retention_days, 90)
-    assert.equal(payload.task_keep_latest_count, 100)
+    assert.equal(payload.channel_test_task_retention_days, 90)
+    assert.equal(payload.model_update_task_retention_days, 90)
     assert.equal(payload.ratio_history_retention_days, 365)
     assert.equal(payload.status_probe_history_retention_days, 7)
     assert.equal(payload.group_monitor_retention_days, 7)

@@ -56,12 +56,21 @@
 | `auto_enable_on_cost_ratio_recovery` | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `false` | 布尔值 |
 | `auto_enable_on_balance_recovery` | `ChannelMonitorAutoEnableOnBalanceRecovery` | `false` | 布尔值 |
 | `cost_retention_days` | `ChannelMonitorCostRetentionDays` | `30` | `1..3650`；渠道和 API Key 日成本保留期 |
-| `route_metric_retention_days` | `ChannelMonitorRouteMetricRetentionDays` | `30` | `1..3650`；路由分钟指标和延迟分桶保留期，受智能调度最长窗口保护 |
+| `route_metric_retention_days` | `ChannelMonitorRouteMetricRetentionDays` | `30` | `1..3650`；路由分钟指标保留期，受智能调度最长窗口保护 |
+| `duration_bucket_retention_days` | `ChannelMonitorDurationBucketRetentionDays` | `30` | `1..3650`；延迟分桶保留期，受智能调度最长窗口保护 |
 | `api_key_metric_retention_days` | `ChannelMonitorApiKeyMetricRetentionDays` | `7` | `1..3650`；API Key 分钟指标保留期 |
 | `execution_detail_retention_days` | `ChannelMonitorExecutionDetailRetentionDays` | `3` | `1..3650` |
-| `task_retention_days` | `ChannelMonitorTaskRetentionDays` | `90` | `1..3650`，且不能短于调度执行明细保留期 |
+| `task_retention_days` | `ChannelMonitorTaskRetentionDays` | `7` | `1..3650`；未分类监控任务保留期，且不能短于调度执行明细保留期 |
+| `ratio_monitor_task_retention_days` | `ChannelMonitorRatioMonitorTaskRetentionDays` | `7` | `1..3650`；渠道比例监控任务保留期 |
+| `smart_schedule_task_retention_days` | `ChannelMonitorSmartScheduleTaskRetentionDays` | `7` | `1..3650`；智能调度任务保留期 |
+| `smart_schedule_probe_task_retention_days` | `ChannelMonitorSmartScheduleProbeTaskRetentionDays` | `3` | `1..3650`；智能调度探测任务保留期 |
+| `cleanup_task_retention_days` | `ChannelMonitorCleanupTaskRetentionDays` | `7` | `1..3650`；清理任务保留期 |
+| `model_detection_task_retention_days` | `ChannelMonitorModelDetectionTaskRetentionDays` | `7` | `1..3650`；模型检测任务保留期 |
+| `channel_test_task_retention_days` | `ChannelMonitorChannelTestTaskRetentionDays` | `7` | `1..3650`；渠道测试任务保留期 |
+| `model_update_task_retention_days` | `ChannelMonitorModelUpdateTaskRetentionDays` | `7` | `1..3650`；模型更新任务保留期 |
 | `ratio_history_retention_days` | `ChannelMonitorRatioHistoryRetentionDays` | `365` | `1..3650` |
 | `status_probe_history_retention_days` | `ChannelMonitorStatusProbeHistoryRetentionDays` | `7` | `1..90` |
+| `group_monitor_retention_days` | `ChannelMonitorGroupMonitorRetentionDays` | `7` | `1..3650`；分组监控执行记录保留期 |
 | `model_detection_retention_days` | `ChannelMonitorModelDetectionRetentionDays` | `30` | `7..180` |
 | `cleanup_enabled` | `ChannelMonitorCleanupEnabled` | `true` | 布尔值；关闭后不创建或续排清理任务，已排队任务直接结束 |
 | `cleanup_batch_size` | `ChannelMonitorCleanupBatchSize` | `1000` | `1..10000`；单条删除语句的最大记录数 |

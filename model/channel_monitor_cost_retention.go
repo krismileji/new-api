@@ -17,12 +17,29 @@ type ChannelMonitorCostRetentionResult struct {
 }
 
 // DeleteChannelMonitorCostsBefore deletes each metric table
-// against its own cutoff. Route metrics and duration buckets share the route
-// cutoff because both feed smart-schedule performance queries.
+// against their configured cutoffs. The legacy entry point keeps duration
+// buckets aligned with route metrics; the extended entry point supports an
+// independent duration-bucket cutoff.
 func DeleteChannelMonitorCostsBefore(
 	ctx context.Context,
 	costCutoff int64,
 	routeMetricCutoff int64,
+	apiKeyMetricCutoff int64,
+	batchSize int,
+	budget ChannelMonitorCleanupBudget,
+) (ChannelMonitorCostRetentionResult, error) {
+	return DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
+		ctx, costCutoff, routeMetricCutoff, routeMetricCutoff, apiKeyMetricCutoff, batchSize, budget,
+	)
+}
+
+// DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff lets duration
+// buckets use an independent retention cutoff from route metrics.
+func DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
+	ctx context.Context,
+	costCutoff int64,
+	routeMetricCutoff int64,
+	durationBucketCutoff int64,
 	apiKeyMetricCutoff int64,
 	batchSize int,
 	budget ChannelMonitorCleanupBudget,
@@ -33,6 +50,9 @@ func DeleteChannelMonitorCostsBefore(
 	}
 	if routeMetricCutoff <= 0 {
 		return result, errors.New("channel monitor route metric cutoff must be positive")
+	}
+	if durationBucketCutoff <= 0 {
+		return result, errors.New("channel monitor duration bucket cutoff must be positive")
 	}
 	if apiKeyMetricCutoff <= 0 {
 		return result, errors.New("channel monitor API Key metric cutoff must be positive")
@@ -51,7 +71,7 @@ func DeleteChannelMonitorCostsBefore(
 			var ids []int64
 			if err := DB.WithContext(ctx).
 				Model(&ChannelMonitorMinuteDurationBucket{}).
-				Where("minute_start < ?", routeMetricCutoff).
+				Where("minute_start < ?", durationBucketCutoff).
 				Order("minute_start ASC, id ASC").
 				Limit(batchSize).
 				Pluck("id", &ids).Error; err != nil {

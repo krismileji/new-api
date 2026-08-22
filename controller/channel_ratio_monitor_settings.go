@@ -30,11 +30,20 @@ const (
 	channelMonitorAutoEnableOnBalanceRecoveryOption            = "ChannelMonitorAutoEnableOnBalanceRecovery"
 	channelMonitorCostRetentionDaysOption                      = "ChannelMonitorCostRetentionDays"
 	channelMonitorRouteMetricRetentionDaysOption               = "ChannelMonitorRouteMetricRetentionDays"
+	channelMonitorDurationBucketRetentionDaysOption            = "ChannelMonitorDurationBucketRetentionDays"
 	channelMonitorAPIKeyMetricRetentionDaysOption              = "ChannelMonitorApiKeyMetricRetentionDays"
 	channelMonitorExecutionDetailRetentionDaysOption           = "ChannelMonitorExecutionDetailRetentionDays"
 	channelMonitorTaskRetentionDaysOption                      = "ChannelMonitorTaskRetentionDays"
+	channelMonitorRatioMonitorTaskRetentionDaysOption          = "ChannelMonitorRatioMonitorTaskRetentionDays"
+	channelMonitorSmartScheduleTaskRetentionDaysOption         = "ChannelMonitorSmartScheduleTaskRetentionDays"
+	channelMonitorSmartScheduleProbeTaskRetentionDaysOption    = "ChannelMonitorSmartScheduleProbeTaskRetentionDays"
+	channelMonitorCleanupTaskRetentionDaysOption               = "ChannelMonitorCleanupTaskRetentionDays"
+	channelMonitorModelDetectionTaskRetentionDaysOption        = "ChannelMonitorModelDetectionTaskRetentionDays"
+	channelMonitorChannelTestTaskRetentionDaysOption           = "ChannelMonitorChannelTestTaskRetentionDays"
+	channelMonitorModelUpdateTaskRetentionDaysOption           = "ChannelMonitorModelUpdateTaskRetentionDays"
 	channelMonitorRatioHistoryRetentionDaysOption              = "ChannelMonitorRatioHistoryRetentionDays"
 	channelMonitorStatusProbeHistoryRetentionDaysOption        = "ChannelMonitorStatusProbeHistoryRetentionDays"
+	channelMonitorGroupMonitorRetentionDaysOption              = "ChannelMonitorGroupMonitorRetentionDays"
 	channelMonitorModelDetectionRetentionDaysOption            = "ChannelMonitorModelDetectionRetentionDays"
 	channelMonitorCleanupEnabledOption                         = "ChannelMonitorCleanupEnabled"
 	channelMonitorCleanupBatchSizeOption                       = "ChannelMonitorCleanupBatchSize"
@@ -115,11 +124,20 @@ const (
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 2
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
+	defaultChannelMonitorDurationBucketRetentionDays           = 30
 	defaultChannelMonitorAPIKeyMetricRetentionDays             = 7
 	defaultChannelMonitorExecutionDetailRetentionDays          = 3
-	defaultChannelMonitorTaskRetentionDays                     = 90
+	defaultChannelMonitorTaskRetentionDays                     = 7
+	defaultChannelMonitorRatioMonitorTaskRetentionDays         = 7
+	defaultChannelMonitorSmartScheduleTaskRetentionDays        = 7
+	defaultChannelMonitorSmartScheduleProbeTaskRetentionDays   = 3
+	defaultChannelMonitorCleanupTaskRetentionDays              = 7
+	defaultChannelMonitorModelDetectionTaskRetentionDays       = 7
+	defaultChannelMonitorChannelTestTaskRetentionDays          = 7
+	defaultChannelMonitorModelUpdateTaskRetentionDays          = 7
 	defaultChannelMonitorRatioHistoryRetentionDays             = 365
 	defaultChannelMonitorStatusProbeHistoryRetentionDays       = 7
+	defaultChannelMonitorGroupMonitorRetentionDays             = 7
 	defaultChannelMonitorCleanupEnabled                        = true
 	defaultChannelMonitorCleanupBatchSize                      = 1000
 	defaultChannelMonitorCleanupBudgetSeconds                  = 10
@@ -158,11 +176,20 @@ type channelMonitorSettings struct {
 	AutoEnableOnBalanceRecovery           bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     int                        `json:"cost_retention_days"`
 	RouteMetricRetentionDays              int                        `json:"route_metric_retention_days"`
+	DurationBucketRetentionDays           int                        `json:"duration_bucket_retention_days"`
 	APIKeyMetricRetentionDays             int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     int                        `json:"task_retention_days"`
+	RatioMonitorTaskRetentionDays         int                        `json:"ratio_monitor_task_retention_days"`
+	SmartScheduleTaskRetentionDays        int                        `json:"smart_schedule_task_retention_days"`
+	SmartScheduleProbeTaskRetentionDays   int                        `json:"smart_schedule_probe_task_retention_days"`
+	CleanupTaskRetentionDays              int                        `json:"cleanup_task_retention_days"`
+	ModelDetectionTaskRetentionDays       int                        `json:"model_detection_task_retention_days"`
+	ChannelTestTaskRetentionDays          int                        `json:"channel_test_task_retention_days"`
+	ModelUpdateTaskRetentionDays          int                        `json:"model_update_task_retention_days"`
 	RatioHistoryRetentionDays             int                        `json:"ratio_history_retention_days"`
 	StatusProbeHistoryRetentionDays       int                        `json:"status_probe_history_retention_days"`
+	GroupMonitorRetentionDays             int                        `json:"group_monitor_retention_days"`
 	ModelDetectionRetentionDays           int                        `json:"model_detection_retention_days"`
 	CleanupEnabled                        bool                       `json:"cleanup_enabled"`
 	CleanupBatchSize                      int                        `json:"cleanup_batch_size"`
@@ -207,11 +234,20 @@ type channelMonitorSettingsUpdateRequest struct {
 	AutoEnableOnBalanceRecovery           *bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     *int                        `json:"cost_retention_days"`
 	RouteMetricRetentionDays              *int                        `json:"route_metric_retention_days"`
+	DurationBucketRetentionDays           *int                        `json:"duration_bucket_retention_days"`
 	APIKeyMetricRetentionDays             *int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          *int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     *int                        `json:"task_retention_days"`
+	RatioMonitorTaskRetentionDays         *int                        `json:"ratio_monitor_task_retention_days"`
+	SmartScheduleTaskRetentionDays        *int                        `json:"smart_schedule_task_retention_days"`
+	SmartScheduleProbeTaskRetentionDays   *int                        `json:"smart_schedule_probe_task_retention_days"`
+	CleanupTaskRetentionDays              *int                        `json:"cleanup_task_retention_days"`
+	ModelDetectionTaskRetentionDays       *int                        `json:"model_detection_task_retention_days"`
+	ChannelTestTaskRetentionDays          *int                        `json:"channel_test_task_retention_days"`
+	ModelUpdateTaskRetentionDays          *int                        `json:"model_update_task_retention_days"`
 	RatioHistoryRetentionDays             *int                        `json:"ratio_history_retention_days"`
 	StatusProbeHistoryRetentionDays       *int                        `json:"status_probe_history_retention_days"`
+	GroupMonitorRetentionDays             *int                        `json:"group_monitor_retention_days"`
 	ModelDetectionRetentionDays           *int                        `json:"model_detection_retention_days"`
 	CleanupEnabled                        *bool                       `json:"cleanup_enabled"`
 	CleanupBatchSize                      *int                        `json:"cleanup_batch_size"`
@@ -271,11 +307,20 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorAutoEnableOnBalanceRecoveryOption,
 		channelMonitorCostRetentionDaysOption,
 		channelMonitorRouteMetricRetentionDaysOption,
+		channelMonitorDurationBucketRetentionDaysOption,
 		channelMonitorAPIKeyMetricRetentionDaysOption,
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
+		channelMonitorRatioMonitorTaskRetentionDaysOption,
+		channelMonitorSmartScheduleTaskRetentionDaysOption,
+		channelMonitorSmartScheduleProbeTaskRetentionDaysOption,
+		channelMonitorCleanupTaskRetentionDaysOption,
+		channelMonitorModelDetectionTaskRetentionDaysOption,
+		channelMonitorChannelTestTaskRetentionDaysOption,
+		channelMonitorModelUpdateTaskRetentionDaysOption,
 		channelMonitorRatioHistoryRetentionDaysOption,
 		channelMonitorStatusProbeHistoryRetentionDaysOption,
+		channelMonitorGroupMonitorRetentionDaysOption,
 		channelMonitorModelDetectionRetentionDaysOption,
 		channelMonitorCleanupEnabledOption,
 		channelMonitorCleanupBatchSizeOption,
@@ -329,11 +374,20 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawAutoEnableOnBalanceRecovery := options[channelMonitorAutoEnableOnBalanceRecoveryOption]
 	rawCostRetentionDays := options[channelMonitorCostRetentionDaysOption]
 	rawRouteMetricRetentionDays := options[channelMonitorRouteMetricRetentionDaysOption]
+	rawDurationBucketRetentionDays := options[channelMonitorDurationBucketRetentionDaysOption]
 	rawAPIKeyMetricRetentionDays := options[channelMonitorAPIKeyMetricRetentionDaysOption]
 	rawExecutionDetailRetentionDays := options[channelMonitorExecutionDetailRetentionDaysOption]
 	rawTaskRetentionDays := options[channelMonitorTaskRetentionDaysOption]
+	rawRatioMonitorTaskRetentionDays := options[channelMonitorRatioMonitorTaskRetentionDaysOption]
+	rawSmartScheduleTaskRetentionDays := options[channelMonitorSmartScheduleTaskRetentionDaysOption]
+	rawSmartScheduleProbeTaskRetentionDays := options[channelMonitorSmartScheduleProbeTaskRetentionDaysOption]
+	rawCleanupTaskRetentionDays := options[channelMonitorCleanupTaskRetentionDaysOption]
+	rawModelDetectionTaskRetentionDays := options[channelMonitorModelDetectionTaskRetentionDaysOption]
+	rawChannelTestTaskRetentionDays := options[channelMonitorChannelTestTaskRetentionDaysOption]
+	rawModelUpdateTaskRetentionDays := options[channelMonitorModelUpdateTaskRetentionDaysOption]
 	rawRatioHistoryRetentionDays := options[channelMonitorRatioHistoryRetentionDaysOption]
 	rawStatusProbeHistoryRetentionDays := options[channelMonitorStatusProbeHistoryRetentionDaysOption]
+	rawGroupMonitorRetentionDays := options[channelMonitorGroupMonitorRetentionDaysOption]
 	rawModelDetectionRetentionDays := options[channelMonitorModelDetectionRetentionDaysOption]
 	rawCleanupEnabled := options[channelMonitorCleanupEnabledOption]
 	rawCleanupBatchSize := options[channelMonitorCleanupBatchSizeOption]
@@ -392,6 +446,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || routeMetricRetentionDays < minChannelMonitorCostRetentionDays || routeMetricRetentionDays > maxChannelMonitorCostRetentionDays {
 		routeMetricRetentionDays = defaultChannelMonitorRouteMetricRetentionDays
 	}
+	durationBucketRetentionDays, err := strconv.Atoi(rawDurationBucketRetentionDays)
+	if err != nil || durationBucketRetentionDays < minChannelMonitorCostRetentionDays || durationBucketRetentionDays > maxChannelMonitorCostRetentionDays {
+		durationBucketRetentionDays = defaultChannelMonitorDurationBucketRetentionDays
+	}
 	apiKeyMetricRetentionDays, err := strconv.Atoi(rawAPIKeyMetricRetentionDays)
 	if err != nil || apiKeyMetricRetentionDays < minChannelMonitorCostRetentionDays || apiKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays {
 		apiKeyMetricRetentionDays = defaultChannelMonitorAPIKeyMetricRetentionDays
@@ -407,6 +465,20 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if taskRetentionDays < executionDetailRetentionDays {
 		taskRetentionDays = executionDetailRetentionDays
 	}
+	parseTaskRetentionDays := func(raw string, fallback int) int {
+		days, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
+			return fallback
+		}
+		return days
+	}
+	ratioMonitorTaskRetentionDays := parseTaskRetentionDays(rawRatioMonitorTaskRetentionDays, defaultChannelMonitorRatioMonitorTaskRetentionDays)
+	smartScheduleTaskRetentionDays := parseTaskRetentionDays(rawSmartScheduleTaskRetentionDays, defaultChannelMonitorSmartScheduleTaskRetentionDays)
+	smartScheduleProbeTaskRetentionDays := parseTaskRetentionDays(rawSmartScheduleProbeTaskRetentionDays, defaultChannelMonitorSmartScheduleProbeTaskRetentionDays)
+	cleanupTaskRetentionDays := parseTaskRetentionDays(rawCleanupTaskRetentionDays, defaultChannelMonitorCleanupTaskRetentionDays)
+	modelDetectionTaskRetentionDays := parseTaskRetentionDays(rawModelDetectionTaskRetentionDays, defaultChannelMonitorModelDetectionTaskRetentionDays)
+	channelTestTaskRetentionDays := parseTaskRetentionDays(rawChannelTestTaskRetentionDays, defaultChannelMonitorChannelTestTaskRetentionDays)
+	modelUpdateTaskRetentionDays := parseTaskRetentionDays(rawModelUpdateTaskRetentionDays, defaultChannelMonitorModelUpdateTaskRetentionDays)
 	ratioHistoryRetentionDays, err := strconv.Atoi(rawRatioHistoryRetentionDays)
 	if err != nil || ratioHistoryRetentionDays < minChannelMonitorCostRetentionDays || ratioHistoryRetentionDays > maxChannelMonitorCostRetentionDays {
 		ratioHistoryRetentionDays = defaultChannelMonitorRatioHistoryRetentionDays
@@ -415,6 +487,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || statusProbeHistoryRetentionDays < minChannelMonitorCostRetentionDays ||
 		statusProbeHistoryRetentionDays > maxChannelMonitorStatusProbeHistoryRetentionDays {
 		statusProbeHistoryRetentionDays = defaultChannelMonitorStatusProbeHistoryRetentionDays
+	}
+	groupMonitorRetentionDays, err := strconv.Atoi(rawGroupMonitorRetentionDays)
+	if err != nil || groupMonitorRetentionDays < minChannelMonitorCostRetentionDays || groupMonitorRetentionDays > maxChannelMonitorCostRetentionDays {
+		groupMonitorRetentionDays = defaultChannelMonitorGroupMonitorRetentionDays
 	}
 	modelDetectionRetentionDays, err := strconv.Atoi(rawModelDetectionRetentionDays)
 	if err != nil || modelDetectionRetentionDays < model.ChannelModelDetectionMinRetentionDays ||
@@ -495,11 +571,20 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		AutoEnableOnBalanceRecovery:           autoEnableOnBalanceRecovery,
 		CostRetentionDays:                     costRetentionDays,
 		RouteMetricRetentionDays:              routeMetricRetentionDays,
+		DurationBucketRetentionDays:           durationBucketRetentionDays,
 		APIKeyMetricRetentionDays:             apiKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          executionDetailRetentionDays,
 		TaskRetentionDays:                     taskRetentionDays,
+		RatioMonitorTaskRetentionDays:         ratioMonitorTaskRetentionDays,
+		SmartScheduleTaskRetentionDays:        smartScheduleTaskRetentionDays,
+		SmartScheduleProbeTaskRetentionDays:   smartScheduleProbeTaskRetentionDays,
+		CleanupTaskRetentionDays:              cleanupTaskRetentionDays,
+		ModelDetectionTaskRetentionDays:       modelDetectionTaskRetentionDays,
+		ChannelTestTaskRetentionDays:          channelTestTaskRetentionDays,
+		ModelUpdateTaskRetentionDays:          modelUpdateTaskRetentionDays,
 		RatioHistoryRetentionDays:             ratioHistoryRetentionDays,
 		StatusProbeHistoryRetentionDays:       statusProbeHistoryRetentionDays,
+		GroupMonitorRetentionDays:             groupMonitorRetentionDays,
 		ModelDetectionRetentionDays:           modelDetectionRetentionDays,
 		CleanupEnabled:                        cleanupEnabled,
 		CleanupBatchSize:                      cleanupBatchSize,
@@ -802,11 +887,20 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.AutoEnableOnBalanceRecovery == nil &&
 		request.CostRetentionDays == nil &&
 		request.RouteMetricRetentionDays == nil &&
+		request.DurationBucketRetentionDays == nil &&
 		request.APIKeyMetricRetentionDays == nil &&
 		request.ExecutionDetailRetentionDays == nil &&
 		request.TaskRetentionDays == nil &&
+		request.RatioMonitorTaskRetentionDays == nil &&
+		request.SmartScheduleTaskRetentionDays == nil &&
+		request.SmartScheduleProbeTaskRetentionDays == nil &&
+		request.CleanupTaskRetentionDays == nil &&
+		request.ModelDetectionTaskRetentionDays == nil &&
+		request.ChannelTestTaskRetentionDays == nil &&
+		request.ModelUpdateTaskRetentionDays == nil &&
 		request.RatioHistoryRetentionDays == nil &&
 		request.StatusProbeHistoryRetentionDays == nil &&
+		request.GroupMonitorRetentionDays == nil &&
 		request.ModelDetectionRetentionDays == nil &&
 		request.CleanupEnabled == nil &&
 		request.CleanupBatchSize == nil &&
@@ -971,6 +1065,18 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.RouteMetricRetentionDays = *request.RouteMetricRetentionDays
 		values[channelMonitorRouteMetricRetentionDaysOption] = strconv.Itoa(settings.RouteMetricRetentionDays)
 	}
+	if request.DurationBucketRetentionDays != nil && (*request.DurationBucketRetentionDays < minChannelMonitorCostRetentionDays ||
+		*request.DurationBucketRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "延迟分桶保留天数必须在 1 到 3650 天之间",
+		})
+		return
+	}
+	if request.DurationBucketRetentionDays != nil {
+		settings.DurationBucketRetentionDays = *request.DurationBucketRetentionDays
+		values[channelMonitorDurationBucketRetentionDaysOption] = strconv.Itoa(settings.DurationBucketRetentionDays)
+	}
 	if request.APIKeyMetricRetentionDays != nil && (*request.APIKeyMetricRetentionDays < minChannelMonitorCostRetentionDays ||
 		*request.APIKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1007,6 +1113,19 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.TaskRetentionDays = *request.TaskRetentionDays
 		values[channelMonitorTaskRetentionDaysOption] = strconv.Itoa(settings.TaskRetentionDays)
 	}
+	setTaskRetention := func(value *int, target *int, option string) {
+		if value != nil {
+			*target = *value
+			values[option] = strconv.Itoa(*target)
+		}
+	}
+	setTaskRetention(request.RatioMonitorTaskRetentionDays, &settings.RatioMonitorTaskRetentionDays, channelMonitorRatioMonitorTaskRetentionDaysOption)
+	setTaskRetention(request.SmartScheduleTaskRetentionDays, &settings.SmartScheduleTaskRetentionDays, channelMonitorSmartScheduleTaskRetentionDaysOption)
+	setTaskRetention(request.SmartScheduleProbeTaskRetentionDays, &settings.SmartScheduleProbeTaskRetentionDays, channelMonitorSmartScheduleProbeTaskRetentionDaysOption)
+	setTaskRetention(request.CleanupTaskRetentionDays, &settings.CleanupTaskRetentionDays, channelMonitorCleanupTaskRetentionDaysOption)
+	setTaskRetention(request.ModelDetectionTaskRetentionDays, &settings.ModelDetectionTaskRetentionDays, channelMonitorModelDetectionTaskRetentionDaysOption)
+	setTaskRetention(request.ChannelTestTaskRetentionDays, &settings.ChannelTestTaskRetentionDays, channelMonitorChannelTestTaskRetentionDaysOption)
+	setTaskRetention(request.ModelUpdateTaskRetentionDays, &settings.ModelUpdateTaskRetentionDays, channelMonitorModelUpdateTaskRetentionDaysOption)
 	if request.RatioHistoryRetentionDays != nil && (*request.RatioHistoryRetentionDays < minChannelMonitorCostRetentionDays ||
 		*request.RatioHistoryRetentionDays > maxChannelMonitorCostRetentionDays) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1031,6 +1150,18 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.StatusProbeHistoryRetentionDays != nil {
 		settings.StatusProbeHistoryRetentionDays = *request.StatusProbeHistoryRetentionDays
 		values[channelMonitorStatusProbeHistoryRetentionDaysOption] = strconv.Itoa(settings.StatusProbeHistoryRetentionDays)
+	}
+	if request.GroupMonitorRetentionDays != nil && (*request.GroupMonitorRetentionDays < minChannelMonitorCostRetentionDays ||
+		*request.GroupMonitorRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "分组监控记录保留天数必须在 1 到 3650 天之间",
+		})
+		return
+	}
+	if request.GroupMonitorRetentionDays != nil {
+		settings.GroupMonitorRetentionDays = *request.GroupMonitorRetentionDays
+		values[channelMonitorGroupMonitorRetentionDaysOption] = strconv.Itoa(settings.GroupMonitorRetentionDays)
 	}
 	if request.ModelDetectionRetentionDays != nil &&
 		(*request.ModelDetectionRetentionDays < model.ChannelModelDetectionMinRetentionDays ||
@@ -1430,11 +1561,20 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"auto_enable_on_balance_recovery":            settings.AutoEnableOnBalanceRecovery,
 		"cost_retention_days":                        settings.CostRetentionDays,
 		"route_metric_retention_days":                settings.RouteMetricRetentionDays,
+		"duration_bucket_retention_days":             settings.DurationBucketRetentionDays,
 		"api_key_metric_retention_days":              settings.APIKeyMetricRetentionDays,
 		"execution_detail_retention_days":            settings.ExecutionDetailRetentionDays,
 		"task_retention_days":                        settings.TaskRetentionDays,
+		"ratio_monitor_task_retention_days":          settings.RatioMonitorTaskRetentionDays,
+		"smart_schedule_task_retention_days":         settings.SmartScheduleTaskRetentionDays,
+		"smart_schedule_probe_task_retention_days":   settings.SmartScheduleProbeTaskRetentionDays,
+		"cleanup_task_retention_days":                settings.CleanupTaskRetentionDays,
+		"model_detection_task_retention_days":        settings.ModelDetectionTaskRetentionDays,
+		"channel_test_task_retention_days":           settings.ChannelTestTaskRetentionDays,
+		"model_update_task_retention_days":           settings.ModelUpdateTaskRetentionDays,
 		"ratio_history_retention_days":               settings.RatioHistoryRetentionDays,
 		"status_probe_history_retention_days":        settings.StatusProbeHistoryRetentionDays,
+		"group_monitor_retention_days":               settings.GroupMonitorRetentionDays,
 		"model_detection_retention_days":             settings.ModelDetectionRetentionDays,
 		"cleanup_enabled":                            settings.CleanupEnabled,
 		"cleanup_batch_size":                         settings.CleanupBatchSize,
@@ -1526,6 +1666,10 @@ func validateChannelMonitorRetentionRequest(request channelMonitorSettingsUpdate
 		maxChannelMonitorCostRetentionDays, "路由分钟指标保留天数必须在 1 到 3650 天之间"); err != nil {
 		return err
 	}
+	if err := validateDays(request.DurationBucketRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "延迟分桶保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
 	if err := validateDays(request.APIKeyMetricRetentionDays, minChannelMonitorCostRetentionDays,
 		maxChannelMonitorCostRetentionDays, "API Key 分钟指标保留天数必须在 1 到 3650 天之间"); err != nil {
 		return err
@@ -1538,12 +1682,44 @@ func validateChannelMonitorRetentionRequest(request channelMonitorSettingsUpdate
 		maxChannelMonitorCostRetentionDays, "监控任务保留天数必须在 1 到 3650 天之间"); err != nil {
 		return err
 	}
+	if err := validateDays(request.RatioMonitorTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "渠道比例监控任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.SmartScheduleTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "智能调度任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.SmartScheduleProbeTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "智能调度探测任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.CleanupTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "清理任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.ModelDetectionTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "模型检测任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.ChannelTestTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "渠道测试任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.ModelUpdateTaskRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "模型更新任务保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
 	if err := validateDays(request.RatioHistoryRetentionDays, minChannelMonitorCostRetentionDays,
 		maxChannelMonitorCostRetentionDays, "倍率历史保留天数必须在 1 到 3650 天之间"); err != nil {
 		return err
 	}
 	if err := validateDays(request.StatusProbeHistoryRetentionDays, minChannelMonitorCostRetentionDays,
 		maxChannelMonitorStatusProbeHistoryRetentionDays, "状态探测历史保留天数必须在 1 到 90 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.GroupMonitorRetentionDays, minChannelMonitorCostRetentionDays,
+		maxChannelMonitorCostRetentionDays, "分组监控记录保留天数必须在 1 到 3650 天之间"); err != nil {
 		return err
 	}
 	if err := validateDays(request.ModelDetectionRetentionDays, model.ChannelModelDetectionMinRetentionDays,

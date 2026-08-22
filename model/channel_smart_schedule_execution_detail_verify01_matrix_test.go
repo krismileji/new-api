@@ -152,7 +152,6 @@ func TestVerify01SnapshotDatabaseMatrix(t *testing.T) {
 					RatioHistory:    threeDayCutoff,
 				},
 				[]string{"channel_smart_schedule"},
-				100,
 				64,
 				ChannelMonitorCleanupBudget{},
 			)

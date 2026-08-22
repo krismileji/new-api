@@ -79,7 +79,6 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 			RatioHistory:    ratioCutoff,
 		},
 		[]string{monitoredTaskType},
-		2,
 		1,
 		exhaustedBudget,
 	)
@@ -100,14 +99,13 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 			RatioHistory:    ratioCutoff,
 		},
 		[]string{monitoredTaskType},
-		2,
 		1,
 		ChannelMonitorCleanupBudget{},
 	)
 	require.NoError(t, err)
 	assert.False(t, result.Incomplete)
-	assert.Equal(t, int64(2), result.ExecutionDetailRowsDeleted)
-	assert.Equal(t, int64(1), result.TaskRowsDeleted)
+	assert.Equal(t, int64(4), result.ExecutionDetailRowsDeleted)
+	assert.Equal(t, int64(3), result.TaskRowsDeleted)
 	assert.Equal(t, int64(2), result.RatioHistoryRowsDeleted)
 
 	var remainingTasks []SystemTask
@@ -120,24 +118,17 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 		"recent-terminal",
 		"old-pending",
 		"old-running",
-		"old-protected-a",
-		"old-protected-b",
 		"ignored-old",
 	}, remainingTaskIDs)
 
 	var remainingDetails []ChannelSmartScheduleExecutionDetail
 	require.NoError(t, db.Order("id ASC").Find(&remainingDetails).Error)
-	require.Len(t, remainingDetails, 4)
+	require.Len(t, remainingDetails, 2)
 	remainingDetailTaskIDs := make([]string, 0, len(remainingDetails))
 	for _, detail := range remainingDetails {
 		remainingDetailTaskIDs = append(remainingDetailTaskIDs, detail.TaskId)
 	}
-	assert.ElementsMatch(t, []string{
-		"old-pending",
-		"old-running",
-		"old-protected-a",
-		"old-protected-b",
-	}, remainingDetailTaskIDs)
+	assert.ElementsMatch(t, []string{"old-pending", "old-running"}, remainingDetailTaskIDs)
 
 	var remainingRatioHistory []ChannelRatioHistory
 	require.NoError(t, db.Find(&remainingRatioHistory).Error)
@@ -145,7 +136,44 @@ func TestDeleteChannelMonitorHistoryBeforeHonorsRetentionAndTaskGuards(t *testin
 	assert.Equal(t, 3, remainingRatioHistory[0].ChannelId)
 }
 
-func TestDeleteChannelMonitorHistoryBeforeKeepsLatestTerminalTasksPerType(t *testing.T) {
+func TestDeleteChannelMonitorHistoryBeforeWithTaskCutoffsUsesPerTypeCutoff(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-task-cutoffs.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&SystemTask{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	tasks := []SystemTask{
+		{TaskID: "model-detection-delete", Type: SystemTaskTypeChannelModelDetection, Status: SystemTaskStatusSucceeded, CreatedAt: 50, UpdatedAt: 50},
+		{TaskID: "model-detection-retain", Type: SystemTaskTypeChannelModelDetection, Status: SystemTaskStatusSucceeded, CreatedAt: 500, UpdatedAt: 500},
+		{TaskID: "model-detection-latest", Type: SystemTaskTypeChannelModelDetection, Status: SystemTaskStatusSucceeded, CreatedAt: 900, UpdatedAt: 900},
+	}
+	require.NoError(t, db.Create(&tasks).Error)
+
+	result, err := DeleteChannelMonitorHistoryBeforeWithTaskCutoffs(
+		context.Background(),
+		ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1_000, Task: 1_000, RatioHistory: 1_000},
+		[]string{SystemTaskTypeChannelModelDetection},
+		map[string]int64{SystemTaskTypeChannelModelDetection: 100},
+		10,
+		ChannelMonitorCleanupBudget{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.TaskRowsDeleted)
+
+	var remaining []SystemTask
+	require.NoError(t, db.Order("id ASC").Find(&remaining).Error)
+	require.Len(t, remaining, 2)
+	assert.Equal(t, []string{"model-detection-retain", "model-detection-latest"}, []string{remaining[0].TaskID, remaining[1].TaskID})
+}
+
+func TestDeleteChannelMonitorHistoryBeforeDeletesAllExpiredTerminalTasksPerType(t *testing.T) {
 	originalDB := DB
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-history-retention-boundary.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -164,11 +192,14 @@ func TestDeleteChannelMonitorHistoryBeforeKeepsLatestTerminalTasksPerType(t *tes
 
 	const (
 		terminalTasksPerType = 102
-		keepLatest           = 100
 		detailCutoff         = int64(20_000)
 		taskCutoff           = int64(10_000)
 	)
-	taskTypes := []string{"channel_smart_schedule", "channel_ratio_monitor"}
+	taskTypes := []string{
+		"channel_smart_schedule",
+		"channel_ratio_monitor",
+		SystemTaskTypeChannelModelDetection,
+	}
 	tasks := make([]SystemTask, 0, len(taskTypes)*(terminalTasksPerType+2))
 	for _, taskType := range taskTypes {
 		for index := 0; index < terminalTasksPerType; index++ {
@@ -218,14 +249,13 @@ func TestDeleteChannelMonitorHistoryBeforeKeepsLatestTerminalTasksPerType(t *tes
 			RatioHistory:    detailCutoff,
 		},
 		taskTypes,
-		keepLatest,
 		17,
 		ChannelMonitorCleanupBudget{},
 	)
 	require.NoError(t, err)
 	assert.False(t, result.Incomplete)
-	assert.Equal(t, int64(len(taskTypes)*(terminalTasksPerType-keepLatest)), result.TaskRowsDeleted)
-	assert.Equal(t, int64(len(taskTypes)*(terminalTasksPerType-keepLatest)), result.ExecutionDetailRowsDeleted)
+	assert.Equal(t, int64(len(taskTypes)*terminalTasksPerType), result.TaskRowsDeleted)
+	assert.Equal(t, int64(len(taskTypes)*terminalTasksPerType), result.ExecutionDetailRowsDeleted)
 
 	terminalStatuses := []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}
 	for _, taskType := range taskTypes {
@@ -235,9 +265,7 @@ func TestDeleteChannelMonitorHistoryBeforeKeepsLatestTerminalTasksPerType(t *tes
 			Where("status IN ?", terminalStatuses).
 			Order("id ASC").
 			Pluck("task_id", &terminalTaskIDs).Error)
-		require.Len(t, terminalTaskIDs, keepLatest)
-		assert.Equal(t, fmt.Sprintf("%s-terminal-002", taskType), terminalTaskIDs[0])
-		assert.Equal(t, fmt.Sprintf("%s-terminal-101", taskType), terminalTaskIDs[len(terminalTaskIDs)-1])
+		require.Empty(t, terminalTaskIDs)
 
 		var activeTasks []SystemTask
 		require.NoError(t, db.Where("type = ?", taskType).
@@ -253,10 +281,7 @@ func TestDeleteChannelMonitorHistoryBeforeKeepsLatestTerminalTasksPerType(t *tes
 			Where("task_id LIKE ?", taskType+"-%").
 			Order("task_id ASC").
 			Pluck("task_id", &detailTaskIDs).Error)
-		assert.Len(t, detailTaskIDs, keepLatest+2)
-		assert.NotContains(t, detailTaskIDs, fmt.Sprintf("%s-terminal-000", taskType))
-		assert.NotContains(t, detailTaskIDs, fmt.Sprintf("%s-terminal-001", taskType))
-		assert.Contains(t, detailTaskIDs, fmt.Sprintf("%s-terminal-002", taskType))
+		assert.Len(t, detailTaskIDs, 2)
 		assert.Contains(t, detailTaskIDs, taskType+"-pending")
 		assert.Contains(t, detailTaskIDs, taskType+"-running")
 	}
@@ -269,19 +294,17 @@ func TestDeleteChannelMonitorHistoryBeforeRejectsInvalidArguments(t *testing.T) 
 		RatioHistory:    1,
 	}
 	tests := []struct {
-		name       string
-		cutoffs    ChannelMonitorHistoryRetentionCutoffs
-		taskTypes  []string
-		keepLatest int
-		batchSize  int
+		name      string
+		cutoffs   ChannelMonitorHistoryRetentionCutoffs
+		taskTypes []string
+		batchSize int
 	}{
-		{name: "invalid execution detail cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{Task: 1, RatioHistory: 1}, taskTypes: []string{"task"}, keepLatest: 1, batchSize: 1},
-		{name: "invalid task cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, RatioHistory: 1}, taskTypes: []string{"task"}, keepLatest: 1, batchSize: 1},
-		{name: "invalid ratio history cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, Task: 1}, taskTypes: []string{"task"}, keepLatest: 1, batchSize: 1},
-		{name: "task retention shorter than execution details", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, Task: 2, RatioHistory: 1}, taskTypes: []string{"task"}, keepLatest: 1, batchSize: 1},
-		{name: "missing task types", cutoffs: validCutoffs, taskTypes: []string{" "}, keepLatest: 1, batchSize: 1},
-		{name: "invalid keep latest", cutoffs: validCutoffs, taskTypes: []string{"task"}, batchSize: 1},
-		{name: "invalid batch size", cutoffs: validCutoffs, taskTypes: []string{"task"}, keepLatest: 1},
+		{name: "invalid execution detail cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{Task: 1, RatioHistory: 1}, taskTypes: []string{"task"}, batchSize: 1},
+		{name: "invalid task cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, RatioHistory: 1}, taskTypes: []string{"task"}, batchSize: 1},
+		{name: "invalid ratio history cutoff", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, Task: 1}, taskTypes: []string{"task"}, batchSize: 1},
+		{name: "task retention shorter than execution details", cutoffs: ChannelMonitorHistoryRetentionCutoffs{ExecutionDetail: 1, Task: 2, RatioHistory: 1}, taskTypes: []string{"task"}, batchSize: 1},
+		{name: "missing task types", cutoffs: validCutoffs, taskTypes: []string{" "}, batchSize: 1},
+		{name: "invalid batch size", cutoffs: validCutoffs, taskTypes: []string{"task"}},
 	}
 
 	for _, test := range tests {
@@ -290,7 +313,6 @@ func TestDeleteChannelMonitorHistoryBeforeRejectsInvalidArguments(t *testing.T) 
 				context.Background(),
 				test.cutoffs,
 				test.taskTypes,
-				test.keepLatest,
 				test.batchSize,
 				ChannelMonitorCleanupBudget{},
 			)

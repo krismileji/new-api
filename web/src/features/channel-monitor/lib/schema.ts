@@ -54,17 +54,17 @@ export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
 export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 30
 export const DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS = 30
+export const DEFAULT_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS = 30
 export const DEFAULT_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS = 7
 export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 3
-export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
-export const DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS = 90
-export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS = 90
-export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS = 90
-export const DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS = 90
-export const DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS = 90
-export const MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 1
-export const MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 10_000
-export const DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 100
+export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS = 3
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS = 7
 export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
 export const MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 7
@@ -921,6 +921,12 @@ export function createChannelMonitorSettingsSchema() {
           '路由分钟指标保留天数不能超过 3650 天'
         )
         .default(DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS),
+      durationBucketRetentionDays: z.coerce
+        .number()
+        .int('延迟分桶保留天数必须是整数')
+        .min(1, '延迟分桶保留天数不能小于 1 天')
+        .max(3650, '延迟分桶保留天数不能超过 3650 天')
+        .default(DEFAULT_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS),
       apiKeyMetricRetentionDays: z.coerce
         .number()
         .int('API Key 分钟指标保留天数必须是整数')
@@ -987,18 +993,18 @@ export function createChannelMonitorSettingsSchema() {
         .min(1)
         .max(3650)
         .default(DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS),
-      taskKeepLatestCount: z.coerce
+      channelTestTaskRetentionDays: z.coerce
         .number()
-        .int('每类监控任务最少保留数量必须是整数')
-        .min(
-          MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
-          '每类监控任务最少保留数量不能小于 1 条'
-        )
-        .max(
-          MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
-          '每类监控任务最少保留数量不能超过 10000 条'
-        )
-        .default(DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT),
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_CHANNEL_TEST_TASK_RETENTION_DAYS),
+      modelUpdateTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS),
       ratioHistoryRetentionDays: z.coerce
         .number()
         .int('倍率历史保留天数必须是整数')
