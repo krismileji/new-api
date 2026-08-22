@@ -263,6 +263,8 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&ChannelLogicalGroup{},
+		&ChannelLogicalGroupMember{},
 		&Token{},
 		&User{},
 		&UserSession{},
@@ -357,6 +359,8 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&ChannelLogicalGroup{}, "ChannelLogicalGroup"},
+		{&ChannelLogicalGroupMember{}, "ChannelLogicalGroupMember"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&UserSession{}, "UserSession"},

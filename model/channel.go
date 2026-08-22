@@ -50,6 +50,10 @@ type Channel struct {
 	ParamOverride     *string `json:"param_override" gorm:"type:text"`
 	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
 	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	// LogicalChannelID identifies the optional logical channel group used by
+	// shared scheduling, status probing, and model detection. Ordinary channel
+	// monitoring, costs, balance, ratio, and concurrency continue to use Id.
+	LogicalChannelID *int64 `json:"logical_channel_id,omitempty" gorm:"bigint;index"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
