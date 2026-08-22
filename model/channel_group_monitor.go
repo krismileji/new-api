@@ -389,6 +389,8 @@ func SaveChannelGroupMonitorExecution(execution *ChannelGroupMonitorExecution) (
 		execution.CreatedAt = execution.FinishedAt
 	}
 	created := false
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		inserted := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "run_id"}, {Name: "group_name"}},

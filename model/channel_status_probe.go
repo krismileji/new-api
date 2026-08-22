@@ -439,21 +439,25 @@ func RequestChannelStatusProbeManualRun(channelId int, now int64) (string, error
 }
 
 func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClaim, error) {
-	if limit <= 0 {
-		return []ChannelStatusProbeClaim{}, nil
-	}
+	// A non-positive limit is intentionally unbounded for the monitor worker.
 	var candidates []ChannelStatusProbeConfig
-	err := DB.Where("lease_until <= ?", now).
+	query := DB.Where("lease_until <= ?", now).
 		Where("manual_request_id <> ? OR (enabled = ? AND next_run_at > 0 AND next_run_at <= ?)", "", true, now).
-		Order("manual_requested_at DESC, next_run_at ASC, channel_id ASC").
-		Limit(limit * 3).
-		Find(&candidates).Error
+		Order("manual_requested_at DESC, next_run_at ASC, channel_id ASC")
+	if limit > 0 {
+		query = query.Limit(limit * 3)
+	}
+	err := query.Find(&candidates).Error
 	if err != nil {
 		return nil, err
 	}
-	claims := make([]ChannelStatusProbeClaim, 0, min(limit, len(candidates)))
+	claimCapacity := len(candidates)
+	if limit > 0 && claimCapacity > limit {
+		claimCapacity = limit
+	}
+	claims := make([]ChannelStatusProbeClaim, 0, claimCapacity)
 	for _, candidate := range candidates {
-		if len(claims) >= limit {
+		if limit > 0 && len(claims) >= limit {
 			break
 		}
 		models, decodeErr := candidate.Models()
@@ -509,17 +513,17 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 // their next monitoring period begins. Completed model results remain intact;
 // only missing results under the previous run ID are recorded as timeouts.
 func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
-	if limit <= 0 {
-		return 0, nil
-	}
+	// A non-positive limit processes every overdue run in this scan.
 	var candidates []ChannelStatusProbeConfig
-	err := DB.Where(
+	query := DB.Where(
 		"running_run_id <> ? AND enabled = ? AND next_run_at > 0 AND next_run_at <= ?",
 		"", true, now,
 	).
-		Order("next_run_at ASC, channel_id ASC").
-		Limit(limit).
-		Find(&candidates).Error
+		Order("next_run_at ASC, channel_id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&candidates).Error
 	if err != nil {
 		return 0, err
 	}
@@ -823,6 +827,8 @@ func saveChannelStatusProbeExecutionTx(tx *gorm.DB, execution *ChannelStatusProb
 
 func SaveChannelStatusProbeExecution(execution *ChannelStatusProbeExecution) (bool, error) {
 	created := false
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var err error
 		created, err = saveChannelStatusProbeExecutionTx(tx, execution)
@@ -844,6 +850,8 @@ func ListPendingChannelStatusProbeExecutions(limit int) ([]ChannelStatusProbeExe
 }
 
 func UpdateChannelStatusProbeExecutionSample(executionId int64, status string, message string, now int64) error {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&ChannelStatusProbeExecution{}).
 			Where("id = ?", executionId).

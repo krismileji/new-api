@@ -24,10 +24,6 @@ type channelRatioMonitorTaskHandler struct{}
 
 const maxChannelRatioMonitorTaskFailureDetails = 100
 
-// Keep upstream refreshes bounded so a large channel set does not create an
-// unbounded burst of outbound requests or concurrent database writers.
-const channelRatioMonitorMaxConcurrency = 8
-
 type channelRatioMonitorTaskResult struct {
 	Total                         int                              `json:"total"`
 	Updated                       int                              `json:"updated"`
@@ -433,18 +429,11 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			taskErr = err
 		}
 	}
-	workerCount := len(configured)
-	if workerCount > channelRatioMonitorMaxConcurrency {
-		workerCount = channelRatioMonitorMaxConcurrency
-	}
-	semaphore := make(chan struct{}, workerCount)
 	var monitorWorkers sync.WaitGroup
-	for index, monitor := range configured {
-		semaphore <- struct{}{}
+	for _, monitor := range configured {
 		monitorWorkers.Add(1)
-		go func(index int, monitor model.ChannelRatioMonitor) {
+		go func(monitor model.ChannelRatioMonitor) {
 			defer monitorWorkers.Done()
-			defer func() { <-semaphore }()
 			select {
 			case <-ctx.Done():
 				recordTaskError(ctx.Err())
@@ -862,7 +851,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 			}
 			reportChannelProgress()
-		}(index, monitor)
+		}(monitor)
 	}
 	monitorWorkers.Wait()
 	if taskErr != nil {

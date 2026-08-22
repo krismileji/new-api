@@ -22,9 +22,6 @@ const (
 	channelStatusProbeMinScanIntervalMillis     = 200
 	channelStatusProbeMaxScanIntervalMillis     = 30000
 	channelStatusProbeLeaseRenewEvery           = 2 * time.Minute
-	channelStatusProbeDefaultConcurrent         = 5
-	channelStatusProbeMaxConcurrent             = 20
-	channelStatusProbeTimeoutBatch              = 100
 	channelStatusProbeSampleRetryEvery          = 30 * time.Second
 	channelStatusProbeSampleRetryMaxAge         = 24 * time.Hour
 	channelStatusProbeSampleRetryBatch          = 20
@@ -92,17 +89,12 @@ func startChannelStatusProbeWorker() {
 		if !common.IsMasterNode {
 			return
 		}
-		concurrency := common.GetEnvOrDefault("CHANNEL_STATUS_PROBE_CONCURRENCY", channelStatusProbeDefaultConcurrent)
-		if concurrency < 1 || concurrency > channelStatusProbeMaxConcurrent {
-			concurrency = channelStatusProbeDefaultConcurrent
-		}
-		semaphore := make(chan struct{}, concurrency)
 		gopool.Go(func() {
 			ticker := time.NewTicker(channelStatusProbeScanIntervalDuration())
 			defer ticker.Stop()
 			lastSampleRetry := time.Time{}
 			for {
-				if err := runChannelStatusProbeScanOnce(context.Background(), semaphore); err != nil {
+				if err := runChannelStatusProbeScanOnce(context.Background()); err != nil {
 					common.SysError("扫描渠道状态探测任务失败: " + err.Error())
 				}
 				if time.Since(lastSampleRetry) >= channelStatusProbeSampleRetryEvery {
@@ -120,28 +112,22 @@ func startChannelStatusProbeWorker() {
 	})
 }
 
-func runChannelStatusProbeScanOnce(ctx context.Context, semaphore chan struct{}) error {
+func runChannelStatusProbeScanOnce(ctx context.Context) error {
 	now := common.GetTimestamp()
-	timedOut, err := model.TimeoutOverdueChannelStatusProbes(now, channelStatusProbeTimeoutBatch)
+	timedOut, err := model.TimeoutOverdueChannelStatusProbes(now, 0)
 	if err != nil {
 		return err
 	}
 	if timedOut > 0 {
 		invalidateChannelStatusProbeOverviewCache()
 	}
-	available := cap(semaphore) - len(semaphore)
-	if available <= 0 {
-		return nil
-	}
-	claims, err := model.ClaimDueChannelStatusProbes(now, available)
+	claims, err := model.ClaimDueChannelStatusProbes(now, 0)
 	if err != nil {
 		return err
 	}
 	for _, current := range claims {
 		claim := current
-		semaphore <- struct{}{}
 		gopool.Go(func() {
-			defer func() { <-semaphore }()
 			if err := runChannelStatusProbeClaim(ctx, claim); err != nil {
 				common.SysError(fmt.Sprintf(
 					"执行渠道状态探测失败: channel_id=%d run_id=%s err=%s",

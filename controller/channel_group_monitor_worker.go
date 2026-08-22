@@ -258,28 +258,40 @@ func runChannelGroupMonitorClaim(parent context.Context, claim model.ChannelGrou
 	if err != nil {
 		return err
 	}
-	for index, group := range claim.Groups {
-		if index > 0 && common.RequestInterval > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(common.RequestInterval):
+	var groups sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	for _, group := range claim.Groups {
+		group := group
+		groups.Add(1)
+		go func() {
+			defer groups.Done()
+			if err := ctx.Err(); err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
 			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		current, err := model.IsChannelGroupMonitorLeaseCurrent(claim, common.GetTimestamp())
-		if err != nil {
-			return err
-		}
-		if !current {
-			return errors.New("分组监控配置已变化，本轮任务已取消")
-		}
-		if err := runChannelGroupMonitorGroup(ctx, claim, group, validCandidates, testUserId, testUserErr); err != nil {
-			return err
-		}
+			current, err := model.IsChannelGroupMonitorLeaseCurrent(claim, common.GetTimestamp())
+			if err == nil && !current {
+				err = errors.New("分组监控配置已变化，本轮任务已取消")
+			}
+			if err == nil {
+				err = runChannelGroupMonitorGroup(ctx, claim, group, validCandidates, testUserId, testUserErr)
+			}
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+			}
+		}()
 	}
-	return nil
+	groups.Wait()
+	return firstErr
 }
 
 func runChannelGroupMonitorGroup(
