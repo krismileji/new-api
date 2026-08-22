@@ -297,7 +297,7 @@ func markChannelMonitorDirtyMinutesForLog(log *Log) error {
 		return nil
 	}
 	parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-	if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
+	if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.GroupProbe || parsedOther.StatusProbe) {
 		return nil
 	}
 	logMinute := normalizeChannelMonitorDirtyMinute(log.CreatedAt)

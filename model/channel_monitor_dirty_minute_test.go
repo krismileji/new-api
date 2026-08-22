@@ -135,6 +135,23 @@ func TestClosedMinuteLogMarksDirtyBeforeWatermarkAdvances(t *testing.T) {
 	assert.Equal(t, ChannelMonitorDirtyReasonLateLog, marker.DirtyReason)
 }
 
+func TestGroupProbeLogDoesNotMarkDirtyMinute(t *testing.T) {
+	db := setupChannelMonitorDirtyMinuteTestDB(t)
+	ctx := context.Background()
+	require.NoError(t, AdvanceChannelMonitorAggregationCompletedThrough(ctx, 60))
+
+	require.NoError(t, createLog(&Log{
+		ChannelId: 1,
+		Type:      LogTypeError,
+		CreatedAt: 121,
+		Other:     `{"channel_monitor_group_probe":true}`,
+	}))
+
+	var markerCount int64
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinute{}).Count(&markerCount).Error)
+	assert.Zero(t, markerCount)
+}
+
 func TestCreateLogReturnsMarkerFailureAfterPersistingSourceLog(t *testing.T) {
 	db := setupChannelMonitorDirtyMinuteTestDB(t)
 	markerErr := errors.New("forced dirty marker failure")

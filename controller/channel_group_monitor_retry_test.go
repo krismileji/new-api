@@ -39,6 +39,9 @@ func TestRunChannelGroupMonitorGroupRetriesLikeRelay(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
 	originalStreamingTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
@@ -103,12 +106,38 @@ func TestRunChannelGroupMonitorGroupRetriesLikeRelay(t *testing.T) {
 	var execution model.ChannelGroupMonitorExecution
 	require.NoError(t, db.Where("run_id = ?", claim.RunId).First(&execution).Error)
 	assert.Equal(t, model.ChannelGroupMonitorResultSuccess, execution.Result)
+	var logs []model.Log
+	require.NoError(t, db.Where("other LIKE ?", "%group-monitor-retry-run%").Order("created_at ASC").Find(&logs).Error)
+	require.Len(t, logs, 2)
+	var errorLog, consumeLog *model.Log
+	for index := range logs {
+		log := &logs[index]
+		if log.Type == model.LogTypeError {
+			errorLog = log
+		}
+		if log.Type == model.LogTypeConsume {
+			consumeLog = log
+		}
+	}
+	require.NotNil(t, errorLog)
+	require.NotNil(t, consumeLog)
+	assert.NotEqual(t, errorLog.ChannelId, consumeLog.ChannelId)
+	assert.True(t, errorLog.IsRetryAttempt)
+	assert.Equal(t, errorLog.RequestId, consumeLog.RequestId)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
+	adminInfo, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{fmt.Sprintf("%d", errorLog.ChannelId), fmt.Sprintf("%d", consumeLog.ChannelId)}, adminInfo["use_channel"])
 }
 
 func TestRunChannelGroupMonitorGroupSkipsSetupFailureWithoutRetryBudget(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
 	originalStreamingTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
@@ -175,4 +204,10 @@ func TestRunChannelGroupMonitorGroupSkipsSetupFailureWithoutRetryBudget(t *testi
 	require.NoError(t, db.Where("run_id = ?", claim.RunId).First(&execution).Error)
 	assert.Equal(t, model.ChannelGroupMonitorResultSuccess, execution.Result)
 	assert.Equal(t, 1212, execution.ChannelId)
+	var logs []model.Log
+	require.NoError(t, db.Where("other LIKE ?", "%group-monitor-setup-retry-run%").Order("created_at ASC").Find(&logs).Error)
+	require.Len(t, logs, 1)
+	assert.Equal(t, model.LogTypeConsume, logs[0].Type)
+	assert.Equal(t, 1212, logs[0].ChannelId)
+	assert.NotEmpty(t, logs[0].RequestId)
 }

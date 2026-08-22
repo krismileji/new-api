@@ -140,6 +140,24 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
 		assert.Equal(t, true, other[model.ChannelMonitorGroupProbeLogKey])
 	})
+
+	t.Run("group monitor probe follows ordinary consume log setting", func(t *testing.T) {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[channelprobe.OptionKey] = "true"
+		common.OptionMapRWMutex.Unlock()
+		originalLogConsumeEnabled := common.LogConsumeEnabled
+		common.LogConsumeEnabled = false
+		t.Cleanup(func() { common.LogConsumeEnabled = originalLogConsumeEnabled })
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Delete(&model.Log{}).Error)
+
+		probeCtx := withChannelGroupMonitorTestContext(context.Background(), "vip")
+		result := testChannel(probeCtx, channel, user.Id, "gpt-3.5-turbo", "", false)
+
+		require.NoError(t, result.localErr)
+		var consumeLogCount int64
+		require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
+		assert.Equal(t, int64(0), consumeLogCount)
+	})
 }
 
 func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {

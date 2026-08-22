@@ -149,6 +149,7 @@ type channelMonitorMinuteLogOther struct {
 	FinalRetrySummary     bool     `json:"channel_monitor_final_retry_summary"`
 	SmartScheduleProbe    bool     `json:"channel_monitor_smart_schedule_probe"`
 	ChannelTest           bool     `json:"channel_monitor_channel_test"`
+	GroupProbe            bool     `json:"channel_monitor_group_probe"`
 	StatusProbe           bool     `json:"channel_monitor_status_probe"`
 	StatusCode            any      `json:"status_code"`
 }
@@ -572,7 +573,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		}
 		scannedLogRows++
 		parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
+		if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.GroupProbe || parsedOther.StatusProbe) {
 			continue
 		}
 		durationMs := channelMonitorMinuteAttemptDurationMs(log.UseTime, parsedOther, parsed)
@@ -710,7 +711,7 @@ func aggregateChannelMonitorMinuteLogsFromDatabase(
 		scannedLogRows += len(outsideLogs)
 		for _, log := range outsideLogs {
 			parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-			if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.StatusProbe) {
+			if parsed && (parsedOther.SmartScheduleProbe || parsedOther.ChannelTest || parsedOther.GroupProbe || parsedOther.StatusProbe) {
 				continue
 			}
 			durationMs := channelMonitorMinuteAttemptDurationMs(log.UseTime, parsedOther, parsed)

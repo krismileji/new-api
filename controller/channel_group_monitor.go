@@ -96,6 +96,7 @@ type pricingGroupMonitorItemResponse struct {
 	Group              string                              `json:"group"`
 	Initial            string                              `json:"initial"`
 	Status             string                              `json:"status"`
+	ProbeModel         string                              `json:"probe_model,omitempty"`
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
@@ -649,6 +650,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			Group:              item.Group,
 			Initial:            item.Initial,
 			Status:             item.Status,
+			ProbeModel:         item.ProbeModel,
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,
 			LastFinishedAt:     item.LastFinishedAt,

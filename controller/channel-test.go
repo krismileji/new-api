@@ -102,6 +102,16 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c, _ := gin.CreateTestContext(w)
 	c.Set(channelTestContextKey, true)
 	c.Set(channelTestRequestDispatchedKey, false)
+	requestID := common.NewRequestId()
+	if contextRequestID, ok := ctx.Value(common.RequestIdKey).(string); ok && strings.TrimSpace(contextRequestID) != "" {
+		requestID = strings.TrimSpace(contextRequestID)
+	}
+	c.Set(common.RequestIdKey, requestID)
+	if requestStartTime, ok := ctx.Value(constant.ContextKeyRequestStartTime).(time.Time); ok && !requestStartTime.IsZero() {
+		common.SetContextKey(c, constant.ContextKeyRequestStartTime, requestStartTime)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyRequestStartTime, tik)
+	}
 	applyChannelMonitorSchedulingEligibility(ctx, c)
 
 	testModel = strings.TrimSpace(testModel)
@@ -168,6 +178,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		requestPath = strings.Replace(requestPath, ":generateContent", ":streamGenerateContent", 1)
 	}
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
+	applyChannelGroupMonitorAttemptLogContext(c)
 
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
@@ -187,6 +198,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	applyChannelSmartScheduleProbeTestContext(ctx, c)
 	applyChannelGroupMonitorTestContext(ctx, c)
+	if isChannelGroupMonitorTest(ctx) {
+		c.Set("token_name", "分组监控探测")
+	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
@@ -590,6 +604,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			content = "智能调度定时探测"
 		} else if isGroupMonitorProbe {
 			other[model.ChannelMonitorGroupProbeLogKey] = true
+			appendChannelGroupMonitorAttemptLogInfoFromContext(c, other, model.ChannelStatusProbeResultSuccess)
 			tokenName = "分组监控探测"
 			content = "分组监控探测"
 		} else if isStatusProbe {
@@ -682,7 +697,9 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData,
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
-	other[model.ChannelMonitorChannelTestLogKey] = true
+	if c == nil || c.Request == nil || !isChannelGroupMonitorTest(c.Request.Context()) {
+		other[model.ChannelMonitorChannelTestLogKey] = true
+	}
 	if tieredResult != nil {
 		service.InjectTieredBillingInfo(other, info, tieredResult)
 	}

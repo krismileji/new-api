@@ -73,6 +73,7 @@ describe('group monitor content', () => {
               group: 'default',
               initial: 'D',
               status: 'paused',
+              probe_model: 'gpt-4.1-mini',
               latest_first_token_ms: 215,
               success_rate: 100,
               last_finished_at: 1_752_777_840,
@@ -95,6 +96,7 @@ describe('group monitor content', () => {
     )
 
     assert.ok(markup.includes('default'))
+    assert.ok(markup.includes('gpt-4.1-mini'))
     assert.ok(markup.includes('已停用'))
     assert.ok(!markup.includes('分组监控暂未启用'))
     assert.match(markup, /data-slot="group-monitor-bucket"/)

@@ -217,10 +217,11 @@ func hydrateLogChannelNames(logs []*Log) error {
 func userVisibleLogs(tx *gorm.DB) *gorm.DB {
 	tx = tx.Where("(logs.is_retry_attempt = ? OR logs.is_retry_attempt IS NULL)", false)
 	tx = tx.Where("logs.type IN ?", []int{LogTypeConsume, LogTypeError})
-	return tx.Where("(logs.other IS NULL OR (logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ?))",
+	return tx.Where("(logs.other IS NULL OR (logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ? AND logs.other NOT LIKE ?))",
 		"%\""+ChannelMonitorChannelTestLogKey+"\":true%",
 		"%\""+ChannelMonitorSmartScheduleProbeLogKey+"\":true%",
 		"%\""+ChannelMonitorStatusProbeLogKey+"\":true%",
+		"%\""+ChannelMonitorGroupProbeLogKey+"\":true%",
 		"%\"violation_fee\":true%",
 	)
 }

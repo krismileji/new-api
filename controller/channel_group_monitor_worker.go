@@ -29,6 +29,16 @@ const (
 
 type channelGroupMonitorTestContextKey struct{}
 
+type channelGroupMonitorAttemptLogContextKey struct{}
+type channelGroupMonitorAttemptResultContextKey struct{}
+
+type channelGroupMonitorAttemptLogInfo struct {
+	RunId               string
+	Attempt             int
+	RetryIndex          int
+	AttemptedChannelIds []int
+}
+
 var (
 	channelGroupMonitorWorkerOnce sync.Once
 	channelGroupMonitorWake       = make(chan struct{}, 1)
@@ -47,6 +57,102 @@ func isChannelGroupMonitorTest(ctx context.Context) bool {
 	}
 	groupName, _ := ctx.Value(channelGroupMonitorTestContextKey{}).(string)
 	return groupName != ""
+}
+
+func withChannelGroupMonitorAttemptLogInfo(
+	ctx context.Context,
+	info channelGroupMonitorAttemptLogInfo,
+) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	info.AttemptedChannelIds = append([]int(nil), info.AttemptedChannelIds...)
+	return context.WithValue(ctx, channelGroupMonitorAttemptLogContextKey{}, info)
+}
+
+func channelGroupMonitorAttemptLogInfoFromContext(
+	ctx context.Context,
+) (channelGroupMonitorAttemptLogInfo, bool) {
+	if ctx == nil {
+		return channelGroupMonitorAttemptLogInfo{}, false
+	}
+	info, ok := ctx.Value(channelGroupMonitorAttemptLogContextKey{}).(channelGroupMonitorAttemptLogInfo)
+	if !ok {
+		return channelGroupMonitorAttemptLogInfo{}, false
+	}
+	info.AttemptedChannelIds = append([]int(nil), info.AttemptedChannelIds...)
+	return info, true
+}
+
+func appendChannelGroupMonitorAttemptLogInfo(
+	other map[string]interface{},
+	info channelGroupMonitorAttemptLogInfo,
+	result string,
+) {
+	if other == nil {
+		return
+	}
+	other[model.ChannelMonitorGroupProbeLogKey] = true
+	adminInfo, _ := other["admin_info"].(map[string]interface{})
+	if adminInfo == nil {
+		adminInfo = make(map[string]interface{})
+		other["admin_info"] = adminInfo
+	}
+	if info.RunId != "" {
+		other["channel_monitor_probe_run_id"] = info.RunId
+	}
+	if info.Attempt > 0 {
+		other["channel_monitor_probe_attempt"] = info.Attempt
+	}
+	if info.RetryIndex > 0 {
+		other["channel_monitor_probe_retry_index"] = info.RetryIndex
+	}
+	if len(info.AttemptedChannelIds) > 0 {
+		other["channel_monitor_probe_attempted_channels"] = info.AttemptedChannelIds
+	}
+	if result != "" {
+		other["channel_monitor_probe_result"] = result
+	}
+}
+
+func withChannelGroupMonitorAttemptResult(ctx context.Context, result string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, channelGroupMonitorAttemptResultContextKey{}, result)
+}
+
+func channelGroupMonitorAttemptResultFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	result, _ := ctx.Value(channelGroupMonitorAttemptResultContextKey{}).(string)
+	return result
+}
+
+func applyChannelGroupMonitorAttemptLogContext(c *gin.Context) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	info, ok := channelGroupMonitorAttemptLogInfoFromContext(c.Request.Context())
+	if !ok || len(info.AttemptedChannelIds) == 0 {
+		return
+	}
+	useChannel := make([]string, 0, len(info.AttemptedChannelIds))
+	for _, channelID := range info.AttemptedChannelIds {
+		useChannel = append(useChannel, fmt.Sprintf("%d", channelID))
+	}
+	c.Set("use_channel", useChannel)
+}
+
+func appendChannelGroupMonitorAttemptLogInfoFromContext(c *gin.Context, other map[string]interface{}, result string) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	info, ok := channelGroupMonitorAttemptLogInfoFromContext(c.Request.Context())
+	if ok {
+		appendChannelGroupMonitorAttemptLogInfo(other, info, result)
+	}
 }
 
 func applyChannelGroupMonitorTestContext(source context.Context, target *gin.Context) {
@@ -205,6 +311,11 @@ func runChannelGroupMonitorGroup(
 	}
 
 	probeRoutingContext := newChannelGroupMonitorRoutingContext(ctx, testUserId, group.GroupName)
+	probeRequestID := common.NewRequestId()
+	probeStartedAt := time.Now()
+	probeRoutingContext.Set(common.RequestIdKey, probeRequestID)
+	common.SetContextKey(probeRoutingContext, constant.ContextKeyRequestStartTime, probeStartedAt)
+	probeRoutingContext.Set(channelTestContextKey, true)
 	retryParam := &service.RetryParam{
 		Ctx: probeRoutingContext, TokenGroup: group.GroupName, ModelName: group.ProbeModel,
 		RequestPath: "/v1/responses", Retry: common.GetPointer(0),
@@ -213,8 +324,17 @@ func runChannelGroupMonitorGroup(
 	retryRouting := newRelayRetryRouting()
 	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
 	probeCtx := withChannelGroupMonitorTestContext(ctx, group.GroupName)
+	probeCtx = context.WithValue(probeCtx, common.RequestIdKey, probeRequestID)
+	probeCtx = context.WithValue(probeCtx, constant.ContextKeyRequestStartTime, probeStartedAt)
 	var pendingChannel *model.Channel
 	var finalOutcome *channelStatusProbeOutcome
+	attemptNumber := 0
+	attemptedChannelIds := make([]int, 0, common.RetryTimes+1)
+	finalRetryLogPending := false
+	finalRetryAttemptDuration := time.Duration(0)
+	var finalRetryChannelError *types.ChannelError
+	var finalRetryLogContext *gin.Context
+	var finalRetryError *types.NewAPIError
 	for retryParam.GetRetry() <= common.RetryTimes {
 		channel := pendingChannel
 		pendingChannel = nil
@@ -253,12 +373,24 @@ func runChannelGroupMonitorGroup(
 			break
 		}
 
+		attemptNumber++
+		attemptedChannelIds = append(attemptedChannelIds, channel.Id)
+		attemptCtx := withChannelGroupMonitorAttemptLogInfo(probeCtx, channelGroupMonitorAttemptLogInfo{
+			RunId:               claim.RunId,
+			Attempt:             attemptNumber,
+			RetryIndex:          retryParam.GetRetry(),
+			AttemptedChannelIds: attemptedChannelIds,
+		})
 		outcome := executeChannelStatusProbeModelWithEndpoint(
-			probeCtx, channel, testUserId, group.ProbeModel, string(constant.EndpointTypeOpenAIResponse),
+			attemptCtx, channel, testUserId, group.ProbeModel, string(constant.EndpointTypeOpenAIResponse),
 		)
 		execution.ChannelId = channel.Id
 		finalOutcome = &outcome
 		if outcome.Result == model.ChannelStatusProbeResultSuccess {
+			finalRetryLogPending = false
+			finalRetryChannelError = nil
+			finalRetryLogContext = nil
+			finalRetryError = nil
 			break
 		}
 
@@ -321,6 +453,43 @@ func runChannelGroupMonitorGroup(
 			!responseStarted && isFastFailureSameChannelRetryable(probeRoutingContext, probeError),
 			!responseStarted && ordinaryRetryable,
 		)
+		logContext := outcome.ProbeResult.context
+		if logContext == nil {
+			logContext = probeRoutingContext
+		}
+		if probeError != nil && logContext != nil {
+			if logContext.Request != nil {
+				logContext.Request = logContext.Request.WithContext(
+					withChannelGroupMonitorAttemptResult(logContext.Request.Context(), outcome.Result),
+				)
+			}
+			attemptDurationForLog := outcome.ProbeResult.attemptDuration
+			channelError := newRelayChannelError(logContext, channel)
+			processChannelErrorWithTiming(
+				logContext,
+				*channelError,
+				probeError,
+				retryDecision != relayRetryNone,
+				attemptNumber > 1,
+				attemptDurationForLog,
+				false,
+			)
+			finalRetryLogPending = retryDecision != relayRetryNone
+			if finalRetryLogPending {
+				if attemptDurationForLog != nil {
+					finalRetryAttemptDuration = *attemptDurationForLog
+				} else {
+					finalRetryAttemptDuration = 0
+				}
+				finalRetryChannelError = channelError
+				finalRetryLogContext = logContext
+				finalRetryError = probeError
+			} else {
+				finalRetryChannelError = nil
+				finalRetryLogContext = nil
+				finalRetryError = nil
+			}
+		}
 		if retryDecision == relayRetryNone {
 			break
 		}
@@ -334,6 +503,12 @@ func runChannelGroupMonitorGroup(
 			retryParam.IncreaseRetry()
 			retryRouting.exclude(channel.Id)
 		}
+	}
+	if finalRetryLogPending && finalRetryChannelError != nil && finalRetryLogContext != nil && finalRetryError != nil {
+		processChannelErrorWithTiming(
+			finalRetryLogContext, *finalRetryChannelError, finalRetryError, false, false,
+			&finalRetryAttemptDuration, true,
+		)
 	}
 	applyChannelGroupMonitorFinalOutcome(&execution, finalOutcome)
 	_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)

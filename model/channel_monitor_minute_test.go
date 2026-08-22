@@ -506,13 +506,15 @@ func TestAggregateChannelMonitorMinuteSaturatesRetryFailureDuration(t *testing.T
 	assert.Equal(t, int64(math.MaxInt64), metric.RetryFailureDurationTotalMs)
 }
 
-func TestAggregateChannelMonitorMinuteIgnoresMonitoringAndChannelTestConsumeLogs(t *testing.T) {
+func TestAggregateChannelMonitorMinuteIgnoresMonitoringProbeConsumeLogs(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	probeOther, err := common.Marshal(channelMonitorMinuteLogOther{SmartScheduleProbe: true})
 	require.NoError(t, err)
 	channelTestOther, err := common.Marshal(channelMonitorMinuteLogOther{ChannelTest: true})
 	require.NoError(t, err)
 	statusProbeOther, err := common.Marshal(channelMonitorMinuteLogOther{StatusProbe: true})
+	require.NoError(t, err)
+	groupProbeOther, err := common.Marshal(channelMonitorMinuteLogOther{GroupProbe: true})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&[]Log{
 		{
@@ -531,8 +533,13 @@ func TestAggregateChannelMonitorMinuteIgnoresMonitoringAndChannelTestConsumeLogs
 			UseTime: 2, Other: string(statusProbeOther),
 		},
 		{
+			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenName: "分组监控探测",
+			CreatedAt: 124, Type: LogTypeConsume, IsStream: true, CompletionTokens: 20,
+			UseTime: 2, Other: string(groupProbeOther),
+		},
+		{
 			ChannelId: 1, Group: "vip", ModelName: "model-a", TokenName: "业务令牌",
-			CreatedAt: 124, Type: LogTypeConsume,
+			CreatedAt: 125, Type: LogTypeConsume,
 		},
 	}).Error)
 

@@ -509,6 +509,84 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	processChannelErrorWithTiming(c, channelError, err, isRetryAttempt, false, nil, false)
 }
 
+func recordRelayChannelErrorLog(
+	c *gin.Context,
+	channelError types.ChannelError,
+	err *types.NewAPIError,
+	isRetryAttempt bool,
+	attemptDuration *time.Duration,
+	finalRetrySummary bool,
+) {
+	if c == nil || err == nil || !constant.ErrorLogEnabled || !types.IsRecordErrorLog(err) {
+		return
+	}
+	userId := c.GetInt("id")
+	tokenName := c.GetString("token_name")
+	modelName := c.GetString("original_model")
+	tokenId := c.GetInt("token_id")
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if usingGroup == "" {
+		usingGroup = c.GetString("group")
+	}
+	if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
+		usingGroup = autoGroup
+	}
+	channelId := channelError.ChannelId
+	other := make(map[string]interface{})
+	if c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	other["error_type"] = err.GetErrorType()
+	other["error_code"] = err.GetErrorCode()
+	other["status_code"] = err.StatusCode
+	other["channel_id"] = channelId
+	other["channel_name"] = channelError.ChannelName
+	other["channel_type"] = channelError.ChannelType
+	userVisibleMessage, hasUserVisibleMessage := service.ResolveUserErrorMessage(
+		service.GetConfiguredErrorMessageMapping(),
+		string(err.GetErrorCode()),
+		err.StatusCode,
+	)
+	if hasUserVisibleMessage {
+		other["user_visible_error_message"] = userVisibleMessage
+	}
+	isGroupProbe := c.Request != nil && isChannelGroupMonitorTest(c.Request.Context())
+	if isChannelTestContext(c) && !isGroupProbe {
+		other[model.ChannelMonitorChannelTestLogKey] = true
+	}
+	if isGroupProbe {
+		appendChannelGroupMonitorAttemptLogInfoFromContext(c, other, channelGroupMonitorAttemptResultFromContext(c.Request.Context()))
+	}
+	if attemptDuration != nil {
+		attemptDurationMs := attemptDuration.Milliseconds()
+		if attemptDurationMs < 0 {
+			attemptDurationMs = 0
+		}
+		other["channel_monitor_attempt_duration_ms"] = attemptDurationMs
+	}
+	if finalRetrySummary {
+		other["channel_monitor_final_retry_summary"] = true
+	}
+	adminInfo := make(map[string]interface{})
+	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+	isMultiKey := channelError.IsMultiKey
+	if isMultiKey {
+		adminInfo["is_multi_key"] = true
+		adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	}
+	service.AppendChannelAffinityAdminInfo(c, adminInfo)
+	if diagnostic, ok := common.GetContextKeyType[service.UpstreamErrorDiagnostic](c, service.UpstreamErrorDiagnosticContextKey); ok {
+		adminInfo["upstream_error"] = diagnostic
+	}
+	other["admin_info"] = adminInfo
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
+}
+
 func processChannelErrorWithTiming(
 	c *gin.Context,
 	channelError types.ChannelError,
@@ -548,70 +626,7 @@ func processChannelErrorWithTiming(
 		}
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
-		// 保存错误日志到mysql中
-		userId := c.GetInt("id")
-		tokenName := c.GetString("token_name")
-		modelName := c.GetString("original_model")
-		tokenId := c.GetInt("token_id")
-		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-		if usingGroup == "" {
-			usingGroup = c.GetString("group")
-		}
-		if autoGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); autoGroup != "" {
-			usingGroup = autoGroup
-		}
-		channelId := channelError.ChannelId
-		other := make(map[string]interface{})
-		if c.Request != nil && c.Request.URL != nil {
-			other["request_path"] = c.Request.URL.Path
-		}
-		other["error_type"] = err.GetErrorType()
-		other["error_code"] = err.GetErrorCode()
-		other["status_code"] = err.StatusCode
-		other["channel_id"] = channelId
-		other["channel_name"] = channelError.ChannelName
-		other["channel_type"] = channelError.ChannelType
-		userVisibleMessage, hasUserVisibleMessage := service.ResolveUserErrorMessage(
-			service.GetConfiguredErrorMessageMapping(),
-			string(err.GetErrorCode()),
-			err.StatusCode,
-		)
-		if hasUserVisibleMessage {
-			other["user_visible_error_message"] = userVisibleMessage
-		}
-		if isChannelTestContext(c) {
-			other[model.ChannelMonitorChannelTestLogKey] = true
-		}
-		if attemptDuration != nil {
-			attemptDurationMs := attemptDuration.Milliseconds()
-			if attemptDurationMs < 0 {
-				attemptDurationMs = 0
-			}
-			other["channel_monitor_attempt_duration_ms"] = attemptDurationMs
-		}
-		if finalRetrySummary {
-			other["channel_monitor_final_retry_summary"] = true
-		}
-		adminInfo := make(map[string]interface{})
-		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-		isMultiKey := channelError.IsMultiKey
-		if isMultiKey {
-			adminInfo["is_multi_key"] = true
-			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
-		}
-		service.AppendChannelAffinityAdminInfo(c, adminInfo)
-		if diagnostic, ok := common.GetContextKeyType[service.UpstreamErrorDiagnostic](c, service.UpstreamErrorDiagnosticContextKey); ok {
-			adminInfo["upstream_error"] = diagnostic
-		}
-		other["admin_info"] = adminInfo
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), usingGroup, other, isRetryAttempt)
-	}
+	recordRelayChannelErrorLog(c, channelError, err, isRetryAttempt, attemptDuration, finalRetrySummary)
 }
 
 func RelayMidjourney(c *gin.Context) {

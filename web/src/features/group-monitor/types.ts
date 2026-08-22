@@ -81,6 +81,7 @@ export type ChannelGroupMonitorItem = {
   group: string
   initial: string
   status: ChannelGroupMonitorStatus
+  probe_model?: string
   latest_first_token_ms: number | null
   success_rate: number | null
   success_count: number
@@ -94,6 +95,7 @@ export type PricingGroupMonitorItem = Pick<
   | 'group'
   | 'initial'
   | 'status'
+  | 'probe_model'
   | 'latest_first_token_ms'
   | 'success_rate'
   | 'last_finished_at'

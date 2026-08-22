@@ -25,6 +25,24 @@ func TestChannelGroupMonitorProbeContextUsesConfiguredGroup(t *testing.T) {
 	assert.Equal(t, "vip", common.GetContextKeyString(target, constant.ContextKeyUsingGroup))
 }
 
+func TestChannelGroupMonitorAttemptLogInfoCapturesRetryChain(t *testing.T) {
+	other := make(map[string]interface{})
+	appendChannelGroupMonitorAttemptLogInfo(other, channelGroupMonitorAttemptLogInfo{
+		RunId: "group-run-1", Attempt: 2, RetryIndex: 1,
+		AttemptedChannelIds: []int{11, 12},
+	}, model.ChannelStatusProbeResultUpstreamFailure)
+
+	assert.Equal(t, true, other[model.ChannelMonitorGroupProbeLogKey])
+	assert.Equal(t, "group-run-1", other["channel_monitor_probe_run_id"])
+	assert.Equal(t, 2, other["channel_monitor_probe_attempt"])
+	assert.Equal(t, 1, other["channel_monitor_probe_retry_index"])
+	assert.Equal(t, []int{11, 12}, other["channel_monitor_probe_attempted_channels"])
+	assert.Equal(t, model.ChannelStatusProbeResultUpstreamFailure, other["channel_monitor_probe_result"])
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	assert.NotContains(t, adminInfo, "use_channel")
+}
+
 func TestApplyChannelGroupMonitorFinalOutcomePreservesExplicitLocalFailure(t *testing.T) {
 	execution := model.ChannelGroupMonitorExecution{
 		Result:       model.ChannelGroupMonitorResultLocalFailure,
@@ -277,9 +295,10 @@ func TestGetPricingGroupMonitorOnlyReturnsVisiblePublicFields(t *testing.T) {
 	require.Len(t, payload.Data.Items, 1)
 	item := payload.Data.Items[0]
 	assert.Equal(t, "private", item["group"])
+	assert.Equal(t, "gpt-4.1", item["probe_model"])
 	assert.InDelta(t, 100, item["success_rate"], 0.001)
 	for _, sensitiveField := range []string{
-		"probe_model", "config_valid", "latest_result", "last_success_at", "last_failure_at",
+		"config_valid", "latest_result", "last_success_at", "last_failure_at",
 		"consecutive_success", "consecutive_failure", "channel_id", "settled_cost_nano_cny", "error_message",
 	} {
 		assert.NotContains(t, item, sensitiveField)

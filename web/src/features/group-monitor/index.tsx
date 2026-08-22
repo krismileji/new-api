@@ -332,6 +332,15 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                 </dd>
               </div>
               <div className='col-span-2 min-w-0'>
+                <dt className='text-muted-foreground text-xs'>探测模型</dt>
+                <dd
+                  className='mt-1 truncate font-mono text-xs tabular-nums'
+                  title={item.probe_model || undefined}
+                >
+                  {item.probe_model || '--'}
+                </dd>
+              </div>
+              <div className='col-span-2 min-w-0'>
                 <dt className='text-muted-foreground text-xs'>更新时间</dt>
                 <dd
                   className='mt-1 truncate font-mono text-xs tabular-nums'
