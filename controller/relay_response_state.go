@@ -56,8 +56,9 @@ func relayUserVisibleErrorMessage(c *gin.Context, apiErr *types.NewAPIError) (st
 	if c == nil || apiErr == nil {
 		return "", false
 	}
-	return service.ResolveUserErrorMessage(
-		service.GetConfiguredErrorMessageMapping(),
+	return resolveRelayUserVisibleErrorMessage(
+		c,
+		apiErr.Error(),
 		string(apiErr.GetErrorCode()),
 		apiErr.StatusCode,
 	)
@@ -102,7 +103,7 @@ func writeRelayErrorResponse(c *gin.Context, ws *websocket.Conn, relayFormat typ
 	case types.RelayFormatOpenAIRealtime:
 		// A realtime WebSocket is already established before relay errors reach
 		// this path, so it is outside the pre-response replacement boundary.
-		helper.WssError(c, ws, apiErr.ToOpenAIError())
+		helper.WssError(c, ws, relayOpenAIErrorForUser(c, apiErr))
 	case types.RelayFormatClaude:
 		c.JSON(apiErr.StatusCode, gin.H{
 			"type":  "error",

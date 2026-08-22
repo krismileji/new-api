@@ -84,8 +84,8 @@ import {
   updateChannelMonitorSmartScheduleChannelConfig,
   updateMonitoredChannelStatus,
 } from './api'
-import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
+import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
@@ -135,13 +135,20 @@ import {
   DEFAULT_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
   DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED,
   DEFAULT_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_GROUP_MONITOR_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
+  DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -268,10 +275,23 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   execution_detail_retention_days:
     DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS,
   task_retention_days: DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS,
+  ratio_monitor_task_retention_days:
+    DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS,
+  smart_schedule_task_retention_days:
+    DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS,
+  smart_schedule_probe_task_retention_days:
+    DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS,
+  cleanup_task_retention_days:
+    DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS,
+  model_detection_task_retention_days:
+    DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
+  task_keep_latest_count: DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
   ratio_history_retention_days:
     DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS,
   status_probe_history_retention_days:
     DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
+  group_monitor_retention_days:
+    DEFAULT_CHANNEL_MONITOR_GROUP_MONITOR_RETENTION_DAYS,
   model_detection_retention_days:
     DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   cleanup_enabled: DEFAULT_CHANNEL_MONITOR_CLEANUP_ENABLED,
@@ -284,6 +304,7 @@ const DEFAULT_CHANNEL_MONITOR_SETTINGS: ChannelMonitorSettings = {
   notification_email: '',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   error_message_mapping: '',
+  error_message_keywords: '',
   probe_response_enabled: false,
   probe_response_match_input: DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
   probe_response_text: DEFAULT_PROBE_RESPONSE_TEXT,
@@ -878,8 +899,7 @@ export function ChannelMonitor() {
     view === 'smart-schedule' ? smartScheduleResult : undefined,
   ])
   const todayProbeCost = costOverview?.today_probe_cost_cny ?? 0
-  const todayGroupProbeCost =
-    costOverview?.today_group_probe_cost_cny ?? 0
+  const todayGroupProbeCost = costOverview?.today_group_probe_cost_cny ?? 0
   const todayModelDetectionCost =
     costOverview?.today_model_detection_cost_cny ?? 0
   const todayBusinessCost = costOverview
@@ -1649,7 +1669,7 @@ export function ChannelMonitor() {
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog
-          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
+          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_monitor_task_retention_days}:${settings.smart_schedule_task_retention_days}:${settings.smart_schedule_probe_task_retention_days}:${settings.cleanup_task_retention_days}:${settings.model_detection_task_retention_days}:${settings.task_keep_latest_count}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.group_monitor_retention_days}:${settings.model_detection_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.error_message_keywords}:${settings.probe_response_enabled}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
           settings={settings}
           open
           onOpenChange={setSettingsOpen}

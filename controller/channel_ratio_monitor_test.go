@@ -568,6 +568,35 @@ func TestUpdateChannelMonitorErrorMessageMappingValidatesAndPersists(t *testing.
 	assert.Equal(t, mapping, option.Value)
 }
 
+func TestUpdateChannelMonitorErrorMessageKeywordsValidatesAndPersists(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	tooMany := strings.TrimSuffix(strings.Repeat("keyword\n", service.MaxErrorMessageKeywords+1), "\n")
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_keywords": tooMany,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	keywords := " secret upstream detail \nprovider"
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_keywords": keywords,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, strings.TrimSpace(keywords), response.Data.ErrorMessageKeywords)
+	assert.Equal(t, strings.TrimSpace(keywords), service.GetConfiguredErrorMessageKeywords())
+
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorErrorMessageKeywordsOption).First(&option).Error)
+	assert.Equal(t, strings.TrimSpace(keywords), option.Value)
+}
+
 func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmpty(t *testing.T) {
 	for _, raw := range []string{"", "null", "{\"invalid\":true}"} {
 		t.Run(raw, func(t *testing.T) {

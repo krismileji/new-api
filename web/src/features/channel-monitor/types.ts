@@ -610,8 +610,15 @@ export type ChannelMonitorSettings = {
   api_key_metric_retention_days: number
   execution_detail_retention_days: number
   task_retention_days: number
+  ratio_monitor_task_retention_days: number
+  smart_schedule_task_retention_days: number
+  smart_schedule_probe_task_retention_days: number
+  cleanup_task_retention_days: number
+  model_detection_task_retention_days: number
+  task_keep_latest_count: number
   ratio_history_retention_days: number
   status_probe_history_retention_days: number
+  group_monitor_retention_days: number
   model_detection_retention_days: number
   cleanup_enabled: boolean
   cleanup_batch_size: number
@@ -622,6 +629,7 @@ export type ChannelMonitorSettings = {
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
   error_message_mapping: string
+  error_message_keywords: string
   probe_response_enabled: boolean
   probe_response_match_input?: string
   probe_response_text?: string

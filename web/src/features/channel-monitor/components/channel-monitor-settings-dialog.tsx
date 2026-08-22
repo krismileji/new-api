@@ -66,6 +66,7 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 
 import { updateChannelMonitorSettings } from '../api'
 import {
@@ -99,6 +100,8 @@ import {
   MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
   MAX_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
   MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
+  MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
   MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -109,6 +112,8 @@ import {
   MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
   MIN_CHANNEL_MONITOR_CLEANUP_CONTINUATION_SECONDS,
   MIN_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES,
+  MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS,
+  MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
   MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -163,8 +168,14 @@ type ChannelMonitorRetentionFieldName =
   | 'apiKeyMetricRetentionDays'
   | 'executionDetailRetentionDays'
   | 'taskRetentionDays'
+  | 'ratioMonitorTaskRetentionDays'
+  | 'smartScheduleTaskRetentionDays'
+  | 'smartScheduleProbeTaskRetentionDays'
+  | 'cleanupTaskRetentionDays'
+  | 'modelDetectionTaskRetentionDays'
   | 'ratioHistoryRetentionDays'
   | 'statusProbeHistoryRetentionDays'
+  | 'groupMonitorRetentionDays'
   | 'modelDetectionRetentionDays'
 
 type ChannelMonitorCleanupNumberFieldName =
@@ -172,6 +183,7 @@ type ChannelMonitorCleanupNumberFieldName =
   | 'cleanupBudgetSeconds'
   | 'cleanupContinuationSeconds'
   | 'cleanupIntervalMinutes'
+  | 'taskKeepLatestCount'
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -309,8 +321,49 @@ export function ChannelMonitorRetentionFields(props: {
         <ChannelMonitorRetentionDayField
           form={props.form}
           name='taskRetentionDays'
-          label='监控任务保留天数'
-          description='不能短于调度执行明细；仅清理已结束任务，各类始终保留最近 100 条'
+          label='未分类监控任务保留天数（兼容）'
+          description='仅用于兼容旧版本选项；已列出的任务类型使用各自独立保留期'
+        />
+        <ChannelMonitorCleanupNumberField
+          form={props.form}
+          name='taskKeepLatestCount'
+          label='每类监控任务最少保留数量'
+          description='各类已结束任务至少保留的最新记录数量'
+          min={MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT}
+          max={MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT}
+          unit='条'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='ratioMonitorTaskRetentionDays'
+          label='渠道比例监控任务保留天数'
+          description='保留渠道比例监控系统任务记录'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='smartScheduleTaskRetentionDays'
+          label='智能调度任务保留天数'
+          description='保留智能调度系统任务记录'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='smartScheduleProbeTaskRetentionDays'
+          label='智能调度探测任务保留天数'
+          description='保留智能调度探测系统任务记录'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='cleanupTaskRetentionDays'
+          label='清理任务保留天数'
+          description='保留渠道监控清理系统任务记录'
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='modelDetectionTaskRetentionDays'
+          label='模型检测任务保留天数'
+          description='保留模型检测系统任务记录'
+          min={MIN_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS}
+          max={MAX_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS}
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
@@ -322,8 +375,14 @@ export function ChannelMonitorRetentionFields(props: {
           form={props.form}
           name='statusProbeHistoryRetentionDays'
           label='状态探测记录保留天数'
-          description='仅清理每次模型执行明细，渠道配置和最新状态始终保留'
+          description='保留状态探测执行明细'
           max={MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='groupMonitorRetentionDays'
+          label='分组监控记录保留天数'
+          description='保留分组监控执行记录'
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
@@ -540,9 +599,20 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       executionDetailRetentionDays:
         props.settings.execution_detail_retention_days,
       taskRetentionDays: props.settings.task_retention_days,
+      ratioMonitorTaskRetentionDays:
+        props.settings.ratio_monitor_task_retention_days,
+      smartScheduleTaskRetentionDays:
+        props.settings.smart_schedule_task_retention_days,
+      smartScheduleProbeTaskRetentionDays:
+        props.settings.smart_schedule_probe_task_retention_days,
+      cleanupTaskRetentionDays: props.settings.cleanup_task_retention_days,
+      modelDetectionTaskRetentionDays:
+        props.settings.model_detection_task_retention_days,
+      taskKeepLatestCount: props.settings.task_keep_latest_count,
       ratioHistoryRetentionDays: props.settings.ratio_history_retention_days,
       statusProbeHistoryRetentionDays:
         props.settings.status_probe_history_retention_days,
+      groupMonitorRetentionDays: props.settings.group_monitor_retention_days,
       modelDetectionRetentionDays:
         props.settings.model_detection_retention_days,
       cleanupEnabled: props.settings.cleanup_enabled,
@@ -554,6 +624,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
       errorMessageMapping: props.settings.error_message_mapping ?? '',
+      errorMessageKeywords: props.settings.error_message_keywords ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       probeResponseMatchInput:
         props.settings.probe_response_match_input ??
@@ -934,6 +1005,32 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             insufficient_quota: '额度不足，请联系管理员',
                           }}
                           valueType='string'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='errorMessageKeywords'
+                  render={({ field }) => (
+                    <FormItem className='space-y-3'>
+                      <div className='space-y-1'>
+                        <FormLabel>错误屏蔽关键字</FormLabel>
+                        <FormDescription>
+                          全局应用于所有渠道；每行填写一个关键字，最多 32
+                          个、每个不超过 128
+                          个字符。匹配后只从用户可见错误中删除，管理员日志仍保留完整原始错误。匹配不区分大小写。
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Textarea
+                          rows={4}
+                          placeholder='每行填写一个关键字'
+                          {...field}
+                          disabled={mutation.isPending}
                         />
                       </FormControl>
                       <FormMessage />

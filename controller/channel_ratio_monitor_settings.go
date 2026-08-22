@@ -45,6 +45,7 @@ const (
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorErrorMessageMappingOption                    = service.ErrorMessageMappingOptionKey
+	channelMonitorErrorMessageKeywordsOption                   = service.ErrorMessageKeywordsOptionKey
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
 	channelMonitorProbeResponseMatchInputOption                = channelprobe.MatchInputOptionKey
 	channelMonitorProbeResponseTextOption                      = channelprobe.ResponseTextOptionKey
@@ -172,6 +173,7 @@ type channelMonitorSettings struct {
 	NotificationEmail                     string                     `json:"notification_email"`
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   string                     `json:"error_message_mapping"`
+	ErrorMessageKeywords                  string                     `json:"error_message_keywords"`
 	ProbeResponseEnabled                  bool                       `json:"probe_response_enabled"`
 	ProbeResponseMatchInput               string                     `json:"probe_response_match_input"`
 	ProbeResponseText                     string                     `json:"probe_response_text"`
@@ -220,6 +222,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	NotificationEmail                     *string                     `json:"notification_email"`
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   *string                     `json:"error_message_mapping"`
+	ErrorMessageKeywords                  *string                     `json:"error_message_keywords"`
 	ProbeResponseEnabled                  *bool                       `json:"probe_response_enabled"`
 	ProbeResponseMatchInput               *string                     `json:"probe_response_match_input"`
 	ProbeResponseText                     *string                     `json:"probe_response_text"`
@@ -283,6 +286,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorNotificationEmailOption,
 		channelMonitorEmailNotificationTypesOption,
 		channelMonitorErrorMessageMappingOption,
+		channelMonitorErrorMessageKeywordsOption,
 		channelMonitorProbeResponseOption,
 		channelMonitorProbeResponseMatchInputOption,
 		channelMonitorProbeResponseTextOption,
@@ -340,6 +344,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawNotificationEmail := options[channelMonitorNotificationEmailOption]
 	rawEmailNotificationTypes := options[channelMonitorEmailNotificationTypesOption]
 	rawErrorMessageMapping := options[channelMonitorErrorMessageMappingOption]
+	rawErrorMessageKeywords := options[channelMonitorErrorMessageKeywordsOption]
 	rawRelayResponseHeaderTimeout := options[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := options[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleGroupPolicies := options[channelMonitorSmartScheduleGroupPoliciesOption]
@@ -505,6 +510,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		NotificationEmail:                     notificationEmail,
 		EmailNotificationTypes:                emailNotificationTypes,
 		ErrorMessageMapping:                   rawErrorMessageMapping,
+		ErrorMessageKeywords:                  rawErrorMessageKeywords,
 		ProbeResponseEnabled:                  probeResponseConfig.Enabled,
 		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
 		ProbeResponseText:                     probeResponseConfig.ResponseText,
@@ -811,6 +817,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.NotificationEmail == nil &&
 		request.EmailNotificationTypes == nil &&
 		request.ErrorMessageMapping == nil &&
+		request.ErrorMessageKeywords == nil &&
 		request.ProbeResponseEnabled == nil &&
 		request.ProbeResponseMatchInput == nil &&
 		request.ProbeResponseText == nil &&
@@ -868,6 +875,15 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.ErrorMessageMapping = errorMessageMapping
 		values[channelMonitorErrorMessageMappingOption] = errorMessageMapping
+	}
+	if request.ErrorMessageKeywords != nil {
+		errorMessageKeywords := strings.TrimSpace(*request.ErrorMessageKeywords)
+		if err := service.ValidateErrorMessageKeywords(errorMessageKeywords); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.ErrorMessageKeywords = errorMessageKeywords
+		values[channelMonitorErrorMessageKeywordsOption] = errorMessageKeywords
 	}
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -1429,6 +1445,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"notification_email_configured":              settings.NotificationEmail != "",
 		"email_notification_types":                   settings.EmailNotificationTypes,
 		"error_message_mapping_configured":           strings.TrimSpace(settings.ErrorMessageMapping) != "",
+		"error_message_keywords_configured":          strings.TrimSpace(settings.ErrorMessageKeywords) != "",
 		"probe_response_enabled":                     settings.ProbeResponseEnabled,
 		"probe_response_match_input":                 settings.ProbeResponseMatchInput,
 		"probe_response_text":                        settings.ProbeResponseText,

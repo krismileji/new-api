@@ -90,8 +90,15 @@ const settings = {
   api_key_metric_retention_days: 7,
   execution_detail_retention_days: 3,
   task_retention_days: 90,
+  ratio_monitor_task_retention_days: 90,
+  smart_schedule_task_retention_days: 90,
+  smart_schedule_probe_task_retention_days: 90,
+  cleanup_task_retention_days: 90,
+  model_detection_task_retention_days: 90,
+  task_keep_latest_count: 100,
   ratio_history_retention_days: 365,
   status_probe_history_retention_days: 7,
+  group_monitor_retention_days: 7,
   model_detection_retention_days: 30,
   cleanup_enabled: true,
   cleanup_batch_size: 1000,
@@ -101,6 +108,7 @@ const settings = {
   email_notification_enabled: true,
   notification_email: 'alerts@example.com',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
+  error_message_keywords: '',
   error_message_mapping: '',
   probe_response_enabled: false,
   probe_response_match_input: 'hi',
@@ -306,9 +314,16 @@ const retentionSettingsLoaded =
     ['apiKeyMetricRetentionDays', '7'],
     ['executionDetailRetentionDays', '3'],
     ['taskRetentionDays', '90'],
+    ['ratioMonitorTaskRetentionDays', '90'],
+    ['smartScheduleTaskRetentionDays', '90'],
+    ['smartScheduleProbeTaskRetentionDays', '90'],
+    ['cleanupTaskRetentionDays', '90'],
+    ['modelDetectionTaskRetentionDays', '90'],
     ['ratioHistoryRetentionDays', '365'],
     ['statusProbeHistoryRetentionDays', '7'],
+    ['groupMonitorRetentionDays', '7'],
     ['modelDetectionRetentionDays', '30'],
+    ['taskKeepLatestCount', '100'],
     ['cleanupBatchSize', '1000'],
     ['cleanupBudgetSeconds', '10'],
     ['cleanupContinuationSeconds', '60'],
@@ -323,7 +338,7 @@ const retentionSettingsLoaded =
     ?.querySelector('[aria-label="启用自动清理"]')
     ?.getAttribute('aria-checked') === 'true'
 const retentionFieldsOnlyInRetentionTab =
-  monitorRetentionFieldCount === 0 && retentionRetentionFieldCount === 8
+  monitorRetentionFieldCount === 0 && retentionRetentionFieldCount === 14
 await unmountSettingsSurface(generalSurface)
 
 const scheduleSurface = await renderSettingsSurface('schedule')

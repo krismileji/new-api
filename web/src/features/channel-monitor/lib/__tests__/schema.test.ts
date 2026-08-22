@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import { createChannelMonitorCustomFormConfig } from '../custom-upstream'
@@ -343,6 +344,7 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
+      errorMessageKeywords: '',
       probeResponseEnabled: true,
       probeResponseMatchInput: ' health check ',
       probeResponseText: ' healthy ',
@@ -460,6 +462,7 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       errorMessageMapping: '',
+      errorMessageKeywords: '',
       probeResponseEnabled: false,
       probeResponseMatchInput: 'hi',
       probeResponseText: 'Hi. What are you working on?',
@@ -489,6 +492,12 @@ describe('channel monitor settings schema', () => {
       { probeResponseOutputTokens: MAX_PROBE_RESPONSE_TOKEN_COUNT + 1 },
       { errorMessageMapping: '{"429":429}' },
       { errorMessageMapping: '[]' },
+      {
+        errorMessageKeywords: Array.from({ length: 33 }, () => 'keyword').join(
+          '\n'
+        ),
+      },
+      { errorMessageKeywords: 'x'.repeat(129) },
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, ...patch }).success,

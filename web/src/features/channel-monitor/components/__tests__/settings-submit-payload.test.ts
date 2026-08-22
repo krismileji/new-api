@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
@@ -33,6 +34,12 @@ type StorageSettingKeys =
   | 'api_key_metric_retention_days'
   | 'execution_detail_retention_days'
   | 'task_retention_days'
+  | 'ratio_monitor_task_retention_days'
+  | 'smart_schedule_task_retention_days'
+  | 'smart_schedule_probe_task_retention_days'
+  | 'cleanup_task_retention_days'
+  | 'model_detection_task_retention_days'
+  | 'task_keep_latest_count'
   | 'ratio_history_retention_days'
   | 'status_probe_history_retention_days'
   | 'model_detection_retention_days'
@@ -67,8 +74,15 @@ const formValues = {
   apiKeyMetricRetentionDays: 7,
   executionDetailRetentionDays: 14,
   taskRetentionDays: 90,
+  ratioMonitorTaskRetentionDays: 90,
+  smartScheduleTaskRetentionDays: 90,
+  smartScheduleProbeTaskRetentionDays: 90,
+  cleanupTaskRetentionDays: 90,
+  modelDetectionTaskRetentionDays: 90,
+  taskKeepLatestCount: 100,
   ratioHistoryRetentionDays: 365,
   statusProbeHistoryRetentionDays: 7,
+  groupMonitorRetentionDays: 7,
   modelDetectionRetentionDays: 30,
   cleanupEnabled: false,
   cleanupBatchSize: 2500,
@@ -79,6 +93,7 @@ const formValues = {
   notificationEmail: 'ops@example.com',
   emailNotificationTypes: ['balance_warning', 'task_failed'],
   errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
+  errorMessageKeywords: 'secret\nupstream',
   probeResponseEnabled: true,
   probeResponseMatchInput: 'health check',
   probeResponseText: 'healthy',
@@ -368,12 +383,16 @@ describe('channel monitor settings submit payload', () => {
       'cleanup_continuation_seconds',
       'cleanup_enabled',
       'cleanup_interval_minutes',
+      'cleanup_task_retention_days',
       'cost_retention_days',
       'email_notification_enabled',
       'email_notification_types',
+      'error_message_keywords',
       'error_message_mapping',
       'execution_detail_retention_days',
+      'group_monitor_retention_days',
       'model_detection_retention_days',
+      'model_detection_task_retention_days',
       'notification_email',
       'probe_response_cache_write_tokens',
       'probe_response_cached_tokens',
@@ -385,8 +404,12 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_output_tokens',
       'probe_response_text',
       'ratio_history_retention_days',
+      'ratio_monitor_task_retention_days',
       'route_metric_retention_days',
+      'smart_schedule_probe_task_retention_days',
+      'smart_schedule_task_retention_days',
       'status_probe_history_retention_days',
+      'task_keep_latest_count',
       'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
@@ -395,8 +418,15 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(payload.route_metric_retention_days, 30)
     assert.equal(payload.api_key_metric_retention_days, 7)
     assert.equal(payload.task_retention_days, 90)
+    assert.equal(payload.ratio_monitor_task_retention_days, 90)
+    assert.equal(payload.smart_schedule_task_retention_days, 90)
+    assert.equal(payload.smart_schedule_probe_task_retention_days, 90)
+    assert.equal(payload.cleanup_task_retention_days, 90)
+    assert.equal(payload.model_detection_task_retention_days, 90)
+    assert.equal(payload.task_keep_latest_count, 100)
     assert.equal(payload.ratio_history_retention_days, 365)
     assert.equal(payload.status_probe_history_retention_days, 7)
+    assert.equal(payload.group_monitor_retention_days, 7)
     assert.equal(payload.model_detection_retention_days, 30)
     assert.equal(payload.cleanup_enabled, false)
     assert.equal(payload.cleanup_batch_size, 2500)
@@ -411,6 +441,7 @@ describe('channel monitor settings submit payload', () => {
       payload.error_message_mapping,
       '{"429":"请求过于频繁，请稍后再试"}'
     )
+    assert.equal(payload.error_message_keywords, 'secret\nupstream')
     assert.equal(payload.probe_response_match_input, 'health check')
     assert.equal(payload.probe_response_text, 'healthy')
     assert.equal(payload.probe_response_min_delay_ms, 125)

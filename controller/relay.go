@@ -542,8 +542,9 @@ func recordRelayChannelErrorLog(
 	other["channel_id"] = channelId
 	other["channel_name"] = channelError.ChannelName
 	other["channel_type"] = channelError.ChannelType
-	userVisibleMessage, hasUserVisibleMessage := service.ResolveUserErrorMessage(
-		service.GetConfiguredErrorMessageMapping(),
+	userVisibleMessage, hasUserVisibleMessage := resolveRelayUserVisibleErrorMessage(
+		c,
+		err.Error(),
 		string(err.GetErrorCode()),
 		err.StatusCode,
 	)
@@ -664,8 +665,9 @@ func RelayMidjourney(c *gin.Context) {
 		}
 		originalDescription := fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)
 		description := originalDescription
-		if message, ok := service.ResolveUserErrorMessage(
-			service.GetConfiguredErrorMessageMapping(),
+		if message, ok := resolveRelayUserVisibleErrorMessage(
+			c,
+			originalDescription,
 			fmt.Sprintf("%d", mjErr.Code),
 			statusCode,
 		); ok {
@@ -981,8 +983,9 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
-	if message, ok := service.ResolveUserErrorMessage(
-		service.GetConfiguredErrorMessageMapping(),
+	if message, ok := resolveRelayUserVisibleErrorMessage(
+		c,
+		taskErr.Message,
 		taskErr.Code,
 		taskErr.StatusCode,
 	); ok {

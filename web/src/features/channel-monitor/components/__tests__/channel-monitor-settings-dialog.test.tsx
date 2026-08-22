@@ -318,8 +318,11 @@ describe('channel monitor settings dialog', () => {
       markup,
       /<input(?=[^>]*name="modelDetectionRetentionDays")(?=[^>]*min="7")(?=[^>]*max="180")(?=[^>]*value="30")[^>]*>/
     )
-    assert.ok(markup.includes('不能短于调度执行明细'))
-    assert.ok(markup.includes('各类始终保留最近 100 条'))
+    assert.ok(markup.includes('仅用于兼容旧版本选项'))
+    assert.match(markup, /name="taskKeepLatestCount"/)
+    assert.ok(markup.includes('各类已结束任务至少保留的最新记录数量'))
+    assert.ok(markup.includes('分组监控记录保留天数'))
+    assert.ok(markup.includes('模型检测任务保留天数'))
     assert.ok(markup.includes('按配置周期分批清理到期数据'))
     assert.ok(markup.includes('删除后不可恢复'))
     assert.ok(markup.includes('启用自动清理'))

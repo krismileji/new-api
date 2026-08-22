@@ -57,9 +57,18 @@ export const DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS = 30
 export const DEFAULT_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS = 7
 export const DEFAULT_CHANNEL_MONITOR_EXECUTION_DETAIL_RETENTION_DAYS = 3
 export const DEFAULT_CHANNEL_MONITOR_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS = 90
+export const DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS = 90
+export const MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 1
+export const MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 10_000
+export const DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT = 100
 export const DEFAULT_CHANNEL_MONITOR_RATIO_HISTORY_RETENTION_DAYS = 365
 export const MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 90
 export const DEFAULT_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS = 7
+export const DEFAULT_CHANNEL_MONITOR_GROUP_MONITOR_RETENTION_DAYS = 7
 export const MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 7
 export const MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 180
 export const DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS = 30
@@ -80,6 +89,8 @@ export const MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS = 600
 export const MAX_ERROR_MESSAGE_MAPPING_ENTRIES = 100
 export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
 export const MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH = 4096
+export const MAX_ERROR_MESSAGE_KEYWORDS = 32
+export const MAX_ERROR_MESSAGE_KEYWORD_LENGTH = 128
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
 export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
 export const DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS = 500
@@ -820,6 +831,32 @@ const errorMessageMappingSchema = z
     }
   })
 
+const errorMessageKeywordsSchema = z
+  .string()
+  .default('')
+  .superRefine((value, context) => {
+    const keywords = value
+      .split(/\r?\n/)
+      .map((keyword) => keyword.trim())
+      .filter(Boolean)
+    if (keywords.length > MAX_ERROR_MESSAGE_KEYWORDS) {
+      context.addIssue({
+        code: 'custom',
+        message: `错误屏蔽关键字最多支持 ${MAX_ERROR_MESSAGE_KEYWORDS} 个`,
+      })
+      return
+    }
+    const oversized = keywords.find(
+      (keyword) => keyword.length > MAX_ERROR_MESSAGE_KEYWORD_LENGTH
+    )
+    if (oversized) {
+      context.addIssue({
+        code: 'custom',
+        message: `错误屏蔽关键字长度不能超过 ${MAX_ERROR_MESSAGE_KEYWORD_LENGTH} 个字符`,
+      })
+    }
+  })
+
 export function createChannelMonitorSettingsSchema() {
   return z
     .object({
@@ -918,6 +955,50 @@ export function createChannelMonitorSettingsSchema() {
           MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
           '监控任务保留天数不能超过 3650 天'
         ),
+      ratioMonitorTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_RATIO_MONITOR_TASK_RETENTION_DAYS),
+      smartScheduleTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_TASK_RETENTION_DAYS),
+      smartScheduleProbeTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(
+          DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_PROBE_TASK_RETENTION_DAYS
+        ),
+      cleanupTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_CLEANUP_TASK_RETENTION_DAYS),
+      modelDetectionTaskRetentionDays: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .default(DEFAULT_CHANNEL_MONITOR_MODEL_DETECTION_TASK_RETENTION_DAYS),
+      taskKeepLatestCount: z.coerce
+        .number()
+        .int('每类监控任务最少保留数量必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
+          '每类监控任务最少保留数量不能小于 1 条'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT,
+          '每类监控任务最少保留数量不能超过 10000 条'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_TASK_KEEP_LATEST_COUNT),
       ratioHistoryRetentionDays: z.coerce
         .number()
         .int('倍率历史保留天数必须是整数')
@@ -940,6 +1021,18 @@ export function createChannelMonitorSettingsSchema() {
           MAX_CHANNEL_MONITOR_STATUS_PROBE_HISTORY_RETENTION_DAYS,
           '状态探测执行记录保留天数不能超过 90 天'
         ),
+      groupMonitorRetentionDays: z.coerce
+        .number()
+        .int('分组监控记录保留天数必须是整数')
+        .min(
+          MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '分组监控记录保留天数不能小于 1 天'
+        )
+        .max(
+          MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+          '分组监控记录保留天数不能超过 3650 天'
+        )
+        .default(DEFAULT_CHANNEL_MONITOR_GROUP_MONITOR_RETENTION_DAYS),
       modelDetectionRetentionDays: z.coerce
         .number()
         .int('模型检测历史保留天数必须是整数')
@@ -1024,6 +1117,7 @@ export function createChannelMonitorSettingsSchema() {
           '请输入有效的通知邮箱'
         ),
       errorMessageMapping: errorMessageMappingSchema,
+      errorMessageKeywords: errorMessageKeywordsSchema,
       probeResponseEnabled: z.boolean(),
       probeResponseMatchInput: z
         .string()
