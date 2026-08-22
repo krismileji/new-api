@@ -1023,6 +1023,26 @@ func TestChannelDailyCostBatcherIsBoundedAndKeepsAggregatingExistingKeys(t *test
 	assert.Equal(t, int64(5), written[0].ProbeCostNanoCNY)
 }
 
+func TestGetChannelDailyCostPendingCountReadsInMemoryQueue(t *testing.T) {
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    4,
+		MaxBatchSize:  2,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, func(context.Context, []model.ChannelDailyCostDelta) error { return nil })
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), model.AddChannelDailyCostBatch)
+	})
+
+	assert.Zero(t, GetChannelDailyCostPendingCount())
+	require.True(t, enqueueChannelDailyCost(model.ChannelDailyCostDelta{
+		ChannelId: 1, OccurredAt: 100, CostNanoCNY: 10, SettledDelta: 1,
+	}))
+	assert.Equal(t, 1, GetChannelDailyCostPendingCount())
+}
+
 func TestChannelDailyCostFallsBackToSynchronousWriteWhenBufferIsFull(t *testing.T) {
 	var written []model.ChannelDailyCostDelta
 	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{

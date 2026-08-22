@@ -343,6 +343,17 @@ func (b *channelDailyCostBatcher) pendingCount() int {
 	return len(b.retryBatch) + len(b.pending)
 }
 
+// GetChannelDailyCostPendingCount returns the number of aggregated cost entries
+// waiting to be persisted on this process. It only reads the in-memory batcher
+// state and does not perform database or Redis I/O.
+func GetChannelDailyCostPendingCount() int {
+	channelDailyCostBatcherMu.RLock()
+	batcher := dailyCostBatcher
+	pending := batcher.pendingCount()
+	channelDailyCostBatcherMu.RUnlock()
+	return pending
+}
+
 func (b *channelDailyCostBatcher) stop() {
 	b.stopOnce.Do(func() {
 		b.mu.Lock()
@@ -408,9 +419,5 @@ func FlushChannelDailyCostEvents() error {
 }
 
 func pendingChannelDailyCostEventsForTest() int {
-	channelDailyCostBatcherMu.RLock()
-	batcher := dailyCostBatcher
-	pending := batcher.pendingCount()
-	channelDailyCostBatcherMu.RUnlock()
-	return pending
+	return GetChannelDailyCostPendingCount()
 }

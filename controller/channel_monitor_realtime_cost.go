@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 )
 
 type channelMonitorRealtimeChannelCost struct {
@@ -65,6 +66,7 @@ func applyChannelMonitorRealtimeCost(
 	overview.LastProcessedAt = metadata.LastProcessedAt
 	overview.RetryCount = metadata.RetryCount
 	overview.TakeoverCount = metadata.TakeoverCount
+	overview.CostQueuePendingCount = service.GetChannelDailyCostPendingCount()
 	overview.MarkerReleaseFailureCount = metadata.MarkerReleaseFailureCount
 	overview.MarkerReleaseFailureActive = metadata.MarkerReleaseFailureActive
 	overview.StreamTrimFailureCount = metadata.StreamTrimFailureCount

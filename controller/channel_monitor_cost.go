@@ -96,6 +96,7 @@ type channelMonitorCostOverview struct {
 	LastProcessedAt                int64                       `json:"last_processed_at"`
 	RetryCount                     int64                       `json:"retry_count"`
 	TakeoverCount                  int64                       `json:"takeover_count"`
+	CostQueuePendingCount          int                         `json:"cost_queue_pending_count"`
 	MarkerReleaseFailureCount      int64                       `json:"marker_release_failure_count"`
 	MarkerReleaseFailureActive     bool                        `json:"marker_release_failure_active"`
 	StreamTrimFailureCount         int64                       `json:"stream_trim_failure_count"`

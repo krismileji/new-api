@@ -304,6 +304,7 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	assert.Equal(t, int64(1), response.Data.Coverage.UnresolvedCount)
 	assert.Empty(t, response.Data.Channels)
 	assert.Empty(t, response.Data.APIKeys)
+	assert.Equal(t, service.GetChannelDailyCostPendingCount(), response.Data.CostQueuePendingCount)
 	assert.Zero(t, detailQueries.Load())
 }
 

@@ -34,6 +34,7 @@ export function ChannelMonitorRealtimeStatus(
 
   const pendingCount =
     props.metadata.pending_count ?? props.metadata.queue_depth
+  const costQueuePendingCount = props.metadata.cost_queue_pending_count
   const redisAvailable =
     props.metadata.redis_available ??
     props.metadata.redis_status !== 'unavailable'
@@ -85,6 +86,14 @@ export function ChannelMonitorRealtimeStatus(
       ) : null}
       {pendingCount > 0 ? (
         <Badge variant='warning'>Redis 待处理 {pendingCount}</Badge>
+      ) : null}
+      {costQueuePendingCount !== undefined ? (
+        <Badge
+          variant={costQueuePendingCount > 0 ? 'warning' : 'outline'}
+          title='当前节点成本待写队列，按聚合条目计数'
+        >
+          成本待写队列 {costQueuePendingCount}
+        </Badge>
       ) : null}
       {props.metadata.marker_release_failure_active ? (
         <Badge variant='destructive'>副作用标记释放故障</Badge>

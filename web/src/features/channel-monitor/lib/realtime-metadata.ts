@@ -52,6 +52,15 @@ export function mergeChannelMonitorRealtimeMetadata(
       )
     }
     if (
+      merged.cost_queue_pending_count !== undefined ||
+      snapshot.cost_queue_pending_count !== undefined
+    ) {
+      merged.cost_queue_pending_count = Math.max(
+        merged.cost_queue_pending_count ?? 0,
+        snapshot.cost_queue_pending_count ?? 0
+      )
+    }
+    if (
       merged.oldest_pending_at !== undefined ||
       snapshot.oldest_pending_at !== undefined
     ) {

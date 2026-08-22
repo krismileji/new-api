@@ -38,6 +38,7 @@ describe('channel monitor realtime status', () => {
           redis_available: true,
           redis_consumer_running: true,
           pending_count: 6,
+          cost_queue_pending_count: 3,
           oldest_pending_at: 1_752_777_800,
           consumer_lag_seconds: 45,
           last_published_at: 1_752_777_830,
@@ -59,6 +60,7 @@ describe('channel monitor realtime status', () => {
     assert.ok(markup.includes('Redis 正常'))
     assert.ok(markup.includes('消费者 运行中'))
     assert.ok(markup.includes('Redis 待处理 6'))
+    assert.ok(markup.includes('成本待写队列 3'))
     assert.ok(markup.includes('消费延迟 45 秒'))
     assert.ok(markup.includes('重试 3 次'))
     assert.ok(markup.includes('接管 2 次'))
@@ -86,6 +88,7 @@ describe('channel monitor realtime status', () => {
           redis_available: false,
           redis_consumer_running: false,
           pending_count: 0,
+          cost_queue_pending_count: 0,
           realtime_degraded: false,
         }}
       />
@@ -96,5 +99,6 @@ describe('channel monitor realtime status', () => {
     assert.ok(markup.includes('Redis 故障'))
     assert.ok(markup.includes('消费者 已停止'))
     assert.equal(markup.includes('Redis 待处理'), false)
+    assert.ok(markup.includes('成本待写队列 0'))
   })
 })

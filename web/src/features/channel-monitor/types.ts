@@ -236,6 +236,7 @@ export type ChannelMonitorRealtimeMetadata = {
   redis_available?: boolean
   redis_consumer_running?: boolean
   pending_count?: number
+  cost_queue_pending_count?: number
   oldest_pending_at?: number
   consumer_lag_seconds?: number
   last_published_at?: number
