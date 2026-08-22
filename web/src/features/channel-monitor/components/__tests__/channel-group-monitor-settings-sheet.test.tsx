@@ -30,7 +30,10 @@ const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
 
 function settingsResponse(
-  groups: ChannelGroupMonitorSettingsResponse['settings']['groups']
+  groups: ChannelGroupMonitorSettingsResponse['settings']['groups'],
+  candidateModelsByGroup: Record<string, string[]> = {
+    default: ['gpt-4.1'],
+  }
 ): ChannelGroupMonitorSettingsResponse {
   return {
     settings: {
@@ -48,9 +51,7 @@ function settingsResponse(
       running_started_at: 0,
       updated_at: 0,
     },
-    candidate_models_by_group: {
-      default: ['gpt-4.1'],
-    },
+    candidate_models_by_group: candidateModelsByGroup,
   }
 }
 
@@ -110,6 +111,24 @@ describe('分组监控配置', () => {
     )
     assert.ok(immediateProbeButton)
     assert.equal(immediateProbeButton.disabled, false)
+
+    await act(async () => rendered.root.unmount())
+    rendered.queryClient.clear()
+    rendered.host.remove()
+  })
+
+  test('渠道暂时不可用时仍显示已保存的探测模型', async () => {
+    const rendered = await renderSheet(
+      settingsResponse(
+        [{ group_name: 'default', probe_model: 'gpt-5.6-sol' }],
+        { default: [] }
+      )
+    )
+    const probeModelTrigger = document.querySelector(
+      'button[aria-label="default的探测模型"]'
+    )
+    assert.ok(probeModelTrigger)
+    assert.match(probeModelTrigger.textContent ?? '', /gpt-5\.6-sol/)
 
     await act(async () => rendered.root.unmount())
     rendered.queryClient.clear()

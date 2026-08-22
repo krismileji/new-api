@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -219,6 +220,52 @@ func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {
 	candidates, err = getChannelGroupMonitorCandidateModels(true)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gpt-4.1"}, candidates["default"])
+}
+
+func TestUpdateChannelGroupMonitorSettingsKeepsDisabledConfiguredModel(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.ChannelGroupMonitorConfig{},
+		&model.ChannelGroupMonitorState{},
+		&model.ChannelGroupMonitorExecution{},
+	))
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 906, Name: "已停用的分组监控渠道", Type: constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusAutoDisabled, Group: "特价", Models: "gpt-5.6-sol",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "特价", Model: "gpt-5.6-sol", ChannelId: 906, Enabled: true,
+	}).Error)
+	created, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
+		Enabled:         true,
+		Groups:          []model.ChannelGroupMonitorGroup{{GroupName: "特价", ProbeModel: "gpt-5.6-sol"}},
+		IntervalSeconds: 300, DisplayValue: 60,
+		DisplayUnit: model.ChannelStatusProbeDisplayUnitMinute,
+	}, 1_000)
+	require.NoError(t, err)
+
+	body, err := common.Marshal(map[string]any{
+		"enabled": true,
+		"groups": []map[string]string{{
+			"group_name": "特价", "probe_model": "gpt-5.6-sol",
+		}},
+		"interval_seconds": 300,
+		"display_value":    60,
+		"display_unit":     model.ChannelStatusProbeDisplayUnitMinute,
+		"revision":         created.Revision,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/channel_monitor/group_monitor/settings", bytes.NewReader(body))
+	UpdateChannelGroupMonitorSettings(c)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var payload struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	assert.True(t, payload.Success)
 }
 
 func TestGetPricingGroupMonitorOnlyReturnsVisiblePublicFields(t *testing.T) {

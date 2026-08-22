@@ -522,9 +522,19 @@ export function ChannelGroupMonitorSettingsSheet(
                         (candidate) => candidate.value === option.value
                       ) === optionIndex
                   )
-                  const modelItems = (
+                  const availableModelNames =
                     candidateModelsByGroup[currentGroupName] ?? []
-                  ).map((modelName) => ({ value: modelName, label: modelName }))
+                  const configuredProbeModel =
+                    groupValues[index]?.probeModel?.trim() ?? ''
+                  const modelNames =
+                    configuredProbeModel &&
+                    !availableModelNames.includes(configuredProbeModel)
+                      ? [...availableModelNames, configuredProbeModel]
+                      : availableModelNames
+                  const modelItems = modelNames.map((modelName) => ({
+                    value: modelName,
+                    label: modelName,
+                  }))
                   return (
                     <article
                       key={group.id}

@@ -214,6 +214,30 @@ func groupMonitorModelIsCandidate(candidates map[string][]string, groupName stri
 	return false
 }
 
+func includeSavedChannelGroupMonitorModels(
+	candidates map[string][]string,
+	config model.ChannelGroupMonitorConfig,
+) (map[string][]string, error) {
+	groups, err := config.Groups()
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string][]string, len(candidates))
+	for groupName, models := range candidates {
+		merged[groupName] = append([]string(nil), models...)
+	}
+	for _, group := range groups {
+		groupName := strings.TrimSpace(group.GroupName)
+		probeModel := strings.TrimSpace(group.ProbeModel)
+		if groupName == "" || probeModel == "" || groupMonitorModelIsCandidate(merged, groupName, probeModel) {
+			continue
+		}
+		merged[groupName] = append(merged[groupName], probeModel)
+		sort.Strings(merged[groupName])
+	}
+	return merged, nil
+}
+
 func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGroup, candidates map[string][]string) ([]model.ChannelGroupMonitorGroup, error) {
 	if len(rawGroups) > model.ChannelGroupMonitorMaxGroups {
 		return nil, errors.New("监控分组不能超过 100 个")
@@ -525,6 +549,16 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		return
 	}
 	candidates, err := getChannelGroupMonitorCandidateModels(true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	currentConfig, err := model.GetChannelGroupMonitorConfigOrDefault()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	candidates, err = includeSavedChannelGroupMonitorModels(candidates, currentConfig)
 	if err != nil {
 		common.ApiError(c, err)
 		return
