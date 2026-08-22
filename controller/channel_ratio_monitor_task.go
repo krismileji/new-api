@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +23,10 @@ import (
 type channelRatioMonitorTaskHandler struct{}
 
 const maxChannelRatioMonitorTaskFailureDetails = 100
+
+// Keep upstream refreshes bounded so a large channel set does not create an
+// unbounded burst of outbound requests or concurrent database writers.
+const channelRatioMonitorMaxConcurrency = 8
 
 type channelRatioMonitorTaskResult struct {
 	Total                         int                              `json:"total"`
@@ -409,378 +414,459 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	summary = channelRatioMonitorTaskResult{Total: len(configured)}
 	policyInputs := make(map[int]channelMonitorPolicyInput, len(configured))
 	balanceRecoveryInputs := make(map[int]channelMonitorPolicyInput, len(configured))
+	var stateMu sync.Mutex
+	var progressMu sync.Mutex
+	processed := 0
+	reportChannelProgress := func() {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		processed++
+		reportProgress(processed, summary.Total)
+	}
+	recordTaskError := func(err error) {
+		if err == nil {
+			return
+		}
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		if taskErr == nil {
+			taskErr = err
+		}
+	}
+	workerCount := len(configured)
+	if workerCount > channelRatioMonitorMaxConcurrency {
+		workerCount = channelRatioMonitorMaxConcurrency
+	}
+	semaphore := make(chan struct{}, workerCount)
+	var monitorWorkers sync.WaitGroup
 	for index, monitor := range configured {
-		select {
-		case <-ctx.Done():
-			return summary, ctx.Err()
-		default:
-		}
-		if monitor.UpstreamRatioSyncDisabled && monitor.UpstreamBalanceSyncDisabled {
-			summary.Skipped++
-			reportProgress(index+1, summary.Total)
-			continue
-		}
-		ratioAutoFetchEnabled := !monitor.UpstreamRatioSyncDisabled &&
-			monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
-		balanceAutoFetchEnabled := !monitor.UpstreamBalanceSyncDisabled &&
-			monitor.BalanceConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
-		stoppedSyncFailure := channelRatioMonitorStoppedSyncFailure(
-			monitor,
-			settings.AutoUpdateConsecutiveFailureLimit,
-		)
-		pendingChannelName := ""
-		pendingChannelRemark := ""
-		pendingRatioFailure := !ratioAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
-			monitor, model.ChannelRatioFailureAlertRatio, settings.AutoUpdateConsecutiveFailureLimit,
-		)
-		pendingBalanceFailure := !balanceAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
-			monitor, model.ChannelRatioFailureAlertBalance, settings.AutoUpdateConsecutiveFailureLimit,
-		)
-		if pendingRatioFailure || pendingBalanceFailure {
-			if pendingChannel, lookupErr := model.GetChannelById(monitor.ChannelId, true); lookupErr == nil {
-				pendingChannelName = pendingChannel.Name
-				if pendingChannel.Remark != nil {
-					pendingChannelRemark = strings.TrimSpace(*pendingChannel.Remark)
-				}
+		semaphore <- struct{}{}
+		monitorWorkers.Add(1)
+		go func(index int, monitor model.ChannelRatioMonitor) {
+			defer monitorWorkers.Done()
+			defer func() { <-semaphore }()
+			select {
+			case <-ctx.Done():
+				recordTaskError(ctx.Err())
+				reportChannelProgress()
+				return
+			default:
 			}
-		}
-		if !ratioAutoFetchEnabled {
-			_, truncated := appendReadyChannelRatioMonitorFailureNotification(
-				&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertRatio,
-				settings.AutoUpdateConsecutiveFailureLimit, nil,
-			)
-			failureNotificationsTruncated = failureNotificationsTruncated || truncated
-		}
-		if !balanceAutoFetchEnabled {
-			_, truncated := appendReadyChannelRatioMonitorFailureNotification(
-				&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertBalance,
-				settings.AutoUpdateConsecutiveFailureLimit, nil,
-			)
-			failureNotificationsTruncated = failureNotificationsTruncated || truncated
-		}
-		if !ratioAutoFetchEnabled && !balanceAutoFetchEnabled {
-			if stoppedSyncFailure != nil {
-				summary.recordFailure(monitor.ChannelId, pendingChannelName, pendingChannelRemark, stoppedSyncFailure)
-			} else {
+			if monitor.UpstreamRatioSyncDisabled && monitor.UpstreamBalanceSyncDisabled {
+				stateMu.Lock()
 				summary.Skipped++
+				stateMu.Unlock()
+				reportChannelProgress()
+				return
 			}
-			reportProgress(index+1, summary.Total)
-			continue
-		}
-		fetchRatio := ratioAutoFetchEnabled
-
-		channel, err := model.GetChannelById(monitor.ChannelId, true)
-		if err != nil {
-			summary.recordFailure(monitor.ChannelId, "", "", err)
-			applied, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
-				monitor.ChannelId,
-				monitor.UpstreamRevision,
-				err.Error(),
+			ratioAutoFetchEnabled := !monitor.UpstreamRatioSyncDisabled &&
+				monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
+			balanceAutoFetchEnabled := !monitor.UpstreamBalanceSyncDisabled &&
+				monitor.BalanceConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
+			stoppedSyncFailure := channelRatioMonitorStoppedSyncFailure(
+				monitor,
+				settings.AutoUpdateConsecutiveFailureLimit,
 			)
-			if statusErr != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure status update failed: %v", monitor.ChannelId, statusErr))
-			} else if applied {
-				if latestMonitor, stateErr := model.GetChannelRatioMonitor(monitor.ChannelId); stateErr != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure alert state lookup failed: %v", monitor.ChannelId, stateErr))
-				} else {
-					_, truncated := appendReadyChannelRatioMonitorFailureNotification(
-						&failureNotifications, latestMonitor, "", "", model.ChannelRatioFailureAlertRatio,
-						settings.AutoUpdateConsecutiveFailureLimit, err,
-					)
-					failureNotificationsTruncated = failureNotificationsTruncated || truncated
+			pendingChannelName := ""
+			pendingChannelRemark := ""
+			pendingRatioFailure := !ratioAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
+				monitor, model.ChannelRatioFailureAlertRatio, settings.AutoUpdateConsecutiveFailureLimit,
+			)
+			pendingBalanceFailure := !balanceAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
+				monitor, model.ChannelRatioFailureAlertBalance, settings.AutoUpdateConsecutiveFailureLimit,
+			)
+			if pendingRatioFailure || pendingBalanceFailure {
+				if pendingChannel, lookupErr := model.GetChannelById(monitor.ChannelId, true); lookupErr == nil {
+					pendingChannelName = pendingChannel.Name
+					if pendingChannel.Remark != nil {
+						pendingChannelRemark = strings.TrimSpace(*pendingChannel.Remark)
+					}
 				}
 			}
-			logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d lookup failed: %v", monitor.ChannelId, err))
-			reportProgress(index+1, summary.Total)
-			continue
-		}
-		channelRemark := ""
-		if channel.Remark != nil {
-			channelRemark = strings.TrimSpace(*channel.Remark)
-		}
+			if !ratioAutoFetchEnabled {
+				stateMu.Lock()
+				_, truncated := appendReadyChannelRatioMonitorFailureNotification(
+					&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertRatio,
+					settings.AutoUpdateConsecutiveFailureLimit, nil,
+				)
+				failureNotificationsTruncated = failureNotificationsTruncated || truncated
+				stateMu.Unlock()
+			}
+			if !balanceAutoFetchEnabled {
+				stateMu.Lock()
+				_, truncated := appendReadyChannelRatioMonitorFailureNotification(
+					&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertBalance,
+					settings.AutoUpdateConsecutiveFailureLimit, nil,
+				)
+				failureNotificationsTruncated = failureNotificationsTruncated || truncated
+				stateMu.Unlock()
+			}
+			if !ratioAutoFetchEnabled && !balanceAutoFetchEnabled {
+				if stoppedSyncFailure != nil {
+					stateMu.Lock()
+					summary.recordFailure(monitor.ChannelId, pendingChannelName, pendingChannelRemark, stoppedSyncFailure)
+					stateMu.Unlock()
+				} else {
+					stateMu.Lock()
+					summary.Skipped++
+					stateMu.Unlock()
+				}
+				reportChannelProgress()
+				return
+			}
+			fetchRatio := ratioAutoFetchEnabled
 
-		var outcome channelMonitorFetchOutcome
-		var recordedBalance *float64
-		var balanceEvaluation *channelMonitorBalanceEvaluation
-		var effectiveBalanceForRecovery *float64
-		balanceBelowAutoDisableThreshold := false
-		ratioUpdated := false
-		syncSkipped := false
-		retriesUsed := 0
-		for attempt := 0; attempt <= settings.AutoUpdateRetryCount; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-ctx.Done():
-					return summary, ctx.Err()
-				default:
+			channel, err := model.GetChannelById(monitor.ChannelId, true)
+			if err != nil {
+				stateMu.Lock()
+				summary.recordFailure(monitor.ChannelId, "", "", err)
+				stateMu.Unlock()
+				applied, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
+					monitor.ChannelId,
+					monitor.UpstreamRevision,
+					err.Error(),
+				)
+				if statusErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure status update failed: %v", monitor.ChannelId, statusErr))
+				} else if applied {
+					if latestMonitor, stateErr := model.GetChannelRatioMonitor(monitor.ChannelId); stateErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure alert state lookup failed: %v", monitor.ChannelId, stateErr))
+					} else {
+						stateMu.Lock()
+						_, truncated := appendReadyChannelRatioMonitorFailureNotification(
+							&failureNotifications, latestMonitor, "", "", model.ChannelRatioFailureAlertRatio,
+							settings.AutoUpdateConsecutiveFailureLimit, err,
+						)
+						failureNotificationsTruncated = failureNotificationsTruncated || truncated
+						stateMu.Unlock()
+					}
+				}
+				logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d lookup failed: %v", monitor.ChannelId, err))
+				reportChannelProgress()
+				return
+			}
+			channelRemark := ""
+			if channel.Remark != nil {
+				channelRemark = strings.TrimSpace(*channel.Remark)
+			}
+
+			var outcome channelMonitorFetchOutcome
+			var recordedBalance *float64
+			var balanceEvaluation *channelMonitorBalanceEvaluation
+			var effectiveBalanceForRecovery *float64
+			balanceBelowAutoDisableThreshold := false
+			ratioUpdated := false
+			syncSkipped := false
+			retriesUsed := 0
+			for attempt := 0; attempt <= settings.AutoUpdateRetryCount; attempt++ {
+				if attempt > 0 {
+					select {
+					case <-ctx.Done():
+						recordTaskError(ctx.Err())
+						reportChannelProgress()
+						return
+					default:
+					}
+
+					refreshedMonitor, refreshErr := model.GetChannelRatioMonitor(monitor.ChannelId)
+					if refreshErr != nil {
+						err = fmt.Errorf("重试前重新读取上游配置失败: %w", refreshErr)
+						break
+					}
+					monitor = refreshedMonitor
+					if fetchRatio {
+						if monitor.UpstreamRatioSyncDisabled {
+							syncSkipped = true
+							err = nil
+							break
+						}
+						if monitor.ConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+							break
+						}
+					} else {
+						if monitor.UpstreamBalanceSyncDisabled {
+							syncSkipped = true
+							err = nil
+							break
+						}
+						if monitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+							break
+						}
+					}
+					retriesUsed++
+					stateMu.Lock()
+					summary.Retried++
+					stateMu.Unlock()
 				}
 
-				refreshedMonitor, refreshErr := model.GetChannelRatioMonitor(monitor.ChannelId)
-				if refreshErr != nil {
-					err = fmt.Errorf("重试前重新读取上游配置失败: %w", refreshErr)
+				ratioUpdated = false
+				if fetchRatio {
+					fetchMonitor := monitor
+					if fetchMonitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+						fetchMonitor.UpstreamBalanceSyncDisabled = true
+					}
+					outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, true, 0, "系统自动更新")
+					ratioUpdated = err == nil
+					if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
+						balance := *outcome.Result.Balance.Amount
+						recordedBalance = &balance
+						balanceEvaluation = outcome.BalanceEvaluation
+					}
+				} else {
+					var balanceResult service.ChannelMonitorUpstreamBalanceResult
+					var fetchedEvaluation *channelMonitorBalanceEvaluation
+					balanceResult, fetchedEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
+					if balanceResult.Amount != nil {
+						balance := *balanceResult.Amount
+						recordedBalance = &balance
+						balanceEvaluation = fetchedEvaluation
+					}
+				}
+				if err == nil ||
+					attempt == settings.AutoUpdateRetryCount ||
+					errors.Is(err, service.ErrChannelMonitorUpstreamAuthentication) {
 					break
 				}
-				monitor = refreshedMonitor
-				if fetchRatio {
-					if monitor.UpstreamRatioSyncDisabled {
-						syncSkipped = true
-						err = nil
-						break
-					}
-					if monitor.ConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
-						break
-					}
-				} else {
-					if monitor.UpstreamBalanceSyncDisabled {
-						syncSkipped = true
-						err = nil
-						break
-					}
-					if monitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
-						break
-					}
+				logger.LogWarn(ctx, fmt.Sprintf(
+					"channel ratio monitor: channel_id=%d attempt=%d failed: %v",
+					monitor.ChannelId,
+					attempt+1,
+					err,
+				))
+			}
+			if syncSkipped {
+				stateMu.Lock()
+				summary.Skipped++
+				stateMu.Unlock()
+				reportChannelProgress()
+				return
+			}
+			if errors.Is(err, model.ErrChannelRatioMonitorConfigChanged) {
+				stateMu.Lock()
+				summary.Skipped++
+				stateMu.Unlock()
+				reportChannelProgress()
+				return
+			}
+			upstreamSyncFailed := err != nil
+			if recordedBalance != nil {
+				balance := *recordedBalance
+				effectiveBalance := balance
+				estimatedConsumption := 0.0
+				if balanceEvaluation != nil {
+					effectiveBalance = balanceEvaluation.EffectiveBalance
+					estimatedConsumption = balanceEvaluation.EstimatedConsumption
 				}
-				retriesUsed++
-				summary.Retried++
-			}
-
-			ratioUpdated = false
-			if fetchRatio {
-				fetchMonitor := monitor
-				if fetchMonitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
-					fetchMonitor.UpstreamBalanceSyncDisabled = true
-				}
-				outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, true, 0, "系统自动更新")
-				ratioUpdated = err == nil
-				if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
-					balance := *outcome.Result.Balance.Amount
-					recordedBalance = &balance
-					balanceEvaluation = outcome.BalanceEvaluation
-				}
-			} else {
-				var balanceResult service.ChannelMonitorUpstreamBalanceResult
-				var fetchedEvaluation *channelMonitorBalanceEvaluation
-				balanceResult, fetchedEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
-				if balanceResult.Amount != nil {
-					balance := *balanceResult.Amount
-					recordedBalance = &balance
-					balanceEvaluation = fetchedEvaluation
-				}
-			}
-			if err == nil ||
-				attempt == settings.AutoUpdateRetryCount ||
-				errors.Is(err, service.ErrChannelMonitorUpstreamAuthentication) {
-				break
-			}
-			logger.LogWarn(ctx, fmt.Sprintf(
-				"channel ratio monitor: channel_id=%d attempt=%d failed: %v",
-				monitor.ChannelId,
-				attempt+1,
-				err,
-			))
-		}
-		if syncSkipped {
-			summary.Skipped++
-			reportProgress(index+1, summary.Total)
-			continue
-		}
-		if errors.Is(err, model.ErrChannelRatioMonitorConfigChanged) {
-			summary.Skipped++
-			reportProgress(index+1, summary.Total)
-			continue
-		}
-		upstreamSyncFailed := err != nil
-		if recordedBalance != nil {
-			balance := *recordedBalance
-			effectiveBalance := balance
-			estimatedConsumption := 0.0
-			if balanceEvaluation != nil {
-				effectiveBalance = balanceEvaluation.EffectiveBalance
-				estimatedConsumption = balanceEvaluation.EstimatedConsumption
-			}
-			effectiveBalanceForRecovery = &effectiveBalance
-			balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
-				effectiveBalance < *monitor.BalanceAutoDisableThreshold
-			summary.BalanceUpdated++
-			balanceAutoDisabled, disableErr := autoDisableChannelMonitorAtEffectiveBalance(
-				monitor,
-				channel,
-				balance,
-				effectiveBalance,
-				estimatedConsumption,
-			)
-			if disableErr != nil {
-				if err == nil {
-					err = disableErr
-				} else {
-					err = fmt.Errorf("%w（余额自动禁用失败：%v）", err, disableErr)
-				}
-			}
-			if balanceAutoDisabled {
-				summary.ChannelsDisabled++
-				channelStatusChanged = true
-			}
-			if monitor.BalanceWarningThreshold != nil &&
-				balance < *monitor.BalanceWarningThreshold &&
-				!monitor.BalanceAlertNotified {
-				summary.BalanceWarnings++
-				balanceWarnings = append(balanceWarnings, channelRatioMonitorBalanceWarning{
-					ChannelId:        monitor.ChannelId,
-					UpstreamRevision: monitor.UpstreamRevision,
-					ChannelName:      channel.Name,
-					ChannelRemark:    channelRemark,
-					UpstreamType:     monitor.UpstreamType,
-					Balance:          balance,
-					Threshold:        *monitor.BalanceWarningThreshold,
-				})
-			}
-		}
-		stoppedSyncOnly := err == nil && stoppedSyncFailure != nil
-		updateFailed := err != nil || stoppedSyncOnly
-		if updateFailed {
-			failureErr := err
-			if failureErr == nil {
-				failureErr = stoppedSyncFailure
-			}
-			if retriesUsed > 0 {
-				failureErr = fmt.Errorf("重试 %d 次后仍失败: %w", retriesUsed, failureErr)
-			}
-			summary.recordFailure(monitor.ChannelId, channel.Name, channelRemark, failureErr)
-			if upstreamSyncFailed {
-				latestMonitor, stateErr := model.GetChannelRatioMonitor(monitor.ChannelId)
-				if stateErr != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure alert state lookup failed: %v", monitor.ChannelId, stateErr))
-				} else {
-					failureType := model.ChannelRatioFailureAlertBalance
-					if fetchRatio {
-						failureType = model.ChannelRatioFailureAlertRatio
-					}
-					_, truncated := appendReadyChannelRatioMonitorFailureNotification(
-						&failureNotifications, latestMonitor, channel.Name, channelRemark,
-						failureType, settings.AutoUpdateConsecutiveFailureLimit, failureErr,
-					)
-					failureNotificationsTruncated = failureNotificationsTruncated || truncated
-				}
-			}
-			if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled {
-				disabled, revisionCurrent, _, disableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
-					channel.Id,
-					monitor.UpstreamRevision,
-					model.CaptureChannelMonitorStatus(channel),
-					common.ChannelStatusAutoDisabled,
-					channelMonitorUpdateFailureDisableReason,
+				effectiveBalanceForRecovery = &effectiveBalance
+				balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
+					effectiveBalance < *monitor.BalanceAutoDisableThreshold
+				stateMu.Lock()
+				summary.BalanceUpdated++
+				stateMu.Unlock()
+				balanceAutoDisabled, disableErr := autoDisableChannelMonitorAtEffectiveBalance(
+					monitor,
+					channel,
+					balance,
+					effectiveBalance,
+					estimatedConsumption,
 				)
 				if disableErr != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
+					if err == nil {
+						err = disableErr
+					} else {
+						err = fmt.Errorf("%w（余额自动禁用失败：%v）", err, disableErr)
+					}
 				}
-				if !revisionCurrent {
-					disabled = false
-				}
-				if disabled {
+				if balanceAutoDisabled {
+					stateMu.Lock()
 					summary.ChannelsDisabled++
 					channelStatusChanged = true
-					disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
-						ChannelId:     channel.Id,
-						ChannelName:   channel.Name,
-						ChannelRemark: channelRemark,
-						Reason:        "上游倍率或余额更新失败",
+					stateMu.Unlock()
+				}
+				if monitor.BalanceWarningThreshold != nil &&
+					balance < *monitor.BalanceWarningThreshold &&
+					!monitor.BalanceAlertNotified {
+					stateMu.Lock()
+					summary.BalanceWarnings++
+					balanceWarnings = append(balanceWarnings, channelRatioMonitorBalanceWarning{
+						ChannelId:        monitor.ChannelId,
+						UpstreamRevision: monitor.UpstreamRevision,
+						ChannelName:      channel.Name,
+						ChannelRemark:    channelRemark,
+						UpstreamType:     monitor.UpstreamType,
+						Balance:          balance,
+						Threshold:        *monitor.BalanceWarningThreshold,
 					})
+					stateMu.Unlock()
 				}
 			}
-			logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d update failed: %v", monitor.ChannelId, failureErr))
-			if stoppedSyncOnly {
+			stoppedSyncOnly := err == nil && stoppedSyncFailure != nil
+			updateFailed := err != nil || stoppedSyncOnly
+			if updateFailed {
+				failureErr := err
+				if failureErr == nil {
+					failureErr = stoppedSyncFailure
+				}
+				if retriesUsed > 0 {
+					failureErr = fmt.Errorf("重试 %d 次后仍失败: %w", retriesUsed, failureErr)
+				}
+				stateMu.Lock()
+				summary.recordFailure(monitor.ChannelId, channel.Name, channelRemark, failureErr)
+				stateMu.Unlock()
+				if upstreamSyncFailed {
+					latestMonitor, stateErr := model.GetChannelRatioMonitor(monitor.ChannelId)
+					if stateErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d failure alert state lookup failed: %v", monitor.ChannelId, stateErr))
+					} else {
+						failureType := model.ChannelRatioFailureAlertBalance
+						if fetchRatio {
+							failureType = model.ChannelRatioFailureAlertRatio
+						}
+						stateMu.Lock()
+						_, truncated := appendReadyChannelRatioMonitorFailureNotification(
+							&failureNotifications, latestMonitor, channel.Name, channelRemark,
+							failureType, settings.AutoUpdateConsecutiveFailureLimit, failureErr,
+						)
+						failureNotificationsTruncated = failureNotificationsTruncated || truncated
+						stateMu.Unlock()
+					}
+				}
+				if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled {
+					disabled, revisionCurrent, _, disableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+						channel.Id,
+						monitor.UpstreamRevision,
+						model.CaptureChannelMonitorStatus(channel),
+						common.ChannelStatusAutoDisabled,
+						channelMonitorUpdateFailureDisableReason,
+					)
+					if disableErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
+					}
+					if !revisionCurrent {
+						disabled = false
+					}
+					if disabled {
+						stateMu.Lock()
+						summary.ChannelsDisabled++
+						channelStatusChanged = true
+						disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
+							ChannelId:     channel.Id,
+							ChannelName:   channel.Name,
+							ChannelRemark: channelRemark,
+							Reason:        "上游倍率或余额更新失败",
+						})
+						stateMu.Unlock()
+					}
+				}
+				logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d update failed: %v", monitor.ChannelId, failureErr))
+				if stoppedSyncOnly {
+					stateMu.Lock()
+					summary.Updated++
+					if retriesUsed > 0 {
+						summary.RecoveredAfterRetry++
+					}
+					stateMu.Unlock()
+				}
+			} else {
+				stateMu.Lock()
 				summary.Updated++
 				if retriesUsed > 0 {
 					summary.RecoveredAfterRetry++
 				}
-			}
-		} else {
-			summary.Updated++
-			if retriesUsed > 0 {
-				summary.RecoveredAfterRetry++
-			}
-			syncRecovered := (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
-				(monitor.UpstreamBalanceSyncDisabled || recordedBalance != nil)
-			if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
-				recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
-				if recoveryErr != nil {
-					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
-				} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, effectiveBalanceForRecovery) {
-					enabled, revisionCurrent, _, enableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
-						channel.Id,
-						monitor.UpstreamRevision,
-						model.CaptureChannelMonitorStatus(recoveryChannel),
-						common.ChannelStatusEnabled,
-						"",
-					)
-					if enableErr != nil {
-						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic recovery failed: %v", channel.Id, enableErr))
-					}
-					if !revisionCurrent {
-						enabled = false
-					}
-					if enabled {
-						channel.Status = common.ChannelStatusEnabled
-						summary.ChannelsEnabled++
-						channelStatusChanged = true
+				stateMu.Unlock()
+				syncRecovered := (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
+					(monitor.UpstreamBalanceSyncDisabled || recordedBalance != nil)
+				if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
+					recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
+					if recoveryErr != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
+					} else if channelMonitorUpdateFailureRecovered(monitor, recoveryChannel, effectiveBalanceForRecovery) {
+						enabled, revisionCurrent, _, enableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+							channel.Id,
+							monitor.UpstreamRevision,
+							model.CaptureChannelMonitorStatus(recoveryChannel),
+							common.ChannelStatusEnabled,
+							"",
+						)
+						if enableErr != nil {
+							logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic recovery failed: %v", channel.Id, enableErr))
+						}
+						if !revisionCurrent {
+							enabled = false
+						}
+						if enabled {
+							channel.Status = common.ChannelStatusEnabled
+							stateMu.Lock()
+							summary.ChannelsEnabled++
+							channelStatusChanged = true
+							stateMu.Unlock()
+						}
 					}
 				}
-			}
-			if ratioUpdated {
-				economicInputsChanged = true
-				policyInputs[monitor.ChannelId] = channelMonitorPolicyInput{
-					UpstreamRevision:                 monitor.UpstreamRevision,
-					CostRatio:                        outcome.Result.CostRatio,
-					BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
-					SingleChannelAction:              monitor.SingleChannelAction,
-					MultipleChannelsAction:           monitor.MultipleChannelsAction,
-				}
-				if outcome.Changed {
-					summary.Changed++
-					emailChanges = append(emailChanges, channelRatioMonitorEmailChange{
-						ChannelId:        monitor.ChannelId,
-						ChannelName:      channel.Name,
-						ChannelRemark:    channelRemark,
-						UpstreamType:     monitor.UpstreamType,
-						UpstreamGroup:    monitor.UpstreamGroup,
-						OldRatio:         monitor.Ratio,
-						NewRatio:         outcome.Result.Ratio,
-						ConversionFactor: outcome.Result.ConversionFactor,
-						OldCostRatio:     monitor.Ratio * outcome.Result.ConversionFactor,
-						NewCostRatio:     outcome.Result.CostRatio,
-					})
-				}
-			}
-			if settings.AutoEnableOnBalanceRecovery && recordedBalance != nil {
-				costRatio := 0.0
-				costRatioAvailable := false
 				if ratioUpdated {
-					costRatio = outcome.Result.CostRatio
-					costRatioAvailable = validateChannelMonitorRatio(&costRatio)
-				} else if monitor.UpdatedTime > 0 &&
-					(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit) {
-					storedCostRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
-					if conversionErr != nil {
-						logger.LogWarn(ctx, fmt.Sprintf(
-							"channel ratio monitor: channel_id=%d balance recovery cost ratio calculation failed: %v",
-							monitor.ChannelId,
-							conversionErr,
-						))
-					} else {
-						costRatio = storedCostRatio
-						costRatioAvailable = true
-					}
-				}
-				if costRatioAvailable {
-					balanceRecoveryInputs[monitor.ChannelId] = channelMonitorPolicyInput{
+					stateMu.Lock()
+					economicInputsChanged = true
+					policyInputs[monitor.ChannelId] = channelMonitorPolicyInput{
 						UpstreamRevision:                 monitor.UpstreamRevision,
-						CostRatio:                        costRatio,
+						CostRatio:                        outcome.Result.CostRatio,
 						BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
+						SingleChannelAction:              monitor.SingleChannelAction,
+						MultipleChannelsAction:           monitor.MultipleChannelsAction,
+					}
+					if outcome.Changed {
+						summary.Changed++
+						emailChanges = append(emailChanges, channelRatioMonitorEmailChange{
+							ChannelId:        monitor.ChannelId,
+							ChannelName:      channel.Name,
+							ChannelRemark:    channelRemark,
+							UpstreamType:     monitor.UpstreamType,
+							UpstreamGroup:    monitor.UpstreamGroup,
+							OldRatio:         monitor.Ratio,
+							NewRatio:         outcome.Result.Ratio,
+							ConversionFactor: outcome.Result.ConversionFactor,
+							OldCostRatio:     monitor.Ratio * outcome.Result.ConversionFactor,
+							NewCostRatio:     outcome.Result.CostRatio,
+						})
+					}
+					stateMu.Unlock()
+				}
+				if settings.AutoEnableOnBalanceRecovery && recordedBalance != nil {
+					costRatio := 0.0
+					costRatioAvailable := false
+					if ratioUpdated {
+						costRatio = outcome.Result.CostRatio
+						costRatioAvailable = validateChannelMonitorRatio(&costRatio)
+					} else if monitor.UpdatedTime > 0 &&
+						(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit) {
+						storedCostRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
+						if conversionErr != nil {
+							logger.LogWarn(ctx, fmt.Sprintf(
+								"channel ratio monitor: channel_id=%d balance recovery cost ratio calculation failed: %v",
+								monitor.ChannelId,
+								conversionErr,
+							))
+						} else {
+							costRatio = storedCostRatio
+							costRatioAvailable = true
+						}
+					}
+					if costRatioAvailable {
+						stateMu.Lock()
+						balanceRecoveryInputs[monitor.ChannelId] = channelMonitorPolicyInput{
+							UpstreamRevision:                 monitor.UpstreamRevision,
+							CostRatio:                        costRatio,
+							BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
+						}
+						stateMu.Unlock()
 					}
 				}
 			}
-		}
-		reportProgress(index+1, summary.Total)
+			reportChannelProgress()
+		}(index, monitor)
+	}
+	monitorWorkers.Wait()
+	if taskErr != nil {
+		return summary, taskErr
 	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {

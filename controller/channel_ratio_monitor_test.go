@@ -4172,6 +4172,67 @@ func TestRunChannelRatioMonitorTaskRespectsPerChannelSyncCapabilities(t *testing
 	assert.InDelta(t, 5, *balanceMonitor.UpstreamBalance, 1e-9)
 }
 
+func TestRunChannelRatioMonitorTaskProcessesChannelsConcurrently(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorAutoUpdateRetryCountOption: "0",
+	})
+	disableChannelMonitorSSRFProtection(t)
+
+	var activeRequests atomic.Int32
+	var maxActiveRequests atomic.Int32
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/pricing", r.URL.Path)
+		active := activeRequests.Add(1)
+		for {
+			previous := maxActiveRequests.Load()
+			if active <= previous || maxActiveRequests.CompareAndSwap(previous, active) {
+				break
+			}
+		}
+		started <- struct{}{}
+		<-release
+		activeRequests.Add(-1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"success\":true,\"group_ratio\":{\"vip\":1.25}}"))
+	}))
+	defer server.Close()
+
+	channels := []model.Channel{
+		{Id: 1, Name: "first", Key: "first-key", Group: "vip", Status: common.ChannelStatusEnabled},
+		{Id: 2, Name: "second", Key: "second-key", Group: "vip", Status: common.ChannelStatusEnabled},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1, Ratio: 1, UpdatedTime: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL, UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic, UpstreamBalanceSyncDisabled: true},
+		{ChannelId: 2, Ratio: 1, UpdatedTime: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL, UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic, UpstreamBalanceSyncDisabled: true},
+	}).Error)
+
+	taskDone := make(chan struct{})
+	var summary channelRatioMonitorTaskResult
+	var taskErr error
+	go func() {
+		summary, taskErr = runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
+		close(taskDone)
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			close(release)
+			require.FailNow(t, "expected both channel refreshes to start concurrently")
+		}
+	}
+	close(release)
+	<-taskDone
+
+	require.NoError(t, taskErr)
+	assert.Equal(t, 2, summary.Updated)
+	assert.GreaterOrEqual(t, maxActiveRequests.Load(), int32(2))
+}
+
 func TestRunChannelRatioMonitorTaskUpdatesCustomFixedSources(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{

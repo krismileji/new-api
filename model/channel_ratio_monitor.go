@@ -389,6 +389,10 @@ func recordChannelRatioMonitorFetchFailure(channelId int, fetchError string, exp
 	}
 
 	applied = true
+	// Keep monitor row transactions serialized with other channel writes so
+	// concurrent refresh workers remain compatible with SQLite locking.
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var monitor ChannelRatioMonitor
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
@@ -473,6 +477,8 @@ func recordChannelRatioMonitorBalance(
 	}
 
 	applied = true
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var monitor ChannelRatioMonitor
 		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&monitor).Error
