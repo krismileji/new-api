@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -101,4 +102,163 @@ func TestDatabaseChannelSelectionFallsBackAfterRequestPathFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, wildcard.Id, channel.Id)
+}
+
+func TestDatabaseSmartScheduleLogicalGroupSelectsRemainingMemberAfterExclusion(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useDatabaseChannelSelection(t)
+	t.Setenv(ChannelLogicalGroupGlobalEnableEnv, "true")
+	require.NoError(t, db.AutoMigrate(&ChannelLogicalGroup{}, &ChannelLogicalGroupMember{}))
+
+	logicalID := int64(9300)
+	priority := int64(100)
+	weight := uint(100)
+	require.NoError(t, db.Create(&ChannelLogicalGroup{
+		Id: logicalID, Name: "同一上游", Status: ChannelLogicalGroupStatusEnabled, Revision: 3,
+	}).Error)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 9301, Name: "key-a", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+		{Id: 9302, Name: "key-b", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelLogicalGroupMember{
+		{LogicalGroupID: logicalID, ChannelID: 9301, Weight: 100, AddressFingerprint: strings.Repeat("a", 64)},
+		{LogicalGroupID: logicalID, ChannelID: 9302, Weight: 0, AddressFingerprint: strings.Repeat("a", 64)},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 9301, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 9302, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 9301, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 9302, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	policy := &channelSmartScheduleTrafficPolicy{
+		enabled: true, allModels: map[string]struct{}{"vip": {}},
+		modelsByGroup: map[string]map[string]struct{}{},
+	}
+
+	channel, err := getChannelFromDatabasePoolWithTrafficPolicy(
+		"vip", "model-a", "model-a", 0, "",
+		ChannelSelectionOptions{ExcludedChannelIds: []int{9301}}, policy,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 9302, channel.Id)
+}
+
+func TestDatabaseLogicalGroupSelectionDisabledKeepsPhysicalRouting(t *testing.T) {
+	tests := []struct {
+		name          string
+		globalEnabled string
+		policy        *channelSmartScheduleTrafficPolicy
+	}{
+		{
+			name: "全局关闭", globalEnabled: "false",
+			policy: &channelSmartScheduleTrafficPolicy{
+				enabled: true, allModels: map[string]struct{}{"vip": {}},
+				modelsByGroup: map[string]map[string]struct{}{},
+			},
+		},
+		{
+			name: "单组未托管", globalEnabled: "true",
+			policy: &channelSmartScheduleTrafficPolicy{
+				enabled: true, allModels: map[string]struct{}{"other": {}},
+				modelsByGroup: map[string]map[string]struct{}{},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelSmartScheduleRouteTestDB(t)
+			useDatabaseChannelSelection(t)
+			t.Setenv(ChannelLogicalGroupGlobalEnableEnv, test.globalEnabled)
+			require.NoError(t, db.AutoMigrate(&ChannelLogicalGroup{}, &ChannelLogicalGroupMember{}))
+			logicalID := int64(9400)
+			highPriority := int64(100)
+			lowPriority := int64(10)
+			weight := uint(100)
+			require.NoError(t, db.Create(&ChannelLogicalGroup{
+				Id: logicalID, Name: "关闭回退", Status: ChannelLogicalGroupStatusEnabled, Revision: 1,
+			}).Error)
+			require.NoError(t, db.Create(&[]Channel{
+				{Id: 9401, Name: "physical-primary", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+				{Id: 9402, Name: "logical-weight-primary", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+			}).Error)
+			require.NoError(t, db.Create(&[]ChannelLogicalGroupMember{
+				{LogicalGroupID: logicalID, ChannelID: 9401, Weight: 0, AddressFingerprint: strings.Repeat("b", 64)},
+				{LogicalGroupID: logicalID, ChannelID: 9402, Weight: 100, AddressFingerprint: strings.Repeat("b", 64)},
+			}).Error)
+			require.NoError(t, db.Create(&[]Ability{
+				{ChannelId: 9401, Group: "vip", Model: "model-a", Enabled: true, Priority: &highPriority, Weight: weight},
+				{ChannelId: 9402, Group: "vip", Model: "model-a", Enabled: true, Priority: &lowPriority, Weight: weight},
+			}).Error)
+			if test.policy.managesPool("vip", "model-a") {
+				require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+					{ChannelId: 9401, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+					{ChannelId: 9402, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+				}).Error)
+			}
+
+			channel, err := getChannelFromDatabasePoolWithTrafficPolicy(
+				"vip", "model-a", "model-a", 0, "", ChannelSelectionOptions{}, test.policy,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 9401, channel.Id)
+		})
+	}
+}
+
+func TestDatabaseSmartScheduleLogicalGroupUsesLogicalRouteStateOverlay(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useDatabaseChannelSelection(t)
+	t.Setenv(ChannelLogicalGroupGlobalEnableEnv, "true")
+	require.NoError(t, db.AutoMigrate(
+		&ChannelLogicalGroup{}, &ChannelLogicalGroupMember{}, &ChannelLogicalSmartScheduleRouteState{},
+	))
+	logicalID := int64(9450)
+	physicalPriority := int64(100)
+	standalonePriority := int64(50)
+	weight := uint(100)
+	require.NoError(t, db.Create(&ChannelLogicalGroup{
+		Id: logicalID, Name: "逻辑状态覆盖", Status: ChannelLogicalGroupStatusEnabled, Revision: 2,
+	}).Error)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 9451, Name: "key-a", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+		{Id: 9452, Name: "key-b", Status: common.ChannelStatusEnabled, LogicalChannelID: &logicalID},
+		{Id: 9453, Name: "standalone", Status: common.ChannelStatusEnabled},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelLogicalGroupMember{
+		{LogicalGroupID: logicalID, ChannelID: 9451, Weight: 1, AddressFingerprint: strings.Repeat("d", 64)},
+		{LogicalGroupID: logicalID, ChannelID: 9452, Weight: 1, AddressFingerprint: strings.Repeat("d", 64)},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 9451, Group: "vip", Model: "model-a", Enabled: true, Priority: &physicalPriority, Weight: weight},
+		{ChannelId: 9452, Group: "vip", Model: "model-a", Enabled: true, Priority: &physicalPriority, Weight: weight},
+		{ChannelId: 9453, Group: "vip", Model: "model-a", Enabled: true, Priority: &standalonePriority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 9451, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 9452, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 9453, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+	payload, err := encodeLogicalSmartScheduleRouteStateWithRouting(
+		ChannelSmartScheduleRouteState{ParticipationSet: true, Revision: 1}, 10, weight,
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&ChannelLogicalSmartScheduleRouteState{
+		LogicalGroupID: logicalID, LogicalRevision: 2, GroupName: "vip", ModelName: "model-a",
+		StateRevision: 1, StateJSON: payload, UpdatedAt: common.GetTimestamp(),
+	}).Error)
+	policy := &channelSmartScheduleTrafficPolicy{
+		enabled: true, allModels: map[string]struct{}{"vip": {}},
+		modelsByGroup: map[string]map[string]struct{}{},
+	}
+
+	channel, err := getChannelFromDatabasePoolWithTrafficPolicy(
+		"vip", "model-a", "model-a", 0, "", ChannelSelectionOptions{}, policy,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 9453, channel.Id)
 }

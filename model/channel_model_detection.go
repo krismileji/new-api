@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -624,47 +625,105 @@ func (batch ChannelModelDetectionBatch) Validate() error {
 }
 
 type ChannelModelDetectionRun struct {
-	Id                         int64   `json:"id" gorm:"primaryKey"`
-	RunId                      string  `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex"`
-	BatchId                    *string `json:"batch_id,omitempty" gorm:"type:varchar(64);index"`
-	ChannelId                  int     `json:"channel_id" gorm:"not null;index:idx_channel_model_detection_run_channel_created,priority:1"`
-	ConfigRevision             int64   `json:"config_revision" gorm:"bigint;not null"`
-	GlobalConfigRevision       int64   `json:"global_config_revision" gorm:"bigint;not null"`
-	Trigger                    string  `json:"trigger" gorm:"type:varchar(16);not null"`
-	Preset                     string  `json:"preset" gorm:"type:varchar(16);not null"`
-	PresetSource               string  `json:"preset_source" gorm:"type:varchar(32);not null"`
-	Status                     string  `json:"status" gorm:"type:varchar(48);not null;index:idx_channel_model_detection_run_status_updated,priority:1"`
-	TargetCount                int     `json:"target_count" gorm:"not null"`
-	CompletedTargetCount       int     `json:"completed_target_count" gorm:"not null"`
-	PlannedLogicalRequests     int64   `json:"planned_logical_requests" gorm:"bigint;not null"`
-	CompletedLogicalRequests   int64   `json:"completed_logical_requests" gorm:"bigint;not null"`
-	HTTPAttempts               int64   `json:"http_attempts" gorm:"column:http_attempts;bigint;not null"`
-	RetryCount                 int64   `json:"retry_count" gorm:"bigint;not null"`
-	ErrorCount                 int64   `json:"error_count" gorm:"bigint;not null"`
-	InFlightCount              int64   `json:"in_flight_count" gorm:"bigint;not null"`
-	PricingContextUserId       int     `json:"pricing_context_user_id" gorm:"index"`
-	BudgetQuotaLimit           int64   `json:"budget_quota_limit" gorm:"bigint;not null"`
-	BudgetCostNanoCNY          *int64  `json:"budget_cost_nano_cny" gorm:"bigint"`
-	EstimatedQuota             int64   `json:"estimated_quota" gorm:"bigint;not null"`
-	EstimatedCostNanoCNY       *int64  `json:"estimated_cost_nano_cny" gorm:"bigint"`
-	CostEstimateUnknownCount   int64   `json:"cost_estimate_unknown_count" gorm:"bigint;not null"`
-	SettledQuota               int64   `json:"settled_quota" gorm:"bigint;not null"`
-	CostBasisQuota             int64   `json:"cost_basis_quota" gorm:"bigint;not null"`
-	SettledCostNanoCNY         *int64  `json:"settled_cost_nano_cny" gorm:"bigint"`
-	UnresolvedCostNanoCNY      *int64  `json:"unresolved_cost_nano_cny" gorm:"bigint"`
-	UnresolvedCostUnknownCount int64   `json:"unresolved_cost_unknown_count" gorm:"bigint;not null"`
-	SettledRequestCount        int64   `json:"settled_request_count" gorm:"bigint;not null"`
-	UnresolvedRequestCount     int64   `json:"unresolved_request_count" gorm:"bigint;not null"`
-	QueuedAt                   int64   `json:"queued_at" gorm:"bigint;index"`
-	StartedAt                  int64   `json:"started_at" gorm:"bigint;index"`
-	FinishedAt                 int64   `json:"finished_at" gorm:"bigint;index"`
-	UpdatedAt                  int64   `json:"updated_at" gorm:"bigint;not null;index:idx_channel_model_detection_run_status_updated,priority:2;index:idx_channel_model_detection_run_channel_created,priority:2,sort:desc"`
-	CancelRequestedAt          int64   `json:"cancel_requested_at" gorm:"bigint"`
-	ErrorCode                  string  `json:"error_code" gorm:"type:varchar(128)"`
-	ErrorMessage               string  `json:"error_message" gorm:"type:varchar(512)"`
-	CreatedByUserId            int     `json:"created_by_user_id" gorm:"index"`
-	CreatedByUsername          string  `json:"created_by_username" gorm:"type:varchar(128)"`
-	CreatedAt                  int64   `json:"created_at" gorm:"bigint;not null;index:idx_channel_model_detection_run_channel_created,priority:2,sort:desc"`
+	Id        int64   `json:"id" gorm:"primaryKey"`
+	RunId     string  `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex"`
+	BatchId   *string `json:"batch_id,omitempty" gorm:"type:varchar(64);index"`
+	ChannelId int     `json:"channel_id" gorm:"not null;index:idx_channel_model_detection_run_channel_created,priority:1"`
+	// LogicalChannelID/Revision freeze the shared execution identity. The
+	// public API continues to expose the physical ChannelId; these fields are
+	// internal so membership changes cannot rewrite an active run.
+	LogicalChannelID           int64  `json:"-" gorm:"bigint;index"`
+	LogicalRevision            int64  `json:"-" gorm:"bigint"`
+	LogicalMemberSnapshotJSON  string `json:"-" gorm:"column:logical_member_snapshot_json;type:text"`
+	ConfigRevision             int64  `json:"config_revision" gorm:"bigint;not null"`
+	GlobalConfigRevision       int64  `json:"global_config_revision" gorm:"bigint;not null"`
+	Trigger                    string `json:"trigger" gorm:"type:varchar(16);not null"`
+	Preset                     string `json:"preset" gorm:"type:varchar(16);not null"`
+	PresetSource               string `json:"preset_source" gorm:"type:varchar(32);not null"`
+	Status                     string `json:"status" gorm:"type:varchar(48);not null;index:idx_channel_model_detection_run_status_updated,priority:1"`
+	TargetCount                int    `json:"target_count" gorm:"not null"`
+	CompletedTargetCount       int    `json:"completed_target_count" gorm:"not null"`
+	PlannedLogicalRequests     int64  `json:"planned_logical_requests" gorm:"bigint;not null"`
+	CompletedLogicalRequests   int64  `json:"completed_logical_requests" gorm:"bigint;not null"`
+	HTTPAttempts               int64  `json:"http_attempts" gorm:"column:http_attempts;bigint;not null"`
+	RetryCount                 int64  `json:"retry_count" gorm:"bigint;not null"`
+	ErrorCount                 int64  `json:"error_count" gorm:"bigint;not null"`
+	InFlightCount              int64  `json:"in_flight_count" gorm:"bigint;not null"`
+	PricingContextUserId       int    `json:"pricing_context_user_id" gorm:"index"`
+	BudgetQuotaLimit           int64  `json:"budget_quota_limit" gorm:"bigint;not null"`
+	BudgetCostNanoCNY          *int64 `json:"budget_cost_nano_cny" gorm:"bigint"`
+	EstimatedQuota             int64  `json:"estimated_quota" gorm:"bigint;not null"`
+	EstimatedCostNanoCNY       *int64 `json:"estimated_cost_nano_cny" gorm:"bigint"`
+	CostEstimateUnknownCount   int64  `json:"cost_estimate_unknown_count" gorm:"bigint;not null"`
+	SettledQuota               int64  `json:"settled_quota" gorm:"bigint;not null"`
+	CostBasisQuota             int64  `json:"cost_basis_quota" gorm:"bigint;not null"`
+	SettledCostNanoCNY         *int64 `json:"settled_cost_nano_cny" gorm:"bigint"`
+	UnresolvedCostNanoCNY      *int64 `json:"unresolved_cost_nano_cny" gorm:"bigint"`
+	UnresolvedCostUnknownCount int64  `json:"unresolved_cost_unknown_count" gorm:"bigint;not null"`
+	SettledRequestCount        int64  `json:"settled_request_count" gorm:"bigint;not null"`
+	UnresolvedRequestCount     int64  `json:"unresolved_request_count" gorm:"bigint;not null"`
+	QueuedAt                   int64  `json:"queued_at" gorm:"bigint;index"`
+	StartedAt                  int64  `json:"started_at" gorm:"bigint;index"`
+	FinishedAt                 int64  `json:"finished_at" gorm:"bigint;index"`
+	UpdatedAt                  int64  `json:"updated_at" gorm:"bigint;not null;index:idx_channel_model_detection_run_status_updated,priority:2;index:idx_channel_model_detection_run_channel_created,priority:2,sort:desc"`
+	CancelRequestedAt          int64  `json:"cancel_requested_at" gorm:"bigint"`
+	ErrorCode                  string `json:"error_code" gorm:"type:varchar(128)"`
+	ErrorMessage               string `json:"error_message" gorm:"type:varchar(512)"`
+	CreatedByUserId            int    `json:"created_by_user_id" gorm:"index"`
+	CreatedByUsername          string `json:"created_by_username" gorm:"type:varchar(128)"`
+	CreatedAt                  int64  `json:"created_at" gorm:"bigint;not null;index:idx_channel_model_detection_run_channel_created,priority:2,sort:desc"`
+}
+
+type ChannelModelDetectionMemberSnapshot struct {
+	ChannelID int  `json:"channel_id"`
+	Weight    uint `json:"weight"`
+}
+
+func (run *ChannelModelDetectionRun) SetLogicalMemberSnapshot(members []ChannelModelDetectionMemberSnapshot) error {
+	if run == nil {
+		return errors.New("模型检测轮次成员快照无效")
+	}
+	if len(members) == 0 {
+		run.LogicalMemberSnapshotJSON = ""
+		return nil
+	}
+	seen := make(map[int]struct{}, len(members))
+	normalized := make([]ChannelModelDetectionMemberSnapshot, len(members))
+	copy(normalized, members)
+	for _, member := range normalized {
+		if member.ChannelID <= 0 || ValidateChannelLogicalGroupMemberWeight(member.Weight) != nil {
+			return errors.New("模型检测轮次成员快照无效")
+		}
+		if _, exists := seen[member.ChannelID]; exists {
+			return errors.New("模型检测轮次成员快照无效")
+		}
+		seen[member.ChannelID] = struct{}{}
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].ChannelID < normalized[j].ChannelID })
+	encoded, err := common.Marshal(normalized)
+	if err != nil || len(encoded) > 64<<10 {
+		return errors.New("模型检测轮次成员快照无效")
+	}
+	run.LogicalMemberSnapshotJSON = string(encoded)
+	return nil
+}
+
+func (run ChannelModelDetectionRun) LogicalMemberSnapshot() ([]ChannelModelDetectionMemberSnapshot, error) {
+	if strings.TrimSpace(run.LogicalMemberSnapshotJSON) == "" {
+		return nil, nil
+	}
+	if len(run.LogicalMemberSnapshotJSON) > 64<<10 {
+		return nil, errors.New("模型检测轮次成员快照无效")
+	}
+	var members []ChannelModelDetectionMemberSnapshot
+	if err := common.UnmarshalJsonStr(run.LogicalMemberSnapshotJSON, &members); err != nil {
+		return nil, errors.New("模型检测轮次成员快照无效")
+	}
+	copyRun := run
+	if err := copyRun.SetLogicalMemberSnapshot(members); err != nil {
+		return nil, err
+	}
+	return members, nil
 }
 
 func IsChannelModelDetectionActiveRunStatus(status string) bool {
@@ -696,13 +755,21 @@ func CreateChannelModelDetectionRun(tx *gorm.DB, run *ChannelModelDetectionRun) 
 	}
 	var created bool
 	err := tx.Transaction(func(tx *gorm.DB) error {
-		claimed := tx.Model(&ChannelModelDetectionConfig{}).
-			Where("channel_id = ? AND running_run_id = ?", run.ChannelId, "").
-			Updates(map[string]any{"running_run_id": run.RunId, "updated_at": channelModelDetectionNow()})
-		if claimed.Error != nil {
-			return claimed.Error
+		claimed := false
+		var err error
+		if run.LogicalRevision > 0 {
+			claimed, err = claimChannelModelDetectionLogicalRun(tx, run)
+		} else {
+			result := tx.Model(&ChannelModelDetectionConfig{}).
+				Where("channel_id = ? AND running_run_id = ?", run.ChannelId, "").
+				Updates(map[string]any{"running_run_id": run.RunId, "updated_at": channelModelDetectionNow()})
+			err = result.Error
+			claimed = result.RowsAffected == 1
 		}
-		if claimed.RowsAffected != 1 {
+		if err != nil {
+			return err
+		}
+		if !claimed {
 			return nil
 		}
 		if err := tx.Create(run).Error; err != nil {
@@ -723,6 +790,13 @@ func ReleaseChannelModelDetectionRun(tx *gorm.DB, channelId int, runId string, n
 	}
 	if now <= 0 {
 		now = channelModelDetectionNow()
+	}
+	var run ChannelModelDetectionRun
+	if err := tx.Select("logical_channel_id", "logical_revision").Where("run_id = ?", runId).First(&run).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	if run.LogicalChannelID > 0 && run.LogicalRevision > 0 {
+		return releaseChannelModelDetectionLogicalRun(tx, run.LogicalChannelID, runId, now)
 	}
 	updated := tx.Model(&ChannelModelDetectionConfig{}).
 		Where("channel_id = ? AND running_run_id = ?", channelId, runId).
@@ -761,6 +835,15 @@ func (run ChannelModelDetectionRun) Validate() error {
 	if strings.TrimSpace(run.RunId) == "" || run.ChannelId <= 0 {
 		return errors.New("模型检测轮次无效")
 	}
+	// Physical (ungrouped) runs retain their channel ID with revision zero;
+	// grouped runs carry both a positive logical ID and revision.
+	if run.LogicalChannelID < 0 || run.LogicalRevision < 0 || (run.LogicalChannelID == 0 && run.LogicalRevision != 0) {
+		return errors.New("模型检测轮次逻辑归属无效")
+	}
+	members, err := run.LogicalMemberSnapshot()
+	if err != nil || len(members) > 0 && run.LogicalRevision <= 0 {
+		return errors.New("模型检测轮次成员快照无效")
+	}
 	if !IsChannelModelDetectionTrigger(run.Trigger) {
 		return ErrChannelModelDetectionInvalidTrigger
 	}
@@ -787,11 +870,18 @@ func (run ChannelModelDetectionRun) Validate() error {
 }
 
 type ChannelModelDetectionExecution struct {
-	Id                         int64                           `json:"id" gorm:"primaryKey"`
-	RunId                      string                          `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
-	TargetKey                  string                          `json:"target_key" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
-	TargetId                   int64                           `json:"target_id" gorm:"not null;index"`
-	ChannelId                  int                             `json:"channel_id" gorm:"not null;index"`
+	Id              int64  `json:"id" gorm:"primaryKey"`
+	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
+	TargetKey       string `json:"target_key" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_model_detection_execution_target"`
+	TargetId        int64  `json:"target_id" gorm:"not null;index"`
+	LogicalTargetId *int64 `json:"-" gorm:"index"`
+	ChannelId       int    `json:"channel_id" gorm:"not null;index"`
+	// ChannelId is the actual physical member used by the current attempt.
+	// Logical identity is frozen from the parent run and retained separately so
+	// retrying a transport error may move to another Key without duplicating the
+	// logical target.
+	LogicalChannelID           int64                           `json:"-" gorm:"bigint;index"`
+	LogicalRevision            int64                           `json:"-" gorm:"bigint"`
 	RequestModel               string                          `json:"request_model" gorm:"type:varchar(255);not null"`
 	ClaimedModel               string                          `json:"claimed_model" gorm:"type:varchar(32);not null"`
 	Preset                     string                          `json:"preset" gorm:"type:varchar(16);not null"`
@@ -859,6 +949,12 @@ func (execution *ChannelModelDetectionExecution) BeforeCreate(_ *gorm.DB) error 
 func (execution ChannelModelDetectionExecution) Validate() error {
 	if strings.TrimSpace(execution.RunId) == "" || strings.TrimSpace(execution.TargetKey) == "" || execution.TargetId <= 0 || execution.ChannelId <= 0 {
 		return errors.New("模型检测目标执行无效")
+	}
+	if execution.LogicalChannelID < 0 || execution.LogicalRevision < 0 || (execution.LogicalChannelID == 0 && execution.LogicalRevision != 0) {
+		return errors.New("模型检测目标执行逻辑归属无效")
+	}
+	if execution.LogicalTargetId != nil && (*execution.LogicalTargetId <= 0 || execution.LogicalRevision <= 0) {
+		return errors.New("模型检测目标执行逻辑目标无效")
 	}
 	if !IsChannelModelDetectionPreset(execution.Preset) {
 		return ErrChannelModelDetectionInvalidPreset

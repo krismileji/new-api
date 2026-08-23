@@ -54,3 +54,26 @@ func TestChannelModelDetectionCancelRunsForStatusesPropagatesCancellationFailure
 	err = CancelChannelModelDetectionRunsForStatuses(context.Background(), db, []int64{common.ChannelStatusManuallyDisabled})
 	assert.ErrorIs(t, err, want)
 }
+
+func TestChannelModelDetectionCancelRunsForDeletedFrozenOrActualMember(t *testing.T) {
+	db := setupChannelModelDetectionRunAPITestDB(t)
+	run := model.ChannelModelDetectionRun{
+		RunId: "grouped-delete-run", ChannelId: 410, LogicalChannelID: 900, LogicalRevision: 4,
+		Trigger: model.ChannelModelDetectionTriggerManual, Preset: model.ChannelModelDetectionPresetLow,
+		PresetSource: model.ChannelModelDetectionPresetSourceManualSelected, Status: model.ChannelModelDetectionRunStatusRunning,
+	}
+	require.NoError(t, run.SetLogicalMemberSnapshot([]model.ChannelModelDetectionMemberSnapshot{{ChannelID: 410, Weight: 1}, {ChannelID: 411, Weight: 1}}))
+	require.NoError(t, db.Create(&run).Error)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionExecution{
+		RunId: run.RunId, TargetKey: "grouped-delete-target", TargetId: 1, ChannelId: 411,
+		LogicalChannelID: run.LogicalChannelID, LogicalRevision: run.LogicalRevision, RequestModel: "model",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Preset: run.Preset, Status: model.ChannelModelDetectionExecutionStatusRunning,
+	}).Error)
+	stub := &channelModelDetectionRunCancelerStub{db: db, status: model.ChannelModelDetectionRunStatusCanceled}
+	restore := SetChannelModelDetectionRunCancelerFactory(func(*gorm.DB) (ChannelModelDetectionRunCanceler, error) { return stub, nil })
+	t.Cleanup(restore)
+
+	require.NoError(t, CancelChannelModelDetectionRunsForChannels(context.Background(), db, []int{411}))
+	assert.Equal(t, 1, stub.calls)
+	assert.Equal(t, run.RunId, stub.runID)
+}

@@ -123,6 +123,122 @@ type ChannelModelDetectorRelay struct {
 	acquireConcurrency channelModelDetectorConcurrencyAcquirer
 }
 
+// channelModelDetectionAttemptSelection builds the eligible physical member
+// set from the run's frozen relation. Current group rows are deliberately not
+// read: relation edits affect new runs only.
+func channelModelDetectionAttemptSelection(ctx context.Context, authorization ChannelModelDetectorAttemptAuthorization) (LogicalChannelSelectionSnapshot, []LogicalChannelMemberAvailability, error) {
+	claims := authorization.Claims
+	if claims.LogicalChannelID <= 0 || claims.LogicalRevision <= 0 || len(claims.LogicalMembers) == 0 || model.DB == nil {
+		return LogicalChannelSelectionSnapshot{}, nil, ErrChannelModelDetectorRelayUnavailable
+	}
+	snapshot := LogicalChannelSelectionSnapshot{
+		LogicalChannelID: claims.LogicalChannelID, Revision: claims.LogicalRevision,
+		Status: model.ChannelLogicalGroupStatusEnabled,
+	}
+	memberIDs := make([]int, 0, len(claims.LogicalMembers))
+	for _, member := range claims.LogicalMembers {
+		snapshot.Members = append(snapshot.Members, LogicalChannelMemberSnapshot{ChannelID: member.ChannelID, Weight: member.Weight})
+		memberIDs = append(memberIDs, member.ChannelID)
+	}
+	var channels []model.Channel
+	if err := model.DB.WithContext(ctx).Select("id", "status", "models").Where("id IN ?", memberIDs).Find(&channels).Error; err != nil {
+		return LogicalChannelSelectionSnapshot{}, nil, err
+	}
+	channelByID := make(map[int]model.Channel, len(channels))
+	for _, channel := range channels {
+		channelByID[channel.Id] = channel
+	}
+	monitorByChannel := make(map[int]model.ChannelRatioMonitor)
+	if model.DB.Migrator().HasTable(&model.ChannelRatioMonitor{}) {
+		var monitors []model.ChannelRatioMonitor
+		if err := model.DB.WithContext(ctx).Select("channel_id", "upstream_balance", "balance_auto_disable_threshold", "upstream_balance_sync_disabled").Where("channel_id IN ?", memberIDs).Find(&monitors).Error; err != nil {
+			return LogicalChannelSelectionSnapshot{}, nil, err
+		}
+		for _, monitor := range monitors {
+			monitorByChannel[monitor.ChannelId] = monitor
+		}
+	}
+	availability := make([]LogicalChannelMemberAvailability, 0, len(snapshot.Members))
+	previousChannelID := 0
+	if model.DB != nil && authorization.AttemptNo > 1 {
+		var execution model.ChannelModelDetectionExecution
+		if queryErr := model.DB.WithContext(ctx).Select("channel_id").Where("id = ? AND run_id = ? AND target_id = ?", claims.ExecutionID, claims.RunID, claims.TargetID).First(&execution).Error; queryErr == nil {
+			previousChannelID = execution.ChannelId
+		}
+	}
+	for _, member := range snapshot.Members {
+		channel, exists := channelByID[member.ChannelID]
+		available := exists && channel.Status == common.ChannelStatusEnabled
+		reason := ""
+		if !exists {
+			reason = "channel_missing"
+		} else if channel.Status != common.ChannelStatusEnabled {
+			reason = "channel_disabled"
+		} else {
+			modelSupported := false
+			for _, supportedModel := range channel.GetModels() {
+				if supportedModel == claims.RequestModel {
+					modelSupported = true
+					break
+				}
+			}
+			if !modelSupported {
+				available = false
+				reason = "model_unsupported"
+			}
+		}
+		if available {
+			if monitor, ok := monitorByChannel[member.ChannelID]; ok && !monitor.UpstreamBalanceSyncDisabled && monitor.BalanceAutoDisableThreshold != nil && monitor.UpstreamBalance != nil {
+				threshold := *monitor.BalanceAutoDisableThreshold
+				balance := *monitor.UpstreamBalance
+				if !math.IsNaN(threshold) && !math.IsInf(threshold, 0) && !math.IsNaN(balance) && !math.IsInf(balance, 0) && balance < threshold {
+					available = false
+					reason = "balance_insufficient"
+				}
+			}
+		}
+		if authorization.AttemptNo > 1 && member.ChannelID == previousChannelID && available {
+			available = false
+			reason = "previous_attempt"
+		}
+		availability = append(availability, LogicalChannelMemberAvailability{ChannelID: member.ChannelID, Weight: member.Weight, Available: available, Reason: reason})
+	}
+	if authorization.AttemptNo > 1 && previousChannelID > 0 {
+		hasAlternative := false
+		for _, member := range availability {
+			if member.Available {
+				hasAlternative = true
+				break
+			}
+		}
+		if !hasAlternative {
+			for index := range availability {
+				if availability[index].ChannelID == previousChannelID && availability[index].Reason == "previous_attempt" {
+					availability[index].Available = true
+					availability[index].Reason = ""
+				}
+			}
+		}
+	}
+	return snapshot, availability, nil
+}
+
+func bindChannelModelDetectionAttemptChannel(ctx context.Context, authorization ChannelModelDetectorAttemptAuthorization, channelID int) error {
+	if authorization.Claims.LogicalRevision <= 0 || model.DB == nil || channelID <= 0 {
+		return nil
+	}
+	updated := model.DB.WithContext(ctx).Model(&model.ChannelModelDetectionExecution{}).
+		Where("id = ? AND run_id = ? AND target_id = ? AND status IN ?", authorization.Claims.ExecutionID, authorization.Claims.RunID, authorization.Claims.TargetID, []string{model.ChannelModelDetectionExecutionStatusPending, model.ChannelModelDetectionExecutionStatusSubmitting, model.ChannelModelDetectionExecutionStatusRunning}).
+		Update("channel_id", channelID)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ErrChannelModelDetectorRelayUnavailable
+	}
+	return nil
+}
+
 func NewChannelModelDetectorRelay(tokens *ChannelModelDetectorTokenStore, executor ChannelModelDetectorFixedChannelExecutor) (*ChannelModelDetectorRelay, error) {
 	return newChannelModelDetectorRelay(tokens, executor, func(ctx context.Context, channelID int) (channelModelDetectorConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
 		// A process-local relay can still be exercised before the application
@@ -182,12 +298,54 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 		return ChannelModelDetectorRelayResult{Authorization: authorization}, fmt.Errorf("编码模型检测请求失败: %w", err)
 	}
 
-	lease, acquired, _, err := relay.acquireConcurrency(ctx, authorization.Claims.ChannelID)
-	if err != nil {
-		return ChannelModelDetectorRelayResult{Authorization: authorization}, fmt.Errorf("获取模型检测渠道并发租约失败: %w", err)
-	}
-	if !acquired {
-		return ChannelModelDetectorRelayResult{Authorization: authorization}, ErrChannelModelDetectorRelayBusy
+	selectedChannelID := authorization.Claims.ChannelID
+	var lease channelModelDetectorConcurrencyLease
+	if authorization.Claims.LogicalRevision <= 0 {
+		var acquired bool
+		lease, acquired, _, err = relay.acquireConcurrency(ctx, selectedChannelID)
+		if err != nil {
+			return ChannelModelDetectorRelayResult{Authorization: authorization}, fmt.Errorf("获取模型检测渠道并发租约失败: %w", err)
+		}
+		if !acquired {
+			return ChannelModelDetectorRelayResult{Authorization: authorization}, ErrChannelModelDetectorRelayBusy
+		}
+	} else {
+		snapshot, availability, selectionErr := channelModelDetectionAttemptSelection(ctx, authorization)
+		if selectionErr != nil {
+			return ChannelModelDetectorRelayResult{Authorization: authorization}, selectionErr
+		}
+		busyMembers := make(map[int]struct{}, len(availability))
+		for {
+			candidates := append([]LogicalChannelMemberAvailability(nil), availability...)
+			for index := range candidates {
+				if _, busy := busyMembers[candidates[index].ChannelID]; busy {
+					candidates[index].Available = false
+					candidates[index].Reason = "concurrency_busy"
+				}
+			}
+			selectedChannelID, selectionErr = SelectLogicalChannelMember(snapshot, candidates, nil)
+			if errors.Is(selectionErr, ErrLogicalChannelSelectionNoAvailableMembers) && len(busyMembers) > 0 {
+				return ChannelModelDetectorRelayResult{Authorization: authorization}, ErrChannelModelDetectorRelayBusy
+			}
+			if selectionErr != nil {
+				return ChannelModelDetectorRelayResult{Authorization: authorization}, selectionErr
+			}
+			var acquired bool
+			lease, acquired, _, err = relay.acquireConcurrency(ctx, selectedChannelID)
+			if err != nil {
+				return ChannelModelDetectorRelayResult{Authorization: authorization}, fmt.Errorf("获取模型检测渠道并发租约失败: %w", err)
+			}
+			if acquired {
+				if err := bindChannelModelDetectionAttemptChannel(ctx, authorization, selectedChannelID); err != nil {
+					if lease != nil {
+						lease.Release()
+					}
+					return ChannelModelDetectorRelayResult{Authorization: authorization}, err
+				}
+				break
+			}
+			busyMembers[selectedChannelID] = struct{}{}
+		}
 	}
 	if lease != nil {
 		defer lease.Release()
@@ -198,7 +356,7 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 		RunID:             authorization.Claims.RunID,
 		TargetID:          authorization.Claims.TargetID,
 		ExecutionID:       authorization.Claims.ExecutionID,
-		ChannelID:         authorization.Claims.ChannelID,
+		ChannelID:         selectedChannelID,
 		RequestModel:      authorization.Claims.RequestModel,
 		ClaimedModel:      authorization.Claims.ClaimedModel,
 		Preset:            authorization.Claims.Preset,

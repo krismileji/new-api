@@ -249,10 +249,19 @@ func (runtime *channelModelDetectionRuntime) issueCredential(ctx context.Context
 		ttl = service.ChannelModelDetectorTokenMaxTTL
 	}
 	runtime.tokens.RevokeRunTarget(run.RunId, execution.TargetId)
+	logicalMembers, err := run.LogicalMemberSnapshot()
+	if err != nil {
+		return "", "", err
+	}
+	if run.LogicalRevision > 0 && len(logicalMembers) == 0 {
+		return "", "", service.ErrChannelModelDetectorRelayUnavailable
+	}
 	credential, err := runtime.tokens.Issue(service.ChannelModelDetectorTokenSpec{
 		RunID: run.RunId, TargetID: execution.TargetId, ExecutionID: execution.Id,
 		ChannelID: execution.ChannelId, RequestModel: execution.RequestModel,
-		ClaimedModel: execution.ClaimedModel, Preset: execution.Preset,
+		LogicalChannelID: run.LogicalChannelID, LogicalRevision: run.LogicalRevision,
+		LogicalMembers: logicalMembers,
+		ClaimedModel:   execution.ClaimedModel, Preset: execution.Preset,
 		RelayBaseURL: relayBaseURL, MaxHTTPAttempts: int(remaining),
 		ExpiresAt: time.Now().UTC().Add(ttl).Unix(),
 	})
@@ -283,16 +292,27 @@ func (runtime *channelModelDetectionRuntime) handleConfigChange(ctx context.Cont
 	if runtime == nil || runtime.tokens == nil || runtime.worker == nil || model.DB == nil || change.ChannelID <= 0 {
 		return
 	}
-	var config model.ChannelModelDetectionConfig
-	if err := model.DB.WithContext(ctx).Select("running_run_id").Where("channel_id = ?", change.ChannelID).First(&config).Error; err != nil || config.RunningRunId == "" {
+	runID := ""
+	if identity, identityErr := service.ResolveChannelLogicalIdentity(change.ChannelID); identityErr == nil && identity.Revision > 0 {
+		var sharedRun model.ChannelModelDetectionRun
+		if err := model.DB.WithContext(ctx).Select("run_id").Where("logical_channel_id = ? AND status IN ?", identity.LogicalChannelID, []string{model.ChannelModelDetectionRunStatusQueued, model.ChannelModelDetectionRunStatusWaitingDetector, model.ChannelModelDetectionRunStatusSubmitting, model.ChannelModelDetectionRunStatusRunning, model.ChannelModelDetectionRunStatusSubmissionUnknown, model.ChannelModelDetectionRunStatusCanceling}).Order("id DESC").First(&sharedRun).Error; err == nil {
+			runID = sharedRun.RunId
+		}
+	} else {
+		var config model.ChannelModelDetectionConfig
+		if err := model.DB.WithContext(ctx).Select("running_run_id").Where("channel_id = ?", change.ChannelID).First(&config).Error; err == nil {
+			runID = config.RunningRunId
+		}
+	}
+	if runID == "" {
 		return
 	}
 	var executions []model.ChannelModelDetectionExecution
-	if err := model.DB.WithContext(ctx).Select("target_id").Where("run_id = ?", config.RunningRunId).Find(&executions).Error; err != nil {
+	if err := model.DB.WithContext(ctx).Select("target_id").Where("run_id = ?", runID).Find(&executions).Error; err != nil {
 		return
 	}
 	for _, execution := range executions {
-		runtime.tokens.RevokeRunTarget(config.RunningRunId, execution.TargetId)
+		runtime.tokens.RevokeRunTarget(runID, execution.TargetId)
 	}
 	go func(runID string) {
 		for attempt := 0; attempt < 3; attempt++ {
@@ -305,7 +325,7 @@ func (runtime *channelModelDetectionRuntime) handleConfigChange(ctx context.Cont
 			time.Sleep(time.Second)
 		}
 		logger.LogWarn(context.Background(), "模型检测配置变更后取消轮次超时")
-	}(config.RunningRunId)
+	}(runID)
 }
 
 type channelModelDetectionRuntimeCanceler struct {

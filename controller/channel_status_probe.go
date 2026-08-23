@@ -178,6 +178,41 @@ func normalizeChannelStatusProbeModels(channel *model.Channel, rawModels []strin
 	return models, nil
 }
 
+func normalizeLogicalChannelStatusProbeModels(memberChannels map[int]*model.Channel, rawModels []string) ([]string, error) {
+	if len(rawModels) == 0 || len(rawModels) > model.ChannelStatusProbeMaxModels {
+		return nil, errors.New("探测模型数量必须在 1 到 20 之间")
+	}
+	memberIDs := make([]int, 0, len(memberChannels))
+	for channelID := range memberChannels {
+		memberIDs = append(memberIDs, channelID)
+	}
+	sort.Ints(memberIDs)
+	seen := make(map[string]struct{}, len(rawModels))
+	models := make([]string, 0, len(rawModels))
+	for _, rawModel := range rawModels {
+		modelName := strings.TrimSpace(rawModel)
+		if modelName == "" || utf8.RuneCountInString(modelName) > 255 || strings.Contains(modelName, "*") {
+			return nil, errors.New("探测模型必须是长度不超过 255 的具体模型名称")
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		supported := false
+		for _, channelID := range memberIDs {
+			if _, err := normalizeChannelStatusProbeModels(memberChannels[channelID], []string{modelName}); err == nil {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return nil, errors.New("模型 " + modelName + " 不在逻辑渠道组任一成员支持范围内")
+		}
+		seen[modelName] = struct{}{}
+		models = append(models, modelName)
+	}
+	return models, nil
+}
+
 func channelStatusProbeHealth(
 	config *channelStatusProbeConfigResponse,
 	states map[string]model.ChannelStatusProbeState,
@@ -664,7 +699,12 @@ func UpdateChannelStatusProbeConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	models, err := normalizeChannelStatusProbeModels(channel, *request.Models)
+	_, _, memberChannels, err := resolveChannelStatusProbeMembers(channel.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	models, err := normalizeLogicalChannelStatusProbeModels(memberChannels, *request.Models)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return

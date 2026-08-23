@@ -89,6 +89,21 @@ func channelMonitorRedisProtectionEffectKey(channelID int, groupName, modelName 
 	)
 }
 
+func channelMonitorRedisLogicalProtectionEffectKey(
+	logicalID int64,
+	revision int64,
+	groupName string,
+	modelName string,
+) string {
+	return channelMonitorRedisEffectKey(
+		"logical_runtime_protection",
+		strconv.FormatInt(logicalID, 10),
+		strconv.FormatInt(revision, 10),
+		groupName,
+		modelName,
+	)
+}
+
 func channelMonitorRedisAdaptiveEffectKey(groupName, modelName string) string {
 	return channelMonitorRedisEffectKey("adaptive_refresh", groupName, modelName)
 }

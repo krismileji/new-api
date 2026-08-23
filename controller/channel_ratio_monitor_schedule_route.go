@@ -315,6 +315,15 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		selectedRoutes = append(selectedRoutes, route)
 	}
+	physicalSelectedRoutes := append([]model.ChannelSmartScheduleRoute(nil), selectedRoutes...)
+	physicalRouteByKey := make(map[channelSmartScheduleRouteKey]model.ChannelSmartScheduleRoute, len(physicalSelectedRoutes))
+	for _, route := range physicalSelectedRoutes {
+		physicalRouteByKey[channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}] = route
+	}
+	selectedRoutes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(selectedRoutes)
+	if err != nil {
+		return result, err
+	}
 	result.Total = len(selectedRoutes)
 	if result.Total == 0 {
 		reportProgress(0, 0)
@@ -336,6 +345,10 @@ func runChannelSmartScheduleByRouteOnce(
 
 	poolCandidates := make(map[channelSmartScheduleRoutePoolKey][]channelSmartScheduleCandidate)
 	poolRoutes := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRoute)
+	for _, route := range physicalSelectedRoutes {
+		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
+		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
+	}
 	routeKeyByPoolChannel := make(map[channelSmartScheduleRoutePoolKey]map[int]channelSmartScheduleRouteKey)
 	directActions := make([]channelSmartScheduleRouteDirectAction, 0)
 	statusUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(selectedRoutes))
@@ -344,7 +357,6 @@ func runChannelSmartScheduleByRouteOnce(
 	for _, route := range selectedRoutes {
 		policy := policyByGroup[route.Group]
 		poolKey := channelSmartScheduleRoutePoolKey{group: route.Group, model: route.Model}
-		poolRoutes[poolKey] = append(poolRoutes[poolKey], route)
 		manualPrimary := route.State.ManualPrimaryUntil > now
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 		monitor, monitorAvailable := monitorByChannel[route.ChannelId]
@@ -362,9 +374,8 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		adaptiveWindowStart := now - int64(policy.AdaptiveSamplingWindowSeconds)
 		readWindowStart := min(adaptiveWindowStart, performanceStart, routeStabilityWindowStart)
-		routeEvents, scoreSnapshot, err := channelSmartScheduleRealtimeEvents(
-			ctx, route.ChannelId, route.Model, readWindowStart,
-			route.SharedSamples.ObservationSince, 0,
+		routeEvents, scoreSnapshot, err := channelSmartScheduleSchedulingRouteRealtimeEvents(
+			ctx, route, readWindowStart, route.SharedSamples.ObservationSince, 0,
 		)
 		if err != nil {
 			return result, fmt.Errorf("读取渠道 %d 模型 %s 的 Redis 健康窗口失败: %w", route.ChannelId, route.Model, err)
@@ -725,13 +736,36 @@ func runChannelSmartScheduleByRouteOnce(
 			channelSmartScheduleSetAdjustmentReason(statusUpdates[index].ScoreDetails, statusUpdates[index].Error)
 		}
 	}
+	logicalProjectedUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(statusUpdates))
+	for _, update := range statusUpdates {
+		key := channelSmartScheduleRouteKey{channelId: update.ChannelId, group: update.Group, model: update.Model}
+		route := routeByKey[key]
+		if route.LogicalChannelId <= 0 {
+			logicalProjectedUpdates = append(logicalProjectedUpdates, update)
+			continue
+		}
+		for _, memberChannelId := range route.LogicalMemberIds {
+			memberKey := channelSmartScheduleRouteKey{channelId: memberChannelId, group: update.Group, model: update.Model}
+			if _, exists := physicalRouteByKey[memberKey]; !exists {
+				return result, fmt.Errorf("逻辑渠道组成员 %d 缺少智能调度物理路由", memberChannelId)
+			}
+			projected := update
+			projected.ChannelId = memberChannelId
+			projected.LogicalChannelId = route.LogicalChannelId
+			projected.LogicalRevision = route.LogicalRevision
+			projected.ExpectedLogicalStateRevision = route.State.Revision
+			projected.LogicalProjectionOnly = memberChannelId != route.ChannelId
+			logicalProjectedUpdates = append(logicalProjectedUpdates, projected)
+		}
+	}
+	statusUpdates = logicalProjectedUpdates
 
 	processed := result.Skipped
 	updatesByPool := make(map[channelSmartScheduleRoutePoolKey][]model.ChannelSmartScheduleRouteResultUpdate)
 	updatesByKey := make(map[channelSmartScheduleRouteKey]struct{}, len(statusUpdates))
 	for _, update := range statusUpdates {
 		key := channelSmartScheduleRouteKey{channelId: update.ChannelId, group: update.Group, model: update.Model}
-		route := routeByKey[key]
+		route := physicalRouteByKey[key]
 		update.PoolGuard = true
 		update.ExpectedRevision = route.State.Revision
 		update.ExpectedControlRevision = controlRevision
@@ -817,7 +851,7 @@ func runChannelSmartScheduleByRouteOnce(
 			enqueueChannelSmartScheduleAdaptivePoolRefresh(poolKey.group, poolKey.model)
 		}
 		for index, update := range updates {
-			if update.ObservationOnly {
+			if update.ObservationOnly || update.LogicalProjectionOnly {
 				continue
 			}
 			key := channelSmartScheduleRouteKey{channelId: update.ChannelId, group: update.Group, model: update.Model}

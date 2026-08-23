@@ -22,7 +22,9 @@ func setupChannelStatusProbeModelTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&ChannelStatusProbeConfig{},
+		&ChannelStatusProbeLogicalConfig{},
 		&ChannelStatusProbeState{},
+		&ChannelStatusProbeLogicalState{},
 		&ChannelStatusProbeExecution{},
 	))
 	DB = db

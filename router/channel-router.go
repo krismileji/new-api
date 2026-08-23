@@ -37,6 +37,13 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 }
 
 var channelPermissionRoutes = []permissionRoute{
+	{method: http.MethodGet, path: "/logical-groups", permission: authz.ChannelRead, handler: controller.GetLogicalChannelGroups},
+	{method: http.MethodGet, path: "/logical-groups/:id", permission: authz.ChannelRead, handler: controller.GetLogicalChannelGroup},
+	{method: http.MethodPost, path: "/logical-groups/precheck", permission: authz.ChannelRead, handler: controller.PrecheckLogicalChannelGroup},
+	{method: http.MethodPost, path: "/logical-groups", permission: authz.ChannelWrite, handler: controller.CreateLogicalChannelGroup},
+	{method: http.MethodPut, path: "/logical-groups/:id/members", permission: authz.ChannelWrite, handler: controller.ReplaceLogicalChannelGroupMembers},
+	{method: http.MethodPut, path: "/logical-groups/:id/status", permission: authz.ChannelWrite, handler: controller.UpdateLogicalChannelGroupStatus},
+	{method: http.MethodDelete, path: "/logical-groups/:id", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteLogicalChannelGroup},
 	{method: http.MethodGet, path: "/", permission: authz.ChannelRead, handler: controller.GetAllChannels},
 	{method: http.MethodGet, path: "/search", permission: authz.ChannelRead, handler: controller.SearchChannels},
 	{method: http.MethodGet, path: "/models", permission: authz.ChannelRead, handler: controller.ChannelListModels},

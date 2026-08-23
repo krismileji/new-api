@@ -1,6 +1,9 @@
 package service
 
-import "github.com/QuantumNous/new-api/model"
+import (
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+)
 
 func PreferredChannelAffinityStatus(
 	group string,
@@ -9,8 +12,30 @@ func PreferredChannelAffinityStatus(
 	requestPath string,
 	options ...model.ChannelSelectionOptions,
 ) model.ChannelSmartScheduleAffinityStatus {
-	if ChannelRateLimitCooldownUntil(channelId, modelName) > 0 {
-		return model.ChannelSmartScheduleAffinityTemporarilyUnavailable
+	return model.ChannelSmartScheduleAffinityCandidateEligibilityExcluding(
+		group, modelName, channelId, requestPath,
+		channelAffinityCooldownExclusions(modelName), options...,
+	)
+}
+
+func SelectPreferredChannelAffinityMember(
+	group string,
+	modelName string,
+	preferredChannelID int,
+	requestPath string,
+	options ...model.ChannelSelectionOptions,
+) (*model.Channel, error) {
+	return model.SelectChannelSmartScheduleAffinityMemberExcluding(
+		group, modelName, preferredChannelID, requestPath,
+		channelAffinityCooldownExclusions(modelName), options...,
+	)
+}
+
+func channelAffinityCooldownExclusions(modelName string) map[int]struct{} {
+	channelIDs := channelRateLimitCooldownChannelIds(modelName, common.GetTimestamp())
+	excluded := make(map[int]struct{}, len(channelIDs))
+	for _, channelID := range channelIDs {
+		excluded[channelID] = struct{}{}
 	}
-	return model.ChannelSmartScheduleAffinityEligibility(group, modelName, channelId, requestPath, options...)
+	return excluded
 }

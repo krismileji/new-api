@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,6 +105,120 @@ func TestAdaptiveRefreshQueueCoalescesDuplicatesAndRetainsInProcessSuccessor(t *
 	channelSmartScheduleAdaptiveRefreshQueue.Lock()
 	assert.Equal(t, map[channelSmartScheduleAdaptiveRefreshEvent]struct{}{event: {}}, channelSmartScheduleAdaptiveRefreshQueue.pending)
 	channelSmartScheduleAdaptiveRefreshQueue.Unlock()
+}
+
+func TestAdaptiveRefreshTreatsLogicalMembersAsOneSharedSubject(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	t.Setenv(model.ChannelLogicalGroupGlobalEnableEnv, "true")
+	require.NoError(t, db.AutoMigrate(
+		&model.ChannelLogicalGroup{}, &model.ChannelLogicalGroupMember{},
+		&model.ChannelLogicalSmartScheduleRouteState{}, &model.ChannelLogicalSmartScheduleSampleState{},
+	))
+	useChannelSmartScheduleGroupRatio(t, `{"vip":1}`)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 2, 80, 30,
+	)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+
+	group := model.ChannelLogicalGroup{
+		Name: "shared-adaptive", Status: model.ChannelLogicalGroupStatusEnabled, Revision: 3,
+	}
+	require.NoError(t, db.Create(&group).Error)
+	priority := int64(80)
+	weight := uint(1000)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id: 1691, Name: "logical-key-a", Status: common.ChannelStatusEnabled,
+			Priority: &priority, Weight: &weight, LogicalChannelID: &group.Id,
+		},
+		{
+			Id: 1692, Name: "logical-key-b", Status: common.ChannelStatusEnabled,
+			Priority: &priority, Weight: &weight, LogicalChannelID: &group.Id,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelLogicalGroupMember{
+		{LogicalGroupID: group.Id, ChannelID: 1691, Weight: 1, AddressFingerprint: strings.Repeat("a", 64)},
+		{LogicalGroupID: group.Id, ChannelID: 1692, Weight: 1, AddressFingerprint: strings.Repeat("a", 64)},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1691, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1692, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{
+			ChannelId: 1691, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			Revision: 1, BaseRank: 1, BasePriority: priority, BaseWeight: weight,
+		},
+		{
+			ChannelId: 1692, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+			Revision: 1, BaseRank: 1, BasePriority: priority, BaseWeight: weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelRatioMonitor{
+		{ChannelId: 1691, Ratio: 1, UpdatedTime: 1},
+		{ChannelId: 1692, Ratio: 1, UpdatedTime: 1},
+	}).Error)
+
+	routes, err := model.GetChannelSmartScheduleRoutePool("vip", "model-a")
+	require.NoError(t, err)
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	beforeRevision := routes[0].State.Revision
+	var abilitiesBefore []model.Ability
+	require.NoError(t, db.Where(&model.Ability{Group: "vip", Model: "model-a"}).
+		Order("channel_id ASC").Find(&abilitiesBefore).Error)
+	var physicalStatesBefore []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("group_name = ? AND model_name = ?", "vip", "model-a").
+		Order("channel_id ASC").Find(&physicalStatesBefore).Error)
+
+	now := common.GetTimestamp()
+	metricReads := map[int]int{}
+	settings := getChannelMonitorSettings()
+	conflict, err := refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
+		context.Background(),
+		channelSmartScheduleRoutePoolKey{group: "vip", model: "model-a"},
+		policy.policy(),
+		settings.SmartScheduleControlRevision,
+		model.DB,
+		func(
+			_ context.Context, channelId int, _ string, _ int64, _ int64, _ int, _ float64, _ float64,
+		) (model.ChannelSmartScheduleAdaptiveHealthMetric, error) {
+			metricReads[channelId]++
+			return model.ChannelSmartScheduleAdaptiveHealthMetric{
+				RequestCount: 2, HealthyRequestCount: 2,
+				FirstTokenCount: 2, FirstTokenTotalMs: 200, LastUsedTime: now,
+				StabilitySuccessCount: 2,
+			}, nil
+		},
+		func(context.Context, int, string) (int64, error) { return 0, nil },
+		now,
+		0,
+	)
+	require.NoError(t, err)
+	assert.False(t, conflict)
+	assert.Equal(t, map[int]int{1691: 3, 1692: 3}, metricReads)
+
+	routes, err = model.GetChannelSmartScheduleRoutePool("vip", "model-a")
+	require.NoError(t, err)
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	assert.Equal(t, beforeRevision+1, routes[0].State.Revision)
+	assert.Equal(t, int64(4), routes[0].State.AdaptiveHealthSampleCount)
+
+	var abilitiesAfter []model.Ability
+	require.NoError(t, db.Where(&model.Ability{Group: "vip", Model: "model-a"}).
+		Order("channel_id ASC").Find(&abilitiesAfter).Error)
+	assert.Equal(t, abilitiesBefore, abilitiesAfter)
+	var physicalStatesAfter []model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("group_name = ? AND model_name = ?", "vip", "model-a").
+		Order("channel_id ASC").Find(&physicalStatesAfter).Error)
+	assert.Equal(t, physicalStatesBefore, physicalStatesAfter)
 }
 
 func TestFullSchedulePreservesRuntimeOverlayAndQueuesOnePoolReplay(t *testing.T) {

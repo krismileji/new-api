@@ -125,11 +125,18 @@ func Distribute() func(c *gin.Context) {
 									affinityTemporarilyUnavailable = true
 								}
 								if affinityStatus == model.ChannelSmartScheduleAffinityEligible {
+									selected, selectErr := service.SelectPreferredChannelAffinityMember(
+										g, modelRequest.Model, preferred.Id, c.Request.URL.Path, selectionOptions,
+									)
+									if selectErr != nil || selected == nil {
+										affinityTemporarilyUnavailable = true
+										continue
+									}
 									selectGroup = g
 									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
+									channel = selected
 									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
+									service.MarkChannelAffinityUsed(c, g, selected.Id)
 									break
 								}
 							}
@@ -140,10 +147,17 @@ func Distribute() func(c *gin.Context) {
 							)
 							affinityTemporarilyUnavailable = affinityStatus == model.ChannelSmartScheduleAffinityTemporarilyUnavailable
 							if affinityStatus == model.ChannelSmartScheduleAffinityEligible {
-								channel = preferred
-								selectGroup = usingGroup
-								affinityUsable = true
-								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+								selected, selectErr := service.SelectPreferredChannelAffinityMember(
+									usingGroup, modelRequest.Model, preferred.Id, c.Request.URL.Path, selectionOptions,
+								)
+								if selectErr != nil || selected == nil {
+									affinityTemporarilyUnavailable = true
+								} else {
+									channel = selected
+									selectGroup = usingGroup
+									affinityUsable = true
+									service.MarkChannelAffinityUsed(c, usingGroup, selected.Id)
+								}
 							}
 						}
 					}

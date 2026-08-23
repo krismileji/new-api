@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -49,6 +50,7 @@ func recordManualChannelSmartScheduleProbeResultForGroup(
 		model.ChannelSmartScheduleSampleSourceManualTest,
 		"",
 		0,
+		nil,
 	)
 }
 
@@ -67,6 +69,27 @@ func recordChannelStatusProbeSmartScheduleResult(
 		model.ChannelSmartScheduleSampleSourceStatusProbe,
 		sampleId,
 		probeTime,
+		nil,
+	)
+}
+
+func recordChannelStatusProbeSmartScheduleResultWithIdentity(
+	channel *model.Channel,
+	result testResult,
+	durationMs float64,
+	sampleId string,
+	probeTime int64,
+	identity model.LogicalChannelIdentity,
+) (bool, string) {
+	return recordChannelSmartScheduleProbeResult(
+		channel,
+		result,
+		durationMs,
+		"",
+		model.ChannelSmartScheduleSampleSourceStatusProbe,
+		sampleId,
+		probeTime,
+		&identity,
 	)
 }
 
@@ -78,6 +101,7 @@ func recordChannelSmartScheduleProbeResult(
 	source string,
 	sampleId string,
 	requestedProbeTime int64,
+	frozenIdentity *model.LogicalChannelIdentity,
 ) (bool, string) {
 	if channel == nil {
 		return false, "渠道不可用，未计入智能调度样本"
@@ -183,7 +207,22 @@ func recordChannelSmartScheduleProbeResult(
 		))
 		return false, "恢复状态读取失败，请查看服务端日志"
 	}
-	_, err := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+	identity := model.LogicalChannelIdentity{}
+	if frozenIdentity != nil {
+		identity = *frozenIdentity
+		identity.ChannelID = channel.Id
+	} else {
+		var identityErr error
+		identity, identityErr = model.ResolveChannelLogicalIdentity(channel.Id)
+		if identityErr != nil {
+			common.SysError(fmt.Sprintf(
+				"保存%s共享样本前解析逻辑渠道失败: channel_id=%d model=%s err=%s",
+				probeLabel, channel.Id, modelName, identityErr.Error(),
+			))
+			return false, "逻辑渠道读取失败，请查看服务端日志"
+		}
+	}
+	_, err := model.SaveLogicalChannelSmartScheduleModelSample(identity, eligibleGroup, model.ChannelSmartScheduleModelSampleResult{
 		ChannelId:     channel.Id,
 		Model:         routeModelName,
 		Source:        source,
@@ -198,6 +237,10 @@ func recordChannelSmartScheduleProbeResult(
 		ProbeRecovery: recoveryRequest,
 	})
 	if err != nil {
+		if frozenIdentity != nil && (errors.Is(err, model.ErrChannelLogicalGroupRevisionConflict) ||
+			errors.Is(err, model.ErrLogicalChannelSelectionGroupDisabled)) {
+			return false, "逻辑渠道关系已变化，旧 revision 探测样本已丢弃"
+		}
 		common.SysError(fmt.Sprintf(
 			"保存%s共享样本失败: channel_id=%d model=%s matched_group=%s err=%s",
 			probeLabel, channel.Id, modelName, eligibleGroup, err.Error(),

@@ -57,7 +57,28 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 
 	var run model.ChannelModelDetectionRun
-	if err := db.WithContext(ctx).Where("run_id = ? AND channel_id = ?", execution.RunID, execution.ChannelID).First(&run).Error; err != nil {
+	if err := db.WithContext(ctx).Where("run_id = ?", execution.RunID).First(&run).Error; err != nil {
+		return result, ErrChannelModelDetectorFixedChannelUnavailable
+	}
+	if run.LogicalChannelID > 0 && run.LogicalRevision > 0 {
+		members, snapshotErr := run.LogicalMemberSnapshot()
+		if snapshotErr != nil {
+			return result, ErrChannelModelDetectorFixedChannelUnavailable
+		}
+		if len(members) == 0 {
+			return result, ErrChannelModelDetectorFixedChannelUnavailable
+		}
+		isMember := false
+		for _, member := range members {
+			if member.ChannelID == execution.ChannelID {
+				isMember = true
+				break
+			}
+		}
+		if !isMember {
+			return result, ErrChannelModelDetectorFixedChannelUnavailable
+		}
+	} else if run.ChannelId != execution.ChannelID {
 		return result, ErrChannelModelDetectorFixedChannelUnavailable
 	}
 	var storedExecution model.ChannelModelDetectionExecution
@@ -72,7 +93,14 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 
 	var channel model.Channel
-	if err := db.WithContext(ctx).Where("id = ?", execution.ChannelID).First(&channel).Error; err != nil || !channelModelDetectorChannelAllowed(channel.Status) {
+	if err := db.WithContext(ctx).Where("id = ?", execution.ChannelID).First(&channel).Error; err != nil {
+		return result, ErrChannelModelDetectorFixedChannelUnavailable
+	}
+	channelAllowed := channelModelDetectorChannelAllowed(channel.Status)
+	if run.LogicalRevision > 0 {
+		channelAllowed = channel.Status == common.ChannelStatusEnabled
+	}
+	if !channelAllowed {
 		return result, ErrChannelModelDetectorFixedChannelUnavailable
 	}
 	pricingUserID := run.PricingContextUserId

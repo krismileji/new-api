@@ -121,6 +121,10 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 	originalChannelCache := channelsIDM
 	originalAdvancedCustomCache := channel2advancedCustomConfig
 	originalRouteCache := channelSmartScheduleRouteCache
+	originalLogicalRuntime := logicalChannelRuntimeCache
+	originalLogicalDirty := logicalChannelRuntimeDirty
+	logicalChannelRuntimeCache = nil
+	logicalChannelRuntimeDirty = false
 	channelSyncLock.Unlock()
 	t.Cleanup(func() {
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
@@ -129,6 +133,8 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 		channelsIDM = originalChannelCache
 		channel2advancedCustomConfig = originalAdvancedCustomCache
 		channelSmartScheduleRouteCache = originalRouteCache
+		logicalChannelRuntimeCache = originalLogicalRuntime
+		logicalChannelRuntimeDirty = originalLogicalDirty
 		channelSyncLock.Unlock()
 	})
 

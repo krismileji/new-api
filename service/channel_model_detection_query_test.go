@@ -157,6 +157,36 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	assert.Equal(t, initialQueryCount, queryCount.Load())
 }
 
+func TestChannelModelDetectionOverviewTreatsLegacyNullLogicalFieldsAsPhysical(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	olderRun, execution := seedChannelModelDetectionQueryChannel(t, db, 104, "success", 100)
+	newerRun := olderRun
+	newerRun.Id = 0
+	newerRun.RunId = "legacy-null-latest"
+	newerRun.CreatedAt = 200
+	newerRun.QueuedAt = 200
+	newerRun.FinishedAt = 201
+	newerRun.UpdatedAt = 201
+	require.NoError(t, db.Create(&newerRun).Error)
+	require.NoError(t, db.Exec("UPDATE channel_model_detection_runs SET logical_channel_id = NULL, logical_revision = NULL WHERE run_id = ?", newerRun.RunId).Error)
+	settledQuota, settledCost := int64(2), int64(200)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionCostEvent{
+		CostEventId: "legacy-null-cost", RunId: newerRun.RunId, TargetId: execution.TargetId, ExecutionId: execution.Id, ChannelId: 104,
+		RequestModel: execution.RequestModel, ClaimedModel: execution.ClaimedModel, Preset: execution.Preset,
+		DetectorRequestId: "legacy-null-request", AttemptNo: 1, DispatchState: model.ChannelModelDetectionDispatchDispatched,
+		SettlementStatus: model.ChannelModelDetectionSettlementSettled, UsageSource: model.ChannelModelDetectionUsageUpstreamAuthoritative,
+		UsageAvailable: true, SettledQuota: &settledQuota, CostBasisQuota: &settledQuota, SettledCostNanoCNY: &settledCost,
+		CostScope: model.ChannelModelDetectionCostScopeChannelUpstreamAPI, CreatedAt: 200, SettledAt: 201, UpdatedAt: 201,
+	}).Error)
+
+	overview, err := GetChannelModelDetectionOverview(context.Background(), db, 300)
+	require.NoError(t, err)
+	require.Len(t, overview.Channels, 1)
+	require.NotNil(t, overview.Channels[0].LatestRunCost)
+	require.NotNil(t, overview.Channels[0].LatestRunCost.SettledCostCNY)
+	assert.Equal(t, "0.000000200", *overview.Channels[0].LatestRunCost.SettledCostCNY)
+}
+
 func TestChannelModelDetectionOverviewTreatsStrongFingerprintConflictAsUnhealthy(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{

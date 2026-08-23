@@ -196,6 +196,34 @@ func TestChannelModelDetectorTokenValidatesDedicatedKeyTTLAndRelayURL(t *testing
 	assert.NotEqual(t, firstStore.signingKey, secondStore.signingKey)
 }
 
+func TestChannelModelDetectorTokenValidatesAndFreezesLogicalMembers(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := newTestChannelModelDetectorTokenStore(t, &now)
+	spec := ChannelModelDetectorTokenSpec{
+		RunID: "logical-run", TargetID: 11, ExecutionID: 1011, ChannelID: 23,
+		LogicalChannelID: 99, LogicalRevision: 3, RequestModel: "channel-alias",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Preset: model.ChannelModelDetectionPresetLow,
+		RelayBaseURL: "http://127.0.0.1:3000/internal/model-detector", MaxHTTPAttempts: 2, ExpiresAt: now.Add(time.Hour).Unix(),
+	}
+
+	_, err := store.Issue(spec)
+	assert.Error(t, err)
+
+	spec.LogicalMembers = []model.ChannelModelDetectionMemberSnapshot{{ChannelID: 23, Weight: 1}, {ChannelID: 23, Weight: 2}}
+	_, err = store.Issue(spec)
+	assert.Error(t, err)
+
+	spec.LogicalMembers = []model.ChannelModelDetectionMemberSnapshot{{ChannelID: 23, Weight: 1}, {ChannelID: 24, Weight: 2}}
+	credential, err := store.Issue(spec)
+	require.NoError(t, err)
+	spec.LogicalMembers[0].ChannelID = 999
+	assert.Equal(t, []model.ChannelModelDetectionMemberSnapshot{{ChannelID: 23, Weight: 1}, {ChannelID: 24, Weight: 2}}, credential.Claims.LogicalMembers)
+	credential.Claims.LogicalMembers[0].ChannelID = 998
+	authorization, err := store.AuthorizeAttempt(credential.BearerToken(), credential.Claims.RequestModel, "frozen-members")
+	require.NoError(t, err)
+	assert.Equal(t, []model.ChannelModelDetectionMemberSnapshot{{ChannelID: 23, Weight: 1}, {ChannelID: 24, Weight: 2}}, authorization.Claims.LogicalMembers)
+}
+
 func newTestChannelModelDetectorTokenStore(t *testing.T, now *time.Time) *ChannelModelDetectorTokenStore {
 	t.Helper()
 	store, err := newChannelModelDetectorTokenStore([]byte(strings.Repeat("a", 32)), func() time.Time { return *now })

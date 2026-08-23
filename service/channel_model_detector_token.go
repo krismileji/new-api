@@ -41,33 +41,44 @@ var (
 // ChannelModelDetectorTokenSpec is the immutable binding requested by a
 // worker. The store always generates the nonce itself.
 type ChannelModelDetectorTokenSpec struct {
-	RunID           string
-	TargetID        int64
-	ExecutionID     int64
-	ChannelID       int
-	RequestModel    string
-	ClaimedModel    string
-	Preset          string
-	RelayBaseURL    string
-	MaxHTTPAttempts int
-	ExpiresAt       int64
+	RunID            string
+	TargetID         int64
+	ExecutionID      int64
+	ChannelID        int
+	LogicalChannelID int64
+	LogicalRevision  int64
+	LogicalMembers   []model.ChannelModelDetectionMemberSnapshot
+	RequestModel     string
+	ClaimedModel     string
+	Preset           string
+	RelayBaseURL     string
+	MaxHTTPAttempts  int
+	ExpiresAt        int64
 }
 
 // ChannelModelDetectorTokenClaims are kept only in process memory. They are
 // not embedded in the bearer token, so a holder cannot inspect or alter the
 // selected channel, target, or upstream model.
 type ChannelModelDetectorTokenClaims struct {
-	RunID           string `json:"run_id"`
-	TargetID        int64  `json:"target_id"`
-	ExecutionID     int64  `json:"execution_id"`
-	ChannelID       int    `json:"channel_id"`
-	RequestModel    string `json:"request_model"`
-	ClaimedModel    string `json:"claimed_model"`
-	Preset          string `json:"preset"`
-	RelayBaseURL    string `json:"relay_base_url"`
-	MaxHTTPAttempts int    `json:"max_http_attempts"`
-	ExpiresAt       int64  `json:"expires_at"`
-	Nonce           string `json:"nonce"`
+	RunID            string                                      `json:"run_id"`
+	TargetID         int64                                       `json:"target_id"`
+	ExecutionID      int64                                       `json:"execution_id"`
+	ChannelID        int                                         `json:"channel_id"`
+	LogicalChannelID int64                                       `json:"logical_channel_id"`
+	LogicalRevision  int64                                       `json:"logical_revision"`
+	LogicalMembers   []model.ChannelModelDetectionMemberSnapshot `json:"-"`
+	RequestModel     string                                      `json:"request_model"`
+	ClaimedModel     string                                      `json:"claimed_model"`
+	Preset           string                                      `json:"preset"`
+	RelayBaseURL     string                                      `json:"relay_base_url"`
+	MaxHTTPAttempts  int                                         `json:"max_http_attempts"`
+	ExpiresAt        int64                                       `json:"expires_at"`
+	Nonce            string                                      `json:"nonce"`
+}
+
+func cloneChannelModelDetectorTokenClaims(claims ChannelModelDetectorTokenClaims) ChannelModelDetectorTokenClaims {
+	claims.LogicalMembers = append([]model.ChannelModelDetectionMemberSnapshot(nil), claims.LogicalMembers...)
+	return claims
 }
 
 func (claims ChannelModelDetectorTokenClaims) MarshalJSON() ([]byte, error) {
@@ -173,17 +184,20 @@ func (store *ChannelModelDetectorTokenStore) Issue(spec ChannelModelDetectorToke
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
 	claims := ChannelModelDetectorTokenClaims{
-		RunID:           normalizedSpec.RunID,
-		TargetID:        normalizedSpec.TargetID,
-		ExecutionID:     normalizedSpec.ExecutionID,
-		ChannelID:       normalizedSpec.ChannelID,
-		RequestModel:    normalizedSpec.RequestModel,
-		ClaimedModel:    normalizedSpec.ClaimedModel,
-		Preset:          normalizedSpec.Preset,
-		RelayBaseURL:    normalizedSpec.RelayBaseURL,
-		MaxHTTPAttempts: normalizedSpec.MaxHTTPAttempts,
-		ExpiresAt:       normalizedSpec.ExpiresAt,
-		Nonce:           nonce,
+		RunID:            normalizedSpec.RunID,
+		TargetID:         normalizedSpec.TargetID,
+		ExecutionID:      normalizedSpec.ExecutionID,
+		ChannelID:        normalizedSpec.ChannelID,
+		LogicalChannelID: normalizedSpec.LogicalChannelID,
+		LogicalRevision:  normalizedSpec.LogicalRevision,
+		LogicalMembers:   append([]model.ChannelModelDetectionMemberSnapshot(nil), normalizedSpec.LogicalMembers...),
+		RequestModel:     normalizedSpec.RequestModel,
+		ClaimedModel:     normalizedSpec.ClaimedModel,
+		Preset:           normalizedSpec.Preset,
+		RelayBaseURL:     normalizedSpec.RelayBaseURL,
+		MaxHTTPAttempts:  normalizedSpec.MaxHTTPAttempts,
+		ExpiresAt:        normalizedSpec.ExpiresAt,
+		Nonce:            nonce,
 	}
 
 	store.mu.Lock()
@@ -193,7 +207,7 @@ func (store *ChannelModelDetectorTokenStore) Issue(spec ChannelModelDetectorToke
 		return ChannelModelDetectorCredential{}, errors.New("模型检测任务凭证随机标识冲突")
 	}
 	store.records[nonce] = &channelModelDetectorTokenRecord{
-		claims:   claims,
+		claims:   cloneChannelModelDetectorTokenClaims(claims),
 		attempts: make(map[[sha256.Size]byte]int),
 	}
 	store.mu.Unlock()
@@ -245,7 +259,7 @@ func (store *ChannelModelDetectorTokenStore) AuthorizeAttempt(token, requestedMo
 	attemptKey := sha256.Sum256([]byte(detectorRequestID))
 	if attemptNo, exists := record.attempts[attemptKey]; exists {
 		return ChannelModelDetectorAttemptAuthorization{
-			Claims:            record.claims,
+			Claims:            cloneChannelModelDetectorTokenClaims(record.claims),
 			DetectorRequestID: detectorRequestID,
 			AttemptNo:         attemptNo,
 			RemainingAttempts: record.claims.MaxHTTPAttempts - record.used,
@@ -259,7 +273,7 @@ func (store *ChannelModelDetectorTokenStore) AuthorizeAttempt(token, requestedMo
 	record.used++
 	record.attempts[attemptKey] = record.used
 	return ChannelModelDetectorAttemptAuthorization{
-		Claims:            record.claims,
+		Claims:            cloneChannelModelDetectorTokenClaims(record.claims),
 		DetectorRequestID: detectorRequestID,
 		AttemptNo:         record.used,
 		RemainingAttempts: record.claims.MaxHTTPAttempts - record.used,
@@ -365,6 +379,26 @@ func validateChannelModelDetectorTokenSpec(spec ChannelModelDetectorTokenSpec, n
 	spec.Preset = strings.ToLower(strings.TrimSpace(spec.Preset))
 	if spec.RunID == "" || len(spec.RunID) > 128 || spec.TargetID <= 0 || spec.ExecutionID <= 0 || spec.ChannelID <= 0 {
 		return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证归属无效")
+	}
+	if spec.LogicalChannelID < 0 || spec.LogicalRevision < 0 || (spec.LogicalChannelID == 0 && spec.LogicalRevision != 0) {
+		return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证逻辑归属无效")
+	}
+	if spec.LogicalRevision > 0 {
+		if len(spec.LogicalMembers) == 0 {
+			return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证成员快照无效")
+		}
+		seen := make(map[int]struct{}, len(spec.LogicalMembers))
+		for _, member := range spec.LogicalMembers {
+			if member.ChannelID <= 0 || model.ValidateChannelLogicalGroupMemberWeight(member.Weight) != nil {
+				return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证成员快照无效")
+			}
+			if _, exists := seen[member.ChannelID]; exists {
+				return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证成员快照无效")
+			}
+			seen[member.ChannelID] = struct{}{}
+		}
+	} else if len(spec.LogicalMembers) > 0 {
+		return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证成员快照无效")
 	}
 	if spec.RequestModel == "" || len(spec.RequestModel) > 255 {
 		return ChannelModelDetectorTokenSpec{}, errors.New("模型检测任务凭证请求模型无效")

@@ -172,10 +172,17 @@ type ChannelSmartScheduleRoute struct {
 	EconomicRole       string                               `json:"economic_role,omitempty"`
 	State              ChannelSmartScheduleRouteState       `json:"state"`
 	SharedSamples      ChannelSmartScheduleModelSampleState `json:"shared_samples"`
+	LogicalChannelId   int64                                `json:"-"`
+	LogicalRevision    int64                                `json:"-"`
+	LogicalMemberIds   []int                                `json:"-"`
 }
 
 type ChannelSmartScheduleRouteResultUpdate struct {
 	ChannelId                                     int
+	LogicalChannelId                              int64
+	LogicalRevision                               int64
+	ExpectedLogicalStateRevision                  int64
+	LogicalProjectionOnly                         bool
 	Group                                         string
 	Model                                         string
 	Status                                        string
@@ -1559,6 +1566,18 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 	if messageRunes := []rune(reason); len(messageRunes) > 255 {
 		reason = string(messageRunes[:255])
 	}
+	if IsLogicalChannelGroupingEnabled() {
+		identity, identityErr := ResolveChannelLogicalIdentity(channelId)
+		if identityErr != nil {
+			return result, identityErr
+		}
+		if identity.Revision > 0 && identity.LogicalChannelID != int64(identity.ChannelID) {
+			return protectLogicalChannelSmartScheduleRouteOnRuntimeFailure(
+				identity, group, modelName, protectionUntil, reason, expectedControlRevision,
+				allowNormalRoute, recoveryProbeOnly, redisEventSequence,
+			)
+		}
+	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
@@ -1785,6 +1804,55 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	observationBoundaryAdvanced := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, result := range results {
+			if result.LogicalChannelId <= 0 {
+				continue
+			}
+			if result.LogicalRevision <= 0 || result.ExpectedLogicalStateRevision <= 0 {
+				return errors.New("逻辑智能调度路由结果缺少关系或状态修订号")
+			}
+			if _, err := lockLogicalSmartScheduleIdentityTx(tx, LogicalChannelIdentity{
+				ChannelID: result.ChannelId, LogicalChannelID: result.LogicalChannelId, Revision: result.LogicalRevision,
+			}); err != nil {
+				return err
+			}
+		}
+		type logicalRouteMutation struct {
+			stored  ChannelLogicalSmartScheduleRouteState
+			payload channelLogicalSmartScheduleRoutePayload
+		}
+		logicalRoutes := make(map[channelLogicalSmartScheduleRouteKey]*logicalRouteMutation)
+		for _, result := range results {
+			if result.LogicalChannelId <= 0 || result.LogicalProjectionOnly || result.ObservationOnly {
+				continue
+			}
+			key := channelLogicalSmartScheduleRouteKey{
+				logicalID: result.LogicalChannelId, revision: result.LogicalRevision,
+				group: result.Group, model: channelSmartScheduleModelName(result.Model),
+			}
+			if _, exists := logicalRoutes[key]; exists {
+				return errors.New("逻辑智能调度整池结果包含重复路由")
+			}
+			var stored ChannelLogicalSmartScheduleRouteState
+			if err := lockForUpdate(tx).Where(&ChannelLogicalSmartScheduleRouteState{
+				LogicalGroupID: key.logicalID, LogicalRevision: key.revision,
+				GroupName: key.group, ModelName: key.model,
+			}).First(&stored).Error; err != nil {
+				return err
+			}
+			if stored.StateRevision != result.ExpectedLogicalStateRevision {
+				return ErrChannelLogicalGroupRevisionConflict
+			}
+			payload, err := decodeLogicalSmartScheduleRoutePayload(stored.StateJSON)
+			if err != nil {
+				return err
+			}
+			payload.State.Revision = stored.StateRevision
+			payload.State.ChannelId = 0
+			payload.State.GroupName = key.group
+			payload.State.ModelName = key.model
+			logicalRoutes[key] = &logicalRouteMutation{stored: stored, payload: payload}
+		}
 		var redisEffectState *ChannelMonitorRedisEffectState
 		if redisRuntimeEventSequence > 0 {
 			var effectErr error
@@ -1913,9 +1981,26 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				outcomes[index].Applied = true
 				continue
 			}
+			if result.LogicalChannelId > 0 && result.LogicalProjectionOnly {
+				outcomes[index].Applied = true
+				continue
+			}
 			key := outcomes[index].Key
 			state := states[index]
 			ability := abilities[index]
+			var logicalKey channelLogicalSmartScheduleRouteKey
+			var logicalRoute *logicalRouteMutation
+			if result.LogicalChannelId > 0 {
+				logicalKey = channelLogicalSmartScheduleRouteKey{
+					logicalID: result.LogicalChannelId, revision: result.LogicalRevision,
+					group: result.Group, model: channelSmartScheduleModelName(result.Model),
+				}
+				logicalRoute = logicalRoutes[logicalKey]
+				if logicalRoute == nil {
+					return errors.New("逻辑智能调度路由状态未锁定")
+				}
+				state = logicalRoute.payload.State
+			}
 			if result.RuntimeStabilityRecovery && state.StabilityState != ChannelSmartScheduleStabilityProbing {
 				return nil
 			}
@@ -1950,14 +2035,28 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 					state.StabilitySavedWeight = result.Stability.SavedWeight
 					if previousStabilityState != "" && result.Stability.State == "" {
 						state.StabilitySince = 0
-						sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
-							tx, result.ChannelId, result.Model, updatedTime,
-						)
-						if observationErr != nil {
-							return observationErr
+						if logicalRoute != nil {
+							sampleState, advanced, observationErr := advanceLogicalChannelSmartScheduleObservationSinceTx(
+								tx, LogicalChannelIdentity{
+									ChannelID: result.ChannelId, LogicalChannelID: result.LogicalChannelId,
+									Revision: result.LogicalRevision,
+								}, result.Group, result.Model, updatedTime,
+							)
+							if observationErr != nil {
+								return observationErr
+							}
+							outcomes[index].ObservationSince = sampleState.ObservationSince
+							observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
+						} else {
+							sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
+								tx, result.ChannelId, result.Model, updatedTime,
+							)
+							if observationErr != nil {
+								return observationErr
+							}
+							outcomes[index].ObservationSince = sampleState.ObservationSince
+							observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
 						}
-						outcomes[index].ObservationSince = sampleState.ObservationSince
-						observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
 					}
 				}
 				if result.RuntimeProtectionUntil != nil {
@@ -2011,6 +2110,41 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				return errors.New("智能调度路由修订号已达上限")
 			}
 			state.Revision++
+			if logicalRoute != nil {
+				priority := logicalRoute.payload.EffectivePriority
+				weight := logicalRoute.payload.EffectiveWeight
+				if applyPriorityWeight {
+					outcomes[index].RoutingChanged = priority != result.Priority || weight != result.Weight
+					priority = result.Priority
+					weight = result.Weight
+				}
+				state.Id = 0
+				state.ChannelId = 0
+				state.GroupName = logicalKey.group
+				state.ModelName = logicalKey.model
+				raw, encodeErr := encodeLogicalSmartScheduleRouteStateWithRouting(state, priority, weight)
+				if encodeErr != nil {
+					return encodeErr
+				}
+				updated := tx.Model(&ChannelLogicalSmartScheduleRouteState{}).Where(
+					"id = ? AND state_revision = ?",
+					logicalRoute.stored.Id, logicalRoute.stored.StateRevision,
+				).Updates(map[string]any{
+					"state_revision": state.Revision, "state_json": raw, "updated_at": common.GetTimestamp(),
+				})
+				if updated.Error != nil {
+					return updated.Error
+				}
+				if updated.RowsAffected != 1 {
+					return ErrChannelLogicalGroupRevisionConflict
+				}
+				logicalRoute.stored.StateRevision = state.Revision
+				logicalRoute.payload.State = state
+				logicalRoute.payload.EffectivePriority = priority
+				logicalRoute.payload.EffectiveWeight = weight
+				outcomes[index].Applied = true
+				continue
+			}
 			if applyPriorityWeight {
 				priority := result.Priority
 				weight := result.Weight
@@ -2027,9 +2161,10 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			} else if err := saveChannelSmartScheduleRouteStateTx(tx, &state); err != nil {
 				return err
 			}
+			states[index] = state
 			outcomes[index].Applied = true
 		}
-		if poolGuarded && !adaptiveOverlayOnly {
+		if poolGuarded && !adaptiveOverlayOnly && len(logicalRoutes) == 0 {
 			changedKeys, reapplyErr := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 				tx,
 				[]channelSmartScheduleRoutePool{{group: group, model: modelName}},

@@ -123,6 +123,7 @@ type ChannelSmartScheduleSampleSeries struct {
 
 type channelSmartScheduleSample struct {
 	Time              int64    `json:"time"`
+	ChannelId         int      `json:"physical_channel_id,omitempty"`
 	Success           bool     `json:"success"`
 	Source            string   `json:"source,omitempty"`
 	SampleId          string   `json:"sample_id,omitempty"`

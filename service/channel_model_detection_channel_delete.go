@@ -37,22 +37,65 @@ func CancelChannelModelDetectionRunsForChannels(ctx context.Context, db *gorm.DB
 		return nil
 	}
 	sort.Ints(normalized)
+	activeStatuses := []string{
+		model.ChannelModelDetectionRunStatusQueued,
+		model.ChannelModelDetectionRunStatusWaitingDetector,
+		model.ChannelModelDetectionRunStatusSubmitting,
+		model.ChannelModelDetectionRunStatusRunning,
+		model.ChannelModelDetectionRunStatusSubmissionUnknown,
+		model.ChannelModelDetectionRunStatusCanceling,
+	}
 	var runs []model.ChannelModelDetectionRun
 	if err := db.WithContext(ctx).
-		Select("run_id", "channel_id", "status").
-		Where("channel_id IN ? AND status IN ?", normalized, []string{
-			model.ChannelModelDetectionRunStatusQueued,
-			model.ChannelModelDetectionRunStatusWaitingDetector,
-			model.ChannelModelDetectionRunStatusSubmitting,
-			model.ChannelModelDetectionRunStatusRunning,
-			model.ChannelModelDetectionRunStatusSubmissionUnknown,
-			model.ChannelModelDetectionRunStatusCanceling,
-		}).Order("channel_id ASC, id ASC").Find(&runs).Error; err != nil {
+		Select("id", "run_id", "channel_id", "status", "logical_channel_id", "logical_revision", "logical_member_snapshot_json").
+		Where("status IN ?", activeStatuses).Order("channel_id ASC, id ASC").Find(&runs).Error; err != nil {
 		return err
 	}
+	deleted := make(map[int]struct{}, len(normalized))
+	for _, channelID := range normalized {
+		deleted[channelID] = struct{}{}
+	}
+	runByID := make(map[string]model.ChannelModelDetectionRun, len(runs))
+	selected := make(map[string]struct{})
 	for _, run := range runs {
-		if _, err := CancelChannelModelDetectionRun(ctx, db, run.RunId); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("删除渠道前取消模型检测轮次 %s 失败: %w", run.RunId, err)
+		runByID[run.RunId] = run
+		if _, ownerDeleted := deleted[run.ChannelId]; ownerDeleted {
+			selected[run.RunId] = struct{}{}
+		}
+		if run.LogicalRevision <= 0 {
+			continue
+		}
+		members, err := run.LogicalMemberSnapshot()
+		if err != nil {
+			return err
+		}
+		for _, member := range members {
+			if _, memberDeleted := deleted[member.ChannelID]; memberDeleted {
+				selected[run.RunId] = struct{}{}
+				break
+			}
+		}
+	}
+	if len(runs) > 0 && db.Migrator().HasTable(&model.ChannelModelDetectionExecution{}) {
+		var executionRunIDs []string
+		if err := db.WithContext(ctx).Model(&model.ChannelModelDetectionExecution{}).
+			Where("channel_id IN ?", normalized).Distinct().Pluck("run_id", &executionRunIDs).Error; err != nil {
+			return err
+		}
+		for _, runID := range executionRunIDs {
+			if _, active := runByID[runID]; active {
+				selected[runID] = struct{}{}
+			}
+		}
+	}
+	runIDs := make([]string, 0, len(selected))
+	for runID := range selected {
+		runIDs = append(runIDs, runID)
+	}
+	sort.Strings(runIDs)
+	for _, runID := range runIDs {
+		if _, err := CancelChannelModelDetectionRun(ctx, db, runID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("删除渠道前取消模型检测轮次 %s 失败: %w", runID, err)
 		}
 	}
 	return nil

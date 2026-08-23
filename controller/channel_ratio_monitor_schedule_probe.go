@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -230,15 +231,53 @@ func runChannelSmartScheduleProbeOnce(
 	if err != nil {
 		return result, err
 	}
-	requestModelByKey := make(map[channelSmartScheduleModelKey]string)
+	type probeSubjectKey struct {
+		logicalChannelId int64
+		logicalRevision  int64
+		model            string
+	}
+	type logicalSnapshotKey struct {
+		logicalChannelId int64
+		logicalRevision  int64
+	}
+	identityByChannel := make(map[int]model.LogicalChannelIdentity)
+	snapshotByLogicalKey := make(map[logicalSnapshotKey]model.LogicalChannelSelectionSnapshot)
+	for _, route := range routes {
+		if _, exists := identityByChannel[route.ChannelId]; exists {
+			continue
+		}
+		identity, identityErr := model.ResolveChannelLogicalIdentity(route.ChannelId)
+		if identityErr != nil {
+			return result, identityErr
+		}
+		identityByChannel[route.ChannelId] = identity
+		if identity.Revision <= 0 || identity.LogicalChannelID == int64(identity.ChannelID) {
+			continue
+		}
+		snapshotKey := logicalSnapshotKey{
+			logicalChannelId: identity.LogicalChannelID,
+			logicalRevision:  identity.Revision,
+		}
+		if _, exists := snapshotByLogicalKey[snapshotKey]; exists {
+			continue
+		}
+		snapshot, snapshotErr := model.GetLogicalChannelSelectionSnapshot(identity)
+		if snapshotErr != nil {
+			return result, snapshotErr
+		}
+		snapshotByLogicalKey[snapshotKey] = snapshot
+	}
+	requestModelByKey := make(map[probeSubjectKey]string)
 	for _, route := range routes {
 		routeModel := strings.TrimSpace(route.Model)
 		if routeModel == "" || strings.Contains(routeModel, "*") {
 			continue
 		}
-		key := channelSmartScheduleModelKey{
-			channelId: route.ChannelId,
-			model:     ratio_setting.FormatMatchingModelName(routeModel),
+		identity := identityByChannel[route.ChannelId]
+		key := probeSubjectKey{
+			logicalChannelId: identity.LogicalChannelID,
+			logicalRevision:  identity.Revision,
+			model:            ratio_setting.FormatMatchingModelName(routeModel),
 		}
 		if current := requestModelByKey[key]; current == "" || routeModel < current {
 			requestModelByKey[key] = routeModel
@@ -257,6 +296,44 @@ func runChannelSmartScheduleProbeOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
+	routesForSchedulingSnapshot := selectedRoutes
+	if len(selectedRoutes) == 1 {
+		identity := identityByChannel[selectedRoutes[0].ChannelId]
+		if identity.Revision > 0 && identity.LogicalChannelID != int64(identity.ChannelID) {
+			routesForSchedulingSnapshot = append(
+				append([]model.ChannelSmartScheduleRoute(nil), selectedRoutes...),
+				selectedRoutes[0],
+			)
+		}
+	}
+	schedulingRoutes, err := model.CoalesceChannelSmartScheduleSchedulingRoutes(routesForSchedulingSnapshot)
+	if err != nil {
+		return result, err
+	}
+	type probeRouteKey struct {
+		subject probeSubjectKey
+		group   string
+		model   string
+	}
+	lastSampleTimeBySubject := make(map[probeSubjectKey]int64)
+	schedulingRouteByKey := make(map[probeRouteKey]model.ChannelSmartScheduleRoute)
+	for _, route := range schedulingRoutes {
+		identity := identityByChannel[route.ChannelId]
+		if route.LogicalChannelId > 0 {
+			identity.LogicalChannelID = route.LogicalChannelId
+			identity.Revision = route.LogicalRevision
+		}
+		key := probeSubjectKey{
+			logicalChannelId: identity.LogicalChannelID,
+			logicalRevision:  identity.Revision,
+			model:            ratio_setting.FormatMatchingModelName(strings.TrimSpace(route.Model)),
+		}
+		lastSampleTimeBySubject[key] = max(lastSampleTimeBySubject[key], route.SharedSamples.LastTime)
+		schedulingRouteByKey[probeRouteKey{
+			subject: key, group: route.Group,
+			model: ratio_setting.FormatMatchingModelName(strings.TrimSpace(route.Model)),
+		}] = route
+	}
 
 	now := common.GetTimestamp()
 	retentionMinutes := max(
@@ -265,18 +342,34 @@ func runChannelSmartScheduleProbeOnce(
 	)
 	retentionStart := now - int64(retentionMinutes*60)
 	type dueProbe struct {
-		routes       []model.ChannelSmartScheduleRoute
-		requestModel string
+		routes          []model.ChannelSmartScheduleRoute
+		requestModel    string
+		identity        model.LogicalChannelIdentity
+		logicalSnapshot *model.LogicalChannelSelectionSnapshot
 	}
-	probesByModel := make(map[channelSmartScheduleModelKey]dueProbe)
-	probeOrder := make([]channelSmartScheduleModelKey, 0)
+	probesByModel := make(map[probeSubjectKey]dueProbe)
+	probeOrder := make([]probeSubjectKey, 0)
 	for _, route := range selectedRoutes {
 		routeModel := strings.TrimSpace(route.Model)
 		normalizedModel := ratio_setting.FormatMatchingModelName(routeModel)
-		key := channelSmartScheduleModelKey{channelId: route.ChannelId, model: normalizedModel}
+		identity := identityByChannel[route.ChannelId]
+		key := probeSubjectKey{
+			logicalChannelId: identity.LogicalChannelID,
+			logicalRevision:  identity.Revision,
+			model:            normalizedModel,
+		}
 		probe, exists := probesByModel[key]
 		if !exists {
 			probeOrder = append(probeOrder, key)
+			probe.identity = identity
+			if identity.Revision > 0 && identity.LogicalChannelID != int64(identity.ChannelID) {
+				snapshotKey := logicalSnapshotKey{
+					logicalChannelId: identity.LogicalChannelID,
+					logicalRevision:  identity.Revision,
+				}
+				snapshot := snapshotByLogicalKey[snapshotKey]
+				probe.logicalSnapshot = &snapshot
+			}
 		}
 		probe.routes = append(probe.routes, route)
 		probe.requestModel = requestModelByKey[key]
@@ -290,15 +383,28 @@ func runChannelSmartScheduleProbeOnce(
 			result.Skipped++
 			continue
 		}
-		if service.ChannelRateLimitCooldownUntilMatching(key.channelId, probe.requestModel) > 0 {
+		if probe.logicalSnapshot == nil && service.ChannelRateLimitCooldownUntilMatching(
+			probe.identity.ChannelID, probe.requestModel,
+		) > 0 {
 			result.Skipped++
 			continue
 		}
 		eligibleRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(probe.routes))
 		minimumIntervalMinutes := 0
 		for _, route := range probe.routes {
-			if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !route.State.Participates() ||
-				!channelSmartScheduleProbeRouteEnabled(route.State.StabilityState, policyByGroup[route.Group]) {
+			state := route.State
+			if probe.logicalSnapshot != nil {
+				schedulingRoute, exists := schedulingRouteByKey[probeRouteKey{
+					subject: key, group: route.Group,
+					model: ratio_setting.FormatMatchingModelName(strings.TrimSpace(route.Model)),
+				}]
+				if !exists {
+					continue
+				}
+				state = schedulingRoute.State
+			}
+			if route.ChannelStatus != common.ChannelStatusEnabled || !route.Enabled || !state.Participates() ||
+				!channelSmartScheduleProbeRouteEnabled(state.StabilityState, policyByGroup[route.Group]) {
 				continue
 			}
 			eligibleRoutes = append(eligibleRoutes, route)
@@ -311,12 +417,13 @@ func runChannelSmartScheduleProbeOnce(
 			result.Skipped++
 			continue
 		}
-		if eligibleRoutes[0].SharedSamples.LastTime > 0 &&
-			now-eligibleRoutes[0].SharedSamples.LastTime < int64(minimumIntervalMinutes*60) {
+		lastSampleTime := lastSampleTimeBySubject[key]
+		if lastSampleTime > 0 && now-lastSampleTime < int64(minimumIntervalMinutes*60) {
 			result.Skipped++
 			continue
 		}
-		due = append(due, dueProbe{routes: eligibleRoutes, requestModel: probe.requestModel})
+		probe.routes = eligibleRoutes
+		due = append(due, probe)
 	}
 	if len(due) == 0 {
 		reportProgress(result.Total, result.Total)
@@ -326,12 +433,14 @@ func runChannelSmartScheduleProbeOnce(
 	channelIds := make([]int, 0, len(due))
 	seenChannelIds := make(map[int]struct{}, len(due))
 	for _, item := range due {
-		channelId := item.routes[0].ChannelId
-		if _, exists := seenChannelIds[channelId]; exists {
-			continue
+		for _, route := range item.routes {
+			channelId := route.ChannelId
+			if _, exists := seenChannelIds[channelId]; exists {
+				continue
+			}
+			seenChannelIds[channelId] = struct{}{}
+			channelIds = append(channelIds, channelId)
 		}
-		seenChannelIds[channelId] = struct{}{}
-		channelIds = append(channelIds, channelId)
 	}
 	channels, err := model.GetChannelsByIds(channelIds)
 	if err != nil {
@@ -343,11 +452,18 @@ func runChannelSmartScheduleProbeOnce(
 	}
 	probeable := make([]dueProbe, 0, len(due))
 	for _, item := range due {
-		channel := channelById[item.routes[0].ChannelId]
-		if channel == nil {
-			return result, fmt.Errorf("智能调度探测渠道 %d 不存在", item.routes[0].ChannelId)
+		supported := false
+		for _, route := range item.routes {
+			channel := channelById[route.ChannelId]
+			if channel == nil {
+				return result, fmt.Errorf("智能调度探测渠道 %d 不存在", route.ChannelId)
+			}
+			if channelSmartScheduleSupportsTextProbe(channel, item.requestModel) {
+				supported = true
+				break
+			}
 		}
-		if !channelSmartScheduleSupportsTextProbe(channel, item.requestModel) {
+		if !supported {
 			result.Skipped++
 			continue
 		}
@@ -370,6 +486,13 @@ func runChannelSmartScheduleProbeOnce(
 		}
 		var route model.ChannelSmartScheduleRoute
 		var channel *model.Channel
+		var probeCtx context.Context
+		var lease *service.ChannelConcurrencyLease
+		type eligibleProbeMember struct {
+			route   model.ChannelSmartScheduleRoute
+			channel *model.Channel
+		}
+		eligibleByChannel := make(map[int]eligibleProbeMember)
 		candidateRoutes := make([]model.ChannelSmartScheduleRoute, 0, len(item.routes))
 		for _, candidateRoute := range item.routes {
 			if candidateRoute.Model == item.requestModel {
@@ -382,17 +505,75 @@ func runChannelSmartScheduleProbeOnce(
 			}
 		}
 		for _, candidateRoute := range candidateRoutes {
-			currentRoute, currentChannel, _, eligible, eligibilityErr := channelSmartScheduleProbeEligibility(
-				candidateRoute, item.requestModel,
-			)
+			if _, exists := eligibleByChannel[candidateRoute.ChannelId]; exists {
+				continue
+			}
+			var currentRoute model.ChannelSmartScheduleRoute
+			var currentChannel *model.Channel
+			var eligible bool
+			var eligibilityErr error
+			if item.logicalSnapshot == nil {
+				currentRoute, currentChannel, _, eligible, eligibilityErr = channelSmartScheduleProbeEligibility(
+					candidateRoute, item.requestModel,
+				)
+			} else {
+				var found bool
+				currentRoute, currentChannel, found, eligibilityErr = model.LookupChannelSmartScheduleProbeRoute(
+					candidateRoute.ChannelId, candidateRoute.Group, candidateRoute.Model,
+				)
+				eligible = found && currentRoute.ChannelStatus == common.ChannelStatusEnabled && currentRoute.Enabled &&
+					service.ChannelRateLimitCooldownUntilMatching(currentRoute.ChannelId, item.requestModel) <= 0
+			}
 			if eligibilityErr != nil {
 				return result, eligibilityErr
 			}
 			if eligible && channelSmartScheduleSupportsTextProbe(currentChannel, currentRoute.Model) {
-				route = currentRoute
-				channel = currentChannel
-				break
+				eligibleByChannel[currentRoute.ChannelId] = eligibleProbeMember{
+					route: currentRoute, channel: currentChannel,
+				}
+				if item.logicalSnapshot == nil {
+					route = currentRoute
+					channel = currentChannel
+					break
+				}
 			}
+		}
+		for item.logicalSnapshot != nil && len(eligibleByChannel) > 0 {
+			availability := make([]model.LogicalChannelMemberAvailability, 0, len(eligibleByChannel))
+			for _, member := range item.logicalSnapshot.Members {
+				if _, exists := eligibleByChannel[member.ChannelID]; !exists {
+					continue
+				}
+				availability = append(availability, model.LogicalChannelMemberAvailability{
+					ChannelID: member.ChannelID, Weight: member.Weight, Available: true,
+				})
+			}
+			selectedChannelId, selectErr := model.SelectLogicalChannelMember(
+				*item.logicalSnapshot, availability, nil,
+			)
+			if selectErr != nil {
+				if errors.Is(selectErr, model.ErrLogicalChannelSelectionNoAvailableMembers) {
+					break
+				}
+				return result, selectErr
+			}
+			selected := eligibleByChannel[selectedChannelId]
+			selectedProbeCtx := withChannelSmartScheduleProbeTestContext(ctx, selected.route.Group)
+			selectedLease, acquired, _, acquireErr := service.AcquireChannelConcurrency(
+				selectedProbeCtx, selected.channel.Id,
+			)
+			if acquireErr != nil {
+				return result, fmt.Errorf("获取智能调度探测渠道 %d 并发配额失败: %w", selected.channel.Id, acquireErr)
+			}
+			if !acquired {
+				delete(eligibleByChannel, selectedChannelId)
+				continue
+			}
+			route = selected.route
+			channel = selected.channel
+			probeCtx = selectedProbeCtx
+			lease = selectedLease
+			break
 		}
 		if channel == nil {
 			result.Skipped++
@@ -400,16 +581,20 @@ func runChannelSmartScheduleProbeOnce(
 			reportProgress(processed, result.Total)
 			continue
 		}
-		probeCtx := withChannelSmartScheduleProbeTestContext(ctx, route.Group)
-		lease, acquired, _, acquireErr := service.AcquireChannelConcurrency(probeCtx, channel.Id)
-		if acquireErr != nil {
-			return result, fmt.Errorf("获取智能调度探测渠道 %d 并发配额失败: %w", channel.Id, acquireErr)
-		}
-		if !acquired {
-			result.Skipped++
-			processed++
-			reportProgress(processed, result.Total)
-			continue
+		if lease == nil {
+			probeCtx = withChannelSmartScheduleProbeTestContext(ctx, route.Group)
+			var acquired bool
+			var acquireErr error
+			lease, acquired, _, acquireErr = service.AcquireChannelConcurrency(probeCtx, channel.Id)
+			if acquireErr != nil {
+				return result, fmt.Errorf("获取智能调度探测渠道 %d 并发配额失败: %w", channel.Id, acquireErr)
+			}
+			if !acquired {
+				result.Skipped++
+				processed++
+				reportProgress(processed, result.Total)
+				continue
+			}
 		}
 		probeStartedAt := time.Now()
 		probeResult := testChannel(
@@ -458,7 +643,7 @@ func runChannelSmartScheduleProbeOnce(
 			if recoveryErr != nil {
 				return result, recoveryErr
 			}
-			_, saveErr := model.SaveChannelSmartScheduleModelSample(model.ChannelSmartScheduleModelSampleResult{
+			sample := model.ChannelSmartScheduleModelSampleResult{
 				ChannelId: route.ChannelId, Model: item.requestModel,
 				Source:      model.ChannelSmartScheduleSampleSourceScheduledProbe,
 				WindowStart: retentionStart, Time: probeTime, Success: succeeded, Error: message,
@@ -466,12 +651,34 @@ func runChannelSmartScheduleProbeOnce(
 				FirstTokenMs:  probeResult.firstResponseMilliseconds,
 				TPS:           probeResult.tokensPerSecond,
 				ProbeRecovery: recoveryRequest,
-			})
-			if saveErr != nil {
-				return result, saveErr
 			}
-			applyChannelSmartScheduleProbeRecoveryResult(route.ChannelId, item.requestModel, recoveryRequest)
-			if !succeeded && probeResult.newAPIError != nil {
+			writeApplied := true
+			var saveErr error
+			if item.logicalSnapshot != nil {
+				if !model.IsLogicalChannelGroupingEnabled() {
+					writeApplied = false
+				} else {
+					frozenIdentity := item.identity
+					frozenIdentity.ChannelID = route.ChannelId
+					_, saveErr = model.SaveLogicalChannelSmartScheduleModelSample(
+						frozenIdentity, route.Group, sample,
+					)
+				}
+			} else {
+				_, saveErr = model.SaveChannelSmartScheduleModelSample(sample)
+			}
+			if saveErr != nil {
+				if item.logicalSnapshot == nil ||
+					(!errors.Is(saveErr, model.ErrChannelLogicalGroupRevisionConflict) &&
+						!errors.Is(saveErr, model.ErrLogicalChannelSelectionGroupDisabled)) {
+					return result, saveErr
+				}
+				writeApplied = false
+			}
+			if writeApplied {
+				applyChannelSmartScheduleProbeRecoveryResult(route.ChannelId, item.requestModel, recoveryRequest)
+			}
+			if writeApplied && !succeeded && probeResult.newAPIError != nil {
 				protectChannelSmartScheduleScheduledProbeFailureAfterRecoveryResult(
 					route.ChannelId,
 					item.requestModel,

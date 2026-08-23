@@ -117,3 +117,48 @@ func TestDeleteChannelModelDetectionDataRejectsActiveRunAndKeepsBatch(t *testing
 	require.NoError(t, db.Model(&ChannelModelDetectionBatch{}).Where("batch_id = ?", batch.BatchId).Count(&batchCount).Error)
 	assert.EqualValues(t, 1, batchCount)
 }
+
+func TestDeleteChannelModelDetectionDataPreservesGroupedHistory(t *testing.T) {
+	db := setupChannelModelDetectionTestDB(t)
+	config := ChannelModelDetectionConfig{ChannelId: 312}
+	require.NoError(t, db.Create(&config).Error)
+	target := ChannelModelDetectionTarget{ConfigId: config.Id, ChannelId: 312, RequestModel: "model", ClaimedModel: ChannelModelDetectionClaimedModelSol, Enabled: true}
+	require.NoError(t, db.Create(&target).Error)
+	run := ChannelModelDetectionRun{
+		RunId: "grouped-cleanup", ChannelId: 311, LogicalChannelID: 901, LogicalRevision: 5,
+		Trigger: ChannelModelDetectionTriggerManual, Preset: ChannelModelDetectionPresetLow,
+		PresetSource: ChannelModelDetectionPresetSourceManualSelected, Status: ChannelModelDetectionRunStatusRunning,
+	}
+	require.NoError(t, run.SetLogicalMemberSnapshot([]ChannelModelDetectionMemberSnapshot{{ChannelID: 311, Weight: 1}, {ChannelID: 312, Weight: 1}}))
+	require.NoError(t, db.Create(&run).Error)
+	execution := ChannelModelDetectionExecution{
+		RunId: run.RunId, TargetKey: "grouped-cleanup-target", TargetId: target.Id, ChannelId: 312,
+		LogicalChannelID: run.LogicalChannelID, LogicalRevision: run.LogicalRevision, RequestModel: target.RequestModel,
+		ClaimedModel: target.ClaimedModel, Preset: run.Preset, Status: ChannelModelDetectionExecutionStatusRunning,
+	}
+	require.NoError(t, db.Create(&execution).Error)
+	event := ChannelModelDetectionCostEvent{
+		CostEventId: "grouped-cleanup-cost", RunId: run.RunId, TargetId: target.Id, ExecutionId: execution.Id, ChannelId: 312,
+		RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Preset: run.Preset, DetectorRequestId: "cleanup", AttemptNo: 1,
+		DispatchState: ChannelModelDetectionDispatchDispatched, SettlementStatus: ChannelModelDetectionSettlementUnresolved,
+		UsageSource: ChannelModelDetectionUsageUnavailable, CostScope: ChannelModelDetectionCostScopeChannelUpstreamAPI,
+	}
+	require.NoError(t, db.Create(&event).Error)
+
+	err := db.Transaction(func(tx *gorm.DB) error { return deleteChannelModelDetectionDataTx(tx, []int{312}) })
+	assert.ErrorIs(t, err, ErrChannelModelDetectionChannelActive)
+	require.NoError(t, db.Model(&ChannelModelDetectionRun{}).Where("run_id = ?", run.RunId).Updates(map[string]any{"status": ChannelModelDetectionRunStatusCanceled, "finished_at": int64(100)}).Error)
+	require.NoError(t, db.Model(&ChannelModelDetectionExecution{}).Where("id = ?", execution.Id).Update("status", ChannelModelDetectionExecutionStatusCanceled).Error)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return deleteChannelModelDetectionDataTx(tx, []int{312}) }))
+
+	for _, table := range []any{&ChannelModelDetectionRun{}, &ChannelModelDetectionExecution{}, &ChannelModelDetectionCostEvent{}} {
+		var count int64
+		require.NoError(t, db.Model(table).Where("run_id = ?", run.RunId).Count(&count).Error)
+		assert.EqualValues(t, 1, count, "%T", table)
+	}
+	for _, table := range []any{&ChannelModelDetectionConfig{}, &ChannelModelDetectionTarget{}} {
+		var count int64
+		require.NoError(t, db.Model(table).Where("channel_id = ?", 312).Count(&count).Error)
+		assert.Zero(t, count, "%T", table)
+	}
+}

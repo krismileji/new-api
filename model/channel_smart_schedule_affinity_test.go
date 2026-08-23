@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,6 +10,40 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestSmartScheduleAffinityPinsLogicalGroupButReselectsPhysicalMember(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	useChannelSmartScheduleTrafficPolicy(t, true, `[{"group":"vip","models":["model-a"]}]`)
+	useDatabaseChannelSelection(t)
+	t.Setenv(ChannelLogicalGroupGlobalEnableEnv, "true")
+	require.NoError(t, db.AutoMigrate(&ChannelLogicalGroup{}, &ChannelLogicalGroupMember{}))
+	group := &ChannelLogicalGroup{Name: "亲和逻辑组"}
+	require.NoError(t, db.Create(group).Error)
+	priority := int64(100)
+	require.NoError(t, db.Create(&[]Channel{
+		{Id: 1701, Name: "cached-key", Status: common.ChannelStatusEnabled, LogicalChannelID: &group.Id},
+		{Id: 1702, Name: "weighted-key", Status: common.ChannelStatusEnabled, LogicalChannelID: &group.Id},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelLogicalGroupMember{
+		{LogicalGroupID: group.Id, ChannelID: 1701, Weight: 0, AddressFingerprint: strings.Repeat("d", 64)},
+		{LogicalGroupID: group.Id, ChannelID: 1702, Weight: 100, AddressFingerprint: strings.Repeat("d", 64)},
+	}).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: 1701, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100},
+		{ChannelId: 1702, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: 1701, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1702, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+	}).Error)
+
+	selected, err := SelectChannelSmartScheduleAffinityMember(
+		"vip", "model-a", 1701, "/v1/chat/completions",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 1702, selected.Id, "亲和只固定逻辑候选，实际 Key 仍按成员 weight 选择")
+}
 
 func TestIsChannelSmartScheduleAffinityEligibleRequiresHighestPriority(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)

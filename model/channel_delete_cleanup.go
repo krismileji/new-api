@@ -30,11 +30,15 @@ func deleteChannelsWithMonitorData(channelIds []int) (int64, error) {
 	sort.Ints(ids)
 
 	var deletedCount int64
+	logicalRelationsChanged := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var err error
-		deletedCount, err = deleteChannelRowsWithMonitorDataTx(tx, ids)
+		deletedCount, logicalRelationsChanged, err = deleteChannelRowsWithMonitorDataTx(tx, ids)
 		return err
 	})
+	if err == nil && logicalRelationsChanged {
+		InvalidateLogicalChannelRuntimeCache()
+	}
 	return deletedCount, err
 }
 
@@ -46,6 +50,7 @@ func deleteChannelsByStatusesWithMonitorData(statuses []int64) (int64, error) {
 		return 0, nil
 	}
 	var deletedCount int64
+	logicalRelationsChanged := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var channelIds []int
 		if err := lockForUpdate(tx.Model(&Channel{}).Select("id").Where("status IN ?", statuses)).
@@ -57,13 +62,16 @@ func deleteChannelsByStatusesWithMonitorData(statuses []int64) (int64, error) {
 			return nil
 		}
 		var err error
-		deletedCount, err = deleteChannelRowsWithMonitorDataTx(tx, channelIds)
+		deletedCount, logicalRelationsChanged, err = deleteChannelRowsWithMonitorDataTx(tx, channelIds)
 		return err
 	})
+	if err == nil && logicalRelationsChanged {
+		InvalidateLogicalChannelRuntimeCache()
+	}
 	return deletedCount, err
 }
 
-func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, error) {
+func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, bool, error) {
 	ids := append([]int(nil), channelIds...)
 	sort.Ints(ids)
 	existingChannelIds := make([]int, 0, len(ids))
@@ -75,11 +83,15 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 			Where("id IN ?", ids[start:end]).
 			Order("id ASC").
 			Find(&channels).Error; err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		for index := range channels {
 			existingChannelIds = append(existingChannelIds, channels[index].Id)
 		}
+	}
+	logicalRelationsChanged, err := detachDeletedChannelsFromLogicalGroupsTx(tx, existingChannelIds)
+	if err != nil {
+		return 0, false, err
 	}
 
 	var deletedCount int64
@@ -91,7 +103,7 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 			Where("channel_id IN ?", existingIds).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		pools := channelSmartScheduleRoutePoolsFromAbilities(abilities)
 		if tx.Migrator().HasTable(&ChannelRatioMonitor{}) {
@@ -100,11 +112,11 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 				Where("channel_id IN ?", existingIds).
 				Order("channel_id ASC").
 				Find(&monitors).Error; err != nil {
-				return 0, err
+				return 0, false, err
 			}
 		}
 		if _, err := lockChannelSmartScheduleRoutePoolStatesTx(tx, pools); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if tx.Migrator().HasTable(&ChannelSmartScheduleModelSampleState{}) {
 			var sampleStates []ChannelSmartScheduleModelSampleState
@@ -112,33 +124,33 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, e
 				Where("channel_id IN ?", existingIds).
 				Order("channel_id ASC, model_name ASC").
 				Find(&sampleStates).Error; err != nil {
-				return 0, err
+				return 0, false, err
 			}
 		}
 		if _, err := lockChannelSmartScheduleRoutePoolAbilitiesTx(tx, pools); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		result := tx.Where("id IN ?", existingIds).Delete(&Channel{})
 		if result.Error != nil {
-			return 0, result.Error
+			return 0, false, result.Error
 		}
 		deletedCount += result.RowsAffected
 		if err := tx.Where("channel_id IN ?", existingIds).Delete(&Ability{}).Error; err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		// Keep route states until pool reconciliation has observed any fixed
 		// intent belonging to a deleted channel.
 		if err := reapplyChannelSmartScheduleRoutePrimariesTx(tx, pools); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if err := deleteChannelModelDetectionDataTx(tx, existingIds); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if err := deleteChannelMonitorDataTx(tx, existingIds); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
-	return deletedCount, nil
+	return deletedCount, logicalRelationsChanged, nil
 }
 
 func deleteChannelMonitorDataTx(tx *gorm.DB, channelIds []int) error {

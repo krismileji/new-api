@@ -928,11 +928,130 @@ func refreshChannelSmartScheduleAdaptivePool(
 		policy,
 		expectedControlRevision,
 		expectedDatabase,
-		channelSmartScheduleLocalAdaptiveMetric,
+		nil,
 		channelSmartScheduleLocalCooldown,
 		0,
 		0,
 	)
+}
+
+func mergeChannelSmartScheduleAdaptiveMetric(
+	target *model.ChannelSmartScheduleAdaptiveHealthMetric,
+	source model.ChannelSmartScheduleAdaptiveHealthMetric,
+) {
+	target.RequestCount += source.RequestCount
+	target.FailureCount += source.FailureCount
+	target.SlowRequestCount += source.SlowRequestCount
+	target.HealthyRequestCount += source.HealthyRequestCount
+	target.FirstTokenCount += source.FirstTokenCount
+	target.FirstTokenTotalMs += source.FirstTokenTotalMs
+	target.TPSSampleCount += source.TPSSampleCount
+	target.TPSTotal += source.TPSTotal
+	target.TPSOutputTokens += source.TPSOutputTokens
+	target.TPSGenerationDurationMs += source.TPSGenerationDurationMs
+	target.LatencyPressure += source.LatencyPressure
+	target.LastUsedTime = max(target.LastUsedTime, source.LastUsedTime)
+	target.StabilitySuccessCount += source.StabilitySuccessCount
+	target.StabilityFailureCount += source.StabilityFailureCount
+	target.StabilityFinalFailureCount += source.StabilityFinalFailureCount
+	target.StabilityRetryFailureCount += source.StabilityRetryFailureCount
+	target.RetryFailureDurationTotalMs += source.RetryFailureDurationTotalMs
+
+	failureBuckets := make(map[[2]int64]int64, len(target.RetryFailureDurationBuckets)+len(source.RetryFailureDurationBuckets))
+	for _, bucket := range target.RetryFailureDurationBuckets {
+		failureBuckets[[2]int64{bucket.LowerBoundMs, bucket.UpperBoundMs}] += bucket.Count
+	}
+	for _, bucket := range source.RetryFailureDurationBuckets {
+		failureBuckets[[2]int64{bucket.LowerBoundMs, bucket.UpperBoundMs}] += bucket.Count
+	}
+	target.RetryFailureDurationBuckets = target.RetryFailureDurationBuckets[:0]
+	for bounds, count := range failureBuckets {
+		target.RetryFailureDurationBuckets = append(target.RetryFailureDurationBuckets, model.ChannelMonitorFailureDurationBucket{
+			LowerBoundMs: bounds[0], UpperBoundMs: bounds[1], Count: count,
+		})
+	}
+	sort.Slice(target.RetryFailureDurationBuckets, func(i, j int) bool {
+		return target.RetryFailureDurationBuckets[i].LowerBoundMs < target.RetryFailureDurationBuckets[j].LowerBoundMs
+	})
+
+	durationBuckets := make(map[[2]int64]model.ChannelMonitorDurationBucket, len(target.FirstTokenDurationBuckets)+len(source.FirstTokenDurationBuckets))
+	for _, bucket := range append(target.FirstTokenDurationBuckets, source.FirstTokenDurationBuckets...) {
+		key := [2]int64{bucket.LowerBoundMs, bucket.UpperBoundMs}
+		merged := durationBuckets[key]
+		merged.LowerBoundMs = bucket.LowerBoundMs
+		merged.UpperBoundMs = bucket.UpperBoundMs
+		merged.Count += bucket.Count
+		merged.TotalMs += bucket.TotalMs
+		durationBuckets[key] = merged
+	}
+	target.FirstTokenDurationBuckets = target.FirstTokenDurationBuckets[:0]
+	for _, bucket := range durationBuckets {
+		target.FirstTokenDurationBuckets = append(target.FirstTokenDurationBuckets, bucket)
+	}
+	sort.Slice(target.FirstTokenDurationBuckets, func(i, j int) bool {
+		return target.FirstTokenDurationBuckets[i].LowerBoundMs < target.FirstTokenDurationBuckets[j].LowerBoundMs
+	})
+}
+
+func readChannelSmartScheduleAdaptiveRouteMetric(
+	ctx context.Context,
+	route model.ChannelSmartScheduleRoute,
+	windowStart int64,
+	observationSince int64,
+	maxRequests int,
+	warningSeconds float64,
+	criticalSeconds float64,
+	readMetric channelSmartScheduleAdaptiveMetricReader,
+) (model.ChannelSmartScheduleAdaptiveHealthMetric, error) {
+	if readMetric == nil {
+		events, _, err := channelSmartScheduleSchedulingRouteRealtimeEvents(
+			ctx, route, windowStart, observationSince, maxRequests,
+		)
+		if err != nil {
+			return model.ChannelSmartScheduleAdaptiveHealthMetric{}, err
+		}
+		return channelSmartScheduleRealtimeAdaptiveMetricFromEvents(events, warningSeconds, criticalSeconds), nil
+	}
+	memberIDs := route.LogicalMemberIds
+	if len(memberIDs) == 0 {
+		memberIDs = []int{route.ChannelId}
+	}
+	combined := model.ChannelSmartScheduleAdaptiveHealthMetric{}
+	for _, channelID := range memberIDs {
+		metric, err := readMetric(
+			ctx, channelID, route.Model, windowStart, observationSince, maxRequests, warningSeconds, criticalSeconds,
+		)
+		if err != nil {
+			return model.ChannelSmartScheduleAdaptiveHealthMetric{}, err
+		}
+		mergeChannelSmartScheduleAdaptiveMetric(&combined, metric)
+	}
+	return combined, nil
+}
+
+func readChannelSmartScheduleAdaptiveRouteCooldown(
+	ctx context.Context,
+	route model.ChannelSmartScheduleRoute,
+	readCooldown channelSmartScheduleCooldownReader,
+) (int64, error) {
+	memberIDs := route.LogicalMemberIds
+	if len(memberIDs) == 0 {
+		memberIDs = []int{route.ChannelId}
+	}
+	combined := int64(0)
+	for index, channelID := range memberIDs {
+		cooldownUntil, err := readCooldown(ctx, channelID, route.Model)
+		if err != nil {
+			return 0, err
+		}
+		if cooldownUntil <= 0 {
+			return 0, nil
+		}
+		if index == 0 || cooldownUntil < combined {
+			combined = cooldownUntil
+		}
+	}
+	return combined, nil
 }
 
 func channelSmartScheduleLocalCooldown(
@@ -979,7 +1098,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 ) (bool, error) {
 	softRoutingEnabled := policy.ApplyMode == channelMonitorSmartScheduleApplyPriorityWeight &&
 		(policy.AdaptiveSamplingEnabled || policy.SampleMode == channelMonitorSmartScheduleSampleTraffic)
-	if expectedDatabase != model.DB || readMetric == nil || readCooldown == nil ||
+	if expectedDatabase != model.DB || readCooldown == nil ||
 		(!softRoutingEnabled && !policy.StabilityEnabled) {
 		return false, nil
 	}
@@ -987,8 +1106,17 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 	if err != nil || len(routes) == 0 {
 		return false, err
 	}
+	physicalRoutes := append([]model.ChannelSmartScheduleRoute(nil), routes...)
+	physicalRouteByChannel := make(map[int]model.ChannelSmartScheduleRoute, len(physicalRoutes))
+	for _, route := range physicalRoutes {
+		physicalRouteByChannel[route.ChannelId] = route
+	}
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	if err != nil {
+		return false, err
+	}
 	for _, route := range routes {
-		if route.State.Id == 0 {
+		if route.LogicalChannelId <= 0 && route.State.Id == 0 {
 			return false, nil
 		}
 	}
@@ -1030,7 +1158,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 	stateByChannel := make(map[int]model.ChannelSmartScheduleRouteState, len(routes))
 	for _, route := range routes {
 		stateByChannel[route.ChannelId] = route.State
-		cooldownUntil, err := readCooldown(ctx, route.ChannelId, route.Model)
+		cooldownUntil, err := readChannelSmartScheduleAdaptiveRouteCooldown(ctx, route, readCooldown)
 		if err != nil {
 			return false, err
 		}
@@ -1038,28 +1166,26 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		if !route.State.Participates() {
 			continue
 		}
-		metric, err := readMetric(
-			ctx,
-			route.ChannelId,
-			route.Model,
+		metric, err := readChannelSmartScheduleAdaptiveRouteMetric(
+			ctx, route,
 			adaptiveWindowStart,
 			route.SharedSamples.ObservationSince,
 			policy.AdaptiveSamplingWindowRequests,
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			readMetric,
 		)
 		if err != nil {
 			return false, err
 		}
-		performanceMetric, err := readMetric(
-			ctx,
-			route.ChannelId,
-			route.Model,
+		performanceMetric, err := readChannelSmartScheduleAdaptiveRouteMetric(
+			ctx, route,
 			performanceWindowStart,
 			route.SharedSamples.ObservationSince,
 			0,
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			readMetric,
 		)
 		if err != nil {
 			return false, err
@@ -1069,15 +1195,14 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 			route.State.StabilitySince > routeStabilityWindowStart {
 			routeStabilityWindowStart = route.State.StabilitySince
 		}
-		stabilityMetric, err := readMetric(
-			ctx,
-			route.ChannelId,
-			route.Model,
+		stabilityMetric, err := readChannelSmartScheduleAdaptiveRouteMetric(
+			ctx, route,
 			routeStabilityWindowStart,
 			route.SharedSamples.ObservationSince,
 			0,
 			policy.AdaptiveSamplingFirstTokenWarningSeconds,
 			policy.AdaptiveSamplingFirstTokenCriticalSeconds,
+			readMetric,
 		)
 		if err != nil {
 			return false, err
@@ -1622,6 +1747,35 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		}
 		return false, nil
 	}
+	projectedUpdates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(physicalRoutes))
+	for index, route := range routes {
+		update := updates[index]
+		if route.LogicalChannelId <= 0 {
+			projectedUpdates = append(projectedUpdates, update)
+			continue
+		}
+		for _, memberID := range route.LogicalMemberIds {
+			physical, exists := physicalRouteByChannel[memberID]
+			if !exists {
+				return false, model.ErrChannelLogicalGroupRevisionConflict
+			}
+			projected := update
+			projected.ChannelId = memberID
+			projected.LogicalChannelId = route.LogicalChannelId
+			projected.LogicalRevision = route.LogicalRevision
+			projected.ExpectedLogicalStateRevision = route.State.Revision
+			projected.LogicalProjectionOnly = memberID != route.ChannelId
+			projected.ExpectedRevision = physical.State.Revision
+			projected.ExpectedParticipationSet = physical.State.ParticipationSet
+			projected.ExpectedExcluded = physical.State.Excluded
+			projected.ExpectedAbilityEnabled = physical.Enabled
+			projected.ExpectedChannelStatus = physical.ChannelStatus
+			projected.ExpectedPriority = physical.Priority
+			projected.ExpectedWeight = physical.Weight
+			projectedUpdates = append(projectedUpdates, projected)
+		}
+	}
+	updates = projectedUpdates
 	sort.Slice(updates, func(i int, j int) bool { return updates[i].ChannelId < updates[j].ChannelId })
 	outcomes, err := model.ApplyChannelSmartScheduleRouteResults(updates)
 	if err != nil {

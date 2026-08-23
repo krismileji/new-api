@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,10 +27,14 @@ func setupChannelModelDetectionEstimateTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.Channel{},
+		&model.ChannelLogicalGroup{},
+		&model.ChannelLogicalGroupMember{},
 		&model.ChannelRatioMonitor{},
 		&model.ChannelModelDetectionGlobalConfig{},
 		&model.ChannelModelDetectionConfig{},
 		&model.ChannelModelDetectionTarget{},
+		&model.ChannelModelDetectionLogicalConfig{},
+		&model.ChannelModelDetectionLogicalTarget{},
 		&model.ChannelModelDetectionRun{},
 		&model.ChannelModelDetectionExecution{},
 		&model.ChannelModelDetectionCostEvent{},
@@ -111,6 +116,42 @@ func TestChannelModelDetectionEstimateAPICallsOfficialEndpointsOnceAndReusesEsti
 	assert.Zero(t, runs)
 	assert.Zero(t, executions)
 	assert.Zero(t, events)
+}
+
+func TestChannelModelDetectionEstimateReadsSharedLogicalTargetsFromAnyMember(t *testing.T) {
+	db := setupChannelModelDetectionEstimateTestDB(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+	var bootstrapCalls, estimateCalls atomic.Int64
+	server := newChannelModelDetectionEstimateServer(t, 4, &bootstrapCalls, &estimateCalls)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{DetectorURL: server.URL, ScheduledPreset: model.ChannelModelDetectionPresetLow, Revision: 1}).Error)
+	address := "https://api.example.com/v1"
+	group := model.ChannelLogicalGroup{Name: "estimate-shared", Status: model.ChannelLogicalGroupStatusEnabled, Revision: 2}
+	require.NoError(t, db.Create(&group).Error)
+	channels := []model.Channel{
+		{Id: 706, Name: "estimate-a", LogicalChannelID: &group.Id, BaseURL: &address, Models: "alpha", Status: common.ChannelStatusEnabled},
+		{Id: 707, Name: "estimate-b", LogicalChannelID: &group.Id, BaseURL: &address, Models: "beta", Status: common.ChannelStatusEnabled},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	require.NoError(t, db.Create(&[]model.ChannelLogicalGroupMember{
+		{LogicalGroupID: group.Id, ChannelID: 706, Weight: 1, AddressFingerprint: strings.Repeat("b", 64)},
+		{LogicalGroupID: group.Id, ChannelID: 707, Weight: 1, AddressFingerprint: strings.Repeat("b", 64)},
+	}).Error)
+	config := model.ChannelModelDetectionLogicalConfig{LogicalChannelId: group.Id, Revision: 1}
+	require.NoError(t, db.Create(&config).Error)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionLogicalTarget{
+		ConfigId: config.Id, LogicalChannelId: group.Id, TargetKey: "shared-beta", RequestModel: "beta",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelTerra, Enabled: true,
+	}).Error)
+
+	response, err := EstimateChannelModelDetectionCost(context.Background(), db, 706, model.ChannelModelDetectionPresetLow, ChannelModelDetectorClientOptions{HTTPClient: server.Client()})
+	require.NoError(t, err)
+	require.Len(t, response.Targets, 1)
+	assert.Equal(t, "shared-beta", response.Targets[0].TargetKey)
+	assert.Equal(t, "beta", response.Targets[0].RequestModel)
+	assert.EqualValues(t, 1, bootstrapCalls.Load())
+	assert.EqualValues(t, 1, estimateCalls.Load())
 }
 
 func TestChannelModelDetectionEstimateAPIReturnsRequestVolumeWithoutCostEstimate(t *testing.T) {

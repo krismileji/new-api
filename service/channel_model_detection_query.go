@@ -296,6 +296,11 @@ type channelModelDetectionExecutionOverviewRow struct {
 	RunPresetSource string `gorm:"column:run_preset_source"`
 }
 
+type channelModelDetectionLogicalOverviewData struct {
+	Configs []model.ChannelModelDetectionLogicalConfig
+	Targets []model.ChannelModelDetectionLogicalTarget
+}
+
 func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int64) (ChannelModelDetectionOverviewResponse, error) {
 	db, err := channelModelDetectionQueryDB(ctx, tx)
 	if err != nil {
@@ -308,6 +313,24 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	var channels []model.Channel
 	if err := db.Omit("key").Order("id ASC").Find(&channels).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
+	}
+	activeLogicalGroups := make(map[int64]struct{})
+	if model.IsLogicalChannelGroupingEnabled() && db.Migrator().HasTable(&model.ChannelLogicalGroup{}) {
+		var groupIDs []int64
+		if err := db.Model(&model.ChannelLogicalGroup{}).Where("status = ?", model.ChannelLogicalGroupStatusEnabled).Pluck("id", &groupIDs).Error; err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+		for _, groupID := range groupIDs {
+			activeLogicalGroups[groupID] = struct{}{}
+		}
+	}
+	for index := range channels {
+		if channels[index].LogicalChannelID == nil {
+			continue
+		}
+		if _, active := activeLogicalGroups[*channels[index].LogicalChannelID]; !active {
+			channels[index].LogicalChannelID = nil
+		}
 	}
 
 	global := model.ChannelModelDetectionGlobalConfig{}
@@ -328,6 +351,17 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	if err := db.Order("channel_id ASC, position ASC, id ASC").Find(&targets).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
+	logicalData := channelModelDetectionLogicalOverviewData{}
+	if db.Migrator().HasTable(&model.ChannelModelDetectionLogicalConfig{}) {
+		if err := db.Order("logical_channel_id ASC").Find(&logicalData.Configs).Error; err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+	}
+	if db.Migrator().HasTable(&model.ChannelModelDetectionLogicalTarget{}) {
+		if err := db.Order("logical_channel_id ASC, position ASC, id ASC").Find(&logicalData.Targets).Error; err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+	}
 
 	runTable := db.NamingStrategy.TableName("ChannelModelDetectionRun")
 	activeStatuses := []string{
@@ -339,7 +373,7 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 		model.ChannelModelDetectionRunStatusCanceling,
 	}
 	var runs []model.ChannelModelDetectionRun
-	latestRunClause := "NOT EXISTS (SELECT 1 FROM " + runTable + " AS newer_run WHERE newer_run.channel_id = detection_run.channel_id AND (newer_run.created_at > detection_run.created_at OR (newer_run.created_at = detection_run.created_at AND newer_run.id > detection_run.id)))"
+	latestRunClause := "NOT EXISTS (SELECT 1 FROM " + runTable + " AS newer_run WHERE ((COALESCE(detection_run.logical_revision, 0) > 0 AND COALESCE(newer_run.logical_revision, 0) > 0 AND newer_run.logical_channel_id = detection_run.logical_channel_id) OR (COALESCE(detection_run.logical_revision, 0) = 0 AND COALESCE(newer_run.logical_revision, 0) = 0 AND newer_run.channel_id = detection_run.channel_id)) AND (newer_run.created_at > detection_run.created_at OR (newer_run.created_at = detection_run.created_at AND newer_run.id > detection_run.id)))"
 	if err := db.Table(runTable+" AS detection_run").Select("detection_run.*").
 		Where("detection_run.status IN ? OR "+latestRunClause, activeStatuses).
 		Order("detection_run.channel_id ASC, detection_run.created_at DESC, detection_run.id DESC").
@@ -350,8 +384,12 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	executionTable := db.NamingStrategy.TableName("ChannelModelDetectionExecution")
 	targetTable := db.NamingStrategy.TableName("ChannelModelDetectionTarget")
 	var executionRows []channelModelDetectionExecutionOverviewRow
-	latestExecutionClause := "NOT EXISTS (SELECT 1 FROM " + executionTable + " AS newer_execution WHERE newer_execution.target_id = detection_execution.target_id AND (newer_execution.created_at > detection_execution.created_at OR (newer_execution.created_at = detection_execution.created_at AND newer_execution.id > detection_execution.id)))"
+	latestExecutionClause := "NOT EXISTS (SELECT 1 FROM " + executionTable + " AS newer_execution WHERE newer_execution.target_key = detection_execution.target_key AND (newer_execution.created_at > detection_execution.created_at OR (newer_execution.created_at = detection_execution.created_at AND newer_execution.id > detection_execution.id)))"
 	currentTargetClause := "EXISTS (SELECT 1 FROM " + targetTable + " AS current_target WHERE current_target.id = detection_execution.target_id)"
+	if db.Migrator().HasTable(&model.ChannelModelDetectionLogicalTarget{}) {
+		logicalTargetTable := db.NamingStrategy.TableName("ChannelModelDetectionLogicalTarget")
+		currentTargetClause = "((detection_execution.logical_target_id IS NOT NULL AND EXISTS (SELECT 1 FROM " + logicalTargetTable + " AS current_logical_target WHERE current_logical_target.id = detection_execution.logical_target_id)) OR (detection_execution.logical_target_id IS NULL AND EXISTS (SELECT 1 FROM " + targetTable + " AS current_target WHERE current_target.id = detection_execution.target_id)))"
+	}
 	executionTimestamp := "(CASE WHEN detection_execution.started_at > 0 THEN detection_execution.started_at ELSE detection_execution.created_at END)"
 	if err := db.Table(executionTable+" AS detection_execution").
 		Select("detection_execution.*, detection_run.trigger AS run_trigger, detection_run.preset_source AS run_preset_source").
@@ -403,7 +441,7 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
 
-	response, err := buildChannelModelDetectionOverview(now, global, channels, configs, targets, runs, executionRows, costEvents, todayCosts, ratioMonitors)
+	response, err := buildChannelModelDetectionOverview(now, global, channels, configs, targets, runs, executionRows, costEvents, todayCosts, ratioMonitors, logicalData)
 	if err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
@@ -445,6 +483,11 @@ func ListChannelModelDetectionRuns(ctx context.Context, tx *gorm.DB, channelID i
 	runTable := db.NamingStrategy.TableName("ChannelModelDetectionRun")
 	executionTable := db.NamingStrategy.TableName("ChannelModelDetectionExecution")
 	runsQuery := db.Table(runTable+" AS detection_run").Where("detection_run.channel_id = ?", channelID)
+	sharedPhysicalView := false
+	if identity, identityErr := channelModelDetectionLogicalIdentity(db, channelID, db == model.DB); identityErr == nil && identity.Revision > 0 {
+		runsQuery = db.Table(runTable+" AS detection_run").Where("detection_run.channel_id = ? OR detection_run.logical_channel_id = ?", channelID, identity.LogicalChannelID)
+		sharedPhysicalView = true
+	}
 	if query.Trigger != "" {
 		runsQuery = runsQuery.Where("detection_run.trigger = ?", query.Trigger)
 	}
@@ -487,11 +530,24 @@ func ListChannelModelDetectionRuns(ctx context.Context, tx *gorm.DB, channelID i
 	}
 	items := make([]ChannelModelDetectionRunSummary, 0, len(runs))
 	for i := range runs {
-		aggregate, aggregateErr := aggregateChannelModelDetectionCostForRun(runs[i], eventsByRun[runs[i].RunId])
+		projectedRun := runs[i]
+		physicalEvents := eventsByRun[runs[i].RunId]
+		if sharedPhysicalView && runs[i].LogicalRevision > 0 {
+			physicalEvents = nil
+			for _, event := range eventsByRun[runs[i].RunId] {
+				if event.ChannelId == channelID {
+					physicalEvents = append(physicalEvents, event)
+				}
+			}
+			projectedRun.ChannelId = channelID
+		}
+		aggregate, aggregateErr := aggregateChannelModelDetectionCostForPhysicalView(
+			projectedRun, physicalEvents, eventsByRun[runs[i].RunId], sharedPhysicalView && runs[i].LogicalRevision > 0,
+		)
 		if aggregateErr != nil {
 			return ChannelModelDetectionRunHistoryResponse{}, aggregateErr
 		}
-		items = append(items, channelModelDetectionRunSummary(runs[i], aggregate))
+		items = append(items, channelModelDetectionRunSummary(projectedRun, aggregate))
 	}
 	return ChannelModelDetectionRunHistoryResponse{Page: query.Page, PageSize: query.PageSize, Total: total, Items: items}, nil
 }
@@ -561,7 +617,7 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 	return response, nil
 }
 
-func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDetectionGlobalConfig, channels []model.Channel, configs []model.ChannelModelDetectionConfig, targets []model.ChannelModelDetectionTarget, runs []model.ChannelModelDetectionRun, executionRows []channelModelDetectionExecutionOverviewRow, costEvents []model.ChannelModelDetectionCostEvent, todayCosts []model.ChannelDailyCost, ratioMonitors []model.ChannelRatioMonitor) (ChannelModelDetectionOverviewResponse, error) {
+func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDetectionGlobalConfig, channels []model.Channel, configs []model.ChannelModelDetectionConfig, targets []model.ChannelModelDetectionTarget, runs []model.ChannelModelDetectionRun, executionRows []channelModelDetectionExecutionOverviewRow, costEvents []model.ChannelModelDetectionCostEvent, todayCosts []model.ChannelDailyCost, ratioMonitors []model.ChannelRatioMonitor, logicalData ...channelModelDetectionLogicalOverviewData) (ChannelModelDetectionOverviewResponse, error) {
 	todayStart := model.ChannelDailyCostDayStart(now)
 	configured := global.DetectorURLConfigured()
 	maskedURL := maskChannelModelDetectorURL(global.DetectorURL)
@@ -594,15 +650,61 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 	}
 
 	configByChannel := make(map[int]model.ChannelModelDetectionConfig, len(configs))
+	logicalChannelByPhysical := make(map[int]int64, len(channels))
+	for i := range channels {
+		logicalID := int64(channels[i].Id)
+		if model.IsLogicalChannelGroupingEnabled() && channels[i].LogicalChannelID != nil && *channels[i].LogicalChannelID > 0 {
+			logicalID = *channels[i].LogicalChannelID
+		}
+		logicalChannelByPhysical[channels[i].Id] = logicalID
+	}
+	configByLogical := make(map[int64]model.ChannelModelDetectionConfig)
 	for i := range configs {
 		configByChannel[configs[i].ChannelId] = configs[i]
+		logicalID := logicalChannelByPhysical[configs[i].ChannelId]
+		if logicalID > 0 {
+			if previous, exists := configByLogical[logicalID]; !exists || configs[i].ChannelId < previous.ChannelId {
+				configByLogical[logicalID] = configs[i]
+			}
+		}
+	}
+	if len(logicalData) > 0 {
+		for _, logicalConfig := range logicalData[0].Configs {
+			configByLogical[logicalConfig.LogicalChannelId] = model.ChannelModelDetectionConfig{
+				Id: logicalConfig.Id, ScheduleEnabled: logicalConfig.ScheduleEnabled, Revision: logicalConfig.Revision,
+				RunningRunId: logicalConfig.RunningRunId, CreatedAt: logicalConfig.CreatedAt, UpdatedAt: logicalConfig.UpdatedAt,
+			}
+		}
 	}
 	targetsByChannel := make(map[int][]model.ChannelModelDetectionTarget)
+	targetsByLogical := make(map[int64][]model.ChannelModelDetectionTarget)
 	for i := range targets {
 		targetsByChannel[targets[i].ChannelId] = append(targetsByChannel[targets[i].ChannelId], targets[i])
+		logicalID := logicalChannelByPhysical[targets[i].ChannelId]
+		if logicalID > 0 {
+			// The canonical target set is owned by the lowest member.
+			if config, ok := configByLogical[logicalID]; ok && config.ChannelId == targets[i].ChannelId {
+				targetsByLogical[logicalID] = append(targetsByLogical[logicalID], targets[i])
+			}
+		}
+	}
+	if len(logicalData) > 0 {
+		for _, logicalConfig := range logicalData[0].Configs {
+			targetsByLogical[logicalConfig.LogicalChannelId] = nil
+		}
+		for _, logicalTarget := range logicalData[0].Targets {
+			targetsByLogical[logicalTarget.LogicalChannelId] = append(targetsByLogical[logicalTarget.LogicalChannelId], model.ChannelModelDetectionTarget{
+				Id: logicalTarget.Id, ConfigId: logicalTarget.ConfigId, TargetKey: logicalTarget.TargetKey,
+				RequestModel: logicalTarget.RequestModel, ClaimedModel: logicalTarget.ClaimedModel,
+				Position: logicalTarget.Position, Enabled: logicalTarget.Enabled,
+				CreatedAt: logicalTarget.CreatedAt, UpdatedAt: logicalTarget.UpdatedAt,
+			})
+		}
 	}
 	latestRunByChannel := make(map[int]model.ChannelModelDetectionRun)
 	activeRunByChannel := make(map[int]model.ChannelModelDetectionRun)
+	latestRunByLogical := make(map[int64]model.ChannelModelDetectionRun)
+	activeRunByLogical := make(map[int64]model.ChannelModelDetectionRun)
 	for i := range runs {
 		run := runs[i]
 		latest, ok := latestRunByChannel[run.ChannelId]
@@ -613,6 +715,16 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			active, exists := activeRunByChannel[run.ChannelId]
 			if !exists || channelModelDetectionRunIsNewer(run, active) {
 				activeRunByChannel[run.ChannelId] = run
+			}
+		}
+		if run.LogicalChannelID > 0 && run.LogicalRevision > 0 {
+			if latest, ok := latestRunByLogical[run.LogicalChannelID]; !ok || channelModelDetectionRunIsNewer(run, latest) {
+				latestRunByLogical[run.LogicalChannelID] = run
+			}
+			if model.IsChannelModelDetectionActiveRunStatus(run.Status) {
+				if active, ok := activeRunByLogical[run.LogicalChannelID]; !ok || channelModelDetectionRunIsNewer(run, active) {
+					activeRunByLogical[run.LogicalChannelID] = run
+				}
 			}
 		}
 	}
@@ -658,10 +770,27 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 	groupSet := map[string]struct{}{}
 	modelSet := map[string]struct{}{}
 	modelsByGroupSet := map[string]map[string]struct{}{}
+	supportedModelsByLogical := make(map[int64]map[string]struct{})
+	for i := range channels {
+		logicalID := logicalChannelByPhysical[channels[i].Id]
+		if logicalID == int64(channels[i].Id) {
+			continue
+		}
+		if supportedModelsByLogical[logicalID] == nil {
+			supportedModelsByLogical[logicalID] = make(map[string]struct{})
+		}
+		for _, supportedModel := range splitChannelModelDetectionList(channels[i].Models) {
+			supportedModelsByLogical[logicalID][supportedModel] = struct{}{}
+		}
+	}
 	for i := range channels {
 		channel := channels[i]
 		groups := splitChannelModelDetectionList(channel.Group)
 		supportedModels := splitChannelModelDetectionList(channel.Models)
+		logicalID := logicalChannelByPhysical[channel.Id]
+		if logicalID != int64(channel.Id) {
+			supportedModels = sortedChannelModelDetectionSet(supportedModelsByLogical[logicalID])
+		}
 		for _, group := range groups {
 			groupSet[group] = struct{}{}
 			if modelsByGroupSet[group] == nil {
@@ -694,6 +823,12 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			item.Remark = *channel.Remark
 		}
 		config, hasConfig := configByChannel[channel.Id]
+		if logicalID != int64(channel.Id) {
+			if sharedConfig, ok := configByLogical[logicalID]; ok {
+				config, hasConfig = sharedConfig, true
+				config.ChannelId = channel.Id
+			}
+		}
 		if hasConfig {
 			item.Config = &ChannelModelDetectionChannelConfigResponse{
 				ChannelID: config.ChannelId, ScheduleEnabled: config.ScheduleEnabled, Revision: config.Revision,
@@ -701,6 +836,11 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			}
 		}
 		activeRun, hasActiveRun := activeRunByChannel[channel.Id]
+		if logicalID != int64(channel.Id) {
+			if sharedRun, ok := activeRunByLogical[logicalID]; ok {
+				activeRun, hasActiveRun = sharedRun, true
+			}
+		}
 		if hasActiveRun {
 			progress := channelModelDetectionRunProgress(activeRun)
 			item.ActiveRun = &ChannelModelDetectionActiveRunResponse{
@@ -711,16 +851,37 @@ func buildChannelModelDetectionOverview(now int64, global model.ChannelModelDete
 			response.Detector.Busy = true
 		}
 		latestRun, hasLatestRun := latestRunByChannel[channel.Id]
-		if hasLatestRun {
-			aggregate, aggregateErr := aggregateChannelModelDetectionCostForRun(latestRun, eventsByRun[latestRun.RunId])
-			if aggregateErr != nil {
-				return ChannelModelDetectionOverviewResponse{}, aggregateErr
+		if logicalID != int64(channel.Id) {
+			if sharedRun, ok := latestRunByLogical[logicalID]; ok {
+				latestRun, hasLatestRun = sharedRun, true
 			}
-			cost := channelModelDetectionCostResponse(aggregate)
-			item.LatestRunCost = &cost
+		}
+		if hasLatestRun {
+			physicalEvents := make([]model.ChannelModelDetectionCostEvent, 0, len(eventsByRun[latestRun.RunId]))
+			for _, event := range eventsByRun[latestRun.RunId] {
+				if event.ChannelId == channel.Id {
+					physicalEvents = append(physicalEvents, event)
+				}
+			}
+			if len(physicalEvents) > 0 || logicalID == int64(channel.Id) {
+				aggregate, aggregateErr := aggregateChannelModelDetectionCostForPhysicalView(
+					latestRun, physicalEvents, eventsByRun[latestRun.RunId], logicalID != int64(channel.Id) && latestRun.LogicalRevision > 0,
+				)
+				if aggregateErr != nil {
+					return ChannelModelDetectionOverviewResponse{}, aggregateErr
+				}
+				cost := channelModelDetectionCostResponse(aggregate)
+				item.LatestRunCost = &cost
+			}
 		}
 
 		channelTargets := targetsByChannel[channel.Id]
+		if logicalID != int64(channel.Id) {
+			channelTargets = append([]model.ChannelModelDetectionTarget(nil), targetsByLogical[logicalID]...)
+			for index := range channelTargets {
+				channelTargets[index].ChannelId = channel.Id
+			}
+		}
 		for j := range channelTargets {
 			target := channelTargets[j]
 			targetItem := ChannelModelDetectionTargetSummary{
@@ -824,6 +985,27 @@ func aggregateChannelModelDetectionCostForRun(run model.ChannelModelDetectionRun
 		run.UnresolvedCostNanoCNY, run.UnresolvedCostUnknownCount,
 		run.SettledRequestCount, run.UnresolvedRequestCount,
 	)
+}
+
+// aggregateChannelModelDetectionCostForPhysicalView prevents a shared run's
+// stored logical cost from being projected onto a physical member that did
+// not produce any cost event. The logical run remains visible, but billing
+// stays attached to the actual member channel.
+func aggregateChannelModelDetectionCostForPhysicalView(
+	run model.ChannelModelDetectionRun,
+	physicalEvents []model.ChannelModelDetectionCostEvent,
+	allRunEvents []model.ChannelModelDetectionCostEvent,
+	shared bool,
+) (ChannelModelDetectionCostAggregate, error) {
+	if shared && len(physicalEvents) == 0 && len(allRunEvents) > 0 {
+		zero := int64(0)
+		return ChannelModelDetectionCostAggregate{
+			Status:                ChannelModelDetectionCostStatusNotStarted,
+			SettledCostNanoCNY:    &zero,
+			UnresolvedCostNanoCNY: &zero,
+		}, nil
+	}
+	return aggregateChannelModelDetectionCostForRun(run, physicalEvents)
 }
 
 func aggregateChannelModelDetectionCostForExecution(execution model.ChannelModelDetectionExecution, events []model.ChannelModelDetectionCostEvent) (ChannelModelDetectionCostAggregate, error) {

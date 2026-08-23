@@ -54,6 +54,13 @@ func InitChannelCache() {
 		snapshot.smartScheduleStates,
 		snapshot.smartScheduleGroupPauses,
 	)
+	newChannelLogicalSmartScheduleRoutingCache, err := logicalSmartScheduleRouteOverlaysFromStates(
+		snapshot.logicalScheduleStates,
+	)
+	if err != nil {
+		common.SysError("load logical smart schedule routing cache failed: " + err.Error())
+		return
+	}
 	newChannelSmartScheduleRuntimeRouteIndex := buildChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRouteCache)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
@@ -92,6 +99,7 @@ func InitChannelCache() {
 	channelSyncLock.Lock()
 	group2model2channels = newGroup2model2channels
 	channelSmartScheduleRouteCache = newChannelSmartScheduleRouteCache
+	channelLogicalSmartScheduleRoutingCache = newChannelLogicalSmartScheduleRoutingCache
 	publishChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRuntimeRouteIndex)
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
@@ -115,6 +123,11 @@ func InitChannelCache() {
 	// loadPricingAdvancedCustomConfigs. channelSyncLock MUST be released before
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
+	if err := RefreshLogicalChannelRuntimeCache(); err != nil {
+		// Keep the previous complete logical snapshot when the optional logical
+		// relation tables are unavailable or a refresh fails during startup.
+		common.SysError("load logical channel runtime snapshot failed: " + err.Error())
+	}
 	common.SysLog("channels synced from database")
 }
 
@@ -138,8 +151,39 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 			group, model, retry, requestPath, selectionOptions, trafficPolicy,
 		)
 	}
+	managedModelNames := channelSmartScheduleRouteModelNames(model)
+	if IsLogicalChannelGroupingEnabled() && trafficPolicy != nil &&
+		trafficPolicy.managesAnyPool(group, managedModelNames) {
+		channelSyncLock.RLock()
+		runtimeDirty := logicalChannelRuntimeDirty
+		channelSyncLock.RUnlock()
+		if runtimeDirty {
+			if err := RefreshLogicalChannelRuntimeCache(); err != nil {
+				return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+					group, model, retry, requestPath, selectionOptions, trafficPolicy,
+				)
+			}
+			for _, managedModelName := range managedModelNames {
+				if !trafficPolicy.managesPool(group, managedModelName) {
+					continue
+				}
+				if err := RefreshChannelSmartScheduleRoutePoolCache(group, managedModelName); err != nil {
+					return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+						group, model, retry, requestPath, selectionOptions, trafficPolicy,
+					)
+				}
+			}
+		}
+	}
 
 	channelSyncLock.RLock()
+	if logicalChannelRuntimeDirty && IsLogicalChannelGroupingEnabled() &&
+		trafficPolicy != nil && trafficPolicy.managesAnyPool(group, managedModelNames) {
+		channelSyncLock.RUnlock()
+		return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
+			group, model, retry, requestPath, selectionOptions, trafficPolicy,
+		)
+	}
 	defer channelSyncLock.RUnlock()
 	if channel, handled, err := getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		group, model, retry, requestPath, selectionOptions, trafficPolicy,
@@ -335,7 +379,12 @@ func CacheUpdateChannel(channel *Channel) {
 	if channelsIDM == nil {
 		channelsIDM = make(map[int]*Channel)
 	}
+	logicalChannelChanged := false
 	if oldChannel, ok := channelsIDM[channel.Id]; ok {
+		logicalChannelChanged = (oldChannel.LogicalChannelID == nil) != (channel.LogicalChannelID == nil)
+		if !logicalChannelChanged && oldChannel.LogicalChannelID != nil && channel.LogicalChannelID != nil {
+			logicalChannelChanged = *oldChannel.LogicalChannelID != *channel.LogicalChannelID
+		}
 		logger.LogDebug(nil, "CacheUpdateChannel before: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, oldChannel.ChannelInfo.MultiKeyPollingIndex)
 	}
 	channelsIDM[channel.Id] = channel
@@ -355,4 +404,7 @@ func CacheUpdateChannel(channel *Channel) {
 	// updatePricingLock while holding channelSyncLock would be an AB-BA deadlock.
 	channelSyncLock.Unlock()
 	InvalidatePricingCache()
+	if logicalChannelChanged {
+		InvalidateLogicalChannelRuntimeCache()
+	}
 }

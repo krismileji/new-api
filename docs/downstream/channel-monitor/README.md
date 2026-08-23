@@ -15,6 +15,8 @@
 - [Redis 清理与命名](redis-cleanup-runbook.md)：按 `channel_monitor:v1:` 精确白名单清理 Stream、消费组和共享投影。
 - [快照容量与数据库矩阵](snapshot-capacity-database-matrix.md)：任务级 gzip 快照容量、内存和三数据库读写清理验收。
 - [冷启动完整验收](cold-start-verification.md)：空库迁移、Redis 消费组、完整调度、分钟聚合和清理任务验收。
+- [逻辑归组验收与发布](logical-group-acceptance-release.md)：P0-P13 集成矩阵、自动化命令、灰度发布、回滚和证据归档。
+- [逻辑归组使用注意事项](logical-group-notes.md)：配置边界、weight、并发、历史、回滚和上线检查清单。
 
 ## 能力边界
 

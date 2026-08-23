@@ -107,6 +107,8 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 	if len(input.Targets) < 1 || len(input.Targets) > 10 {
 		return ChannelModelDetectionConfigResponse{}, fmt.Errorf("%w: 目标数量必须在 1 到 10 之间", ErrChannelModelDetectionInvalidConfig)
 	}
+	useLogicalRuntime := db == model.DB
+	requestedChannelID := channelID
 
 	var response ChannelModelDetectionConfigResponse
 	var change ChannelModelDetectionConfigChange
@@ -120,7 +122,22 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 			}
 			return err
 		}
-		if err := validateChannelModelDetectionTargets(&channel, input.Targets); err != nil {
+		identity, err := channelModelDetectionLogicalIdentity(transaction, channelID, useLogicalRuntime)
+		if err != nil {
+			return err
+		}
+		if identity.Revision > 0 {
+			logicalResponse, logicalChange, logicalErr := updateChannelModelDetectionLogicalConfig(transaction, identity, requestedChannelID, input, now)
+			if logicalErr != nil {
+				return logicalErr
+			}
+			response = logicalResponse
+			change = logicalChange
+			return nil
+		}
+		configChannel := channel
+		configChannelID := configChannel.Id
+		if err := validateChannelModelDetectionTargets(&configChannel, input.Targets); err != nil {
 			return err
 		}
 
@@ -138,7 +155,7 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 		}
 
 		var config model.ChannelModelDetectionConfig
-		configErr := transaction.Where("channel_id = ?", channelID).First(&config).Error
+		configErr := transaction.Where("channel_id = ?", configChannelID).First(&config).Error
 		exists := configErr == nil
 		if configErr != nil && !errors.Is(configErr, gorm.ErrRecordNotFound) {
 			return configErr
@@ -159,7 +176,7 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 			}
 			config.Revision++
 		} else {
-			config = model.ChannelModelDetectionConfig{ChannelId: channelID, Revision: 1}
+			config = model.ChannelModelDetectionConfig{ChannelId: configChannelID, Revision: 1}
 		}
 		config.ScheduleEnabled = input.ScheduleEnabled
 		config.UpdatedAt = now.Unix()
@@ -169,7 +186,7 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 
 		var existing []model.ChannelModelDetectionTarget
 		if exists {
-			if err := transaction.Where("config_id = ? AND channel_id = ?", config.Id, channelID).Order("position ASC").Find(&existing).Error; err != nil {
+			if err := transaction.Where("config_id = ? AND channel_id = ?", config.Id, configChannelID).Order("position ASC").Find(&existing).Error; err != nil {
 				return err
 			}
 		}
@@ -232,10 +249,10 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 			if existingTarget, ok := existingByKey[key]; ok {
 				target = existingTarget
 			} else {
-				target = model.ChannelModelDetectionTarget{ConfigId: config.Id, ChannelId: channelID, TargetKey: key}
+				target = model.ChannelModelDetectionTarget{ConfigId: config.Id, ChannelId: configChannelID, TargetKey: key}
 			}
 			target.ConfigId = config.Id
-			target.ChannelId = channelID
+			target.ChannelId = configChannelID
 			target.TargetKey = key
 			target.RequestModel = targetInput.RequestModel
 			target.ClaimedModel = targetInput.ClaimedModel
@@ -250,8 +267,8 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 			}
 			responses = append(responses, ChannelModelDetectionTargetResponse{TargetKey: key, RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Enabled: true, Position: position})
 		}
-		response = ChannelModelDetectionConfigResponse{ChannelID: channelID, ScheduleEnabled: config.ScheduleEnabled, Revision: config.Revision, CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt, Targets: responses}
-		change = ChannelModelDetectionConfigChange{ChannelID: channelID, OldRevision: oldRevision, NewRevision: config.Revision}
+		response = ChannelModelDetectionConfigResponse{ChannelID: requestedChannelID, ScheduleEnabled: config.ScheduleEnabled, Revision: config.Revision, CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt, Targets: responses}
+		change = ChannelModelDetectionConfigChange{ChannelID: requestedChannelID, OldRevision: oldRevision, NewRevision: config.Revision}
 		return nil
 	})
 	if err != nil {
@@ -263,14 +280,193 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 	return response, nil
 }
 
+func updateChannelModelDetectionLogicalConfig(tx *gorm.DB, identity LogicalChannelIdentity, requestedChannelID int, input ChannelModelDetectionConfigUpdateInput, now time.Time) (ChannelModelDetectionConfigResponse, ChannelModelDetectionConfigChange, error) {
+	group, err := model.LockLogicalChannelGroupForMembership(tx, identity.LogicalChannelID)
+	if err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	if !model.IsLogicalChannelGroupActive(group.Status) || group.Revision != identity.Revision {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, model.ErrChannelLogicalGroupRevisionConflict
+	}
+	members, err := model.LockLogicalChannelGroupMembers(tx, []int64{identity.LogicalChannelID})
+	if err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	memberIDs := make([]int, 0, len(members))
+	requestedMember := false
+	for _, member := range members {
+		memberIDs = append(memberIDs, member.ChannelID)
+		requestedMember = requestedMember || member.ChannelID == requestedChannelID
+	}
+	if !requestedMember || len(memberIDs) == 0 {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, model.ErrChannelLogicalGroupInvalidMember
+	}
+	var channels []*model.Channel
+	if err := tx.Where("id IN ?", memberIDs).Order("id ASC").Find(&channels).Error; err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	if len(channels) != len(memberIDs) {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionChannelNotFound
+	}
+	if err := validateChannelModelDetectionTargetsForChannels(channels, input.Targets); err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	if input.ScheduleEnabled {
+		var global model.ChannelModelDetectionGlobalConfig
+		if err := tx.Where("id = ?", model.ChannelModelDetectionConfigID).First(&global).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionDetectorNotConfigured
+			}
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+		}
+		if !global.DetectorURLConfigured() {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionDetectorNotConfigured
+		}
+	}
+	if err := model.EnsureChannelModelDetectionLogicalConfigTx(tx, identity.LogicalChannelID, memberIDs); err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+
+	var config model.ChannelModelDetectionLogicalConfig
+	configErr := tx.Where("logical_channel_id = ?", identity.LogicalChannelID).First(&config).Error
+	exists := configErr == nil
+	if configErr != nil && !errors.Is(configErr, gorm.ErrRecordNotFound) {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, configErr
+	}
+	if exists {
+		if input.ExpectedRevision <= 0 || input.ExpectedRevision != config.Revision {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionRevisionConflict
+		}
+	} else if input.ExpectedRevision != 0 {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionRevisionConflict
+	}
+	oldRevision := int64(0)
+	if exists {
+		oldRevision = config.Revision
+		if config.Revision == math.MaxInt64 {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, fmt.Errorf("%w: 修订号已达上限", ErrChannelModelDetectionInvalidConfig)
+		}
+		config.Revision++
+	} else {
+		config = model.ChannelModelDetectionLogicalConfig{LogicalChannelId: identity.LogicalChannelID, Revision: 1}
+	}
+	config.ScheduleEnabled = input.ScheduleEnabled
+	config.UpdatedAt = now.Unix()
+	if config.CreatedAt == 0 {
+		config.CreatedAt = now.Unix()
+	}
+
+	var existing []model.ChannelModelDetectionLogicalTarget
+	if exists {
+		if err := tx.Where("config_id = ? AND logical_channel_id = ?", config.Id, identity.LogicalChannelID).Order("position ASC").Find(&existing).Error; err != nil {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+		}
+	}
+	existingByKey := make(map[string]model.ChannelModelDetectionLogicalTarget, len(existing))
+	for _, target := range existing {
+		existingByKey[target.TargetKey] = target
+	}
+	resolvedKeys := make([]string, len(input.Targets))
+	keep := make(map[string]bool, len(input.Targets))
+	for position, targetInput := range input.Targets {
+		key := strings.TrimSpace(targetInput.TargetKey)
+		if key != "" {
+			if _, ok := existingByKey[key]; !ok {
+				return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, fmt.Errorf("%w: %s", ErrChannelModelDetectionTargetNotFound, key)
+			}
+		} else {
+			key = common.GetUUID()
+			for {
+				_, alreadyExists := existingByKey[key]
+				if !alreadyExists && !keep[key] {
+					break
+				}
+				key = common.GetUUID()
+			}
+		}
+		resolvedKeys[position] = key
+		keep[key] = true
+	}
+	if exists {
+		updated := tx.Model(&model.ChannelModelDetectionLogicalConfig{}).
+			Where("id = ? AND logical_channel_id = ? AND revision = ?", config.Id, identity.LogicalChannelID, oldRevision).
+			Updates(map[string]any{"schedule_enabled": config.ScheduleEnabled, "revision": config.Revision, "updated_at": config.UpdatedAt})
+		if updated.Error != nil {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, ErrChannelModelDetectionRevisionConflict
+		}
+	} else if err := tx.Create(&config).Error; err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	for _, target := range existing {
+		temporaryModel := "__channel_model_detection_update_" + target.TargetKey
+		if err := tx.Model(&model.ChannelModelDetectionLogicalTarget{}).Where("id = ?", target.Id).UpdateColumn("request_model", temporaryModel).Error; err != nil {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+		}
+		if !keep[target.TargetKey] {
+			if err := tx.Delete(&model.ChannelModelDetectionLogicalTarget{}, target.Id).Error; err != nil {
+				return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+			}
+		}
+	}
+	responses := make([]ChannelModelDetectionTargetResponse, 0, len(input.Targets))
+	for position, targetInput := range input.Targets {
+		key := resolvedKeys[position]
+		var target model.ChannelModelDetectionLogicalTarget
+		if existingTarget, ok := existingByKey[key]; ok {
+			target = existingTarget
+		} else {
+			target = model.ChannelModelDetectionLogicalTarget{ConfigId: config.Id, LogicalChannelId: identity.LogicalChannelID, TargetKey: key}
+		}
+		target.ConfigId = config.Id
+		target.LogicalChannelId = identity.LogicalChannelID
+		target.TargetKey = key
+		target.RequestModel = targetInput.RequestModel
+		target.ClaimedModel = targetInput.ClaimedModel
+		target.Position = position
+		target.Enabled = true
+		target.UpdatedAt = now.Unix()
+		if target.CreatedAt == 0 {
+			target.CreatedAt = now.Unix()
+		}
+		if err := tx.Save(&target).Error; err != nil {
+			return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+		}
+		responses = append(responses, ChannelModelDetectionTargetResponse{TargetKey: key, RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Enabled: true, Position: position})
+	}
+	var currentRevision int64
+	if err := tx.Model(&model.ChannelLogicalGroup{}).Where("id = ?", identity.LogicalChannelID).Pluck("revision", &currentRevision).Error; err != nil {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, err
+	}
+	if currentRevision != identity.Revision {
+		return ChannelModelDetectionConfigResponse{}, ChannelModelDetectionConfigChange{}, model.ErrChannelLogicalGroupRevisionConflict
+	}
+	response := ChannelModelDetectionConfigResponse{ChannelID: requestedChannelID, ScheduleEnabled: config.ScheduleEnabled, Revision: config.Revision, CreatedAt: config.CreatedAt, UpdatedAt: config.UpdatedAt, Targets: responses}
+	change := ChannelModelDetectionConfigChange{ChannelID: requestedChannelID, OldRevision: oldRevision, NewRevision: config.Revision}
+	return response, change, nil
+}
+
 func validateChannelModelDetectionTargets(channel *model.Channel, inputs []ChannelModelDetectionTargetUpdateInput) error {
 	if channel == nil {
 		return ErrChannelModelDetectionChannelNotFound
 	}
-	models := channel.GetModels()
-	supported := make(map[string]struct{}, len(models))
-	for _, value := range models {
-		supported[value] = struct{}{}
+	return validateChannelModelDetectionTargetsForChannels([]*model.Channel{channel}, inputs)
+}
+
+func validateChannelModelDetectionTargetsForChannels(channels []*model.Channel, inputs []ChannelModelDetectionTargetUpdateInput) error {
+	if len(channels) == 0 {
+		return ErrChannelModelDetectionChannelNotFound
+	}
+	supported := make(map[string]struct{})
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		for _, value := range channel.GetModels() {
+			supported[value] = struct{}{}
+		}
 	}
 	keys := make(map[string]struct{}, len(inputs))
 	pairs := make(map[string]struct{}, len(inputs))
@@ -355,15 +551,18 @@ func EstimateChannelModelDetectionCost(ctx context.Context, tx *gorm.DB, channel
 	if !global.DetectorURLConfigured() {
 		return ChannelModelDetectionEstimateResponse{}, ErrChannelModelDetectionDetectorNotConfigured
 	}
-	var config model.ChannelModelDetectionConfig
-	if err := db.WithContext(ctx).Where("channel_id = ?", channelID).First(&config).Error; err != nil {
+	var targets []model.ChannelModelDetectionTarget
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		identity, err := channelModelDetectionLogicalIdentity(tx, channelID, db == model.DB)
+		if err != nil {
+			return err
+		}
+		_, targets, _, err = channelModelDetectionConfigForIdentity(tx, identity, channelID, db == model.DB)
+		return err
+	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ChannelModelDetectionEstimateResponse{}, ErrChannelModelDetectionConfigNotFound
 		}
-		return ChannelModelDetectionEstimateResponse{}, err
-	}
-	var targets []model.ChannelModelDetectionTarget
-	if err := db.WithContext(ctx).Where("config_id = ? AND channel_id = ? AND enabled = ?", config.Id, channelID, true).Order("position ASC").Find(&targets).Error; err != nil {
 		return ChannelModelDetectionEstimateResponse{}, err
 	}
 	if len(targets) == 0 {

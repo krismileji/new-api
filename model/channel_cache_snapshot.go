@@ -13,6 +13,7 @@ type channelCacheSnapshot struct {
 	channels                 []*Channel
 	abilities                []*Ability
 	smartScheduleStates      []ChannelSmartScheduleRouteState
+	logicalScheduleStates    []ChannelLogicalSmartScheduleRouteState
 	smartScheduleGroupPauses []ChannelSmartScheduleGroupPause
 }
 
@@ -27,6 +28,13 @@ func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
 			if err := tx.
 				Order("channel_id ASC, group_name ASC, model_name ASC").
 				Find(&snapshot.smartScheduleStates).Error; err != nil {
+				return err
+			}
+		}
+		if IsLogicalChannelGroupingEnabled() && tx.Migrator().HasTable(&ChannelLogicalSmartScheduleRouteState{}) {
+			if err := tx.
+				Order("logical_group_id ASC, logical_revision ASC, group_name ASC, model_name ASC").
+				Find(&snapshot.logicalScheduleStates).Error; err != nil {
 				return err
 			}
 		}

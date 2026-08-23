@@ -55,8 +55,13 @@ var (
 )
 
 type ChannelStatusProbeConfig struct {
-	Id                int64  `json:"id"`
-	ChannelId         int    `json:"channel_id" gorm:"not null;uniqueIndex;index:idx_channel_status_probe_scheduled_due,priority:4;index:idx_channel_status_probe_manual_due,priority:4"`
+	Id        int64 `json:"id"`
+	ChannelId int   `json:"channel_id" gorm:"not null;uniqueIndex;index:idx_channel_status_probe_scheduled_due,priority:4;index:idx_channel_status_probe_manual_due,priority:4"`
+	// LogicalChannelId is the shared probe identity. It is populated by the
+	// status-probe worker when a channel belongs to a logical group; zero keeps
+	// legacy rows compatible and means the physical channel is the identity.
+	LogicalChannelId  int64  `json:"-" gorm:"bigint;index"`
+	LogicalRevision   int64  `json:"-" gorm:"bigint"`
 	Enabled           bool   `json:"enabled" gorm:"index:idx_channel_status_probe_scheduled_due,priority:1"`
 	ModelsJSON        string `json:"-" gorm:"type:text;not null"`
 	IntervalSeconds   int    `json:"interval_seconds"`
@@ -196,6 +201,8 @@ func (bucket *ChannelStatusProbeBucket) Add(
 type ChannelStatusProbeState struct {
 	Id                    int64    `json:"id"`
 	ChannelId             int      `json:"channel_id" gorm:"not null;uniqueIndex:idx_channel_status_probe_state_model"`
+	LogicalChannelId      int64    `json:"-" gorm:"bigint;index"`
+	LogicalRevision       int64    `json:"-" gorm:"bigint"`
 	ModelName             string   `json:"model_name" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_status_probe_state_model"`
 	ExecutionId           int64    `json:"execution_id" gorm:"bigint"`
 	RunId                 string   `json:"run_id" gorm:"type:varchar(64)"`
@@ -252,9 +259,16 @@ func (state ChannelStatusProbeState) Buckets(unit string) ([]ChannelStatusProbeB
 }
 
 type ChannelStatusProbeExecution struct {
-	Id                 int64    `json:"id" gorm:"index:idx_channel_status_probe_channel_result_finished,priority:4,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:4,sort:desc;index:idx_channel_status_probe_sample_retry,priority:4"`
-	RunId              string   `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_status_probe_run_model"`
-	ChannelId          int      `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1;index:idx_channel_status_probe_channel_result_finished,priority:1;index:idx_channel_status_probe_channel_trigger_finished,priority:1"`
+	Id        int64  `json:"id" gorm:"index:idx_channel_status_probe_channel_result_finished,priority:4,sort:desc;index:idx_channel_status_probe_channel_trigger_finished,priority:4,sort:desc;index:idx_channel_status_probe_sample_retry,priority:4"`
+	RunId     string `json:"run_id" gorm:"type:varchar(64);not null;uniqueIndex:idx_channel_status_probe_run_model"`
+	ChannelId int    `json:"channel_id" gorm:"not null;index:idx_channel_status_probe_channel_finished,priority:1;index:idx_channel_status_probe_channel_model_finished,priority:1;index:idx_channel_status_probe_channel_result_finished,priority:1;index:idx_channel_status_probe_channel_trigger_finished,priority:1"`
+	// LogicalChannelId identifies the shared execution boundary while ChannelId
+	// remains the legacy/API owner of the execution row. ActualChannelId records
+	// the physical member whose key sent the request. Both fields are internal
+	// so existing status-probe API response shapes remain unchanged.
+	LogicalChannelId   int64    `json:"-" gorm:"bigint;index"`
+	LogicalRevision    int64    `json:"-" gorm:"bigint"`
+	ActualChannelId    int      `json:"-" gorm:"index"`
 	ModelName          string   `json:"model_name" gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_status_probe_run_model;index:idx_channel_status_probe_channel_model_finished,priority:2"`
 	ConfigRevision     int64    `json:"config_revision" gorm:"bigint"`
 	Trigger            string   `json:"trigger" gorm:"type:varchar(16);index;index:idx_channel_status_probe_channel_trigger_finished,priority:2"`
@@ -296,12 +310,268 @@ type ChannelStatusProbeConfigInput struct {
 
 type ChannelStatusProbeClaim struct {
 	Config          ChannelStatusProbeConfig
+	LogicalConfig   bool
+	Identity        LogicalChannelIdentity
+	Snapshot        LogicalChannelGroupSnapshot
 	Models          []string
 	Trigger         string
 	RunId           string
 	ManualRequestId string
 	LeaseToken      string
 	DeadlineAt      int64
+}
+
+type channelStatusProbeScope struct {
+	Identity  LogicalChannelIdentity
+	Snapshot  LogicalChannelGroupSnapshot
+	OwnerID   int
+	MemberIDs []int
+}
+
+type channelStatusProbeScopeKey struct {
+	LogicalChannelID int64
+	Revision         int64
+}
+
+type channelStatusProbeScopedConfig struct {
+	Config        ChannelStatusProbeConfig
+	Scope         channelStatusProbeScope
+	LogicalConfig bool
+}
+
+func lockChannelStatusProbeLogicalScopeTx(tx *gorm.DB, scope channelStatusProbeScope, requiredMemberIDs ...int) (bool, error) {
+	if scope.Identity.Revision <= 0 {
+		return true, nil
+	}
+	group, err := LockLogicalChannelGroupForMembership(tx, scope.Identity.LogicalChannelID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !IsLogicalChannelGroupActive(group.Status) || group.Revision != scope.Identity.Revision {
+		return false, nil
+	}
+	members := make(map[int]struct{}, len(requiredMemberIDs))
+	for _, channelID := range requiredMemberIDs {
+		if channelID > 0 {
+			members[channelID] = struct{}{}
+		}
+	}
+	if len(members) == 0 {
+		return true, nil
+	}
+	memberIDs := make([]int, 0, len(members))
+	for channelID := range members {
+		memberIDs = append(memberIDs, channelID)
+	}
+	var count int64
+	if err := tx.Model(&ChannelLogicalGroupMember{}).
+		Where("logical_group_id = ? AND channel_id IN ?", scope.Identity.LogicalChannelID, memberIDs).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == int64(len(memberIDs)), nil
+}
+
+func resolveChannelStatusProbeScope(channelID int) (channelStatusProbeScope, error) {
+	identity, err := ResolveChannelLogicalIdentity(channelID)
+	if err != nil {
+		// Legacy model tests and upgrade checks may exercise the probe tables
+		// before the channels table exists. Preserve the physical behavior only
+		// for that schema state; production relation failures remain visible.
+		if DB != nil && DB.Migrator().HasTable(&Channel{}) {
+			return channelStatusProbeScope{}, err
+		}
+		identity = LogicalChannelIdentity{ChannelID: channelID, LogicalChannelID: int64(channelID)}
+	}
+	snapshot, err := GetLogicalChannelSelectionSnapshot(identity)
+	if err != nil {
+		return channelStatusProbeScope{}, err
+	}
+	members := append([]LogicalChannelMemberSnapshot(nil), snapshot.Members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].ChannelID < members[j].ChannelID })
+	if len(members) == 0 {
+		return channelStatusProbeScope{}, ErrLogicalChannelRuntimeGroupNotFound
+	}
+	snapshot.Members = members
+	memberIDs := make([]int, 0, len(members))
+	for _, member := range members {
+		memberIDs = append(memberIDs, member.ChannelID)
+	}
+	return channelStatusProbeScope{
+		Identity: identity, Snapshot: snapshot, OwnerID: memberIDs[0], MemberIDs: memberIDs,
+	}, nil
+}
+
+func resolvePersistedChannelStatusProbeScope(channelID int, logicalChannelID int64, logicalRevision int64) (channelStatusProbeScope, error) {
+	scope, err := resolveChannelStatusProbeScope(channelID)
+	if err != nil || !IsLogicalChannelGroupingEnabled() || logicalChannelID <= 0 || logicalRevision <= 0 ||
+		(scope.Identity.Revision > 0 && scope.Identity.LogicalChannelID == logicalChannelID) {
+		return scope, err
+	}
+	snapshot, snapshotErr := GetLogicalChannelGroupSnapshot(logicalChannelID)
+	if snapshotErr != nil || !IsLogicalChannelGroupActive(snapshot.Status) {
+		return scope, nil
+	}
+	for _, member := range snapshot.Members {
+		candidate, candidateErr := resolveChannelStatusProbeScope(member.ChannelID)
+		if candidateErr == nil && candidate.Identity.LogicalChannelID == logicalChannelID && candidate.Identity.Revision > 0 {
+			return candidate, nil
+		}
+	}
+	return scope, nil
+}
+
+func resolveChannelStatusProbeConfigScope(config ChannelStatusProbeConfig) (channelStatusProbeScope, error) {
+	return resolvePersistedChannelStatusProbeScope(config.ChannelId, config.LogicalChannelId, config.LogicalRevision)
+}
+
+func channelStatusProbeCanonicalConfigs(configs []ChannelStatusProbeConfig) ([]channelStatusProbeScopedConfig, error) {
+	selected := make(map[channelStatusProbeScopeKey]channelStatusProbeScopedConfig, len(configs))
+	for _, config := range configs {
+		scope, err := resolveChannelStatusProbeConfigScope(config)
+		if err != nil {
+			return nil, err
+		}
+		key := channelStatusProbeScopeKey{LogicalChannelID: scope.Identity.LogicalChannelID, Revision: scope.Identity.Revision}
+		current, exists := selected[key]
+		if !exists || (config.ChannelId == scope.OwnerID && current.Config.ChannelId != scope.OwnerID) ||
+			(config.ChannelId != scope.OwnerID && current.Config.ChannelId != scope.OwnerID && config.ChannelId < current.Config.ChannelId) {
+			selected[key] = channelStatusProbeScopedConfig{Config: config, Scope: scope}
+		}
+	}
+	var logicalConfigs []ChannelStatusProbeLogicalConfig
+	if DB.Migrator().HasTable(&ChannelStatusProbeLogicalConfig{}) {
+		if err := DB.Order("logical_channel_id ASC").Find(&logicalConfigs).Error; err != nil {
+			return nil, err
+		}
+	}
+	for _, logicalConfig := range logicalConfigs {
+		snapshot, err := GetLogicalChannelGroupSnapshot(logicalConfig.LogicalChannelId)
+		if err != nil || !IsLogicalChannelGroupingEnabled() || !IsLogicalChannelGroupActive(snapshot.Status) || len(snapshot.Members) == 0 {
+			continue
+		}
+		scope, err := resolveChannelStatusProbeScope(snapshot.Members[0].ChannelID)
+		if err != nil || scope.Identity.Revision <= 0 || scope.Identity.LogicalChannelID != logicalConfig.LogicalChannelId {
+			continue
+		}
+		logicalConfig.LogicalRevision = scope.Identity.Revision
+		logicalConfig.OwnerChannelId = scope.OwnerID
+		key := channelStatusProbeScopeKey{LogicalChannelID: scope.Identity.LogicalChannelID, Revision: scope.Identity.Revision}
+		selected[key] = channelStatusProbeScopedConfig{
+			Config: logicalConfig.Project(scope.OwnerID), Scope: scope, LogicalConfig: true,
+		}
+	}
+	result := make([]channelStatusProbeScopedConfig, 0, len(selected))
+	for _, item := range selected {
+		item.Config.ChannelId = item.Scope.OwnerID
+		item.Config.LogicalChannelId = item.Scope.Identity.LogicalChannelID
+		item.Config.LogicalRevision = item.Scope.Identity.Revision
+		result = append(result, item)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Config.ChannelId < result[j].Config.ChannelId })
+	return result, nil
+}
+
+func channelStatusProbePhysicalConfigForScope(tx *gorm.DB, scope channelStatusProbeScope, lock bool) (ChannelStatusProbeConfig, error) {
+	query := tx.Where("channel_id IN ?", scope.MemberIDs)
+	query = query.Order("channel_id ASC")
+	if lock {
+		query = lockForUpdate(query)
+	}
+	var configs []ChannelStatusProbeConfig
+	if err := query.Find(&configs).Error; err != nil {
+		return ChannelStatusProbeConfig{}, err
+	}
+	if len(configs) == 0 {
+		return ChannelStatusProbeConfig{}, gorm.ErrRecordNotFound
+	}
+	selected := configs[0]
+	for _, config := range configs {
+		if config.ChannelId == scope.OwnerID {
+			selected = config
+			break
+		}
+	}
+	return selected, nil
+}
+
+func channelStatusProbeLogicalConfigForScope(tx *gorm.DB, scope channelStatusProbeScope, lock bool) (ChannelStatusProbeLogicalConfig, error) {
+	query := tx.Where("logical_channel_id = ?", scope.Identity.LogicalChannelID)
+	if lock {
+		query = lockForUpdate(query)
+	}
+	var config ChannelStatusProbeLogicalConfig
+	if err := query.First(&config).Error; err != nil {
+		return ChannelStatusProbeLogicalConfig{}, err
+	}
+	return config, nil
+}
+
+func materializeChannelStatusProbeLogicalConfig(tx *gorm.DB, scope channelStatusProbeScope, now int64) (ChannelStatusProbeLogicalConfig, error) {
+	currentScope, err := lockChannelStatusProbeLogicalScopeTx(tx, scope, scope.OwnerID)
+	if err != nil {
+		return ChannelStatusProbeLogicalConfig{}, err
+	}
+	if !currentScope {
+		return ChannelStatusProbeLogicalConfig{}, ErrChannelLogicalGroupRevisionConflict
+	}
+	current, err := channelStatusProbeLogicalConfigForScope(tx, scope, true)
+	if err == nil {
+		if current.LogicalRevision != scope.Identity.Revision || current.OwnerChannelId != scope.OwnerID {
+			if err := tx.Model(&ChannelStatusProbeLogicalConfig{}).Where("id = ?", current.Id).
+				Updates(map[string]any{"logical_revision": scope.Identity.Revision, "owner_channel_id": scope.OwnerID}).Error; err != nil {
+				return ChannelStatusProbeLogicalConfig{}, err
+			}
+			current.LogicalRevision = scope.Identity.Revision
+			current.OwnerChannelId = scope.OwnerID
+		}
+		return current, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ChannelStatusProbeLogicalConfig{}, err
+	}
+	physical, err := channelStatusProbePhysicalConfigForScope(tx, scope, true)
+	if err != nil {
+		return ChannelStatusProbeLogicalConfig{}, err
+	}
+	current = ChannelStatusProbeLogicalConfig{
+		LogicalChannelId: scope.Identity.LogicalChannelID, LogicalRevision: scope.Identity.Revision, OwnerChannelId: scope.OwnerID,
+		Enabled: physical.Enabled, ModelsJSON: physical.ModelsJSON, IntervalSeconds: physical.IntervalSeconds,
+		DisplayValue: physical.DisplayValue, DisplayUnit: physical.DisplayUnit, RecordSample: physical.RecordSample,
+		NextRunAt: physical.NextRunAt, Revision: max(physical.Revision, 1), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "logical_channel_id"}}, DoNothing: true}).
+		Create(&current).Error; err != nil {
+		return ChannelStatusProbeLogicalConfig{}, err
+	}
+	return channelStatusProbeLogicalConfigForScope(tx, scope, true)
+}
+
+func channelStatusProbeConfigForScope(tx *gorm.DB, scope channelStatusProbeScope, lock bool) (ChannelStatusProbeConfig, bool, error) {
+	if scope.Identity.Revision <= 0 {
+		config, err := channelStatusProbePhysicalConfigForScope(tx, scope, lock)
+		return config, false, err
+	}
+	logicalConfig, err := channelStatusProbeLogicalConfigForScope(tx, scope, lock)
+	if err == nil {
+		logicalConfig.LogicalRevision = scope.Identity.Revision
+		logicalConfig.OwnerChannelId = scope.OwnerID
+		return logicalConfig.Project(scope.OwnerID), true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ChannelStatusProbeConfig{}, false, err
+	}
+	config, err := channelStatusProbePhysicalConfigForScope(tx, scope, lock)
+	if err != nil {
+		return ChannelStatusProbeConfig{}, false, err
+	}
+	config.ChannelId = scope.OwnerID
+	config.LogicalChannelId = scope.Identity.LogicalChannelID
+	config.LogicalRevision = scope.Identity.Revision
+	return config, false, nil
 }
 
 func nextChannelStatusProbeRunAt(after int64, intervalSeconds int) int64 {
@@ -313,6 +583,10 @@ func nextChannelStatusProbeRunAt(after int64, intervalSeconds int) int64 {
 }
 
 func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigInput, now int64) (ChannelStatusProbeConfig, error) {
+	scope, err := resolveChannelStatusProbeScope(channelId)
+	if err != nil {
+		return ChannelStatusProbeConfig{}, err
+	}
 	modelsJSON, err := common.Marshal(input.Models)
 	if err != nil {
 		return ChannelStatusProbeConfig{}, err
@@ -320,8 +594,81 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 	displayValue, displayUnit := NormalizeChannelStatusProbeDisplay(input.DisplayValue, input.DisplayUnit)
 	var saved ChannelStatusProbeConfig
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		var current ChannelStatusProbeConfig
-		findErr := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&current).Error
+		if scope.Identity.Revision > 0 {
+			currentScope, lockErr := lockChannelStatusProbeLogicalScopeTx(tx, scope, scope.OwnerID)
+			if lockErr != nil {
+				return lockErr
+			}
+			if !currentScope {
+				return ErrChannelLogicalGroupRevisionConflict
+			}
+			current, findErr := channelStatusProbeLogicalConfigForScope(tx, scope, true)
+			if errors.Is(findErr, gorm.ErrRecordNotFound) {
+				physical, physicalErr := channelStatusProbePhysicalConfigForScope(tx, scope, true)
+				currentRevision := int64(0)
+				if physicalErr == nil {
+					currentRevision = physical.Revision
+				} else if !errors.Is(physicalErr, gorm.ErrRecordNotFound) {
+					return physicalErr
+				}
+				if input.Revision != currentRevision {
+					return ErrChannelStatusProbeConfigChanged
+				}
+				nextRunAt := int64(0)
+				if input.Enabled {
+					nextRunAt = nextChannelStatusProbeRunAt(now, input.IntervalSeconds)
+				}
+				current = ChannelStatusProbeLogicalConfig{
+					LogicalChannelId: scope.Identity.LogicalChannelID, LogicalRevision: scope.Identity.Revision, OwnerChannelId: scope.OwnerID,
+					Enabled: input.Enabled, ModelsJSON: string(modelsJSON), IntervalSeconds: input.IntervalSeconds,
+					DisplayValue: displayValue, DisplayUnit: displayUnit, RecordSample: input.RecordSample,
+					NextRunAt: nextRunAt, Revision: currentRevision + 1, CreatedAt: now, UpdatedAt: now,
+				}
+				if err := tx.Create(&current).Error; err != nil {
+					return err
+				}
+			} else if findErr != nil {
+				return findErr
+			} else {
+				if current.Revision != input.Revision {
+					return ErrChannelStatusProbeConfigChanged
+				}
+				nextRunAt := current.NextRunAt
+				configurationChanged := current.ModelsJSON != string(modelsJSON) || current.IntervalSeconds != input.IntervalSeconds
+				if !input.Enabled {
+					nextRunAt = 0
+				} else if !current.Enabled || configurationChanged || nextRunAt <= 0 || input.IntervalSeconds <= 0 || nextRunAt%int64(input.IntervalSeconds) != 0 {
+					nextRunAt = nextChannelStatusProbeRunAt(now, input.IntervalSeconds)
+				}
+				updates := map[string]any{
+					"logical_revision": scope.Identity.Revision, "owner_channel_id": scope.OwnerID,
+					"enabled": input.Enabled, "models_json": string(modelsJSON), "interval_seconds": input.IntervalSeconds,
+					"display_value": displayValue, "display_unit": displayUnit, "record_sample": input.RecordSample,
+					"next_run_at": nextRunAt, "revision": current.Revision + 1, "updated_at": now,
+				}
+				updated := tx.Model(&ChannelStatusProbeLogicalConfig{}).Where("id = ? AND revision = ?", current.Id, current.Revision).Updates(updates)
+				if updated.Error != nil {
+					return updated.Error
+				}
+				if updated.RowsAffected != 1 {
+					return ErrChannelStatusProbeConfigChanged
+				}
+				if err := tx.Where("id = ?", current.Id).First(&current).Error; err != nil {
+					return err
+				}
+			}
+			stateQuery := tx.Where("logical_channel_id = ?", scope.Identity.LogicalChannelID)
+			if len(input.Models) > 0 {
+				stateQuery = stateQuery.Where("model_name NOT IN ?", input.Models)
+			}
+			if err := stateQuery.Delete(&ChannelStatusProbeLogicalState{}).Error; err != nil {
+				return err
+			}
+			saved = current.Project(channelId)
+			return nil
+		}
+
+		current, findErr := channelStatusProbePhysicalConfigForScope(tx, scope, true)
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
 			if input.Revision != 0 {
 				return ErrChannelStatusProbeConfigChanged
@@ -331,7 +678,8 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 				nextRunAt = nextChannelStatusProbeRunAt(now, input.IntervalSeconds)
 			}
 			saved = ChannelStatusProbeConfig{
-				ChannelId: channelId, Enabled: input.Enabled, ModelsJSON: string(modelsJSON),
+				ChannelId: channelId,
+				Enabled:   input.Enabled, ModelsJSON: string(modelsJSON),
 				IntervalSeconds: input.IntervalSeconds,
 				DisplayValue:    displayValue,
 				DisplayUnit:     displayUnit,
@@ -381,32 +729,158 @@ func SaveChannelStatusProbeConfig(channelId int, input ChannelStatusProbeConfigI
 		}
 		return stateQuery.Delete(&ChannelStatusProbeState{}).Error
 	})
+	if err == nil && scope.Identity.Revision <= 0 {
+		saved.ChannelId = channelId
+	}
 	return saved, err
 }
 
 func GetChannelStatusProbeConfig(channelId int) (ChannelStatusProbeConfig, error) {
-	var config ChannelStatusProbeConfig
-	err := DB.Where("channel_id = ?", channelId).First(&config).Error
+	scope, err := resolveChannelStatusProbeScope(channelId)
+	if err != nil {
+		return ChannelStatusProbeConfig{}, err
+	}
+	config, _, err := channelStatusProbeConfigForScope(DB, scope, false)
+	config.ChannelId = channelId
+	config.LogicalChannelId = scope.Identity.LogicalChannelID
+	config.LogicalRevision = scope.Identity.Revision
 	return config, err
 }
 
 func GetChannelStatusProbeConfigs() ([]ChannelStatusProbeConfig, error) {
 	var configs []ChannelStatusProbeConfig
-	err := DB.Order("channel_id ASC").Find(&configs).Error
-	return configs, err
+	if err := DB.Order("channel_id ASC").Find(&configs).Error; err != nil {
+		return nil, err
+	}
+	canonical, err := channelStatusProbeCanonicalConfigs(configs)
+	if err != nil {
+		return nil, err
+	}
+	projected := make([]ChannelStatusProbeConfig, 0, len(configs))
+	for _, item := range canonical {
+		for _, channelID := range item.Scope.MemberIDs {
+			config := item.Config
+			config.ChannelId = channelID
+			projected = append(projected, config)
+		}
+	}
+	sort.Slice(projected, func(i, j int) bool { return projected[i].ChannelId < projected[j].ChannelId })
+	return projected, nil
 }
 
 func GetChannelStatusProbeStates() ([]ChannelStatusProbeState, error) {
 	var states []ChannelStatusProbeState
-	err := DB.Order("channel_id ASC, model_name ASC").Find(&states).Error
-	return states, err
+	if err := DB.Order("channel_id ASC, model_name ASC").Find(&states).Error; err != nil {
+		return nil, err
+	}
+	type scopedState struct {
+		state ChannelStatusProbeState
+		scope channelStatusProbeScope
+	}
+	type stateKey struct {
+		scope channelStatusProbeScopeKey
+		model string
+	}
+	selected := make(map[stateKey]scopedState, len(states))
+	for _, state := range states {
+		scope, err := resolvePersistedChannelStatusProbeScope(state.ChannelId, state.LogicalChannelId, state.LogicalRevision)
+		if err != nil {
+			return nil, err
+		}
+		key := stateKey{
+			scope: channelStatusProbeScopeKey{LogicalChannelID: scope.Identity.LogicalChannelID, Revision: scope.Identity.Revision},
+			model: state.ModelName,
+		}
+		current, exists := selected[key]
+		if !exists || state.ChannelId == scope.OwnerID ||
+			(current.state.ChannelId != scope.OwnerID && state.FinishedAt > current.state.FinishedAt) {
+			selected[key] = scopedState{state: state, scope: scope}
+		}
+	}
+	if DB.Migrator().HasTable(&ChannelStatusProbeLogicalState{}) {
+		var logicalStates []ChannelStatusProbeLogicalState
+		if err := DB.Order("logical_channel_id ASC, model_name ASC").Find(&logicalStates).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range logicalStates {
+			snapshot, err := GetLogicalChannelGroupSnapshot(row.LogicalChannelId)
+			if err != nil || !IsLogicalChannelGroupingEnabled() || !IsLogicalChannelGroupActive(snapshot.Status) || len(snapshot.Members) == 0 {
+				continue
+			}
+			scope, err := resolveChannelStatusProbeScope(snapshot.Members[0].ChannelID)
+			if err != nil || scope.Identity.Revision <= 0 || scope.Identity.LogicalChannelID != row.LogicalChannelId ||
+				row.LogicalRevision != scope.Identity.Revision {
+				continue
+			}
+			state, err := row.State(scope.OwnerID)
+			if err != nil {
+				return nil, err
+			}
+			key := stateKey{
+				scope: channelStatusProbeScopeKey{LogicalChannelID: scope.Identity.LogicalChannelID, Revision: scope.Identity.Revision},
+				model: row.ModelName,
+			}
+			selected[key] = scopedState{state: state, scope: scope}
+		}
+	}
+	projected := make([]ChannelStatusProbeState, 0, len(states))
+	for _, item := range selected {
+		for _, channelID := range item.scope.MemberIDs {
+			state := item.state
+			state.ChannelId = channelID
+			state.LogicalChannelId = item.scope.Identity.LogicalChannelID
+			state.LogicalRevision = item.scope.Identity.Revision
+			projected = append(projected, state)
+		}
+	}
+	sort.Slice(projected, func(i, j int) bool {
+		if projected[i].ChannelId != projected[j].ChannelId {
+			return projected[i].ChannelId < projected[j].ChannelId
+		}
+		return projected[i].ModelName < projected[j].ModelName
+	})
+	return projected, nil
 }
 
 func RequestChannelStatusProbeManualRun(channelId int, now int64) (string, error) {
+	scope, err := resolveChannelStatusProbeScope(channelId)
+	if err != nil {
+		return "", err
+	}
 	requestId := common.GetUUID()
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		var config ChannelStatusProbeConfig
-		if err := lockForUpdate(tx).Where("channel_id = ?", channelId).First(&config).Error; err != nil {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if scope.Identity.Revision > 0 {
+			config, err := materializeChannelStatusProbeLogicalConfig(tx, scope, now)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrChannelStatusProbeNotConfigured
+				}
+				return err
+			}
+			models, err := config.Models()
+			if err != nil {
+				return err
+			}
+			if len(models) == 0 {
+				return ErrChannelStatusProbeNotConfigured
+			}
+			if strings.TrimSpace(config.ManualRequestId) != "" {
+				return ErrChannelStatusProbeManualPending
+			}
+			updated := tx.Model(&ChannelStatusProbeLogicalConfig{}).
+				Where("id = ? AND manual_request_id = ?", config.Id, "").
+				Updates(map[string]any{"manual_request_id": requestId, "manual_requested_at": now, "updated_at": now})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrChannelStatusProbeManualPending
+			}
+			return nil
+		}
+
+		config, err := channelStatusProbePhysicalConfigForScope(tx, scope, true)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrChannelStatusProbeNotConfigured
 			}
@@ -439,26 +913,54 @@ func RequestChannelStatusProbeManualRun(channelId int, now int64) (string, error
 }
 
 func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClaim, error) {
-	// A non-positive limit is intentionally unbounded for the monitor worker.
-	var candidates []ChannelStatusProbeConfig
-	query := DB.Where("lease_until <= ?", now).
-		Where("manual_request_id <> ? OR (enabled = ? AND next_run_at > 0 AND next_run_at <= ?)", "", true, now).
-		Order("manual_requested_at DESC, next_run_at ASC, channel_id ASC")
-	if limit > 0 {
-		query = query.Limit(limit * 3)
+	var persisted []ChannelStatusProbeConfig
+	if err := DB.Find(&persisted).Error; err != nil {
+		return nil, err
 	}
-	err := query.Find(&candidates).Error
+	candidates, err := channelStatusProbeCanonicalConfigs(persisted)
 	if err != nil {
 		return nil, err
 	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iManual := strings.TrimSpace(candidates[i].Config.ManualRequestId) != ""
+		jManual := strings.TrimSpace(candidates[j].Config.ManualRequestId) != ""
+		if iManual != jManual {
+			return iManual
+		}
+		if iManual && candidates[i].Config.ManualRequestedAt != candidates[j].Config.ManualRequestedAt {
+			return candidates[i].Config.ManualRequestedAt > candidates[j].Config.ManualRequestedAt
+		}
+		if candidates[i].Config.NextRunAt != candidates[j].Config.NextRunAt {
+			return candidates[i].Config.NextRunAt < candidates[j].Config.NextRunAt
+		}
+		return candidates[i].Config.ChannelId < candidates[j].Config.ChannelId
+	})
 	claimCapacity := len(candidates)
 	if limit > 0 && claimCapacity > limit {
 		claimCapacity = limit
 	}
 	claims := make([]ChannelStatusProbeClaim, 0, claimCapacity)
-	for _, candidate := range candidates {
+	for _, item := range candidates {
 		if limit > 0 && len(claims) >= limit {
 			break
+		}
+		if item.Scope.Identity.Revision > 0 && !item.LogicalConfig {
+			var logicalConfig ChannelStatusProbeLogicalConfig
+			err := DB.Transaction(func(tx *gorm.DB) error {
+				var materializeErr error
+				logicalConfig, materializeErr = materializeChannelStatusProbeLogicalConfig(tx, item.Scope, now)
+				return materializeErr
+			})
+			if err != nil {
+				return nil, err
+			}
+			item.Config = logicalConfig.Project(item.Scope.OwnerID)
+			item.LogicalConfig = true
+		}
+		candidate := item.Config
+		manualRequestId := strings.TrimSpace(candidate.ManualRequestId)
+		if candidate.LeaseUntil > now || (manualRequestId == "" && (!candidate.Enabled || candidate.NextRunAt <= 0 || candidate.NextRunAt > now)) {
+			continue
 		}
 		models, decodeErr := candidate.Models()
 		if decodeErr != nil {
@@ -466,9 +968,12 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		}
 		trigger := ChannelStatusProbeTriggerScheduled
 		runId := common.GetUUID()
-		manualRequestId := strings.TrimSpace(candidate.ManualRequestId)
 		claimQuery := DB.Model(&ChannelStatusProbeConfig{}).
 			Where("id = ? AND revision = ? AND lease_until <= ?", candidate.Id, candidate.Revision, now)
+		if item.LogicalConfig {
+			claimQuery = DB.Model(&ChannelStatusProbeLogicalConfig{}).
+				Where("id = ? AND revision = ? AND lease_until <= ?", candidate.Id, candidate.Revision, now)
+		}
 		if manualRequestId != "" {
 			trigger = ChannelStatusProbeTriggerManual
 			runId = manualRequestId
@@ -502,7 +1007,8 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		candidate.RunningRunId = runId
 		candidate.RunningStartedAt = now
 		claims = append(claims, ChannelStatusProbeClaim{
-			Config: candidate, Models: models, Trigger: trigger, RunId: runId,
+			Config: candidate, LogicalConfig: item.LogicalConfig, Identity: item.Scope.Identity, Snapshot: item.Scope.Snapshot,
+			Models: models, Trigger: trigger, RunId: runId,
 			ManualRequestId: manualRequestId, LeaseToken: leaseToken, DeadlineAt: deadlineAt,
 		})
 	}
@@ -513,28 +1019,57 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 // their next monitoring period begins. Completed model results remain intact;
 // only missing results under the previous run ID are recorded as timeouts.
 func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
-	// A non-positive limit processes every overdue run in this scan.
-	var candidates []ChannelStatusProbeConfig
-	query := DB.Where(
-		"running_run_id <> ? AND enabled = ? AND next_run_at > 0 AND next_run_at <= ?",
-		"", true, now,
-	).
-		Order("next_run_at ASC, channel_id ASC")
-	if limit > 0 {
-		query = query.Limit(limit)
+	var persisted []ChannelStatusProbeConfig
+	if err := DB.Find(&persisted).Error; err != nil {
+		return 0, err
 	}
-	err := query.Find(&candidates).Error
+	candidates, err := channelStatusProbeCanonicalConfigs(persisted)
 	if err != nil {
 		return 0, err
 	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Config.NextRunAt != candidates[j].Config.NextRunAt {
+			return candidates[i].Config.NextRunAt < candidates[j].Config.NextRunAt
+		}
+		return candidates[i].Config.ChannelId < candidates[j].Config.ChannelId
+	})
 	timedOut := 0
-	for _, candidate := range candidates {
+	for _, item := range candidates {
+		if limit > 0 && timedOut >= limit {
+			break
+		}
+		if item.Scope.Identity.Revision > 0 && !item.LogicalConfig {
+			var logicalConfig ChannelStatusProbeLogicalConfig
+			err := DB.Transaction(func(tx *gorm.DB) error {
+				var materializeErr error
+				logicalConfig, materializeErr = materializeChannelStatusProbeLogicalConfig(tx, item.Scope, now)
+				return materializeErr
+			})
+			if err != nil {
+				return timedOut, err
+			}
+			item.Config = logicalConfig.Project(item.Scope.OwnerID)
+			item.LogicalConfig = true
+		}
+		candidate := item.Config
+		if strings.TrimSpace(candidate.RunningRunId) == "" || !candidate.Enabled || candidate.NextRunAt <= 0 || candidate.NextRunAt > now {
+			continue
+		}
 		err = DB.Transaction(func(tx *gorm.DB) error {
 			var current ChannelStatusProbeConfig
-			if err := lockForUpdate(tx).
+			currentQuery := lockForUpdate(tx).
 				Where("id = ? AND revision = ? AND running_run_id = ? AND next_run_at = ?",
-					candidate.Id, candidate.Revision, candidate.RunningRunId, candidate.NextRunAt).
-				First(&current).Error; err != nil {
+					candidate.Id, candidate.Revision, candidate.RunningRunId, candidate.NextRunAt)
+			if item.LogicalConfig {
+				var logicalCurrent ChannelStatusProbeLogicalConfig
+				if err := currentQuery.First(&logicalCurrent).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return err
+				}
+				current = logicalCurrent.Project(item.Scope.OwnerID)
+			} else if err := currentQuery.First(&current).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return nil
 				}
@@ -543,6 +1078,9 @@ func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
 			if current.NextRunAt <= 0 || current.NextRunAt > now || strings.TrimSpace(current.RunningRunId) == "" {
 				return nil
 			}
+			current.ChannelId = item.Scope.OwnerID
+			current.LogicalChannelId = item.Scope.Identity.LogicalChannelID
+			current.LogicalRevision = item.Scope.Identity.Revision
 			models, err := current.Models()
 			if err != nil {
 				return err
@@ -555,7 +1093,11 @@ func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
 				updates["manual_request_id"] = ""
 				updates["manual_requested_at"] = int64(0)
 			}
-			updated := tx.Model(&ChannelStatusProbeConfig{}).
+			updateModel := tx.Model(&ChannelStatusProbeConfig{})
+			if item.LogicalConfig {
+				updateModel = tx.Model(&ChannelStatusProbeLogicalConfig{})
+			}
+			updated := updateModel.
 				Where("id = ? AND revision = ? AND lease_token = ? AND running_run_id = ? AND next_run_at = ?",
 					current.Id, current.Revision, current.LeaseToken, current.RunningRunId, current.NextRunAt).
 				Updates(updates)
@@ -571,8 +1113,9 @@ func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
 			}
 			for _, modelName := range models {
 				execution := &ChannelStatusProbeExecution{
-					RunId: current.RunningRunId, ChannelId: current.ChannelId,
-					ModelName: modelName, ConfigRevision: current.Revision, Trigger: current.RunningTrigger,
+					RunId: current.RunningRunId, ChannelId: current.ChannelId, LogicalChannelId: current.LogicalChannelId,
+					LogicalRevision: current.LogicalRevision,
+					ModelName:       modelName, ConfigRevision: current.Revision, Trigger: current.RunningTrigger,
 					Result: ChannelStatusProbeResultUpstreamFailure, StartedAt: startedAt, FinishedAt: current.NextRunAt,
 					ErrorCode: ChannelStatusProbeErrorTimeout, ErrorMessage: ChannelStatusProbeTimeoutMessage,
 					SampleStatus: ChannelStatusProbeSampleSkipped, SampleMessage: "探测超时，未计入智能调度样本",
@@ -593,7 +1136,11 @@ func TimeoutOverdueChannelStatusProbes(now int64, limit int) (int, error) {
 }
 
 func RenewChannelStatusProbeLease(claim ChannelStatusProbeClaim, now int64) (bool, error) {
-	updated := DB.Model(&ChannelStatusProbeConfig{}).
+	updateModel := DB.Model(&ChannelStatusProbeConfig{})
+	if claim.LogicalConfig {
+		updateModel = DB.Model(&ChannelStatusProbeLogicalConfig{})
+	}
+	updated := updateModel.
 		Where("id = ? AND revision = ? AND lease_token = ?", claim.Config.Id, claim.Config.Revision, claim.LeaseToken).
 		Updates(map[string]any{"lease_until": now + ChannelStatusProbeLeaseSeconds, "updated_at": now})
 	return updated.RowsAffected == 1, updated.Error
@@ -601,7 +1148,11 @@ func RenewChannelStatusProbeLease(claim ChannelStatusProbeClaim, now int64) (boo
 
 func IsChannelStatusProbeLeaseCurrent(claim ChannelStatusProbeClaim, now int64) (bool, error) {
 	var count int64
-	err := DB.Model(&ChannelStatusProbeConfig{}).
+	query := DB.Model(&ChannelStatusProbeConfig{})
+	if claim.LogicalConfig {
+		query = DB.Model(&ChannelStatusProbeLogicalConfig{})
+	}
+	err := query.
 		Where("id = ? AND revision = ? AND lease_token = ? AND lease_until > ?", claim.Config.Id, claim.Config.Revision, claim.LeaseToken, now).
 		Count(&count).Error
 	return count == 1, err
@@ -614,9 +1165,16 @@ func CompleteChannelStatusProbeClaim(claim ChannelStatusProbeClaim, finishedAt i
 	}
 	if claim.Trigger == ChannelStatusProbeTriggerScheduled {
 		nextRunAt := int64(0)
-		var current ChannelStatusProbeConfig
-		if err := DB.Select("next_run_at").Where("id = ?", claim.Config.Id).First(&current).Error; err == nil {
-			nextRunAt = current.NextRunAt
+		if claim.LogicalConfig {
+			var current ChannelStatusProbeLogicalConfig
+			if err := DB.Select("next_run_at").Where("id = ?", claim.Config.Id).First(&current).Error; err == nil {
+				nextRunAt = current.NextRunAt
+			}
+		} else {
+			var current ChannelStatusProbeConfig
+			if err := DB.Select("next_run_at").Where("id = ?", claim.Config.Id).First(&current).Error; err == nil {
+				nextRunAt = current.NextRunAt
+			}
 		}
 		if nextRunAt <= 0 {
 			nextRunAt = nextChannelStatusProbeRunAt(finishedAt, claim.Config.IntervalSeconds)
@@ -626,7 +1184,11 @@ func CompleteChannelStatusProbeClaim(claim ChannelStatusProbeClaim, finishedAt i
 		updates["manual_request_id"] = ""
 		updates["manual_requested_at"] = int64(0)
 	}
-	updated := DB.Model(&ChannelStatusProbeConfig{}).
+	updateModel := DB.Model(&ChannelStatusProbeConfig{})
+	if claim.LogicalConfig {
+		updateModel = DB.Model(&ChannelStatusProbeLogicalConfig{})
+	}
+	updated := updateModel.
 		Where("id = ? AND revision = ? AND lease_token = ?", claim.Config.Id, claim.Config.Revision, claim.LeaseToken).
 		Updates(updates)
 	if updated.Error != nil || updated.RowsAffected == 1 {
@@ -640,7 +1202,11 @@ func CompleteChannelStatusProbeClaim(claim ChannelStatusProbeClaim, finishedAt i
 		cleanup["manual_request_id"] = ""
 		cleanup["manual_requested_at"] = int64(0)
 	}
-	return DB.Model(&ChannelStatusProbeConfig{}).
+	cleanupModel := DB.Model(&ChannelStatusProbeConfig{})
+	if claim.LogicalConfig {
+		cleanupModel = DB.Model(&ChannelStatusProbeLogicalConfig{})
+	}
+	return cleanupModel.
 		Where("id = ? AND lease_token = ?", claim.Config.Id, claim.LeaseToken).
 		Updates(cleanup).Error
 }
@@ -714,15 +1280,44 @@ func saveChannelStatusProbeExecutionTx(tx *gorm.DB, execution *ChannelStatusProb
 	}
 	created = true
 
-	var currentConfig ChannelStatusProbeConfig
-	configErr := lockForUpdate(tx).
-		Select("id", "models_json").
-		Where("channel_id = ?", execution.ChannelId).
-		First(&currentConfig).Error
+	logicalExecution := execution.LogicalChannelId > 0 && execution.LogicalRevision > 0
+	configuredModelsJSON := ""
+	var configErr error
+	if logicalExecution {
+		executionScope := channelStatusProbeScope{
+			Identity: LogicalChannelIdentity{
+				ChannelID: execution.ChannelId, LogicalChannelID: execution.LogicalChannelId, Revision: execution.LogicalRevision,
+			},
+		}
+		currentScope, revisionErr := lockChannelStatusProbeLogicalScopeTx(
+			tx, executionScope, execution.ChannelId, execution.ActualChannelId,
+		)
+		if revisionErr != nil {
+			return false, revisionErr
+		}
+		if !currentScope {
+			return created, nil
+		}
+		var currentConfig ChannelStatusProbeLogicalConfig
+		configErr = lockForUpdate(tx).
+			Select("id", "models_json").
+			Where("logical_channel_id = ?", execution.LogicalChannelId).
+			First(&currentConfig).Error
+		configuredModelsJSON = currentConfig.ModelsJSON
+	} else {
+		var currentConfig ChannelStatusProbeConfig
+		configErr = lockForUpdate(tx).
+			Select("id", "models_json").
+			Where("channel_id = ?", execution.ChannelId).
+			First(&currentConfig).Error
+		configuredModelsJSON = currentConfig.ModelsJSON
+	}
 	if configErr == nil {
-		configuredModels, err := currentConfig.Models()
-		if err != nil {
-			return false, err
+		configuredModels := []string{}
+		if strings.TrimSpace(configuredModelsJSON) != "" {
+			if err := common.UnmarshalJsonStr(configuredModelsJSON, &configuredModels); err != nil {
+				return false, fmt.Errorf("解析渠道状态探测模型失败: %w", err)
+			}
 		}
 		modelConfigured := false
 		for _, modelName := range configuredModels {
@@ -739,16 +1334,32 @@ func saveChannelStatusProbeExecutionTx(tx *gorm.DB, execution *ChannelStatusProb
 	}
 
 	var state ChannelStatusProbeState
-	stateErr := lockForUpdate(tx).
-		Where("channel_id = ? AND model_name = ?", execution.ChannelId, execution.ModelName).
-		First(&state).Error
-	if errors.Is(stateErr, gorm.ErrRecordNotFound) {
-		state = ChannelStatusProbeState{
-			ChannelId: execution.ChannelId, ModelName: execution.ModelName,
-			CreatedAt: execution.FinishedAt,
+	var logicalStateRow ChannelStatusProbeLogicalState
+	var stateErr error
+	if logicalExecution {
+		stateErr = lockForUpdate(tx).
+			Where("logical_channel_id = ? AND model_name = ?", execution.LogicalChannelId, execution.ModelName).
+			First(&logicalStateRow).Error
+		if stateErr == nil {
+			if logicalStateRow.LogicalRevision == execution.LogicalRevision {
+				state, stateErr = logicalStateRow.State(execution.ChannelId)
+			} else {
+				stateErr = gorm.ErrRecordNotFound
+			}
 		}
+	} else {
+		stateErr = lockForUpdate(tx).
+			Where("channel_id = ? AND model_name = ?", execution.ChannelId, execution.ModelName).
+			First(&state).Error
+	}
+	if errors.Is(stateErr, gorm.ErrRecordNotFound) {
+		state = ChannelStatusProbeState{ChannelId: execution.ChannelId, ModelName: execution.ModelName, CreatedAt: execution.FinishedAt}
 	} else if stateErr != nil {
 		return false, stateErr
+	}
+	if logicalExecution {
+		state.LogicalChannelId = execution.LogicalChannelId
+		state.LogicalRevision = execution.LogicalRevision
 	}
 
 	bucketSeries := []struct {
@@ -819,6 +1430,17 @@ func saveChannelStatusProbeExecutionTx(tx *gorm.DB, execution *ChannelStatusProb
 		}
 	}
 	state.UpdatedAt = max(state.UpdatedAt, execution.FinishedAt)
+	if logicalExecution {
+		row, err := newChannelStatusProbeLogicalStateRow(state)
+		if err != nil {
+			return false, err
+		}
+		row.Id = logicalStateRow.Id
+		if row.Id == 0 {
+			return created, tx.Create(&row).Error
+		}
+		return created, tx.Save(&row).Error
+	}
 	if state.Id == 0 {
 		return created, tx.Create(&state).Error
 	}
@@ -858,6 +1480,37 @@ func UpdateChannelStatusProbeExecutionSample(executionId int64, status string, m
 			Updates(map[string]any{"sample_status": status, "sample_message": message}).Error; err != nil {
 			return err
 		}
+		var execution ChannelStatusProbeExecution
+		if err := tx.Select("id", "channel_id", "logical_channel_id", "logical_revision", "model_name").
+			Where("id = ?", executionId).First(&execution).Error; err != nil {
+			return err
+		}
+		if execution.LogicalChannelId > 0 && execution.LogicalRevision > 0 {
+			var row ChannelStatusProbeLogicalState
+			if err := lockForUpdate(tx).Where("logical_channel_id = ? AND model_name = ?", execution.LogicalChannelId, execution.ModelName).
+				First(&row).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			if row.ExecutionId != executionId {
+				return nil
+			}
+			state, err := row.State(execution.ChannelId)
+			if err != nil {
+				return err
+			}
+			state.SampleStatus = status
+			state.SampleMessage = message
+			state.UpdatedAt = now
+			updated, err := newChannelStatusProbeLogicalStateRow(state)
+			if err != nil {
+				return err
+			}
+			updated.Id = row.Id
+			return tx.Save(&updated).Error
+		}
 		return tx.Model(&ChannelStatusProbeState{}).
 			Where("execution_id = ?", executionId).
 			Updates(map[string]any{"sample_status": status, "sample_message": message, "updated_at": now}).Error
@@ -872,7 +1525,22 @@ func ListChannelStatusProbeExecutions(
 	result string,
 	trigger string,
 ) ([]ChannelStatusProbeExecution, int64, error) {
-	query := DB.Model(&ChannelStatusProbeExecution{}).Where("channel_id = ?", channelId)
+	scope, err := resolveChannelStatusProbeScope(channelId)
+	if err != nil {
+		return nil, 0, err
+	}
+	query := DB.Model(&ChannelStatusProbeExecution{})
+	if scope.Identity.Revision > 0 {
+		query = query.Where(
+			"channel_id = ? OR actual_channel_id = ? OR logical_channel_id = ?",
+			channelId, channelId, scope.Identity.LogicalChannelID,
+		)
+	} else {
+		query = query.Where(
+			"channel_id = ? OR actual_channel_id = ? OR (logical_channel_id = ? AND logical_revision = 0)",
+			channelId, channelId, scope.Identity.LogicalChannelID,
+		)
+	}
 	if modelName != "" {
 		query = query.Where("model_name = ?", modelName)
 	}
@@ -887,10 +1555,13 @@ func ListChannelStatusProbeExecutions(
 		return nil, 0, err
 	}
 	var executions []ChannelStatusProbeExecution
-	err := query.Order("finished_at DESC, id DESC").
+	err = query.Order("finished_at DESC, id DESC").
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Find(&executions).Error
+	for index := range executions {
+		executions[index].ChannelId = channelId
+	}
 	return executions, total, err
 }
 

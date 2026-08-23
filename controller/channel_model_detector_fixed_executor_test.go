@@ -70,6 +70,47 @@ func TestEnsureChannelModelDetectorStreamUsage(t *testing.T) {
 	}
 }
 
+func TestChannelModelDetectorFixedExecutorValidatesFrozenLogicalMembership(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.ChannelLogicalGroup{}, &model.ChannelLogicalGroupMember{},
+		&model.ChannelModelDetectionRun{}, &model.ChannelModelDetectionExecution{},
+	))
+	group := model.ChannelLogicalGroup{Name: "frozen-members", Status: model.ChannelLogicalGroupStatusEnabled, Revision: 2}
+	require.NoError(t, db.Create(&group).Error)
+	channel := model.Channel{Id: 699, Name: "logical-member", Status: common.ChannelStatusEnabled, LogicalChannelID: &group.Id}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ChannelLogicalGroupMember{
+		LogicalGroupID: group.Id, ChannelID: channel.Id, Weight: 1, AddressFingerprint: service.LogicalChannelAddressFingerprint("https://api.example.com/v1"),
+	}).Error)
+	run := model.ChannelModelDetectionRun{
+		RunId: "frozen-logical-run", ChannelId: channel.Id, LogicalChannelID: group.Id, LogicalRevision: 1,
+		Trigger: model.ChannelModelDetectionTriggerManual, Preset: model.ChannelModelDetectionPresetLow,
+	}
+	require.NoError(t, run.SetLogicalMemberSnapshot([]model.ChannelModelDetectionMemberSnapshot{{ChannelID: channel.Id, Weight: 1}}))
+	require.NoError(t, db.Create(&run).Error)
+	execution := model.ChannelModelDetectionExecution{
+		RunId: run.RunId, TargetKey: "target", TargetId: 1, ChannelId: channel.Id,
+		LogicalChannelID: group.Id, LogicalRevision: run.LogicalRevision, RequestModel: "alias",
+		ClaimedModel: model.ChannelModelDetectionClaimedModelSol, Preset: run.Preset,
+	}
+	require.NoError(t, db.Create(&execution).Error)
+	request := service.ChannelModelDetectorRelayExecution{
+		Source: service.ChannelModelDetectorRequestSource, RunID: run.RunId, TargetID: execution.TargetId, ExecutionID: execution.Id,
+		ChannelID: channel.Id, RequestModel: execution.RequestModel, ClaimedModel: execution.ClaimedModel, Preset: execution.Preset,
+		DetectorRequestID: "frozen-revision", AttemptNo: 1, RequestBody: []byte(`{"model":"alias"}`),
+	}
+	require.NoError(t, db.Where("logical_group_id = ?", group.Id).Delete(&model.ChannelLogicalGroupMember{}).Error)
+	require.NoError(t, db.Delete(&group).Error)
+
+	_, err := NewChannelModelDetectorFixedExecutor(db).ExecuteChannelModelDetectorAttempt(context.Background(), request)
+	assert.NotErrorIs(t, err, ErrChannelModelDetectorFixedChannelUnavailable, "persisted run snapshot survives relation deletion")
+
+	request.ChannelID = channel.Id + 1
+	_, err = NewChannelModelDetectorFixedExecutor(db).ExecuteChannelModelDetectorAttempt(context.Background(), request)
+	assert.ErrorIs(t, err, ErrChannelModelDetectorFixedChannelUnavailable, "channels outside the frozen snapshot remain unavailable")
+}
+
 func TestChannelModelDetectorFixedExecutorCostBoundary(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	disableChannelMonitorSSRFProtection(t)

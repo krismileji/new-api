@@ -82,8 +82,8 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 		return nil, nil
 	}
 	var err error
-	abilities, err = filterChannelSmartScheduleTrafficAbilities(
-		abilities, group, poolModelName, trafficPolicy, retry > 0,
+	abilities, err = filterChannelSmartScheduleParticipatingAbilities(
+		abilities, group, poolModelName, trafficPolicy,
 	)
 	if err != nil || len(abilities) == 0 {
 		return nil, err
@@ -130,28 +130,27 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	if len(available) == 0 {
 		return nil, nil
 	}
-	if options.HasRequestSize() {
-		availableChannelIDs := make([]int, 0, len(available))
-		for _, ability := range available {
-			availableChannelIDs = append(availableChannelIDs, ability.ChannelId)
-		}
-		requestLimitStates, err := loadChannelSmartScheduleRequestLimitStates(
-			group, poolModelName, availableChannelIDs,
-		)
-		if err != nil {
-			return nil, err
-		}
-		available = filterAbilitiesBySmartScheduleRequestLimits(available, requestLimitStates, options)
+	routes, logicalRuntime, err := channelSmartScheduleDatabaseRoutes(
+		available, channelById, group, poolModelName, trafficPolicy,
+	)
+	if err != nil {
+		return nil, err
 	}
-	if len(available) == 0 {
+	routes = filterChannelSmartScheduleParticipatingCachedRoutes(
+		routes, group, poolModelName, trafficPolicy,
+	)
+	routes = filterChannelSmartScheduleStableCachedRoutes(
+		routes, group, poolModelName, trafficPolicy, retry > 0,
+	)
+	routes = filterChannelSmartScheduleRequestLimits(routes, options)
+	if len(routes) == 0 {
 		return nil, nil
 	}
-	priorities := make([]int64, 0, len(available))
-	seenPriorities := make(map[int64]struct{}, len(available))
-	for _, ability := range available {
-		priority, _ := channelRoutingForTrafficPolicy(
-			ability, channelById[ability.ChannelId], group, poolModelName, trafficPolicy,
-		)
+	priorities := make([]int64, 0, len(routes))
+	seenPriorities := make(map[int64]struct{}, len(routes))
+	managedPool := trafficPolicy != nil && trafficPolicy.managesPool(group, poolModelName)
+	for _, route := range routes {
+		priority, _ := channelSmartScheduleCachedRouteRouting(route, managedPool)
 		if _, exists := seenPriorities[priority]; exists {
 			continue
 		}
@@ -167,20 +166,30 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	}
 	targetPriority := priorities[retry]
 	channelIds = channelIds[:0]
-	weights := make([]uint, 0, len(available))
-	for _, ability := range available {
-		priority, weight := channelRoutingForTrafficPolicy(
-			ability, channelById[ability.ChannelId], group, poolModelName, trafficPolicy,
-		)
+	weights := make([]uint, 0, len(routes))
+	targetRoutes := make([]channelSmartScheduleCachedRoute, 0, len(routes))
+	for _, route := range routes {
+		priority, weight := channelSmartScheduleCachedRouteRouting(route, managedPool)
 		if priority != targetPriority {
 			continue
 		}
-		channelIds = append(channelIds, ability.ChannelId)
+		channelIds = append(channelIds, route.channelId)
 		weights = append(weights, weight)
+		targetRoutes = append(targetRoutes, route)
 	}
 	channelId, err := chooseChannelByWeights(channelIds, weights)
 	if err != nil {
 		return nil, err
+	}
+	for _, route := range targetRoutes {
+		if route.channelId != channelId {
+			continue
+		}
+		channelId, err = selectLogicalSmartScheduleMemberID(route, logicalRuntime)
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
 	return channelById[channelId], nil
 }

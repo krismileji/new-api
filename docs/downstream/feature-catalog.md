@@ -5,6 +5,7 @@
 | 功能 | 状态 | 主要入口 | 详细文档 |
 | --- | --- | --- | --- |
 | 渠道监控与智能调度 | 使用中 | 管理端 `/channel-monitor`、`/api/channel_monitor` | [渠道监控索引](channel-monitor/README.md) |
+| 渠道逻辑归组 | 验收中 | 渠道管理的“同渠道配置”入口、`/api/channel/logical-groups` | [逻辑归组验收与发布](channel-monitor/logical-group-acceptance-release.md)、[使用注意事项](channel-monitor/logical-group-notes.md) |
 | 渠道上游倍率与余额同步 | 使用中 | 渠道监控的“上游配置与策略” | [上游同步与策略](channel-monitor/upstream-and-policies.md) |
 | 渠道成本、性能和成功率统计 | 使用中 | 渠道监控的渠道、分组、模型和成本视图 | [成本、性能与成功率](channel-monitor/cost-performance.md) |
 | 渠道连通性测试与并发限制 | 使用中 | 渠道监控、渠道管理 | [测试与并发限制](channel-monitor/testing-and-concurrency.md) |

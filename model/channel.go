@@ -53,7 +53,7 @@ type Channel struct {
 	// LogicalChannelID identifies the optional logical channel group used by
 	// shared scheduling, status probing, and model detection. Ordinary channel
 	// monitoring, costs, balance, ratio, and concurrency continue to use Id.
-	LogicalChannelID *int64 `json:"logical_channel_id,omitempty" gorm:"bigint;index"`
+	LogicalChannelID *int64 `json:"-" gorm:"bigint;index"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
@@ -552,6 +552,17 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	_, err := channel.UpdateWithTransactionHook(nil)
+	return err
+}
+
+// ChannelUpdateTransactionHook validates and updates downstream-owned channel
+// relations in the same transaction as the physical channel update. It
+// returns whether committed relation state changed; callers publish cache
+// invalidation only after UpdateWithTransactionHook returns successfully.
+type ChannelUpdateTransactionHook func(tx *gorm.DB, previous, proposed *Channel) (bool, error)
+
+func (channel *Channel) UpdateWithTransactionHook(hook ChannelUpdateTransactionHook) (bool, error) {
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -593,7 +604,19 @@ func (channel *Channel) Update() error {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
-	return DB.Transaction(func(tx *gorm.DB) error {
+	relationChanged := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if hook != nil {
+			var previous Channel
+			if err := lockForUpdate(tx).First(&previous, "id = ?", channel.Id).Error; err != nil {
+				return err
+			}
+			changed, err := hook(tx, &previous, channel)
+			if err != nil {
+				return err
+			}
+			relationChanged = changed
+		}
 		if err := tx.Model(channel).Updates(channel).Error; err != nil {
 			return err
 		}
@@ -602,6 +625,7 @@ func (channel *Channel) Update() error {
 		}
 		return channel.UpdateAbilities(tx)
 	})
+	return relationChanged && err == nil, err
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {

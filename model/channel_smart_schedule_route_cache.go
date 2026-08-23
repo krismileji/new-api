@@ -10,7 +10,17 @@ import (
 )
 
 type channelSmartScheduleCachedRoute struct {
-	channelId                       int
+	channelId int
+	// logicalChannelID is populated only for the transient logical-group
+	// projection used by smart-schedule selection. Persisted route state and
+	// the runtime route index remain keyed by physical channel_id.
+	logicalChannelID                int64
+	logicalRevision                 int64
+	logicalMembers                  []channelSmartScheduleLogicalMember
+	logicalPriority                 int64
+	logicalWeight                   uint
+	logicalOfficialPriority         int64
+	logicalOfficialWeight           uint
 	priority                        int64
 	weight                          uint
 	officialPriority                int64
@@ -30,6 +40,12 @@ func channelSmartScheduleCachedRouteRouting(
 	route channelSmartScheduleCachedRoute,
 	managedPool bool,
 ) (int64, uint) {
+	if route.logicalChannelID > 0 {
+		if managedPool {
+			return route.logicalPriority, route.logicalWeight
+		}
+		return route.logicalOfficialPriority, route.logicalOfficialWeight
+	}
 	if managedPool {
 		return route.priority, route.weight
 	}
@@ -48,6 +64,7 @@ func channelSmartScheduleCachedRouteRouting(
 }
 
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
+var channelLogicalSmartScheduleRoutingCache map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay
 
 // RefreshChannelSmartScheduleRoutePoolCache reloads one route pool after a
 // runtime overlay changes Ability routing or request-limit state.
@@ -75,13 +92,29 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 	channels := make(map[int]*Channel, len(channelIds))
 	if len(channelIds) > 0 {
 		var poolChannels []*Channel
-		if err := DB.Select("id", "status", "priority", "weight").
+		if err := DB.Select("id", "status", "priority", "weight", "logical_channel_id").
 			Where("id IN ?", channelIds).Find(&poolChannels).Error; err != nil {
 			return err
 		}
 		for _, channel := range poolChannels {
 			channels[channel.Id] = channel
 		}
+	}
+	logicalIDs := make([]int64, 0)
+	seenLogicalIDs := make(map[int64]struct{})
+	for _, channel := range channels {
+		if channel.LogicalChannelID == nil || *channel.LogicalChannelID <= 0 {
+			continue
+		}
+		if _, exists := seenLogicalIDs[*channel.LogicalChannelID]; exists {
+			continue
+		}
+		seenLogicalIDs[*channel.LogicalChannelID] = struct{}{}
+		logicalIDs = append(logicalIDs, *channel.LogicalChannelID)
+	}
+	logicalRoutings, err := loadLogicalSmartScheduleRouteOverlays(logicalIDs, group, modelName)
+	if err != nil {
+		return err
 	}
 	var states []ChannelSmartScheduleRouteState
 	if err := DB.Where("group_name = ? AND model_name = ?", group, modelName).
@@ -103,6 +136,19 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 	defer channelSyncLock.Unlock()
 	if channelSmartScheduleRouteCache == nil {
 		return nil
+	}
+	if channelLogicalSmartScheduleRoutingCache == nil {
+		channelLogicalSmartScheduleRoutingCache = make(
+			map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay,
+		)
+	}
+	for key := range channelLogicalSmartScheduleRoutingCache {
+		if key.group == group && key.model == channelSmartScheduleModelName(modelName) {
+			delete(channelLogicalSmartScheduleRoutingCache, key)
+		}
+	}
+	for key, routing := range logicalRoutings {
+		channelLogicalSmartScheduleRoutingCache[key] = routing
 	}
 	modelRoutes := channelSmartScheduleRouteCache[group]
 	previousRoutes := append([]channelSmartScheduleCachedRoute(nil), modelRoutes[modelName]...)
@@ -207,9 +253,9 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 			channelId:             ability.ChannelId,
 			priority:              priority,
 			weight:                weight,
-			officialPriority:     officialPriority,
-			officialWeight:       officialWeight,
-			officialInherited:   ability.Priority == nil,
+			officialPriority:      officialPriority,
+			officialWeight:        officialWeight,
+			officialInherited:     ability.Priority == nil,
 			participates:          state.Participates(),
 			temporaryTrafficSince: state.TemporaryTrafficSince,
 			stabilitySince:        state.StabilitySince,
@@ -252,6 +298,10 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	options ChannelSelectionOptions,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) (*Channel, bool, error) {
+	if logicalChannelRuntimeDirty && IsLogicalChannelGroupingEnabled() && trafficPolicy != nil &&
+		trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+		return nil, true, ErrLogicalChannelRuntimeUnavailable
+	}
 	if channelSmartScheduleRouteCache == nil {
 		if trafficPolicy != nil && trafficPolicy.managesAnyPool(
 			group, channelSmartScheduleRouteModelNames(modelName),
@@ -261,21 +311,24 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		return nil, false, nil
 	}
 	selectionModelName := modelName
-	routes := channelSmartScheduleRouteCache[group][selectionModelName]
-	routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, selectionModelName, trafficPolicy, retry > 0)
-	routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
+	managedPool := trafficPolicy != nil && trafficPolicy.managesPool(group, selectionModelName)
+	routes := prepareChannelSmartScheduleCachedRoutes(
+		channelSmartScheduleRouteCache[group][selectionModelName], group, selectionModelName,
+		modelName, requestPath, options, trafficPolicy, retry > 0, managedPool,
+	)
 	if len(routes) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
 		selectionModelName = normalizedModel
-		routes = channelSmartScheduleRouteCache[group][selectionModelName]
-		routes = filterChannelSmartScheduleTrafficCachedRoutes(routes, group, normalizedModel, trafficPolicy, retry > 0)
-		routes = filterChannelSmartScheduleCachedRoutes(routes, requestPath, modelName, options)
+		managedPool = trafficPolicy != nil && trafficPolicy.managesPool(group, selectionModelName)
+		routes = prepareChannelSmartScheduleCachedRoutes(
+			channelSmartScheduleRouteCache[group][selectionModelName], group, selectionModelName,
+			modelName, requestPath, options, trafficPolicy, retry > 0, managedPool,
+		)
 	}
 	if len(routes) == 0 {
 		return nil, true, nil
 	}
 
-	managedPool := trafficPolicy != nil && trafficPolicy.managesPool(group, selectionModelName)
 	priorities := make([]int64, 0)
 	seenPriorities := make(map[int64]struct{})
 	for _, route := range routes {
@@ -312,6 +365,20 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	if selectionErr != nil {
 		return nil, true, selectionErr
 	}
+	var selectedRoute *channelSmartScheduleCachedRoute
+	for index := range targetRoutes {
+		if targetRoutes[index].channelId == channelId {
+			selectedRoute = &targetRoutes[index]
+			break
+		}
+	}
+	if selectedRoute == nil {
+		return nil, true, fmt.Errorf("数据库一致性错误，逻辑调度候选 # %d 不存在，请联系管理员修复", channelId)
+	}
+	channelId, memberErr := selectLogicalSmartScheduleMemberID(*selectedRoute, logicalChannelRuntimeCache)
+	if memberErr != nil {
+		return nil, true, memberErr
+	}
 	channel := channelsIDM[channelId]
 	if channel == nil {
 		return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
@@ -319,7 +386,46 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	return channel, true, nil
 }
 
+func prepareChannelSmartScheduleCachedRoutes(
+	routes []channelSmartScheduleCachedRoute,
+	group string,
+	selectionModelName string,
+	requestModelName string,
+	requestPath string,
+	options ChannelSelectionOptions,
+	trafficPolicy *channelSmartScheduleTrafficPolicy,
+	allowDegradedFallback bool,
+	managedPool bool,
+) []channelSmartScheduleCachedRoute {
+	routes = filterChannelSmartScheduleParticipatingCachedRoutes(
+		routes, group, selectionModelName, trafficPolicy,
+	)
+	routes = filterChannelSmartScheduleCachedRouteAvailability(
+		routes, requestPath, requestModelName, options,
+	)
+	if managedPool {
+		routes = coalesceChannelSmartScheduleLogicalRoutesWithRouting(
+			routes, logicalChannelRuntimeCache, group, selectionModelName,
+			channelLogicalSmartScheduleRoutingCache,
+		)
+	}
+	routes = filterChannelSmartScheduleParticipatingCachedRoutes(
+		routes, group, selectionModelName, trafficPolicy,
+	)
+	routes = filterChannelSmartScheduleStableCachedRoutes(
+		routes, group, selectionModelName, trafficPolicy, allowDegradedFallback,
+	)
+	return filterChannelSmartScheduleRequestLimits(routes, options)
+}
+
 func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedRoute, requestPath string, requestModel string, options ChannelSelectionOptions) []channelSmartScheduleCachedRoute {
+	return filterChannelSmartScheduleRequestLimits(
+		filterChannelSmartScheduleCachedRouteAvailability(routes, requestPath, requestModel, options),
+		options,
+	)
+}
+
+func filterChannelSmartScheduleCachedRouteAvailability(routes []channelSmartScheduleCachedRoute, requestPath string, requestModel string, options ChannelSelectionOptions) []channelSmartScheduleCachedRoute {
 	if len(routes) == 0 {
 		return nil
 	}
@@ -344,5 +450,5 @@ func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedR
 			filtered = append(filtered, route)
 		}
 	}
-	return filterChannelSmartScheduleRequestLimits(filtered, options)
+	return filtered
 }

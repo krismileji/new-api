@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -210,6 +211,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 	if db == nil {
 		return ChannelModelDetectionScheduleResult{}, errors.New("模型检测调度数据库不可用")
 	}
+	useLogicalRuntime := db == model.DB
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -326,7 +328,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 				return err
 			}
 		} else {
-			createdRuns, createErr := createChannelModelDetectionScheduledRuns(tx, current, &batch, nowUnix)
+			createdRuns, createErr := createChannelModelDetectionScheduledRuns(tx, current, &batch, nowUnix, useLogicalRuntime)
 			if createErr != nil {
 				return createErr
 			}
@@ -425,7 +427,171 @@ func channelModelDetectionActiveScheduledRunsQuery(tx *gorm.DB, activeStatuses [
 		Where("status IN ?", activeStatuses)
 }
 
-func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelModelDetectionGlobalConfig, batch *model.ChannelModelDetectionBatch, now int64) ([]string, error) {
+// channelModelDetectionLogicalIdentity resolves the relation using the
+// caller's transaction. Scheduler and manual-run tests often pass an
+// isolated database instead of model.DB, so falling back to a narrow query is
+// required; production callers still use the shared runtime cache when both
+// handles are the application database.
+func channelModelDetectionLogicalIdentity(tx *gorm.DB, channelID int, runtimeFlags ...bool) (LogicalChannelIdentity, error) {
+	useLogicalRuntime := tx == model.DB
+	if len(runtimeFlags) > 0 {
+		useLogicalRuntime = runtimeFlags[0]
+	}
+	if channelID <= 0 {
+		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
+	}
+	var identity LogicalChannelIdentity
+	if useLogicalRuntime {
+		var err error
+		identity, err = ResolveChannelLogicalIdentity(channelID)
+		if err != nil {
+			return LogicalChannelIdentity{}, err
+		}
+	} else {
+		var channel model.Channel
+		if err := tx.Select("id", "logical_channel_id").Where("id = ?", channelID).First(&channel).Error; err != nil {
+			return LogicalChannelIdentity{}, err
+		}
+		identity = LogicalChannelIdentity{ChannelID: channelID, LogicalChannelID: int64(channelID)}
+		if channel.LogicalChannelID != nil && *channel.LogicalChannelID > 0 {
+			identity.LogicalChannelID = *channel.LogicalChannelID
+			var group model.ChannelLogicalGroup
+			if err := tx.Select("id", "status", "revision").Where("id = ?", identity.LogicalChannelID).First(&group).Error; err != nil {
+				return LogicalChannelIdentity{}, err
+			}
+			if model.IsLogicalChannelGroupActive(group.Status) {
+				identity.Revision = group.Revision
+			} else {
+				identity.LogicalChannelID = int64(channelID)
+			}
+		}
+	}
+	if identity.Revision > 0 &&
+		(!tx.Migrator().HasTable(&model.ChannelModelDetectionLogicalConfig{}) ||
+			!tx.Migrator().HasTable(&model.ChannelModelDetectionLogicalTarget{})) {
+		// During a rolling migration, keep model detection on the physical
+		// configuration until the shared tables are available.
+		return LogicalChannelIdentity{ChannelID: channelID, LogicalChannelID: int64(channelID)}, nil
+	}
+	return identity, nil
+}
+
+func channelModelDetectionGroupSnapshot(tx *gorm.DB, identity LogicalChannelIdentity, useLogicalRuntime bool) (LogicalChannelGroupSnapshot, error) {
+	if identity.Revision <= 0 {
+		return LogicalChannelGroupSnapshot{
+			LogicalChannelID: identity.LogicalChannelID,
+			Status:           model.ChannelLogicalGroupStatusEnabled,
+			Members:          []LogicalChannelMemberSnapshot{{ChannelID: identity.ChannelID, Weight: model.ChannelLogicalGroupDefaultMemberWeight}},
+		}, nil
+	}
+	if useLogicalRuntime {
+		return GetLogicalChannelSelectionSnapshot(identity)
+	}
+	var group model.ChannelLogicalGroup
+	if err := tx.Select("id", "status", "revision").Where("id = ?", identity.LogicalChannelID).First(&group).Error; err != nil {
+		return LogicalChannelGroupSnapshot{}, err
+	}
+	if !model.IsLogicalChannelGroupActive(group.Status) || group.Revision != identity.Revision {
+		return LogicalChannelGroupSnapshot{}, model.ErrChannelLogicalGroupRevisionConflict
+	}
+	var members []model.ChannelLogicalGroupMember
+	if err := tx.Where("logical_group_id = ?", identity.LogicalChannelID).Order("channel_id ASC").Find(&members).Error; err != nil {
+		return LogicalChannelGroupSnapshot{}, err
+	}
+	snapshot := LogicalChannelGroupSnapshot{LogicalChannelID: identity.LogicalChannelID, Revision: identity.Revision, Status: group.Status}
+	for _, member := range members {
+		snapshot.Members = append(snapshot.Members, LogicalChannelMemberSnapshot{ChannelID: member.ChannelID, Weight: member.Weight})
+	}
+	if len(snapshot.Members) == 0 {
+		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelSelectionInvalidSnapshot
+	}
+	return snapshot, nil
+}
+
+func channelModelDetectionCanonicalMember(snapshot LogicalChannelGroupSnapshot) int {
+	if len(snapshot.Members) == 0 {
+		return 0
+	}
+	members := append([]LogicalChannelMemberSnapshot(nil), snapshot.Members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].ChannelID < members[j].ChannelID })
+	return members[0].ChannelID
+}
+
+// channelModelDetectionConfigForIdentity returns one frozen config/target set
+// for a logical group without overwriting any member's physical fallback.
+func channelModelDetectionConfigForIdentity(tx *gorm.DB, identity LogicalChannelIdentity, requestedChannelID int, runtimeFlags ...bool) (model.ChannelModelDetectionConfig, []model.ChannelModelDetectionTarget, int, error) {
+	useLogicalRuntime := tx == model.DB
+	if len(runtimeFlags) > 0 {
+		useLogicalRuntime = runtimeFlags[0]
+	}
+	memberIDs := []int{requestedChannelID}
+	if identity.Revision > 0 {
+		snapshot, err := channelModelDetectionGroupSnapshot(tx, identity, useLogicalRuntime)
+		if err != nil {
+			return model.ChannelModelDetectionConfig{}, nil, 0, err
+		}
+		memberIDs = memberIDs[:0]
+		for _, member := range snapshot.Members {
+			memberIDs = append(memberIDs, member.ChannelID)
+		}
+		sort.Ints(memberIDs)
+		if err := model.EnsureChannelModelDetectionLogicalConfigTx(tx, identity.LogicalChannelID, memberIDs); err != nil {
+			return model.ChannelModelDetectionConfig{}, nil, 0, err
+		}
+		var logicalConfig model.ChannelModelDetectionLogicalConfig
+		if err := tx.Where("logical_channel_id = ?", identity.LogicalChannelID).First(&logicalConfig).Error; err != nil {
+			return model.ChannelModelDetectionConfig{}, nil, 0, err
+		}
+		var logicalTargets []model.ChannelModelDetectionLogicalTarget
+		if err := tx.Where("config_id = ? AND logical_channel_id = ? AND enabled = ?", logicalConfig.Id, identity.LogicalChannelID, true).Order("position ASC, id ASC").Find(&logicalTargets).Error; err != nil {
+			return model.ChannelModelDetectionConfig{}, nil, 0, err
+		}
+		ownerID := channelModelDetectionCanonicalMember(snapshot)
+		config := model.ChannelModelDetectionConfig{
+			Id: logicalConfig.Id, ChannelId: ownerID, ScheduleEnabled: logicalConfig.ScheduleEnabled,
+			ManualRequestId: logicalConfig.ManualRequestId, ManualRequestedAt: logicalConfig.ManualRequestedAt,
+			Revision: logicalConfig.Revision, RunningRunId: logicalConfig.RunningRunId,
+			CreatedAt: logicalConfig.CreatedAt, UpdatedAt: logicalConfig.UpdatedAt,
+		}
+		targets := make([]model.ChannelModelDetectionTarget, 0, len(logicalTargets))
+		for _, logicalTarget := range logicalTargets {
+			targets = append(targets, model.ChannelModelDetectionTarget{
+				Id: logicalTarget.Id, ConfigId: logicalTarget.ConfigId, ChannelId: ownerID, TargetKey: logicalTarget.TargetKey,
+				RequestModel: logicalTarget.RequestModel, ClaimedModel: logicalTarget.ClaimedModel,
+				Position: logicalTarget.Position, Enabled: logicalTarget.Enabled,
+				CreatedAt: logicalTarget.CreatedAt, UpdatedAt: logicalTarget.UpdatedAt,
+			})
+		}
+		return config, targets, ownerID, nil
+	}
+	var firstErr error
+	for _, candidateID := range memberIDs {
+		var config model.ChannelModelDetectionConfig
+		if err := tx.Where("channel_id = ?", candidateID).First(&config).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) && firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		var targets []model.ChannelModelDetectionTarget
+		if err := tx.Where("config_id = ? AND channel_id = ? AND enabled = ?", config.Id, candidateID, true).Order("position ASC, id ASC").Find(&targets).Error; err != nil {
+			return model.ChannelModelDetectionConfig{}, nil, 0, err
+		}
+		if len(targets) > 0 {
+			return config, targets, candidateID, nil
+		}
+	}
+	if firstErr != nil {
+		return model.ChannelModelDetectionConfig{}, nil, 0, firstErr
+	}
+	return model.ChannelModelDetectionConfig{}, nil, 0, gorm.ErrRecordNotFound
+}
+
+func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelModelDetectionGlobalConfig, batch *model.ChannelModelDetectionBatch, now int64, runtimeFlags ...bool) ([]string, error) {
+	useLogicalRuntime := tx == model.DB
+	if len(runtimeFlags) > 0 {
+		useLogicalRuntime = runtimeFlags[0]
+	}
 	targetTable := tx.NamingStrategy.TableName("ChannelModelDetectionTarget")
 	channelTable := tx.NamingStrategy.TableName("Channel")
 	var configs []model.ChannelModelDetectionConfig
@@ -441,20 +607,73 @@ func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelM
 		Scan(&configs).Error; err != nil {
 		return nil, err
 	}
-	runIDs := make([]string, 0, len(configs))
-	for _, candidate := range configs {
-		var targets []model.ChannelModelDetectionTarget
-		if err := tx.Where("config_id = ? AND channel_id = ? AND enabled = ?", candidate.Id, candidate.ChannelId, true).
-			Order("position ASC, id ASC").Find(&targets).Error; err != nil {
+	if model.IsLogicalChannelGroupingEnabled() && tx.Migrator().HasTable(&model.ChannelModelDetectionLogicalConfig{}) {
+		var logicalConfigs []model.ChannelModelDetectionLogicalConfig
+		if err := tx.Where("schedule_enabled = ? AND running_run_id = ?", true, "").
+			Order("logical_channel_id ASC").Limit(channelModelDetectionScheduleMaxCandidateRuns).Find(&logicalConfigs).Error; err != nil {
 			return nil, err
 		}
-		if len(targets) == 0 {
+		for _, logicalConfig := range logicalConfigs {
+			var group model.ChannelLogicalGroup
+			if err := tx.Select("id", "status", "revision").Where("id = ?", logicalConfig.LogicalChannelId).First(&group).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return nil, err
+			}
+			if !model.IsLogicalChannelGroupActive(group.Status) {
+				continue
+			}
+			var ownerID int
+			if err := tx.Model(&model.ChannelLogicalGroupMember{}).Where("logical_group_id = ?", group.Id).Order("channel_id ASC").Limit(1).Pluck("channel_id", &ownerID).Error; err != nil {
+				return nil, err
+			}
+			if ownerID <= 0 {
+				continue
+			}
+			configs = append(configs, model.ChannelModelDetectionConfig{
+				Id: logicalConfig.Id, ChannelId: ownerID, ScheduleEnabled: logicalConfig.ScheduleEnabled,
+				Revision: logicalConfig.Revision, RunningRunId: logicalConfig.RunningRunId,
+				CreatedAt: logicalConfig.CreatedAt, UpdatedAt: logicalConfig.UpdatedAt,
+			})
+		}
+	}
+	runIDs := make([]string, 0, len(configs))
+	seenLogical := make(map[int64]struct{}, len(configs))
+	activeRunStatuses := []string{model.ChannelModelDetectionRunStatusQueued, model.ChannelModelDetectionRunStatusWaitingDetector, model.ChannelModelDetectionRunStatusSubmitting, model.ChannelModelDetectionRunStatusRunning, model.ChannelModelDetectionRunStatusSubmissionUnknown, model.ChannelModelDetectionRunStatusCanceling}
+	for _, candidate := range configs {
+		identity, err := channelModelDetectionLogicalIdentity(tx, candidate.ChannelId, useLogicalRuntime)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seenLogical[identity.LogicalChannelID]; exists {
 			continue
 		}
+		if identity.Revision > 0 {
+			var activeCount int64
+			if err := tx.Model(&model.ChannelModelDetectionRun{}).Where("logical_channel_id = ? AND status IN ?", identity.LogicalChannelID, activeRunStatuses).Count(&activeCount).Error; err != nil {
+				return nil, err
+			}
+			if activeCount > 0 {
+				seenLogical[identity.LogicalChannelID] = struct{}{}
+				continue
+			}
+		}
+		config, targets, ownerID, err := channelModelDetectionConfigForIdentity(tx, identity, candidate.ChannelId, useLogicalRuntime)
+		if err != nil {
+			return nil, err
+		}
+		if !config.ScheduleEnabled || len(targets) == 0 {
+			seenLogical[identity.LogicalChannelID] = struct{}{}
+			continue
+		}
+		seenLogical[identity.LogicalChannelID] = struct{}{}
 		run := model.ChannelModelDetectionRun{
 			BatchId:              &batch.BatchId,
-			ChannelId:            candidate.ChannelId,
-			ConfigRevision:       candidate.Revision,
+			ChannelId:            ownerID,
+			LogicalChannelID:     identity.LogicalChannelID,
+			LogicalRevision:      identity.Revision,
+			ConfigRevision:       config.Revision,
 			GlobalConfigRevision: global.Revision,
 			Trigger:              model.ChannelModelDetectionTriggerScheduled,
 			Preset:               global.ScheduledPreset,
@@ -465,6 +684,19 @@ func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelM
 			CreatedAt:            now,
 			UpdatedAt:            now,
 		}
+		if identity.Revision > 0 {
+			snapshot, snapshotErr := channelModelDetectionGroupSnapshot(tx, identity, useLogicalRuntime)
+			if snapshotErr != nil {
+				return nil, snapshotErr
+			}
+			members := make([]model.ChannelModelDetectionMemberSnapshot, 0, len(snapshot.Members))
+			for _, member := range snapshot.Members {
+				members = append(members, model.ChannelModelDetectionMemberSnapshot{ChannelID: member.ChannelID, Weight: member.Weight})
+			}
+			if err := run.SetLogicalMemberSnapshot(members); err != nil {
+				return nil, err
+			}
+		}
 		created, err := model.CreateChannelModelDetectionRun(tx, &run)
 		if err != nil {
 			return nil, err
@@ -473,8 +705,15 @@ func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelM
 			continue
 		}
 		for _, target := range targets {
+			var logicalTargetID *int64
+			if identity.Revision > 0 {
+				value := target.Id
+				logicalTargetID = &value
+			}
 			execution := model.ChannelModelDetectionExecution{
-				RunId: run.RunId, TargetKey: target.TargetKey, TargetId: target.Id, ChannelId: target.ChannelId,
+				RunId: run.RunId, TargetKey: target.TargetKey, TargetId: target.Id, ChannelId: ownerID,
+				LogicalTargetId:  logicalTargetID,
+				LogicalChannelID: identity.LogicalChannelID, LogicalRevision: identity.Revision,
 				RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Preset: run.Preset,
 				Status: model.ChannelModelDetectionExecutionStatusPending, CreatedAt: now, UpdatedAt: now,
 			}
@@ -502,6 +741,7 @@ func CreateChannelModelDetectionManualRun(ctx context.Context, db *gorm.DB, inpu
 	if input.ChannelID <= 0 {
 		return model.ChannelModelDetectionRun{}, ErrChannelModelDetectionNoEnabledTargets
 	}
+	useLogicalRuntime := db == model.DB
 	now = now.UTC()
 	var createdRun model.ChannelModelDetectionRun
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -519,25 +759,38 @@ func CreateChannelModelDetectionManualRun(ctx context.Context, db *gorm.DB, inpu
 		if preset == model.ChannelModelDetectionPresetHigh && !input.ConfirmHighCost {
 			return ErrChannelModelDetectionManualHighUnconfirmed
 		}
-		var config model.ChannelModelDetectionConfig
-		if err := tx.Where("channel_id = ?", input.ChannelID).First(&config).Error; err != nil {
+		identity, err := channelModelDetectionLogicalIdentity(tx, input.ChannelID, useLogicalRuntime)
+		if err != nil {
 			return err
 		}
-		var targets []model.ChannelModelDetectionTarget
-		if err := tx.Where("config_id = ? AND channel_id = ? AND enabled = ?", config.Id, input.ChannelID, true).
-			Order("position ASC, id ASC").Find(&targets).Error; err != nil {
+		config, targets, ownerID, err := channelModelDetectionConfigForIdentity(tx, identity, input.ChannelID, useLogicalRuntime)
+		if err != nil {
 			return err
 		}
 		if len(targets) == 0 {
 			return ErrChannelModelDetectionNoEnabledTargets
 		}
 		createdRun = model.ChannelModelDetectionRun{
-			ChannelId: input.ChannelID, ConfigRevision: config.Revision, GlobalConfigRevision: global.Revision,
+			ChannelId: ownerID, LogicalChannelID: identity.LogicalChannelID, LogicalRevision: identity.Revision,
+			ConfigRevision: config.Revision, GlobalConfigRevision: global.Revision,
 			Trigger: model.ChannelModelDetectionTriggerManual, Preset: preset,
 			PresetSource: model.ChannelModelDetectionPresetSourceManualSelected,
 			Status:       model.ChannelModelDetectionRunStatusQueued, TargetCount: len(targets),
 			QueuedAt: now.Unix(), CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 			CreatedByUserId: input.CreatedByUserID, CreatedByUsername: strings.TrimSpace(input.CreatedByUsername),
+		}
+		if identity.Revision > 0 {
+			snapshot, snapshotErr := channelModelDetectionGroupSnapshot(tx, identity, useLogicalRuntime)
+			if snapshotErr != nil {
+				return snapshotErr
+			}
+			members := make([]model.ChannelModelDetectionMemberSnapshot, 0, len(snapshot.Members))
+			for _, member := range snapshot.Members {
+				members = append(members, model.ChannelModelDetectionMemberSnapshot{ChannelID: member.ChannelID, Weight: member.Weight})
+			}
+			if err := createdRun.SetLogicalMemberSnapshot(members); err != nil {
+				return err
+			}
 		}
 		created, err := model.CreateChannelModelDetectionRun(tx, &createdRun)
 		if err != nil {
@@ -547,8 +800,15 @@ func CreateChannelModelDetectionManualRun(ctx context.Context, db *gorm.DB, inpu
 			return ErrChannelModelDetectionRunAlreadyActive
 		}
 		for _, target := range targets {
+			var logicalTargetID *int64
+			if identity.Revision > 0 {
+				value := target.Id
+				logicalTargetID = &value
+			}
 			execution := model.ChannelModelDetectionExecution{
-				RunId: createdRun.RunId, TargetKey: target.TargetKey, TargetId: target.Id, ChannelId: target.ChannelId,
+				RunId: createdRun.RunId, TargetKey: target.TargetKey, TargetId: target.Id, ChannelId: ownerID,
+				LogicalTargetId:  logicalTargetID,
+				LogicalChannelID: identity.LogicalChannelID, LogicalRevision: identity.Revision,
 				RequestModel: target.RequestModel, ClaimedModel: target.ClaimedModel, Preset: preset,
 				Status: model.ChannelModelDetectionExecutionStatusPending, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 			}

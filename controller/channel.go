@@ -1012,6 +1012,15 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	// PatchChannel accepts partial updates. Keep the committed fields that
+	// define the effective upstream address when the request omits them, so a
+	// name/key/weight-only edit cannot look like a provider or URL change.
+	if _, typeProvided := requestData["type"]; !typeProvided {
+		channel.Type = originChannel.Type
+	}
+	if _, baseURLProvided := requestData["base_url"]; !baseURLProvided {
+		channel.BaseURL = originChannel.BaseURL
+	}
 	originProxy := originChannel.GetSetting().Proxy
 	proxyChanged := false
 	if _, settingProvided := requestData["setting"]; settingProvided {
@@ -1114,7 +1123,7 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
-	err = channel.Update()
+	err = service.UpdateChannelWithLogicalGroupValidation(&channel.Channel)
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -33,6 +33,46 @@ func channelSmartScheduleRealtimeEvents(
 	return events, window.Snapshot, nil
 }
 
+func channelSmartScheduleSchedulingRouteRealtimeEvents(
+	ctx context.Context,
+	route model.ChannelSmartScheduleRoute,
+	windowStart int64,
+	observationSince int64,
+	maxRequests int,
+) ([]model.ChannelMonitorEvent, service.ChannelMonitorRedisRouteHealthSnapshot, error) {
+	channelIDs := route.LogicalMemberIds
+	if len(channelIDs) == 0 {
+		channelIDs = []int{route.ChannelId}
+	}
+	events := make([]model.ChannelMonitorEvent, 0)
+	combined := service.ChannelMonitorRedisRouteHealthSnapshot{}
+	for _, channelID := range channelIDs {
+		memberEvents, snapshot, err := channelSmartScheduleRealtimeEvents(
+			ctx, channelID, route.Model, windowStart, observationSince, 0,
+		)
+		if err != nil {
+			return nil, combined, err
+		}
+		events = append(events, memberEvents...)
+		if combined.WindowStart == 0 || snapshot.WindowStart < combined.WindowStart {
+			combined.WindowStart = snapshot.WindowStart
+		}
+		combined.WindowEnd = max(combined.WindowEnd, snapshot.WindowEnd)
+		combined.DataCutoffAt = max(combined.DataCutoffAt, snapshot.DataCutoffAt)
+		combined.EventWatermark = max(combined.EventWatermark, snapshot.EventWatermark)
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].OccurredAt != events[j].OccurredAt {
+			return events[i].OccurredAt < events[j].OccurredAt
+		}
+		return events[i].ChannelId < events[j].ChannelId
+	})
+	if maxRequests > 0 && len(events) > maxRequests {
+		events = events[len(events)-maxRequests:]
+	}
+	return events, combined, nil
+}
+
 func channelSmartScheduleEventsForWindow(
 	events []model.ChannelMonitorEvent,
 	windowStart int64,

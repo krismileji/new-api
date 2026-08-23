@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestChannelSmartScheduleProbeHandlerUsesMinimumGroupInterval(t *testing.T) {
@@ -993,4 +994,197 @@ func TestRunChannelSmartScheduleProbeSkipsSaturatedChannel(t *testing.T) {
 	assert.Zero(t, result.Failed)
 	assert.Equal(t, 1, result.Skipped)
 	assert.Zero(t, requestCount)
+}
+
+func setupChannelSmartScheduleLogicalProbeTest(
+	t *testing.T,
+	onRequest func(*http.Request),
+) (*gorm.DB, model.ChannelLogicalGroup) {
+	t.Helper()
+	db := setupChannelMonitorControllerTestDB(t)
+	t.Setenv(model.ChannelLogicalGroupGlobalEnableEnv, "true")
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	originalStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = originalStreamingTimeout
+	})
+	require.NoError(t, db.AutoMigrate(
+		&model.ChannelLogicalGroup{},
+		&model.ChannelLogicalGroupMember{},
+		&model.ChannelLogicalSmartScheduleRouteState{},
+		&model.ChannelLogicalSmartScheduleSampleState{},
+	))
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if onRequest != nil {
+			onRequest(r)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, err := w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.created","response":{"id":"resp-logical-probe","model":"gpt-4o-mini","created_at":1}}`,
+			`data: {"type":"response.output_text.delta","delta":"ok"}`,
+			`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+			"",
+		}, "\n\n")))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
+
+	user := model.User{
+		Username: "logical-scheduled-probe-root", Password: "password", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	logicalGroup := model.ChannelLogicalGroup{Name: "scheduled-probe-group"}
+	require.NoError(t, db.Create(&logicalGroup).Error)
+	priority := int64(80)
+	weight := uint(50)
+	logicalGroupId := logicalGroup.Id
+	channels := []model.Channel{
+		{
+			Id: 1441, Type: constant.ChannelTypeOpenAI, Key: "sk-zero-weight", Name: "zero weight member",
+			Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL), Models: "gpt-4o-mini",
+			Group: "vip", Priority: &priority, Weight: &weight, LogicalChannelID: &logicalGroupId,
+		},
+		{
+			Id: 1442, Type: constant.ChannelTypeOpenAI, Key: "sk-weighted", Name: "weighted member",
+			Status: common.ChannelStatusEnabled, BaseURL: common.GetPointer(upstream.URL), Models: "gpt-4o-mini",
+			Group: "vip", Priority: &priority, Weight: &weight, LogicalChannelID: &logicalGroupId,
+		},
+	}
+	require.NoError(t, db.Create(&channels).Error)
+	fingerprint := strings.Repeat("a", 64)
+	require.NoError(t, db.Create(&[]model.ChannelLogicalGroupMember{
+		{LogicalGroupID: logicalGroup.Id, ChannelID: 1441, Weight: 0, AddressFingerprint: fingerprint},
+		{LogicalGroupID: logicalGroup.Id, ChannelID: 1442, Weight: 10, AddressFingerprint: fingerprint},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1441, Group: "vip", Model: "gpt-4o-mini", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1442, Group: "vip", Model: "gpt-4o-mini", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1441, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true},
+		{ChannelId: 1442, GroupName: "vip", ModelName: "gpt-4o-mini", ParticipationSet: true},
+	}).Error)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
+		channelMonitorSmartScheduleApplyWeight, []string{"gpt-4o-mini"}, 1, 80, 30,
+	)
+	probeMode := channelMonitorSmartScheduleSampleProbe
+	policy.SampleMode = &probeMode
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "true",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+	})
+	return db, logicalGroup
+}
+
+func TestRunChannelSmartScheduleProbeSharesLogicalExecutionAndUsesMemberWeight(t *testing.T) {
+	requestCount := 0
+	authorization := ""
+	db, logicalGroup := setupChannelSmartScheduleLogicalProbeTest(t, func(r *http.Request) {
+		requestCount++
+		authorization = r.Header.Get("Authorization")
+	})
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Succeeded)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, "Bearer sk-weighted", authorization)
+	var logicalSamples []model.ChannelLogicalSmartScheduleSampleState
+	require.NoError(t, db.Find(&logicalSamples).Error)
+	require.Len(t, logicalSamples, 1)
+	assert.Equal(t, logicalGroup.Id, logicalSamples[0].LogicalGroupID)
+	assert.Equal(t, logicalGroup.Revision, logicalSamples[0].LogicalRevision)
+	assert.Equal(t, "vip", logicalSamples[0].GroupName)
+	assert.Equal(t, "gpt-4o-mini", logicalSamples[0].ModelName)
+	var samples []map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(string(logicalSamples[0].SamplesJSON), &samples))
+	require.Len(t, samples, 1)
+	assert.Equal(t, float64(1442), samples[0]["physical_channel_id"])
+	var physicalSamples []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Find(&physicalSamples).Error)
+	assert.Empty(t, physicalSamples)
+}
+
+func TestRunChannelSmartScheduleProbeDiscardsStaleLogicalRevisionWithoutPhysicalFallback(t *testing.T) {
+	var db *gorm.DB
+	var logicalGroup model.ChannelLogicalGroup
+	requestCount := 0
+	db, logicalGroup = setupChannelSmartScheduleLogicalProbeTest(t, func(*http.Request) {
+		requestCount++
+		require.NoError(t, db.Model(&model.ChannelLogicalGroup{}).Where("id = ?", logicalGroup.Id).Updates(map[string]any{
+			"revision": logicalGroup.Revision + 1, "updated_at": common.GetTimestamp(),
+		}).Error)
+	})
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Succeeded)
+	assert.Equal(t, 1, requestCount)
+	var logicalSamples []model.ChannelLogicalSmartScheduleSampleState
+	require.NoError(t, db.Find(&logicalSamples).Error)
+	require.Len(t, logicalSamples, 1)
+	assert.Empty(t, logicalSamples[0].SamplesJSON)
+	var persistedGroup model.ChannelLogicalGroup
+	require.NoError(t, db.First(&persistedGroup, logicalGroup.Id).Error)
+	assert.Equal(t, logicalGroup.Revision+1, persistedGroup.Revision)
+	var physicalSamples []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Find(&physicalSamples).Error)
+	assert.Empty(t, physicalSamples)
+}
+
+func TestRunChannelSmartScheduleProbeUsesLogicalStateInsteadOfPhysicalMemberState(t *testing.T) {
+	requestCount := 0
+	db, _ := setupChannelSmartScheduleLogicalProbeTest(t, func(*http.Request) {
+		requestCount++
+	})
+	routes, err := model.GetChannelSmartScheduleRoutes()
+	require.NoError(t, err)
+	_, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).Where(
+		"channel_id IN ?", []int{1441, 1442},
+	).Updates(map[string]any{"participation_set": true, "excluded": true}).Error)
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Succeeded)
+	assert.Equal(t, 1, requestCount)
+}
+
+func TestRunChannelSmartScheduleProbeRetriesRemainingMemberWhenSelectedConcurrencyIsFull(t *testing.T) {
+	requestCount := 0
+	authorization := ""
+	_, _ = setupChannelSmartScheduleLogicalProbeTest(t, func(r *http.Request) {
+		requestCount++
+		authorization = r.Header.Get("Authorization")
+	})
+	_, err := service.SaveChannelConcurrencyLimit(context.Background(), 1442, 1)
+	require.NoError(t, err)
+	occupiedLease, acquired, _, err := service.AcquireChannelConcurrency(context.Background(), 1442)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	t.Cleanup(occupiedLease.Release)
+
+	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Total)
+	assert.Equal(t, 1, result.Probed)
+	assert.Equal(t, 1, result.Succeeded)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, "Bearer sk-zero-weight", authorization)
 }

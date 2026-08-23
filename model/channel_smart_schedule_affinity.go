@@ -67,6 +67,120 @@ func ChannelSmartScheduleAffinityEligibility(
 	)
 }
 
+// ChannelSmartScheduleAffinityCandidateEligibilityExcluding checks the
+// logical candidate represented by a cached physical member. Exclusions stay
+// physical so one Key's cooldown does not invalidate its sibling Keys.
+func ChannelSmartScheduleAffinityCandidateEligibilityExcluding(
+	group string,
+	modelName string,
+	preferredChannelID int,
+	requestPath string,
+	excludedChannelIDs map[int]struct{},
+	options ...ChannelSelectionOptions,
+) ChannelSmartScheduleAffinityStatus {
+	identity, err := ResolveChannelLogicalIdentity(preferredChannelID)
+	if err != nil {
+		return ChannelSmartScheduleAffinityInvalid
+	}
+	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
+	if identity.Revision == 0 || identity.LogicalChannelID == int64(preferredChannelID) ||
+		trafficPolicy == nil || !trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+		if _, excluded := excludedChannelIDs[preferredChannelID]; excluded {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		return ChannelSmartScheduleAffinityEligibility(
+			group, modelName, preferredChannelID, requestPath, options...,
+		)
+	}
+	snapshot, err := GetLogicalChannelSelectionSnapshot(identity)
+	if err != nil {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	}
+	temporarilyUnavailable := false
+	for _, member := range snapshot.Members {
+		if _, excluded := excludedChannelIDs[member.ChannelID]; excluded {
+			temporarilyUnavailable = true
+			continue
+		}
+		status := ChannelSmartScheduleAffinityEligibility(
+			group, modelName, member.ChannelID, requestPath, options...,
+		)
+		if status == ChannelSmartScheduleAffinityEligible {
+			return ChannelSmartScheduleAffinityEligible
+		}
+		if status == ChannelSmartScheduleAffinityTemporarilyUnavailable {
+			temporarilyUnavailable = true
+		}
+	}
+	if temporarilyUnavailable {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	}
+	return ChannelSmartScheduleAffinityInvalid
+}
+
+// SelectChannelSmartScheduleAffinityMember keeps affinity at the logical
+// candidate boundary. A cached physical channel identifies the logical group,
+// but the actual Key is selected again by current member availability and the
+// configured logical member weight. Explicit specific_channel_id routing does
+// not call this function and therefore remains physically pinned.
+func SelectChannelSmartScheduleAffinityMember(
+	group string,
+	modelName string,
+	preferredChannelID int,
+	requestPath string,
+	options ...ChannelSelectionOptions,
+) (*Channel, error) {
+	return SelectChannelSmartScheduleAffinityMemberExcluding(
+		group, modelName, preferredChannelID, requestPath, nil, options...,
+	)
+}
+
+// SelectChannelSmartScheduleAffinityMemberExcluding reselects the physical
+// Key inside one affinity-pinned logical candidate while preserving member
+// weights. Exclusions are physical-channel conditions such as 429 cooldowns.
+func SelectChannelSmartScheduleAffinityMemberExcluding(
+	group string,
+	modelName string,
+	preferredChannelID int,
+	requestPath string,
+	excludedChannelIDs map[int]struct{},
+	options ...ChannelSelectionOptions,
+) (*Channel, error) {
+	identity, err := ResolveChannelLogicalIdentity(preferredChannelID)
+	if err != nil {
+		return nil, err
+	}
+	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
+	if identity.Revision == 0 || identity.LogicalChannelID == int64(preferredChannelID) ||
+		trafficPolicy == nil || !trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+		if _, excluded := excludedChannelIDs[preferredChannelID]; excluded {
+			return nil, ErrLogicalChannelSelectionNoAvailableMembers
+		}
+		return CacheGetChannel(preferredChannelID)
+	}
+	snapshot, err := GetLogicalChannelSelectionSnapshot(identity)
+	if err != nil {
+		return nil, err
+	}
+	selectionOptions := channelSelectionOptions(options)
+	availability := make([]LogicalChannelMemberAvailability, 0, len(snapshot.Members))
+	for _, member := range snapshot.Members {
+		status := ChannelSmartScheduleAffinityEligibility(
+			group, modelName, member.ChannelID, requestPath, selectionOptions,
+		)
+		_, excluded := excludedChannelIDs[member.ChannelID]
+		availability = append(availability, LogicalChannelMemberAvailability{
+			ChannelID: member.ChannelID, Weight: member.Weight,
+			Available: status == ChannelSmartScheduleAffinityEligible && !excluded,
+		})
+	}
+	channelID, err := SelectLogicalChannelMember(snapshot, availability, nil)
+	if err != nil {
+		return nil, err
+	}
+	return CacheGetChannel(channelID)
+}
+
 func channelSmartScheduleAffinityRoutePaused(
 	group string,
 	modelNames []string,

@@ -101,31 +101,84 @@ func deleteChannelModelDetectionDataTx(tx *gorm.DB, channelIDs []int) error {
 			return nil
 		}
 	}
-	var active int64
-	if err := tx.Model(&ChannelModelDetectionRun{}).
-		Where("channel_id IN ? AND status IN ?", channelIDs, []string{
-			ChannelModelDetectionRunStatusQueued,
-			ChannelModelDetectionRunStatusWaitingDetector,
-			ChannelModelDetectionRunStatusSubmitting,
-			ChannelModelDetectionRunStatusRunning,
-			ChannelModelDetectionRunStatusSubmissionUnknown,
-			ChannelModelDetectionRunStatusCanceling,
-		}).Count(&active).Error; err != nil {
+	activeStatuses := []string{
+		ChannelModelDetectionRunStatusQueued,
+		ChannelModelDetectionRunStatusWaitingDetector,
+		ChannelModelDetectionRunStatusSubmitting,
+		ChannelModelDetectionRunStatusRunning,
+		ChannelModelDetectionRunStatusSubmissionUnknown,
+		ChannelModelDetectionRunStatusCanceling,
+	}
+	var activeRuns []ChannelModelDetectionRun
+	if err := tx.Select("run_id", "channel_id", "logical_channel_id", "logical_revision", "logical_member_snapshot_json").
+		Where("status IN ?", activeStatuses).Find(&activeRuns).Error; err != nil {
 		return err
 	}
-	if active > 0 {
-		return ErrChannelModelDetectionChannelActive
+	deleted := make(map[int]struct{}, len(channelIDs))
+	for _, channelID := range channelIDs {
+		deleted[channelID] = struct{}{}
 	}
-	for _, table := range []any{
-		&ChannelModelDetectionCostEvent{},
-		&ChannelModelDetectionExecution{},
-		&ChannelModelDetectionRun{},
-		&ChannelModelDetectionTarget{},
-		&ChannelModelDetectionConfig{},
-	} {
-		if err := tx.Where("channel_id IN ?", channelIDs).Delete(table).Error; err != nil {
+	activeRunIDs := make(map[string]struct{}, len(activeRuns))
+	for _, run := range activeRuns {
+		activeRunIDs[run.RunId] = struct{}{}
+		if _, ownerDeleted := deleted[run.ChannelId]; ownerDeleted {
+			return ErrChannelModelDetectionChannelActive
+		}
+		if run.LogicalRevision <= 0 {
+			continue
+		}
+		members, err := run.LogicalMemberSnapshot()
+		if err != nil {
 			return err
 		}
+		for _, member := range members {
+			if _, memberDeleted := deleted[member.ChannelID]; memberDeleted {
+				return ErrChannelModelDetectionChannelActive
+			}
+		}
+	}
+	if len(activeRunIDs) > 0 {
+		var actualRunIDs []string
+		if err := tx.Model(&ChannelModelDetectionExecution{}).Where("channel_id IN ?", channelIDs).Distinct().Pluck("run_id", &actualRunIDs).Error; err != nil {
+			return err
+		}
+		for _, runID := range actualRunIDs {
+			if _, active := activeRunIDs[runID]; active {
+				return ErrChannelModelDetectionChannelActive
+			}
+		}
+	}
+
+	var physicalRunIDs []string
+	if err := tx.Model(&ChannelModelDetectionRun{}).
+		Where("channel_id IN ? AND COALESCE(logical_revision, 0) = 0", channelIDs).
+		Pluck("run_id", &physicalRunIDs).Error; err != nil {
+		return err
+	}
+	if len(physicalRunIDs) > 0 {
+		if err := tx.Where("run_id IN ?", physicalRunIDs).Delete(&ChannelModelDetectionCostEvent{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("run_id IN ?", physicalRunIDs).Delete(&ChannelModelDetectionExecution{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("run_id IN ?", physicalRunIDs).Delete(&ChannelModelDetectionRun{}).Error; err != nil {
+			return err
+		}
+	}
+	groupedRunIDs := tx.Model(&ChannelModelDetectionRun{}).
+		Select("run_id").Where("COALESCE(logical_revision, 0) > 0")
+	if err := tx.Where("channel_id IN ? AND run_id NOT IN (?)", channelIDs, groupedRunIDs).Delete(&ChannelModelDetectionCostEvent{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("channel_id IN ? AND run_id NOT IN (?)", channelIDs, groupedRunIDs).Delete(&ChannelModelDetectionExecution{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("channel_id IN ?", channelIDs).Delete(&ChannelModelDetectionTarget{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("channel_id IN ?", channelIDs).Delete(&ChannelModelDetectionConfig{}).Error; err != nil {
+		return err
 	}
 	return nil
 }
