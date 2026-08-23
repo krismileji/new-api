@@ -35,6 +35,7 @@ export type ChannelGroupMonitorResult =
   | 'local_failure'
   | 'unavailable'
   | 'skipped'
+  | 'timeout'
 
 export type ChannelGroupMonitorBucketResult = '' | ChannelGroupMonitorResult
 
@@ -52,6 +53,7 @@ export type ChannelGroupMonitorBucket = {
   local_failure: number
   unavailable: number
   skipped: number
+  timeout: number
   first_token_total_ms?: number
   first_token_sample_count?: number
   tps_total?: number

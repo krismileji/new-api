@@ -200,6 +200,22 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	assert.EqualValues(t, 1, populatedBucket.FirstTokenSampleCount)
 }
 
+func TestChannelGroupMonitorTimeoutUsesYellowHealthAndWindowResult(t *testing.T) {
+	config := model.ChannelGroupMonitorConfig{Enabled: true, IntervalSeconds: 60}
+	state := model.ChannelGroupMonitorState{
+		Result: model.ChannelGroupMonitorResultTimeout, FinishedAt: 1_000,
+	}
+	assert.Equal(t, channelGroupMonitorHealthStale, channelGroupMonitorHealth(config, &state, 1_001))
+
+	window := mergeChannelGroupMonitorRecentWindow([]model.ChannelGroupMonitorExecution{{
+		GroupName: "default", Result: model.ChannelGroupMonitorResultTimeout, FinishedAt: 1_000,
+	}}, 1_000, 1, model.ChannelStatusProbeDisplayUnitMinute)
+	buckets := window["default"]
+	require.Len(t, buckets, 1)
+	assert.Equal(t, 1, buckets[0].Timeout)
+	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].Result)
+}
+
 func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.Create(&model.Channel{

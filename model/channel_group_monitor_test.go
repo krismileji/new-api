@@ -183,3 +183,72 @@ func TestRequestChannelGroupMonitorManualRunReplacesExpiredManualLease(t *testin
 	assert.Empty(t, stored.LeaseToken)
 	assert.Zero(t, stored.LeaseUntil)
 }
+
+func TestTimeoutOverdueChannelGroupMonitorPreservesCompletedGroups(t *testing.T) {
+	db := setupChannelGroupMonitorTestDB(t)
+	created, err := SaveChannelGroupMonitorConfig(ChannelGroupMonitorConfigInput{
+		Enabled: true,
+		Groups: []ChannelGroupMonitorGroup{
+			{GroupName: "vip", ProbeModel: "model-vip"},
+			{GroupName: "default", ProbeModel: "model-default"},
+		},
+		IntervalSeconds: 60, DisplayValue: 60,
+		DisplayUnit: ChannelStatusProbeDisplayUnitMinute,
+	}, 1_000)
+	require.NoError(t, err)
+
+	claims, err := ClaimDueChannelGroupMonitor(created.NextRunAt)
+	require.NoError(t, err)
+	require.NotNil(t, claims)
+	claim := *claims
+	stored, err := GetChannelGroupMonitorConfig()
+	require.NoError(t, err)
+	assert.Equal(t, created.NextRunAt+60, stored.NextRunAt)
+
+	completed := ChannelGroupMonitorExecution{
+		RunId: claim.RunId, GroupName: "vip", ConfigRevision: claim.Config.Revision,
+		Trigger: ChannelGroupMonitorTriggerScheduled, ProbeModel: "model-vip",
+		Result: ChannelGroupMonitorResultSuccess, StartedAt: created.NextRunAt,
+		FinishedAt: stored.NextRunAt - 1, CreatedAt: stored.NextRunAt - 1,
+	}
+	createdExecution, err := SaveChannelGroupMonitorExecution(&completed)
+	require.NoError(t, err)
+	assert.True(t, createdExecution)
+
+	timedOut, err := TimeoutOverdueChannelGroupMonitor(stored.NextRunAt, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, timedOut)
+
+	var timeout ChannelGroupMonitorExecution
+	require.NoError(t, db.Where("run_id = ? AND group_name = ?", claim.RunId, "default").First(&timeout).Error)
+	assert.Equal(t, ChannelGroupMonitorResultTimeout, timeout.Result)
+	assert.Equal(t, ChannelGroupMonitorErrorTimeout, timeout.ErrorCode)
+	assert.Equal(t, ChannelGroupMonitorTimeoutMessage, timeout.ErrorMessage)
+	assert.Equal(t, stored.NextRunAt, timeout.FinishedAt)
+
+	var preserved ChannelGroupMonitorExecution
+	require.NoError(t, db.Where("run_id = ? AND group_name = ?", claim.RunId, "vip").First(&preserved).Error)
+	assert.Equal(t, ChannelGroupMonitorResultSuccess, preserved.Result)
+
+	current, err := GetChannelGroupMonitorConfig()
+	require.NoError(t, err)
+	assert.Empty(t, current.RunningRunId)
+	assert.Empty(t, current.LeaseToken)
+
+	late := ChannelGroupMonitorExecution{
+		RunId: claim.RunId, GroupName: "default", ConfigRevision: claim.Config.Revision,
+		Trigger: ChannelGroupMonitorTriggerScheduled, ProbeModel: "model-default",
+		Result: ChannelGroupMonitorResultSuccess, StartedAt: created.NextRunAt,
+		FinishedAt: stored.NextRunAt + 1, CreatedAt: stored.NextRunAt + 1,
+	}
+	createdExecution, err = SaveChannelGroupMonitorExecution(&late)
+	require.NoError(t, err)
+	assert.False(t, createdExecution)
+	assert.Equal(t, ChannelGroupMonitorResultTimeout, late.Result)
+
+	nextClaims, err := ClaimDueChannelGroupMonitor(stored.NextRunAt)
+	require.NoError(t, err)
+	require.NotNil(t, nextClaims)
+	assert.NotEqual(t, claim.RunId, nextClaims.RunId)
+	assert.Equal(t, stored.NextRunAt+60, nextClaims.DeadlineAt)
+}

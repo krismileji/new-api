@@ -6,7 +6,7 @@
 
 Root 管理接口提供配置、候选模型、总览、手动执行和执行历史。配置使用 revision；探测间隔为 30 到 86400 秒，展示窗口至少覆盖两个探测周期，每组配置一个具体文本 `probe_model`。重复手动执行返回冲突。
 
-Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物理成员之间重试，但管理员执行记录保留最终逻辑结果和实际渠道。结果包括 success、upstream_failure、rate_limited、local_failure、unavailable 和 skipped；skipped 不计入成功率。探测成本归属实际物理渠道。
+Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物理成员之间重试，但管理员执行记录保留最终逻辑结果和实际渠道。下一监测周期开始时仍未完成的分组会记录 timeout，已完成的分组结果保持不变；timeout 显示为黄色告警，且计入失败统计。结果包括 success、upstream_failure、rate_limited、local_failure、unavailable、timeout 和 skipped；skipped 不计入成功率。探测成本归属实际物理渠道。
 
 ## 用户视图
 

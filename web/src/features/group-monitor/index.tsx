@@ -132,6 +132,7 @@ const BUCKET_RESULT_LABEL: Record<
   local_failure: '本地失败',
   unavailable: '无可用路由',
   skipped: '跳过',
+  timeout: '超时',
 }
 
 const BUCKET_RESULT_COLOR: Record<
@@ -144,6 +145,7 @@ const BUCKET_RESULT_COLOR: Record<
   local_failure: 'bg-warning/70',
   unavailable: 'bg-destructive/70',
   skipped: 'bg-muted-foreground/50',
+  timeout: 'bg-warning',
 }
 
 function groupMonitorBucketPresentation(
@@ -182,6 +184,8 @@ function groupMonitorBucketPresentation(
     statusVariant = 'warning'
   } else if (bucket.result === 'skipped') {
     statusVariant = 'outline'
+  } else if (bucket.result === 'timeout') {
+    statusVariant = 'warning'
   }
   const firstToken = formatHoverDuration(
     averageBucketMetric(

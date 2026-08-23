@@ -206,7 +206,11 @@ func startChannelGroupMonitorWorker() {
 }
 
 func runChannelGroupMonitorScanOnce(ctx context.Context) error {
-	claim, err := model.ClaimDueChannelGroupMonitor(common.GetTimestamp())
+	now := common.GetTimestamp()
+	if _, err := model.TimeoutOverdueChannelGroupMonitor(now, 0); err != nil {
+		return err
+	}
+	claim, err := model.ClaimDueChannelGroupMonitor(now)
 	if err != nil || claim == nil {
 		return err
 	}
@@ -222,7 +226,13 @@ func runChannelGroupMonitorClaim(parent context.Context, claim model.ChannelGrou
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx := parent
+	var cancel context.CancelFunc
+	if claim.DeadlineAt > 0 {
+		ctx, cancel = context.WithDeadline(parent, time.Unix(claim.DeadlineAt, 0))
+	} else {
+		ctx, cancel = context.WithCancel(parent)
+	}
 	done := make(chan struct{})
 	gopool.Go(func() {
 		ticker := time.NewTicker(channelGroupMonitorLeaseRenewEvery)
@@ -291,6 +301,15 @@ func runChannelGroupMonitorClaim(parent context.Context, claim model.ChannelGrou
 		}()
 	}
 	groups.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if _, err := model.TimeoutOverdueChannelGroupMonitor(common.GetTimestamp(), 0); err != nil {
+			errMu.Lock()
+			if firstErr == nil {
+				firstErr = err
+			}
+			errMu.Unlock()
+		}
+	}
 	return firstErr
 }
 
@@ -306,6 +325,11 @@ func runChannelGroupMonitorGroup(
 	execution := model.ChannelGroupMonitorExecution{
 		RunId: claim.RunId, GroupName: group.GroupName, ConfigRevision: claim.Config.Revision,
 		Trigger: claim.Trigger, ProbeModel: group.ProbeModel, StartedAt: now, FinishedAt: now, CreatedAt: now,
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		applyChannelGroupMonitorTimeout(&execution, claim)
+		_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
+		return saveErr
 	}
 	if !groupMonitorModelIsCandidate(validCandidates, group.GroupName, group.ProbeModel) {
 		execution.Result = model.ChannelGroupMonitorResultSkipped
@@ -523,8 +547,23 @@ func runChannelGroupMonitorGroup(
 		)
 	}
 	applyChannelGroupMonitorFinalOutcome(&execution, finalOutcome)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		applyChannelGroupMonitorTimeout(&execution, claim)
+	}
 	_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
 	return saveErr
+}
+
+func applyChannelGroupMonitorTimeout(execution *model.ChannelGroupMonitorExecution, claim model.ChannelGroupMonitorClaim) {
+	if execution == nil {
+		return
+	}
+	execution.Result = model.ChannelGroupMonitorResultTimeout
+	execution.ErrorCode = model.ChannelGroupMonitorErrorTimeout
+	execution.ErrorMessage = model.ChannelGroupMonitorTimeoutMessage
+	if claim.DeadlineAt > 0 {
+		execution.FinishedAt = claim.DeadlineAt
+	}
 }
 
 func channelGroupMonitorOutcomeErrorValue(outcome *channelStatusProbeOutcome) *types.NewAPIError {

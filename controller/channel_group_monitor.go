@@ -81,6 +81,7 @@ type channelGroupMonitorBucketResponse struct {
 	LocalFailure            int     `json:"local_failure"`
 	Unavailable             int     `json:"unavailable"`
 	Skipped                 int     `json:"skipped"`
+	Timeout                 int     `json:"timeout"`
 	FirstTokenTotalMs       float64 `json:"first_token_total_ms,omitempty"`
 	FirstTokenSampleCount   int64   `json:"first_token_sample_count,omitempty"`
 	TPSTotal                float64 `json:"tps_total,omitempty"`
@@ -279,6 +280,8 @@ func channelGroupMonitorBucketResult(bucket channelGroupMonitorBucketResponse) s
 	switch {
 	case bucket.UpstreamFailure > 0:
 		return model.ChannelGroupMonitorResultUpstreamFailure
+	case bucket.Timeout > 0:
+		return model.ChannelGroupMonitorResultTimeout
 	case bucket.Unavailable > 0:
 		return model.ChannelGroupMonitorResultUnavailable
 	case bucket.RateLimited > 0:
@@ -333,6 +336,8 @@ func mergeChannelGroupMonitorRecentWindow(
 			}
 		case model.ChannelGroupMonitorResultUpstreamFailure:
 			bucket.UpstreamFailure++
+		case model.ChannelGroupMonitorResultTimeout:
+			bucket.Timeout++
 		case model.ChannelGroupMonitorResultRateLimited:
 			bucket.RateLimited++
 		case model.ChannelGroupMonitorResultLocalFailure:
@@ -409,6 +414,8 @@ func channelGroupMonitorHealth(config model.ChannelGroupMonitorConfig, state *mo
 		return channelGroupMonitorHealthHealthy
 	case model.ChannelGroupMonitorResultRateLimited:
 		return channelGroupMonitorHealthRateLimited
+	case model.ChannelGroupMonitorResultTimeout:
+		return channelGroupMonitorHealthStale
 	case model.ChannelGroupMonitorResultUnavailable:
 		return channelGroupMonitorHealthUnavailable
 	case model.ChannelGroupMonitorResultUpstreamFailure, model.ChannelGroupMonitorResultLocalFailure:

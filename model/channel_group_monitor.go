@@ -20,6 +20,10 @@ const (
 	ChannelGroupMonitorResultLocalFailure    = "local_failure"
 	ChannelGroupMonitorResultUnavailable     = "unavailable"
 	ChannelGroupMonitorResultSkipped         = "skipped"
+	ChannelGroupMonitorResultTimeout         = "timeout"
+
+	ChannelGroupMonitorErrorTimeout   = "probe_timeout"
+	ChannelGroupMonitorTimeoutMessage = "探测在下一监测周期开始前仍未返回，已标记为超时"
 
 	ChannelGroupMonitorTriggerScheduled = "scheduled"
 	ChannelGroupMonitorTriggerManual    = "manual"
@@ -146,6 +150,7 @@ type ChannelGroupMonitorClaim struct {
 	RunId           string
 	ManualRequestId string
 	LeaseToken      string
+	DeadlineAt      int64
 }
 
 func normalizeChannelGroupMonitorDisplay(value int, unit string) (int, string) {
@@ -326,12 +331,16 @@ func ClaimDueChannelGroupMonitor(now int64) (*ChannelGroupMonitorClaim, error) {
 		claimQuery = claimQuery.Where("enabled = ? AND next_run_at > 0 AND next_run_at <= ?", true, now)
 	}
 	leaseToken := common.GetUUID()
+	deadlineAt := nextChannelGroupMonitorRunAt(now, candidate.IntervalSeconds)
 	updates := map[string]any{
 		"lease_token": leaseToken, "lease_until": now + ChannelGroupMonitorLeaseSeconds,
 		"running_trigger": trigger, "running_run_id": runId, "running_started_at": now, "updated_at": now,
 	}
 	if trigger == ChannelGroupMonitorTriggerScheduled {
-		updates["next_run_at"] = nextChannelGroupMonitorRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+		deadlineAt = nextChannelGroupMonitorRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+		updates["next_run_at"] = deadlineAt
+	} else if candidate.NextRunAt > now {
+		deadlineAt = candidate.NextRunAt
 	}
 	claimed := claimQuery.Updates(updates)
 	if claimed.Error != nil {
@@ -342,8 +351,83 @@ func ClaimDueChannelGroupMonitor(now int64) (*ChannelGroupMonitorClaim, error) {
 	}
 	return &ChannelGroupMonitorClaim{
 		Config: candidate, Groups: groups, Trigger: trigger, RunId: runId,
-		ManualRequestId: manualRequestId, LeaseToken: leaseToken,
+		ManualRequestId: manualRequestId, LeaseToken: leaseToken, DeadlineAt: deadlineAt,
 	}, nil
+}
+
+// TimeoutOverdueChannelGroupMonitor fences a scheduled round that is still
+// running when its next monitoring period begins. Existing group results are
+// preserved; only groups without a result for the previous run receive a
+// timeout execution.
+func TimeoutOverdueChannelGroupMonitor(now int64, limit int) (int, error) {
+	channelStatusLock.Lock()
+	defer channelStatusLock.Unlock()
+
+	var candidate ChannelGroupMonitorConfig
+	if err := DB.Where("id = ? AND enabled = ? AND running_run_id <> ? AND next_run_at > 0 AND next_run_at <= ?",
+		1, true, "", now).First(&candidate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	timedOut := 0
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if limit > 0 && timedOut >= limit {
+			return nil
+		}
+		var current ChannelGroupMonitorConfig
+		if err := lockForUpdate(tx).
+			Where("id = ? AND revision = ? AND running_run_id = ? AND next_run_at = ?",
+				candidate.Id, candidate.Revision, candidate.RunningRunId, candidate.NextRunAt).
+			First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !current.Enabled || current.NextRunAt <= 0 || current.NextRunAt > now || strings.TrimSpace(current.RunningRunId) == "" {
+			return nil
+		}
+		groups, err := current.Groups()
+		if err != nil {
+			return err
+		}
+		updates := map[string]any{
+			"lease_token": "", "lease_until": int64(0), "running_trigger": "",
+			"running_run_id": "", "running_started_at": int64(0), "updated_at": now,
+		}
+		updated := tx.Model(&ChannelGroupMonitorConfig{}).
+			Where("id = ? AND revision = ? AND lease_token = ? AND running_run_id = ? AND next_run_at = ?",
+				current.Id, current.Revision, current.LeaseToken, current.RunningRunId, current.NextRunAt).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return nil
+		}
+		startedAt := current.RunningStartedAt
+		if startedAt <= 0 {
+			startedAt = current.NextRunAt
+		}
+		for _, group := range groups {
+			execution := &ChannelGroupMonitorExecution{
+				RunId: current.RunningRunId, GroupName: group.GroupName, ConfigRevision: current.Revision,
+				Trigger: current.RunningTrigger, ProbeModel: group.ProbeModel,
+				Result: ChannelGroupMonitorResultTimeout, StartedAt: startedAt, FinishedAt: current.NextRunAt,
+				ErrorCode: ChannelGroupMonitorErrorTimeout, ErrorMessage: ChannelGroupMonitorTimeoutMessage,
+				CreatedAt: now,
+			}
+			if _, err := saveChannelGroupMonitorExecutionTx(tx, execution); err != nil {
+				return err
+			}
+		}
+		timedOut++
+		return nil
+	})
+	return timedOut, err
 }
 
 func RenewChannelGroupMonitorLease(claim ChannelGroupMonitorClaim, now int64) (bool, error) {
@@ -381,73 +465,78 @@ func CompleteChannelGroupMonitorClaim(claim ChannelGroupMonitorClaim, finishedAt
 		Updates(updates).Error
 }
 
-func SaveChannelGroupMonitorExecution(execution *ChannelGroupMonitorExecution) (bool, error) {
+func saveChannelGroupMonitorExecutionTx(tx *gorm.DB, execution *ChannelGroupMonitorExecution) (bool, error) {
 	if execution == nil || strings.TrimSpace(execution.RunId) == "" || strings.TrimSpace(execution.GroupName) == "" {
 		return false, errors.New("分组监控执行记录无效")
 	}
 	if execution.CreatedAt <= 0 {
 		execution.CreatedAt = execution.FinishedAt
 	}
-	created := false
+	inserted := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "run_id"}, {Name: "group_name"}},
+		DoNothing: true,
+	}).Create(execution)
+	if inserted.Error != nil {
+		return false, inserted.Error
+	}
+	if inserted.RowsAffected == 0 {
+		var existing ChannelGroupMonitorExecution
+		if err := tx.Where("run_id = ? AND group_name = ?", execution.RunId, execution.GroupName).First(&existing).Error; err != nil {
+			return false, err
+		}
+		*execution = existing
+		return false, nil
+	}
+
+	var state ChannelGroupMonitorState
+	stateErr := lockForUpdate(tx).Where("group_name = ?", execution.GroupName).First(&state).Error
+	if errors.Is(stateErr, gorm.ErrRecordNotFound) {
+		state = ChannelGroupMonitorState{GroupName: execution.GroupName, CreatedAt: execution.FinishedAt}
+	} else if stateErr != nil {
+		return false, stateErr
+	}
+	if execution.Result != ChannelGroupMonitorResultSkipped &&
+		(execution.FinishedAt > state.FinishedAt || (execution.FinishedAt == state.FinishedAt && execution.Id > state.ExecutionId)) {
+		state.ExecutionId = execution.Id
+		state.RunId = execution.RunId
+		state.ProbeModel = execution.ProbeModel
+		state.Result = execution.Result
+		state.RequestDispatched = execution.RequestDispatched
+		if execution.Result == ChannelGroupMonitorResultSuccess {
+			state.ResponseTimeMs = execution.ResponseTimeMs
+			state.FirstTokenMs = execution.FirstTokenMs
+			state.TPS = execution.TPS
+		} else {
+			state.ResponseTimeMs = nil
+			state.FirstTokenMs = nil
+			state.TPS = nil
+		}
+		state.FinishedAt = execution.FinishedAt
+		if execution.Result == ChannelGroupMonitorResultSuccess {
+			state.LastSuccessAt = execution.FinishedAt
+			state.ConsecutiveSuccess++
+			state.ConsecutiveFailure = 0
+		} else if execution.Result != ChannelGroupMonitorResultSkipped {
+			state.LastFailureAt = execution.FinishedAt
+			state.ConsecutiveFailure++
+			state.ConsecutiveSuccess = 0
+		}
+	}
+	state.UpdatedAt = max(state.UpdatedAt, execution.FinishedAt)
+	if state.Id == 0 {
+		return true, tx.Create(&state).Error
+	}
+	return true, tx.Save(&state).Error
+}
+
+func SaveChannelGroupMonitorExecution(execution *ChannelGroupMonitorExecution) (bool, error) {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
+	created := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		inserted := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "run_id"}, {Name: "group_name"}},
-			DoNothing: true,
-		}).Create(execution)
-		if inserted.Error != nil {
-			return inserted.Error
-		}
-		if inserted.RowsAffected == 0 {
-			var existing ChannelGroupMonitorExecution
-			if err := tx.Where("run_id = ? AND group_name = ?", execution.RunId, execution.GroupName).First(&existing).Error; err != nil {
-				return err
-			}
-			*execution = existing
-			return nil
-		}
-		created = true
-
-		var state ChannelGroupMonitorState
-		stateErr := lockForUpdate(tx).Where("group_name = ?", execution.GroupName).First(&state).Error
-		if errors.Is(stateErr, gorm.ErrRecordNotFound) {
-			state = ChannelGroupMonitorState{GroupName: execution.GroupName, CreatedAt: execution.FinishedAt}
-		} else if stateErr != nil {
-			return stateErr
-		}
-		if execution.Result != ChannelGroupMonitorResultSkipped &&
-			(execution.FinishedAt > state.FinishedAt || (execution.FinishedAt == state.FinishedAt && execution.Id > state.ExecutionId)) {
-			state.ExecutionId = execution.Id
-			state.RunId = execution.RunId
-			state.ProbeModel = execution.ProbeModel
-			state.Result = execution.Result
-			state.RequestDispatched = execution.RequestDispatched
-			if execution.Result == ChannelGroupMonitorResultSuccess {
-				state.ResponseTimeMs = execution.ResponseTimeMs
-				state.FirstTokenMs = execution.FirstTokenMs
-				state.TPS = execution.TPS
-			} else {
-				state.ResponseTimeMs = nil
-				state.FirstTokenMs = nil
-				state.TPS = nil
-			}
-			state.FinishedAt = execution.FinishedAt
-			if execution.Result == ChannelGroupMonitorResultSuccess {
-				state.LastSuccessAt = execution.FinishedAt
-				state.ConsecutiveSuccess++
-				state.ConsecutiveFailure = 0
-			} else if execution.Result != ChannelGroupMonitorResultSkipped {
-				state.LastFailureAt = execution.FinishedAt
-				state.ConsecutiveFailure++
-				state.ConsecutiveSuccess = 0
-			}
-		}
-		state.UpdatedAt = max(state.UpdatedAt, execution.FinishedAt)
-		if state.Id == 0 {
-			return tx.Create(&state).Error
-		}
-		return tx.Save(&state).Error
+		var err error
+		created, err = saveChannelGroupMonitorExecutionTx(tx, execution)
+		return err
 	})
 	return created, err
 }

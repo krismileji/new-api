@@ -35,6 +35,7 @@ describe('group monitor content', () => {
           local_failure: 0,
           unavailable: 0,
           skipped: 0,
+          timeout: 0,
           first_token_total_ms: 220,
           first_token_sample_count: 1,
           tps_total: 38.5,
@@ -86,6 +87,7 @@ describe('group monitor content', () => {
                   local_failure: 0,
                   unavailable: 0,
                   skipped: 0,
+                  timeout: 0,
                   result: 'success',
                 },
               ],
@@ -101,5 +103,28 @@ describe('group monitor content', () => {
     assert.ok(!markup.includes('分组监控暂未启用'))
     assert.match(markup, /data-slot="group-monitor-bucket"/)
     assert.match(markup, /data-group-monitor-window-value="60"/)
+  })
+
+  test('renders a timed out probe as a yellow warning', () => {
+    const markup = renderToStaticMarkup(
+      <GroupMonitorBucketDetails
+        bucket={{
+          started_at: 1_752_777_840,
+          success: 0,
+          upstream_failure: 0,
+          rate_limited: 0,
+          local_failure: 0,
+          unavailable: 0,
+          skipped: 0,
+          timeout: 1,
+          result: 'timeout',
+        }}
+        displayUnit='minute'
+        enabled
+      />
+    )
+
+    assert.ok(markup.includes('超时'))
+    assert.match(markup, /bg-warning/)
   })
 })
