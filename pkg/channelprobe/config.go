@@ -25,9 +25,9 @@ const (
 	DefaultMinDelayMs       = 500
 	DefaultMaxDelayMs       = 2_000
 	DefaultInputTokens      = 4_387
-	DefaultCacheWriteTokens = 172
-	DefaultCachedTokens     = 4_001
-	DefaultOutputTokens     = 12
+	DefaultCacheWriteTokens = 0
+	DefaultCachedTokens     = 3_840
+	DefaultOutputTokens     = 14
 
 	MaxMatchInputLength   = 4_096
 	MaxResponseTextLength = 16_384

@@ -8,10 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetResponseConfigKeepsLegacyDefaultsWhenOptionsAreMissing(t *testing.T) {
+func TestGetResponseConfigUsesProbeDefaultsWhenOptionsAreMissing(t *testing.T) {
 	useProbeResponseOptionMap(t, map[string]string{})
 
-	assert.Equal(t, DefaultResponseConfig(), GetResponseConfig())
+	config := GetResponseConfig()
+	assert.Equal(t, DefaultMatchInput, config.MatchInput)
+	assert.Equal(t, DefaultResponseText, config.ResponseText)
+	assert.Equal(t, DefaultMinDelayMs, config.MinDelayMs)
+	assert.Equal(t, DefaultMaxDelayMs, config.MaxDelayMs)
+	assert.Equal(t, 4_387, config.InputTokens)
+	assert.Equal(t, 0, config.CacheWriteTokens)
+	assert.Equal(t, 3_840, config.CachedTokens)
+	assert.Equal(t, 14, config.OutputTokens)
 }
 
 func TestGetResponseConfigReadsConfiguredResponseContract(t *testing.T) {

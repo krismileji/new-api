@@ -21,7 +21,7 @@
 Hi. What are you working on?
 ```
 
-Responses API 的非流式返回按请求模型填充响应字段，包括完整 usage、tool_usage、moderation 和惩罚参数，不固定为某个模型；流式返回按 Responses 协议依次发送 created、in_progress、output item、content part、text delta/done 和 completed 事件，并带连续 sequence_number。Chat Completions 返回 assistant message。两种接口同时支持流式和非流式请求，usage 的输入、缓存写、缓存命中和输出 Token 都可配置，总 Token 自动按输入加输出计算；默认值分别为 `4387`、`172`、`4001`、`12`，总计 `4399`。
+Responses API 的非流式返回按请求模型填充响应字段，包括完整 usage、tool_usage、moderation 和惩罚参数，不固定为某个模型；流式返回按 Responses 协议依次发送 created、in_progress、output item、content part、text delta/done 和 completed 事件，并带连续 sequence_number。Chat Completions 返回 assistant message。两种接口同时支持流式和非流式请求，usage 的输入、缓存写、缓存命中和输出 Token 都可配置，总 Token 自动按输入加输出计算；默认值分别为 `4387`、`0`、`3840`、`14`，总计 `4401`。
 
 配置对应的系统 Option 和默认值如下：
 
@@ -32,9 +32,9 @@ Responses API 的非流式返回按请求模型填充响应字段，包括完整
 | 最小延迟 | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000` 毫秒，不能大于最大延迟 |
 | 最大延迟 | `ChannelMonitorProbeResponseMaxDelayMilliseconds` | `2000` | `0..600000` 毫秒，不能小于最小延迟 |
 | 输入 Token | `ChannelMonitorProbeResponseInputTokens` | `4387` | `0..1000000` |
-| 缓存写 Token | `ChannelMonitorProbeResponseCacheWriteTokens` | `172` | `0..1000000` |
-| 缓存命中 Token | `ChannelMonitorProbeResponseCachedTokens` | `4001` | `0..1000000` |
-| 输出 Token | `ChannelMonitorProbeResponseOutputTokens` | `12` | `0..1000000` |
+| 缓存写 Token | `ChannelMonitorProbeResponseCacheWriteTokens` | `0` | `0..1000000` |
+| 缓存命中 Token | `ChannelMonitorProbeResponseCachedTokens` | `3840` | `0..1000000` |
+| 输出 Token | `ChannelMonitorProbeResponseOutputTokens` | `14` | `0..1000000` |
 
 等待过程监听客户端请求上下文。客户端断开后立即停止，不继续占用计时器或写响应。
 
