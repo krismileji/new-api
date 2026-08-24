@@ -1,10 +1,14 @@
 package model
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,27 +34,44 @@ func setupDirtyLogicalSelectionTest(t *testing.T) *gorm.DB {
 	))
 
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalRedisClient := common.RDB
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	common.RDB = redisClient
 	originalRuntimeRouteIndex := channelSmartScheduleRuntimeRouteIndexCache.Load()
 	channelSyncLock.Lock()
 	originalGroupCache := group2model2channels
 	originalChannelCache := channelsIDM
 	originalAdvancedCustomCache := channel2advancedCustomConfig
 	originalRouteCache := channelSmartScheduleRouteCache
+	originalRouteCacheDirty := channelSmartScheduleRouteCacheDirty
 	originalLogicalRoutingCache := channelLogicalSmartScheduleRoutingCache
 	originalLogicalRuntime := logicalChannelRuntimeCache
 	originalLogicalDirty := logicalChannelRuntimeDirty
+	originalSnapshotMetadata := channelSmartScheduleLocalSnapshotMetadataCache
+	originalSnapshotDirtySince := channelSmartScheduleRouteSnapshotDirtySince
+	originalSnapshotDirtyGeneration := channelSmartScheduleRouteSnapshotDirtyGeneration
+	originalSnapshotDirtyWatermark := channelSmartScheduleRouteSnapshotDirtyWatermark
 	channelSyncLock.Unlock()
 	common.MemoryCacheEnabled = true
 	t.Cleanup(func() {
+		_ = StopChannelSmartScheduleRefreshWorker(context.Background())
+		common.RDB = originalRedisClient
+		assert.NoError(t, redisClient.Close())
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 		channelSyncLock.Lock()
 		group2model2channels = originalGroupCache
 		channelsIDM = originalChannelCache
 		channel2advancedCustomConfig = originalAdvancedCustomCache
 		channelSmartScheduleRouteCache = originalRouteCache
+		channelSmartScheduleRouteCacheDirty = originalRouteCacheDirty
 		channelLogicalSmartScheduleRoutingCache = originalLogicalRoutingCache
 		logicalChannelRuntimeCache = originalLogicalRuntime
 		logicalChannelRuntimeDirty = originalLogicalDirty
+		channelSmartScheduleLocalSnapshotMetadataCache = originalSnapshotMetadata
+		channelSmartScheduleRouteSnapshotDirtySince = originalSnapshotDirtySince
+		channelSmartScheduleRouteSnapshotDirtyGeneration = originalSnapshotDirtyGeneration
+		channelSmartScheduleRouteSnapshotDirtyWatermark = originalSnapshotDirtyWatermark
 		channelSyncLock.Unlock()
 		channelSmartScheduleRuntimeRouteIndexCache.Store(originalRuntimeRouteIndex)
 	})
@@ -102,6 +123,13 @@ func seedDirtyLogicalSelectionTest(t *testing.T, db *gorm.DB) {
 	require.False(t, logicalChannelRuntimeDirty)
 	require.NotNil(t, logicalChannelRuntimeCache)
 	channelSyncLock.RUnlock()
+	StartChannelSmartScheduleRefreshWorker()
+	require.Eventually(t, func() bool {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		return channelSmartScheduleLocalSnapshotMetadataCache != nil &&
+			channelSmartScheduleLocalSnapshotMetadataCache.FromRedis
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func replaceDirtyLogicalSelectionRelation(t *testing.T, db *gorm.DB) {
@@ -147,13 +175,31 @@ func assertDirtyLogicalSelectionMatchesDatabase(t *testing.T, wantChannelID int)
 	assert.Equal(t, selectedFromDatabase.Id, selected.Id)
 }
 
+func waitForDirtyLogicalSelection(t *testing.T, wantChannelID int) {
+	t.Helper()
+	var selected *Channel
+	var err error
+	require.Eventually(t, func() bool {
+		selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+		return err == nil && selected != nil && selected.Id == wantChannelID
+	}, 2*time.Second, 10*time.Millisecond)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, wantChannelID, selected.Id)
+}
+
 func TestDirtyLogicalSelectionRefreshesReplacedRelationBeforeRouting(t *testing.T) {
 	db := setupDirtyLogicalSelectionTest(t)
 	seedDirtyLogicalSelectionTest(t, db)
 	replaceDirtyLogicalSelectionRelation(t, db)
 	InvalidateLogicalChannelRuntimeCache()
 
-	assertDirtyLogicalSelectionMatchesDatabase(t, dirtySelectionNewMember)
+	// The request path immediately serves the previous complete snapshot.
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, dirtySelectionOldMember, selected.Id)
+	waitForDirtyLogicalSelection(t, dirtySelectionNewMember)
 }
 
 func TestDirtyLogicalSelectionRefreshesDisabledGroupBeforeRouting(t *testing.T) {
@@ -163,7 +209,11 @@ func TestDirtyLogicalSelectionRefreshesDisabledGroupBeforeRouting(t *testing.T) 
 		Updates(map[string]any{"status": ChannelLogicalGroupStatusDisabled, "revision": 2}).Error)
 	InvalidateLogicalChannelRuntimeCache()
 
-	assertDirtyLogicalSelectionMatchesDatabase(t, dirtySelectionRetained)
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, dirtySelectionOldMember, selected.Id)
+	waitForDirtyLogicalSelection(t, dirtySelectionRetained)
 }
 
 func TestDirtyLogicalSelectionRefreshesDeletedGroupBeforeRouting(t *testing.T) {
@@ -182,10 +232,16 @@ func TestDirtyLogicalSelectionRefreshesDeletedGroupBeforeRouting(t *testing.T) {
 	}))
 	InvalidateLogicalChannelRuntimeCache()
 
-	assertDirtyLogicalSelectionMatchesDatabase(t, dirtySelectionRetained)
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, dirtySelectionOldMember, selected.Id)
+	channelSyncLock.RLock()
+	assert.True(t, logicalChannelRuntimeDirty)
+	channelSyncLock.RUnlock()
 }
 
-func TestDirtyLogicalSelectionUsesCurrentDatabaseRelationWhenRefreshFails(t *testing.T) {
+func TestDirtyLogicalSelectionKeepsLastCompleteSnapshotWhenRefreshFails(t *testing.T) {
 	db := setupDirtyLogicalSelectionTest(t)
 	seedDirtyLogicalSelectionTest(t, db)
 	replaceDirtyLogicalSelectionRelation(t, db)
@@ -194,7 +250,10 @@ func TestDirtyLogicalSelectionUsesCurrentDatabaseRelationWhenRefreshFails(t *tes
 	}).Error)
 	InvalidateLogicalChannelRuntimeCache()
 
-	assertDirtyLogicalSelectionMatchesDatabase(t, dirtySelectionNewMember)
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, dirtySelectionOldMember, selected.Id)
 	channelSyncLock.RLock()
 	assert.True(t, logicalChannelRuntimeDirty)
 	channelSyncLock.RUnlock()

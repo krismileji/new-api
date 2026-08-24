@@ -40,6 +40,14 @@ func TestChannelMonitorRealtimeMetadataUsesRedisObservability(t *testing.T) {
 	require.NoError(t, client.HSet(
 		ctx,
 		service.ChannelMonitorRedisObservabilityKey,
+		service.ChannelMonitorRedisObservabilityFieldRuntimeMarkerFailureCount,
+		4,
+		service.ChannelMonitorRedisObservabilityFieldScheduleMarkerFailureCount,
+		5,
+		service.ChannelMonitorRedisObservabilityFieldQuarantineCount,
+		6,
+		service.ChannelMonitorRedisObservabilityFieldLastQuarantinedAt,
+		1_750_000_000,
 		service.ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureCount,
 		2,
 		service.ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureActive,
@@ -57,10 +65,16 @@ func TestChannelMonitorRealtimeMetadataUsesRedisObservability(t *testing.T) {
 	assert.Zero(t, metadata.PendingCount)
 	assert.Zero(t, metadata.QueueDepth)
 	assert.Zero(t, metadata.ConsumerLagSeconds)
+	assert.Equal(t, int64(4), metadata.RuntimeMarkerFailureCount)
+	assert.Equal(t, int64(5), metadata.ScheduleMarkerFailureCount)
+	assert.Equal(t, int64(6), metadata.QuarantineCount)
+	assert.Equal(t, int64(1_750_000_000), metadata.LastQuarantinedAt)
 	assert.Equal(t, int64(2), metadata.MarkerReleaseFailureCount)
 	assert.False(t, metadata.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), metadata.StreamTrimFailureCount)
 	assert.False(t, metadata.StreamTrimFailureActive)
+	require.Contains(t, metadata.RedisPoolStats, common.RedisClientRoleMonitorRead)
+	assert.False(t, metadata.RedisPoolStats[common.RedisClientRoleMonitorRead].Unavailable)
 	assert.Empty(t, metadata.DegradedReasons)
 	assert.False(t, metadata.RealtimeDegraded)
 
@@ -70,7 +84,11 @@ func TestChannelMonitorRealtimeMetadataUsesRedisObservability(t *testing.T) {
 		service.ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureActive,
 		1,
 	).Err())
-	degraded := channelMonitorRealtimeMetadata(0)
+	var degraded channelMonitorRealtimeResponseMetadata
+	require.Eventually(t, func() bool {
+		degraded = channelMonitorRealtimeMetadata(0)
+		return degraded.MarkerReleaseFailureActive
+	}, 2*time.Second, 10*time.Millisecond)
 	assert.True(t, degraded.MarkerReleaseFailureActive)
 	assert.Equal(t, []string{service.ChannelMonitorRedisDegradedReasonMarkerReleaseFailure}, degraded.DegradedReasons)
 	assert.True(t, degraded.RealtimeDegraded)

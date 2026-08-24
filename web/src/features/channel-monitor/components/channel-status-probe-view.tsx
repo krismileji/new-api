@@ -87,7 +87,6 @@ import {
   getChannelMonitorActiveRefetchInterval,
 } from '../lib/query-options'
 import {
-  isChannelStatusProbeActive,
   isChannelStatusProbeIssue,
   loadChannelStatusProbeSort,
   matchesChannelStatusProbeGroup,
@@ -100,6 +99,7 @@ import type {
   ChannelStatusProbeHealth,
   ChannelStatusProbeSortMode,
 } from '../types'
+import { ChannelMonitorSnapshotStatus } from './channel-monitor-snapshot-status'
 import { ChannelStatusProbeCard } from './channel-status-probe-card'
 
 const LazyChannelStatusProbeConfigSheet = lazy(() =>
@@ -174,15 +174,8 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
     placeholderData: keepPreviousData,
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: (currentQuery) =>
-      currentQuery.state.data?.data.channels.some(isChannelStatusProbeActive) ??
-      false,
-    refetchInterval: (currentQuery) =>
-      getChannelMonitorActiveRefetchInterval(
-        currentQuery.state.data?.data.channels.some(
-          isChannelStatusProbeActive
-        ) ?? false
-      ),
+    refetchOnMount: false,
+    refetchInterval: () => getChannelMonitorActiveRefetchInterval(true),
   })
   const channels = query.data?.data.channels ?? EMPTY_CHANNELS
   const enabledChannels = useMemo(
@@ -411,6 +404,15 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
 
   return (
     <div className='flex flex-col gap-4'>
+      {query.data?.data ? (
+        <ChannelMonitorSnapshotStatus
+          generatedAt={query.data.data.generated_at}
+          eventWatermark={query.data.data.event_watermark}
+          snapshotAgeSeconds={query.data.data.snapshot_age_seconds}
+          stale={query.data.data.stale}
+          className='justify-end'
+        />
+      ) : null}
       <div className='flex flex-col items-end gap-2'>
         <div
           className='no-scrollbar w-full overflow-x-auto pb-0.5'

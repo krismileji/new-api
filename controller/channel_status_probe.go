@@ -98,6 +98,12 @@ type channelStatusProbeChannelResponse struct {
 
 type channelStatusProbeOverviewResponse struct {
 	ServerNow          int64                               `json:"server_now"`
+	SnapshotVersion    int                                 `json:"snapshot_version"`
+	SnapshotRevision   uint64                              `json:"snapshot_revision"`
+	EventWatermark     uint64                              `json:"event_watermark"`
+	GeneratedAt        int64                               `json:"generated_at"`
+	SnapshotAgeSeconds int64                               `json:"snapshot_age_seconds"`
+	Stale              bool                                `json:"stale"`
 	ScanIntervalSecond int                                 `json:"scan_interval_seconds"`
 	Summary            map[string]int                      `json:"summary"`
 	Groups             []string                            `json:"groups"`
@@ -387,6 +393,10 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 	selectedModel := strings.TrimSpace(c.Query("model"))
 	response, err := getChannelStatusProbeOverviewCached(selectedModel)
 	if err != nil {
+		if errors.Is(err, errChannelStatusProbeOverviewSnapshotUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}

@@ -311,6 +311,7 @@ func TestRecordManualChannelSmartScheduleProbeFailureProtectsWithoutMinimumSampl
 
 func TestManualChannelTestRecordsOneSharedSampleWithoutDuplicateConsumeLog(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	startChannelMonitorEventWriterForTest(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
 	policy := manualProbeTestPolicy("default", []string{"model-a"}, channelMonitorSmartScheduleSampleProbe)

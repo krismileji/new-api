@@ -37,7 +37,6 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
-	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	includeMetrics := true
 	if rawMetrics, configured := c.GetQuery("metrics"); configured {
 		parsed, err := strconv.ParseBool(rawMetrics)
@@ -47,6 +46,10 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		includeMetrics = parsed
 	}
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSchedule, GetChannelMonitorSmartScheduleRoutes) {
+		return
+	}
+	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	settings := getChannelMonitorSettings()
 	var err error
 	var routes []model.ChannelSmartScheduleRoute
@@ -88,6 +91,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	generatedAt := requestedAt.Unix()
 	stabilityWindowMinutes := settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes()
 	responseRoutes := channelSmartScheduleRouteResponses(routes)
+	routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 	if !loadMetrics {
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                  generatedAt,
@@ -105,6 +109,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 			"stability_metrics_available":   false,
 			"stability_items":               []model.ChannelMonitorRouteStabilityMetric{},
 			"execution_snapshot_metrics":    executionSnapshotMetrics,
+			"route_snapshot":                routeSnapshotStatus,
 		})
 		return
 	}
@@ -220,18 +225,37 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		"redis_available":               redisStatus.RedisAvailable,
 		"redis_consumer_running":        redisStatus.RedisConsumerRunning,
 		"pending_count":                 redisStatus.PendingCount,
+		"writer_queue_depth":            redisStatus.WriterQueueDepth,
+		"writer_queue_capacity":         redisStatus.WriterQueueCapacity,
+		"writer_queued_events":          redisStatus.WriterQueuedEvents,
+		"writer_dropped_events":         redisStatus.WriterDroppedEvents,
+		"writer_retry_events":           redisStatus.WriterRetryEvents,
+		"writer_oldest_queued_at":       redisStatus.WriterOldestQueuedAt,
+		"writer_queue_age_seconds":      redisStatus.WriterQueueAgeSeconds,
 		"oldest_pending_at":             redisStatus.OldestPendingAt,
 		"consumer_lag_seconds":          redisStatus.ConsumerLagSeconds,
 		"last_published_at":             redisStatus.LastPublishedAt,
 		"last_processed_at":             redisStatus.LastProcessedAt,
 		"retry_count":                   redisStatus.RetryCount,
 		"takeover_count":                redisStatus.TakeoverCount,
+		"runtime_marker_failure_count":  redisStatus.RuntimeMarkerFailureCount,
+		"schedule_marker_failure_count": redisStatus.ScheduleMarkerFailureCount,
+		"cost_stream_pending_count":     redisStatus.CostStreamPendingCount,
+		"cost_stream_unread_count":      redisStatus.CostStreamUnreadCount,
+		"cost_outbox_pending_count":     redisStatus.CostOutboxPendingCount,
+		"cost_outbox_oldest_pending_at": redisStatus.CostOutboxOldestPendingAt,
+		"cost_outbox_retry_count":       redisStatus.CostOutboxRetryCount,
+		"cost_ledger_failed_count":      redisStatus.CostLedgerFailedCount,
+		"cost_publish_failed_count":     redisStatus.CostPublishFailedCount,
+		"cost_dead_letter_count":        redisStatus.CostDeadLetterCount,
 		"quarantine_count":              redisStatus.QuarantineCount,
 		"last_quarantined_at":           redisStatus.LastQuarantinedAt,
 		"marker_release_failure_count":  redisStatus.MarkerReleaseFailureCount,
 		"marker_release_failure_active": redisStatus.MarkerReleaseFailureActive,
 		"stream_trim_failure_count":     redisStatus.StreamTrimFailureCount,
 		"stream_trim_failure_active":    redisStatus.StreamTrimFailureActive,
+		"redis_pool_stats":              redisStatus.RedisPoolStats,
+		"route_snapshot":                routeSnapshotStatus,
 		"realtime_degraded":             windowIncomplete || redisStatus.RealtimeDegraded,
 		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
 		"stability_window_minutes":      stabilityWindowMinutes,

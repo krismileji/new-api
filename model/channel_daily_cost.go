@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 
@@ -271,12 +272,14 @@ func addChannelDailyCostWithCategories(tx *gorm.DB, channelId int, occurredAt in
 	if err != nil || updated {
 		return err
 	}
-	return errors.New("渠道日成本累计超过 int64 范围")
+	return fmt.Errorf("%w: 渠道日成本累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
 }
 
 func updateChannelDailyCostIfWithinBounds(tx *gorm.DB, channelId int, dayStart int64, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, groupProbeCostNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) (bool, error) {
 	update := tx.Model(&ChannelDailyCost{}).
 		Where("channel_id = ? AND day_start = ?", channelId, dayStart).
+		Where("cost_nano_cny >= 0 AND probe_cost_nano_cny >= 0 AND group_probe_cost_nano_cny >= 0 AND model_detection_cost_nano_cny >= 0").
+		Where("settled_count >= 0 AND unresolved_count >= 0").
 		Where("cost_nano_cny <= ?", math.MaxInt64-costNanoCNY).
 		Where("probe_cost_nano_cny <= ?", math.MaxInt64-probeCostNanoCNY).
 		Where("group_probe_cost_nano_cny <= ?", math.MaxInt64-groupProbeCostNanoCNY).

@@ -66,7 +66,6 @@ import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
-  getChannelMonitorActiveRefetchInterval,
 } from '../lib/query-options'
 import {
   getLatestCompletedChannelMonitorTaskTime,
@@ -487,11 +486,6 @@ export function ChannelMonitorTaskHistoryDialog(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: (currentQuery) =>
-      getChannelMonitorActiveRefetchInterval(
-        currentQuery.state.data?.data.items.some(isActiveChannelMonitorTask) ??
-          false
-      ),
   })
   const tasks = query.data?.data.items ?? []
   const total = query.data?.data.total ?? 0

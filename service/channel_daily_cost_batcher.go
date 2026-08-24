@@ -172,6 +172,7 @@ func (b *channelDailyCostBatcher) enqueueResult(delta model.ChannelDailyCostDelt
 
 func channelDailyCostDeltaIsValid(delta model.ChannelDailyCostDelta) bool {
 	return delta.ChannelId > 0 &&
+		delta.OccurredAt > 0 &&
 		delta.CostNanoCNY >= 0 &&
 		delta.ProbeCostNanoCNY >= 0 &&
 		delta.ProbeCostNanoCNY <= delta.CostNanoCNY &&

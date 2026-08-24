@@ -220,10 +220,11 @@ type ChannelMonitorRedisSharedProjection struct {
 var _ ChannelMonitorRedisEventHandler = (*ChannelMonitorRedisSharedProjection)(nil)
 
 func NewChannelMonitorRedisSharedProjection() (*ChannelMonitorRedisSharedProjection, error) {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled || client == nil {
 		return nil, ErrChannelMonitorRedisSharedProjectionUnavailable
 	}
-	return NewChannelMonitorRedisSharedProjectionWithClient(common.RDB), nil
+	return NewChannelMonitorRedisSharedProjectionWithClient(client), nil
 }
 
 func NewChannelMonitorRedisSharedProjectionWithClient(client *redis.Client) *ChannelMonitorRedisSharedProjection {

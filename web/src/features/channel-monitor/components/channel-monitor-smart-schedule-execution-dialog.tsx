@@ -73,7 +73,6 @@ import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-  getChannelMonitorActiveRefetchInterval,
 } from '../lib/query-options'
 import { formatChannelMonitorSmartScheduleFailureStage } from '../lib/smart-schedule-execution'
 import { isActiveChannelMonitorTask } from '../lib/task-status'
@@ -288,11 +287,6 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: (currentQuery) =>
-      getChannelMonitorActiveRefetchInterval(
-        currentQuery.state.data?.data.items.some(isActiveChannelMonitorTask) ??
-          false
-      ),
   })
   const tasks = useMemo(
     () => query.data?.data.items ?? [],

@@ -108,6 +108,7 @@ func CreateLogicalChannelGroup(name, remark string, status int, inputs []Logical
 		return nil, err
 	}
 	InvalidateLogicalChannelRuntimeCache()
+	NotifyChannelModelDetectionOverviewChanged()
 	return result, nil
 }
 
@@ -255,6 +256,7 @@ func ReplaceLogicalChannelGroupMembers(id, expectedRevision int64, inputs []Logi
 		return nil, err
 	}
 	InvalidateLogicalChannelRuntimeCache()
+	NotifyChannelModelDetectionOverviewChanged()
 	return result, nil
 }
 
@@ -309,6 +311,7 @@ func UpdateLogicalChannelGroupStatus(id, expectedRevision int64, status int) (*L
 		return nil, err
 	}
 	InvalidateLogicalChannelRuntimeCache()
+	NotifyChannelModelDetectionOverviewChanged()
 	return result, nil
 }
 
@@ -354,6 +357,7 @@ func DeleteLogicalChannelGroup(id, expectedRevision int64) error {
 		return err
 	}
 	InvalidateLogicalChannelRuntimeCache()
+	NotifyChannelModelDetectionOverviewChanged()
 	return nil
 }
 

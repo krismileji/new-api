@@ -41,40 +41,63 @@ type channelMonitorDailySuccessChartItem struct {
 }
 
 type channelMonitorTodaySuccessOverview struct {
-	Days                       int                                       `json:"days"`
-	GeneratedAt                int64                                     `json:"generated_at"`
-	DataCutoffAt               int64                                     `json:"data_cutoff_at"`
-	ProcessedAt                int64                                     `json:"processed_at"`
-	ProjectionStartedAt        int64                                     `json:"projection_started_at"`
-	EventWatermark             uint64                                    `json:"event_watermark"`
-	QueueDepth                 int                                       `json:"queue_depth"`
-	RedisStatus                string                                    `json:"redis_status"`
-	RedisAvailable             bool                                      `json:"redis_available"`
-	RedisConsumerRunning       bool                                      `json:"redis_consumer_running"`
-	PendingCount               int64                                     `json:"pending_count"`
-	OldestPendingAt            int64                                     `json:"oldest_pending_at"`
-	ConsumerLagSeconds         int64                                     `json:"consumer_lag_seconds"`
-	LastPublishedAt            int64                                     `json:"last_published_at"`
-	LastProcessedAt            int64                                     `json:"last_processed_at"`
-	RetryCount                 int64                                     `json:"retry_count"`
-	TakeoverCount              int64                                     `json:"takeover_count"`
-	MarkerReleaseFailureCount  int64                                     `json:"marker_release_failure_count"`
-	MarkerReleaseFailureActive bool                                      `json:"marker_release_failure_active"`
-	StreamTrimFailureCount     int64                                     `json:"stream_trim_failure_count"`
-	StreamTrimFailureActive    bool                                      `json:"stream_trim_failure_active"`
-	RealtimeDegraded           bool                                      `json:"realtime_degraded"`
-	DayStart                   int64                                     `json:"day_start"`
-	DetailDate                 string                                    `json:"detail_date"`
-	SuccessMetricsAvailable    bool                                      `json:"success_metrics_available"`
-	CacheWriteMetricsAvailable bool                                      `json:"cache_write_metrics_available"`
-	Summary                    model.ChannelMonitorSuccessSummary        `json:"summary"`
-	ChannelItems               []channelMonitorTodaySuccessChannel       `json:"channel_items"`
-	APIKeyItems                []model.ChannelMonitorSuccessAPIKeyMetric `json:"api_key_items"`
-	CacheWriteItems            []channelMonitorTodayCacheWriteChannel    `json:"cache_write_items"`
-	ChartItems                 []channelMonitorDailySuccessChartItem     `json:"chart_items"`
+	Days                       int                                                    `json:"days"`
+	GeneratedAt                int64                                                  `json:"generated_at"`
+	DataCutoffAt               int64                                                  `json:"data_cutoff_at"`
+	ProcessedAt                int64                                                  `json:"processed_at"`
+	ProjectionStartedAt        int64                                                  `json:"projection_started_at"`
+	EventWatermark             uint64                                                 `json:"event_watermark"`
+	QueueDepth                 int                                                    `json:"queue_depth"`
+	RedisStatus                string                                                 `json:"redis_status"`
+	RedisAvailable             bool                                                   `json:"redis_available"`
+	RedisConsumerRunning       bool                                                   `json:"redis_consumer_running"`
+	PendingCount               int64                                                  `json:"pending_count"`
+	WriterQueueDepth           int                                                    `json:"writer_queue_depth"`
+	WriterQueueCapacity        int                                                    `json:"writer_queue_capacity"`
+	WriterQueuedEvents         int64                                                  `json:"writer_queued_events"`
+	WriterDroppedEvents        int64                                                  `json:"writer_dropped_events"`
+	WriterRetryEvents          int64                                                  `json:"writer_retry_events"`
+	WriterOldestQueuedAt       int64                                                  `json:"writer_oldest_queued_at"`
+	WriterQueueAgeSeconds      int64                                                  `json:"writer_queue_age_seconds"`
+	OldestPendingAt            int64                                                  `json:"oldest_pending_at"`
+	ConsumerLagSeconds         int64                                                  `json:"consumer_lag_seconds"`
+	LastPublishedAt            int64                                                  `json:"last_published_at"`
+	LastProcessedAt            int64                                                  `json:"last_processed_at"`
+	RetryCount                 int64                                                  `json:"retry_count"`
+	TakeoverCount              int64                                                  `json:"takeover_count"`
+	QuarantineCount            int64                                                  `json:"quarantine_count"`
+	LastQuarantinedAt          int64                                                  `json:"last_quarantined_at"`
+	RuntimeMarkerFailureCount  int64                                                  `json:"runtime_marker_failure_count"`
+	ScheduleMarkerFailureCount int64                                                  `json:"schedule_marker_failure_count"`
+	CostStreamPendingCount     int64                                                  `json:"cost_stream_pending_count"`
+	CostStreamUnreadCount      int64                                                  `json:"cost_stream_unread_count"`
+	CostOutboxPendingCount     int64                                                  `json:"cost_outbox_pending_count"`
+	CostOutboxOldestPendingAt  int64                                                  `json:"cost_outbox_oldest_pending_at"`
+	CostOutboxRetryCount       int64                                                  `json:"cost_outbox_retry_count"`
+	CostLedgerFailedCount      int64                                                  `json:"cost_ledger_failed_count"`
+	CostPublishFailedCount     int64                                                  `json:"cost_publish_failed_count"`
+	CostDeadLetterCount        int64                                                  `json:"cost_dead_letter_count"`
+	MarkerReleaseFailureCount  int64                                                  `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive bool                                                   `json:"marker_release_failure_active"`
+	StreamTrimFailureCount     int64                                                  `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive    bool                                                   `json:"stream_trim_failure_active"`
+	RedisPoolStats             map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
+	RealtimeDegraded           bool                                                   `json:"realtime_degraded"`
+	DayStart                   int64                                                  `json:"day_start"`
+	DetailDate                 string                                                 `json:"detail_date"`
+	SuccessMetricsAvailable    bool                                                   `json:"success_metrics_available"`
+	CacheWriteMetricsAvailable bool                                                   `json:"cache_write_metrics_available"`
+	Summary                    model.ChannelMonitorSuccessSummary                     `json:"summary"`
+	ChannelItems               []channelMonitorTodaySuccessChannel                    `json:"channel_items"`
+	APIKeyItems                []model.ChannelMonitorSuccessAPIKeyMetric              `json:"api_key_items"`
+	CacheWriteItems            []channelMonitorTodayCacheWriteChannel                 `json:"cache_write_items"`
+	ChartItems                 []channelMonitorDailySuccessChartItem                  `json:"chart_items"`
 }
 
 func GetChannelMonitorTodaySuccess(c *gin.Context) {
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSuccess, GetChannelMonitorTodaySuccess) {
+		return
+	}
 	days := 1
 	if rawDays := c.Query("days"); rawDays != "" {
 		parsedDays, err := strconv.Atoi(rawDays)
@@ -126,16 +149,36 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	overview.RedisAvailable = metadata.RedisAvailable
 	overview.RedisConsumerRunning = metadata.RedisConsumerRunning
 	overview.PendingCount = metadata.PendingCount
+	overview.WriterQueueDepth = metadata.WriterQueueDepth
+	overview.WriterQueueCapacity = metadata.WriterQueueCapacity
+	overview.WriterQueuedEvents = metadata.WriterQueuedEvents
+	overview.WriterDroppedEvents = metadata.WriterDroppedEvents
+	overview.WriterRetryEvents = metadata.WriterRetryEvents
+	overview.WriterOldestQueuedAt = metadata.WriterOldestQueuedAt
+	overview.WriterQueueAgeSeconds = metadata.WriterQueueAgeSeconds
 	overview.OldestPendingAt = metadata.OldestPendingAt
 	overview.ConsumerLagSeconds = metadata.ConsumerLagSeconds
 	overview.LastPublishedAt = metadata.LastPublishedAt
 	overview.LastProcessedAt = metadata.LastProcessedAt
 	overview.RetryCount = metadata.RetryCount
 	overview.TakeoverCount = metadata.TakeoverCount
+	overview.QuarantineCount = metadata.QuarantineCount
+	overview.LastQuarantinedAt = metadata.LastQuarantinedAt
+	overview.RuntimeMarkerFailureCount = metadata.RuntimeMarkerFailureCount
+	overview.ScheduleMarkerFailureCount = metadata.ScheduleMarkerFailureCount
+	overview.CostStreamPendingCount = metadata.CostStreamPendingCount
+	overview.CostStreamUnreadCount = metadata.CostStreamUnreadCount
+	overview.CostOutboxPendingCount = metadata.CostOutboxPendingCount
+	overview.CostOutboxOldestPendingAt = metadata.CostOutboxOldestPendingAt
+	overview.CostOutboxRetryCount = metadata.CostOutboxRetryCount
+	overview.CostLedgerFailedCount = metadata.CostLedgerFailedCount
+	overview.CostPublishFailedCount = metadata.CostPublishFailedCount
+	overview.CostDeadLetterCount = metadata.CostDeadLetterCount
 	overview.MarkerReleaseFailureCount = metadata.MarkerReleaseFailureCount
 	overview.MarkerReleaseFailureActive = metadata.MarkerReleaseFailureActive
 	overview.StreamTrimFailureCount = metadata.StreamTrimFailureCount
 	overview.StreamTrimFailureActive = metadata.StreamTrimFailureActive
+	overview.RedisPoolStats = metadata.RedisPoolStats
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 
 	todayMetrics := channelMonitorRealtimeTodaySuccessMetrics(todayView)

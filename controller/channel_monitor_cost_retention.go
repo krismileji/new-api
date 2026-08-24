@@ -485,6 +485,11 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
+	if modelDetectionDeleted.CostEventRowsDeleted > 0 ||
+		modelDetectionDeleted.ExecutionRowsDeleted > 0 ||
+		modelDetectionDeleted.RunRowsDeleted > 0 {
+		service.NotifyChannelModelDetectionOverviewChanged()
+	}
 	result.BudgetExhausted = modelDetectionDeleted.Incomplete
 	historyDeleted, err := model.DeleteChannelMonitorHistoryBeforeWithTaskCutoffs(
 		ctx,

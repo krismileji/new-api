@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -332,9 +333,13 @@ func TestTaskInitialCostPersistenceFailureEmitsUnresolvedSuccess(t *testing.T) {
 		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
 	}
 	status := EmitChannelMonitorSuccessEvent(ctx, info, ChannelMonitorSuccessEventInput{CostEventId: "task:persistence-failure"})
-	require.Equal(t, ChannelMonitorEventPublishStatusPublished, status)
-	messages, err := client.XRange(context.Background(), ChannelMonitorRedisEventStream, "-", "+").Result()
-	require.NoError(t, err)
+	require.Equal(t, ChannelMonitorEventPublishStatusQueued, status)
+	var messages []redis.XMessage
+	require.Eventually(t, func() bool {
+		var err error
+		messages, err = client.XRange(context.Background(), ChannelMonitorRedisEventStream, "-", "+").Result()
+		return err == nil && len(messages) == 1
+	}, time.Second, time.Millisecond)
 	require.Len(t, messages, 1)
 	event, err := model.UnmarshalChannelMonitorEvent([]byte(fmt.Sprint(messages[0].Values[ChannelMonitorRedisEventFieldPayload])))
 	require.NoError(t, err)

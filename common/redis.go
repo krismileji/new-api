@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -14,7 +15,170 @@ import (
 )
 
 var RDB *redis.Client
+
+// RDBMonitorWrite, RDBMonitorRead and RDBMonitorConsumer are deliberately
+// separate clients so monitor traffic cannot consume the user-request pool.
+// They are initialized from the same Redis URL as RDB with role-specific pool
+// sizes. The role getters below fall back to RDB for tests and older startup
+// paths that only initialize the legacy client.
+var (
+	RDBMonitorWrite    *redis.Client
+	RDBMonitorRead     *redis.Client
+	RDBMonitorConsumer *redis.Client
+)
 var RedisEnabled = true
+
+// RedisClientRole identifies one independently observable Redis connection
+// pool. User remains the legacy/default client used by application paths.
+type RedisClientRole string
+
+const (
+	RedisClientRoleUser            RedisClientRole = "user"
+	RedisClientRoleMonitorWrite    RedisClientRole = "monitor_write"
+	RedisClientRoleMonitorRead     RedisClientRole = "monitor_read"
+	RedisClientRoleMonitorConsumer RedisClientRole = "monitor_consumer"
+)
+
+// RedisClientPoolStats is a point-in-time snapshot of one role's go-redis
+// connection pool. The counters are cumulative since process start (as
+// provided by redis.PoolStats); callers should derive rates when graphing.
+type RedisClientPoolStats struct {
+	Role                      RedisClientRole `json:"role"`
+	PoolSize                  int             `json:"pool_size"`
+	TotalConns                uint32          `json:"total_conns"`
+	IdleConns                 uint32          `json:"idle_conns"`
+	StaleConns                uint32          `json:"stale_conns"`
+	Hits                      uint32          `json:"hits"`
+	Misses                    uint32          `json:"misses"`
+	Timeouts                  uint32          `json:"timeouts"`
+	CommandCount              uint64          `json:"command_count"`
+	CommandErrorCount         uint64          `json:"command_error_count"`
+	CommandLatencyTotalMicros uint64          `json:"command_latency_total_micros"`
+	CommandLatencyMaxMicros   uint64          `json:"command_latency_max_micros"`
+	Unavailable               bool            `json:"unavailable"`
+}
+
+const (
+	defaultRedisMonitorWritePoolSize    = 4
+	defaultRedisMonitorReadPoolSize     = 8
+	defaultRedisMonitorConsumerPoolSize = 4
+)
+
+var redisClientPoolSizes struct {
+	user            int
+	monitorWrite    int
+	monitorRead     int
+	monitorConsumer int
+}
+
+type redisClientCommandMetrics struct {
+	commandCount              atomic.Uint64
+	commandErrorCount         atomic.Uint64
+	commandLatencyTotalMicros atomic.Uint64
+	commandLatencyMaxMicros   atomic.Uint64
+}
+
+var redisClientCommandMetricsState struct {
+	user            *redisClientCommandMetrics
+	monitorWrite    *redisClientCommandMetrics
+	monitorRead     *redisClientCommandMetrics
+	monitorConsumer *redisClientCommandMetrics
+}
+
+type redisClientCommandStartContextKey struct{}
+
+type redisClientCommandMetricsHook struct {
+	metrics *redisClientCommandMetrics
+}
+
+var _ redis.Hook = (*redisClientCommandMetricsHook)(nil)
+
+func (hook *redisClientCommandMetricsHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	if hook == nil || hook.metrics == nil {
+		return ctx, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, redisClientCommandStartContextKey{}, time.Now()), nil
+}
+
+func (hook *redisClientCommandMetricsHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
+	if hook == nil || hook.metrics == nil {
+		return nil
+	}
+	hook.metrics.record(ctx, cmd.Err() != nil)
+	return nil
+}
+
+func (hook *redisClientCommandMetricsHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return hook.BeforeProcess(ctx, nil)
+}
+
+func (hook *redisClientCommandMetricsHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
+	if hook == nil || hook.metrics == nil {
+		return nil
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	start, _ := redisClientCommandStart(ctx)
+	elapsed := time.Since(start)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	micros := uint64(elapsed / time.Microsecond)
+	hook.metrics.commandCount.Add(uint64(len(cmds)))
+	hook.metrics.commandLatencyTotalMicros.Add(micros)
+	hook.metrics.updateMax(micros)
+	for _, cmd := range cmds {
+		if cmd != nil && cmd.Err() != nil {
+			hook.metrics.commandErrorCount.Add(1)
+		}
+	}
+	return nil
+}
+
+func redisClientCommandStart(ctx context.Context) (time.Time, bool) {
+	if ctx == nil {
+		return time.Time{}, false
+	}
+	start, ok := ctx.Value(redisClientCommandStartContextKey{}).(time.Time)
+	return start, ok
+}
+
+func (metrics *redisClientCommandMetrics) record(ctx context.Context, failed bool) {
+	if metrics == nil {
+		return
+	}
+	start, ok := redisClientCommandStart(ctx)
+	if !ok {
+		return
+	}
+	elapsed := time.Since(start)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	micros := uint64(elapsed / time.Microsecond)
+	metrics.commandCount.Add(1)
+	metrics.commandLatencyTotalMicros.Add(micros)
+	metrics.updateMax(micros)
+	if failed {
+		metrics.commandErrorCount.Add(1)
+	}
+}
+
+func (metrics *redisClientCommandMetrics) updateMax(value uint64) {
+	if metrics == nil {
+		return
+	}
+	for current := metrics.commandLatencyMaxMicros.Load(); value > current; {
+		if metrics.commandLatencyMaxMicros.CompareAndSwap(current, value) {
+			return
+		}
+		current = metrics.commandLatencyMaxMicros.Load()
+	}
+}
 
 func RedisKeyCacheSeconds() int {
 	return SyncFrequency
@@ -37,7 +201,35 @@ func InitRedisClient() (err error) {
 		FatalLog("failed to parse Redis connection string: " + err.Error())
 	}
 	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
-	RDB = redis.NewClient(opt)
+	if opt.PoolSize <= 0 {
+		opt.PoolSize = 10
+	}
+	redisClientPoolSizes.user = opt.PoolSize
+	redisClientCommandMetricsState.user = &redisClientCommandMetrics{}
+	RDB = newRedisClientWithMetrics(opt, redisClientCommandMetricsState.user)
+
+	// Monitor traffic is intentionally isolated by default. Set the flag to
+	// false only as an emergency rollback; role getters then use RDB exactly as
+	// older releases did. Pool sizes are independently tunable for load tests.
+	if GetEnvOrDefaultBool("REDIS_CLIENT_POOL_ISOLATION", true) {
+		redisClientCommandMetricsState.monitorWrite = &redisClientCommandMetrics{}
+		redisClientCommandMetricsState.monitorRead = &redisClientCommandMetrics{}
+		redisClientCommandMetricsState.monitorConsumer = &redisClientCommandMetrics{}
+		RDBMonitorWrite = newRedisRoleClient(opt, "REDIS_MONITOR_WRITE_POOL_SIZE", defaultRedisMonitorWritePoolSize, redisClientCommandMetricsState.monitorWrite)
+		RDBMonitorRead = newRedisRoleClient(opt, "REDIS_MONITOR_READ_POOL_SIZE", defaultRedisMonitorReadPoolSize, redisClientCommandMetricsState.monitorRead)
+		RDBMonitorConsumer = newRedisRoleClient(opt, "REDIS_MONITOR_CONSUMER_POOL_SIZE", defaultRedisMonitorConsumerPoolSize, redisClientCommandMetricsState.monitorConsumer)
+		redisClientPoolSizes.monitorWrite = redisRolePoolSize("REDIS_MONITOR_WRITE_POOL_SIZE", "", defaultRedisMonitorWritePoolSize)
+		redisClientPoolSizes.monitorRead = redisRolePoolSize("REDIS_MONITOR_READ_POOL_SIZE", "", defaultRedisMonitorReadPoolSize)
+		redisClientPoolSizes.monitorConsumer = redisRolePoolSize("REDIS_MONITOR_CONSUMER_POOL_SIZE", "REDIS_CONSUMER_POOL_SIZE", defaultRedisMonitorConsumerPoolSize)
+	} else {
+		RDBMonitorWrite, RDBMonitorRead, RDBMonitorConsumer = nil, nil, nil
+		redisClientCommandMetricsState.monitorWrite = nil
+		redisClientCommandMetricsState.monitorRead = nil
+		redisClientCommandMetricsState.monitorConsumer = nil
+		redisClientPoolSizes.monitorWrite = opt.PoolSize
+		redisClientPoolSizes.monitorRead = opt.PoolSize
+		redisClientPoolSizes.monitorConsumer = opt.PoolSize
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -46,11 +238,162 @@ func InitRedisClient() (err error) {
 	if err != nil {
 		FatalLog("Redis ping test failed: " + err.Error())
 	}
+	for role, client := range map[RedisClientRole]*redis.Client{
+		RedisClientRoleMonitorWrite:    RDBMonitorWrite,
+		RedisClientRoleMonitorRead:     RDBMonitorRead,
+		RedisClientRoleMonitorConsumer: RDBMonitorConsumer,
+	} {
+		if client == nil {
+			continue
+		}
+		if _, pingErr := client.Ping(ctx).Result(); pingErr != nil {
+			FatalLog(fmt.Sprintf("Redis %s pool ping test failed: %s", role, pingErr))
+		}
+	}
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis connected to %s", opt.Addr))
 		SysLog(fmt.Sprintf("Redis database: %d", opt.DB))
 	}
 	return err
+}
+
+func newRedisClientWithMetrics(options *redis.Options, metrics *redisClientCommandMetrics) *redis.Client {
+	client := redis.NewClient(options)
+	if metrics != nil {
+		client.AddHook(&redisClientCommandMetricsHook{metrics: metrics})
+	}
+	return client
+}
+
+func newRedisRoleClient(base *redis.Options, poolEnv string, defaultPoolSize int, metrics *redisClientCommandMetrics) *redis.Client {
+	options := *base
+	fallbackEnv := ""
+	if poolEnv == "REDIS_MONITOR_CONSUMER_POOL_SIZE" {
+		fallbackEnv = "REDIS_CONSUMER_POOL_SIZE"
+	}
+	options.PoolSize = redisRolePoolSize(poolEnv, fallbackEnv, defaultPoolSize)
+	return newRedisClientWithMetrics(&options, metrics)
+}
+
+func redisRolePoolSize(primaryEnv, fallbackEnv string, defaultPoolSize int) int {
+	poolSize := GetEnvOrDefault(primaryEnv, 0)
+	if poolSize <= 0 && fallbackEnv != "" {
+		poolSize = GetEnvOrDefault(fallbackEnv, 0)
+	}
+	if poolSize <= 0 {
+		poolSize = defaultPoolSize
+	}
+	return poolSize
+}
+
+// RedisMonitorWriteClient returns the pool reserved for monitor event and
+// projection writes. It falls back to the legacy client for compatibility with
+// tests and callers that initialize only RDB.
+func RedisMonitorWriteClient() *redis.Client {
+	if RDBMonitorWrite != nil {
+		return RDBMonitorWrite
+	}
+	return RDB
+}
+
+// RedisMonitorReadClient returns the pool reserved for monitor page/query
+// reads and route-health observations.
+func RedisMonitorReadClient() *redis.Client {
+	if RDBMonitorRead != nil {
+		return RDBMonitorRead
+	}
+	return RDB
+}
+
+// RedisMonitorConsumerClient returns the pool reserved for the Stream
+// consumer and its projection/lease writes.
+func RedisMonitorConsumerClient() *redis.Client {
+	if RDBMonitorConsumer != nil {
+		return RDBMonitorConsumer
+	}
+	return RDB
+}
+
+// CloseRedisClients closes all role clients. RDB is included for symmetry and
+// to make shutdown deterministic; callers may safely invoke it more than once.
+func CloseRedisClients() error {
+	clients := []*redis.Client{RDBMonitorWrite, RDBMonitorRead, RDBMonitorConsumer, RDB}
+	seen := make(map[*redis.Client]struct{}, len(clients))
+	var closeErrors []error
+	for _, client := range clients {
+		if client == nil {
+			continue
+		}
+		if _, ok := seen[client]; ok {
+			continue
+		}
+		seen[client] = struct{}{}
+		if err := client.Close(); err != nil {
+			closeErrors = append(closeErrors, err)
+		}
+	}
+	RDB, RDBMonitorWrite, RDBMonitorRead, RDBMonitorConsumer = nil, nil, nil, nil
+	redisClientCommandMetricsState.user = nil
+	redisClientCommandMetricsState.monitorWrite = nil
+	redisClientCommandMetricsState.monitorRead = nil
+	redisClientCommandMetricsState.monitorConsumer = nil
+	return errors.Join(closeErrors...)
+}
+
+// GetRedisClientPoolStats reports independently named role pool metrics for
+// dashboards and diagnostics. Missing role clients are marked unavailable.
+func GetRedisClientPoolStats() map[RedisClientRole]RedisClientPoolStats {
+	monitorWriteMetrics := redisClientCommandMetricsState.monitorWrite
+	monitorReadMetrics := redisClientCommandMetricsState.monitorRead
+	monitorConsumerMetrics := redisClientCommandMetricsState.monitorConsumer
+	if monitorWriteMetrics == nil && RedisMonitorWriteClient() == RDB {
+		monitorWriteMetrics = redisClientCommandMetricsState.user
+	}
+	if monitorReadMetrics == nil && RedisMonitorReadClient() == RDB {
+		monitorReadMetrics = redisClientCommandMetricsState.user
+	}
+	if monitorConsumerMetrics == nil && RedisMonitorConsumerClient() == RDB {
+		monitorConsumerMetrics = redisClientCommandMetricsState.user
+	}
+	result := make(map[RedisClientRole]RedisClientPoolStats, 4)
+	result[RedisClientRoleUser] = redisClientPoolStats(
+		RedisClientRoleUser, RDB, redisClientPoolSizes.user, redisClientCommandMetricsState.user,
+	)
+	result[RedisClientRoleMonitorWrite] = redisClientPoolStats(
+		RedisClientRoleMonitorWrite, RedisMonitorWriteClient(), redisClientPoolSizes.monitorWrite, monitorWriteMetrics,
+	)
+	result[RedisClientRoleMonitorRead] = redisClientPoolStats(
+		RedisClientRoleMonitorRead, RedisMonitorReadClient(), redisClientPoolSizes.monitorRead, monitorReadMetrics,
+	)
+	result[RedisClientRoleMonitorConsumer] = redisClientPoolStats(
+		RedisClientRoleMonitorConsumer, RedisMonitorConsumerClient(), redisClientPoolSizes.monitorConsumer, monitorConsumerMetrics,
+	)
+	return result
+}
+
+func redisClientPoolStats(role RedisClientRole, client *redis.Client, poolSize int, metrics *redisClientCommandMetrics) RedisClientPoolStats {
+	stats := RedisClientPoolStats{Role: role, PoolSize: poolSize, Unavailable: client == nil}
+	if client == nil {
+		return stats
+	}
+	pool := client.PoolStats()
+	if pool == nil {
+		stats.Unavailable = true
+		return stats
+	}
+	stats.TotalConns = pool.TotalConns
+	stats.IdleConns = pool.IdleConns
+	stats.StaleConns = pool.StaleConns
+	stats.Hits = pool.Hits
+	stats.Misses = pool.Misses
+	stats.Timeouts = pool.Timeouts
+	if metrics != nil {
+		stats.CommandCount = metrics.commandCount.Load()
+		stats.CommandErrorCount = metrics.commandErrorCount.Load()
+		stats.CommandLatencyTotalMicros = metrics.commandLatencyTotalMicros.Load()
+		stats.CommandLatencyMaxMicros = metrics.commandLatencyMaxMicros.Load()
+	}
+	return stats
 }
 
 func ParseRedisOption() *redis.Options {

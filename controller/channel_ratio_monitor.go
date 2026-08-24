@@ -485,6 +485,9 @@ func getChannelMonitorOperator(c *gin.Context) (int, string) {
 }
 
 func GetChannelMonitorOverview(c *gin.Context) {
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotOverview, GetChannelMonitorOverview) {
+		return
+	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {
 		common.ApiError(c, err)
@@ -619,16 +622,36 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			"redis_available":               realtimeMetadata.RedisAvailable,
 			"redis_consumer_running":        realtimeMetadata.RedisConsumerRunning,
 			"pending_count":                 realtimeMetadata.PendingCount,
+			"writer_queue_depth":            realtimeMetadata.WriterQueueDepth,
+			"writer_queue_capacity":         realtimeMetadata.WriterQueueCapacity,
+			"writer_queued_events":          realtimeMetadata.WriterQueuedEvents,
+			"writer_dropped_events":         realtimeMetadata.WriterDroppedEvents,
+			"writer_retry_events":           realtimeMetadata.WriterRetryEvents,
+			"writer_oldest_queued_at":       realtimeMetadata.WriterOldestQueuedAt,
+			"writer_queue_age_seconds":      realtimeMetadata.WriterQueueAgeSeconds,
 			"oldest_pending_at":             realtimeMetadata.OldestPendingAt,
 			"consumer_lag_seconds":          realtimeMetadata.ConsumerLagSeconds,
 			"last_published_at":             realtimeMetadata.LastPublishedAt,
 			"last_processed_at":             realtimeMetadata.LastProcessedAt,
 			"retry_count":                   realtimeMetadata.RetryCount,
 			"takeover_count":                realtimeMetadata.TakeoverCount,
+			"quarantine_count":              realtimeMetadata.QuarantineCount,
+			"last_quarantined_at":           realtimeMetadata.LastQuarantinedAt,
+			"runtime_marker_failure_count":  realtimeMetadata.RuntimeMarkerFailureCount,
+			"schedule_marker_failure_count": realtimeMetadata.ScheduleMarkerFailureCount,
+			"cost_stream_pending_count":     realtimeMetadata.CostStreamPendingCount,
+			"cost_stream_unread_count":      realtimeMetadata.CostStreamUnreadCount,
+			"cost_outbox_pending_count":     realtimeMetadata.CostOutboxPendingCount,
+			"cost_outbox_oldest_pending_at": realtimeMetadata.CostOutboxOldestPendingAt,
+			"cost_outbox_retry_count":       realtimeMetadata.CostOutboxRetryCount,
+			"cost_ledger_failed_count":      realtimeMetadata.CostLedgerFailedCount,
+			"cost_publish_failed_count":     realtimeMetadata.CostPublishFailedCount,
+			"cost_dead_letter_count":        realtimeMetadata.CostDeadLetterCount,
 			"marker_release_failure_count":  realtimeMetadata.MarkerReleaseFailureCount,
 			"marker_release_failure_active": realtimeMetadata.MarkerReleaseFailureActive,
 			"stream_trim_failure_count":     realtimeMetadata.StreamTrimFailureCount,
 			"stream_trim_failure_active":    realtimeMetadata.StreamTrimFailureActive,
+			"redis_pool_stats":              realtimeMetadata.RedisPoolStats,
 			"realtime_degraded":             realtimeMetadata.RealtimeDegraded,
 			"channel_order":                 channelOrder,
 			"group_ratios":                  groupRatios,
@@ -776,6 +799,7 @@ func UpdateChannelMonitorRatio(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.NotifyChannelModelDetectionOverviewChanged()
 	service.InvalidateChannelDailyCostSnapshot(channelId)
 	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
 		common.ApiError(c, fmt.Errorf("倍率已保存，但分组策略执行失败: %w", err))
@@ -983,6 +1007,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.NotifyChannelModelDetectionOverviewChanged()
 	service.InvalidateChannelDailyCostSnapshot(channelId)
 	balanceAutoDisabled := false
 	if config.Type == service.CustomUpstreamType {
@@ -1610,6 +1635,7 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	service.NotifyChannelModelDetectionOverviewChanged()
 	monitor = outcome.Monitor
 	balanceAutoDisabled := false
 	if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
@@ -1706,6 +1732,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		result = outcome.Result.Balance
 		balanceEvaluation = outcome.BalanceEvaluation
 		monitor = outcome.Monitor
+		service.NotifyChannelModelDetectionOverviewChanged()
 	} else {
 		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 		if err != nil {
@@ -1737,6 +1764,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 	if balanceAutoDisabled {
 		model.InitChannelCache()
 		service.ResetProxyClientCache()
+		service.NotifyChannelModelDetectionOverviewChanged()
 	}
 	if ratioRefreshed {
 		if err := applyChannelMonitorRatioPolicy(c.Request.Context(), monitor); err != nil {
@@ -1838,6 +1866,7 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 		common.ApiError(c, errors.New("上游令牌已切换，但本地上游配置已变更，未覆盖新的倍率配置"))
 		return
 	}
+	service.NotifyChannelModelDetectionOverviewChanged()
 	service.InvalidateChannelDailyCostSnapshot(channelId)
 	if err := applyChannelMonitorRatioPolicy(c.Request.Context(), updatedMonitor); err != nil {
 		common.ApiError(c, fmt.Errorf("上游令牌已切换且倍率已记录，但分组策略执行失败: %w", err))

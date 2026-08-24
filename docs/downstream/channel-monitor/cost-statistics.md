@@ -11,7 +11,9 @@
 
 ## 批处理和失败边界
 
-普通请求由内存 batcher 按渠道、北京时间日和 API Key 指纹归并，批量写入数据库；队列满时同步写入，失败批次重试。进程被强制终止时，尚未刷库的内存事件可能丢失，当前没有覆盖普通请求的数据库 Outbox。
+普通请求成本默认进入独立的成本 Stream，并由成本 consumer 写入数据库 outbox；Redis 未接受时在有界超时内直接写数据库 outbox。outbox 以事件 ID 幂等去重，日账本更新和 outbox 完成状态在同一事务中提交，进程或 Redis 重启后由恢复任务继续处理。
+
+`CHANNEL_DAILY_COST_RELIABLE_OUTBOX=false` 只作为整批紧急回滚路径，回到旧的内存 batcher；该路径不是默认语义，且仍需保留可靠链路已经写入的 Stream、outbox 和账务记录。成本可靠接受最多等待 250ms 的 Stream 写入和 750ms 的数据库 outbox fallback，二者均失败才报告可靠写入失败。
 
 探针、分组探测和模型检测成本保留来源标记，并按实际物理渠道写入日账。Redis 实时投影不是金额事实源。
 

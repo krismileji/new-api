@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,38 +20,62 @@ type channelCacheSnapshot struct {
 
 func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.
-			Order("id ASC").
-			Find(&snapshot.channels).Error; err != nil {
-			return err
-		}
-		if tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
-			if err := tx.
-				Order("channel_id ASC, group_name ASC, model_name ASC").
-				Find(&snapshot.smartScheduleStates).Error; err != nil {
-				return err
-			}
-		}
-		if IsLogicalChannelGroupingEnabled() && tx.Migrator().HasTable(&ChannelLogicalSmartScheduleRouteState{}) {
-			if err := tx.
-				Order("logical_group_id ASC, logical_revision ASC, group_name ASC, model_name ASC").
-				Find(&snapshot.logicalScheduleStates).Error; err != nil {
-				return err
-			}
-		}
-		if tx.Migrator().HasTable(&ChannelSmartScheduleGroupPause{}) {
-			if err := tx.
-				Where("paused_until > ?", common.GetTimestamp()).
-				Order("channel_id ASC, group_name ASC, model_name ASC").
-				Find(&snapshot.smartScheduleGroupPauses).Error; err != nil {
-				return err
-			}
-		}
-		return tx.
-			Order("channel_id ASC").
-			Order(clause.OrderByColumn{Column: clause.Column{Name: "group"}}).
-			Order(clause.OrderByColumn{Column: clause.Column{Name: "model"}}).
-			Find(&snapshot.abilities).Error
+		var loadErr error
+		snapshot, loadErr = loadChannelCacheSnapshotFromDB(tx)
+		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return snapshot, err
+}
+
+func loadChannelCacheSnapshotFromDB(db *gorm.DB) (snapshot channelCacheSnapshot, err error) {
+	if err := db.
+		Order("id ASC").
+		Find(&snapshot.channels).Error; err != nil {
+		return snapshot, err
+	}
+	if db.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
+		if err := db.
+			Order("channel_id ASC, group_name ASC, model_name ASC").
+			Find(&snapshot.smartScheduleStates).Error; err != nil {
+			return snapshot, err
+		}
+	}
+	if IsLogicalChannelGroupingEnabled() && db.Migrator().HasTable(&ChannelLogicalSmartScheduleRouteState{}) {
+		if err := db.
+			Order("logical_group_id ASC, logical_revision ASC, group_name ASC, model_name ASC").
+			Find(&snapshot.logicalScheduleStates).Error; err != nil {
+			return snapshot, err
+		}
+	}
+	if db.Migrator().HasTable(&ChannelSmartScheduleGroupPause{}) {
+		if err := db.
+			Where("paused_until > ?", common.GetTimestamp()).
+			Order("channel_id ASC, group_name ASC, model_name ASC").
+			Find(&snapshot.smartScheduleGroupPauses).Error; err != nil {
+			return snapshot, err
+		}
+	}
+	err = db.
+		Order("channel_id ASC").
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "group"}}).
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "model"}}).
+		Find(&snapshot.abilities).Error
+	return snapshot, err
+}
+
+func loadChannelSmartScheduleRouteSnapshotSource(ctx context.Context) (
+	snapshot channelCacheSnapshot,
+	logicalRuntime *LogicalChannelRuntimeSnapshot,
+	err error,
+) {
+	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var loadErr error
+		snapshot, loadErr = loadChannelCacheSnapshotFromDB(tx)
+		if loadErr != nil {
+			return loadErr
+		}
+		logicalRuntime, loadErr = buildLogicalChannelRuntimeSnapshot(tx)
+		return loadErr
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	return snapshot, logicalRuntime, err
 }

@@ -24,6 +24,8 @@ type ChannelMonitorEventPublishStatus string
 
 const (
 	ChannelMonitorEventPublishStatusPublished   ChannelMonitorEventPublishStatus = "published"
+	ChannelMonitorEventPublishStatusQueued      ChannelMonitorEventPublishStatus = "queued"
+	ChannelMonitorEventPublishStatusDropped     ChannelMonitorEventPublishStatus = "dropped"
 	ChannelMonitorEventPublishStatusInvalid     ChannelMonitorEventPublishStatus = "invalid"
 	ChannelMonitorEventPublishStatusUnavailable ChannelMonitorEventPublishStatus = "unavailable"
 	ChannelMonitorEventPublishStatusTimeout     ChannelMonitorEventPublishStatus = "timeout"
@@ -66,14 +68,15 @@ func PublishChannelMonitorEvent(ctx context.Context, event model.ChannelMonitorE
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
 		return ChannelMonitorEventPublishStatusInvalid, err
 	}
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorWriteClient()
+	if !common.RedisEnabled || client == nil {
 		return markChannelMonitorEventPublishFailure(
 			ctx,
 			ChannelMonitorEventPublishStatusUnavailable,
 			ErrChannelMonitorEventRedisUnavailable,
 		)
 	}
-	return publishChannelMonitorEventWithPayload(ctx, common.RDB, event, payload)
+	return publishChannelMonitorEventWithPayload(ctx, client, event, payload)
 }
 
 func publishChannelMonitorEvent(

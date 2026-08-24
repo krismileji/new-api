@@ -62,10 +62,18 @@ func RefreshLogicalChannelRuntimeCache() error {
 		channelSyncLock.Unlock()
 		return err
 	}
+	workerStarted := channelSmartScheduleRefreshWorkerIsStarted()
 	channelSyncLock.Lock()
 	logicalChannelRuntimeCache = snapshot
 	logicalChannelRuntimeDirty = false
+	if workerStarted {
+		markChannelSmartScheduleRouteSnapshotDirty()
+	}
 	channelSyncLock.Unlock()
+	if workerStarted {
+		signalChannelSmartScheduleRouteSnapshotDirty()
+	}
+	enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
 	return nil
 }
 
@@ -75,6 +83,14 @@ func InvalidateLogicalChannelRuntimeCache() {
 	channelSyncLock.Lock()
 	logicalChannelRuntimeDirty = true
 	channelSyncLock.Unlock()
+	// Relation changes are observed by the next background refresh. Mark the
+	// existing smart-schedule pools dirty as well so the route projection and
+	// logical membership are rebuilt from one complete view. The enqueue is
+	// non-blocking and deduplicated; user requests continue reading the last
+	// complete snapshot.
+	markAllChannelSmartScheduleRoutePoolsDirty()
+	enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
+	queueDirtyChannelSmartScheduleRefreshes()
 }
 
 // ResolveChannelLogicalIdentity resolves one physical channel to its current
@@ -96,20 +112,19 @@ func ResolveChannelLogicalIdentity(channelID int) (LogicalChannelIdentity, error
 		dirty := logicalChannelRuntimeDirty
 		identity, ok := identityFromRuntimeSnapshot(snapshot, channelID)
 		channelSyncLock.RUnlock()
-		if !dirty && ok {
+		if snapshot != nil && ok {
 			return identity, nil
 		}
-		if err := RefreshLogicalChannelRuntimeCache(); err == nil {
-			channelSyncLock.RLock()
-			identity, ok = identityFromRuntimeSnapshot(logicalChannelRuntimeCache, channelID)
-			channelSyncLock.RUnlock()
-			if ok {
-				return identity, nil
-			}
+		if snapshot == nil {
+			enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
+			return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeUnavailable
 		}
-		// Keep the previous snapshot published for diagnostics, but never use
-		// dirty membership for a new task. A direct database read either
-		// resolves current ownership or fails closed.
+		if dirty {
+			// A dirty snapshot is still the last complete, internally consistent
+			// view. Do not turn a new channel/relation into a per-request DB read.
+			return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeUnavailable
+		}
+		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
 	}
 	return resolveLogicalIdentityFromDatabase(channelID)
 }
@@ -125,19 +140,17 @@ func GetLogicalChannelGroupSnapshot(logicalID int64) (LogicalChannelGroupSnapsho
 		dirty := logicalChannelRuntimeDirty
 		group, ok := groupFromRuntimeSnapshot(snapshot, logicalID)
 		channelSyncLock.RUnlock()
-		if !dirty && ok {
+		if snapshot != nil && ok {
 			return group, nil
 		}
-		if err := RefreshLogicalChannelRuntimeCache(); err == nil {
-			channelSyncLock.RLock()
-			group, ok = groupFromRuntimeSnapshot(logicalChannelRuntimeCache, logicalID)
-			channelSyncLock.RUnlock()
-			if ok {
-				return group, nil
-			}
+		if snapshot == nil {
+			enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
+			return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeUnavailable
 		}
-		// A dirty group snapshot may contain a removed key. Selection callers
-		// must read the current complete relation or receive an error.
+		if dirty {
+			return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeUnavailable
+		}
+		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeGroupNotFound
 	}
 	return loadLogicalChannelGroupSnapshotFromDatabase(logicalID)
 }
@@ -151,22 +164,11 @@ func GetLogicalChannelRuntimeSnapshot() (*LogicalChannelRuntimeSnapshot, error) 
 	if common.MemoryCacheEnabled {
 		channelSyncLock.RLock()
 		snapshot := cloneLogicalChannelRuntimeSnapshot(logicalChannelRuntimeCache)
-		dirty := logicalChannelRuntimeDirty
 		channelSyncLock.RUnlock()
-		if snapshot != nil && !dirty {
-			return snapshot, nil
-		}
-		if err := RefreshLogicalChannelRuntimeCache(); err == nil {
-			channelSyncLock.RLock()
-			snapshot = cloneLogicalChannelRuntimeSnapshot(logicalChannelRuntimeCache)
-			channelSyncLock.RUnlock()
-			if snapshot != nil {
-				return snapshot, nil
-			}
-		}
 		if snapshot != nil {
 			return snapshot, nil
 		}
+		enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
 	}
 	return nil, ErrLogicalChannelRuntimeUnavailable
 }

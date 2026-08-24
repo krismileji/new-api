@@ -950,6 +950,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureReDegradesProbeImmediately(t *
 
 func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	startChannelMonitorEventWriterForTest(t)
 	originalErrorLogEnabled := constant.ErrorLogEnabled
 	constant.ErrorLogEnabled = true
 	t.Cleanup(func() {

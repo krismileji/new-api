@@ -1441,8 +1441,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                           </Button>
                         </div>
                         <FormDescription>
-                          可选续期凭据；可单独测试，或在手动 Token 失效时自动换取新
-                          Token。
+                          可选续期凭据；可单独测试，或在手动 Token
+                          失效时自动换取新 Token。
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

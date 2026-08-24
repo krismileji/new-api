@@ -32,6 +32,27 @@ export function mergeChannelMonitorRealtimeMetadata(
         (snapshot.stream_trim_failure_active ?? false)
       continue
     }
+    if (
+      merged.generated_at !== undefined ||
+      snapshot.generated_at !== undefined
+    ) {
+      merged.generated_at = mergeOldestTimestamp(
+        merged.generated_at,
+        snapshot.generated_at
+      )
+    }
+    if (merged.stale !== undefined || snapshot.stale !== undefined) {
+      merged.stale = (merged.stale ?? false) || (snapshot.stale ?? false)
+    }
+    if (
+      merged.snapshot_age_seconds !== undefined ||
+      snapshot.snapshot_age_seconds !== undefined
+    ) {
+      merged.snapshot_age_seconds = Math.max(
+        merged.snapshot_age_seconds ?? 0,
+        snapshot.snapshot_age_seconds ?? 0
+      )
+    }
     merged.data_cutoff_at = Math.min(
       merged.data_cutoff_at,
       snapshot.data_cutoff_at
@@ -52,12 +73,147 @@ export function mergeChannelMonitorRealtimeMetadata(
       )
     }
     if (
+      merged.writer_queue_depth !== undefined ||
+      snapshot.writer_queue_depth !== undefined
+    ) {
+      merged.writer_queue_depth = Math.max(
+        merged.writer_queue_depth ?? 0,
+        snapshot.writer_queue_depth ?? 0
+      )
+    }
+    if (
+      merged.writer_queue_capacity !== undefined ||
+      snapshot.writer_queue_capacity !== undefined
+    ) {
+      merged.writer_queue_capacity = Math.max(
+        merged.writer_queue_capacity ?? 0,
+        snapshot.writer_queue_capacity ?? 0
+      )
+    }
+    if (
+      merged.writer_queued_events !== undefined ||
+      snapshot.writer_queued_events !== undefined
+    ) {
+      merged.writer_queued_events = Math.max(
+        merged.writer_queued_events ?? 0,
+        snapshot.writer_queued_events ?? 0
+      )
+    }
+    if (
+      merged.writer_dropped_events !== undefined ||
+      snapshot.writer_dropped_events !== undefined
+    ) {
+      merged.writer_dropped_events = Math.max(
+        merged.writer_dropped_events ?? 0,
+        snapshot.writer_dropped_events ?? 0
+      )
+    }
+    if (
+      merged.writer_retry_events !== undefined ||
+      snapshot.writer_retry_events !== undefined
+    ) {
+      merged.writer_retry_events = Math.max(
+        merged.writer_retry_events ?? 0,
+        snapshot.writer_retry_events ?? 0
+      )
+    }
+    if (
+      merged.writer_oldest_queued_at !== undefined ||
+      snapshot.writer_oldest_queued_at !== undefined
+    ) {
+      merged.writer_oldest_queued_at = mergeOldestTimestamp(
+        merged.writer_oldest_queued_at,
+        snapshot.writer_oldest_queued_at
+      )
+    }
+    if (
+      merged.writer_queue_age_seconds !== undefined ||
+      snapshot.writer_queue_age_seconds !== undefined
+    ) {
+      merged.writer_queue_age_seconds = Math.max(
+        merged.writer_queue_age_seconds ?? 0,
+        snapshot.writer_queue_age_seconds ?? 0
+      )
+    }
+    if (
       merged.cost_queue_pending_count !== undefined ||
       snapshot.cost_queue_pending_count !== undefined
     ) {
       merged.cost_queue_pending_count = Math.max(
         merged.cost_queue_pending_count ?? 0,
         snapshot.cost_queue_pending_count ?? 0
+      )
+    }
+    if (
+      merged.cost_stream_pending_count !== undefined ||
+      snapshot.cost_stream_pending_count !== undefined
+    ) {
+      merged.cost_stream_pending_count = Math.max(
+        merged.cost_stream_pending_count ?? 0,
+        snapshot.cost_stream_pending_count ?? 0
+      )
+    }
+    if (
+      merged.cost_stream_unread_count !== undefined ||
+      snapshot.cost_stream_unread_count !== undefined
+    ) {
+      merged.cost_stream_unread_count = Math.max(
+        merged.cost_stream_unread_count ?? 0,
+        snapshot.cost_stream_unread_count ?? 0
+      )
+    }
+    if (
+      merged.cost_outbox_pending_count !== undefined ||
+      snapshot.cost_outbox_pending_count !== undefined
+    ) {
+      merged.cost_outbox_pending_count = Math.max(
+        merged.cost_outbox_pending_count ?? 0,
+        snapshot.cost_outbox_pending_count ?? 0
+      )
+    }
+    if (
+      merged.cost_outbox_oldest_pending_at !== undefined ||
+      snapshot.cost_outbox_oldest_pending_at !== undefined
+    ) {
+      merged.cost_outbox_oldest_pending_at = mergeOldestTimestamp(
+        merged.cost_outbox_oldest_pending_at,
+        snapshot.cost_outbox_oldest_pending_at
+      )
+    }
+    if (
+      merged.cost_outbox_retry_count !== undefined ||
+      snapshot.cost_outbox_retry_count !== undefined
+    ) {
+      merged.cost_outbox_retry_count = Math.max(
+        merged.cost_outbox_retry_count ?? 0,
+        snapshot.cost_outbox_retry_count ?? 0
+      )
+    }
+    if (
+      merged.cost_ledger_failed_count !== undefined ||
+      snapshot.cost_ledger_failed_count !== undefined
+    ) {
+      merged.cost_ledger_failed_count = Math.max(
+        merged.cost_ledger_failed_count ?? 0,
+        snapshot.cost_ledger_failed_count ?? 0
+      )
+    }
+    if (
+      merged.cost_publish_failed_count !== undefined ||
+      snapshot.cost_publish_failed_count !== undefined
+    ) {
+      merged.cost_publish_failed_count = Math.max(
+        merged.cost_publish_failed_count ?? 0,
+        snapshot.cost_publish_failed_count ?? 0
+      )
+    }
+    if (
+      merged.cost_dead_letter_count !== undefined ||
+      snapshot.cost_dead_letter_count !== undefined
+    ) {
+      merged.cost_dead_letter_count = Math.max(
+        merged.cost_dead_letter_count ?? 0,
+        snapshot.cost_dead_letter_count ?? 0
       )
     }
     if (
@@ -142,6 +298,24 @@ export function mergeChannelMonitorRealtimeMetadata(
       )
     }
     if (
+      merged.runtime_marker_failure_count !== undefined ||
+      snapshot.runtime_marker_failure_count !== undefined
+    ) {
+      merged.runtime_marker_failure_count = Math.max(
+        merged.runtime_marker_failure_count ?? 0,
+        snapshot.runtime_marker_failure_count ?? 0
+      )
+    }
+    if (
+      merged.schedule_marker_failure_count !== undefined ||
+      snapshot.schedule_marker_failure_count !== undefined
+    ) {
+      merged.schedule_marker_failure_count = Math.max(
+        merged.schedule_marker_failure_count ?? 0,
+        snapshot.schedule_marker_failure_count ?? 0
+      )
+    }
+    if (
       merged.stream_trim_failure_count !== undefined ||
       snapshot.stream_trim_failure_count !== undefined
     ) {
@@ -193,6 +367,17 @@ export function mergeChannelMonitorRealtimeMetadata(
         merged.redis_consumer_running,
         snapshot.redis_consumer_running
       )
+    }
+    if (
+      merged.degraded_reasons !== undefined ||
+      snapshot.degraded_reasons !== undefined
+    ) {
+      merged.degraded_reasons = [
+        ...new Set([
+          ...(merged.degraded_reasons ?? []),
+          ...(snapshot.degraded_reasons ?? []),
+        ]),
+      ]
     }
     merged.realtime_degraded =
       merged.realtime_degraded ||

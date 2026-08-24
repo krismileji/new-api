@@ -17,10 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
@@ -496,7 +496,7 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('智能调度运行状态'))
     assert.ok(markup.includes('已启用'))
     assert.ok(markup.includes('实时数据已降级'))
-    assert.ok(markup.includes('Redis 待处理 6'))
+    assert.ok(markup.includes('实时事件待处理 6'))
     assert.ok(
       markup.includes(`数据截至 ${formatTimestampToDate(1_752_777_840)}`)
     )

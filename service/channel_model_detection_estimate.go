@@ -274,6 +274,9 @@ func UpdateChannelModelDetectionConfig(ctx context.Context, tx *gorm.DB, channel
 	if err != nil {
 		return ChannelModelDetectionConfigResponse{}, err
 	}
+	if db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	if hook := channelModelDetectionConfigHook(); hook != nil {
 		hook(ctx, change)
 	}

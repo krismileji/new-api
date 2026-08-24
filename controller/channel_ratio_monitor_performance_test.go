@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -17,17 +19,21 @@ import (
 type channelMonitorPerformanceAPIResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
-		RangeMinutes            int                                             `json:"range_minutes"`
-		RangeSource             string                                          `json:"range_source"`
-		GeneratedAt             int64                                           `json:"generated_at"`
-		ProjectionStartedAt     int64                                           `json:"projection_started_at"`
-		DegradedReasons         []string                                        `json:"degraded_reasons"`
-		RealtimeDegraded        bool                                            `json:"realtime_degraded"`
-		MetricCoverage          channelMonitorPerformanceMetricCoverageResponse `json:"metric_coverage"`
-		Items                   []model.ChannelMonitorPerformanceMetric         `json:"items"`
-		SuccessMetricsAvailable bool                                            `json:"success_metrics_available"`
-		SuccessItems            []model.ChannelMonitorSuccessMetric             `json:"success_items"`
-		GroupSuccessItems       []model.ChannelMonitorGroupSuccessMetric        `json:"group_success_items"`
+		RangeMinutes            int                                                    `json:"range_minutes"`
+		RangeSource             string                                                 `json:"range_source"`
+		GeneratedAt             int64                                                  `json:"generated_at"`
+		ProjectionStartedAt     int64                                                  `json:"projection_started_at"`
+		RuntimeMarkerFailures   int64                                                  `json:"runtime_marker_failure_count"`
+		ScheduleMarkerFailures  int64                                                  `json:"schedule_marker_failure_count"`
+		QuarantineCount         int64                                                  `json:"quarantine_count"`
+		RedisPoolStats          map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
+		DegradedReasons         []string                                               `json:"degraded_reasons"`
+		RealtimeDegraded        bool                                                   `json:"realtime_degraded"`
+		MetricCoverage          channelMonitorPerformanceMetricCoverageResponse        `json:"metric_coverage"`
+		Items                   []model.ChannelMonitorPerformanceMetric                `json:"items"`
+		SuccessMetricsAvailable bool                                                   `json:"success_metrics_available"`
+		SuccessItems            []model.ChannelMonitorSuccessMetric                    `json:"success_items"`
+		GroupSuccessItems       []model.ChannelMonitorGroupSuccessMetric               `json:"group_success_items"`
 	} `json:"data"`
 }
 
@@ -68,6 +74,13 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	failure.ErrorMessage = "status_code=503, upstream unavailable"
 	require.NoError(t, projectChannelSmartScheduleTestEvent(success))
 	require.NoError(t, projectChannelSmartScheduleTestEvent(failure))
+	require.NoError(t, common.RDB.HSet(
+		context.Background(),
+		service.ChannelMonitorRedisObservabilityKey,
+		service.ChannelMonitorRedisObservabilityFieldRuntimeMarkerFailureCount, 4,
+		service.ChannelMonitorRedisObservabilityFieldScheduleMarkerFailureCount, 5,
+		service.ChannelMonitorRedisObservabilityFieldQuarantineCount, 6,
+	).Err())
 
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -84,6 +97,13 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.Equal(t, channelMonitorPerformanceRangeManual, response.Data.RangeSource)
 	assert.True(t, response.Data.MetricCoverage.AggregationEnabled)
 	assert.Zero(t, response.Data.ProjectionStartedAt)
+	assert.Equal(t, int64(4), response.Data.RuntimeMarkerFailures)
+	assert.Equal(t, int64(5), response.Data.ScheduleMarkerFailures)
+	assert.Equal(t, int64(6), response.Data.QuarantineCount)
+	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleUser)
+	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleMonitorWrite)
+	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleMonitorRead)
+	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleMonitorConsumer)
 	require.NotNil(t, response.Data.DegradedReasons)
 	assert.Empty(t, response.Data.DegradedReasons)
 	assert.False(t, response.Data.RealtimeDegraded)

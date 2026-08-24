@@ -59,18 +59,16 @@ export function ChannelMonitorPerformanceCoverageAlert(
         )
         break
       case 'consumer_stopped':
-        issueDescriptions.push('Redis 消费者心跳已失效，实时事件当前无人处理。')
+        issueDescriptions.push('事件处理服务已停止，当前没有处理实时事件。')
         break
       case 'consumer_group_missing':
-        issueDescriptions.push(
-          'Redis Stream 消费组尚未建立，实时事件无法进入分钟汇总。'
-        )
+        issueDescriptions.push('实时事件处理组尚未建立，事件无法进入分钟汇总。')
         break
       case 'event_backlog': {
         const pendingCount = props.metadata?.pending_count ?? 0
         const oldestPendingAt = props.metadata?.oldest_pending_at ?? 0
         const consumerLagSeconds = props.metadata?.consumer_lag_seconds ?? 0
-        let description = 'Redis Stream 存在尚未处理完成的事件'
+        let description = '实时事件队列中还有未处理完成的事件'
         if (pendingCount > 0) {
           description += `，其中 ${pendingCount} 条已交付但尚未确认`
         }
@@ -89,14 +87,10 @@ export function ChannelMonitorPerformanceCoverageAlert(
         )
         break
       case 'marker_release_failure':
-        issueDescriptions.push(
-          '聚合副作用标记释放失败，事件重试流程可能受到影响。'
-        )
+        issueDescriptions.push('事件标记清理失败，后续重试可能受到影响。')
         break
       case 'stream_trim_failure':
-        issueDescriptions.push(
-          'Redis Stream 裁剪失败，实时统计链路仍被标记为异常。'
-        )
+        issueDescriptions.push('实时事件队列清理失败，实时统计仍处于异常状态。')
         break
       default:
         issueDescriptions.push(`未识别的实时链路降级原因：${reason}。`)
@@ -113,25 +107,21 @@ export function ChannelMonitorPerformanceCoverageAlert(
       )
     }
     if (props.metadata?.redis_consumer_running === false) {
-      issueDescriptions.push('Redis 消费者心跳已失效，实时事件当前无人处理。')
+      issueDescriptions.push('事件处理服务已停止，当前没有处理实时事件。')
     }
     if (
       (props.metadata?.pending_count ?? props.metadata?.queue_depth ?? 0) > 0 ||
       (props.metadata?.oldest_pending_at ?? 0) > 0
     ) {
       issueDescriptions.push(
-        `Redis Stream 存在尚未处理完成的事件，当前延迟 ${props.metadata?.consumer_lag_seconds ?? 0} 秒。`
+        `实时事件队列中还有未处理完成的事件，当前延迟 ${props.metadata?.consumer_lag_seconds ?? 0} 秒。`
       )
     }
     if (props.metadata?.marker_release_failure_active) {
-      issueDescriptions.push(
-        '聚合副作用标记释放失败，事件重试流程可能受到影响。'
-      )
+      issueDescriptions.push('事件标记清理失败，后续重试可能受到影响。')
     }
     if (props.metadata?.stream_trim_failure_active) {
-      issueDescriptions.push(
-        'Redis Stream 裁剪失败，实时统计链路仍被标记为异常。'
-      )
+      issueDescriptions.push('实时事件队列清理失败，实时统计仍处于异常状态。')
     }
   }
 

@@ -31,11 +31,15 @@ import type {
 
 export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
   refetchInterval: false,
+  refetchIntervalInBackground: false,
   refetchOnWindowFocus: false,
   refetchOnReconnect: false,
 } as const
 
-export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 3000
+// Only the status-probe and model-detection views use the live page policy.
+// Keep this interval here so the two views cannot drift apart.
+export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
+export const CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS = 750
 
 export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
@@ -60,20 +64,118 @@ export const CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY = [
   'channel-monitor-task-history',
 ] as const
 
-const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_KEYS = [
-  ['channel-monitor'],
-  ['channel-monitor-performance'],
-  ['channel-monitor-smart-schedule-executions'],
-  ['channel-monitor-task-history'],
-  ['channel-monitor-success-detail'],
-  ['channel-monitor-history'],
-  ['channel-monitor-available-groups'],
-] as const
+export type ChannelMonitorManualRefreshView =
+  | 'channels'
+  | 'groups'
+  | 'models'
+  | 'status-probe'
+  | 'model-detection'
+  | 'smart-schedule'
 
-export async function refetchChannelMonitorQueries(queryClient: QueryClient) {
+export type ChannelMonitorManualRefreshScope = {
+  view: ChannelMonitorManualRefreshView
+  taskHistoryOpen?: boolean
+  smartScheduleHistoryOpen?: boolean
+}
+
+export function getChannelMonitorManualRefreshScopeKey(
+  scope: ChannelMonitorManualRefreshScope
+) {
+  return `${scope.view}:${scope.taskHistoryOpen ? 'task-history' : ''}:${scope.smartScheduleHistoryOpen ? 'smart-schedule-history' : ''}`
+}
+
+export function shouldCoalesceChannelMonitorManualRefresh(props: {
+  currentScope: string
+  previousScope: string | null
+  currentTime: number
+  previousRefreshAt: number
+  inFlight: boolean
+}) {
+  return (
+    props.currentScope === props.previousScope &&
+    (props.inFlight ||
+      props.currentTime - props.previousRefreshAt <
+        CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS)
+  )
+}
+
+type ChannelMonitorRefreshTarget = {
+  queryKey: readonly unknown[]
+  exact?: boolean
+}
+
+function getChannelMonitorManualRefreshTargets(
+  scope: ChannelMonitorManualRefreshScope
+): ChannelMonitorRefreshTarget[] {
+  let targets: ChannelMonitorRefreshTarget[]
+
+  switch (scope.view) {
+    case 'channels':
+      targets = [
+        { queryKey: ['channel-monitor'], exact: true },
+        { queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY, exact: true },
+        { queryKey: ['channel-monitor-performance'] },
+        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
+        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
+        {
+          queryKey: [...CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY, 'summary'],
+          exact: true,
+        },
+      ]
+      break
+    case 'groups':
+    case 'models':
+      targets = [
+        { queryKey: ['channel-monitor'], exact: true },
+        { queryKey: ['channel-monitor-performance'] },
+        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
+        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
+      ]
+      break
+    case 'status-probe':
+      targets = [{ queryKey: ['channel-monitor', 'status-probe'] }]
+      break
+    case 'model-detection':
+      // The active overview, history sheet, and run detail queries all share
+      // this prefix. Inactive sheets are excluded by the active query filter.
+      targets = [
+        {
+          queryKey: ['channel-monitor', 'model-detection'],
+        },
+      ]
+      break
+    case 'smart-schedule':
+      targets = [
+        { queryKey: ['channel-monitor'], exact: true },
+        { queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY },
+        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
+        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
+      ]
+      break
+  }
+
+  if (scope.taskHistoryOpen) {
+    targets.push({ queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY })
+  }
+  if (scope.smartScheduleHistoryOpen) {
+    targets.push({
+      queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
+    })
+  }
+
+  return targets
+}
+
+export async function refetchChannelMonitorQueries(
+  queryClient: QueryClient,
+  scope: ChannelMonitorManualRefreshScope
+) {
   await Promise.all(
-    CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_KEYS.map((queryKey) =>
-      queryClient.refetchQueries({ queryKey, type: 'all' })
+    getChannelMonitorManualRefreshTargets(scope).map(({ queryKey, exact }) =>
+      queryClient.refetchQueries(
+        { queryKey, exact, type: 'active' },
+        { cancelRefetch: false }
+      )
     )
   )
 }

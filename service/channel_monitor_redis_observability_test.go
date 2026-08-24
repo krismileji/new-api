@@ -221,6 +221,10 @@ func TestChannelMonitorRedisRealtimeStatusReportsOperationalFaultsUntilRecovery(
 	require.NoError(t, client.HSet(
 		ctx,
 		ChannelMonitorRedisObservabilityKey,
+		ChannelMonitorRedisObservabilityFieldRuntimeMarkerFailureCount,
+		4,
+		ChannelMonitorRedisObservabilityFieldScheduleMarkerFailureCount,
+		5,
 		ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureCount,
 		2,
 		ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureActive,
@@ -232,6 +236,8 @@ func TestChannelMonitorRedisRealtimeStatusReportsOperationalFaultsUntilRecovery(
 	).Err())
 
 	failed := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now())
+	assert.Equal(t, int64(4), failed.RuntimeMarkerFailureCount)
+	assert.Equal(t, int64(5), failed.ScheduleMarkerFailureCount)
 	assert.Equal(t, int64(2), failed.MarkerReleaseFailureCount)
 	assert.True(t, failed.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), failed.StreamTrimFailureCount)
@@ -251,6 +257,8 @@ func TestChannelMonitorRedisRealtimeStatusReportsOperationalFaultsUntilRecovery(
 		0,
 	).Err())
 	recovered := getChannelMonitorRedisRealtimeStatus(ctx, client, time.Now())
+	assert.Equal(t, int64(4), recovered.RuntimeMarkerFailureCount)
+	assert.Equal(t, int64(5), recovered.ScheduleMarkerFailureCount)
 	assert.Equal(t, int64(2), recovered.MarkerReleaseFailureCount)
 	assert.False(t, recovered.MarkerReleaseFailureActive)
 	assert.Equal(t, int64(3), recovered.StreamTrimFailureCount)

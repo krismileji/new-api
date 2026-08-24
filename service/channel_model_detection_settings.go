@@ -304,6 +304,9 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 	if activeDetectorChanged {
 		ResetChannelModelDetectionServiceCache()
 	}
+	if db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	response := channelModelDetectionSettingsResponse(saved, addressChanged || activeDetectorChanged)
 	return response, nil
 }
@@ -460,7 +463,11 @@ func TestChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time
 	if strings.TrimSpace(config.DetectorURL) == "" {
 		return ChannelModelDetectionServiceResponse{}, ErrChannelModelDetectionDetectorNotConfigured
 	}
-	return testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now, true, options...)
+	response, testErr := testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now, true, options...)
+	if db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
+	return response, testErr
 }
 
 func TestChannelModelDetectionServiceURL(ctx context.Context, tx *gorm.DB, rawURL string, now time.Time, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {

@@ -66,6 +66,43 @@ func channelSmartScheduleCachedRouteRouting(
 var channelSmartScheduleRouteCache map[string]map[string][]channelSmartScheduleCachedRoute
 var channelLogicalSmartScheduleRoutingCache map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay
 
+// channelSmartScheduleRouteCacheDirty tracks pools whose persisted state or
+// logical membership changed after the last complete route snapshot. A dirty
+// pool continues serving its previous immutable routes while one background
+// rebuild is queued; it is never refreshed synchronously by a user request.
+var channelSmartScheduleRouteCacheDirty map[channelSmartScheduleRoutePool]struct{}
+
+func markChannelSmartScheduleRoutePoolDirty(group string, modelName string) {
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	if group == "" || modelName == "" {
+		return
+	}
+	channelSyncLock.Lock()
+	if channelSmartScheduleRouteCacheDirty == nil {
+		channelSmartScheduleRouteCacheDirty = make(map[channelSmartScheduleRoutePool]struct{})
+	}
+	markChannelSmartScheduleRouteSnapshotDirty()
+	channelSmartScheduleRouteCacheDirty[channelSmartScheduleRoutePool{group: group, model: modelName}] = struct{}{}
+	channelSyncLock.Unlock()
+	signalChannelSmartScheduleRouteSnapshotDirty()
+}
+
+func markAllChannelSmartScheduleRoutePoolsDirty() {
+	channelSyncLock.Lock()
+	if channelSmartScheduleRouteCacheDirty == nil {
+		channelSmartScheduleRouteCacheDirty = make(map[channelSmartScheduleRoutePool]struct{})
+	}
+	markChannelSmartScheduleRouteSnapshotDirty()
+	for group, modelRoutes := range channelSmartScheduleRouteCache {
+		for modelName := range modelRoutes {
+			channelSmartScheduleRouteCacheDirty[channelSmartScheduleRoutePool{group: group, model: modelName}] = struct{}{}
+		}
+	}
+	channelSyncLock.Unlock()
+	signalChannelSmartScheduleRouteSnapshotDirty()
+}
+
 // RefreshChannelSmartScheduleRoutePoolCache reloads one route pool after a
 // runtime overlay changes Ability routing or request-limit state.
 func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) error {
@@ -75,6 +112,11 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 	group = strings.TrimSpace(group)
 	modelName = strings.TrimSpace(modelName)
 	if group == "" || modelName == "" {
+		return nil
+	}
+	if channelSmartScheduleRefreshWorkerIsStarted() {
+		markChannelSmartScheduleRoutePoolDirty(group, modelName)
+		enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{group: group, model: modelName})
 		return nil
 	}
 	channelCacheRefreshLock.Lock()
@@ -161,6 +203,8 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 			}
 		}
 		refreshChannelSmartScheduleRuntimeRouteIndex(group, modelName, previousRoutes, nil)
+		delete(channelSmartScheduleRouteCacheDirty, channelSmartScheduleRoutePool{group: group, model: modelName})
+		enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{group: group, model: modelName})
 		return nil
 	}
 	if modelRoutes == nil {
@@ -169,6 +213,8 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 	}
 	modelRoutes[modelName] = poolRoutes
 	refreshChannelSmartScheduleRuntimeRouteIndex(group, modelName, previousRoutes, poolRoutes)
+	delete(channelSmartScheduleRouteCacheDirty, channelSmartScheduleRoutePool{group: group, model: modelName})
+	enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{group: group, model: modelName})
 	return nil
 }
 
@@ -298,8 +344,10 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	options ChannelSelectionOptions,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) (*Channel, bool, error) {
-	if logicalChannelRuntimeDirty && IsLogicalChannelGroupingEnabled() && trafficPolicy != nil &&
-		trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+	if IsLogicalChannelGroupingEnabled() && trafficPolicy != nil &&
+		trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) &&
+		logicalChannelRuntimeCache == nil &&
+		channelSmartScheduleRouteNeedsRuntime(group, channelSmartScheduleRouteModelNames(modelName)) {
 		return nil, true, ErrLogicalChannelRuntimeUnavailable
 	}
 	if channelSmartScheduleRouteCache == nil {
@@ -384,6 +432,25 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 	}
 	return channel, true, nil
+}
+
+// channelSmartScheduleRouteNeedsRuntime reports whether the requested managed
+// pools contain a logical route that needs the relation snapshot to choose a
+// physical member. Physical smart-schedule routes remain selectable while the
+// optional logical-group snapshot is rebuilding. Callers must hold
+// channelSyncLock for reading.
+func channelSmartScheduleRouteNeedsRuntime(group string, modelNames []string) bool {
+	if channelSmartScheduleRouteCache == nil {
+		return false
+	}
+	for _, modelName := range modelNames {
+		for _, route := range channelSmartScheduleRouteCache[group][modelName] {
+			if route.logicalChannelID > 0 && len(route.logicalMembers) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func prepareChannelSmartScheduleCachedRoutes(

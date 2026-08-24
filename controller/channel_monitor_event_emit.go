@@ -110,5 +110,5 @@ func emitChannelTestMonitorEvent(
 	} else {
 		event.CostStatus = model.ChannelMonitorEventCostUnresolved
 	}
-	_, _ = service.PublishChannelMonitorEvent(context.WithoutCancel(ctx.Request.Context()), event)
+	_, _ = service.EnqueueChannelMonitorEvent(event)
 }

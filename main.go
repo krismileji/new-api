@@ -99,6 +99,7 @@ func main() {
 		}()
 
 		go model.SyncChannelCache(common.SyncFrequency)
+		model.StartChannelSmartScheduleRefreshWorker()
 	}
 
 	// Warm pricing after channel cache initialization so Advanced Custom
@@ -149,9 +150,36 @@ func main() {
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
 	controller.RegisterScheduledSystemTasks()
-	channelMonitorRedisRuntime, err := service.StartChannelMonitorRedisRuntime()
+	var channelMonitorRedisRuntime *service.ChannelMonitorRedisRuntime
+	var channelMonitorEventWriter interface {
+		Stop(context.Context) error
+	}
+	if common.RedisEnabled {
+		channelMonitorRedisRuntime, err = service.StartChannelMonitorRedisRuntime()
+		if err != nil {
+			common.FatalLog("failed to start channel monitor Redis runtime: " + err.Error())
+			return
+		}
+		channelMonitorEventWriter, err = service.StartChannelMonitorEventWriter()
+		if err != nil {
+			_ = channelMonitorRedisRuntime.Stop(context.Background())
+			_ = common.CloseRedisClients()
+			common.FatalLog("failed to start channel monitor event writer: " + err.Error())
+			return
+		}
+	} else {
+		common.SysLog("Redis is disabled; channel monitor Stream runtime and event writer are disabled")
+	}
+	channelDailyCostOutboxRuntime, err := service.StartChannelDailyCostOutboxRuntime()
 	if err != nil {
-		common.FatalLog("failed to start channel monitor Redis runtime: " + err.Error())
+		if channelMonitorEventWriter != nil {
+			_ = channelMonitorEventWriter.Stop(context.Background())
+		}
+		if channelMonitorRedisRuntime != nil {
+			_ = channelMonitorRedisRuntime.Stop(context.Background())
+		}
+		_ = common.CloseRedisClients()
+		common.FatalLog("failed to start channel daily cost outbox runtime: " + err.Error())
 		return
 	}
 	service.StartSystemTaskRunner()
@@ -237,8 +265,26 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
-	if err := channelMonitorRedisRuntime.Stop(ctx); err != nil {
-		common.SysError(fmt.Sprintf("failed to stop channel monitor Redis runtime: %v", err))
+	if err := controller.StopChannelStatusProbeOverviewRefreshRuntime(ctx); err != nil {
+		common.SysError(fmt.Sprintf("failed to stop channel status probe overview refreshes: %v", err))
+	}
+	if common.MemoryCacheEnabled {
+		if err := model.StopChannelSmartScheduleRefreshWorker(ctx); err != nil {
+			common.SysError(fmt.Sprintf("failed to stop smart schedule cache refresh worker: %v", err))
+		}
+	}
+	if channelMonitorEventWriter != nil {
+		if err := channelMonitorEventWriter.Stop(ctx); err != nil {
+			common.SysError(fmt.Sprintf("failed to stop channel monitor event writer: %v", err))
+		}
+	}
+	if err := channelDailyCostOutboxRuntime.Stop(ctx); err != nil {
+		common.SysError(fmt.Sprintf("failed to stop channel daily cost outbox runtime: %v", err))
+	}
+	if channelMonitorRedisRuntime != nil {
+		if err := channelMonitorRedisRuntime.Stop(ctx); err != nil {
+			common.SysError(fmt.Sprintf("failed to stop channel monitor Redis runtime: %v", err))
+		}
 	}
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
@@ -246,6 +292,12 @@ func main() {
 	}
 	if err := service.FlushChannelDailyCostEvents(); err != nil {
 		common.SysError(fmt.Sprintf("failed to flush channel daily cost events: %v", err))
+	}
+	if err := service.FlushChannelDailyCostOutbox(ctx); err != nil {
+		common.SysError(fmt.Sprintf("failed to flush channel daily cost outbox: %v", err))
+	}
+	if err := common.CloseRedisClients(); err != nil {
+		common.SysError(fmt.Sprintf("failed to close Redis clients: %v", err))
 	}
 	common.SysLog("server exited")
 }

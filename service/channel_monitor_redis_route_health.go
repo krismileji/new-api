@@ -203,13 +203,14 @@ func ChannelMonitorRedisRouteHealthCoverageStart() int64 {
 }
 
 func ChannelMonitorRedisRouteHealthProjectionStartedAt(ctx context.Context) int64 {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled || client == nil {
 		return 0
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	value, err := common.RDB.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey).Int64()
+	value, err := client.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey).Int64()
 	if err != nil {
 		return 0
 	}
@@ -217,10 +218,11 @@ func ChannelMonitorRedisRouteHealthProjectionStartedAt(ctx context.Context) int6
 }
 
 func NewChannelMonitorRedisRouteHealthProjection() (*ChannelMonitorRedisRouteHealthProjection, error) {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled || client == nil {
 		return nil, ErrChannelMonitorRedisRouteHealthUnavailable
 	}
-	return newChannelMonitorRedisRouteHealthProjection(common.RDB, nil)
+	return newChannelMonitorRedisRouteHealthProjection(client, nil)
 }
 
 func NewChannelMonitorRedisRouteHealthProjectionForClient(client *redis.Client) (*ChannelMonitorRedisRouteHealthProjection, error) {

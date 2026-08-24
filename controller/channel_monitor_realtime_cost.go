@@ -60,17 +60,37 @@ func applyChannelMonitorRealtimeCost(
 	overview.RedisAvailable = metadata.RedisAvailable
 	overview.RedisConsumerRunning = metadata.RedisConsumerRunning
 	overview.PendingCount = metadata.PendingCount
+	overview.WriterQueueDepth = metadata.WriterQueueDepth
+	overview.WriterQueueCapacity = metadata.WriterQueueCapacity
+	overview.WriterQueuedEvents = metadata.WriterQueuedEvents
+	overview.WriterDroppedEvents = metadata.WriterDroppedEvents
+	overview.WriterRetryEvents = metadata.WriterRetryEvents
+	overview.WriterOldestQueuedAt = metadata.WriterOldestQueuedAt
+	overview.WriterQueueAgeSeconds = metadata.WriterQueueAgeSeconds
 	overview.OldestPendingAt = metadata.OldestPendingAt
 	overview.ConsumerLagSeconds = metadata.ConsumerLagSeconds
 	overview.LastPublishedAt = metadata.LastPublishedAt
 	overview.LastProcessedAt = metadata.LastProcessedAt
 	overview.RetryCount = metadata.RetryCount
 	overview.TakeoverCount = metadata.TakeoverCount
+	overview.QuarantineCount = metadata.QuarantineCount
+	overview.LastQuarantinedAt = metadata.LastQuarantinedAt
+	overview.RuntimeMarkerFailureCount = metadata.RuntimeMarkerFailureCount
+	overview.ScheduleMarkerFailureCount = metadata.ScheduleMarkerFailureCount
 	overview.CostQueuePendingCount = service.GetChannelDailyCostPendingCount()
+	overview.CostStreamPendingCount = metadata.CostStreamPendingCount
+	overview.CostStreamUnreadCount = metadata.CostStreamUnreadCount
+	overview.CostOutboxPendingCount = metadata.CostOutboxPendingCount
+	overview.CostOutboxOldestPendingAt = metadata.CostOutboxOldestPendingAt
+	overview.CostOutboxRetryCount = metadata.CostOutboxRetryCount
+	overview.CostLedgerFailedCount = metadata.CostLedgerFailedCount
+	overview.CostPublishFailedCount = metadata.CostPublishFailedCount
+	overview.CostDeadLetterCount = metadata.CostDeadLetterCount
 	overview.MarkerReleaseFailureCount = metadata.MarkerReleaseFailureCount
 	overview.MarkerReleaseFailureActive = metadata.MarkerReleaseFailureActive
 	overview.StreamTrimFailureCount = metadata.StreamTrimFailureCount
 	overview.StreamTrimFailureActive = metadata.StreamTrimFailureActive
+	overview.RedisPoolStats = metadata.RedisPoolStats
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 	return nil
 }

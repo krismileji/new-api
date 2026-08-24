@@ -73,3 +73,23 @@ func TestChannelMonitorRedisRuntimeRetriesStreamInitialization(t *testing.T) {
 	defer cancel()
 	require.NoError(t, runtime.Stop(ctx))
 }
+
+func TestChannelMonitorRedisRuntimeStopCancelsBlockedStreamInitialization(t *testing.T) {
+	started := make(chan struct{})
+	runtime := startChannelMonitorRedisRuntime(
+		func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		&channelMonitorRedisRuntimeTestConsumer{calls: make(chan int64, 1)},
+		time.Hour,
+		time.Hour,
+		func(error) {},
+	)
+	<-started
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, runtime.Stop(stopCtx))
+}

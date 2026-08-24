@@ -40,6 +40,13 @@ func TestChannelModelDetectionOverviewAPIUsesSuccessEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":true`)
 	assert.Contains(t, recorder.Body.String(), `"channels"`)
+	assert.Contains(t, recorder.Body.String(), `"snapshot_version":1`)
+	assert.Contains(t, recorder.Body.String(), `"snapshot_revision":`)
+	assert.Contains(t, recorder.Body.String(), `"event_watermark":`)
+	assert.Contains(t, recorder.Body.String(), `"generated_at":`)
+	assert.Contains(t, recorder.Body.String(), `"data_cutoff_at":`)
+	assert.Contains(t, recorder.Body.String(), `"snapshot_age_seconds":`)
+	assert.Contains(t, recorder.Body.String(), `"stale":false`)
 	assert.NotContains(t, recorder.Body.String(), "overview-secret")
 }
 

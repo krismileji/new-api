@@ -324,6 +324,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	economicInputsChanged := false
 	defer func() {
 		if economicInputsChanged || channelStatusChanged {
+			service.NotifyChannelModelDetectionOverviewChanged()
 			_ = requestChannelSmartScheduleRun(ctx)
 		}
 	}()

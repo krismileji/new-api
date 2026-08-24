@@ -48,6 +48,7 @@ func TestDeleteLogicalGroupMemberAdvancesRevisionAndDeletesEmptyGroup(t *testing
 	db := setupLogicalGroupChannelDeleteTest(t)
 	group := seedLogicalGroupForChannelDelete(t, db, 901, 902)
 	require.NoError(t, RefreshLogicalChannelRuntimeCache())
+	beforeRevision := group.Revision
 
 	require.NoError(t, (&Channel{Id: 901}).Delete())
 	var storedGroup ChannelLogicalGroup
@@ -58,6 +59,10 @@ func TestDeleteLogicalGroupMemberAdvancesRevisionAndDeletesEmptyGroup(t *testing
 	require.Len(t, members, 1)
 	assert.Equal(t, 902, members[0].ChannelID)
 	identity, err := ResolveChannelLogicalIdentity(902)
+	require.NoError(t, err)
+	assert.Equal(t, beforeRevision, identity.Revision, "dirty resolution keeps the last complete snapshot")
+	require.NoError(t, RefreshLogicalChannelRuntimeCache())
+	identity, err = ResolveChannelLogicalIdentity(902)
 	require.NoError(t, err)
 	assert.Equal(t, storedGroup.Revision, identity.Revision)
 

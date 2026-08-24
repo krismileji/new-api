@@ -235,6 +235,7 @@ func normalizeChannelModelDetectionCostSnapshot(snapshot ChannelModelDetectionCo
 // Replaying the same cost_event_id returns the stored row; reusing an attempt
 // identity with different facts is rejected.
 func PrepareChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostAttemptInput) (model.ChannelModelDetectionCostEvent, bool, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, false, err
@@ -280,6 +281,9 @@ func PrepareChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inp
 		return model.ChannelModelDetectionCostEvent{}, false, created.Error
 	}
 	if created.RowsAffected == 1 {
+		if notifyOverview {
+			NotifyChannelModelDetectionOverviewChanged()
+		}
 		return event, true, nil
 	}
 
@@ -367,6 +371,7 @@ func channelModelDetectionCostEventKeyFromEvent(event model.ChannelModelDetectio
 }
 
 func MarkChannelModelDetectionCostEventDispatched(ctx context.Context, tx *gorm.DB, costEventId string, now int64) (model.ChannelModelDetectionCostEvent, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
@@ -395,10 +400,14 @@ func MarkChannelModelDetectionCostEventDispatched(ctx context.Context, tx *gorm.
 	if event.DispatchState != model.ChannelModelDetectionDispatchDispatched {
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
+	if notifyOverview && updated.RowsAffected == 1 {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return event, nil
 }
 
 func MarkChannelModelDetectionCostEventNotStarted(ctx context.Context, tx *gorm.DB, costEventId string, now int64) (model.ChannelModelDetectionCostEvent, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
@@ -427,6 +436,9 @@ func MarkChannelModelDetectionCostEventNotStarted(ctx context.Context, tx *gorm.
 	if event.DispatchState != model.ChannelModelDetectionDispatchNotStarted || event.SettlementStatus != model.ChannelModelDetectionSettlementNotApplicable {
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
+	if notifyOverview && updated.RowsAffected == 1 {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return event, nil
 }
 
@@ -435,6 +447,7 @@ func MarkChannelModelDetectionCostEventNotStarted(ctx context.Context, tx *gorm.
 // already-dispatched request is conservatively moved to unresolved instead of
 // being recorded as a zero-cost settlement.
 func SettleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostSettlementInput) (model.ChannelModelDetectionCostEvent, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
@@ -449,6 +462,9 @@ func SettleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
 	emitChannelModelDetectionMonitorEvent(settled)
+	if notifyOverview {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return settled, nil
 }
 
@@ -595,6 +611,7 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 }
 
 func MarkChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.DB, input ChannelModelDetectionCostUnresolvedInput) (result model.ChannelModelDetectionCostEvent, resultErr error) {
+	notifyOverview := tx == nil || tx == model.DB
 	useDB, err := channelModelDetectionCostDB(ctx, tx)
 	if err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
@@ -606,6 +623,9 @@ func MarkChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 	})
 	if resultErr == nil {
 		emitChannelModelDetectionMonitorEvent(result)
+		if notifyOverview {
+			NotifyChannelModelDetectionOverviewChanged()
+		}
 	}
 	return result, resultErr
 }
@@ -896,6 +916,7 @@ func aggregateChannelModelDetectionCostEventList(events []model.ChannelModelDete
 }
 
 func RebuildChannelModelDetectionExecutionCost(ctx context.Context, tx *gorm.DB, executionId int64) (ChannelModelDetectionCostAggregate, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	if executionId <= 0 {
 		return ChannelModelDetectionCostAggregate{}, model.ErrChannelModelDetectionInvalidCost
 	}
@@ -914,10 +935,14 @@ func RebuildChannelModelDetectionExecutionCost(ctx context.Context, tx *gorm.DB,
 	if updated.RowsAffected != 1 {
 		return ChannelModelDetectionCostAggregate{}, gorm.ErrRecordNotFound
 	}
+	if notifyOverview {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return aggregate, nil
 }
 
 func RebuildChannelModelDetectionRunCost(ctx context.Context, tx *gorm.DB, runId string) (ChannelModelDetectionCostAggregate, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	runId = strings.TrimSpace(runId)
 	if runId == "" || len(runId) > 64 {
 		return ChannelModelDetectionCostAggregate{}, model.ErrChannelModelDetectionInvalidCost
@@ -937,10 +962,14 @@ func RebuildChannelModelDetectionRunCost(ctx context.Context, tx *gorm.DB, runId
 	if updated.RowsAffected != 1 {
 		return ChannelModelDetectionCostAggregate{}, gorm.ErrRecordNotFound
 	}
+	if notifyOverview {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return aggregate, nil
 }
 
 func RebuildChannelModelDetectionBatchCost(ctx context.Context, tx *gorm.DB, batchId string) (ChannelModelDetectionCostAggregate, error) {
+	notifyOverview := tx == nil || tx == model.DB
 	batchId = strings.TrimSpace(batchId)
 	if batchId == "" || len(batchId) > 64 {
 		return ChannelModelDetectionCostAggregate{}, model.ErrChannelModelDetectionInvalidCost
@@ -969,6 +998,9 @@ func RebuildChannelModelDetectionBatchCost(ctx context.Context, tx *gorm.DB, bat
 	}
 	if updated.RowsAffected != 1 {
 		return ChannelModelDetectionCostAggregate{}, gorm.ErrRecordNotFound
+	}
+	if notifyOverview {
+		NotifyChannelModelDetectionOverviewChanged()
 	}
 	return aggregate, nil
 }

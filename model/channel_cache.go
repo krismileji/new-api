@@ -61,6 +61,11 @@ func InitChannelCache() {
 		common.SysError("load logical smart schedule routing cache failed: " + err.Error())
 		return
 	}
+	newLogicalChannelRuntimeCache, err := buildLogicalChannelRuntimeSnapshot(DB)
+	if err != nil {
+		common.SysError("load logical channel runtime snapshot failed: " + err.Error())
+		return
+	}
 	newChannelSmartScheduleRuntimeRouteIndex := buildChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRouteCache)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
@@ -100,6 +105,12 @@ func InitChannelCache() {
 	group2model2channels = newGroup2model2channels
 	channelSmartScheduleRouteCache = newChannelSmartScheduleRouteCache
 	channelLogicalSmartScheduleRoutingCache = newChannelLogicalSmartScheduleRoutingCache
+	logicalChannelRuntimeCache = newLogicalChannelRuntimeCache
+	logicalChannelRuntimeDirty = false
+	channelSmartScheduleRouteCacheDirty = make(map[channelSmartScheduleRoutePool]struct{})
+	markLocalChannelSmartScheduleRouteSnapshot(time.Now().UnixMilli())
+	channelSmartScheduleRouteSnapshotDirtySince = 0
+	channelSmartScheduleRouteSnapshotDirtyWatermark = 0
 	publishChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRuntimeRouteIndex)
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
@@ -123,10 +134,12 @@ func InitChannelCache() {
 	// loadPricingAdvancedCustomConfigs. channelSyncLock MUST be released before
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
-	if err := RefreshLogicalChannelRuntimeCache(); err != nil {
-		// Keep the previous complete logical snapshot when the optional logical
-		// relation tables are unavailable or a refresh fails during startup.
-		common.SysError("load logical channel runtime snapshot failed: " + err.Error())
+	if channelSmartScheduleRefreshWorkerIsStarted() && common.RedisMonitorWriteClient() != nil {
+		channelSyncLock.Lock()
+		markChannelSmartScheduleRouteSnapshotDirty()
+		channelSyncLock.Unlock()
+		signalChannelSmartScheduleRouteSnapshotDirty()
+		enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
 	}
 	common.SysLog("channels synced from database")
 }
@@ -152,38 +165,46 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		)
 	}
 	managedModelNames := channelSmartScheduleRouteModelNames(model)
-	if IsLogicalChannelGroupingEnabled() && trafficPolicy != nil &&
-		trafficPolicy.managesAnyPool(group, managedModelNames) {
+	managedPool := trafficPolicy != nil && trafficPolicy.managesAnyPool(group, managedModelNames)
+	if managedPool && channelSmartScheduleRefreshWorkerIsStarted() &&
+		!channelSmartScheduleRouteSnapshotUsable(time.Now()) {
+		return nil, ErrChannelSmartScheduleRouteSnapshotUnavailable
+	}
+	if IsLogicalChannelGroupingEnabled() && managedPool {
 		channelSyncLock.RLock()
 		runtimeDirty := logicalChannelRuntimeDirty
+		routeSnapshotAvailable := channelSmartScheduleRouteCache != nil
+		runtimeSnapshotRequired := channelSmartScheduleRouteNeedsRuntime(group, managedModelNames)
+		runtimeSnapshotAvailable := logicalChannelRuntimeCache != nil || !runtimeSnapshotRequired
+		routePoolDirty := false
+		for _, managedModelName := range managedModelNames {
+			if trafficPolicy.managesPool(group, managedModelName) {
+				if _, dirty := channelSmartScheduleRouteCacheDirty[channelSmartScheduleRoutePool{group: group, model: managedModelName}]; dirty {
+					routePoolDirty = true
+					break
+				}
+			}
+		}
 		channelSyncLock.RUnlock()
 		if runtimeDirty {
-			if err := RefreshLogicalChannelRuntimeCache(); err != nil {
-				return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
-					group, model, retry, requestPath, selectionOptions, trafficPolicy,
-				)
-			}
+			// Dirty state only schedules a deduplicated background rebuild.
+			enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{runtime: true})
+		}
+		if runtimeDirty || routePoolDirty {
 			for _, managedModelName := range managedModelNames {
-				if !trafficPolicy.managesPool(group, managedModelName) {
-					continue
-				}
-				if err := RefreshChannelSmartScheduleRoutePoolCache(group, managedModelName); err != nil {
-					return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
-						group, model, retry, requestPath, selectionOptions, trafficPolicy,
-					)
+				if trafficPolicy.managesPool(group, managedModelName) {
+					enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{
+						group: group, model: managedModelName,
+					})
 				}
 			}
+		}
+		if !runtimeSnapshotAvailable || !routeSnapshotAvailable {
+			return nil, ErrChannelSmartScheduleRouteSnapshotUnavailable
 		}
 	}
 
 	channelSyncLock.RLock()
-	if logicalChannelRuntimeDirty && IsLogicalChannelGroupingEnabled() &&
-		trafficPolicy != nil && trafficPolicy.managesAnyPool(group, managedModelNames) {
-		channelSyncLock.RUnlock()
-		return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
-			group, model, retry, requestPath, selectionOptions, trafficPolicy,
-		)
-	}
 	defer channelSyncLock.RUnlock()
 	if channel, handled, err := getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		group, model, retry, requestPath, selectionOptions, trafficPolicy,

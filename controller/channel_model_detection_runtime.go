@@ -86,6 +86,7 @@ func GetChannelModelDetectorRelayHandler() (*ChannelModelDetectorRelayHandler, e
 
 func registerChannelModelDetectionRuntimeTask() {
 	service.RegisterSystemTaskHandler(channelModelDetectionTaskHandler{})
+	service.WarmChannelModelDetectionOverviewSnapshot()
 }
 
 type channelModelDetectionTaskHandler struct{}
@@ -144,6 +145,9 @@ workerLoop:
 		workerResult, runErr := runtime.worker.RunOnce(ctx)
 		if errors.Is(runErr, service.ErrChannelModelDetectionWorkerNoWork) {
 			break
+		}
+		if workerResult.RunID != "" {
+			service.NotifyChannelModelDetectionOverviewChanged()
 		}
 		result.WorkerPasses++
 		result.LastRunID = workerResult.RunID

@@ -31,7 +31,14 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  Suspense,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
@@ -115,18 +122,19 @@ import {
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
-import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorConcurrencyQueryOptions,
+  getChannelMonitorManualRefreshScopeKey,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
   getChannelMonitorSmartScheduleQueryOptions,
   isChannelMonitorPerformanceQueryActive,
   refetchChannelMonitorQueries,
+  shouldCoalesceChannelMonitorManualRefresh,
 } from './lib/query-options'
 import { mergeChannelMonitorRealtimeMetadata } from './lib/realtime-metadata'
 import {
@@ -459,6 +467,9 @@ export function ChannelMonitor() {
     null
   )
   const [manualRefreshPending, setManualRefreshPending] = useState(false)
+  const manualRefreshPromiseRef = useRef<Promise<void> | null>(null)
+  const manualRefreshScopeRef = useRef<string | null>(null)
+  const manualRefreshAtRef = useRef(0)
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
@@ -498,16 +509,7 @@ export function ChannelMonitor() {
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: (currentQuery) =>
-      getChannelMonitorActiveRefetchInterval(
-        currentQuery.state.data?.data.channels.some((channel) => {
-          const activeRun = channel.active_run
-          return (
-            activeRun != null &&
-            isChannelModelDetectionRunActive(activeRun.status)
-          )
-        }) ?? false
-      ),
+    refetchInterval: () => getChannelMonitorActiveRefetchInterval(true),
   })
   const groupMonitorSettingsQuery = useQuery({
     queryKey: ['channel-monitor', 'group-monitor', 'settings'],
@@ -530,13 +532,37 @@ export function ChannelMonitor() {
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,
   })
-  const refreshChannelMonitor = async () => {
-    setManualRefreshPending(true)
-    try {
-      await refetchChannelMonitorQueries(queryClient)
-    } finally {
-      setManualRefreshPending(false)
+  const refreshChannelMonitor = () => {
+    const now = Date.now()
+    const refreshScope = getChannelMonitorManualRefreshScopeKey({
+      view,
+      taskHistoryOpen,
+      smartScheduleHistoryOpen,
+    })
+    if (
+      shouldCoalesceChannelMonitorManualRefresh({
+        currentScope: refreshScope,
+        previousScope: manualRefreshScopeRef.current,
+        currentTime: now,
+        previousRefreshAt: manualRefreshAtRef.current,
+        inFlight: manualRefreshPromiseRef.current != null,
+      })
+    ) {
+      return manualRefreshPromiseRef.current ?? Promise.resolve()
     }
+    manualRefreshAtRef.current = now
+    manualRefreshScopeRef.current = refreshScope
+    setManualRefreshPending(true)
+    const refreshPromise = refetchChannelMonitorQueries(queryClient, {
+      view,
+      taskHistoryOpen,
+      smartScheduleHistoryOpen,
+    }).finally(() => {
+      manualRefreshPromiseRef.current = null
+      setManualRefreshPending(false)
+    })
+    manualRefreshPromiseRef.current = refreshPromise
+    return refreshPromise
   }
   const ratioFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamRatio,

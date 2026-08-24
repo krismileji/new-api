@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
 import { describe, test } from 'vitest'
 
 import { mergeChannelMonitorRealtimeMetadata } from '../realtime-metadata'
@@ -25,26 +26,71 @@ describe('channel monitor realtime metadata', () => {
   test('uses the oldest cutoff and most severe queue state across page snapshots', () => {
     const merged = mergeChannelMonitorRealtimeMetadata([
       {
+        generated_at: 205,
+        snapshot_age_seconds: 5,
+        stale: false,
         data_cutoff_at: 200,
         processed_at: 210,
         event_watermark: 20,
         queue_depth: 1,
+        writer_queue_depth: 2,
+        writer_queue_capacity: 8,
+        writer_dropped_events: 1,
+        cost_stream_pending_count: 2,
+        cost_stream_unread_count: 3,
+        cost_outbox_pending_count: 1,
+        cost_outbox_oldest_pending_at: 150,
+        cost_outbox_retry_count: 4,
+        cost_ledger_failed_count: 1,
+        cost_publish_failed_count: 0,
+        cost_dead_letter_count: 1,
+        degraded_reasons: ['cost_dead_letter'],
         realtime_degraded: false,
       },
       {
+        generated_at: 185,
+        snapshot_age_seconds: 25,
+        stale: true,
         data_cutoff_at: 180,
         processed_at: 190,
         event_watermark: 18,
         queue_depth: 7,
+        writer_queue_depth: 5,
+        writer_queue_capacity: 8,
+        writer_dropped_events: 3,
+        cost_stream_pending_count: 1,
+        cost_stream_unread_count: 5,
+        cost_outbox_pending_count: 6,
+        cost_outbox_oldest_pending_at: 140,
+        cost_outbox_retry_count: 7,
+        cost_ledger_failed_count: 3,
+        cost_publish_failed_count: 2,
+        cost_dead_letter_count: 0,
+        degraded_reasons: ['event_backlog', 'cost_dead_letter'],
         realtime_degraded: true,
       },
     ])
 
     assert.deepEqual(merged, {
+      generated_at: 185,
+      snapshot_age_seconds: 25,
+      stale: true,
       data_cutoff_at: 180,
       processed_at: 190,
       event_watermark: 18,
       queue_depth: 7,
+      writer_queue_depth: 5,
+      writer_queue_capacity: 8,
+      writer_dropped_events: 3,
+      cost_stream_pending_count: 2,
+      cost_stream_unread_count: 5,
+      cost_outbox_pending_count: 6,
+      cost_outbox_oldest_pending_at: 140,
+      cost_outbox_retry_count: 7,
+      cost_ledger_failed_count: 3,
+      cost_publish_failed_count: 2,
+      cost_dead_letter_count: 1,
+      degraded_reasons: ['cost_dead_letter', 'event_backlog'],
       realtime_degraded: true,
     })
   })
@@ -88,6 +134,8 @@ describe('channel monitor realtime metadata', () => {
       redis_available: false,
       redis_consumer_running: false,
       marker_release_failure_count: 2,
+      runtime_marker_failure_count: 4,
+      schedule_marker_failure_count: 1,
       marker_release_failure_active: true,
       stream_trim_failure_count: 1,
       stream_trim_failure_active: false,
@@ -102,6 +150,8 @@ describe('channel monitor realtime metadata', () => {
       redis_available: true,
       redis_consumer_running: true,
       marker_release_failure_count: 1,
+      runtime_marker_failure_count: 3,
+      schedule_marker_failure_count: 5,
       marker_release_failure_active: false,
       stream_trim_failure_count: 3,
       stream_trim_failure_active: true,
@@ -117,6 +167,8 @@ describe('channel monitor realtime metadata', () => {
       assert.equal(merged?.redis_available, false)
       assert.equal(merged?.redis_consumer_running, false)
       assert.equal(merged?.marker_release_failure_count, 2)
+      assert.equal(merged?.runtime_marker_failure_count, 4)
+      assert.equal(merged?.schedule_marker_failure_count, 5)
       assert.equal(merged?.marker_release_failure_active, true)
       assert.equal(merged?.stream_trim_failure_count, 3)
       assert.equal(merged?.stream_trim_failure_active, true)

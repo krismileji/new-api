@@ -36,7 +36,9 @@ const groupMonitorRequestConfig = (
   skipErrorHandler: true,
 })
 
-function ensureGroupMonitorSuccess<T>(response: ChannelGroupMonitorApiResponse<T>) {
+function ensureGroupMonitorSuccess<T>(
+  response: ChannelGroupMonitorApiResponse<T>
+) {
   if (!response.success) {
     throw new Error(response.message || '分组监控请求失败')
   }
@@ -46,10 +48,9 @@ function ensureGroupMonitorSuccess<T>(response: ChannelGroupMonitorApiResponse<T
 export async function getPricingGroupMonitor(): Promise<
   ChannelGroupMonitorApiResponse<PricingGroupMonitor>
 > {
-  const response = await api.get<ChannelGroupMonitorApiResponse<PricingGroupMonitor>>(
-    '/api/pricing/group-monitor',
-    groupMonitorRequestConfig()
-  )
+  const response = await api.get<
+    ChannelGroupMonitorApiResponse<PricingGroupMonitor>
+  >('/api/pricing/group-monitor', groupMonitorRequestConfig())
   return ensureGroupMonitorSuccess(response.data)
 }
 
@@ -65,10 +66,9 @@ export async function getChannelGroupMonitorSettings(): Promise<
 export async function getChannelGroupMonitorOverview(): Promise<
   ChannelGroupMonitorApiResponse<ChannelGroupMonitorOverview>
 > {
-  const response = await api.get<ChannelGroupMonitorApiResponse<ChannelGroupMonitorOverview>>(
-    '/api/channel_monitor/group_monitor/overview',
-    groupMonitorRequestConfig()
-  )
+  const response = await api.get<
+    ChannelGroupMonitorApiResponse<ChannelGroupMonitorOverview>
+  >('/api/channel_monitor/group_monitor/overview', groupMonitorRequestConfig())
   return ensureGroupMonitorSuccess(response.data)
 }
 

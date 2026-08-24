@@ -744,12 +744,14 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 			StabilityMetricsAvailable bool                                              `json:"stability_metrics_available"`
 			StabilityItems            []model.ChannelMonitorRouteStabilityMetric        `json:"stability_items"`
 			ExecutionSnapshotMetrics  *model.ChannelSmartScheduleExecutionDetailMetrics `json:"execution_snapshot_metrics"`
+			RouteSnapshot             model.ChannelSmartScheduleRouteSnapshotStatus     `json:"route_snapshot"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	require.NotNil(t, response.Data.ExecutionSnapshotMetrics)
 	assert.Equal(t, expectedSnapshotMetrics, *response.Data.ExecutionSnapshotMetrics)
+	assert.Positive(t, response.Data.RouteSnapshot.MaxAgeSeconds)
 	assert.True(t, response.Data.StabilityMetricsAvailable)
 	require.Len(t, response.Data.StabilityItems, 1)
 	metric := response.Data.StabilityItems[0]
@@ -891,6 +893,7 @@ func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t
 			PerformanceItems         []model.ChannelMonitorRoutePerformanceMetric      `json:"performance_items"`
 			StabilityItems           []model.ChannelMonitorRouteStabilityMetric        `json:"stability_items"`
 			ExecutionSnapshotMetrics *model.ChannelSmartScheduleExecutionDetailMetrics `json:"execution_snapshot_metrics"`
+			RouteSnapshot            *model.ChannelSmartScheduleRouteSnapshotStatus    `json:"route_snapshot"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
@@ -898,6 +901,7 @@ func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t
 	assert.False(t, response.Data.MetricsIncluded)
 	require.NotNil(t, response.Data.ExecutionSnapshotMetrics)
 	assert.Equal(t, expectedSnapshotMetrics, *response.Data.ExecutionSnapshotMetrics)
+	require.NotNil(t, response.Data.RouteSnapshot)
 	require.Len(t, response.Data.Routes, 1)
 	assert.Equal(t, "model-a", response.Data.Routes[0].SampleModel)
 	assert.Empty(t, response.Data.SampleItems)
@@ -1151,16 +1155,18 @@ func TestGetChannelMonitorSmartScheduleRoutesKeepsParticipationRoutesWhenDisable
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Enabled                   bool                                         `json:"enabled"`
-			Routes                    []model.ChannelSmartScheduleRoute            `json:"routes"`
-			PerformanceItems          []model.ChannelMonitorRoutePerformanceMetric `json:"performance_items"`
-			StabilityMetricsAvailable bool                                         `json:"stability_metrics_available"`
-			StabilityItems            []model.ChannelMonitorRouteStabilityMetric   `json:"stability_items"`
+			Enabled                   bool                                           `json:"enabled"`
+			Routes                    []model.ChannelSmartScheduleRoute              `json:"routes"`
+			PerformanceItems          []model.ChannelMonitorRoutePerformanceMetric   `json:"performance_items"`
+			StabilityMetricsAvailable bool                                           `json:"stability_metrics_available"`
+			StabilityItems            []model.ChannelMonitorRouteStabilityMetric     `json:"stability_items"`
+			RouteSnapshot             *model.ChannelSmartScheduleRouteSnapshotStatus `json:"route_snapshot"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	assert.False(t, response.Data.Enabled)
+	require.NotNil(t, response.Data.RouteSnapshot)
 	require.Len(t, response.Data.Routes, 1)
 	assert.False(t, response.Data.Routes[0].State.Participates())
 	require.NotNil(t, response.Data.Routes[0].CostRatio)

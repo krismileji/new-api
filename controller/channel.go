@@ -705,6 +705,7 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	if len(channels) > 0 {
+		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
 	recordManageAudit(c, "channel.create", map[string]interface{}{
@@ -741,6 +742,7 @@ func DeleteChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.NotifyChannelModelDetectionOverviewChanged()
 	if channelLookupFailed {
 		service.ResetProxyClientCache()
 	} else {
@@ -773,6 +775,7 @@ func DeleteDisabledChannel(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	if rows > 0 {
+		service.NotifyChannelModelDetectionOverviewChanged()
 		service.ResetProxyClientCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
@@ -815,6 +818,7 @@ func DisableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.NotifyChannelModelDetectionOverviewChanged()
 	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.tag_disable", map[string]interface{}{
 		"tag": channelTag.Tag,
@@ -842,6 +846,7 @@ func EnableTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.NotifyChannelModelDetectionOverviewChanged()
 	_ = requestChannelSmartScheduleRun(c.Request.Context())
 	recordManageAudit(c, "channel.tag_enable", map[string]interface{}{
 		"tag": channelTag.Tag,
@@ -903,6 +908,7 @@ func EditTagChannels(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.NotifyChannelModelDetectionOverviewChanged()
 	if (channelTag.Models != nil && *channelTag.Models != "") ||
 		(channelTag.Groups != nil && *channelTag.Groups != "") ||
 		channelTag.Priority != nil || channelTag.Weight != nil {
@@ -944,6 +950,7 @@ func DeleteChannelBatch(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	if deletedCount > 0 {
+		service.NotifyChannelModelDetectionOverviewChanged()
 		service.ResetProxyClientCache()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 	}
@@ -1129,6 +1136,7 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.NotifyChannelModelDetectionOverviewChanged()
 	if channel.Group != originChannel.Group ||
 		channel.Models != originChannel.Models ||
 		channel.GetPriority() != originChannel.GetPriority() ||
@@ -1184,6 +1192,7 @@ func UpdateChannelStatus(c *gin.Context) {
 	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
 	if changed {
 		model.InitChannelCache()
+		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		statusLabel := "禁用"
 		if req.Status == common.ChannelStatusEnabled {
@@ -1216,6 +1225,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	}
 	if changedCount > 0 {
 		model.InitChannelCache()
+		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		statusLabel := "禁用"
 		if req.Status == common.ChannelStatusEnabled {

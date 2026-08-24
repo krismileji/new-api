@@ -17,10 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import {
-  InformationCircleIcon,
-  Route01Icon,
-} from '@hugeicons/core-free-icons'
+import { InformationCircleIcon, Route01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm, type Resolver, type UseFormReturn } from 'react-hook-form'
@@ -220,7 +217,7 @@ function ChannelMonitorFieldInfo(props: {
           aria-hidden='true'
         />
       </TooltipTrigger>
-      <TooltipContent className='max-w-sm whitespace-normal leading-relaxed'>
+      <TooltipContent className='max-w-sm leading-relaxed whitespace-normal'>
         {props.description}
       </TooltipContent>
     </Tooltip>

@@ -14,6 +14,7 @@ import (
 
 func setupLogicalChannelRuntimeTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	t.Setenv(ChannelLogicalGroupGlobalEnableEnv, "true")
 	previousDB := DB
 	previousMemoryCache := common.MemoryCacheEnabled
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "logical-runtime.db")), &gorm.Config{})
@@ -49,6 +50,9 @@ func TestLogicalChannelRuntimeUngroupedAndGroupedRevision(t *testing.T) {
 	require.NoError(t, db.Create(&Channel{Id: 503, Key: "key-c", Name: "c"}).Error)
 
 	identity, err := ResolveChannelLogicalIdentity(501)
+	assert.ErrorIs(t, err, ErrLogicalChannelRuntimeUnavailable)
+	require.NoError(t, RefreshLogicalChannelRuntimeCache())
+	identity, err = ResolveChannelLogicalIdentity(501)
 	require.NoError(t, err)
 	assert.Equal(t, 501, identity.ChannelID)
 	assert.EqualValues(t, 501, identity.LogicalChannelID)
@@ -73,8 +77,8 @@ func TestLogicalChannelRuntimeUngroupedAndGroupedRevision(t *testing.T) {
 	assert.EqualValues(t, 1, snapshot.Members[1].Weight)
 	groupedIdentity := identity
 
-	// A relation update marks the cache dirty. The next new-task resolution
-	// observes the incremented revision and the replacement member set.
+	// A relation update marks the cache dirty. New requests keep using the
+	// previous complete snapshot while one background refresh is pending.
 	oldRevision := group.Revision
 	require.NoError(t, db.Model(group).Updates(map[string]interface{}{"revision": oldRevision + 1}).Error)
 	require.NoError(t, db.Where("logical_group_id = ?", group.Id).Delete(&ChannelLogicalGroupMember{}).Error)
@@ -92,15 +96,21 @@ func TestLogicalChannelRuntimeUngroupedAndGroupedRevision(t *testing.T) {
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
 	identity, err = ResolveChannelLogicalIdentity(503)
 	require.NoError(t, err)
-	assert.EqualValues(t, group.Id, identity.LogicalChannelID)
-	assert.EqualValues(t, oldRevision+1, identity.Revision)
+	assert.EqualValues(t, 503, identity.LogicalChannelID, "dirty selection keeps the previous physical identity")
+	assert.Zero(t, identity.Revision)
 	assert.NotContains(t, selectedChannelColumns, "key", "runtime cache must not select complete credentials")
-	_, err = GetLogicalChannelSelectionSnapshot(groupedIdentity)
-	assert.ErrorIs(t, err, ErrChannelLogicalGroupRevisionConflict, "a stale task identity must not read a new member set")
+	oldSelection, err := GetLogicalChannelSelectionSnapshot(groupedIdentity)
+	require.NoError(t, err)
+	assert.EqualValues(t, oldRevision, oldSelection.Revision)
 	identity, err = ResolveChannelLogicalIdentity(501)
 	require.NoError(t, err)
-	assert.EqualValues(t, 501, identity.LogicalChannelID, "removed member falls back to its physical channel identity")
-	assert.Zero(t, identity.Revision)
+	assert.EqualValues(t, group.Id, identity.LogicalChannelID, "dirty selection keeps the previous complete identity")
+	assert.EqualValues(t, oldRevision, identity.Revision)
+	require.NoError(t, RefreshLogicalChannelRuntimeCache())
+	identity, err = ResolveChannelLogicalIdentity(503)
+	require.NoError(t, err)
+	assert.EqualValues(t, group.Id, identity.LogicalChannelID)
+	assert.EqualValues(t, oldRevision+1, identity.Revision)
 }
 
 func TestLogicalChannelRuntimeFallsBackWhenOptionalSchemaIsMissing(t *testing.T) {
@@ -143,7 +153,8 @@ func TestLogicalChannelRuntimeRefreshFailureRetainsDiagnosticSnapshotButRejectsD
 	before, err := GetLogicalChannelGroupSnapshot(group.Id)
 	require.NoError(t, err)
 
-	require.NoError(t, db.Model(group).Update("revision", group.Revision+1).Error)
+	oldRevision := group.Revision
+	require.NoError(t, db.Model(group).Update("revision", oldRevision+1).Error)
 	require.NoError(t, db.Where("logical_group_id = ?", group.Id).Delete(&ChannelLogicalGroupMember{}).Error)
 	require.NoError(t, db.Model(&Channel{}).Where("id = ?", 601).Update("logical_channel_id", nil).Error)
 	InvalidateLogicalChannelRuntimeCache()
@@ -158,10 +169,11 @@ func TestLogicalChannelRuntimeRefreshFailureRetainsDiagnosticSnapshotButRejectsD
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
 	identity, err := ResolveChannelLogicalIdentity(601)
 	require.NoError(t, err)
-	assert.EqualValues(t, 601, identity.LogicalChannelID, "dirty cache must not route a new request to the removed member")
-	assert.Zero(t, identity.Revision)
-	_, err = GetLogicalChannelGroupSnapshot(group.Id)
-	assert.ErrorIs(t, err, wantErr, "dirty member selection must fail closed when current membership cannot be loaded")
+	assert.EqualValues(t, group.Id, identity.LogicalChannelID, "dirty cache keeps the previous complete identity")
+	assert.EqualValues(t, oldRevision, identity.Revision)
+	staleGroup, err := GetLogicalChannelGroupSnapshot(group.Id)
+	require.NoError(t, err)
+	assert.Equal(t, before, staleGroup, "dirty group reads the last complete snapshot")
 	diagnostic, err := GetLogicalChannelRuntimeSnapshot()
 	require.NoError(t, err)
 	assert.Equal(t, before, diagnostic.Groups[group.Id], "the previous complete snapshot remains available for diagnostics")

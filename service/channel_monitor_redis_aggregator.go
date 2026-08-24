@@ -127,14 +127,15 @@ type ChannelMonitorRedisLogicalAggregator struct {
 var _ ChannelMonitorRedisEventHandler = (*ChannelMonitorRedisLogicalAggregator)(nil)
 
 func NewChannelMonitorRedisLogicalAggregator() (*ChannelMonitorRedisLogicalAggregator, error) {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorConsumerClient()
+	if !common.RedisEnabled || client == nil {
 		return nil, ErrChannelMonitorRedisConsumerUnavailable
 	}
 	runtimeHolder := channelMonitorRedisRuntimeEffectHandler.Load()
 	if runtimeHolder == nil || runtimeHolder.handle == nil {
 		return nil, ErrChannelMonitorRedisRuntimeEffectUnavailable
 	}
-	return NewChannelMonitorRedisLogicalAggregatorWithClient(common.RDB, runtimeHolder.handle, nil)
+	return NewChannelMonitorRedisLogicalAggregatorWithClient(client, runtimeHolder.handle, nil)
 }
 
 func NewChannelMonitorRedisLogicalAggregatorWithClient(

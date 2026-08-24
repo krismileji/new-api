@@ -295,6 +295,13 @@ export type ChannelModelDetectionSettings = {
 
 export type ChannelModelDetectionOverview = {
   server_now: number
+  snapshot_version: number
+  snapshot_revision: number
+  event_watermark: number
+  generated_at: number
+  data_cutoff_at: number
+  snapshot_age_seconds: number
+  stale: boolean
   settings: ChannelModelDetectionSettingsSummary
   detector: ChannelModelDetectionDetectorService
   summary: Record<ChannelModelDetectionHealth, number>

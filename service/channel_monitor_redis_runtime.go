@@ -101,7 +101,7 @@ func (runtime *ChannelMonitorRedisRuntime) run(ctx context.Context) {
 			runtime.reportFailure(err)
 		}
 		incrementChannelMonitorRedisObservation(
-			common.RDB,
+			common.RedisMonitorConsumerClient(),
 			ChannelMonitorRedisObservabilityFieldRetryCount,
 			1,
 		)

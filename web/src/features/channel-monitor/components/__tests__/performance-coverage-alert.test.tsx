@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test } from 'vitest'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, test } from 'vitest'
 
 import { ChannelMonitorPerformanceCoverageAlert } from '../channel-monitor-performance-coverage-alert'
 
@@ -74,7 +74,7 @@ describe('channel monitor performance coverage alert', () => {
     assert.ok(markup.includes('其中 3 条已交付但尚未确认'))
     assert.ok(markup.includes('当前延迟 45 秒'))
     assert.ok(markup.includes('最近一次实时事件发布失败'))
-    assert.ok(markup.includes('聚合副作用标记释放失败'))
+    assert.ok(markup.includes('事件标记清理失败'))
   })
 
   test('stays hidden after the requested window is fully covered', () => {

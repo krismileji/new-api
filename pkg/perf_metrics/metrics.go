@@ -378,14 +378,15 @@ func avgTps(value counters) float64 {
 }
 
 func recordRedis(key bucketKey, sample Sample) {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorWriteClient()
+	if !common.RedisEnabled || client == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	redisKey := redisBucketKey(key)
-	pipe := common.RDB.TxPipeline()
+	pipe := client.TxPipeline()
 	pipe.HIncrBy(ctx, redisKey, "req", 1)
 	if sample.Success {
 		pipe.HIncrBy(ctx, redisKey, "ok", 1)
@@ -406,7 +407,8 @@ func recordRedis(key bucketKey, sample Sample) {
 }
 
 func mergeRedisActiveBuckets(merged map[bucketKey]counters, params QueryParams, startTs int64, endTs int64) {
-	if !common.RedisEnabled || common.RDB == nil || params.Model == "" || params.Group == "" {
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled || client == nil || params.Model == "" || params.Group == "" {
 		return
 	}
 	active := bucketStart(time.Now().Unix())
@@ -416,7 +418,7 @@ func mergeRedisActiveBuckets(merged map[bucketKey]counters, params QueryParams, 
 	key := bucketKey{model: params.Model, group: params.Group, bucketTs: active}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	values, err := common.RDB.HGetAll(ctx, redisBucketKey(key)).Result()
+	values, err := client.HGetAll(ctx, redisBucketKey(key)).Result()
 	if err != nil || len(values) == 0 {
 		return
 	}

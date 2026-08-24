@@ -35,12 +35,13 @@ func InitChannelMonitorRedisStream(ctx context.Context) error {
 	if !common.RedisEnabled {
 		return errors.New("渠道监控启动失败：未启用 Redis，渠道监控需要 Redis Streams")
 	}
-	if common.RDB == nil {
+	client := common.RedisMonitorConsumerClient()
+	if client == nil {
 		return errors.New("渠道监控启动失败：Redis 客户端不可用，渠道监控需要 Redis Streams")
 	}
 
 	identity := channelMonitorRedisInstanceIdentity()
-	return initChannelMonitorRedisStream(ctx, common.RDB, ChannelMonitorRedisConsumerName(identity))
+	return initChannelMonitorRedisStream(ctx, client, ChannelMonitorRedisConsumerName(identity))
 }
 
 func initChannelMonitorRedisStream(ctx context.Context, client channelMonitorRedisClient, consumerName string) error {

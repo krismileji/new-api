@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,6 +52,7 @@ func UpdateChannelMonitorGroupChannels(c *gin.Context) {
 
 	if len(result.AddedChannelIds) > 0 || len(result.RemovedChannelIds) > 0 {
 		model.InitChannelCache()
+		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		recordManageAudit(c, "channel.monitor_group_channels_update", map[string]interface{}{
 			"group":               result.Group,

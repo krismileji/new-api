@@ -51,6 +51,7 @@ type channelDailyCostSnapshotCacheEntry struct {
 type channelDailyCostAttemptState struct {
 	mu                 sync.Mutex
 	ChannelId          int
+	CostEventId        string
 	Dispatched         bool
 	Recording          bool
 	Recorded           bool
@@ -82,7 +83,7 @@ func BeginChannelDailyCostAttempt(ctx *gin.Context, channelId int) {
 	if ctx == nil || channelId <= 0 {
 		return
 	}
-	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{ChannelId: channelId})
+	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{ChannelId: channelId, CostEventId: common.GetUUID()})
 }
 
 // MarkChannelDailyCostRequestDispatched marks the exact boundary where a
@@ -434,6 +435,7 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		}
 	}
 	delta := model.ChannelDailyCostDelta{
+		EventId:               channelDailyCostEventId(ctx, snapshot.ChannelId),
 		ChannelId:             snapshot.ChannelId,
 		OccurredAt:            common.GetTimestamp(),
 		CostNanoCNY:           costNanoCNY,
@@ -446,9 +448,18 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		KeyFingerprint:        snapshot.KeyFingerprint,
 		KeyDisplay:            snapshot.KeyDisplay,
 	}
+	// Validate before selecting the durable path. The Redis consumer also
+	// validates and dead-letters malformed messages, but accepting one here
+	// would turn a local accounting bug into avoidable reliable-queue poison.
+	if err := model.ValidateChannelDailyCostDelta(delta); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("渠道 #%d 每日成本事件无效: %v", snapshot.ChannelId, err))
+		return false
+	}
 	var persisted bool
 	if isProbe {
 		persisted = writeChannelDailyCostSynchronously(delta)
+	} else if channelDailyCostReliableOutboxIsActive() {
+		persisted = publishChannelDailyCostReliableEvent(channelMonitorPublishContext(ctx), delta) == nil
 	} else {
 		persisted = enqueueChannelDailyCost(delta)
 	}
@@ -461,6 +472,22 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 	}
 	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
 	return true
+}
+
+func channelDailyCostEventId(ctx *gin.Context, channelId int) string {
+	if ctx != nil {
+		if value, exists := ctx.Get(channelDailyCostAttemptContextKey); exists {
+			if state, ok := value.(*channelDailyCostAttemptState); ok && state != nil && state.ChannelId == channelId {
+				state.mu.Lock()
+				defer state.mu.Unlock()
+				if state.CostEventId == "" {
+					state.CostEventId = common.GetUUID()
+				}
+				return state.CostEventId
+			}
+		}
+	}
+	return common.GetUUID()
 }
 
 func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, billingUsage *dto.Usage, originUsage *dto.Usage, summary textQuotaSummary, tieredBillingApplied bool, tieredResult *billingexpr.TieredResult) {

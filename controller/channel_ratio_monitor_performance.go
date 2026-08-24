@@ -48,6 +48,9 @@ func getChannelMonitorPerformanceRange(c *gin.Context) (minutes int, source stri
 }
 
 func GetChannelMonitorPerformance(c *gin.Context) {
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotPerformance, GetChannelMonitorPerformance) {
+		return
+	}
 	minutes, rangeSource, ok := getChannelMonitorPerformanceRange(c)
 	if !ok {
 		return
@@ -84,16 +87,36 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 		"redis_available":               metadata.RedisAvailable,
 		"redis_consumer_running":        metadata.RedisConsumerRunning,
 		"pending_count":                 metadata.PendingCount,
+		"writer_queue_depth":            metadata.WriterQueueDepth,
+		"writer_queue_capacity":         metadata.WriterQueueCapacity,
+		"writer_queued_events":          metadata.WriterQueuedEvents,
+		"writer_dropped_events":         metadata.WriterDroppedEvents,
+		"writer_retry_events":           metadata.WriterRetryEvents,
+		"writer_oldest_queued_at":       metadata.WriterOldestQueuedAt,
+		"writer_queue_age_seconds":      metadata.WriterQueueAgeSeconds,
 		"oldest_pending_at":             metadata.OldestPendingAt,
 		"consumer_lag_seconds":          metadata.ConsumerLagSeconds,
 		"last_published_at":             metadata.LastPublishedAt,
 		"last_processed_at":             metadata.LastProcessedAt,
 		"retry_count":                   metadata.RetryCount,
 		"takeover_count":                metadata.TakeoverCount,
+		"quarantine_count":              metadata.QuarantineCount,
+		"last_quarantined_at":           metadata.LastQuarantinedAt,
+		"runtime_marker_failure_count":  metadata.RuntimeMarkerFailureCount,
+		"schedule_marker_failure_count": metadata.ScheduleMarkerFailureCount,
+		"cost_stream_pending_count":     metadata.CostStreamPendingCount,
+		"cost_stream_unread_count":      metadata.CostStreamUnreadCount,
+		"cost_outbox_pending_count":     metadata.CostOutboxPendingCount,
+		"cost_outbox_oldest_pending_at": metadata.CostOutboxOldestPendingAt,
+		"cost_outbox_retry_count":       metadata.CostOutboxRetryCount,
+		"cost_ledger_failed_count":      metadata.CostLedgerFailedCount,
+		"cost_publish_failed_count":     metadata.CostPublishFailedCount,
+		"cost_dead_letter_count":        metadata.CostDeadLetterCount,
 		"marker_release_failure_count":  metadata.MarkerReleaseFailureCount,
 		"marker_release_failure_active": metadata.MarkerReleaseFailureActive,
 		"stream_trim_failure_count":     metadata.StreamTrimFailureCount,
 		"stream_trim_failure_active":    metadata.StreamTrimFailureActive,
+		"redis_pool_stats":              metadata.RedisPoolStats,
 		"degraded_reasons":              metadata.DegradedReasons,
 		"realtime_degraded":             metadata.RealtimeDegraded,
 		"metric_coverage":               metricCoverage,
@@ -105,6 +128,9 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 }
 
 func GetChannelMonitorSuccessDetail(c *gin.Context) {
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSuccessDetail, GetChannelMonitorSuccessDetail) {
+		return
+	}
 	minutes, ok := getChannelMonitorPerformanceMinutes(c)
 	if !ok {
 		return
@@ -156,16 +182,36 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		"redis_available":               metadata.RedisAvailable,
 		"redis_consumer_running":        metadata.RedisConsumerRunning,
 		"pending_count":                 metadata.PendingCount,
+		"writer_queue_depth":            metadata.WriterQueueDepth,
+		"writer_queue_capacity":         metadata.WriterQueueCapacity,
+		"writer_queued_events":          metadata.WriterQueuedEvents,
+		"writer_dropped_events":         metadata.WriterDroppedEvents,
+		"writer_retry_events":           metadata.WriterRetryEvents,
+		"writer_oldest_queued_at":       metadata.WriterOldestQueuedAt,
+		"writer_queue_age_seconds":      metadata.WriterQueueAgeSeconds,
 		"oldest_pending_at":             metadata.OldestPendingAt,
 		"consumer_lag_seconds":          metadata.ConsumerLagSeconds,
 		"last_published_at":             metadata.LastPublishedAt,
 		"last_processed_at":             metadata.LastProcessedAt,
 		"retry_count":                   metadata.RetryCount,
 		"takeover_count":                metadata.TakeoverCount,
+		"quarantine_count":              metadata.QuarantineCount,
+		"last_quarantined_at":           metadata.LastQuarantinedAt,
+		"runtime_marker_failure_count":  metadata.RuntimeMarkerFailureCount,
+		"schedule_marker_failure_count": metadata.ScheduleMarkerFailureCount,
+		"cost_stream_pending_count":     metadata.CostStreamPendingCount,
+		"cost_stream_unread_count":      metadata.CostStreamUnreadCount,
+		"cost_outbox_pending_count":     metadata.CostOutboxPendingCount,
+		"cost_outbox_oldest_pending_at": metadata.CostOutboxOldestPendingAt,
+		"cost_outbox_retry_count":       metadata.CostOutboxRetryCount,
+		"cost_ledger_failed_count":      metadata.CostLedgerFailedCount,
+		"cost_publish_failed_count":     metadata.CostPublishFailedCount,
+		"cost_dead_letter_count":        metadata.CostDeadLetterCount,
 		"marker_release_failure_count":  metadata.MarkerReleaseFailureCount,
 		"marker_release_failure_active": metadata.MarkerReleaseFailureActive,
 		"stream_trim_failure_count":     metadata.StreamTrimFailureCount,
 		"stream_trim_failure_active":    metadata.StreamTrimFailureActive,
+		"redis_pool_stats":              metadata.RedisPoolStats,
 		"degraded_reasons":              metadata.DegradedReasons,
 		"realtime_degraded":             metadata.RealtimeDegraded || metadata.ProjectionStartedAt > detailView.WindowStart,
 		"success_metrics_available":     true,

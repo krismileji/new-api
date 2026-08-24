@@ -25,43 +25,53 @@ const (
 	ChannelMonitorRedisDegradedReasonPublisherUnavailable = "publisher_unavailable"
 	ChannelMonitorRedisDegradedReasonMarkerReleaseFailure = "marker_release_failure"
 	ChannelMonitorRedisDegradedReasonStreamTrimFailure    = "stream_trim_failure"
+	ChannelMonitorRedisDegradedReasonWriterQueueFull      = "writer_queue_full"
+	ChannelMonitorRedisDegradedReasonCostStreamBacklog    = "cost_stream_backlog"
+	ChannelMonitorRedisDegradedReasonCostOutboxBacklog    = "cost_outbox_backlog"
+	ChannelMonitorRedisDegradedReasonCostPublishFailure   = "cost_publish_failure"
+	ChannelMonitorRedisDegradedReasonCostDeadLetter       = "cost_dead_letter"
 )
 
 // ChannelMonitorRedisRealtimeStatus is the shared status contract returned by
 // channel-monitor realtime APIs. PendingCount is the Redis consumer-group
 // pending count; queue_depth remains an API alias for existing callers.
 type ChannelMonitorRedisRealtimeStatus struct {
-	RedisStatus                string   `json:"redis_status"`
-	RedisAvailable             bool     `json:"redis_available"`
-	RedisConsumerRunning       bool     `json:"redis_consumer_running"`
-	PendingCount               int64    `json:"pending_count"`
-	OldestPendingAt            int64    `json:"oldest_pending_at"`
-	ConsumerLagSeconds         int64    `json:"consumer_lag_seconds"`
-	LastPublishedAt            int64    `json:"last_published_at"`
-	LastProcessedAt            int64    `json:"last_processed_at"`
-	RetryCount                 int64    `json:"retry_count"`
-	TakeoverCount              int64    `json:"takeover_count"`
-	QuarantineCount            int64    `json:"quarantine_count"`
-	LastQuarantinedAt          int64    `json:"last_quarantined_at"`
-	MarkerReleaseFailureCount  int64    `json:"marker_release_failure_count"`
-	MarkerReleaseFailureActive bool     `json:"marker_release_failure_active"`
-	StreamTrimFailureCount     int64    `json:"stream_trim_failure_count"`
-	StreamTrimFailureActive    bool     `json:"stream_trim_failure_active"`
-	DegradedReasons            []string `json:"degraded_reasons"`
-	RealtimeDegraded           bool     `json:"realtime_degraded"`
-}
-
-func GetChannelMonitorRedisRealtimeStatus(ctx context.Context) ChannelMonitorRedisRealtimeStatus {
-	status := channelMonitorRedisUnavailableStatus()
-	if !common.RedisEnabled || common.RDB == nil {
-		return status
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	queryCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisObservabilityTimeout)
-	defer cancel()
-	return getChannelMonitorRedisRealtimeStatus(queryCtx, common.RDB, time.Now())
+	RedisStatus                string                                                 `json:"redis_status"`
+	RedisAvailable             bool                                                   `json:"redis_available"`
+	RedisConsumerRunning       bool                                                   `json:"redis_consumer_running"`
+	PendingCount               int64                                                  `json:"pending_count"`
+	WriterQueueDepth           int                                                    `json:"writer_queue_depth"`
+	WriterQueueCapacity        int                                                    `json:"writer_queue_capacity"`
+	WriterQueuedEvents         int64                                                  `json:"writer_queued_events"`
+	WriterDroppedEvents        int64                                                  `json:"writer_dropped_events"`
+	WriterRetryEvents          int64                                                  `json:"writer_retry_events"`
+	WriterOldestQueuedAt       int64                                                  `json:"writer_oldest_queued_at"`
+	WriterQueueAgeSeconds      int64                                                  `json:"writer_queue_age_seconds"`
+	OldestPendingAt            int64                                                  `json:"oldest_pending_at"`
+	ConsumerLagSeconds         int64                                                  `json:"consumer_lag_seconds"`
+	LastPublishedAt            int64                                                  `json:"last_published_at"`
+	LastProcessedAt            int64                                                  `json:"last_processed_at"`
+	RetryCount                 int64                                                  `json:"retry_count"`
+	TakeoverCount              int64                                                  `json:"takeover_count"`
+	QuarantineCount            int64                                                  `json:"quarantine_count"`
+	LastQuarantinedAt          int64                                                  `json:"last_quarantined_at"`
+	RuntimeMarkerFailureCount  int64                                                  `json:"runtime_marker_failure_count"`
+	ScheduleMarkerFailureCount int64                                                  `json:"schedule_marker_failure_count"`
+	MarkerReleaseFailureCount  int64                                                  `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive bool                                                   `json:"marker_release_failure_active"`
+	StreamTrimFailureCount     int64                                                  `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive    bool                                                   `json:"stream_trim_failure_active"`
+	DegradedReasons            []string                                               `json:"degraded_reasons"`
+	RealtimeDegraded           bool                                                   `json:"realtime_degraded"`
+	RedisPoolStats             map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
+	CostStreamPendingCount     int64                                                  `json:"cost_stream_pending_count"`
+	CostStreamUnreadCount      int64                                                  `json:"cost_stream_unread_count"`
+	CostOutboxPendingCount     int64                                                  `json:"cost_outbox_pending_count"`
+	CostOutboxOldestPendingAt  int64                                                  `json:"cost_outbox_oldest_pending_at"`
+	CostOutboxRetryCount       int64                                                  `json:"cost_outbox_retry_count"`
+	CostLedgerFailedCount      int64                                                  `json:"cost_ledger_failed_count"`
+	CostPublishFailedCount     int64                                                  `json:"cost_publish_failed_count"`
+	CostDeadLetterCount        int64                                                  `json:"cost_dead_letter_count"`
 }
 
 func getChannelMonitorRedisRealtimeStatus(
@@ -99,6 +109,12 @@ func getChannelMonitorRedisRealtimeStatus(
 	status.LastQuarantinedAt = channelMonitorRedisObservationInt64(
 		observability[ChannelMonitorRedisObservabilityFieldLastQuarantinedAt],
 	)
+	status.RuntimeMarkerFailureCount = channelMonitorRedisObservationInt64(
+		observability[ChannelMonitorRedisObservabilityFieldRuntimeMarkerFailureCount],
+	)
+	status.ScheduleMarkerFailureCount = channelMonitorRedisObservationInt64(
+		observability[ChannelMonitorRedisObservabilityFieldScheduleMarkerFailureCount],
+	)
 	status.MarkerReleaseFailureCount = channelMonitorRedisObservationInt64(
 		observability[ChannelMonitorRedisObservabilityFieldMarkerReleaseFailureCount],
 	)
@@ -134,6 +150,7 @@ func getChannelMonitorRedisRealtimeStatus(
 		}
 		status.DegradedReasons = append(status.DegradedReasons, ChannelMonitorRedisDegradedReasonConsumerGroupMissing)
 		status.RealtimeDegraded = true
+		applyChannelMonitorEventWriterStats(&status)
 		return status
 	}
 
@@ -179,15 +196,91 @@ func getChannelMonitorRedisRealtimeStatus(
 		status.DegradedReasons = append(status.DegradedReasons, ChannelMonitorRedisDegradedReasonStreamTrimFailure)
 	}
 	status.RealtimeDegraded = len(status.DegradedReasons) > 0
+	applyChannelMonitorEventWriterStats(&status)
 	return status
 }
 
 func channelMonitorRedisUnavailableStatus() ChannelMonitorRedisRealtimeStatus {
-	return ChannelMonitorRedisRealtimeStatus{
+	status := ChannelMonitorRedisRealtimeStatus{
 		RedisStatus:      ChannelMonitorRedisStatusUnavailable,
 		DegradedReasons:  []string{ChannelMonitorRedisDegradedReasonRedisUnavailable},
 		RealtimeDegraded: true,
 	}
+	status.RedisPoolStats = common.GetRedisClientPoolStats()
+	applyChannelMonitorEventWriterStats(&status)
+	applyChannelDailyCostReliableStatus(&status, nil, context.Background())
+	return status
+}
+
+func applyChannelMonitorEventWriterStats(status *ChannelMonitorRedisRealtimeStatus) {
+	if status == nil {
+		return
+	}
+	stats := GetChannelMonitorEventWriterStats()
+	status.WriterQueueDepth = stats.QueueDepth
+	status.WriterQueueCapacity = stats.QueueCapacity
+	status.WriterQueuedEvents = stats.QueuedEvents
+	status.WriterDroppedEvents = stats.DroppedEvents
+	status.WriterRetryEvents = stats.RetryEvents
+	status.WriterOldestQueuedAt = stats.OldestQueuedAt
+	status.WriterQueueAgeSeconds = stats.QueueAgeSeconds
+	if stats.DroppedEvents > 0 {
+		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(
+			status.DegradedReasons,
+			ChannelMonitorRedisDegradedReasonWriterQueueFull,
+		)
+		status.RealtimeDegraded = true
+	}
+}
+
+func applyChannelDailyCostReliableStatus(status *ChannelMonitorRedisRealtimeStatus, client *redis.Client, ctx context.Context) {
+	if status == nil {
+		return
+	}
+	stats := GetChannelDailyCostReliableStats()
+	status.CostOutboxPendingCount = stats.OutboxPending
+	status.CostOutboxOldestPendingAt = stats.OutboxOldestAt
+	status.CostOutboxRetryCount = stats.OutboxRetryCount
+	status.CostLedgerFailedCount = stats.LedgerFailed
+	status.CostPublishFailedCount = stats.PublishFailed
+	status.CostDeadLetterCount = stats.DeadLettered
+	if stats.OutboxPending > 0 {
+		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(status.DegradedReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog)
+	}
+	if stats.PublishFailed > 0 {
+		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(status.DegradedReasons, ChannelMonitorRedisDegradedReasonCostPublishFailure)
+	}
+	if stats.DeadLettered > 0 {
+		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(status.DegradedReasons, ChannelMonitorRedisDegradedReasonCostDeadLetter)
+	}
+	if client != nil {
+		streamLength, err := client.XLen(ctx, ChannelDailyCostRedisStream).Result()
+		if err == nil {
+			// Query the PEL independently of stream length. Redis can retain
+			// pending IDs after an entry was deleted, so XLen == 0 does not
+			// prove that the consumer group has no pending work.
+			status.CostStreamUnreadCount = max(0, streamLength)
+		}
+		if pending, pendingErr := client.XPending(ctx, ChannelDailyCostRedisStream, ChannelDailyCostRedisConsumerGroup).Result(); pendingErr == nil {
+			status.CostStreamPendingCount = max(0, pending.Count)
+			if err == nil {
+				status.CostStreamUnreadCount = max(0, streamLength-pending.Count)
+			}
+		}
+	}
+	if status.CostStreamPendingCount > 0 || status.CostStreamUnreadCount > 0 {
+		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(status.DegradedReasons, ChannelMonitorRedisDegradedReasonCostStreamBacklog)
+	}
+	status.RealtimeDegraded = len(status.DegradedReasons) > 0
+}
+
+func appendUniqueChannelMonitorRedisDegradedReason(reasons []string, reason string) []string {
+	for _, existing := range reasons {
+		if existing == reason {
+			return reasons
+		}
+	}
+	return append(reasons, reason)
 }
 
 func channelMonitorRedisObservationInt64(value string) int64 {

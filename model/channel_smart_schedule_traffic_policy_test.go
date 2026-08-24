@@ -180,7 +180,7 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 
 	channelSmartScheduleRouteCache = nil
 	channel, err = GetRandomSatisfiedChannel("vip", exactModel, 0, "")
-	require.NoError(t, err)
+	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
 	assert.Nil(t, channel)
 
 	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")

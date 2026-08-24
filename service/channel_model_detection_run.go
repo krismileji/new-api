@@ -141,5 +141,8 @@ func CancelChannelModelDetectionRun(ctx context.Context, db *gorm.DB, runID stri
 	if err := db.WithContext(ctx).Select("run_id", "status").Where("run_id = ?", run.RunId).First(&run).Error; err != nil {
 		return ChannelModelDetectionCancelResponse{}, err
 	}
+	if db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return ChannelModelDetectionCancelResponse{RunID: run.RunId, Status: run.Status}, nil
 }

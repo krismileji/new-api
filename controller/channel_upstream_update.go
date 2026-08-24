@@ -494,7 +494,13 @@ func updateChannelUpstreamModelSettings(channel *model.Channel, settings dto.Cha
 	if updateModels {
 		models = &channel.Models
 	}
-	return model.UpdateChannelUpstreamModelSettings(channel.Id, channel.OtherSettings, models)
+	if err := model.UpdateChannelUpstreamModelSettings(channel.Id, channel.OtherSettings, models); err != nil {
+		return err
+	}
+	if updateModels {
+		service.NotifyChannelModelDetectionOverviewChanged()
+	}
+	return nil
 }
 
 func checkAndPersistChannelUpstreamModelUpdates(

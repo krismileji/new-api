@@ -79,14 +79,7 @@ export function ChannelModelDetectionRunDetailSheet(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: (currentQuery) => {
-      const status = currentQuery.state.data?.run.status
-      return getChannelMonitorActiveRefetchInterval(
-        Boolean(
-          props.open && status && isChannelModelDetectionRunActive(status)
-        )
-      )
-    },
+    refetchInterval: () => getChannelMonitorActiveRefetchInterval(props.open),
   })
   const detail = query.data
 

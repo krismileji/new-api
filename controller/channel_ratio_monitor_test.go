@@ -130,6 +130,7 @@ func TestChannelMonitorSettingsReportsInvalidSmartSchedulePolicy(t *testing.T) {
 
 func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	require.NoError(t, StopChannelStatusProbeOverviewRefreshRuntime(context.Background()))
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -180,6 +181,9 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, service.ReloadChannelConcurrencyLimits(context.Background()))
 
 	t.Cleanup(func() {
+		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), time.Second)
+		require.NoError(t, StopChannelStatusProbeOverviewRefreshRuntime(refreshCtx))
+		refreshCancel()
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
 		require.NoError(t, redisRuntime.Stop(stopCtx))
 		stopCancel()
@@ -198,6 +202,17 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func startChannelMonitorEventWriterForTest(t *testing.T) {
+	t.Helper()
+	writer, err := service.StartChannelMonitorEventWriter()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		require.NoError(t, writer.Stop(ctx))
+	})
 }
 
 func aggregateChannelMonitorTestLogs(startTimestamp int64, endTimestamp int64) error {

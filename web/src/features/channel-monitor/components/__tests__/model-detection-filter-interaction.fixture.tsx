@@ -75,6 +75,13 @@ function channel(
 
 const overview: ChannelModelDetectionOverview = {
   server_now: 1_700_000_000,
+  snapshot_version: 1,
+  snapshot_revision: 1,
+  event_watermark: 1,
+  generated_at: 1_700_000_000,
+  data_cutoff_at: 1_699_999_999,
+  snapshot_age_seconds: 0,
+  stale: false,
   settings: {
     detector_url_configured: true,
     detector_url_masked: 'http://gpt-check:8080',

@@ -215,14 +215,21 @@ type ChannelModelDetectionSettingsSummary struct {
 }
 
 type ChannelModelDetectionOverviewResponse struct {
-	ServerNow     int64                                  `json:"server_now"`
-	Settings      ChannelModelDetectionSettingsSummary   `json:"settings"`
-	Detector      ChannelModelDetectionDetectorResponse  `json:"detector"`
-	Summary       map[string]int                         `json:"summary"`
-	Groups        []string                               `json:"groups"`
-	Models        []string                               `json:"models"`
-	ModelsByGroup map[string][]string                    `json:"models_by_group"`
-	Channels      []ChannelModelDetectionChannelResponse `json:"channels"`
+	ServerNow          int64                                  `json:"server_now"`
+	SnapshotVersion    int                                    `json:"snapshot_version"`
+	SnapshotRevision   uint64                                 `json:"snapshot_revision"`
+	EventWatermark     uint64                                 `json:"event_watermark"`
+	GeneratedAt        int64                                  `json:"generated_at"`
+	DataCutoffAt       int64                                  `json:"data_cutoff_at"`
+	SnapshotAgeSeconds int64                                  `json:"snapshot_age_seconds"`
+	Stale              bool                                   `json:"stale"`
+	Settings           ChannelModelDetectionSettingsSummary   `json:"settings"`
+	Detector           ChannelModelDetectionDetectorResponse  `json:"detector"`
+	Summary            map[string]int                         `json:"summary"`
+	Groups             []string                               `json:"groups"`
+	Models             []string                               `json:"models"`
+	ModelsByGroup      map[string][]string                    `json:"models_by_group"`
+	Channels           []ChannelModelDetectionChannelResponse `json:"channels"`
 }
 
 type ChannelModelDetectionRunHistoryQuery struct {

@@ -35,7 +35,21 @@ func useChannelMonitorPublisherRedis(t *testing.T) (*miniredis.Miniredis, *redis
 	common.RedisEnabled = true
 	common.RDB = client
 	useChannelMonitorEventPublishStatsIsolation(t)
+	writer := newChannelMonitorEventWriter(client, channelMonitorEventWriterConfig{
+		QueueCapacity: 32,
+		MaxAttempts:   2,
+		RetryDelay:    time.Millisecond,
+	})
+	channelMonitorEventWriterState.Lock()
+	previousWriter := channelMonitorEventWriterState.writer
+	channelMonitorEventWriterState.writer = writer
+	channelMonitorEventWriterState.Unlock()
+	go writer.run()
 	t.Cleanup(func() {
+		if previousWriter != nil {
+			_ = previousWriter.Stop(context.Background())
+		}
+		_ = writer.Stop(context.Background())
 		common.RedisEnabled = previousEnabled
 		common.RDB = previousClient
 		_ = client.Close()

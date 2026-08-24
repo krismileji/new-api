@@ -228,6 +228,9 @@ export type ChannelMonitorApplyGroupResult = ChannelMonitorFetchResult & {
 }
 
 export type ChannelMonitorRealtimeMetadata = {
+  generated_at?: number
+  snapshot_age_seconds?: number
+  stale?: boolean
   data_cutoff_at: number
   processed_at: number
   event_watermark: number
@@ -236,7 +239,23 @@ export type ChannelMonitorRealtimeMetadata = {
   redis_available?: boolean
   redis_consumer_running?: boolean
   pending_count?: number
+  redis_pool_stats?: Record<string, ChannelMonitorRedisPoolStats>
+  writer_queue_depth?: number
+  writer_queue_capacity?: number
+  writer_queued_events?: number
+  writer_dropped_events?: number
+  writer_retry_events?: number
+  writer_oldest_queued_at?: number
+  writer_queue_age_seconds?: number
   cost_queue_pending_count?: number
+  cost_stream_pending_count?: number
+  cost_stream_unread_count?: number
+  cost_outbox_pending_count?: number
+  cost_outbox_oldest_pending_at?: number
+  cost_outbox_retry_count?: number
+  cost_ledger_failed_count?: number
+  cost_publish_failed_count?: number
+  cost_dead_letter_count?: number
   oldest_pending_at?: number
   consumer_lag_seconds?: number
   last_published_at?: number
@@ -245,12 +264,30 @@ export type ChannelMonitorRealtimeMetadata = {
   takeover_count?: number
   quarantine_count?: number
   last_quarantined_at?: number
+  runtime_marker_failure_count?: number
+  schedule_marker_failure_count?: number
   marker_release_failure_count?: number
   marker_release_failure_active?: boolean
   stream_trim_failure_count?: number
   stream_trim_failure_active?: boolean
   degraded_reasons?: ChannelMonitorRealtimeDegradedReason[]
   realtime_degraded: boolean
+}
+
+export type ChannelMonitorRedisPoolStats = {
+  role?: string
+  pool_size?: number
+  total_conns?: number
+  idle_conns?: number
+  stale_conns?: number
+  hits?: number
+  misses?: number
+  timeouts?: number
+  command_count?: number
+  command_error_count?: number
+  command_latency_total_micros?: number
+  command_latency_max_micros?: number
+  unavailable?: boolean
 }
 
 export type ChannelMonitorRealtimeDegradedReason =
@@ -261,6 +298,11 @@ export type ChannelMonitorRealtimeDegradedReason =
   | 'publisher_unavailable'
   | 'marker_release_failure'
   | 'stream_trim_failure'
+  | 'writer_queue_full'
+  | 'cost_stream_backlog'
+  | 'cost_outbox_backlog'
+  | 'cost_publish_failure'
+  | 'cost_dead_letter'
 
 export type ChannelMonitorOverview = ChannelMonitorRealtimeMetadata & {
   generated_at: number
@@ -993,7 +1035,25 @@ export type ChannelMonitorSmartScheduleRouteResult =
     performance_items: ChannelMonitorSmartScheduleRoutePerformance[]
     stability_metrics_available: boolean
     stability_items: ChannelMonitorSmartScheduleRouteStability[]
+    route_snapshot?: ChannelMonitorSmartScheduleRouteSnapshotStatus
   }
+
+export type ChannelMonitorSmartScheduleRouteSnapshotStatus = {
+  available: boolean
+  revision: number
+  generated_at: number
+  source_watermark: number
+  snapshot_age_seconds: number
+  max_age_seconds: number
+  redis_backed: boolean
+  dirty: boolean
+  stale: boolean
+  degraded: boolean
+  protection_mode: boolean
+  last_redis_success_at: number
+  last_redis_failure_at: number
+  last_redis_error?: string
+}
 
 export type ChannelMonitorSmartScheduleMetricCoverage = {
   aggregation_enabled: boolean
@@ -1306,6 +1366,12 @@ export type ChannelStatusProbeChannel = {
 
 export type ChannelStatusProbeOverview = {
   server_now: number
+  snapshot_version: number
+  snapshot_revision: number
+  event_watermark: number
+  generated_at: number
+  snapshot_age_seconds: number
+  stale: boolean
   scan_interval_seconds: number
   summary: Record<ChannelStatusProbeHealth, number>
   groups: string[]

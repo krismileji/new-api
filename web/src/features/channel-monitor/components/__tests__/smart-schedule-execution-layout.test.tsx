@@ -17,10 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { afterAll, describe, test } from 'vitest'
 
 import { Window } from 'happy-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { afterAll, describe, test } from 'vitest'
 
 import {
   ChannelMonitorSmartScheduleExecutionAdjustments,

@@ -243,6 +243,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 		return result, err
 	}
 	result.WarningRunIDs = warningRunIDs
+	overviewChanged := len(warningRunIDs) > 0
 
 	leaseToken := common.GetUUID()
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -278,6 +279,7 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 			if updated.RowsAffected != 1 {
 				return gorm.ErrRecordNotFound
 			}
+			overviewChanged = true
 			return nil
 		}
 		result.Due = true
@@ -355,10 +357,14 @@ func RunChannelModelDetectionScheduleOnce(ctx context.Context, db *gorm.DB, now 
 		if updated.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
+		overviewChanged = true
 		return nil
 	})
 	if err != nil {
 		_, _ = config.ReleaseLease(db.WithContext(context.Background()), config.Revision, leaseToken, time.Now().UTC().Unix())
+	}
+	if overviewChanged && db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
 	}
 	return result, err
 }
@@ -818,5 +824,8 @@ func CreateChannelModelDetectionManualRun(ctx context.Context, db *gorm.DB, inpu
 		}
 		return nil
 	})
+	if err == nil && db == model.DB {
+		NotifyChannelModelDetectionOverviewChanged()
+	}
 	return createdRun, err
 }

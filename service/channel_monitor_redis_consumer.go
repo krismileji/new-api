@@ -204,11 +204,12 @@ func channelMonitorRedisEffectOwnerFromContext(ctx context.Context) (string, boo
 // NewChannelMonitorRedisEventConsumer builds the REDIS-03 consumer with the
 // mandatory shared Redis client and the stable current-instance identity.
 func NewChannelMonitorRedisEventConsumer(handler ChannelMonitorRedisEventHandler) (*ChannelMonitorRedisEventConsumer, error) {
-	if !common.RedisEnabled || common.RDB == nil {
+	client := common.RedisMonitorConsumerClient()
+	if !common.RedisEnabled || client == nil {
 		return nil, ErrChannelMonitorRedisConsumerUnavailable
 	}
 	return newChannelMonitorRedisEventConsumer(
-		common.RDB,
+		client,
 		ChannelMonitorRedisConsumerName(channelMonitorRedisInstanceIdentity()),
 		handler,
 		defaultChannelMonitorRedisConsumerConfig(),
