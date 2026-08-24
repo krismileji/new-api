@@ -343,6 +343,9 @@ export type ChannelMonitorCostAPIKey = {
   api_key_id: number
   api_key_name: string
   api_key: string
+  user_id?: number
+  username?: string
+  user_display_name?: string
   cost_cny: number
   settled_count: number
   unresolved_count: number

@@ -528,6 +528,52 @@ func TestGetChannelMonitorCostOverviewGroupsAPIKeysAcrossChannelsWithoutSecrets(
 	}
 }
 
+func TestGetChannelMonitorCostOverviewIncludesAPIKeyOwnersForUserGrouping(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&[]model.User{
+		{Id: 801, Username: "alice", DisplayName: "Alice"},
+		{Id: 802, Username: "bob", DisplayName: "Bob"},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Token{
+		{Id: 811, UserId: 801, Name: "Alice 主 Key", Key: "token-alice-primary"},
+		{Id: 812, UserId: 801, Name: "Alice 备用 Key", Key: "token-alice-backup"},
+		{Id: 821, UserId: 802, Name: "Bob Key", Key: "token-bob"},
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 81, Name: "用户分组渠道", Key: "channel-user-group"}).Error)
+	now := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	for _, entry := range []struct {
+		tokenId int
+		name    string
+		key     string
+		cost    int64
+	}{
+		{811, "Alice 主 Key", "token-alice-primary", 1_000_000_000},
+		{812, "Alice 备用 Key", "token-alice-backup", 2_000_000_000},
+		{821, "Bob Key", "token-bob", 3_000_000_000},
+	} {
+		fingerprint, display := model.ChannelDailyCostAPIKeyIdentityForToken(entry.tokenId, entry.key)
+		require.NoError(t, model.AddChannelDailyCostWithAPIKeyAndToken(
+			context.Background(), 81, now, entry.cost, 1, 0,
+			entry.tokenId, entry.name, fingerprint, display,
+		))
+	}
+
+	overview, err := getChannelMonitorCostOverview(context.Background(), 1, now)
+	require.NoError(t, err)
+	require.Len(t, overview.APIKeys, 3)
+	owners := make(map[int]channelMonitorCostAPIKey)
+	for _, apiKey := range overview.APIKeys {
+		owners[apiKey.APIKeyId] = apiKey
+	}
+	assert.Equal(t, 801, owners[811].UserId)
+	assert.Equal(t, "alice", owners[811].Username)
+	assert.Equal(t, "Alice", owners[811].UserDisplayName)
+	assert.Equal(t, 801, owners[812].UserId)
+	assert.Equal(t, 802, owners[821].UserId)
+	assert.Equal(t, "bob", owners[821].Username)
+}
+
 func TestGetChannelMonitorCostOverviewKeepsUnattributedChannelsVisible(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	legacyChannelRemark := "历史补录"

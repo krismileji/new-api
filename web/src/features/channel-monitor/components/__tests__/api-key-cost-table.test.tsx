@@ -93,11 +93,13 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('2 个渠道'))
     assert.ok(markup.includes('仅未确认渠道'))
     assert.ok(markup.includes('仅未确认 API Key'))
+    assert.ok(markup.includes('未归属用户'))
+    assert.ok(markup.includes('API Key 数'))
     assert.ok(markup.includes('未解析 2'))
     assert.ok(markup.includes('解析率 81.8%'))
     assert.ok(markup.includes('0%'))
     assert.ok(markup.indexOf('主 API Key') < markup.indexOf('仅未确认 API Key'))
-    assert.ok(markup.includes('按API Key排序'))
+    assert.ok(markup.includes('按用户排序'))
     assert.ok(markup.includes('按结算成本排序'))
   })
 
@@ -162,6 +164,60 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('上游 Key sk-a**********lpha'))
     assert.ok(markup.includes('1 个渠道'))
     assert.ok(markup.includes('渠道三'))
+  })
+
+  test('groups API keys by user before rendering the key rows', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorAPIKeyCostTable
+        items={[
+          {
+            id: 31,
+            api_key_id: 11,
+            api_key_name: 'Alice 主 Key',
+            api_key: '',
+            user_id: 101,
+            username: 'alice',
+            user_display_name: 'Alice',
+            cost_cny: 1,
+            settled_count: 1,
+            unresolved_count: 0,
+            channels: [],
+          },
+          {
+            id: 32,
+            api_key_id: 12,
+            api_key_name: 'Alice 备用 Key',
+            api_key: '',
+            user_id: 101,
+            username: 'alice',
+            user_display_name: 'Alice',
+            cost_cny: 2,
+            settled_count: 2,
+            unresolved_count: 0,
+            channels: [],
+          },
+          {
+            id: 33,
+            api_key_id: 21,
+            api_key_name: 'Bob Key',
+            api_key: '',
+            user_id: 202,
+            username: 'bob',
+            user_display_name: 'Bob',
+            cost_cny: 3,
+            settled_count: 3,
+            unresolved_count: 0,
+            channels: [],
+          },
+        ]}
+      />
+    )
+
+    assert.equal(markup.match(/title="Alice"/g)?.length, 1)
+    assert.equal(markup.match(/title="Bob"/g)?.length, 1)
+    assert.ok(markup.includes('@alice'))
+    assert.ok(markup.includes('@bob'))
+    assert.ok(markup.indexOf('Alice 主 Key') < markup.indexOf('Bob Key'))
   })
 
   test('exposes sorting controls for API key summary metrics', () => {

@@ -63,10 +63,19 @@ type channelMonitorCostAPIKey struct {
 	APIKeyId        int                               `json:"api_key_id"`
 	APIKeyName      string                            `json:"api_key_name"`
 	APIKey          string                            `json:"api_key"`
+	UserId          int                               `json:"user_id"`
+	Username        string                            `json:"username"`
+	UserDisplayName string                            `json:"user_display_name"`
 	CostCNY         float64                           `json:"cost_cny"`
 	SettledCount    int64                             `json:"settled_count"`
 	UnresolvedCount int64                             `json:"unresolved_count"`
 	Channels        []channelMonitorCostAPIKeyChannel `json:"channels"`
+}
+
+type channelMonitorCostAPIKeyOwner struct {
+	UserId          int
+	Username        string
+	UserDisplayName string
 }
 
 type channelMonitorCostCoverage struct {
@@ -365,6 +374,10 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		detailEndTimestamp = detailDayStart + channelMonitorCostDaySeconds
 	}
 	apiKeyRows, err := model.GetChannelDailyAPIKeyCostTotalsForChannel(ctx, detailStartTimestamp, detailEndTimestamp, channelId)
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
+	apiKeyOwners, err := getChannelMonitorCostAPIKeyOwners(ctx, apiKeyRows)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -710,11 +723,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			}
 			return channelsByCost[i].ChannelId < channelsByCost[j].ChannelId
 		})
+		owner := apiKeyOwners[summary.APIKeyId]
 		costAPIKeys = append(costAPIKeys, channelMonitorCostAPIKey{
 			Id:              summary.Id,
 			APIKeyId:        summary.APIKeyId,
 			APIKeyName:      apiKeyName,
 			APIKey:          summary.KeyDisplay,
+			UserId:          owner.UserId,
+			Username:        owner.Username,
+			UserDisplayName: owner.UserDisplayName,
 			CostCNY:         channelMonitorCostCNY(summary.CostNanoCNY),
 			SettledCount:    summary.SettledCount,
 			UnresolvedCount: summary.UnresolvedCount,
@@ -791,6 +808,79 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		overview.YesterdayModelDetectionCostCNY = chartItems[len(chartItems)-2].ModelDetectionCostCNY
 	}
 	return overview, nil
+}
+
+func getChannelMonitorCostAPIKeyOwners(ctx context.Context, rows []model.ChannelDailyAPIKeyCost) (map[int]channelMonitorCostAPIKeyOwner, error) {
+	owners := make(map[int]channelMonitorCostAPIKeyOwner)
+	if model.DB == nil {
+		return owners, nil
+	}
+	tokenIds := make([]int, 0)
+	seenTokenIds := make(map[int]struct{})
+	for _, row := range rows {
+		if row.APIKeyId <= 0 {
+			continue
+		}
+		if _, seen := seenTokenIds[row.APIKeyId]; seen {
+			continue
+		}
+		seenTokenIds[row.APIKeyId] = struct{}{}
+		tokenIds = append(tokenIds, row.APIKeyId)
+	}
+	if len(tokenIds) == 0 {
+		return owners, nil
+	}
+	type tokenOwner struct {
+		Id     int
+		UserId int
+	}
+	var tokens []tokenOwner
+	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.Token{}).
+		Select("id, user_id").Where("id IN ?", tokenIds).Find(&tokens).Error; err != nil {
+		return nil, err
+	}
+	userIds := make([]int, 0, len(tokens))
+	seenUserIds := make(map[int]struct{})
+	for _, token := range tokens {
+		if token.UserId <= 0 {
+			continue
+		}
+		owners[token.Id] = channelMonitorCostAPIKeyOwner{UserId: token.UserId}
+		if _, seen := seenUserIds[token.UserId]; seen {
+			continue
+		}
+		seenUserIds[token.UserId] = struct{}{}
+		userIds = append(userIds, token.UserId)
+	}
+	if len(userIds) == 0 {
+		return owners, nil
+	}
+	type userIdentity struct {
+		Id          int
+		Username    string
+		DisplayName string
+	}
+	var users []userIdentity
+	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.User{}).
+		Select("id, username, display_name").Where("id IN ?", userIds).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	userIdentities := make(map[int]userIdentity, len(users))
+	for _, user := range users {
+		userIdentities[user.Id] = user
+	}
+	for tokenId, owner := range owners {
+		user, exists := userIdentities[owner.UserId]
+		if exists {
+			owner.Username = strings.TrimSpace(user.Username)
+			owner.UserDisplayName = strings.TrimSpace(user.DisplayName)
+		}
+		if owner.UserDisplayName == "" {
+			owner.UserDisplayName = owner.Username
+		}
+		owners[tokenId] = owner
+	}
+	return owners, nil
 }
 
 func channelMonitorCostDaysFromTotals(startTimestamp int64, endTimestamp int64, rows []model.ChannelDailyCostDayTotal) []channelMonitorCostDay {
