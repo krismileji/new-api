@@ -131,10 +131,10 @@ func TestAdminLogViewsExposeAdminRequestIPWithoutLeakingItToUser(t *testing.T) {
 	userVisibleLogs, _, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, userVisibleLogs, 1)
-	assert.Equal(t, "192.0.2.44", userVisibleLogs[0].Ip)
+	assert.Empty(t, userVisibleLogs[0].Ip)
 	userVisibleOther, err := common.StrToMap(userVisibleLogs[0].Other)
 	require.NoError(t, err)
-	assert.Contains(t, userVisibleOther, "admin_info")
+	assert.NotContains(t, userVisibleOther, "admin_info")
 
 	userLogs, _, err := GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
 	require.NoError(t, err)

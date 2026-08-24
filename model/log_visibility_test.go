@@ -182,26 +182,26 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 		[]string{"request-retried-successfully", "request-final-failure", "other-user-request"},
 		[]string{allUserVisibleLogs[0].RequestId, allUserVisibleLogs[1].RequestId, allUserVisibleLogs[2].RequestId},
 	)
-	var adminVisibleError *Log
+	var userVisibleError *Log
 	for _, log := range allUserVisibleLogs {
 		if log.RequestId == "request-final-failure" {
-			adminVisibleError = log
+			userVisibleError = log
 			break
 		}
 	}
-	require.NotNil(t, adminVisibleError)
-	assert.Equal(t, "status_code=500, final upstream failure", adminVisibleError.Content)
+	require.NotNil(t, userVisibleError)
+	assert.Equal(t, "status_code=500", userVisibleError.Content)
 
 	filteredUserVisibleLogs, filteredTotal, err := GetAllUserVisibleLogsWithChannel(LogTypeUnknown, 0, 0, "", "other-user", "", 0, 10, 12, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), filteredTotal)
 	require.Len(t, filteredUserVisibleLogs, 1)
 	assert.Equal(t, "other-user-request", filteredUserVisibleLogs[0].RequestId)
-	assert.Equal(t, "private-channel", filteredUserVisibleLogs[0].ChannelName)
+	assert.Empty(t, filteredUserVisibleLogs[0].ChannelName)
 	other, err := common.StrToMap(filteredUserVisibleLogs[0].Other)
 	require.NoError(t, err)
-	assert.Contains(t, other, "admin_info")
-	assert.Contains(t, other, "audit_info")
+	assert.NotContains(t, other, "admin_info")
+	assert.NotContains(t, other, "audit_info")
 
 	otherUserLogs, otherUserTotal, err := GetUserLogs(2, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
 	require.NoError(t, err)

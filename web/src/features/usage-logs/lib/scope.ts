@@ -39,10 +39,11 @@ export function getLogsViewCapabilities(scope: LogsViewScope) {
   const isAllUsersView = scope !== 'self'
 
   return {
-    isAdminView: isAllUsersView,
+    isAdminView: scope === 'all',
     isAllUsersView,
-    // Both aggregate scopes are administrator-only. The user-visible scope
-    // changes which rows are included, but keeps complete administrator data.
+    // The aggregate views need identity columns so an administrator can
+    // distinguish rows from different users. User-visible data remains
+    // sanitized by the server even though the table uses the same layout.
     showUserColumn: isAllUsersView,
     showChannelColumn: isAllUsersView,
   }

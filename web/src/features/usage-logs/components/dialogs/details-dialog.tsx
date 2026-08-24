@@ -1142,7 +1142,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
 
         {/* Stream status details */}
-        {other?.stream_status && other.stream_status.status !== 'ok' && (
+        {props.isAdmin &&
+          other?.stream_status &&
+          other.stream_status.status !== 'ok' && (
           <DetailSection label={t('Stream Status')}>
             <DetailRow
               label={t('Status')}

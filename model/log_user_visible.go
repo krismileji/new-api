@@ -11,7 +11,6 @@ import (
 
 type userVisibleLogQueryParams struct {
 	userID            *int
-	exposeRequestIP   bool
 	formatForUser     bool
 	logType           int
 	startTimestamp    int64
@@ -76,9 +75,6 @@ func queryUserVisibleLogs(params userVisibleLogQueryParams) (logs []*Log, total 
 		return nil, 0, errors.New("查询日志失败")
 	}
 
-	if params.exposeRequestIP {
-		exposeAdminRequestIPs(logs)
-	}
 	if params.formatForUser {
 		formatUserLogs(logs, params.startIdx)
 		return logs, total, nil
@@ -107,11 +103,11 @@ func GetAllUserVisibleLogs(logType int, startTimestamp int64, endTimestamp int64
 }
 
 // GetAllUserVisibleLogsWithChannel queries all users while applying the
-// user-visible row filter and an optional channel filter. The administrator
-// endpoint keeps the complete log fields.
+// same row filtering and user-facing formatting as the self view, plus an
+// optional channel filter for the administrator's aggregate table.
 func GetAllUserVisibleLogsWithChannel(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestID string, upstreamRequestID string) (logs []*Log, total int64, err error) {
 	return queryUserVisibleLogs(userVisibleLogQueryParams{
-		exposeRequestIP:   true,
+		formatForUser:     true,
 		logType:           logType,
 		startTimestamp:    startTimestamp,
 		endTimestamp:      endTimestamp,

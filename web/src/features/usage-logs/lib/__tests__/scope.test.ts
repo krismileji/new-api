@@ -39,7 +39,7 @@ describe('usage log view scope', () => {
     assert.equal(resolveLogsViewScope('self', true), 'self')
   })
 
-  test('keeps administrator diagnostics in both aggregate scopes', () => {
+  test('keeps administrator diagnostics out of the user-visible scope', () => {
     assert.deepEqual(getLogsViewCapabilities('all'), {
       isAdminView: true,
       isAllUsersView: true,
@@ -47,7 +47,7 @@ describe('usage log view scope', () => {
       showChannelColumn: true,
     })
     assert.deepEqual(getLogsViewCapabilities('user-visible'), {
-      isAdminView: true,
+      isAdminView: false,
       isAllUsersView: true,
       showUserColumn: true,
       showChannelColumn: true,
