@@ -286,7 +286,7 @@ function TodaySuccessContentLayout(props: {
   children: ReactNode
 }) {
   return (
-    <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-1'>
+    <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain pr-1'>
       {props.history}
       {props.children}
     </div>
@@ -437,12 +437,12 @@ export function ChannelMonitorTodaySuccessDialogContent(
         >
           <h3 className='sr-only'>渠道明细</h3>
           <div className='rounded-lg border'>
-            <Table className='w-full min-w-[840px] table-fixed'>
+            <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
               <TableHeader>
                 <TableRow>
                   <ChannelMonitorSortableTableHead
                     label='渠道'
-                    className='w-[19%]'
+                    className='w-[19%] px-1 text-xs'
                     direction={sortDirection('channel_name')}
                     onSort={() =>
                       setSort((current) =>
@@ -450,13 +450,13 @@ export function ChannelMonitorTodaySuccessDialogContent(
                       )
                     }
                   />
-                  <TableHead className='w-[22%] whitespace-normal'>
+                  <TableHead className='w-[22%] text-xs whitespace-normal'>
                     备注
                   </TableHead>
                   <ChannelMonitorSortableTableHead
                     label='成本倍率'
                     align='right'
-                    className='w-[11%]'
+                    className='w-[11%] px-1 text-xs'
                     direction={sortDirection('cost_ratio')}
                     onSort={() =>
                       setSort((current) =>
@@ -467,7 +467,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   <ChannelMonitorSortableTableHead
                     label='请求数'
                     align='right'
-                    className='w-[11%]'
+                    className='w-[11%] px-1 text-xs'
                     direction={sortDirection('actual_sample_count')}
                     onSort={() =>
                       setSort((current) =>
@@ -478,7 +478,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   <ChannelMonitorSortableTableHead
                     label='成功率'
                     align='right'
-                    className='w-[12%]'
+                    className='w-[12%] px-1 text-xs'
                     direction={sortDirection('actual_success_rate')}
                     onSort={() =>
                       setSort((current) =>
@@ -489,7 +489,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   <ChannelMonitorSortableTableHead
                     label='缓存利用率'
                     align='right'
-                    className='w-[12%]'
+                    className='w-[12%] px-1 text-xs'
                     direction={sortDirection('cache_utilization_rate')}
                     onSort={() =>
                       setSort((current) =>
@@ -503,7 +503,7 @@ export function ChannelMonitorTodaySuccessDialogContent(
                   <ChannelMonitorSortableTableHead
                     label='写入请求数'
                     align='right'
-                    className='w-[13%]'
+                    className='w-[13%] px-1 text-xs'
                     direction={sortDirection('cache_write_request_count')}
                     onSort={() =>
                       setSort((current) =>

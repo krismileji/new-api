@@ -159,9 +159,9 @@ export function ChannelMonitorTodaySuccessCard(
   }
 
   return (
-    <Card size='sm' className='h-full gap-0 py-0 sm:h-32'>
+    <Card size='sm' className='h-full gap-0 py-0 sm:h-36'>
       <CardHeader
-        className='hover:bg-muted/50 focus-visible:ring-ring/50 min-h-0 flex-1 cursor-pointer gap-0 rounded-t-xl py-2 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset'
+        className='hover:bg-muted/50 focus-visible:ring-ring/50 !flex min-h-0 flex-1 cursor-pointer flex-col gap-1 rounded-t-xl py-2 transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset'
         role='button'
         tabIndex={0}
         onClick={props.onOpen}
@@ -173,34 +173,71 @@ export function ChannelMonitorTodaySuccessCard(
         }}
         aria-label={`查看今日成功率、缓存利用率和缓存写明细，成功率 ${successRate}，缓存利用率 ${cacheUtilization}，缓存利用率口径 ${cacheScopeLabel}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
       >
-        <CardDescription>今日成功率 / 缓存利用率</CardDescription>
-        <CardTitle className='text-2xl tabular-nums'>
-          {props.isLoading ? (
-            <Skeleton className='h-7 w-28' />
-          ) : (
-            <span className='flex items-baseline gap-2'>
-              <span>{successRate}</span>
-              <span className='text-muted-foreground text-base font-normal'>
-                /
-              </span>
-              <span data-slot='today-cache-utilization'>
-                {cacheUtilization}
-              </span>
+        <div className='flex min-w-0 items-center justify-between gap-2'>
+          <CardDescription
+            className='min-w-0 truncate text-xs font-medium'
+            title='今日实时概览'
+          >
+            今日实时概览
+          </CardDescription>
+          <CardAction className='static shrink-0 self-auto'>
+            <span className='bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md'>
+              <HugeiconsIcon icon={ChartAverageIcon} aria-hidden='true' />
             </span>
-          )}
-        </CardTitle>
-        <CardAction>
-          <span className='bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md'>
-            <HugeiconsIcon icon={ChartAverageIcon} aria-hidden='true' />
-          </span>
-        </CardAction>
-        <CardDescription className='truncate text-[11px]' title={description}>
+          </CardAction>
+        </div>
+        <div
+          data-slot='today-success-metrics'
+          className='grid min-w-0 grid-cols-2 gap-3'
+        >
+          <div data-slot='today-success-metric-success' className='min-w-0'>
+            <div className='text-muted-foreground flex items-center gap-1.5 text-[11px] leading-4'>
+              <span
+                className='bg-success size-1.5 shrink-0 rounded-full'
+                aria-hidden='true'
+              />
+              成功率
+            </div>
+            <CardTitle className='mt-0.5 min-w-0 text-2xl leading-none tabular-nums'>
+              {props.isLoading ? (
+                <Skeleton className='h-7 w-20' />
+              ) : (
+                successRate
+              )}
+            </CardTitle>
+          </div>
+          <div
+            data-slot='today-success-metric-cache'
+            className='min-w-0 border-s ps-3'
+          >
+            <div className='text-muted-foreground flex items-center gap-1.5 text-[11px] leading-4'>
+              <span
+                className='bg-info size-1.5 shrink-0 rounded-full'
+                aria-hidden='true'
+              />
+              缓存利用率
+            </div>
+            <CardTitle className='mt-0.5 min-w-0 text-2xl leading-none tabular-nums'>
+              {props.isLoading ? (
+                <Skeleton className='h-7 w-20' />
+              ) : (
+                <span data-slot='today-cache-utilization'>
+                  {cacheUtilization}
+                </span>
+              )}
+            </CardTitle>
+          </div>
+        </div>
+        <CardDescription
+          className='mt-auto min-w-0 truncate text-[11px] leading-4'
+          title={description}
+        >
           {description}
         </CardDescription>
       </CardHeader>
-      <CardFooter className='bg-muted/20 mt-auto py-1.5'>
+      <CardFooter className='bg-muted/30 gap-2 px-3 py-1.5'>
         <div className='flex w-full min-w-0 items-center gap-2'>
-          <span className='text-muted-foreground shrink-0 text-xs'>
+          <span className='text-muted-foreground shrink-0 text-[11px] font-medium'>
             缓存口径
           </span>
           <Select

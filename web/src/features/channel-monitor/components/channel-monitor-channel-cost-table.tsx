@@ -159,12 +159,12 @@ export function ChannelMonitorChannelCostTable(
         </span>
       </div>
       <div className='overflow-hidden rounded-md border'>
-        <Table className='min-w-[1080px] table-fixed'>
+        <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
           <TableHeader className='bg-muted/30'>
             <TableRow>
               <ChannelMonitorSortableTableHead
                 label='渠道'
-                className='w-[25%]'
+                className='w-[25%] px-1 text-xs'
                 direction={sortDirection('channel_name')}
                 subtleUnsortedIcon
                 onSort={() =>
@@ -176,7 +176,7 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='成本倍率'
                 align='right'
-                className='w-[9%]'
+                className='w-[9%] px-1 text-xs'
                 direction={sortDirection('cost_ratio')}
                 subtleUnsortedIcon
                 onSort={() =>
@@ -188,7 +188,7 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='已结算成本'
                 align='right'
-                className='w-[12%]'
+                className='w-[12%] px-1 text-xs'
                 direction={sortDirection('cost_cny')}
                 subtleUnsortedIcon
                 onSort={() =>
@@ -200,7 +200,7 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='探测成本'
                 align='right'
-                className='w-[11%]'
+                className='w-[11%] px-1 text-xs'
                 direction={sortDirection('probe_cost_cny')}
                 subtleUnsortedIcon
                 onSort={() =>
@@ -212,7 +212,7 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='分组探测成本'
                 align='right'
-                className='w-[12%]'
+                className='w-[12%] px-1 text-xs'
                 direction={sortDirection('group_probe_cost_cny')}
                 subtleUnsortedIcon
                 onSort={() =>
@@ -224,7 +224,7 @@ export function ChannelMonitorChannelCostTable(
               <ChannelMonitorSortableTableHead
                 label='模型检测成本'
                 align='right'
-                className='w-[13%]'
+                className='w-[13%] px-1 text-xs'
                 direction={sortDirection('model_detection_cost_cny')}
                 subtleUnsortedIcon
                 onSort={() =>

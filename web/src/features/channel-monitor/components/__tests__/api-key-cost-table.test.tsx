@@ -74,8 +74,11 @@ describe('channel monitor API key cost table', () => {
     )
 
     assert.match(markup, /table-fixed/)
-    assert.ok(markup.includes('min-w-[840px]'))
-    assert.ok(markup.includes('minmax(14rem,2.2fr)'))
+    assert.ok(markup.includes('class="min-w-0"'))
+    assert.equal(markup.includes('min-w-[840px]'), false)
+    assert.equal(markup.includes('min-w-[680px]'), false)
+    assert.ok(markup.includes('minmax(0,2.2fr)'))
+    assert.equal(markup.includes('minmax(14rem,2.2fr)'), false)
     assert.match(markup, /truncate/)
     assert.ok(markup.includes('API Key 成本明细'))
     assert.ok(markup.includes('关联渠道'))

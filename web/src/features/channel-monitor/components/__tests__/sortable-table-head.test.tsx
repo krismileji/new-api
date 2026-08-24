@@ -21,9 +21,12 @@ import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { test } from 'vitest'
 
-import { ChannelMonitorSortButton } from '../channel-monitor-sortable-table-head'
+import {
+  ChannelMonitorSortButton,
+  ChannelMonitorSortableTableHead,
+} from '../channel-monitor-sortable-table-head'
 
-test('keeps sortable table labels horizontal when a metric column is narrow', () => {
+test('keeps sortable table labels and indicators inside a narrow metric column', () => {
   const markup = renderToStaticMarkup(
     <ChannelMonitorSortButton
       label='缓存利用率'
@@ -34,10 +37,11 @@ test('keeps sortable table labels horizontal when a metric column is narrow', ()
   const button = markup.match(/^<button\b[^>]*>/)?.[0] ?? ''
   const label = markup.match(/<span\b[^>]*>/)?.[0] ?? ''
 
-  assert.ok(button.includes('whitespace-nowrap'))
-  assert.equal(button.includes('whitespace-normal'), false)
-  assert.ok(label.includes('whitespace-nowrap'))
-  assert.equal(label.includes('break-words'), false)
+  assert.ok(button.includes('min-w-0'))
+  assert.ok(button.includes('overflow-hidden'))
+  assert.ok(button.includes('grid-cols-[minmax(0,1fr)_auto]'))
+  assert.ok(label.includes('truncate'))
+  assert.match(markup, /<svg[^>]*class="[^"]*shrink-0/)
 })
 
 test('can keep inactive sort indicators quiet until the header is focused', () => {
@@ -54,4 +58,26 @@ test('can keep inactive sort indicators quiet until the header is focused', () =
   assert.ok(icon.includes('opacity-0'))
   assert.ok(icon.includes('group-hover/sort:opacity-60'))
   assert.ok(icon.includes('group-focus-visible/sort:opacity-60'))
+})
+
+test('keeps column sizing classes on the table head instead of shrinking the sort button', () => {
+  const markup = renderToStaticMarkup(
+    <table>
+      <thead>
+        <tr>
+          <ChannelMonitorSortableTableHead
+            label='缓存利用率'
+            align='right'
+            className='w-[12%] px-1 text-xs'
+            onSort={() => undefined}
+          />
+        </tr>
+      </thead>
+    </table>
+  )
+  const head = markup.match(/<th\b[^>]*>/)?.[0] ?? ''
+  const button = markup.match(/<button\b[^>]*>/)?.[0] ?? ''
+
+  assert.ok(head.includes('w-[12%]'))
+  assert.equal(button.includes('w-[12%]'), false)
 })

@@ -177,12 +177,12 @@ export function ChannelMonitorSuccessAPIKeyTable(
     >
       <h3 className='font-medium'>API Key 明细</h3>
       <div className='overflow-hidden rounded-lg border'>
-        <Table className='min-w-[640px] table-fixed'>
+        <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
           <TableHeader>
             <TableRow>
               <ChannelMonitorSortableTableHead
                 label='API Key'
-                className='w-[52%]'
+                className='w-[52%] px-1 text-xs'
                 direction={sortDirection('api_key_name')}
                 onSort={() =>
                   setSort((current) =>
@@ -193,7 +193,7 @@ export function ChannelMonitorSuccessAPIKeyTable(
               <ChannelMonitorSortableTableHead
                 label='请求数'
                 align='right'
-                className='w-[16%]'
+                className='w-[16%] px-1 text-xs'
                 direction={sortDirection('actual_sample_count')}
                 onSort={() =>
                   setSort((current) =>
@@ -204,7 +204,7 @@ export function ChannelMonitorSuccessAPIKeyTable(
               <ChannelMonitorSortableTableHead
                 label='成功率'
                 align='right'
-                className='w-[16%]'
+                className='w-[16%] px-1 text-xs'
                 direction={sortDirection('actual_success_rate')}
                 onSort={() =>
                   setSort((current) =>
@@ -215,7 +215,7 @@ export function ChannelMonitorSuccessAPIKeyTable(
               <ChannelMonitorSortableTableHead
                 label='缓存利用率'
                 align='right'
-                className='w-[16%]'
+                className='w-[16%] px-1 text-xs'
                 direction={sortDirection('cache_utilization_rate')}
                 onSort={() =>
                   setSort((current) =>
@@ -237,9 +237,14 @@ export function ChannelMonitorSuccessAPIKeyTable(
                   : 'text-muted-foreground'
               return (
                 <TableRow key={`${item.api_key_id}:${item.api_key_name}`}>
-                  <TableCell>
-                    <div className='flex min-w-48 flex-col gap-0.5'>
-                      <span className='font-medium'>{getAPIKeyName(item)}</span>
+                  <TableCell className='min-w-0'>
+                    <div className='flex min-w-0 flex-col gap-0.5'>
+                      <span
+                        className='truncate font-medium'
+                        title={getAPIKeyName(item)}
+                      >
+                        {getAPIKeyName(item)}
+                      </span>
                       {item.api_key_id > 0 ? (
                         <span className='text-muted-foreground text-xs'>
                           ID {item.api_key_id}

@@ -146,7 +146,7 @@ export function ChannelMonitorCostHistoryDialog(
             按北京时间记录请求结算时固化的已结算上游成本；未解析尝试单独展示，后续配置更新不会改写历史金额。
           </DialogDescription>
         </DialogHeader>
-        <div className='min-h-0 flex-1 overflow-y-auto pr-1'>
+        <div className='min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1'>
           <div className='flex flex-col gap-4 pb-1'>
             <div className='flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between'>
               <CostSummary
@@ -489,17 +489,33 @@ export function CostHistoryData(props: {
           <section className='flex min-w-0 flex-col gap-2'>
             <h3 className='text-sm font-medium'>按日成本</h3>
             <div className='overflow-auto rounded-md border'>
-              <Table className='min-w-[980px]'>
+              <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>日期</TableHead>
-                    <TableHead className='text-right'>已结算成本</TableHead>
-                    <TableHead className='text-right'>探测成本</TableHead>
-                    <TableHead className='text-right'>分组探测成本</TableHead>
-                    <TableHead className='text-right'>模型检测成本</TableHead>
-                    <TableHead className='text-right'>已结算</TableHead>
-                    <TableHead className='text-right'>未解析</TableHead>
-                    <TableHead className='text-right'>解析率</TableHead>
+                    <TableHead className='w-[13%] text-xs leading-4 break-words whitespace-normal'>
+                      日期
+                    </TableHead>
+                    <TableHead className='w-[15%] text-right text-xs leading-4 whitespace-normal'>
+                      已结算成本
+                    </TableHead>
+                    <TableHead className='w-[13%] text-right text-xs leading-4 whitespace-normal'>
+                      探测成本
+                    </TableHead>
+                    <TableHead className='w-[16%] text-right text-xs leading-4 whitespace-normal'>
+                      分组探测成本
+                    </TableHead>
+                    <TableHead className='w-[15%] text-right text-xs leading-4 whitespace-normal'>
+                      模型检测成本
+                    </TableHead>
+                    <TableHead className='w-[8%] text-right text-xs leading-4 whitespace-normal'>
+                      已结算
+                    </TableHead>
+                    <TableHead className='w-[9%] text-right text-xs leading-4 whitespace-normal'>
+                      未解析
+                    </TableHead>
+                    <TableHead className='w-[11%] text-right text-xs leading-4 whitespace-normal'>
+                      解析率
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

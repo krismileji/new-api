@@ -266,13 +266,15 @@ describe('channel monitor today success overview', () => {
     assert.match(markup, /^<div\b/)
     assert.ok(markup.includes('role="button"'))
     assert.ok(markup.includes('tabindex="0"'))
-    assert.ok(markup.includes('今日成功率 / 缓存利用率'))
+    assert.ok(markup.includes('今日实时概览'))
+    assert.ok(markup.includes('成功率'))
+    assert.ok(markup.includes('缓存利用率'))
     assert.ok(markup.includes('90%'))
     assert.ok(markup.includes('50%'))
     assert.ok(markup.includes('10 请求'))
     assert.ok(markup.includes('缓存 50 / 100 tokens'))
     assert.ok(markup.includes('写入 2 个渠道 / 7 次'))
-    assert.ok(markup.includes('sm:h-32'))
+    assert.ok(markup.includes('sm:h-36'))
     assert.ok(markup.includes('缓存口径'))
     assert.ok(markup.includes('选择缓存利用率 API Key'))
     assert.ok(markup.includes('全部 API Key'))
@@ -296,6 +298,27 @@ describe('channel monitor today success overview', () => {
     assert.match(markup, /role="button" tabindex="0"/)
   })
 
+  test('keeps the summary label and values from colliding with the card action', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorTodaySuccessCard
+        result={createResult()}
+        isLoading={false}
+        isError={false}
+        onOpen={noop}
+      />
+    )
+
+    assert.match(
+      markup,
+      /data-slot="today-success-metrics"[^>]*class="[^"]*grid-cols-2[^"]*gap-3/
+    )
+    assert.match(
+      markup,
+      /data-slot="today-success-metric-cache"[^>]*class="[^"]*border-s[^"]*ps-3/
+    )
+    assert.match(markup, /title="今日实时概览"/)
+  })
+
   test('shows a dash on the card when today has no input tokens', () => {
     const result = createResult({
       summary: createSummary({
@@ -316,7 +339,7 @@ describe('channel monitor today success overview', () => {
       />
     )
 
-    assert.match(markup, /90%[\s\S]*>[\s\n]*-[\s\n]*<\/span>/)
+    assert.match(markup, /data-slot="today-cache-utilization">-[\s\n]*<\/span>/)
     assert.doesNotMatch(markup, />0%<\/span>/)
   })
 
@@ -390,15 +413,16 @@ describe('channel monitor today success overview', () => {
     assert.equal(channelCells[20]?.replaceAll(/<[^>]+>/g, ''), '3')
   })
 
-  test('keeps channel detail headers horizontal in narrow dialogs', () => {
+  test('keeps channel detail columns inside the dialog width', () => {
     const markup = renderDialogContent()
     const channelTable = getTables(markup)[0] ?? ''
 
     assert.ok(markup.includes('class="rounded-lg border"'))
     assert.ok(channelTable.includes('table-fixed'))
     assert.ok(channelTable.includes('w-full'))
-    assert.ok(channelTable.includes('min-w-[840px]'))
-    assert.ok(markup.includes('overflow-x-auto'))
+    assert.ok(channelTable.includes('[&amp;_td]:overflow-hidden'))
+    assert.ok(channelTable.includes('[&amp;_td]:text-ellipsis'))
+    assert.equal(channelTable.includes('min-w-[840px]'), false)
     assert.match(channelTable, /<th[^>]*w-\[19%\]/)
     assert.match(channelTable, /<th[^>]*w-\[22%\]/)
   })
@@ -459,9 +483,14 @@ describe('channel monitor today success overview', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorSuccessAPIKeyTable items={createResult().api_key_items} />
     )
-    const apiKeyCells = getTableCells(getTables(markup)[0] ?? '')
+    const apiKeyTable = getTables(markup)[0] ?? ''
+    const apiKeyCells = getTableCells(apiKeyTable)
 
     assert.equal(apiKeyCells.length, 12)
+    assert.ok(apiKeyTable.includes('w-full'))
+    assert.ok(apiKeyTable.includes('table-fixed'))
+    assert.ok(apiKeyTable.includes('[&amp;_td]:overflow-hidden'))
+    assert.equal(apiKeyTable.includes('min-w-[640px]'), false)
     assert.ok(apiKeyCells[0]?.includes('高缓存利用率 Key'))
     assert.ok(apiKeyCells[2]?.includes('100%'))
     assert.ok(apiKeyCells[3]?.includes('100%'))

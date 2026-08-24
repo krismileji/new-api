@@ -63,20 +63,19 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
       variant='ghost'
       size='sm'
       className={cn(
-        'group/sort h-auto min-h-7 w-full py-1 whitespace-nowrap',
-        props.align === 'right'
-          ? 'justify-end text-right'
-          : 'justify-start text-left',
+        'group/sort grid h-auto min-h-7 min-w-0 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-0.5 overflow-hidden px-1 py-1',
+        props.align === 'right' ? 'text-right' : 'text-left',
         props.className
       )}
       aria-label={`按${String(props.label)}排序（当前${directionLabel}）`}
+      title={String(props.label)}
       onClick={props.onSort}
     >
-      <span className='min-w-0 whitespace-nowrap'>{props.label}</span>
+      <span className='min-w-0 truncate leading-4'>{props.label}</span>
       <HugeiconsIcon
         icon={sortIcon}
         className={cn(
-          'text-muted-foreground transition-opacity',
+          'text-muted-foreground size-3 shrink-0 transition-opacity',
           props.subtleUnsortedIcon && !props.direction
             ? 'opacity-0 group-hover/sort:opacity-60 group-focus-visible/sort:opacity-60'
             : 'opacity-100'
@@ -91,13 +90,14 @@ export function ChannelMonitorSortButton(props: ChannelMonitorSortButtonProps) {
 export function ChannelMonitorSortableTableHead(
   props: ChannelMonitorSortableTableHeadProps
 ) {
+  const { className, ...sortButtonProps } = props
   let ariaSort: 'ascending' | 'descending' | 'none' = 'none'
   if (props.direction === 'asc') ariaSort = 'ascending'
   if (props.direction === 'desc') ariaSort = 'descending'
 
   return (
-    <TableHead aria-sort={ariaSort} className={cn('p-0', props.className)}>
-      <ChannelMonitorSortButton {...props} />
+    <TableHead aria-sort={ariaSort} className={cn('p-0', className)}>
+      <ChannelMonitorSortButton {...sortButtonProps} />
     </TableHead>
   )
 }

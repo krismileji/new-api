@@ -64,7 +64,7 @@ type APIKeyCostSort = {
 }
 
 const apiKeyCostGridClassName =
-  'grid grid-cols-[minmax(14rem,2.2fr)_minmax(6rem,0.8fr)_minmax(6rem,0.9fr)_minmax(6rem,0.9fr)_minmax(6rem,0.8fr)_minmax(8rem,1.2fr)]'
+  'grid min-w-0 grid-cols-[minmax(0,2.2fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,1.2fr)]'
 
 function getAPIKeyName(item: ChannelMonitorCostAPIKey) {
   if (item.api_key_name) return item.api_key_name
@@ -166,7 +166,7 @@ export function ChannelMonitorAPIKeyCostTable(
         </Empty>
       ) : (
         <div className='max-h-[min(30rem,50dvh)] overflow-auto rounded-md border'>
-          <div className='min-w-[840px]'>
+          <div className='min-w-0'>
             <div
               className={cn(
                 apiKeyCostGridClassName,
@@ -249,7 +249,7 @@ export function ChannelMonitorAPIKeyCostTable(
                     <summary
                       className={cn(
                         apiKeyCostGridClassName,
-                        'hover:bg-muted/40 focus-visible:ring-ring/50 cursor-pointer list-none items-center px-3 py-3 outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'
+                        'hover:bg-muted/40 focus-visible:ring-ring/50 min-w-0 cursor-pointer list-none items-center px-3 py-3 outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'
                       )}
                     >
                       <span className='flex min-w-0 items-center pl-1'>
@@ -281,22 +281,22 @@ export function ChannelMonitorAPIKeyCostTable(
                         </span>
                       </span>
                       <span
-                        className='text-right font-mono text-sm tabular-nums'
+                        className='min-w-0 truncate text-right font-mono text-sm tabular-nums'
                         aria-label={`${item.channels.length} 个渠道`}
                       >
                         {item.channels.length}
                       </span>
-                      <span className='text-right font-mono text-sm tabular-nums'>
+                      <span className='min-w-0 truncate text-right font-mono text-sm tabular-nums'>
                         {item.settled_count}
                       </span>
                       <span
-                        className='text-right font-mono text-sm tabular-nums'
+                        className='min-w-0 truncate text-right font-mono text-sm tabular-nums'
                         aria-label={`未解析 ${item.unresolved_count}`}
                       >
                         {item.unresolved_count}
                       </span>
                       <span
-                        className='text-right font-mono text-sm tabular-nums'
+                        className='min-w-0 truncate text-right font-mono text-sm tabular-nums'
                         aria-label={`解析率 ${formatChannelMonitorResolutionRate(item.settled_count, item.unresolved_count)}`}
                       >
                         {formatChannelMonitorResolutionRate(
@@ -304,7 +304,7 @@ export function ChannelMonitorAPIKeyCostTable(
                           item.unresolved_count
                         )}
                       </span>
-                      <span className='text-right font-mono font-semibold tabular-nums'>
+                      <span className='min-w-0 truncate text-right font-mono font-semibold tabular-nums'>
                         {formatChannelMonitorCost(item.cost_cny)}
                       </span>
                     </summary>
@@ -314,7 +314,7 @@ export function ChannelMonitorAPIKeyCostTable(
                           暂无渠道明细
                         </p>
                       ) : (
-                        <Table className='min-w-[680px] table-fixed'>
+                        <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
                           <TableHeader>
                             <TableRow>
                               <TableHead className='w-[44%]'>
