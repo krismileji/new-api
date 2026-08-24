@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -19,16 +18,24 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
-		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
-			continue
-		}
+		visibleGroups := make([]string, 0, len(item.EnableGroup))
 		for _, group := range item.EnableGroup {
+			// "all" is a wildcard that makes the model available to
+			// every caller, but it must not expose the model's other,
+			// non-selectable group names in the public catalog.
+			if group == "all" {
+				visibleGroups = append(visibleGroups, group)
+				continue
+			}
 			if _, ok := usableGroup[group]; ok {
-				filtered = append(filtered, item)
-				break
+				visibleGroups = append(visibleGroups, group)
 			}
 		}
+		if len(visibleGroups) == 0 {
+			continue
+		}
+		item.EnableGroup = visibleGroups
+		filtered = append(filtered, item)
 	}
 	return filtered
 }
