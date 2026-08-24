@@ -46,7 +46,6 @@ const usageText = `渠道监控 CM-10 并发与故障验收工具
   --report-file=PATH
 
 令牌默认从 CM10_USER_TOKEN 和 CM10_ADMIN_TOKEN 环境变量读取。
-完整说明见 docs/downstream/channel-monitor/cm10-acceptance.md。
 `
 
 type acceptanceConfig struct {

@@ -15,7 +15,6 @@
 - [连通性测试](connectivity-test.md)：单次、批量和并发循环测试。
 - [渠道并发限制](channel-concurrency.md)：渠道并发上限、租约和满载重选。
 - [本地探针响应](local-probe-response.md)：公开请求的本地探针响应。
-- [一次性上线 Runbook](one-shot-rollout.md)：上线硬闸门、告警阈值、全量切换与逐链路紧急回滚。
 
 ## 权限边界
 
