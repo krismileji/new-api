@@ -149,11 +149,17 @@ func channelSmartScheduleRealtimePerformanceMetric(
 		}
 		if inputTokens > 0 {
 			metric.CacheSampleCount++
-			metric.InputTokens += inputTokens
+			// Cache utilization is token-weighted and only includes streams;
+			// cache hit-rate samples remain request-based.
+			if event.IsStream {
+				metric.InputTokens += inputTokens
+			}
 		}
 		if event.CacheReadTokens != nil && *event.CacheReadTokens > 0 {
 			metric.CacheHitCount++
-			metric.CacheReadTokens += *event.CacheReadTokens
+			if event.IsStream {
+				metric.CacheReadTokens += *event.CacheReadTokens
+			}
 		}
 	}
 	if metric.CacheSampleCount > 0 {

@@ -55,6 +55,7 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	cacheWriteTokens := int64(40)
 	duration := int64(840)
 	event := newChannelMonitorRedisSharedProjectionTestEvent("event-1", occurredAt)
+	event.IsStream = true
 	event.FirstTokenMs = &firstToken
 	event.TPS = &tps
 	event.CompletionTokens = &completionTokens
@@ -105,6 +106,35 @@ func TestChannelMonitorRedisSharedProjectionAggregatesAcrossScopesAndNodes(t *te
 	require.NoError(t, err)
 	assert.NotEmpty(t, minuteValues)
 	assert.Equal(t, event.APIKeyName, minuteValues[channelMonitorRedisSharedScopeAPIKey+":42:"+channelMonitorRedisSharedMetricAPIKeyName])
+}
+
+func TestChannelMonitorRedisSharedProjectionExcludesNonStreamFromCacheUtilization(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	occurredAt := int64(1_750_000_000)
+	streamInput := int64(100)
+	streamCache := int64(25)
+	stream := newChannelMonitorRedisSharedProjectionTestEvent("cache-stream", occurredAt)
+	stream.IsStream = true
+	stream.InputTokens = &streamInput
+	stream.CacheReadTokens = &streamCache
+
+	nonStreamInput := int64(1000)
+	nonStreamCache := int64(900)
+	nonStream := newChannelMonitorRedisSharedProjectionTestEvent("cache-non-stream", occurredAt+1)
+	nonStream.EventSequence = 2
+	nonStream.InputTokens = &nonStreamInput
+	nonStream.CacheReadTokens = &nonStreamCache
+
+	require.NoError(t, projection.HandleChannelMonitorEvents(
+		context.Background(), []model.ChannelMonitorEvent{stream, nonStream},
+	))
+	view, err := projection.Query(context.Background(), occurredAt-60, occurredAt+60)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), view.Summary.CacheSampleCount)
+	assert.Equal(t, int64(2), view.Summary.CacheHitCount)
+	assert.Equal(t, streamInput, view.Summary.InputTokens)
+	assert.Equal(t, streamCache, view.Summary.CacheReadTokens)
 }
 
 func TestChannelMonitorRedisSharedProjectionUsesUpstreamTPSAggregation(t *testing.T) {

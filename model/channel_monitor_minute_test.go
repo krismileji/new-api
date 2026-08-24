@@ -101,24 +101,28 @@ func TestAggregateChannelMonitorMinuteCalculatesCacheUtilizationFromTokens(t *te
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
 	require.NoError(t, db.Create(&[]Log{
 		{
-			ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume,
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume, IsStream: true,
 			PromptTokens: 1000, Other: `{"cache_tokens":1}`,
 		},
 		{
-			ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume,
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 62, Type: LogTypeConsume, IsStream: true,
 			PromptTokens: 1000, Other: `{"cache_tokens":999}`,
 		},
 		{
-			ChannelId: 1, ModelName: "model-a", CreatedAt: 63, Type: LogTypeConsume,
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 63, Type: LogTypeConsume, IsStream: true,
 			PromptTokens: 100, Other: `{"usage_semantic":"anthropic","cache_tokens":400,"cache_creation_tokens":500}`,
 		},
 		{
-			ChannelId: 1, ModelName: "model-a", CreatedAt: 64, Type: LogTypeConsume,
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 64, Type: LogTypeConsume, IsStream: true,
 			PromptTokens: 1000,
 		},
 		{
-			ChannelId: 1, ModelName: "model-a", CreatedAt: 65, Type: LogTypeConsume,
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 65, Type: LogTypeConsume, IsStream: true,
 			PromptTokens: 9999, Other: `{"input_tokens_total":200,"cache_tokens":300}`,
+		},
+		{
+			ChannelId: 1, ModelName: "model-a", CreatedAt: 66, Type: LogTypeConsume,
+			PromptTokens: 5000, Other: `{"cache_tokens":2500}`,
 		},
 	}).Error)
 
@@ -149,7 +153,7 @@ func TestUpgradeChannelMonitorCacheUtilizationMetricsRebuildsCurrentDayOnce(t *t
 		CacheUtilizationCoveredFrom: 0,
 	}).Error)
 	require.NoError(t, db.Create(&Log{
-		ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume,
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 121, Type: LogTypeConsume, IsStream: true,
 		PromptTokens: 1000, Other: `{"cache_tokens":250}`,
 	}).Error)
 
@@ -170,7 +174,7 @@ func TestUpgradeChannelMonitorCacheUtilizationMetricsRebuildsCurrentDayOnce(t *t
 	assert.Equal(t, int64(1000), metric.InputTokens)
 
 	require.NoError(t, db.Create(&Log{
-		ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume,
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 122, Type: LogTypeConsume, IsStream: true,
 		PromptTokens: 1000, Other: `{"cache_tokens":1000}`,
 	}).Error)
 	result, upgraded, err = UpgradeChannelMonitorCacheUtilizationMetrics(
@@ -193,7 +197,7 @@ func TestBackfillChannelMonitorCacheUtilizationRangeExtendsCacheCoverage(t *test
 		CacheUtilizationCoveredFrom: 120,
 	}).Error)
 	require.NoError(t, db.Create(&Log{
-		ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume,
+		ChannelId: 1, ModelName: "model-a", CreatedAt: 61, Type: LogTypeConsume, IsStream: true,
 		PromptTokens: 2000, Other: `{"cache_tokens":500}`,
 	}).Error)
 

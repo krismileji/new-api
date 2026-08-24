@@ -745,10 +745,16 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 	}
 	if inputTokens > 0 {
 		delta.Integers[channelMonitorRedisSharedMetricCacheSamples] = 1
+	}
+	// Keep request-based hit counters, but only include streaming responses in
+	// the token-weighted cache-utilization denominator/numerator.
+	if event.IsStream && inputTokens > 0 {
 		delta.Integers[channelMonitorRedisSharedMetricInputTokens] = inputTokens
 	}
 	if event.CacheReadTokens != nil && *event.CacheReadTokens > 0 {
 		delta.Integers[channelMonitorRedisSharedMetricCacheHits] = 1
+	}
+	if event.IsStream && event.CacheReadTokens != nil && *event.CacheReadTokens > 0 {
 		delta.Integers[channelMonitorRedisSharedMetricCacheReadTokens] = *event.CacheReadTokens
 	}
 	if event.CacheWriteTokens != nil && *event.CacheWriteTokens > 0 {

@@ -12,7 +12,7 @@ import (
 
 const (
 	channelMonitorAggregationStateID      = 1
-	ChannelMonitorCacheUtilizationVersion = 1
+	ChannelMonitorCacheUtilizationVersion = 2
 )
 
 type ChannelMonitorAggregationState struct {

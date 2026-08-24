@@ -38,7 +38,7 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	now := common.GetTimestamp()
 	dayStart := model.ChannelDailyCostDayStart(now)
 	logs := []*model.Log{
-		{ChannelId: 7, ModelName: "model-a", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 1, Type: model.LogTypeConsume, PromptTokens: 100, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
+		{ChannelId: 7, ModelName: "model-a", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 1, Type: model.LogTypeConsume, IsStream: true, PromptTokens: 100, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
 		{ChannelId: 7, ModelName: "model-b", TokenId: 11, TokenName: "主 Key", CreatedAt: dayStart + 2, Type: model.LogTypeError, IsRetryAttempt: true},
 		{ChannelId: 9, ModelName: "deleted-channel", TokenId: 12, TokenName: "备用 Key", CreatedAt: dayStart + 3, Type: model.LogTypeConsume, Other: `{"cache_creation_tokens_5m":64}`},
 		{ChannelId: 7, ModelName: "old", CreatedAt: dayStart - 1, Type: model.LogTypeConsume},
@@ -57,6 +57,7 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	first.APIKeyName = "主 Key"
 	first.RequestDispatched = true
 	first.IsFinalAttempt = true
+	first.IsStream = true
 	first.InputTokens = &inputTokens
 	first.CacheReadTokens = &cacheReadTokens
 	first.CacheWriteTokens = &cacheWriteTokens
@@ -158,7 +159,7 @@ func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *
 	todayStart := model.ChannelDailyCostDayStart(now)
 	yesterdayStart := todayStart - channelMonitorCostDaySeconds
 	require.NoError(t, db.Create(&[]*model.Log{
-		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, PromptTokens: 16, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
+		{ChannelId: 27, ModelName: "yesterday", TokenId: 31, TokenName: "昨日 Key", CreatedAt: yesterdayStart + 1, Type: model.LogTypeConsume, IsStream: true, PromptTokens: 16, Other: `{"cache_tokens":8,"cache_write_tokens":32}`},
 		{ChannelId: 27, ModelName: "today", TokenId: 32, TokenName: "今日 Key", CreatedAt: todayStart + 1, Type: model.LogTypeError},
 	}).Error)
 	require.NoError(t, aggregateChannelMonitorTestLogs(yesterdayStart, now))

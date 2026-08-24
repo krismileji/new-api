@@ -233,7 +233,7 @@ func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay
 		}).Error)
 	require.NoError(t, db.Create(&model.Log{
 		ChannelId: 7, ModelName: "model-a", CreatedAt: oldMinute + 1,
-		Type: model.LogTypeConsume, PromptTokens: 1000, Other: `{"cache_tokens":250}`,
+		Type: model.LogTypeConsume, IsStream: true, PromptTokens: 1000, Other: `{"cache_tokens":250}`,
 	}).Error)
 
 	require.NoError(t, runChannelMonitorAggregationAt(context.Background(), now+20, false))

@@ -311,7 +311,9 @@ func (aggregate *ChannelMonitorMinuteRouteMetric) addLog(log channelMonitorMinut
 	}
 
 	parsedOther, parsed := channelMonitorMinuteOther(log.Other)
-	if log.Type == LogTypeConsume {
+	// Cache utilization is defined for streaming responses; cache hit-rate
+	// counters below remain request-based for compatibility.
+	if log.Type == LogTypeConsume && log.IsStream {
 		aggregate.addCacheUtilization(log, parsedOther)
 	}
 	if parsed && parsedOther.CacheTokens != nil {

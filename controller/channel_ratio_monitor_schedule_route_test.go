@@ -86,6 +86,27 @@ func TestChannelSmartScheduleRealtimeMetricCoverageIncludesTruncatedRouteWindow(
 	assert.Equal(t, 1000, coverage.RealtimeSampleLimit)
 }
 
+func TestChannelSmartScheduleRealtimeCacheUtilizationExcludesNonStream(t *testing.T) {
+	streamInput := int64(100)
+	streamCache := int64(25)
+	nonStreamInput := int64(1000)
+	nonStreamCache := int64(900)
+	events := []model.ChannelMonitorEvent{
+		{Source: model.ChannelMonitorEventSourceBusiness, IsStream: true, InputTokens: &streamInput, CacheReadTokens: &streamCache},
+		{Source: model.ChannelMonitorEventSourceBusiness, InputTokens: &nonStreamInput, CacheReadTokens: &nonStreamCache},
+	}
+
+	metric, available := channelSmartScheduleRealtimePerformanceMetric(
+		model.ChannelSmartScheduleRoute{ChannelId: 1, Group: "vip", Model: "model-a"},
+		events, channelSmartSchedulePolicy{},
+	)
+	require.True(t, available)
+	assert.Equal(t, int64(2), metric.CacheSampleCount)
+	assert.Equal(t, int64(2), metric.CacheHitCount)
+	assert.Equal(t, streamInput, metric.InputTokens)
+	assert.Equal(t, streamCache, metric.CacheReadTokens)
+}
+
 func TestRunChannelSmartScheduleRecordsRouteAdjustmentsAndReasons(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelSmartScheduleGroupRatio(t, `{"vip":100}`)
