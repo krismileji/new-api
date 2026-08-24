@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { shouldWarnChannelMonitorPageSnapshot } from '../lib/realtime-metadata'
 import type { ChannelMonitorRealtimeMetadata } from '../types'
 
 type ChannelMonitorRealtimeStatusProps = {
@@ -93,7 +94,7 @@ export function ChannelMonitorRealtimeStatus(
       {props.metadata.realtime_degraded ? (
         <Badge variant='destructive'>实时数据已降级</Badge>
       ) : null}
-      {props.metadata.stale ? (
+      {shouldWarnChannelMonitorPageSnapshot(props.metadata) ? (
         <Badge variant='warning'>页面快照已过期</Badge>
       ) : null}
       {pendingCount > 0 ? (

@@ -18,6 +18,22 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ChannelMonitorRealtimeMetadata } from '../types'
 
+// A page snapshot enters stale-while-revalidate shortly after it is written.
+// Keep that internal cache state out of the user-facing warning until the
+// snapshot has been unchanged long enough to indicate a failed refresh.
+export const CHANNEL_MONITOR_SNAPSHOT_WARNING_AGE_SECONDS = 30
+
+export function shouldWarnChannelMonitorPageSnapshot(
+  metadata: ChannelMonitorRealtimeMetadata
+) {
+  if (!metadata.stale) return false
+  if (!metadata.generated_at) return true
+  return (
+    Date.now() / 1000 - metadata.generated_at >=
+    CHANNEL_MONITOR_SNAPSHOT_WARNING_AGE_SECONDS
+  )
+}
+
 export function mergeChannelMonitorRealtimeMetadata(
   snapshots: readonly (ChannelMonitorRealtimeMetadata | undefined)[]
 ): ChannelMonitorRealtimeMetadata | undefined {

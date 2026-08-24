@@ -102,6 +102,28 @@ describe('channel monitor realtime status', () => {
     assert.ok(markup.includes('已处理事件序号 42'))
   })
 
+  test('does not warn for a recently generated stale-while-revalidate snapshot', () => {
+    const generatedAt = Math.floor(Date.now() / 1000) - 12
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorRealtimeStatus
+        metadata={{
+          generated_at: generatedAt,
+          stale: true,
+          data_cutoff_at: 1_752_777_840,
+          processed_at: 1_752_777_845,
+          event_watermark: 42,
+          queue_depth: 0,
+          redis_status: 'available',
+          redis_available: true,
+          redis_consumer_running: true,
+          realtime_degraded: false,
+        }}
+      />
+    )
+
+    assert.ok(!markup.includes('页面快照已过期'))
+  })
+
   test('states when no request event has been projected yet', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorRealtimeStatus
