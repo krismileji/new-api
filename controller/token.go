@@ -168,9 +168,11 @@ func GetTokenAutoGroups(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	autoGroups := service.GetUserAutoGroup(userGroup)
 	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
-		"max_count": setting.GetMaxTokenAutoGroups(),
+		"groups":      autoGroups,
+		"max_count":   setting.GetMaxTokenAutoGroups(),
+		"group_order": setting.SortGroupNames(autoGroups),
 	})
 }
 

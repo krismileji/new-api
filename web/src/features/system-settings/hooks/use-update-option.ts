@@ -59,6 +59,12 @@ export function useUpdateOption() {
           }
         }
 
+        if (variables.key === 'GroupOrder') {
+          queryClient.invalidateQueries({ queryKey: ['pricing'] })
+          queryClient.invalidateQueries({ queryKey: ['user-groups'] })
+          queryClient.invalidateQueries({ queryKey: ['token-auto-groups'] })
+        }
+
         toast.success(i18next.t('Setting updated successfully'))
       } else {
         toast.error(data.message || i18next.t('Failed to update setting'))

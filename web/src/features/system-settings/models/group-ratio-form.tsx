@@ -52,6 +52,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { orderGroupNames } from '@/lib/group-order'
 
 import {
   SettingsForm,
@@ -66,6 +67,7 @@ import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
 type GroupFormValues = {
   GroupRatio: string
+  GroupOrder: string
   TopupGroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
@@ -107,6 +109,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   const watchedGroupRatio = form.watch('GroupRatio')
   const watchedUserUsableGroups = form.watch('UserUsableGroups')
   const watchedTopupGroupRatio = form.watch('TopupGroupRatio')
+  const watchedGroupOrder = form.watch('GroupOrder')
   const groupNames = useMemo(() => {
     const ratioMap = safeJsonParse<Record<string, number>>(watchedGroupRatio, {
       fallback: {},
@@ -120,14 +123,25 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       watchedTopupGroupRatio,
       { fallback: {}, silent: true }
     )
-    return [
-      ...new Set([
-        ...Object.keys(ratioMap),
-        ...Object.keys(usableMap),
-        ...Object.keys(topupMap),
-      ]),
-    ]
-  }, [watchedGroupRatio, watchedUserUsableGroups, watchedTopupGroupRatio])
+    return orderGroupNames(
+      [
+        ...new Set([
+          ...Object.keys(ratioMap),
+          ...Object.keys(usableMap),
+          ...Object.keys(topupMap),
+        ]),
+      ],
+      safeJsonParse<string[]>(watchedGroupOrder, {
+        fallback: [],
+        silent: true,
+      })
+    )
+  }, [
+    watchedGroupOrder,
+    watchedGroupRatio,
+    watchedUserUsableGroups,
+    watchedTopupGroupRatio,
+  ])
 
   return (
     <div className='space-y-6'>
@@ -168,6 +182,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
           <div className='space-y-6'>
             <GroupRatioVisualEditor
               groupRatio={form.watch('GroupRatio')}
+              groupOrder={form.watch('GroupOrder')}
               topupGroupRatio={form.watch('TopupGroupRatio')}
               userUsableGroups={form.watch('UserUsableGroups')}
               groupGroupRatio={form.watch('GroupGroupRatio')}
@@ -258,6 +273,30 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     {t(
                       'JSON map of group → ratio applied when the user selects the group explicitly.'
                     )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='GroupOrder'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Sort Order')}</FormLabel>
+                  <FormControl>
+                    <JsonCodeEditor
+                      value={field.value}
+                      onChange={field.onChange}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      textareaRef={field.ref}
+                      heightClassName='h-40 min-h-40 max-h-40'
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('JSON array of group identifiers')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

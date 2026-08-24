@@ -55,6 +55,7 @@ import {
   formatUptimePct,
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
+import { orderGroupNames } from '@/lib/group-order'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
@@ -852,6 +853,7 @@ function getDynamicFormattedPricesByTier(
 function GroupPricingSection(props: {
   model: PricingModel
   groupRatio: Record<string, number>
+  groupOrder: string[]
   usableGroup: Record<string, { desc: string; ratio: number }>
   autoGroups: string[]
   priceRate: number
@@ -863,8 +865,12 @@ function GroupPricingSection(props: {
   const showRechargePrice = props.showRechargePrice ?? false
 
   const availableGroups = useMemo(
-    () => getAvailableGroups(props.model, props.usableGroup || {}),
-    [props.model, props.usableGroup]
+    () =>
+      orderGroupNames(
+        getAvailableGroups(props.model, props.usableGroup || {}),
+        props.groupOrder
+      ),
+    [props.groupOrder, props.model, props.usableGroup]
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
@@ -1128,6 +1134,7 @@ const TAB_META: Record<
 export interface ModelDetailsContentProps {
   model: PricingModel
   groupRatio: Record<string, number>
+  groupOrder: string[]
   usableGroup: Record<string, { desc: string; ratio: number }>
   endpointMap: Record<string, { path?: string; method?: string }>
   autoGroups: string[]
@@ -1184,6 +1191,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
             <GroupPricingSection
               model={props.model}
               groupRatio={props.groupRatio}
+              groupOrder={props.groupOrder}
               usableGroup={props.usableGroup}
               autoGroups={props.autoGroups}
               priceRate={props.priceRate}
@@ -1253,6 +1261,7 @@ export function ModelDetails() {
   const {
     models,
     groupRatio,
+    groupOrder,
     usableGroup,
     endpointMap,
     autoGroups,
@@ -1332,6 +1341,7 @@ export function ModelDetails() {
         <ModelDetailsContent
           model={model}
           groupRatio={groupRatio || {}}
+          groupOrder={groupOrder || []}
           usableGroup={usableGroup || {}}
           autoGroups={autoGroups || []}
           priceRate={priceRate ?? 1}

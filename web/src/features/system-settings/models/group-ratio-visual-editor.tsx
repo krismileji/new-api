@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  ArrowDown,
+  ArrowUp,
   AlertTriangle,
   ChevronDown,
   GripVertical,
@@ -79,6 +81,7 @@ import { safeJsonParse } from '../utils/json-parser'
 
 type GroupRatioVisualEditorProps = {
   groupRatio: string
+  groupOrder: string
   topupGroupRatio: string
   userUsableGroups: string
   groupGroupRatio: string
@@ -124,6 +127,28 @@ function parseRatioMap(value: string): Record<string, number> {
   })
 }
 
+function parseGroupOrder(value: string): string[] {
+  return safeJsonParse<string[]>(value, {
+    fallback: [],
+    silent: true,
+  })
+}
+
+function orderGroupNames(names: string[], groupOrder: string[]): string[] {
+  const available = new Set(names)
+  const ordered = groupOrder.filter((name) => available.has(name))
+  const seen = new Set(ordered)
+  for (const name of [...names].sort((left, right) =>
+    left.localeCompare(right)
+  )) {
+    if (!seen.has(name)) {
+      ordered.push(name)
+      seen.add(name)
+    }
+  }
+  return ordered
+}
+
 function parseUsableMap(value: string): Record<string, string> {
   return safeJsonParse<Record<string, string>>(value, {
     fallback: {},
@@ -143,7 +168,8 @@ function parseNestedRatioMap(
 function buildGroupPricingRows(
   groupRatio: string,
   userUsableGroups: string,
-  topupGroupRatio: string
+  topupGroupRatio: string,
+  groupOrder: string
 ): GroupPricingRow[] {
   const ratioMap = parseRatioMap(groupRatio)
   const usableMap = parseUsableMap(userUsableGroups)
@@ -154,14 +180,16 @@ function buildGroupPricingRows(
     ...Object.keys(topupMap),
   ])
 
-  return [...names].map((name) => ({
-    _id: createGroupPricingId(),
-    name,
-    ratio: String(normalizeRatio(ratioMap[name])),
-    topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
-    selectable: Object.hasOwn(usableMap, name),
-    description: String(usableMap[name] ?? ''),
-  }))
+  return orderGroupNames([...names], parseGroupOrder(groupOrder)).map(
+    (name) => ({
+      _id: createGroupPricingId(),
+      name,
+      ratio: String(normalizeRatio(ratioMap[name])),
+      topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
+      selectable: Object.hasOwn(usableMap, name),
+      description: String(usableMap[name] ?? ''),
+    })
+  )
 }
 
 function serializeGroupPricingRows(rows: GroupPricingRow[]) {
@@ -184,6 +212,11 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
 
   return {
     GroupRatio: JSON.stringify(groupRatio, null, 2),
+    GroupOrder: JSON.stringify(
+      rows.map((row) => row.name.trim()).filter(Boolean),
+      null,
+      2
+    ),
     UserUsableGroups: JSON.stringify(userUsableGroups, null, 2),
     TopupGroupRatio: JSON.stringify(topupGroupRatio, null, 2),
   }
@@ -193,6 +226,7 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
   const serialized = serializeGroupPricingRows(rows)
   return JSON.stringify({
     groupRatio: parseRatioMap(serialized.GroupRatio),
+    groupOrder: parseGroupOrder(serialized.GroupOrder),
     userUsableGroups: parseUsableMap(serialized.UserUsableGroups),
     topupGroupRatio: parseRatioMap(serialized.TopupGroupRatio),
   })
@@ -200,11 +234,13 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
 
 function sourceGroupPricingSignature(
   groupRatio: string,
+  groupOrder: string,
   userUsableGroups: string,
   topupGroupRatio: string
 ): string {
   return JSON.stringify({
     groupRatio: parseRatioMap(groupRatio),
+    groupOrder: parseGroupOrder(groupOrder),
     userUsableGroups: parseUsableMap(userUsableGroups),
     topupGroupRatio: parseRatioMap(topupGroupRatio),
   })
@@ -261,6 +297,7 @@ function GroupNameSelect(props: GroupNameSelectProps) {
 
 export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   groupRatio,
+  groupOrder,
   topupGroupRatio,
   userUsableGroups,
   groupGroupRatio,
@@ -281,11 +318,13 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       ...Object.keys(usableMap),
       ...Object.keys(topupMap),
     ])
-    return [...names].map((name) => ({
-      name,
-      ratio: normalizeRatio(ratioMap[name]),
-    }))
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+    return orderGroupNames([...names], parseGroupOrder(groupOrder)).map(
+      (name) => ({
+        name,
+        ratio: normalizeRatio(ratioMap[name]),
+      })
+    )
+  }, [groupRatio, groupOrder, userUsableGroups, topupGroupRatio])
 
   const registryNames = useMemo(
     () => registry.map((entry) => entry.name),
@@ -336,6 +375,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
     <div className='space-y-4'>
       <GroupPricingTable
         groupRatio={groupRatio}
+        groupOrder={groupOrder}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
         onChange={onChange}
@@ -428,6 +468,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
 type GroupPricingTableProps = {
   groupRatio: string
+  groupOrder: string
   userUsableGroups: string
   topupGroupRatio: string
   onChange: (field: string, value: string) => void
@@ -436,6 +477,7 @@ type GroupPricingTableProps = {
 
 function GroupPricingTable({
   groupRatio,
+  groupOrder,
   userUsableGroups,
   topupGroupRatio,
   onChange,
@@ -443,12 +485,18 @@ function GroupPricingTable({
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<GroupPricingRow[]>(() =>
-    buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio)
+    buildGroupPricingRows(
+      groupRatio,
+      userUsableGroups,
+      topupGroupRatio,
+      groupOrder
+    )
   )
 
   useEffect(() => {
     const incomingSignature = sourceGroupPricingSignature(
       groupRatio,
+      groupOrder,
       userUsableGroups,
       topupGroupRatio
     )
@@ -459,16 +507,18 @@ function GroupPricingTable({
       return buildGroupPricingRows(
         groupRatio,
         userUsableGroups,
-        topupGroupRatio
+        topupGroupRatio,
+        groupOrder
       )
     })
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+  }, [groupRatio, groupOrder, userUsableGroups, topupGroupRatio])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
       setRows(nextRows)
       const serialized = serializeGroupPricingRows(nextRows)
       onChange('GroupRatio', serialized.GroupRatio)
+      onChange('GroupOrder', serialized.GroupOrder)
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
     },
@@ -512,6 +562,21 @@ function GroupPricingTable({
   const removeRow = useCallback(
     (id: string) => {
       emitRows(rows.filter((row) => row._id !== id))
+    },
+    [emitRows, rows]
+  )
+
+  const moveRow = useCallback(
+    (id: string, direction: 'up' | 'down') => {
+      const index = rows.findIndex((row) => row._id === id)
+      const targetIndex = direction === 'up' ? index - 1 : index + 1
+      if (index < 0 || targetIndex < 0 || targetIndex >= rows.length) return
+      const nextRows = [...rows]
+      ;[nextRows[index], nextRows[targetIndex]] = [
+        nextRows[targetIndex],
+        nextRows[index],
+      ]
+      emitRows(nextRows)
     },
     [emitRows, rows]
   )
@@ -643,6 +708,28 @@ function GroupPricingTable({
                 cellClassName: 'text-right',
                 cell: (row) => (
                   <div className='flex justify-end gap-1'>
+                    <Button
+                      variant='ghost'
+                      size='sm'
+                      disabled={rows[0]?._id === row._id}
+                      onClick={() => moveRow(row._id, 'up')}
+                      aria-label={t('Move {{group}} up', {
+                        group: row.name.trim(),
+                      })}
+                    >
+                      <ArrowUp className='h-4 w-4' />
+                    </Button>
+                    <Button
+                      variant='ghost'
+                      size='sm'
+                      disabled={rows.at(-1)?._id === row._id}
+                      onClick={() => moveRow(row._id, 'down')}
+                      aria-label={t('Move {{group}} down', {
+                        group: row.name.trim(),
+                      })}
+                    >
+                      <ArrowDown className='h-4 w-4' />
+                    </Button>
                     <Button
                       variant='ghost'
                       size='sm'

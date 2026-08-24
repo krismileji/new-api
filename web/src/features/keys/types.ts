@@ -98,6 +98,7 @@ export interface ApiKeyFormData {
 
 export interface TokenAutoGroupsConfig {
   groups: string[]
+  group_order?: string[]
   max_count: number
 }
 

@@ -3,6 +3,7 @@ package controller
 import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,11 @@ func GetPricing(c *gin.Context) {
 			delete(groupRatio, group)
 		}
 	}
+	groupNames := make([]string, 0, len(groupRatio))
+	for group := range groupRatio {
+		groupNames = append(groupNames, group)
+	}
+	autoGroups := service.GetRoleAutoGroups(group, role)
 
 	c.JSON(200, gin.H{
 		"success":            true,
@@ -78,8 +84,9 @@ func GetPricing(c *gin.Context) {
 		"vendors":            model.GetVendors(),
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
+		"group_order":        setting.SortGroupNames(groupNames),
 		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetRoleAutoGroups(group, role),
+		"auto_groups":        setting.SortGroupNames(autoGroups),
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }

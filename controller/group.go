@@ -16,6 +16,7 @@ func GetGroups(c *gin.Context) {
 	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		groupNames = append(groupNames, groupName)
 	}
+	groupNames = setting.SortGroupNames(groupNames)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -29,13 +30,16 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userUsableGroups := service.GetRoleUsableGroups(userGroup, c.GetInt("role"))
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	groupOrder := make([]string, 0, len(groupRatios))
+	for groupName := range groupRatios {
 		// The role-aware group set contains every group this caller can use.
 		if desc, ok := userUsableGroups[groupName]; ok {
 			usableGroups[groupName] = map[string]interface{}{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,
 			}
+			groupOrder = append(groupOrder, groupName)
 		}
 	}
 	if _, ok := userUsableGroups["auto"]; ok {
@@ -45,8 +49,9 @@ func GetUserGroups(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    usableGroups,
+		"success":     true,
+		"message":     "",
+		"data":        usableGroups,
+		"group_order": setting.SortGroupNames(groupOrder),
 	})
 }

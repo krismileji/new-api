@@ -65,6 +65,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
 import {
@@ -155,16 +156,30 @@ export function ApiKeysMutateDrawer({
   })
 
   const models = modelsData?.data || []
-  const groups = useMemo<ApiKeyGroupOption[]>(
-    () =>
-      Object.entries(groupsData?.data || {}).map(([key, info]) => ({
-        value: key,
-        label: key,
-        desc: info.desc || key,
-        ratio: info.ratio,
-      })),
-    [groupsData]
-  )
+  const groups = useMemo<ApiKeyGroupOption[]>(() => {
+    const entries = Object.entries(groupsData?.data || {})
+    const regularNames = orderGroupNames(
+      entries.map(([key]) => key).filter((key) => key !== 'auto'),
+      groupsData?.group_order || []
+    )
+    const orderedNames = entries.some(([key]) => key === 'auto')
+      ? [...regularNames, 'auto']
+      : regularNames
+    const infoByName = new Map(entries)
+    return orderedNames.flatMap((key) => {
+      const info = infoByName.get(key)
+      return info
+        ? [
+            {
+              value: key,
+              label: key,
+              desc: info.desc || key,
+              ratio: info.ratio,
+            },
+          ]
+        : []
+    })
+  }, [groupsData])
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const availableAutoGroupNames = useMemo(
     () => groups.filter((group) => group.value !== 'auto').map((g) => g.value),
@@ -172,9 +187,9 @@ export function ApiKeysMutateDrawer({
   )
   const globalAutoGroups = useMemo(() => {
     const available = new Set(availableAutoGroupNames)
-    return (autoGroupsData?.data?.groups || []).filter((group) =>
-      available.has(group)
-    )
+    const configuredOrder =
+      autoGroupsData?.data?.group_order ?? autoGroupsData?.data?.groups ?? []
+    return configuredOrder.filter((group) => available.has(group))
   }, [autoGroupsData, availableAutoGroupNames])
   const globalAutoGroupOptions = useMemo(() => {
     const groupsByValue = new Map(groups.map((group) => [group.value, group]))
