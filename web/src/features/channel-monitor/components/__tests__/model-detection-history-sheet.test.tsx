@@ -406,6 +406,15 @@ describe('模型检测历史 Sheet', () => {
             claimed_model: 'gpt-5.6-terra',
             fingerprint_verdict_state: 'unclear',
             fingerprint_model: '',
+            progress: {
+              ...execution.progress,
+              successful: 2,
+              errors: 1,
+            },
+            cost: createCost({
+              settled_cost_cny: '0.010000000',
+              settled_request_count: 1,
+            }),
             report: { overall_verdict: '需关注' },
           },
         ],
@@ -433,6 +442,8 @@ describe('模型检测历史 Sheet', () => {
     assert.match(results.textContent ?? '', /Juice 证据通过/)
     assert.match(results.textContent ?? '', /行为指纹明确/)
     assert.match(results.textContent ?? '', /检测器识别gpt-5\.6-sol/)
+    assert.match(results.textContent ?? '', /成功3/)
+    assert.match(results.textContent ?? '', /实际结算¥0\.025680000/)
 
     await act(async () => {
       triggers[1].click()
@@ -440,6 +451,9 @@ describe('模型检测历史 Sheet', () => {
     })
     assert.match(results.textContent ?? '', /最终判定需关注/)
     assert.match(results.textContent ?? '', /行为指纹不明确/)
+    assert.match(results.textContent ?? '', /成功2/)
+    assert.match(results.textContent ?? '', /异常1/)
+    assert.match(results.textContent ?? '', /实际结算¥0\.010000000/)
   })
 
   test('缺少 Usage 的请求保持待核实且不会把空值格式化为零', async () => {

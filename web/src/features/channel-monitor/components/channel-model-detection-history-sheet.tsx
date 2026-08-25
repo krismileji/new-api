@@ -202,6 +202,17 @@ function errorSummary(message: string) {
     .slice(0, 240)
 }
 
+function actualSettledCostLabel(cost: ChannelModelDetectionCost) {
+  if (cost.status === 'not_started') return '尚未请求'
+  if (cost.status === 'pending') return '结算中'
+  if (cost.settled_request_count > 0) {
+    return cost.settled_cost_cny == null
+      ? '金额待确认'
+      : `¥${cost.settled_cost_cny}`
+  }
+  return '暂未结算'
+}
+
 function statusDotClass(status: ChannelModelDetectionRunStatus) {
   if (status === 'completed') return 'bg-success'
   if (status === 'failed') return 'bg-destructive'
@@ -286,9 +297,37 @@ function ExecutionResultCard(props: {
           </div>
         </div>
         <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>
-          {execution.progress.logical_completed} / {execution.progress.planned}
+          逻辑完成 {execution.progress.logical_completed} /{' '}
+          {execution.progress.planned}
         </span>
       </div>
+      <dl
+        className='bg-muted/35 mt-2 grid min-w-0 grid-cols-2 gap-x-3 gap-y-1.5 rounded-md px-2.5 py-1.5 text-[11px] sm:grid-cols-4'
+        data-slot='model-detection-history-result-metrics'
+      >
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>成功</dt>
+          <dd className='mt-0.5 font-medium tabular-nums'>
+            {execution.progress.successful}
+          </dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>异常</dt>
+          <dd className='mt-0.5 font-medium tabular-nums'>
+            {execution.progress.errors}
+          </dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>目标</dt>
+          <dd className='mt-0.5 font-medium tabular-nums'>1 / 1</dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>实际结算</dt>
+          <dd className='mt-0.5 truncate font-medium tabular-nums'>
+            {actualSettledCostLabel(execution.cost)}
+          </dd>
+        </div>
+      </dl>
       <dl className='mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-2'>
         <div className='min-w-0'>
           <dt className='text-muted-foreground'>最终判定</dt>
@@ -465,17 +504,7 @@ function RunItem(props: {
       )
     : 0
   const safeError = errorSummary(run.error_message)
-  let settledCost = '暂未结算'
-  if (run.cost.status === 'not_started') {
-    settledCost = '尚未请求'
-  } else if (run.cost.status === 'pending') {
-    settledCost = '结算中'
-  } else if (run.cost.settled_request_count > 0) {
-    settledCost =
-      run.cost.settled_cost_cny == null
-        ? '金额待确认'
-        : `¥${run.cost.settled_cost_cny}`
-  }
+  const settledCost = actualSettledCostLabel(run.cost)
   const unresolvedCount = Math.max(
     run.cost.unresolved_request_count,
     run.cost.unresolved_cost_unknown_count
@@ -602,6 +631,7 @@ function RunItem(props: {
         className='bg-muted/35 mt-2 grid min-w-0 grid-cols-3 gap-2 rounded-md px-2.5 py-1.5 text-xs'
         data-slot='model-detection-history-metrics'
       >
+        <div className='col-span-3 text-muted-foreground text-[10px]'>本轮合计</div>
         <div className='min-w-0'>
           <dt className='text-muted-foreground text-[10px]'>成功</dt>
           <dd className='mt-0.5 font-medium tabular-nums'>
