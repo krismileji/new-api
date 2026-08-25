@@ -197,7 +197,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	assert.Equal(t, int64(1), filteredTotal)
 	require.Len(t, filteredUserVisibleLogs, 1)
 	assert.Equal(t, "other-user-request", filteredUserVisibleLogs[0].RequestId)
-	assert.Empty(t, filteredUserVisibleLogs[0].ChannelName)
+	assert.Equal(t, "private-channel", filteredUserVisibleLogs[0].ChannelName)
 	other, err := common.StrToMap(filteredUserVisibleLogs[0].Other)
 	require.NoError(t, err)
 	assert.NotContains(t, other, "admin_info")

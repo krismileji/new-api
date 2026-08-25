@@ -103,10 +103,10 @@ func GetAllUserVisibleLogs(logType int, startTimestamp int64, endTimestamp int64
 }
 
 // GetAllUserVisibleLogsWithChannel queries all users while applying the
-// same row filtering and user-facing formatting as the self view, plus an
-// optional channel filter for the administrator's aggregate table.
+// same row filtering and user-facing formatting as the self view. Channel
+// names are restored for the administrator's aggregate table.
 func GetAllUserVisibleLogsWithChannel(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestID string, upstreamRequestID string) (logs []*Log, total int64, err error) {
-	return queryUserVisibleLogs(userVisibleLogQueryParams{
+	logs, total, err = queryUserVisibleLogs(userVisibleLogQueryParams{
 		formatForUser:     true,
 		logType:           logType,
 		startTimestamp:    startTimestamp,
@@ -121,6 +121,13 @@ func GetAllUserVisibleLogsWithChannel(logType int, startTimestamp int64, endTime
 		requestID:         requestID,
 		upstreamRequestID: upstreamRequestID,
 	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if err = hydrateLogChannelNames(logs); err != nil {
+		return logs, total, err
+	}
+	return logs, total, nil
 }
 
 // sumUsedQuotaFromQuery keeps aggregate statistics aligned with the log
