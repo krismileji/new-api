@@ -496,6 +496,8 @@ function RunItem(props: {
   const [detail, setDetail] = useState<ChannelModelDetectionRunDetail | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const showRunAggregate =
+    !resultsOpen || !detail || detail.executions.length <= 1
   const status = RUN_STATUS[run.status]
   const progressValue = run.progress.planned
     ? Math.min(
@@ -612,63 +614,69 @@ function RunItem(props: {
         </div>
       </div>
 
-      <div className='mt-2 min-w-0'>
-        <div className='text-muted-foreground mb-1 flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] tabular-nums'>
-          <span>
-            逻辑完成 {run.progress.logical_completed} / {run.progress.planned}
-          </span>
-          <span>
-            目标 {run.completed_target_count} / {run.target_count}
-          </span>
-        </div>
-        <Progress
-          value={progressValue}
-          aria-label={`轮次 ${run.run_id} 逻辑进度 ${run.progress.logical_completed} / ${run.progress.planned}`}
-        />
-      </div>
+      {showRunAggregate ? (
+        <>
+          <div className='mt-2 min-w-0'>
+            <div className='text-muted-foreground mb-1 flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] tabular-nums'>
+              <span>
+                逻辑完成 {run.progress.logical_completed} / {run.progress.planned}
+              </span>
+              <span>
+                目标 {run.completed_target_count} / {run.target_count}
+              </span>
+            </div>
+            <Progress
+              value={progressValue}
+              aria-label={`轮次 ${run.run_id} 逻辑进度 ${run.progress.logical_completed} / ${run.progress.planned}`}
+            />
+          </div>
 
-      <dl
-        className='bg-muted/35 mt-2 grid min-w-0 grid-cols-3 gap-2 rounded-md px-2.5 py-1.5 text-xs'
-        data-slot='model-detection-history-metrics'
-      >
-        <div className='col-span-3 text-muted-foreground text-[10px]'>本轮合计</div>
-        <div className='min-w-0'>
-          <dt className='text-muted-foreground text-[10px]'>成功</dt>
-          <dd className='mt-0.5 font-medium tabular-nums'>
-            {run.progress.successful}
-          </dd>
-        </div>
-        <div className='min-w-0'>
-          <dt className='text-muted-foreground text-[10px]'>异常</dt>
-          <dd className='mt-0.5 font-medium tabular-nums'>
-            {run.progress.errors}
-          </dd>
-        </div>
-        <div className='min-w-0'>
-          <dt className='text-muted-foreground text-[10px]'>实际结算</dt>
-          <dd className='mt-0.5 truncate font-medium tabular-nums'>
-            {settledCost}
-          </dd>
-        </div>
-      </dl>
+          <dl
+            className='bg-muted/35 mt-2 grid min-w-0 grid-cols-3 gap-2 rounded-md px-2.5 py-1.5 text-xs'
+            data-slot='model-detection-history-metrics'
+          >
+            <div className='col-span-3 text-muted-foreground text-[10px]'>
+              本轮合计
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-[10px]'>成功</dt>
+              <dd className='mt-0.5 font-medium tabular-nums'>
+                {run.progress.successful}
+              </dd>
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-[10px]'>异常</dt>
+              <dd className='mt-0.5 font-medium tabular-nums'>
+                {run.progress.errors}
+              </dd>
+            </div>
+            <div className='min-w-0'>
+              <dt className='text-muted-foreground text-[10px]'>实际结算</dt>
+              <dd className='mt-0.5 truncate font-medium tabular-nums'>
+                {settledCost}
+              </dd>
+            </div>
+          </dl>
 
-      <div className='text-muted-foreground mt-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] tabular-nums'>
-        <span>更新 {formatTimestampToDate(latestTimestamp)}</span>
-        <span aria-hidden='true'>·</span>
-        <span>HTTP {run.progress.http_attempts}</span>
-        {run.progress.retries > 0 && (
-          <>
+          <div className='text-muted-foreground mt-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] tabular-nums'>
+            <span>更新 {formatTimestampToDate(latestTimestamp)}</span>
             <span aria-hidden='true'>·</span>
-            <span>重试 {run.progress.retries}</span>
-          </>
-        )}
-        {unresolvedCount > 0 && (
-          <>
-            <span aria-hidden='true'>·</span>
-            <span>待核实 {unresolvedCount}</span>
-          </>
-        )}
-      </div>
+            <span>HTTP {run.progress.http_attempts}</span>
+            {run.progress.retries > 0 && (
+              <>
+                <span aria-hidden='true'>·</span>
+                <span>重试 {run.progress.retries}</span>
+              </>
+            )}
+            {unresolvedCount > 0 && (
+              <>
+                <span aria-hidden='true'>·</span>
+                <span>待核实 {unresolvedCount}</span>
+              </>
+            )}
+          </div>
+        </>
+      ) : null}
 
       {(run.error_code || safeError) && (
         <div
@@ -685,9 +693,11 @@ function RunItem(props: {
         <div className='mt-2 border-t pt-2'>{resultContent}</div>
       ) : null}
 
-      <div className='mt-2'>
-        <CostSummary cost={run.cost} />
-      </div>
+      {showRunAggregate ? (
+        <div className='mt-2'>
+          <CostSummary cost={run.cost} />
+        </div>
+      ) : null}
     </article>
   )
 }

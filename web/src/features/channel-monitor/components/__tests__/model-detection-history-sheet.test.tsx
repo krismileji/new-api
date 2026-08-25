@@ -430,6 +430,16 @@ describe('模型检测历史 Sheet', () => {
       '[data-slot="model-detection-history-results"]'
     )
     assert.ok(results)
+    const runItem = document.querySelector(
+      '[data-slot="model-detection-history-run"][data-run-id="run-results"]'
+    )
+    assert.ok(runItem)
+    assert.equal(
+      runItem.querySelector('[data-slot="model-detection-history-metrics"]'),
+      null
+    )
+    assert.equal(runItem.querySelector('details[aria-label="检测成本"]'), null)
+    assert.doesNotMatch(runItem.textContent ?? '', /本轮合计/)
     const triggers = [
       ...results.querySelectorAll<HTMLButtonElement>(
         '[data-slot="tabs-trigger"]'
