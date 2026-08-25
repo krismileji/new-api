@@ -124,6 +124,15 @@ function resultVariant(result: ChannelStatusProbeResult) {
   return 'outline' as const
 }
 
+function resultDotClass(result: ChannelStatusProbeResult) {
+  if (result === 'success') return 'bg-success'
+  if (result === 'upstream_failure') return 'bg-destructive'
+  if (result === 'rate_limited' || result === 'local_failure') {
+    return 'bg-warning'
+  }
+  return 'bg-muted-foreground/60'
+}
+
 function formatMetric(value: number | null, unit: 'ms' | 'tps') {
   if (value == null) return '-'
   if (unit === 'tps') return value.toFixed(value >= 100 ? 0 : 1)
@@ -135,70 +144,92 @@ function ChannelStatusProbeExecutionRow(props: {
 }) {
   const execution = props.execution
   return (
-    <article className='border-b px-4 py-4 last:border-b-0'>
-      <div className='flex min-w-0 items-start justify-between gap-3'>
+    <article
+      className='group border-b px-3 py-2.5 last:border-b-0 sm:px-4'
+      data-slot='status-probe-history-row'
+    >
+      <div className='grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(240px,0.72fr)] sm:items-center sm:gap-4'>
         <div className='min-w-0'>
-          <div className='truncate font-medium' title={execution.model_name}>
-            {execution.model_name}
+          <div className='flex min-w-0 items-center gap-2'>
+            <span
+              aria-hidden='true'
+              className={`size-1.5 shrink-0 rounded-full ${resultDotClass(execution.result)}`}
+            />
+            <div
+              className='min-w-0 truncate text-sm font-medium'
+              title={execution.model_name}
+            >
+              {execution.model_name}
+            </div>
+            <Badge
+              className='shrink-0 px-1.5 py-0 text-[11px] leading-5'
+              variant={resultVariant(execution.result)}
+            >
+              {RESULT_LABEL[execution.result]}
+            </Badge>
           </div>
-          <div className='text-muted-foreground mt-0.5 text-xs tabular-nums'>
-            {formatTimestampToDate(execution.finished_at)} ·{' '}
-            {execution.trigger === 'manual' ? '手动触发' : '周期触发'}
+          <div className='text-muted-foreground mt-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[11px] tabular-nums'>
+            <span>{formatTimestampToDate(execution.finished_at)}</span>
+            <span aria-hidden='true'>·</span>
+            <span>{execution.trigger === 'manual' ? '手动' : '周期'}</span>
+            <span aria-hidden='true'>·</span>
+            <span className='min-w-0 truncate'>
+              端点 {execution.endpoint || '-'}
+            </span>
+            <span aria-hidden='true'>·</span>
+            <span>{execution.stream ? '流式' : '非流式'}</span>
           </div>
         </div>
-        <Badge variant={resultVariant(execution.result)}>
-          {RESULT_LABEL[execution.result]}
-        </Badge>
+
+        <dl
+          className='bg-muted/35 grid grid-cols-3 gap-2 rounded-md px-2.5 py-1.5'
+          data-slot='status-probe-history-metrics'
+        >
+          <div className='min-w-0'>
+            <dt className='text-muted-foreground text-[10px]'>首字</dt>
+            <dd className='mt-0.5 truncate font-mono text-xs font-medium tabular-nums'>
+              {formatMetric(execution.first_token_ms, 'ms')}
+            </dd>
+          </div>
+          <div className='min-w-0'>
+            <dt className='text-muted-foreground text-[10px]'>TPS</dt>
+            <dd className='mt-0.5 truncate font-mono text-xs font-medium tabular-nums'>
+              {formatMetric(execution.tps, 'tps')}
+            </dd>
+          </div>
+          <div className='min-w-0'>
+            <dt className='text-muted-foreground text-[10px]'>总响应</dt>
+            <dd className='mt-0.5 truncate font-mono text-xs font-medium tabular-nums'>
+              {formatMetric(execution.response_time_ms, 'ms')}
+            </dd>
+          </div>
+        </dl>
       </div>
 
-      <dl className='mt-3 grid grid-cols-3 gap-3'>
-        <div>
-          <dt className='text-muted-foreground text-xs'>首字</dt>
-          <dd className='mt-0.5 font-mono font-medium tabular-nums'>
-            {formatMetric(execution.first_token_ms, 'ms')}
-          </dd>
-        </div>
-        <div>
-          <dt className='text-muted-foreground text-xs'>TPS</dt>
-          <dd className='mt-0.5 font-mono font-medium tabular-nums'>
-            {formatMetric(execution.tps, 'tps')}
-          </dd>
-        </div>
-        <div>
-          <dt className='text-muted-foreground text-xs'>总响应</dt>
-          <dd className='mt-0.5 font-mono font-medium tabular-nums'>
-            {formatMetric(execution.response_time_ms, 'ms')}
-          </dd>
-        </div>
-      </dl>
-
-      <div className='text-muted-foreground mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs'>
-        <span>端点 {execution.endpoint || '-'}</span>
-        <span>{execution.stream ? '流式' : '非流式'}</span>
+      <div className='text-muted-foreground mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]'>
         {execution.usage_available ? (
-          <span>
-            Token 输入 {execution.input_tokens} / 输出 {execution.output_tokens}{' '}
-            / 总计 {execution.total_tokens}
+          <span className='tabular-nums'>
+            Token {execution.input_tokens} 入 / {execution.output_tokens} 出 /{' '}
+            {execution.total_tokens} 总
           </span>
         ) : (
           <span>Usage 不可用</span>
         )}
-      </div>
-      {execution.usage_available &&
-        (execution.cached_tokens > 0 ||
-          execution.cache_write_tokens > 0 ||
-          execution.reasoning_tokens > 0) && (
-          <div className='text-muted-foreground mt-1 flex flex-wrap gap-x-3 text-xs'>
-            <span>缓存读取 {execution.cached_tokens}</span>
-            <span>缓存写入 {execution.cache_write_tokens}</span>
-            <span>推理 {execution.reasoning_tokens}</span>
-          </div>
-        )}
-      <div className='text-muted-foreground mt-2 text-xs'>
-        样本：{execution.sample_message || execution.sample_status}
+        {execution.usage_available &&
+          (execution.cached_tokens > 0 ||
+            execution.cache_write_tokens > 0 ||
+            execution.reasoning_tokens > 0) && (
+            <span className='tabular-nums'>
+              缓存 {execution.cached_tokens} 读 / {execution.cache_write_tokens}{' '}
+              写 · 推理 {execution.reasoning_tokens}
+            </span>
+          )}
+        <span className='min-w-0 truncate'>
+          样本：{execution.sample_message || execution.sample_status}
+        </span>
       </div>
       {execution.error_message && (
-        <details className='mt-2 text-xs'>
+        <details className='mt-1.5 text-[11px]'>
           <summary className='text-destructive cursor-pointer font-medium'>
             查看错误摘要
             {execution.error_code ? ` · ${execution.error_code}` : ''}
@@ -265,9 +296,9 @@ export function ChannelStatusProbeHistorySheet(
   let executionContent: ReactNode
   if (query.isLoading) {
     executionContent = (
-      <div className='flex flex-col gap-4 p-4'>
+      <div className='flex flex-col gap-2 p-3 sm:p-4'>
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className='h-32 w-full' />
+          <Skeleton key={index} className='h-24 w-full' />
         ))}
       </div>
     )
@@ -486,7 +517,7 @@ export function ChannelStatusProbeHistorySheet(
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent className='w-full sm:max-w-2xl'>
+      <SheetContent className='w-full max-w-full overflow-x-hidden sm:max-w-3xl'>
         <SheetHeader>
           <SheetTitle>状态探测记录</SheetTitle>
           <SheetDescription>

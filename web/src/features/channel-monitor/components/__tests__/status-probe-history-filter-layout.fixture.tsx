@@ -20,7 +20,10 @@ import assert from 'node:assert/strict'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import type { ChannelStatusProbeChannel } from '../../types'
+import type {
+  ChannelStatusProbeChannel,
+  ChannelStatusProbeExecution,
+} from '../../types'
 import './test-dom'
 
 const { act } = await import('react')
@@ -71,6 +74,38 @@ const queryClient = new QueryClient({
     queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
   },
 })
+
+const execution: ChannelStatusProbeExecution = {
+  id: 1,
+  run_id: 'probe-run-1',
+  channel_id: channel.id,
+  model_name: 'gpt-4.1-mini',
+  config_revision: 1,
+  trigger: 'scheduled',
+  result: 'success',
+  started_at: 1_700_000_000,
+  finished_at: 1_700_000_002,
+  response_time_ms: 2_000,
+  first_token_ms: 320,
+  tps: 42,
+  endpoint: '/v1/chat/completions',
+  stream: true,
+  request_id: 'request-1',
+  request_dispatched: true,
+  usage_available: true,
+  input_tokens: 100,
+  output_tokens: 20,
+  total_tokens: 120,
+  cached_tokens: 0,
+  cache_write_tokens: 0,
+  reasoning_tokens: 0,
+  error_code: '',
+  error_message: '',
+  sample_requested: false,
+  sample_status: 'skipped',
+  sample_message: '',
+  created_at: 1_700_000_002,
+}
 queryClient.setQueryData(
   [
     'channel-monitor',
@@ -89,7 +124,7 @@ queryClient.setQueryData(
   {
     success: true,
     message: '',
-    data: { page: 1, page_size: 20, total: 0, items: [] },
+    data: { page: 1, page_size: 20, total: 1, items: [execution] },
   }
 )
 
@@ -123,6 +158,17 @@ assert.equal(
   [...filters.classList].some((className) => className.includes('grid')),
   false
 )
+
+const historyRow = document.querySelector<HTMLElement>(
+  '[data-slot="status-probe-history-row"]'
+)
+assert.ok(historyRow)
+assert.ok(historyRow.classList.contains('py-2.5'))
+const metrics = historyRow.querySelector<HTMLElement>(
+  '[data-slot="status-probe-history-metrics"]'
+)
+assert.ok(metrics)
+assert.ok(metrics.classList.contains('grid-cols-3'))
 
 const triggerWidths = [
   ['按模型筛选执行记录', 'sm:w-48'],
