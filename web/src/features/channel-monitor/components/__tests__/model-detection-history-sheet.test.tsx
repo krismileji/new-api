@@ -289,7 +289,7 @@ afterEach(async () => {
 })
 
 describe('模型检测历史 Sheet', () => {
-  test('展示触发方式、实际档位、状态、进度、时间和创建管理员', async () => {
+  test('展示触发方式、实际档位、状态、进度和关键摘要', async () => {
     const run = createRun()
     await renderHistory({
       channel: createChannel(),
@@ -302,10 +302,16 @@ describe('模型检测历史 Sheet', () => {
     assert.match(text, /部分完成/)
     assert.match(text, /逻辑完成 138 \/ 202/)
     assert.match(text, /目标 2 \/ 3/)
-    assert.match(text, new RegExp(formatTimestampToDate(run.queued_at)))
-    assert.match(text, new RegExp(formatTimestampToDate(run.started_at)))
     assert.match(text, new RegExp(formatTimestampToDate(run.finished_at)))
-    assert.match(text, /root-admin/)
+    assert.match(text, /成功\s*136/)
+    assert.match(text, /异常\s*2/)
+    assert.match(text, /实际结算¥0\.025680000/)
+    const metrics = document.querySelector<HTMLElement>(
+      '[data-slot="model-detection-history-metrics"]'
+    )
+    assert.ok(metrics)
+    assert.match(metrics.className, /grid-cols-3/)
+    assert.ok(document.querySelector('details[aria-label="检测成本"]'))
     assert.equal(
       document.querySelector('[data-slot="sheet-title"]')?.textContent,
       '模型检测历史'

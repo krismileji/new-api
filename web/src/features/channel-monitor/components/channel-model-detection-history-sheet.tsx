@@ -183,12 +183,6 @@ function triggerLabel(trigger: ChannelModelDetectionTrigger) {
   return trigger === 'manual' ? '手动' : '定时'
 }
 
-function createdByLabel(run: ChannelModelDetectionRunSummary) {
-  if (run.created_by_username) return run.created_by_username
-  if (run.created_by_user_id > 0) return `管理员 #${run.created_by_user_id}`
-  return run.trigger === 'scheduled' ? '系统调度' : '未知管理员'
-}
-
 function errorSummary(message: string) {
   return message
     .replaceAll(/Bearer\s+\S+/gi, 'Bearer ***')
@@ -197,6 +191,14 @@ function errorSummary(message: string) {
       '$1=***'
     )
     .slice(0, 240)
+}
+
+function statusDotClass(status: ChannelModelDetectionRunStatus) {
+  if (status === 'completed') return 'bg-success'
+  if (status === 'failed') return 'bg-destructive'
+  if (status === 'partial' || status === 'canceling') return 'bg-warning'
+  if (status === 'canceled') return 'bg-muted-foreground/60'
+  return 'bg-primary'
 }
 
 function CostSummary(props: { cost: ChannelModelDetectionCost }) {
@@ -209,25 +211,18 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
         : `已结算渠道成本 ¥${cost.settled_cost_cny}`
   }
 
-  let unresolvedCost = '无待核实请求'
-  if (
-    cost.unresolved_request_count > 0 ||
-    cost.unresolved_cost_unknown_count > 0
-  ) {
-    unresolvedCost = '等待可核验 Usage，不计入已结算成本'
-  }
+  const unresolvedCost =
+    cost.unresolved_request_count > 0 || cost.unresolved_cost_unknown_count > 0
+      ? '等待可核验 Usage，不计入已结算成本'
+      : '无待核实请求'
 
   return (
-    <section className='border-t pt-3' aria-label='检测成本'>
-      {cost.status === 'not_started' && (
-        <div className='text-muted-foreground mb-2 text-xs'>
-          尚未发出上游请求
-        </div>
-      )}
-      {cost.status === 'pending' && (
-        <div className='text-muted-foreground mb-2 text-xs'>成本结算中</div>
-      )}
-      <dl className='grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 text-xs sm:grid-cols-2'>
+    <details className='border-t pt-1.5 text-[11px]' aria-label='检测成本'>
+      <summary className='text-muted-foreground cursor-pointer select-none'>
+        成本明细 · 等价已结算额度 {formatQuota(cost.settled_quota)} ·{' '}
+        {settledCost}
+      </summary>
+      <dl className='mt-2 grid min-w-0 grid-cols-1 gap-2 text-xs sm:grid-cols-3'>
         <div className='min-w-0'>
           <dt className='text-muted-foreground'>等价计费额度</dt>
           <dd className='mt-0.5 font-medium tabular-nums'>
@@ -252,7 +247,7 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
           </dd>
         </div>
       </dl>
-    </section>
+    </details>
   )
 }
 
@@ -269,16 +264,37 @@ function RunItem(props: {
       )
     : 0
   const safeError = errorSummary(run.error_message)
+  let settledCost = '暂未结算'
+  if (run.cost.status === 'not_started') {
+    settledCost = '尚未请求'
+  } else if (run.cost.status === 'pending') {
+    settledCost = '结算中'
+  } else if (run.cost.settled_request_count > 0) {
+    settledCost =
+      run.cost.settled_cost_cny == null
+        ? '金额待确认'
+        : `¥${run.cost.settled_cost_cny}`
+  }
+  const unresolvedCount = Math.max(
+    run.cost.unresolved_request_count,
+    run.cost.unresolved_cost_unknown_count
+  )
+  const latestTimestamp =
+    run.finished_at || run.updated_at || run.started_at || run.queued_at
 
   return (
     <article
-      className='min-w-0 rounded-lg border p-3 sm:p-4'
+      className='min-w-0 rounded-lg border px-3 py-2.5 sm:p-3'
       data-slot='model-detection-history-run'
       data-run-id={run.run_id}
     >
       <div className='flex min-w-0 items-start justify-between gap-3'>
         <div className='min-w-0'>
           <div className='flex min-w-0 flex-wrap items-center gap-2'>
+            <span
+              aria-hidden='true'
+              className={`size-1.5 shrink-0 rounded-full ${statusDotClass(run.status)}`}
+            />
             <span className='font-medium'>
               {triggerLabel(run.trigger)} ·{' '}
               {channelModelDetectionPresetLabel(run.preset)}
@@ -305,8 +321,8 @@ function RunItem(props: {
         )}
       </div>
 
-      <div className='mt-3 min-w-0'>
-        <div className='text-muted-foreground mb-1 flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-xs tabular-nums'>
+      <div className='mt-2 min-w-0'>
+        <div className='text-muted-foreground mb-1 flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-[11px] tabular-nums'>
           <span>
             逻辑完成 {run.progress.logical_completed} / {run.progress.planned}
           </span>
@@ -320,42 +336,60 @@ function RunItem(props: {
         />
       </div>
 
-      <dl className='mt-3 grid min-w-0 grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4'>
+      <dl
+        className='bg-muted/35 mt-2 grid min-w-0 grid-cols-3 gap-2 rounded-md px-2.5 py-1.5 text-xs'
+        data-slot='model-detection-history-metrics'
+      >
         <div className='min-w-0'>
-          <dt className='text-muted-foreground'>排队时间</dt>
-          <dd className='mt-0.5 tabular-nums'>
-            {formatTimestampToDate(run.queued_at)}
+          <dt className='text-muted-foreground text-[10px]'>成功</dt>
+          <dd className='mt-0.5 font-medium tabular-nums'>
+            {run.progress.successful}
           </dd>
         </div>
         <div className='min-w-0'>
-          <dt className='text-muted-foreground'>开始时间</dt>
-          <dd className='mt-0.5 tabular-nums'>
-            {formatTimestampToDate(run.started_at)}
+          <dt className='text-muted-foreground text-[10px]'>异常</dt>
+          <dd className='mt-0.5 font-medium tabular-nums'>
+            {run.progress.errors}
           </dd>
         </div>
         <div className='min-w-0'>
-          <dt className='text-muted-foreground'>完成时间</dt>
-          <dd className='mt-0.5 tabular-nums'>
-            {formatTimestampToDate(run.finished_at)}
-          </dd>
-        </div>
-        <div className='min-w-0'>
-          <dt className='text-muted-foreground'>创建管理员</dt>
-          <dd className='mt-0.5 truncate' title={createdByLabel(run)}>
-            {createdByLabel(run)}
+          <dt className='text-muted-foreground text-[10px]'>实际结算</dt>
+          <dd className='mt-0.5 truncate font-medium tabular-nums'>
+            {settledCost}
           </dd>
         </div>
       </dl>
 
+      <div className='text-muted-foreground mt-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] tabular-nums'>
+        <span>更新 {formatTimestampToDate(latestTimestamp)}</span>
+        <span aria-hidden='true'>·</span>
+        <span>HTTP {run.progress.http_attempts}</span>
+        {run.progress.retries > 0 && (
+          <>
+            <span aria-hidden='true'>·</span>
+            <span>重试 {run.progress.retries}</span>
+          </>
+        )}
+        {unresolvedCount > 0 && (
+          <>
+            <span aria-hidden='true'>·</span>
+            <span>待核实 {unresolvedCount}</span>
+          </>
+        )}
+      </div>
+
       {(run.error_code || safeError) && (
-        <div className='text-destructive mt-3 min-w-0 text-xs break-words'>
+        <div
+          className='text-destructive mt-1.5 min-w-0 truncate text-[11px]'
+          title={safeError}
+        >
           {run.error_code && <span>错误代码 {run.error_code}</span>}
           {run.error_code && safeError && <span> · </span>}
           {safeError && <span>{safeError}</span>}
         </div>
       )}
 
-      <div className='mt-3'>
+      <div className='mt-2'>
         <CostSummary cost={run.cost} />
       </div>
     </article>
@@ -459,11 +493,11 @@ function HistoryFilters(props: {
 function HistoryLoading() {
   return (
     <div
-      className='flex min-w-0 flex-col gap-3 p-4'
+      className='flex min-w-0 flex-col gap-2 p-3 sm:p-4'
       aria-label='正在加载检测历史'
     >
       {[0, 1, 2].map((index) => (
-        <div key={index} className='rounded-lg border p-4'>
+        <div key={index} className='rounded-lg border p-3'>
           <Skeleton className='h-5 w-40 max-w-full' />
           <Skeleton className='mt-3 h-1 w-full' />
           <Skeleton className='mt-4 h-20 w-full' />
