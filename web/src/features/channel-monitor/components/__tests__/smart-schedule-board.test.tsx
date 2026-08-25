@@ -483,6 +483,7 @@ function renderBoard(
         isError={options.isError ?? false}
         onOpenHistory={noop}
         onOpenSettings={noop}
+        onActionComplete={async () => {}}
         selection={options.selection}
       />
     </QueryClientProvider>

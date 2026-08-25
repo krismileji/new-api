@@ -108,6 +108,7 @@ type BatchTestChannel = Pick<Channel, 'id' | 'name' | 'status'> &
 type ChannelBatchTestDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onTestComplete?: () => void
   channels?: ReadonlyArray<BatchTestChannel>
   modelSelectionMode?: 'multiple' | 'single'
   selectAllMode?: 'all' | 'enabled'
@@ -797,6 +798,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
       void queryClient.invalidateQueries({
         queryKey: channelsQueryKeys.lists(),
       })
+      props.onTestComplete?.()
 
       if (stopped) {
         toast.warning(

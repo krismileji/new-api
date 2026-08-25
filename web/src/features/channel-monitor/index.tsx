@@ -565,6 +565,23 @@ export function ChannelMonitor() {
     manualRefreshPromiseRef.current = refreshPromise
     return refreshPromise
   }
+  const refreshChannelMonitorAfterAction = () => {
+    const refreshScope = {
+      view,
+      taskHistoryOpen,
+      smartScheduleHistoryOpen,
+    }
+    const pendingRefresh = manualRefreshPromiseRef.current
+    if (pendingRefresh) {
+      return pendingRefresh
+        .catch(() => undefined)
+        .then(() => refetchChannelMonitorQueries(queryClient, refreshScope))
+        .catch(() => undefined)
+    }
+    return refetchChannelMonitorQueries(queryClient, refreshScope).catch(
+      () => undefined
+    )
+  }
   const ratioFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamRatio,
     onError: handleChannelMonitorMutationError,
@@ -1483,6 +1500,7 @@ export function ChannelMonitor() {
               onOpenHistory={() => {
                 setSmartScheduleHistoryOpen(true)
               }}
+              onActionComplete={refreshChannelMonitorAfterAction}
               onOpenSettings={openSmartScheduleSettings}
             />
           </TabsContent>
@@ -1687,6 +1705,7 @@ export function ChannelMonitor() {
           onOpenChange={(open) => {
             if (!open) setChannelDialog(null)
           }}
+          onTestComplete={refreshChannelMonitorAfterAction}
         />
       )}
       {editingGroup && (
@@ -1796,6 +1815,7 @@ export function ChannelMonitor() {
             selectAllMode='all'
             enableRepeatMode
             onOpenChange={setBatchTestOpen}
+            onTestComplete={refreshChannelMonitorAfterAction}
           />
         </Suspense>
       )}

@@ -41,6 +41,7 @@ import type { ChannelMonitorSmartScheduleRoute } from '../types'
 type ChannelMonitorSmartScheduleClearDialogProps = {
   route: ChannelMonitorSmartScheduleRoute | null
   onOpenChange: (open: boolean) => void
+  onActionComplete?: () => Promise<void>
 }
 
 type ChannelMonitorSmartScheduleClearRequest = {
@@ -69,7 +70,7 @@ export function ChannelMonitorSmartScheduleClearDialog(
       return await clearChannelMonitorSmartScheduleRouteStability(routeRequest)
     },
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response, request) => {
+    onSuccess: async (response, request) => {
       props.onOpenChange(false)
       let message = '当前路由没有需要解除的保护'
       if (request.kind === 'exploration') {
@@ -80,8 +81,10 @@ export function ChannelMonitorSmartScheduleClearDialog(
         message = `已解除保护，恢复 P${response.data.priority} / W${response.data.weight}`
       }
       toast.success(message)
+      await props.onActionComplete?.()
     },
     onSettled: () => {
+      if (props.onActionComplete) return
       queryClient.invalidateQueries({
         queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
       })

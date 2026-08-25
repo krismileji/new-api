@@ -26,7 +26,7 @@ import {
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -65,11 +65,6 @@ import {
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
-import {
-  CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
-  CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-  CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
-} from '../lib/query-options'
 import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-model-order'
 import {
   channelMonitorSmartSchedulePrimaryRequiresConfirmation,
@@ -112,6 +107,7 @@ type ChannelMonitorSmartScheduleBoardProps = {
   isError: boolean
   onOpenSettings: () => void
   onOpenHistory: () => void
+  onActionComplete: () => Promise<void>
   selection?: {
     group: string
     model: string
@@ -136,7 +132,6 @@ function channelMonitorSmartScheduleSampleKey(
 export function ChannelMonitorSmartScheduleBoard(
   props: ChannelMonitorSmartScheduleBoardProps
 ) {
-  const queryClient = useQueryClient()
   const [selectedGroup, setSelectedGroup] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [clearTarget, setClearTarget] =
@@ -343,17 +338,13 @@ export function ChannelMonitorSmartScheduleBoard(
     setPrimaryTarget(null)
   }
 
-  const invalidateSchedule = () => {
-    queryClient.invalidateQueries({
-      queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-    })
-    queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
-  }
   const updateMutation = useMutation({
     mutationFn: updateChannelMonitorSmartScheduleRouteConfig,
     onError: handleChannelMonitorMutationError,
-    onSuccess: () => toast.success('路由调度设置已保存'),
-    onSettled: invalidateSchedule,
+    onSuccess: async () => {
+      toast.success('路由调度设置已保存')
+      await props.onActionComplete()
+    },
   })
   const primaryMutation = useMutation({
     mutationFn: ({ request }: PrimaryMutationVariables) =>
@@ -369,7 +360,7 @@ export function ChannelMonitorSmartScheduleBoard(
       }
       handleChannelMonitorMutationError(error)
     },
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       let successMessage = '已解除主渠道固定'
       if (response.data.duration_minutes > 0) {
         successMessage = `主渠道已固定 ${response.data.duration_minutes} 分钟`
@@ -379,55 +370,31 @@ export function ChannelMonitorSmartScheduleBoard(
       }
       toast.success(successMessage)
       closePrimaryDialog()
-    },
-    onSettled: () => {
-      invalidateSchedule()
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
-      })
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
-      })
+      await props.onActionComplete()
     },
   })
   const groupPauseMutation = useMutation({
     mutationFn: updateChannelMonitorSmartScheduleGroupPause,
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       toast.success(
         response.data.duration_minutes > 0
           ? `已暂停“${response.data.group} / ${response.data.model}”路由流量 ${response.data.duration_minutes} 分钟`
           : `已恢复“${response.data.group} / ${response.data.model}”路由流量`
       )
-    },
-    onSettled: () => {
-      invalidateSchedule()
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
-      })
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
-      })
+      await props.onActionComplete()
     },
   })
   const runMutation = useMutation({
     mutationFn: runChannelMonitorSmartSchedule,
     onError: handleChannelMonitorMutationError,
-    onSuccess: (response) => {
+    onSuccess: async (response) => {
       toast.success(
         response.data.created
           ? '智能调度任务已创建'
           : '已有智能调度任务正在运行'
       )
-    },
-    onSettled: () => {
-      invalidateSchedule()
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
-      })
-      queryClient.invalidateQueries({
-        queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
-      })
+      await props.onActionComplete()
     },
   })
   const submitPrimary = () => {
@@ -946,6 +913,7 @@ export function ChannelMonitorSmartScheduleBoard(
 
       <ChannelMonitorSmartScheduleClearDialog
         route={clearTarget}
+        onActionComplete={props.onActionComplete}
         onOpenChange={(open) => {
           if (!open) setClearTarget(null)
         }}

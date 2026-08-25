@@ -109,6 +109,7 @@ import { ChannelTestSampleToggle } from './channel-test-sample-toggle'
 type ChannelTestDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onTestComplete?: () => void
 }
 
 export type ChannelTestTarget = Pick<
@@ -317,6 +318,7 @@ function getTestTableColumnClass(columnId: string) {
 export function ChannelTestDialog({
   open,
   onOpenChange,
+  onTestComplete,
 }: ChannelTestDialogProps) {
   const { currentRow } = useChannels()
 
@@ -329,6 +331,7 @@ export function ChannelTestDialog({
       channel={currentRow}
       open={open}
       onOpenChange={onOpenChange}
+      onTestComplete={onTestComplete}
     />
   )
 }
@@ -341,6 +344,7 @@ export function ChannelTestDialogForChannel(
       key={props.channel.id}
       open={props.open}
       onOpenChange={props.onOpenChange}
+      onTestComplete={props.onTestComplete}
       currentRow={props.channel}
     />
   )
@@ -349,6 +353,7 @@ export function ChannelTestDialogForChannel(
 function ChannelTestDialogContent({
   open,
   onOpenChange,
+  onTestComplete,
   currentRow,
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
@@ -627,6 +632,7 @@ function ChannelTestDialogContent({
               finalResult?.completedAt
             )
           )
+          onTestComplete?.()
         }
       }
       return finalResult
@@ -636,6 +642,7 @@ function ChannelTestDialogContent({
       endpointType,
       effectiveStreamTest,
       markModelTesting,
+      onTestComplete,
       recordSample,
       refreshChannelLists,
       t,
@@ -779,10 +786,12 @@ function ChannelTestDialogContent({
         setBatchProgress(null)
         setRowSelection({})
         refreshChannelLists(resultPatch)
+        onTestComplete?.()
       }
     },
     [
       dismissBatchProgressToast,
+      onTestComplete,
       refreshChannelLists,
       t,
       testSingleModel,
