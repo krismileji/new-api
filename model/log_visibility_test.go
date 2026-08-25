@@ -246,6 +246,52 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	assert.Contains(t, adminContent, "manual channel test")
 }
 
+func TestUserVisibleLogsHydrateChannelNameAfterCacheMiss(t *testing.T) {
+	originalDB := DB
+	originalLogDB := LOG_DB
+	originalLogDatabaseType := common.LogDatabaseType()
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalChannels := channelsIDM
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+		common.SetLogDatabaseType(originalLogDatabaseType)
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		channelsIDM = originalChannels
+	})
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "logs-cache-miss.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Exec("CREATE TABLE channels (id INTEGER PRIMARY KEY, name TEXT NOT NULL)").Error)
+	const channelID = 987654321
+	require.NoError(t, db.Exec("INSERT INTO channels (id, name) VALUES (?, ?)", channelID, "cache-miss-channel").Error)
+	require.NoError(t, db.Create(&Log{
+		UserId:    1,
+		CreatedAt: 1,
+		Type:      LogTypeConsume,
+		ChannelId: channelID,
+		Content:   "visible request",
+	}).Error)
+
+	DB = db
+	LOG_DB = db
+	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+	common.MemoryCacheEnabled = true
+	channelsIDM = map[int]*Channel{}
+
+	logs, total, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "cache-miss-channel", logs[0].ChannelName)
+}
+
 func TestClickHouseRetryAttemptColumn(t *testing.T) {
 	assert.Contains(t, clickHouseLogCreateTableSQL(0), "is_retry_attempt UInt8 DEFAULT 0")
 	assert.Equal(t, "ALTER TABLE logs ADD COLUMN IF NOT EXISTS is_retry_attempt UInt8 DEFAULT 0", clickHouseLogRetryAttemptColumnSQL)

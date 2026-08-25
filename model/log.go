@@ -189,8 +189,9 @@ func hydrateLogChannelNames(logs []*Log) error {
 		Name string `gorm:"column:name"`
 	}
 	if common.MemoryCacheEnabled {
+		missingChannelIDs := make([]int, 0)
 		for _, channelId := range channelIds.Items() {
-			if cacheChannel, err := CacheGetChannel(channelId); err == nil {
+			if cacheChannel, err := CacheGetChannel(channelId); err == nil && cacheChannel != nil {
 				channels = append(channels, struct {
 					Id   int    `gorm:"column:id"`
 					Name string `gorm:"column:name"`
@@ -198,6 +199,16 @@ func hydrateLogChannelNames(logs []*Log) error {
 					Id:   channelId,
 					Name: cacheChannel.Name,
 				})
+			} else {
+				// Logs can outlive a cache refresh (or the channel itself). Fall
+				// back to the primary database so user-visible logs still expose
+				// the channel name whenever the row exists.
+				missingChannelIDs = append(missingChannelIDs, channelId)
+			}
+		}
+		if len(missingChannelIDs) > 0 {
+			if err := DB.Table("channels").Select("id, name").Where("id IN ?", missingChannelIDs).Find(&channels).Error; err != nil {
+				return err
 			}
 		}
 	} else if err := DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
