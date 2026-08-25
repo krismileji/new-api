@@ -2,8 +2,10 @@ package channelprobe
 
 import (
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +13,7 @@ import (
 
 const (
 	OptionKey                 = "ChannelMonitorProbeResponseEnabled"
+	AllowedIPsOptionKey       = "ChannelMonitorProbeResponseAllowedIPs"
 	MatchInputOptionKey       = "ChannelMonitorProbeResponseMatchInput"
 	ResponseTextOptionKey     = "ChannelMonitorProbeResponseText"
 	MinDelayMsOptionKey       = "ChannelMonitorProbeResponseMinDelayMilliseconds"
@@ -31,12 +34,15 @@ const (
 
 	MaxMatchInputLength   = 4_096
 	MaxResponseTextLength = 16_384
+	MaxAllowedIPsLength   = 4_096
+	MaxAllowedIPCount     = 64
 	MaxDelayMs            = 600_000
 	MaxTokenCount         = 1_000_000
 )
 
 type ResponseConfig struct {
 	Enabled          bool
+	AllowedIPs       string
 	MatchInput       string
 	ResponseText     string
 	MinDelayMs       int
@@ -64,6 +70,7 @@ func GetResponseConfig() ResponseConfig {
 	common.OptionMapRWMutex.RLock()
 	options := map[string]string{
 		OptionKey:                 common.OptionMap[OptionKey],
+		AllowedIPsOptionKey:       common.OptionMap[AllowedIPsOptionKey],
 		MatchInputOptionKey:       common.OptionMap[MatchInputOptionKey],
 		ResponseTextOptionKey:     common.OptionMap[ResponseTextOptionKey],
 		MinDelayMsOptionKey:       common.OptionMap[MinDelayMsOptionKey],
@@ -80,6 +87,13 @@ func GetResponseConfig() ResponseConfig {
 func ResponseConfigFromOptions(options map[string]string) ResponseConfig {
 	config := DefaultResponseConfig()
 	config.Enabled, _ = strconv.ParseBool(options[OptionKey])
+	config.AllowedIPs = strings.TrimSpace(options[AllowedIPsOptionKey])
+	normalizedAllowedIPs, err := normalizeResponseAllowedIPs(config.AllowedIPs)
+	if err != nil {
+		config.Enabled = false
+	} else {
+		config.AllowedIPs = normalizedAllowedIPs
+	}
 	config.MatchInput = parseResponseTextOption(options[MatchInputOptionKey], config.MatchInput, MaxMatchInputLength)
 	config.ResponseText = parseResponseTextOption(options[ResponseTextOptionKey], config.ResponseText, MaxResponseTextLength)
 	config.MinDelayMs = parseResponseIntOption(options[MinDelayMsOptionKey], config.MinDelayMs, 0, MaxDelayMs)
@@ -96,6 +110,12 @@ func ResponseConfigFromOptions(options map[string]string) ResponseConfig {
 }
 
 func NormalizeResponseConfig(config ResponseConfig) (ResponseConfig, error) {
+	normalizedAllowedIPs, err := normalizeResponseAllowedIPs(config.AllowedIPs)
+	if err != nil {
+		return ResponseConfig{}, err
+	}
+	config.AllowedIPs = normalizedAllowedIPs
+
 	config.MatchInput = strings.TrimSpace(config.MatchInput)
 	if config.MatchInput == "" {
 		return ResponseConfig{}, fmt.Errorf("探针匹配输入不能为空")
@@ -138,6 +158,27 @@ func NormalizeResponseConfig(config ResponseConfig) (ResponseConfig, error) {
 	return config, nil
 }
 
+func (config ResponseConfig) AllowsClientIP(rawClientIP string) bool {
+	if config.AllowedIPs == "" {
+		return true
+	}
+	clientIP, err := netip.ParseAddr(strings.TrimSpace(rawClientIP))
+	if err != nil || clientIP.Zone() != "" {
+		return false
+	}
+	clientIP = clientIP.Unmap()
+	for _, rawAllowedIP := range splitResponseAllowedIPs(config.AllowedIPs) {
+		allowedIP, err := netip.ParseAddr(rawAllowedIP)
+		if err != nil || allowedIP.Zone() != "" {
+			return false
+		}
+		if allowedIP.Unmap() == clientIP {
+			return true
+		}
+	}
+	return false
+}
+
 func (config ResponseConfig) TotalTokens() int {
 	return config.InputTokens + config.OutputTokens
 }
@@ -156,4 +197,40 @@ func parseResponseIntOption(raw string, fallback int, minimum int, maximum int) 
 		return fallback
 	}
 	return value
+}
+
+func normalizeResponseAllowedIPs(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if utf8.RuneCountInString(value) > MaxAllowedIPsLength {
+		return "", fmt.Errorf("探针生效 IP 配置不能超过 %d 个字符", MaxAllowedIPsLength)
+	}
+	parts := splitResponseAllowedIPs(value)
+	if len(parts) > MaxAllowedIPCount {
+		return "", fmt.Errorf("探针生效 IP 不能超过 %d 个", MaxAllowedIPCount)
+	}
+
+	seen := make(map[netip.Addr]struct{}, len(parts))
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		address, err := netip.ParseAddr(part)
+		if err != nil || address.Zone() != "" {
+			return "", fmt.Errorf("探针生效 IP %q 无效", part)
+		}
+		address = address.Unmap()
+		if _, exists := seen[address]; exists {
+			continue
+		}
+		seen[address] = struct{}{}
+		normalized = append(normalized, address.String())
+	}
+	return strings.Join(normalized, "\n"), nil
+}
+
+func splitResponseAllowedIPs(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
 }

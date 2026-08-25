@@ -391,6 +391,7 @@ describe('channel monitor settings schema', () => {
       errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
       errorMessageKeywords: '',
       probeResponseEnabled: true,
+      probeResponseAllowedIPs: ' 203.0.113.10,\n2001:db8::10 ',
       probeResponseMatchInput: ' health check ',
       probeResponseText: ' healthy ',
       probeResponseMinDelayMs: 125,
@@ -429,6 +430,10 @@ describe('channel monitor settings schema', () => {
       '{"429":"请求过于频繁，请稍后再试"}'
     )
     assert.equal(settings.probeResponseEnabled, true)
+    assert.equal(
+      settings.probeResponseAllowedIPs,
+      '203.0.113.10,\n2001:db8::10'
+    )
     assert.equal(settings.probeResponseMatchInput, 'health check')
     assert.equal(settings.probeResponseText, 'healthy')
     assert.equal(settings.probeResponseMinDelayMs, 125)
@@ -509,6 +514,7 @@ describe('channel monitor settings schema', () => {
       errorMessageMapping: '',
       errorMessageKeywords: '',
       probeResponseEnabled: false,
+      probeResponseAllowedIPs: '',
       probeResponseMatchInput: 'hi',
       probeResponseText: 'Hi. What are you working on?',
       probeResponseMinDelayMs: 500,
@@ -529,6 +535,13 @@ describe('channel monitor settings schema', () => {
     const schema = createChannelMonitorSettingsSchema()
     for (const patch of [
       { probeResponseMatchInput: '' },
+      { probeResponseAllowedIPs: 'not-an-ip' },
+      {
+        probeResponseAllowedIPs: Array.from(
+          { length: 65 },
+          (_, index) => `192.0.2.${(index % 254) + 1}`
+        ).join('\n'),
+      },
       { probeResponseText: '' },
       { probeResponseMinDelayMs: -1 },
       { probeResponseMaxDelayMs: MAX_PROBE_RESPONSE_DELAY_MS + 1 },

@@ -453,6 +453,7 @@ func TestChannelMonitorProbeResponseSettingsUseDefaultsAndStoredValues(t *testin
 		settings := getChannelMonitorSettings()
 
 		assert.Equal(t, channelprobe.DefaultMatchInput, settings.ProbeResponseMatchInput)
+		assert.Empty(t, settings.ProbeResponseAllowedIPs)
 		assert.Equal(t, channelprobe.DefaultResponseText, settings.ProbeResponseText)
 		assert.Equal(t, channelprobe.DefaultMinDelayMs, settings.ProbeResponseMinDelayMs)
 		assert.Equal(t, channelprobe.DefaultMaxDelayMs, settings.ProbeResponseMaxDelayMs)
@@ -465,6 +466,7 @@ func TestChannelMonitorProbeResponseSettingsUseDefaultsAndStoredValues(t *testin
 	t.Run("stored options are returned", func(t *testing.T) {
 		useChannelMonitorOptionMap(t, map[string]string{
 			channelMonitorProbeResponseOption:                 "true",
+			channelMonitorProbeResponseAllowedIPsOption:       "203.0.113.10, 2001:db8::10",
 			channelMonitorProbeResponseMatchInputOption:       "health check",
 			channelMonitorProbeResponseTextOption:             "healthy",
 			channelMonitorProbeResponseMinDelayMsOption:       "125",
@@ -477,6 +479,7 @@ func TestChannelMonitorProbeResponseSettingsUseDefaultsAndStoredValues(t *testin
 		settings := getChannelMonitorSettings()
 
 		assert.True(t, settings.ProbeResponseEnabled)
+		assert.Equal(t, "203.0.113.10\n2001:db8::10", settings.ProbeResponseAllowedIPs)
 		assert.Equal(t, "health check", settings.ProbeResponseMatchInput)
 		assert.Equal(t, "healthy", settings.ProbeResponseText)
 		assert.Equal(t, 125, settings.ProbeResponseMinDelayMs)
@@ -494,6 +497,7 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 
 	invalidRequests := []map[string]any{
 		{"probe_response_match_input": " "},
+		{"probe_response_allowed_ips": "not-an-ip"},
 		{"probe_response_match_input": strings.Repeat("x", channelprobe.MaxMatchInputLength+1)},
 		{"probe_response_text": " "},
 		{"probe_response_text": strings.Repeat("x", channelprobe.MaxResponseTextLength+1)},
@@ -512,6 +516,7 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 		"probe_response_enabled":            true,
+		"probe_response_allowed_ips":        " 203.0.113.10, 2001:db8::10 ",
 		"probe_response_match_input":        " health check ",
 		"probe_response_text":               " healthy ",
 		"probe_response_min_delay_ms":       125,
@@ -528,6 +533,7 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
 	assert.True(t, response.Data.ProbeResponseEnabled)
+	assert.Equal(t, "203.0.113.10\n2001:db8::10", response.Data.ProbeResponseAllowedIPs)
 	assert.Equal(t, "health check", response.Data.ProbeResponseMatchInput)
 	assert.Equal(t, "healthy", response.Data.ProbeResponseText)
 	assert.Equal(t, 125, response.Data.ProbeResponseMinDelayMs)
@@ -539,6 +545,7 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 
 	wantOptions := map[string]string{
 		channelMonitorProbeResponseOption:                 "true",
+		channelMonitorProbeResponseAllowedIPsOption:       "203.0.113.10\n2001:db8::10",
 		channelMonitorProbeResponseMatchInputOption:       "health check",
 		channelMonitorProbeResponseTextOption:             "healthy",
 		channelMonitorProbeResponseMinDelayMsOption:       "125",

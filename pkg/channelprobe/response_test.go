@@ -261,6 +261,56 @@ func TestMiddlewareRoutesProbeRequestsBeforeDownstream(t *testing.T) {
 	})
 }
 
+func TestMiddlewareRestrictsProbeResponsesToAllowedClientIPs(t *testing.T) {
+	useProbeResponseOptionMap(t, map[string]string{
+		OptionKey:             "true",
+		AllowedIPsOptionKey:   "203.0.113.10\n2001:db8::10",
+		MatchInputOptionKey:   "health check",
+		ResponseTextOptionKey: "healthy",
+		MinDelayMsOptionKey:   "0",
+		MaxDelayMsOptionKey:   "0",
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.Use(Middleware())
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	tests := []struct {
+		name         string
+		remoteAddr   string
+		forwardedFor string
+		wantStatus   int
+	}{
+		{name: "allowed IPv4", remoteAddr: "203.0.113.10:12345", wantStatus: http.StatusOK},
+		{name: "allowed IPv6", remoteAddr: "[2001:db8::10]:12345", wantStatus: http.StatusOK},
+		{name: "other IP passes through", remoteAddr: "203.0.113.11:12345", wantStatus: http.StatusNoContent},
+		{name: "untrusted forwarded IP passes through", remoteAddr: "203.0.113.11:12345", forwardedFor: "203.0.113.10", wantStatus: http.StatusNoContent},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/responses",
+				strings.NewReader(`{"model":"gpt-5.6-sol","input":"health check"}`),
+			)
+			request.RemoteAddr = test.remoteAddr
+			request.Header.Set("Content-Type", "application/json")
+			if test.forwardedFor != "" {
+				request.Header.Set("X-Forwarded-For", test.forwardedFor)
+			}
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			assert.Equal(t, test.wantStatus, recorder.Code)
+		})
+	}
+}
+
 func TestServeChannelProbeResponsesJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

@@ -698,6 +698,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       errorMessageMapping: props.settings.error_message_mapping ?? '',
       errorMessageKeywords: props.settings.error_message_keywords ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
+      probeResponseAllowedIPs: props.settings.probe_response_allowed_ips ?? '',
       probeResponseMatchInput:
         props.settings.probe_response_match_input ??
         DEFAULT_PROBE_RESPONSE_MATCH_INPUT,

@@ -56,6 +56,7 @@ const (
 	channelMonitorErrorMessageMappingOption                    = service.ErrorMessageMappingOptionKey
 	channelMonitorErrorMessageKeywordsOption                   = service.ErrorMessageKeywordsOptionKey
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
+	channelMonitorProbeResponseAllowedIPsOption                = channelprobe.AllowedIPsOptionKey
 	channelMonitorProbeResponseMatchInputOption                = channelprobe.MatchInputOptionKey
 	channelMonitorProbeResponseTextOption                      = channelprobe.ResponseTextOptionKey
 	channelMonitorProbeResponseMinDelayMsOption                = channelprobe.MinDelayMsOptionKey
@@ -202,6 +203,7 @@ type channelMonitorSettings struct {
 	ErrorMessageMapping                   string                     `json:"error_message_mapping"`
 	ErrorMessageKeywords                  string                     `json:"error_message_keywords"`
 	ProbeResponseEnabled                  bool                       `json:"probe_response_enabled"`
+	ProbeResponseAllowedIPs               string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               string                     `json:"probe_response_match_input"`
 	ProbeResponseText                     string                     `json:"probe_response_text"`
 	ProbeResponseMinDelayMs               int                        `json:"probe_response_min_delay_ms"`
@@ -260,6 +262,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	ErrorMessageMapping                   *string                     `json:"error_message_mapping"`
 	ErrorMessageKeywords                  *string                     `json:"error_message_keywords"`
 	ProbeResponseEnabled                  *bool                       `json:"probe_response_enabled"`
+	ProbeResponseAllowedIPs               *string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               *string                     `json:"probe_response_match_input"`
 	ProbeResponseText                     *string                     `json:"probe_response_text"`
 	ProbeResponseMinDelayMs               *int                        `json:"probe_response_min_delay_ms"`
@@ -333,6 +336,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorErrorMessageMappingOption,
 		channelMonitorErrorMessageKeywordsOption,
 		channelMonitorProbeResponseOption,
+		channelMonitorProbeResponseAllowedIPsOption,
 		channelMonitorProbeResponseMatchInputOption,
 		channelMonitorProbeResponseTextOption,
 		channelMonitorProbeResponseMinDelayMsOption,
@@ -597,6 +601,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		ErrorMessageMapping:                   rawErrorMessageMapping,
 		ErrorMessageKeywords:                  rawErrorMessageKeywords,
 		ProbeResponseEnabled:                  probeResponseConfig.Enabled,
+		ProbeResponseAllowedIPs:               probeResponseConfig.AllowedIPs,
 		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
 		ProbeResponseText:                     probeResponseConfig.ResponseText,
 		ProbeResponseMinDelayMs:               probeResponseConfig.MinDelayMs,
@@ -913,6 +918,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ErrorMessageMapping == nil &&
 		request.ErrorMessageKeywords == nil &&
 		request.ProbeResponseEnabled == nil &&
+		request.ProbeResponseAllowedIPs == nil &&
 		request.ProbeResponseMatchInput == nil &&
 		request.ProbeResponseText == nil &&
 		request.ProbeResponseMinDelayMs == nil &&
@@ -1273,6 +1279,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		return
 	}
 	probeResponseSettingsChanged := request.ProbeResponseEnabled != nil ||
+		request.ProbeResponseAllowedIPs != nil ||
 		request.ProbeResponseMatchInput != nil ||
 		request.ProbeResponseText != nil ||
 		request.ProbeResponseMinDelayMs != nil ||
@@ -1284,6 +1291,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if probeResponseSettingsChanged {
 		probeResponseConfig := channelprobe.ResponseConfig{
 			Enabled:          settings.ProbeResponseEnabled,
+			AllowedIPs:       settings.ProbeResponseAllowedIPs,
 			MatchInput:       settings.ProbeResponseMatchInput,
 			ResponseText:     settings.ProbeResponseText,
 			MinDelayMs:       settings.ProbeResponseMinDelayMs,
@@ -1295,6 +1303,9 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		if request.ProbeResponseEnabled != nil {
 			probeResponseConfig.Enabled = *request.ProbeResponseEnabled
+		}
+		if request.ProbeResponseAllowedIPs != nil {
+			probeResponseConfig.AllowedIPs = *request.ProbeResponseAllowedIPs
 		}
 		if request.ProbeResponseMatchInput != nil {
 			probeResponseConfig.MatchInput = *request.ProbeResponseMatchInput
@@ -1326,6 +1337,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 			return
 		}
 		settings.ProbeResponseEnabled = normalizedProbeResponseConfig.Enabled
+		settings.ProbeResponseAllowedIPs = normalizedProbeResponseConfig.AllowedIPs
 		settings.ProbeResponseMatchInput = normalizedProbeResponseConfig.MatchInput
 		settings.ProbeResponseText = normalizedProbeResponseConfig.ResponseText
 		settings.ProbeResponseMinDelayMs = normalizedProbeResponseConfig.MinDelayMs
@@ -1336,6 +1348,9 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.ProbeResponseOutputTokens = normalizedProbeResponseConfig.OutputTokens
 		if request.ProbeResponseEnabled != nil {
 			values[channelMonitorProbeResponseOption] = strconv.FormatBool(settings.ProbeResponseEnabled)
+		}
+		if request.ProbeResponseAllowedIPs != nil {
+			values[channelMonitorProbeResponseAllowedIPsOption] = settings.ProbeResponseAllowedIPs
 		}
 		if request.ProbeResponseMatchInput != nil {
 			values[channelMonitorProbeResponseMatchInputOption] = settings.ProbeResponseMatchInput

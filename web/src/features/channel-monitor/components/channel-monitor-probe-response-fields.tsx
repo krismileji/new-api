@@ -36,6 +36,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
 import {
+  MAX_PROBE_RESPONSE_ALLOWED_IPS_LENGTH,
   MAX_PROBE_RESPONSE_DELAY_MS,
   MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
   MAX_PROBE_RESPONSE_TEXT_LENGTH,
@@ -142,6 +143,31 @@ export function ChannelMonitorProbeResponseFields(props: {
               </FormControl>
               <FormDescription>
                 去除首尾空白后进行不区分大小写的完整匹配
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={props.form.control}
+          name='probeResponseAllowedIPs'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>生效 IP（可选）</FormLabel>
+              <FormControl>
+                <Textarea
+                  className='min-h-20 resize-y font-mono'
+                  maxLength={MAX_PROBE_RESPONSE_ALLOWED_IPS_LENGTH}
+                  placeholder={'203.0.113.10\n2001:db8::10'}
+                  autoCapitalize='none'
+                  autoComplete='off'
+                  spellCheck={false}
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>
+                每行一个 IPv4 或 IPv6，也可用逗号分隔；留空时对所有来源生效
               </FormDescription>
               <FormMessage />
             </FormItem>

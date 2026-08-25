@@ -99,6 +99,7 @@ const formValues = {
   errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
   errorMessageKeywords: 'secret\nupstream',
   probeResponseEnabled: true,
+  probeResponseAllowedIPs: '203.0.113.10\n2001:db8::10',
   probeResponseMatchInput: 'health check',
   probeResponseText: 'healthy',
   probeResponseMinDelayMs: 125,
@@ -401,6 +402,7 @@ describe('channel monitor settings submit payload', () => {
       'model_detection_task_retention_days',
       'model_update_task_retention_days',
       'notification_email',
+      'probe_response_allowed_ips',
       'probe_response_cache_write_tokens',
       'probe_response_cached_tokens',
       'probe_response_enabled',
@@ -450,6 +452,10 @@ describe('channel monitor settings submit payload', () => {
       '{"429":"请求过于频繁，请稍后再试"}'
     )
     assert.equal(payload.error_message_keywords, 'secret\nupstream')
+    assert.equal(
+      payload.probe_response_allowed_ips,
+      '203.0.113.10\n2001:db8::10'
+    )
     assert.equal(payload.probe_response_match_input, 'health check')
     assert.equal(payload.probe_response_text, 'healthy')
     assert.equal(payload.probe_response_min_delay_ms, 125)

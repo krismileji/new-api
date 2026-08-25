@@ -101,6 +101,8 @@ export const DEFAULT_PROBE_RESPONSE_CACHED_TOKENS = 3_840
 export const DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS = 14
 export const MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH = 4_096
 export const MAX_PROBE_RESPONSE_TEXT_LENGTH = 16_384
+export const MAX_PROBE_RESPONSE_ALLOWED_IPS_LENGTH = 4_096
+export const MAX_PROBE_RESPONSE_ALLOWED_IP_COUNT = 64
 export const MAX_PROBE_RESPONSE_DELAY_MS = 600_000
 export const MAX_PROBE_RESPONSE_TOKEN_COUNT = 1_000_000
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
@@ -136,6 +138,36 @@ export const MAX_SMART_SCHEDULE_PRIMARY_SWITCH_THRESHOLD_PERCENT = 100
 export const MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS = 60
 export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT = 10
 export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS = 60_000
+
+const probeResponseIPAddressSchema = z.union([z.ipv4(), z.ipv6()])
+const probeResponseAllowedIPsSchema = z
+  .string()
+  .trim()
+  .max(
+    MAX_PROBE_RESPONSE_ALLOWED_IPS_LENGTH,
+    '探针生效 IP 配置不能超过 4096 个字符'
+  )
+  .superRefine((value, context) => {
+    const addresses = value.split(/[,\s]+/).filter(Boolean)
+    if (addresses.length > MAX_PROBE_RESPONSE_ALLOWED_IP_COUNT) {
+      context.addIssue({
+        code: 'custom',
+        message: '探针生效 IP 不能超过 64 个',
+      })
+      return
+    }
+    if (
+      addresses.some(
+        (address) => !probeResponseIPAddressSchema.safeParse(address).success
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: '请输入有效的 IPv4 或 IPv6 地址',
+      })
+    }
+  })
+  .default('')
 
 const channelMonitorSmartScheduleApplyModes = [
   'weight',
@@ -1125,6 +1157,7 @@ export function createChannelMonitorSettingsSchema() {
       errorMessageMapping: errorMessageMappingSchema,
       errorMessageKeywords: errorMessageKeywordsSchema,
       probeResponseEnabled: z.boolean(),
+      probeResponseAllowedIPs: probeResponseAllowedIPsSchema,
       probeResponseMatchInput: z
         .string()
         .trim()

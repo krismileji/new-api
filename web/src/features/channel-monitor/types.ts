@@ -690,6 +690,7 @@ export type ChannelMonitorSettings = {
   error_message_mapping: string
   error_message_keywords: string
   probe_response_enabled: boolean
+  probe_response_allowed_ips?: string
   probe_response_match_input?: string
   probe_response_text?: string
   probe_response_min_delay_ms?: number

@@ -225,7 +225,7 @@ func tryChannelProbeResponse(c *gin.Context) bool {
 		return false
 	}
 	config := GetResponseConfig()
-	if !config.Enabled {
+	if !config.Enabled || !config.AllowsClientIP(c.ClientIP()) {
 		return false
 	}
 

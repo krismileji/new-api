@@ -99,6 +99,7 @@ function ProbeResponseFieldsFixture() {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
       probeResponseEnabled: true,
+      probeResponseAllowedIPs: '203.0.113.10\n2001:db8::10',
       probeResponseMatchInput: 'hi',
       probeResponseText: 'Hi. What are you working on?',
       probeResponseMinDelayMs: 500,
@@ -358,6 +359,10 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('aria-label="启用本地探针响应"'))
     assert.ok(markup.includes('data-checked'))
     assert.ok(markup.includes('匹配输入'))
+    assert.ok(markup.includes('生效 IP（可选）'))
+    assert.ok(markup.includes('203.0.113.10'))
+    assert.ok(markup.includes('2001:db8::10'))
+    assert.ok(markup.includes('留空时对所有来源生效'))
     assert.ok(markup.includes('响应文本'))
     assert.ok(markup.includes('最小延迟'))
     assert.ok(markup.includes('最大延迟'))
