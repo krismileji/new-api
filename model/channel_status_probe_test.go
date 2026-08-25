@@ -359,6 +359,13 @@ func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *test
 	assert.EqualValues(t, 1, buckets[0].TPSSampleCount)
 	assert.InDelta(t, 2400, buckets[0].ResponseTimeTotalMs, 0.001)
 	assert.EqualValues(t, 2, buckets[0].ResponseTimeSampleCount)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, buckets[0].LatestResult)
+	assert.Equal(t, second.Id, buckets[0].LatestExecutionId)
+	assert.Equal(t, second.FinishedAt, buckets[0].LatestFinishedAt)
+	assert.Equal(t, "gpt-4.1", buckets[0].LatestModelName)
+	assert.Nil(t, buckets[0].LatestFirstTokenMs)
+	assert.Nil(t, buckets[0].LatestTPS)
+	assert.Equal(t, &response, buckets[0].LatestResponseTimeMs)
 
 	hourBuckets, err := state.Buckets(ChannelStatusProbeDisplayUnitHour)
 	require.NoError(t, err)

@@ -238,6 +238,35 @@ func TestMergeChannelStatusProbeRecentWindowReturnsConfiguredWindowAndWorstMinut
 	assert.EqualValues(t, 1, summary.FirstTokenSampleCount)
 }
 
+func TestMergeChannelStatusProbeExecutionRecentWindowUsesLatestExecution(t *testing.T) {
+	firstToken := 240.0
+	tps := 42.5
+	responseTime := 1_250.0
+	summary := mergeChannelStatusProbeExecutionRecentWindow([]model.ChannelStatusProbeExecution{
+		{
+			Id: 1, ChannelId: 1, ModelName: "model-a", Result: model.ChannelStatusProbeResultSuccess,
+			FinishedAt: 1_021, FirstTokenMs: &firstToken, TPS: &tps, ResponseTimeMs: &responseTime,
+		},
+		{
+			Id: 2, ChannelId: 1, ModelName: "model-a", Result: model.ChannelStatusProbeResultUpstreamFailure,
+			FinishedAt: 1_029,
+		},
+	}, 1_029, 1, model.ChannelStatusProbeDisplayUnitMinute)
+
+	require.Len(t, summary.Buckets, 1)
+	bucket := summary.Buckets[0]
+	assert.Equal(t, model.ChannelStatusProbeResultUpstreamFailure, bucket.LatestResult)
+	assert.EqualValues(t, 1, bucket.Success)
+	assert.EqualValues(t, 1, bucket.UpstreamFailure)
+	assert.EqualValues(t, 1, bucket.FirstTokenSampleCount)
+	assert.EqualValues(t, 1, bucket.TPSSampleCount)
+	assert.EqualValues(t, 1, bucket.ResponseTimeSampleCount)
+	assert.InDelta(t, responseTime, bucket.ResponseTimeTotalMs, 0.001)
+	assert.Nil(t, bucket.LatestFirstTokenMs)
+	assert.Nil(t, bucket.LatestTPS)
+	assert.Nil(t, bucket.LatestResponseTimeMs)
+}
+
 func TestMergeChannelStatusProbeRecentWindowUsesConfiguredHourAndDayBuckets(t *testing.T) {
 	now := int64(1_725_888_000)
 	tests := []struct {

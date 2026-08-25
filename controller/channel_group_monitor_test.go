@@ -198,6 +198,13 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	assert.EqualValues(t, 1, populatedBucket.TPSSampleCount)
 	assert.InDelta(t, firstToken, populatedBucket.FirstTokenTotalMs, 0.001)
 	assert.EqualValues(t, 1, populatedBucket.FirstTokenSampleCount)
+	// The window keeps aggregate counters for the summary, but hover details
+	// must identify the latest execution in the time cell.  The skipped probe
+	// finished after the successful and rate-limited probes above.
+	assert.Equal(t, model.ChannelGroupMonitorResultSkipped, populatedBucket.LatestResult)
+	assert.Nil(t, populatedBucket.LatestFirstTokenMs)
+	assert.Nil(t, populatedBucket.LatestTPS)
+	assert.Nil(t, populatedBucket.LatestResponseTimeMs)
 }
 
 func TestChannelGroupMonitorTimeoutUsesYellowHealthAndWindowResult(t *testing.T) {
@@ -214,6 +221,30 @@ func TestChannelGroupMonitorTimeoutUsesYellowHealthAndWindowResult(t *testing.T)
 	require.Len(t, buckets, 1)
 	assert.Equal(t, 1, buckets[0].Timeout)
 	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].Result)
+}
+
+func TestMergeChannelGroupMonitorRecentWindowUsesLatestExecutionForHoverMetrics(t *testing.T) {
+	firstToken := 1_040.0
+	tps := 10.0
+	responseTime := 31_040.0
+	window := mergeChannelGroupMonitorRecentWindow([]model.ChannelGroupMonitorExecution{
+		{
+			Id: 1, GroupName: "default", Result: model.ChannelGroupMonitorResultSuccess,
+			FinishedAt: 980, FirstTokenMs: &firstToken, TPS: &tps, ResponseTimeMs: &responseTime,
+		},
+		{
+			Id: 2, GroupName: "default", Result: model.ChannelGroupMonitorResultTimeout,
+			FinishedAt: 1_000,
+		},
+	}, 1_000, 1, model.ChannelStatusProbeDisplayUnitMinute)
+
+	buckets := window["default"]
+	require.Len(t, buckets, 1)
+	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].Result)
+	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].LatestResult)
+	assert.Nil(t, buckets[0].LatestFirstTokenMs)
+	assert.Nil(t, buckets[0].LatestTPS)
+	assert.Nil(t, buckets[0].LatestResponseTimeMs)
 }
 
 func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {

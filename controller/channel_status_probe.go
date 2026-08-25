@@ -64,6 +64,13 @@ type channelStatusProbeBucketResponse struct {
 	TPSSampleCount          int64    `json:"tps_sample_count,omitempty"`
 	ResponseTimeTotalMs     float64  `json:"response_time_total_ms,omitempty"`
 	ResponseTimeSampleCount int64    `json:"response_time_sample_count,omitempty"`
+	LatestExecutionId       int64    `json:"latest_execution_id,omitempty"`
+	LatestFinishedAt        int64    `json:"latest_finished_at,omitempty"`
+	LatestResult            string   `json:"latest_result,omitempty"`
+	LatestModelName         string   `json:"latest_model_name,omitempty"`
+	LatestFirstTokenMs      *float64 `json:"latest_first_token_ms,omitempty"`
+	LatestTPS               *float64 `json:"latest_tps,omitempty"`
+	LatestResponseTimeMs    *float64 `json:"latest_response_time_ms,omitempty"`
 }
 
 type channelStatusProbeModelResponse struct {
@@ -324,6 +331,24 @@ type channelStatusProbeWindowSummary struct {
 	ResponseTimeSampleCount int64
 }
 
+func channelStatusProbeBucketResponseFromModelBucket(
+	bucket model.ChannelStatusProbeBucket,
+) channelStatusProbeBucketResponse {
+	return channelStatusProbeBucketResponse{
+		StartedAt: bucket.StartedAt, Success: bucket.Success,
+		UpstreamFailure: bucket.UpstreamFailure, RateLimited: bucket.RateLimited,
+		LocalFailure: bucket.LocalFailure, Skipped: bucket.Skipped, Canceled: bucket.Canceled,
+		Models: bucket.Models, Result: channelStatusProbeBucketResult(bucket),
+		FirstTokenTotalMs: bucket.FirstTokenTotalMs, FirstTokenSampleCount: bucket.FirstTokenSampleCount,
+		TPSTotal: bucket.TPSTotal, TPSSampleCount: bucket.TPSSampleCount,
+		ResponseTimeTotalMs: bucket.ResponseTimeTotalMs, ResponseTimeSampleCount: bucket.ResponseTimeSampleCount,
+		LatestExecutionId: bucket.LatestExecutionId, LatestFinishedAt: bucket.LatestFinishedAt,
+		LatestResult: bucket.LatestResult, LatestModelName: bucket.LatestModelName,
+		LatestFirstTokenMs: bucket.LatestFirstTokenMs, LatestTPS: bucket.LatestTPS,
+		LatestResponseTimeMs: bucket.LatestResponseTimeMs,
+	}
+}
+
 func mergeChannelStatusProbeRecentWindow(
 	states []model.ChannelStatusProbeState,
 	now int64,
@@ -358,6 +383,17 @@ func mergeChannelStatusProbeRecentWindow(
 			current.TPSSampleCount += bucket.TPSSampleCount
 			current.ResponseTimeTotalMs += bucket.ResponseTimeTotalMs
 			current.ResponseTimeSampleCount += bucket.ResponseTimeSampleCount
+			if bucket.LatestResult != "" &&
+				(current.LatestResult == "" || bucket.LatestFinishedAt > current.LatestFinishedAt ||
+					(bucket.LatestFinishedAt == current.LatestFinishedAt && bucket.LatestExecutionId > current.LatestExecutionId)) {
+				current.LatestExecutionId = bucket.LatestExecutionId
+				current.LatestFinishedAt = bucket.LatestFinishedAt
+				current.LatestResult = bucket.LatestResult
+				current.LatestModelName = bucket.LatestModelName
+				current.LatestFirstTokenMs = bucket.LatestFirstTokenMs
+				current.LatestTPS = bucket.LatestTPS
+				current.LatestResponseTimeMs = bucket.LatestResponseTimeMs
+			}
 			for _, modelName := range bucket.Models {
 				current.Add("", modelName, nil, nil, nil)
 			}
@@ -378,6 +414,10 @@ func mergeChannelStatusProbeRecentWindow(
 			FirstTokenTotalMs: bucket.FirstTokenTotalMs, FirstTokenSampleCount: bucket.FirstTokenSampleCount,
 			TPSTotal: bucket.TPSTotal, TPSSampleCount: bucket.TPSSampleCount,
 			ResponseTimeTotalMs: bucket.ResponseTimeTotalMs, ResponseTimeSampleCount: bucket.ResponseTimeSampleCount,
+			LatestExecutionId: bucket.LatestExecutionId, LatestFinishedAt: bucket.LatestFinishedAt,
+			LatestResult: bucket.LatestResult, LatestModelName: bucket.LatestModelName,
+			LatestFirstTokenMs: bucket.LatestFirstTokenMs, LatestTPS: bucket.LatestTPS,
+			LatestResponseTimeMs: bucket.LatestResponseTimeMs,
 		})
 		summary.FirstTokenTotalMs += bucket.FirstTokenTotalMs
 		summary.FirstTokenSampleCount += bucket.FirstTokenSampleCount
@@ -387,6 +427,66 @@ func mergeChannelStatusProbeRecentWindow(
 		summary.ResponseTimeSampleCount += bucket.ResponseTimeSampleCount
 	}
 	return summary, nil
+}
+
+func mergeChannelStatusProbeExecutionRecentWindow(
+	executions []model.ChannelStatusProbeExecution,
+	now int64,
+	displayValue int,
+	displayUnit string,
+) channelStatusProbeWindowSummary {
+	displayValue, displayUnit = model.NormalizeChannelStatusProbeDisplay(displayValue, displayUnit)
+	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+	currentBucket := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit)
+	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
+	bucketsByStart := make(map[int64]model.ChannelStatusProbeBucket, displayValue)
+	latestTimestamps := make(map[int64]int64, displayValue)
+	for _, execution := range executions {
+		timestamp := execution.FinishedAt
+		if timestamp <= 0 {
+			timestamp = execution.StartedAt
+		}
+		if timestamp <= 0 {
+			timestamp = execution.CreatedAt
+		}
+		if timestamp < minimumBucket || timestamp > now {
+			continue
+		}
+		startedAt := model.ChannelStatusProbeDisplayBucketStart(timestamp, displayUnit)
+		if startedAt < minimumBucket || startedAt > currentBucket {
+			continue
+		}
+		bucket := bucketsByStart[startedAt]
+		bucket.StartedAt = startedAt
+		bucket.Add(execution.Result, execution.ModelName, execution.FirstTokenMs, execution.TPS, execution.ResponseTimeMs)
+		bucketsByStart[startedAt] = bucket
+		if previousTimestamp, exists := latestTimestamps[startedAt]; !exists || timestamp > previousTimestamp ||
+			(timestamp == previousTimestamp && execution.Id > bucket.LatestExecutionId) {
+			bucket.LatestExecutionId = execution.Id
+			bucket.LatestFinishedAt = execution.FinishedAt
+			bucket.LatestResult = execution.Result
+			bucket.LatestModelName = execution.ModelName
+			bucket.LatestFirstTokenMs = execution.FirstTokenMs
+			bucket.LatestTPS = execution.TPS
+			bucket.LatestResponseTimeMs = execution.ResponseTimeMs
+			bucketsByStart[startedAt] = bucket
+			latestTimestamps[startedAt] = timestamp
+		}
+	}
+	summary := channelStatusProbeWindowSummary{Buckets: make([]channelStatusProbeBucketResponse, 0, displayValue)}
+	for startedAt := minimumBucket; startedAt <= currentBucket; startedAt += bucketSeconds {
+		bucket := bucketsByStart[startedAt]
+		bucket.StartedAt = startedAt
+		responseBucket := channelStatusProbeBucketResponseFromModelBucket(bucket)
+		summary.Buckets = append(summary.Buckets, responseBucket)
+		summary.FirstTokenTotalMs += bucket.FirstTokenTotalMs
+		summary.FirstTokenSampleCount += bucket.FirstTokenSampleCount
+		summary.TPSTotal += bucket.TPSTotal
+		summary.TPSSampleCount += bucket.TPSSampleCount
+		summary.ResponseTimeTotalMs += bucket.ResponseTimeTotalMs
+		summary.ResponseTimeSampleCount += bucket.ResponseTimeSampleCount
+	}
+	return summary
 }
 
 func GetChannelStatusProbeOverview(c *gin.Context) {
@@ -419,6 +519,19 @@ func buildChannelStatusProbeOverview(
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
+	maxDisplaySeconds := int64(model.ChannelStatusProbeDefaultDisplayValue) *
+		model.ChannelStatusProbeDisplayBucketSeconds(model.ChannelStatusProbeDefaultDisplayUnit)
+	for _, config := range configs {
+		displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
+		displaySeconds := int64(displayValue) * model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+		if displaySeconds > maxDisplaySeconds {
+			maxDisplaySeconds = displaySeconds
+		}
+	}
+	recentExecutions, err := model.GetChannelStatusProbeExecutionsSince(now - maxDisplaySeconds)
+	if err != nil {
+		return channelStatusProbeOverviewResponse{}, err
+	}
 	monitors, err := model.GetChannelRatioMonitors()
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
@@ -436,6 +549,15 @@ func buildChannelStatusProbeOverview(
 	statesByChannel := make(map[int][]model.ChannelStatusProbeState)
 	for _, state := range states {
 		statesByChannel[state.ChannelId] = append(statesByChannel[state.ChannelId], state)
+	}
+	type executionKey struct {
+		channelID int
+		modelName string
+	}
+	executionsByChannelModel := make(map[executionKey][]model.ChannelStatusProbeExecution)
+	for _, execution := range recentExecutions {
+		key := executionKey{channelID: execution.ChannelId, modelName: execution.ModelName}
+		executionsByChannelModel[key] = append(executionsByChannelModel[key], execution)
 	}
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
@@ -544,14 +666,20 @@ func buildChannelStatusProbeOverview(
 					latest = &stateCopy
 				}
 			}
-			windowSummary, mergeErr := mergeChannelStatusProbeRecentWindow(
-				statesForModel,
-				now,
-				displayValue,
-				displayUnit,
-			)
-			if mergeErr != nil {
-				return channelStatusProbeOverviewResponse{}, mergeErr
+			var windowSummary channelStatusProbeWindowSummary
+			modelExecutions := executionsByChannelModel[executionKey{channelID: channel.Id, modelName: modelName}]
+			if len(modelExecutions) > 0 {
+				windowSummary = mergeChannelStatusProbeExecutionRecentWindow(
+					modelExecutions, now, displayValue, displayUnit,
+				)
+			} else {
+				var mergeErr error
+				windowSummary, mergeErr = mergeChannelStatusProbeRecentWindow(
+					statesForModel, now, displayValue, displayUnit,
+				)
+				if mergeErr != nil {
+					return channelStatusProbeOverviewResponse{}, mergeErr
+				}
 			}
 			modelConfig := *configResponse
 			modelConfig.Models = []string{modelName}

@@ -61,6 +61,10 @@ export type ChannelGroupMonitorBucket = {
   response_time_total_ms?: number
   response_time_sample_count?: number
   result: ChannelGroupMonitorBucketResult
+  latest_result?: ChannelGroupMonitorBucketResult
+  latest_first_token_ms?: number | null
+  latest_tps?: number | null
+  latest_response_time_ms?: number | null
 }
 
 export type ChannelGroupMonitorSettings = {

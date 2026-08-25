@@ -74,21 +74,25 @@ type channelGroupMonitorItemResponse struct {
 }
 
 type channelGroupMonitorBucketResponse struct {
-	StartedAt               int64   `json:"started_at"`
-	Success                 int     `json:"success"`
-	UpstreamFailure         int     `json:"upstream_failure"`
-	RateLimited             int     `json:"rate_limited"`
-	LocalFailure            int     `json:"local_failure"`
-	Unavailable             int     `json:"unavailable"`
-	Skipped                 int     `json:"skipped"`
-	Timeout                 int     `json:"timeout"`
-	FirstTokenTotalMs       float64 `json:"first_token_total_ms,omitempty"`
-	FirstTokenSampleCount   int64   `json:"first_token_sample_count,omitempty"`
-	TPSTotal                float64 `json:"tps_total,omitempty"`
-	TPSSampleCount          int64   `json:"tps_sample_count,omitempty"`
-	ResponseTimeTotalMs     float64 `json:"response_time_total_ms,omitempty"`
-	ResponseTimeSampleCount int64   `json:"response_time_sample_count,omitempty"`
-	Result                  string  `json:"result"`
+	StartedAt               int64    `json:"started_at"`
+	Success                 int      `json:"success"`
+	UpstreamFailure         int      `json:"upstream_failure"`
+	RateLimited             int      `json:"rate_limited"`
+	LocalFailure            int      `json:"local_failure"`
+	Unavailable             int      `json:"unavailable"`
+	Skipped                 int      `json:"skipped"`
+	Timeout                 int      `json:"timeout"`
+	FirstTokenTotalMs       float64  `json:"first_token_total_ms,omitempty"`
+	FirstTokenSampleCount   int64    `json:"first_token_sample_count,omitempty"`
+	TPSTotal                float64  `json:"tps_total,omitempty"`
+	TPSSampleCount          int64    `json:"tps_sample_count,omitempty"`
+	ResponseTimeTotalMs     float64  `json:"response_time_total_ms,omitempty"`
+	ResponseTimeSampleCount int64    `json:"response_time_sample_count,omitempty"`
+	Result                  string   `json:"result"`
+	LatestResult            string   `json:"latest_result,omitempty"`
+	LatestFirstTokenMs      *float64 `json:"latest_first_token_ms,omitempty"`
+	LatestTPS               *float64 `json:"latest_tps,omitempty"`
+	LatestResponseTimeMs    *float64 `json:"latest_response_time_ms,omitempty"`
 }
 
 // pricingGroupMonitorItemResponse is the public subset of monitor state.
@@ -308,6 +312,7 @@ func mergeChannelGroupMonitorRecentWindow(
 	currentBucket := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit)
 	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
 	bucketsByGroup := make(map[string]map[int64]channelGroupMonitorBucketResponse)
+	latestByGroup := make(map[string]map[int64]model.ChannelGroupMonitorExecution)
 	for _, execution := range executions {
 		if execution.FinishedAt < minimumBucket || execution.FinishedAt > now {
 			continue
@@ -351,6 +356,16 @@ func mergeChannelGroupMonitorRecentWindow(
 			bucket.ResponseTimeTotalMs += *execution.ResponseTimeMs
 			bucket.ResponseTimeSampleCount++
 		}
+		latestBuckets := latestByGroup[execution.GroupName]
+		if latestBuckets == nil {
+			latestBuckets = make(map[int64]model.ChannelGroupMonitorExecution)
+			latestByGroup[execution.GroupName] = latestBuckets
+		}
+		if previous, exists := latestBuckets[startedAt]; !exists ||
+			execution.FinishedAt > previous.FinishedAt ||
+			(execution.FinishedAt == previous.FinishedAt && execution.Id > previous.Id) {
+			latestBuckets[startedAt] = execution
+		}
 		bucket.Result = channelGroupMonitorBucketResult(bucket)
 		groupBuckets[startedAt] = bucket
 	}
@@ -360,6 +375,12 @@ func mergeChannelGroupMonitorRecentWindow(
 		for startedAt := minimumBucket; startedAt <= currentBucket; startedAt += bucketSeconds {
 			bucket := groupBuckets[startedAt]
 			bucket.StartedAt = startedAt
+			if latest, exists := latestByGroup[groupName][startedAt]; exists {
+				bucket.LatestResult = latest.Result
+				bucket.LatestFirstTokenMs = latest.FirstTokenMs
+				bucket.LatestTPS = latest.TPS
+				bucket.LatestResponseTimeMs = latest.ResponseTimeMs
+			}
 			buckets = append(buckets, bucket)
 		}
 		result[groupName] = buckets

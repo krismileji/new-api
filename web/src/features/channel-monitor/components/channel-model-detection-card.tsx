@@ -298,7 +298,9 @@ function modelDetectionBucketPresentation(
     bucket.started_at,
     displayUnit
   )
-  if (!bucket.result) {
+  const result = bucket.latest_result || bucket.result
+  const hasLatest = Boolean(bucket.latest_result)
+  if (!result) {
     if (automaticDetectionEnabled) {
       return {
         ariaLabel: `${timeRange} · 定时检测已开启但未执行`,
@@ -325,18 +327,31 @@ function modelDetectionBucketPresentation(
     failed: '执行失败',
     running: '进行中',
     inactive: '跳过',
-  }[bucket.result]
+  }[result]
   let statusVariant: BadgeVariant = 'outline'
-  if (bucket.result === 'success' || bucket.result === 'running') {
+  if (result === 'success' || result === 'running') {
     statusVariant = 'secondary'
-  } else if (bucket.result === 'unhealthy') {
+  } else if (result === 'unhealthy') {
     statusVariant = 'destructive'
-  } else if (bucket.result === 'attention' || bucket.result === 'failed') {
+  } else if (result === 'attention' || result === 'failed') {
     statusVariant = 'warning'
   }
+  const detectionCount = hasLatest
+    ? (bucket.latest_detection_count ?? 0)
+    : bucket.detection_count
+  const success = hasLatest ? (bucket.latest_success ?? 0) : bucket.success
+  const attention = hasLatest
+    ? (bucket.latest_attention ?? 0)
+    : bucket.attention
+  const unhealthy = hasLatest
+    ? (bucket.latest_unhealthy ?? 0)
+    : bucket.unhealthy
+  const failed = hasLatest ? (bucket.latest_failed ?? 0) : bucket.failed
+  const running = hasLatest ? (bucket.latest_running ?? 0) : bucket.running
+  const inactive = hasLatest ? (bucket.latest_inactive ?? 0) : bucket.inactive
   return {
-    ariaLabel: `${timeRange} · 检测 ${bucket.detection_count} · 正常 ${bucket.success} · 关注 ${bucket.attention} · 异常 ${bucket.unhealthy} · 执行失败 ${bucket.failed} · 进行中 ${bucket.running} · 跳过 ${bucket.inactive}`,
-    className: RESULT_BUCKET_COLOR[bucket.result],
+    ariaLabel: `${timeRange} · 检测 ${detectionCount} · 正常 ${success} · 关注 ${attention} · 异常 ${unhealthy} · 执行失败 ${failed} · 进行中 ${running} · 跳过 ${inactive}`,
+    className: RESULT_BUCKET_COLOR[result],
     state: 'executed',
     status,
     statusVariant,
@@ -353,17 +368,54 @@ function ModelDetectionBucketDetails(props: {
     props.displayUnit,
     props.automaticDetectionEnabled
   )
-  const details = props.bucket.result
-    ? [
-        { label: '检测总数', value: props.bucket.detection_count },
-        { label: '正常', value: props.bucket.success },
-        { label: '需关注', value: props.bucket.attention },
-        { label: '异常', value: props.bucket.unhealthy },
-        { label: '执行失败', value: props.bucket.failed },
-        { label: '进行中', value: props.bucket.running },
-        { label: '跳过', value: props.bucket.inactive },
-      ]
-    : undefined
+  const hasLatest = Boolean(props.bucket.latest_result)
+  const details =
+    props.bucket.latest_result || props.bucket.result
+      ? [
+          {
+            label: '检测总数',
+            value: hasLatest
+              ? (props.bucket.latest_detection_count ?? 0)
+              : props.bucket.detection_count,
+          },
+          {
+            label: '正常',
+            value: hasLatest
+              ? (props.bucket.latest_success ?? 0)
+              : props.bucket.success,
+          },
+          {
+            label: '需关注',
+            value: hasLatest
+              ? (props.bucket.latest_attention ?? 0)
+              : props.bucket.attention,
+          },
+          {
+            label: '异常',
+            value: hasLatest
+              ? (props.bucket.latest_unhealthy ?? 0)
+              : props.bucket.unhealthy,
+          },
+          {
+            label: '执行失败',
+            value: hasLatest
+              ? (props.bucket.latest_failed ?? 0)
+              : props.bucket.failed,
+          },
+          {
+            label: '进行中',
+            value: hasLatest
+              ? (props.bucket.latest_running ?? 0)
+              : props.bucket.running,
+          },
+          {
+            label: '跳过',
+            value: hasLatest
+              ? (props.bucket.latest_inactive ?? 0)
+              : props.bucket.inactive,
+          },
+        ]
+      : undefined
   return (
     <ChannelMonitorStatusWindowDetails
       timeRange={formatChannelMonitorStatusWindowRange(

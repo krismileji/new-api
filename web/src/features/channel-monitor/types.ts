@@ -1335,6 +1335,13 @@ export type ChannelStatusProbeBucket = {
   tps_sample_count?: number
   response_time_total_ms?: number
   response_time_sample_count?: number
+  latest_execution_id?: number
+  latest_finished_at?: number
+  latest_result?: ChannelStatusProbeResult
+  latest_model_name?: string
+  latest_first_token_ms?: number | null
+  latest_tps?: number | null
+  latest_response_time_ms?: number | null
 }
 
 export type ChannelStatusProbeModelStatus = {

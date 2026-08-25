@@ -152,6 +152,13 @@ type ChannelStatusProbeBucket struct {
 	TPSSampleCount          int64    `json:"tps_sample_count,omitempty"`
 	ResponseTimeTotalMs     float64  `json:"response_time_total_ms,omitempty"`
 	ResponseTimeSampleCount int64    `json:"response_time_sample_count,omitempty"`
+	LatestExecutionId       int64    `json:"latest_execution_id,omitempty"`
+	LatestFinishedAt        int64    `json:"latest_finished_at,omitempty"`
+	LatestResult            string   `json:"latest_result,omitempty"`
+	LatestModelName         string   `json:"latest_model_name,omitempty"`
+	LatestFirstTokenMs      *float64 `json:"latest_first_token_ms,omitempty"`
+	LatestTPS               *float64 `json:"latest_tps,omitempty"`
+	LatestResponseTimeMs    *float64 `json:"latest_response_time_ms,omitempty"`
 }
 
 func (bucket *ChannelStatusProbeBucket) Add(
@@ -1249,6 +1256,17 @@ func accumulateChannelStatusProbeBuckets(
 			execution.TPS,
 			execution.ResponseTimeMs,
 		)
+		current := &retained[bucketIndex]
+		if current.LatestResult == "" || execution.FinishedAt > current.LatestFinishedAt ||
+			(execution.FinishedAt == current.LatestFinishedAt && execution.Id > current.LatestExecutionId) {
+			current.LatestExecutionId = execution.Id
+			current.LatestFinishedAt = execution.FinishedAt
+			current.LatestResult = execution.Result
+			current.LatestModelName = execution.ModelName
+			current.LatestFirstTokenMs = execution.FirstTokenMs
+			current.LatestTPS = execution.TPS
+			current.LatestResponseTimeMs = execution.ResponseTimeMs
+		}
 	}
 	sort.Slice(retained, func(i, j int) bool { return retained[i].StartedAt < retained[j].StartedAt })
 	return retained
@@ -1468,6 +1486,16 @@ func ListPendingChannelStatusProbeExecutions(limit int) ([]ChannelStatusProbeExe
 		Order("created_at ASC, id ASC").
 		Limit(limit).
 		Find(&executions).Error
+	return executions, err
+}
+
+func GetChannelStatusProbeExecutionsSince(startedAt int64) ([]ChannelStatusProbeExecution, error) {
+	if !DB.Migrator().HasTable(&ChannelStatusProbeExecution{}) {
+		return []ChannelStatusProbeExecution{}, nil
+	}
+	var executions []ChannelStatusProbeExecution
+	err := DB.Where("finished_at >= ?", startedAt).
+		Order("channel_id ASC, model_name ASC, finished_at ASC, id ASC").Find(&executions).Error
 	return executions, err
 }
 

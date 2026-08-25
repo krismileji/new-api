@@ -153,8 +153,13 @@ function statusProbeBucketPresentation(
     bucket.started_at,
     unit
   )
-  const models = bucket.models?.join('、') || '无'
-  if (!bucket.result) {
+  const result = bucket.latest_result || bucket.result
+  const hasLatest = Boolean(bucket.latest_result)
+  const models =
+    (hasLatest && bucket.latest_model_name
+      ? bucket.latest_model_name
+      : bucket.models?.join('、')) || '无'
+  if (!result) {
     if (automaticProbeEnabled) {
       return {
         ariaLabel: `${timeRange} · 周期探测已开启但未执行`,
@@ -175,35 +180,59 @@ function statusProbeBucketPresentation(
     }
   }
   const firstToken = formatDuration(
-    averageBucketMetric(
-      bucket.first_token_total_ms,
-      bucket.first_token_sample_count
-    )
+    hasLatest
+      ? (bucket.latest_first_token_ms ?? null)
+      : averageBucketMetric(
+          bucket.first_token_total_ms,
+          bucket.first_token_sample_count
+        )
   )
   const tps = formatTPS(
-    averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
+    hasLatest
+      ? (bucket.latest_tps ?? null)
+      : averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
   )
   const duration = formatDuration(
-    averageBucketMetric(
-      bucket.response_time_total_ms,
-      bucket.response_time_sample_count
-    )
+    hasLatest
+      ? (bucket.latest_response_time_ms ?? null)
+      : averageBucketMetric(
+          bucket.response_time_total_ms,
+          bucket.response_time_sample_count
+        )
   )
+  const success = hasLatest ? (result === 'success' ? 1 : 0) : bucket.success
+  const upstreamFailure = hasLatest
+    ? result === 'upstream_failure'
+      ? 1
+      : 0
+    : bucket.upstream_failure
+  const rateLimited = hasLatest
+    ? result === 'rate_limited'
+      ? 1
+      : 0
+    : bucket.rate_limited
+  const localFailure = hasLatest
+    ? result === 'local_failure'
+      ? 1
+      : 0
+    : bucket.local_failure
+  const skippedOrCanceled = hasLatest
+    ? result === 'skipped' || result === 'canceled'
+      ? 1
+      : 0
+    : bucket.skipped + bucket.canceled
   let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
     'outline'
-  if (bucket.result === 'success') statusVariant = 'secondary'
-  else if (bucket.result === 'upstream_failure') statusVariant = 'destructive'
-  else if (
-    bucket.result === 'rate_limited' ||
-    bucket.result === 'local_failure'
-  ) {
+  if (result === 'success') statusVariant = 'secondary'
+  else if (result === 'upstream_failure') statusVariant = 'destructive'
+  else if (result === 'rate_limited' || result === 'local_failure') {
     statusVariant = 'warning'
   }
   return {
-    ariaLabel: `${timeRange} · 成功 ${bucket.success} · 上游失败 ${bucket.upstream_failure} · 限流 ${bucket.rate_limited} · 本地失败 ${bucket.local_failure} · 跳过或取消 ${bucket.skipped + bucket.canceled} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${duration} · 模型 ${models}`,
-    className: BUCKET_COLOR[bucket.result],
+    ariaLabel: `${timeRange} · 成功 ${success} · 上游失败 ${upstreamFailure} · 限流 ${rateLimited} · 本地失败 ${localFailure} · 跳过或取消 ${skippedOrCanceled} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${duration} · 模型 ${models}`,
+    className: BUCKET_COLOR[result],
     state: 'executed',
-    status: RESULT_LABEL[bucket.result],
+    status: RESULT_LABEL[result],
     statusVariant,
   }
 }
@@ -218,45 +247,79 @@ function StatusProbeBucketDetails(props: {
     props.unit,
     props.automaticProbeEnabled
   )
-  const details = props.bucket.result
-    ? [
-        {
-          label: '首字',
-          value: formatDuration(
-            averageBucketMetric(
-              props.bucket.first_token_total_ms,
-              props.bucket.first_token_sample_count
-            )
-          ),
-        },
-        {
-          label: 'TPS',
-          value: formatTPS(
-            averageBucketMetric(
-              props.bucket.tps_total,
-              props.bucket.tps_sample_count
-            )
-          ),
-        },
-        {
-          label: '耗时',
-          value: formatDuration(
-            averageBucketMetric(
-              props.bucket.response_time_total_ms,
-              props.bucket.response_time_sample_count
-            )
-          ),
-        },
-        { label: '成功', value: props.bucket.success },
-        { label: '上游失败', value: props.bucket.upstream_failure },
-        { label: '限流', value: props.bucket.rate_limited },
-        { label: '本地失败', value: props.bucket.local_failure },
-        {
-          label: '跳过 / 取消',
-          value: props.bucket.skipped + props.bucket.canceled,
-        },
-      ]
-    : undefined
+  const hasLatest = Boolean(props.bucket.latest_result)
+  const result = props.bucket.latest_result || props.bucket.result
+  const success = hasLatest
+    ? result === 'success'
+      ? 1
+      : 0
+    : props.bucket.success
+  const upstreamFailure = hasLatest
+    ? result === 'upstream_failure'
+      ? 1
+      : 0
+    : props.bucket.upstream_failure
+  const rateLimited = hasLatest
+    ? result === 'rate_limited'
+      ? 1
+      : 0
+    : props.bucket.rate_limited
+  const localFailure = hasLatest
+    ? result === 'local_failure'
+      ? 1
+      : 0
+    : props.bucket.local_failure
+  const skippedOrCanceled = hasLatest
+    ? result === 'skipped' || result === 'canceled'
+      ? 1
+      : 0
+    : props.bucket.skipped + props.bucket.canceled
+  const details =
+    props.bucket.latest_result || props.bucket.result
+      ? [
+          {
+            label: '首字',
+            value: formatDuration(
+              hasLatest
+                ? (props.bucket.latest_first_token_ms ?? null)
+                : averageBucketMetric(
+                    props.bucket.first_token_total_ms,
+                    props.bucket.first_token_sample_count
+                  )
+            ),
+          },
+          {
+            label: 'TPS',
+            value: formatTPS(
+              hasLatest
+                ? (props.bucket.latest_tps ?? null)
+                : averageBucketMetric(
+                    props.bucket.tps_total,
+                    props.bucket.tps_sample_count
+                  )
+            ),
+          },
+          {
+            label: '耗时',
+            value: formatDuration(
+              hasLatest
+                ? (props.bucket.latest_response_time_ms ?? null)
+                : averageBucketMetric(
+                    props.bucket.response_time_total_ms,
+                    props.bucket.response_time_sample_count
+                  )
+            ),
+          },
+          { label: '成功', value: success },
+          { label: '上游失败', value: upstreamFailure },
+          { label: '限流', value: rateLimited },
+          { label: '本地失败', value: localFailure },
+          {
+            label: '跳过 / 取消',
+            value: skippedOrCanceled,
+          },
+        ]
+      : undefined
   return (
     <ChannelMonitorStatusWindowDetails
       timeRange={formatChannelMonitorStatusWindowRange(
@@ -267,8 +330,16 @@ function StatusProbeBucketDetails(props: {
       statusVariant={presentation.statusVariant}
       description={presentation.description}
       details={details}
-      footerLabel={props.bucket.result ? '涉及模型' : undefined}
-      footerValue={props.bucket.models?.join('、')}
+      footerLabel={
+        props.bucket.latest_result || props.bucket.result
+          ? '涉及模型'
+          : undefined
+      }
+      footerValue={
+        hasLatest && props.bucket.latest_model_name
+          ? props.bucket.latest_model_name
+          : props.bucket.models?.join('、')
+      }
     />
   )
 }

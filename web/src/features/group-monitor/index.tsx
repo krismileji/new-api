@@ -161,7 +161,9 @@ function groupMonitorBucketPresentation(
     bucket.started_at,
     displayUnit
   )
-  if (!bucket.result) {
+  const result = bucket.latest_result || bucket.result
+  const hasLatest = Boolean(bucket.latest_result)
+  if (!result) {
     return {
       ariaLabel: `${timeRange} · ${enabled ? '已开启但未执行' : '未安排探测'}`,
       className: enabled ? 'bg-muted-foreground/35' : 'bg-muted/60',
@@ -175,38 +177,41 @@ function groupMonitorBucketPresentation(
   }
   let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
     'destructive'
-  if (bucket.result === 'success') {
+  if (result === 'success') {
     statusVariant = 'secondary'
-  } else if (
-    bucket.result === 'rate_limited' ||
-    bucket.result === 'local_failure'
-  ) {
+  } else if (result === 'rate_limited' || result === 'local_failure') {
     statusVariant = 'warning'
-  } else if (bucket.result === 'skipped') {
+  } else if (result === 'skipped') {
     statusVariant = 'outline'
-  } else if (bucket.result === 'timeout') {
+  } else if (result === 'timeout') {
     statusVariant = 'warning'
   }
   const firstToken = formatHoverDuration(
-    averageBucketMetric(
-      bucket.first_token_total_ms,
-      bucket.first_token_sample_count
-    )
+    hasLatest
+      ? (bucket.latest_first_token_ms ?? null)
+      : averageBucketMetric(
+          bucket.first_token_total_ms,
+          bucket.first_token_sample_count
+        )
   )
   const tps = formatTPS(
-    averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
+    hasLatest
+      ? (bucket.latest_tps ?? null)
+      : averageBucketMetric(bucket.tps_total, bucket.tps_sample_count)
   )
   const responseTime = formatHoverDuration(
-    averageBucketMetric(
-      bucket.response_time_total_ms,
-      bucket.response_time_sample_count
-    )
+    hasLatest
+      ? (bucket.latest_response_time_ms ?? null)
+      : averageBucketMetric(
+          bucket.response_time_total_ms,
+          bucket.response_time_sample_count
+        )
   )
   return {
-    ariaLabel: `${timeRange} · ${BUCKET_RESULT_LABEL[bucket.result]} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${responseTime}`,
-    className: BUCKET_RESULT_COLOR[bucket.result],
+    ariaLabel: `${timeRange} · ${BUCKET_RESULT_LABEL[result]} · 首字 ${firstToken} · TPS ${tps} · 耗时 ${responseTime}`,
+    className: BUCKET_RESULT_COLOR[result],
     state: 'executed',
-    status: BUCKET_RESULT_LABEL[bucket.result],
+    status: BUCKET_RESULT_LABEL[result],
     statusVariant,
   }
 }
@@ -221,6 +226,31 @@ export function GroupMonitorBucketDetails(props: {
     props.displayUnit,
     props.enabled
   )
+  const hasLatest = Boolean(props.bucket.latest_result)
+  const firstToken = hasLatest
+    ? formatHoverDuration(props.bucket.latest_first_token_ms ?? null)
+    : formatHoverDuration(
+        averageBucketMetric(
+          props.bucket.first_token_total_ms,
+          props.bucket.first_token_sample_count
+        )
+      )
+  const tps = hasLatest
+    ? formatTPS(props.bucket.latest_tps ?? null)
+    : formatTPS(
+        averageBucketMetric(
+          props.bucket.tps_total,
+          props.bucket.tps_sample_count
+        )
+      )
+  const responseTime = hasLatest
+    ? formatHoverDuration(props.bucket.latest_response_time_ms ?? null)
+    : formatHoverDuration(
+        averageBucketMetric(
+          props.bucket.response_time_total_ms,
+          props.bucket.response_time_sample_count
+        )
+      )
   return (
     <ChannelMonitorStatusWindowDetails
       timeRange={formatChannelMonitorStatusWindowRange(
@@ -235,30 +265,15 @@ export function GroupMonitorBucketDetails(props: {
           ? [
               {
                 label: '首字',
-                value: formatHoverDuration(
-                  averageBucketMetric(
-                    props.bucket.first_token_total_ms,
-                    props.bucket.first_token_sample_count
-                  )
-                ),
+                value: firstToken,
               },
               {
                 label: 'TPS',
-                value: formatTPS(
-                  averageBucketMetric(
-                    props.bucket.tps_total,
-                    props.bucket.tps_sample_count
-                  )
-                ),
+                value: tps,
               },
               {
                 label: '耗时',
-                value: formatHoverDuration(
-                  averageBucketMetric(
-                    props.bucket.response_time_total_ms,
-                    props.bucket.response_time_sample_count
-                  )
-                ),
+                value: responseTime,
               },
             ]
           : undefined

@@ -127,4 +127,39 @@ describe('group monitor content', () => {
     assert.ok(markup.includes('超时'))
     assert.match(markup, /bg-warning/)
   })
+
+  test('uses the latest execution instead of the bucket aggregate for hover details', () => {
+    const markup = renderToStaticMarkup(
+      <GroupMonitorBucketDetails
+        bucket={{
+          started_at: 1_752_777_840,
+          success: 1,
+          upstream_failure: 0,
+          rate_limited: 0,
+          local_failure: 0,
+          unavailable: 0,
+          skipped: 0,
+          timeout: 1,
+          first_token_total_ms: 220,
+          first_token_sample_count: 1,
+          tps_total: 38.5,
+          tps_sample_count: 1,
+          response_time_total_ms: 31_040,
+          response_time_sample_count: 1,
+          result: 'timeout',
+          latest_result: 'success',
+          latest_first_token_ms: 220,
+          latest_tps: 38.5,
+          latest_response_time_ms: 1_480,
+        }}
+        displayUnit='minute'
+        enabled
+      />
+    )
+
+    assert.ok(markup.includes('成功'))
+    assert.ok(markup.includes('0.22 秒'))
+    assert.ok(markup.includes('1.48 秒'))
+    assert.ok(!markup.includes('超时'))
+  })
 })

@@ -118,15 +118,23 @@ type ChannelModelDetectionExecutionSummary struct {
 }
 
 type ChannelModelDetectionResultBucket struct {
-	StartedAt      int64  `json:"started_at"`
-	Result         string `json:"result"`
-	DetectionCount int    `json:"detection_count"`
-	Success        int    `json:"success"`
-	Attention      int    `json:"attention"`
-	Unhealthy      int    `json:"unhealthy"`
-	Failed         int    `json:"failed"`
-	Running        int    `json:"running"`
-	Inactive       int    `json:"inactive"`
+	StartedAt            int64  `json:"started_at"`
+	Result               string `json:"result"`
+	DetectionCount       int    `json:"detection_count"`
+	Success              int    `json:"success"`
+	Attention            int    `json:"attention"`
+	Unhealthy            int    `json:"unhealthy"`
+	Failed               int    `json:"failed"`
+	Running              int    `json:"running"`
+	Inactive             int    `json:"inactive"`
+	LatestResult         string `json:"latest_result,omitempty"`
+	LatestDetectionCount int    `json:"latest_detection_count,omitempty"`
+	LatestSuccess        int    `json:"latest_success,omitempty"`
+	LatestAttention      int    `json:"latest_attention,omitempty"`
+	LatestUnhealthy      int    `json:"latest_unhealthy,omitempty"`
+	LatestFailed         int    `json:"latest_failed,omitempty"`
+	LatestRunning        int    `json:"latest_running,omitempty"`
+	LatestInactive       int    `json:"latest_inactive,omitempty"`
 }
 
 type ChannelModelDetectionTargetSummary struct {
@@ -1152,6 +1160,8 @@ func channelModelDetectionResultBuckets(
 	minimumBucket := currentBucket - int64(displayValue-1)*bucketSeconds
 	buckets := make([]ChannelModelDetectionResultBucket, displayValue)
 	indices := make(map[int64]int, displayValue)
+	latestRows := make(map[int64]channelModelDetectionExecutionOverviewRow, displayValue)
+	latestTimestamps := make(map[int64]int64, displayValue)
 	for index := range buckets {
 		startedAt := minimumBucket + int64(index)*bucketSeconds
 		buckets[index].StartedAt = startedAt
@@ -1185,6 +1195,33 @@ func channelModelDetectionResultBuckets(
 			bucket.Inactive++
 		}
 		bucket.Result = channelModelDetectionBucketResult(bucket)
+		previous, exists := latestRows[startedAt]
+		if !exists || timestamp > latestTimestamps[startedAt] ||
+			(timestamp == latestTimestamps[startedAt] && row.Id > previous.Id) {
+			latestRows[startedAt] = row
+			latestTimestamps[startedAt] = timestamp
+		}
+	}
+	for startedAt, row := range latestRows {
+		index := indices[startedAt]
+		bucket := &buckets[index]
+		classification := channelModelDetectionBucketClassification(row.ChannelModelDetectionExecution)
+		bucket.LatestResult = classification
+		bucket.LatestDetectionCount = 1
+		switch classification {
+		case channelModelDetectionBucketResultSuccess:
+			bucket.LatestSuccess = 1
+		case channelModelDetectionBucketResultAttention:
+			bucket.LatestAttention = 1
+		case channelModelDetectionBucketResultUnhealthy:
+			bucket.LatestUnhealthy = 1
+		case channelModelDetectionBucketResultFailed:
+			bucket.LatestFailed = 1
+		case channelModelDetectionBucketResultRunning:
+			bucket.LatestRunning = 1
+		case channelModelDetectionBucketResultInactive:
+			bucket.LatestInactive = 1
+		}
 	}
 	return buckets
 }

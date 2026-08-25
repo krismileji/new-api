@@ -165,6 +165,14 @@ export type ChannelModelDetectionResultBucket = {
   failed: number
   running: number
   inactive: number
+  latest_result?: ChannelModelDetectionBucketResult
+  latest_detection_count?: number
+  latest_success?: number
+  latest_attention?: number
+  latest_unhealthy?: number
+  latest_failed?: number
+  latest_running?: number
+  latest_inactive?: number
 }
 
 export type ChannelModelDetectionTargetSummary = {
