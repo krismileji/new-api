@@ -461,6 +461,20 @@ func TestAccumulateChannelStatusProbeBucketsKeepsLatestThirtyBeijingDays(t *test
 	assert.Equal(t, firstDayStart+30*24*60*60, buckets[len(buckets)-1].StartedAt)
 }
 
+func TestAccumulateChannelStatusProbeBucketsTimeoutByStartTime(t *testing.T) {
+	execution := ChannelStatusProbeExecution{
+		ModelName: "model-a", Result: ChannelStatusProbeResultUpstreamFailure,
+		ErrorCode: ChannelStatusProbeErrorTimeout, StartedAt: 1_000, FinishedAt: 1_060,
+	}
+	buckets := accumulateChannelStatusProbeBuckets(
+		[]ChannelStatusProbeBucket{}, &execution, ChannelStatusProbeDisplayUnitMinute, 2,
+	)
+
+	require.Len(t, buckets, 1)
+	assert.Equal(t, ChannelStatusProbeDisplayBucketStart(execution.StartedAt, ChannelStatusProbeDisplayUnitMinute), buckets[0].StartedAt)
+	assert.EqualValues(t, 1, buckets[0].UpstreamFailure)
+}
+
 func TestListPendingChannelStatusProbeExecutionsReturnsOldestRequestedSamples(t *testing.T) {
 	db := setupChannelStatusProbeModelTestDB(t)
 	executions := []ChannelStatusProbeExecution{

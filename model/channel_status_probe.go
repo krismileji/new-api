@@ -137,6 +137,23 @@ func ChannelStatusProbeDisplayBucketStart(timestamp int64, unit string) int64 {
 	return timestamp - timestamp%bucketSeconds
 }
 
+// ChannelStatusProbeExecutionBucketTimestamp returns the time cell to which
+// an execution belongs. A timeout is recorded at the next scheduler boundary,
+// so it must remain visible in the minute in which the probe started.
+func ChannelStatusProbeExecutionBucketTimestamp(execution ChannelStatusProbeExecution) int64 {
+	if execution.Result == ChannelStatusProbeResultUpstreamFailure &&
+		execution.ErrorCode == ChannelStatusProbeErrorTimeout && execution.StartedAt > 0 {
+		return execution.StartedAt
+	}
+	if execution.FinishedAt > 0 {
+		return execution.FinishedAt
+	}
+	if execution.StartedAt > 0 {
+		return execution.StartedAt
+	}
+	return execution.CreatedAt
+}
+
 type ChannelStatusProbeBucket struct {
 	StartedAt               int64    `json:"started_at"`
 	Success                 int      `json:"success"`
@@ -1225,7 +1242,7 @@ func accumulateChannelStatusProbeBuckets(
 	limit int,
 ) []ChannelStatusProbeBucket {
 	bucketSeconds := ChannelStatusProbeDisplayBucketSeconds(unit)
-	bucketStart := ChannelStatusProbeDisplayBucketStart(execution.FinishedAt, unit)
+	bucketStart := ChannelStatusProbeDisplayBucketStart(ChannelStatusProbeExecutionBucketTimestamp(*execution), unit)
 	latestStart := bucketStart
 	for _, bucket := range buckets {
 		if bucket.StartedAt > latestStart {

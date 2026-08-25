@@ -561,7 +561,7 @@ func GetChannelGroupMonitorExecutionsSince(startedAt int64) ([]ChannelGroupMonit
 // historical non-skipped semantics.
 func GetChannelGroupMonitorExecutionWindowSince(startedAt int64) ([]ChannelGroupMonitorExecution, error) {
 	var executions []ChannelGroupMonitorExecution
-	err := DB.Select("id, group_name, result, response_time_ms, first_token_ms, tps, finished_at").
+	err := DB.Select("id, group_name, result, response_time_ms, first_token_ms, tps, started_at, finished_at").
 		Where("finished_at >= ?", startedAt).
 		Order("group_name ASC, finished_at ASC, id ASC").Find(&executions).Error
 	return executions, err

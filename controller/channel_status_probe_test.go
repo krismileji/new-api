@@ -267,6 +267,19 @@ func TestMergeChannelStatusProbeExecutionRecentWindowUsesLatestExecution(t *test
 	assert.Nil(t, bucket.LatestResponseTimeMs)
 }
 
+func TestMergeChannelStatusProbeExecutionRecentWindowBucketsTimeoutByStartTime(t *testing.T) {
+	summary := mergeChannelStatusProbeExecutionRecentWindow([]model.ChannelStatusProbeExecution{{
+		Id: 1, ChannelId: 1, ModelName: "model-a",
+		Result: model.ChannelStatusProbeResultUpstreamFailure, ErrorCode: model.ChannelStatusProbeErrorTimeout,
+		StartedAt: 1_000, FinishedAt: 1_060,
+	}}, 1_060, 2, model.ChannelStatusProbeDisplayUnitMinute)
+
+	require.Len(t, summary.Buckets, 2)
+	assert.EqualValues(t, 1, summary.Buckets[0].UpstreamFailure)
+	assert.Zero(t, summary.Buckets[1].UpstreamFailure)
+	assert.Equal(t, model.ChannelStatusProbeResultUpstreamFailure, summary.Buckets[0].LatestResult)
+}
+
 func TestMergeChannelStatusProbeRecentWindowUsesConfiguredHourAndDayBuckets(t *testing.T) {
 	now := int64(1_725_888_000)
 	tests := []struct {

@@ -223,6 +223,19 @@ func TestChannelGroupMonitorTimeoutUsesYellowHealthAndWindowResult(t *testing.T)
 	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].Result)
 }
 
+func TestMergeChannelGroupMonitorRecentWindowBucketsTimeoutByStartTime(t *testing.T) {
+	window := mergeChannelGroupMonitorRecentWindow([]model.ChannelGroupMonitorExecution{{
+		GroupName: "default", Result: model.ChannelGroupMonitorResultTimeout,
+		StartedAt: 1_000, FinishedAt: 1_060,
+	}}, 1_060, 2, model.ChannelStatusProbeDisplayUnitMinute)
+
+	buckets := window["default"]
+	require.Len(t, buckets, 2)
+	assert.EqualValues(t, 1, buckets[0].Timeout)
+	assert.Zero(t, buckets[1].Timeout)
+	assert.Equal(t, model.ChannelGroupMonitorResultTimeout, buckets[0].LatestResult)
+}
+
 func TestMergeChannelGroupMonitorRecentWindowUsesLatestExecutionForHoverMetrics(t *testing.T) {
 	firstToken := 1_040.0
 	tps := 10.0

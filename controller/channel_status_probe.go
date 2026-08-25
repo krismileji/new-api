@@ -442,15 +442,16 @@ func mergeChannelStatusProbeExecutionRecentWindow(
 	bucketsByStart := make(map[int64]model.ChannelStatusProbeBucket, displayValue)
 	latestTimestamps := make(map[int64]int64, displayValue)
 	for _, execution := range executions {
-		timestamp := execution.FinishedAt
-		if timestamp <= 0 {
-			timestamp = execution.StartedAt
-		}
-		if timestamp <= 0 {
-			timestamp = execution.CreatedAt
-		}
-		if timestamp < minimumBucket || timestamp > now {
+		if execution.FinishedAt > now {
 			continue
+		}
+		timestamp := model.ChannelStatusProbeExecutionBucketTimestamp(execution)
+		if timestamp <= 0 || timestamp < minimumBucket || timestamp > now {
+			continue
+		}
+		latestTimestamp := execution.FinishedAt
+		if latestTimestamp <= 0 {
+			latestTimestamp = timestamp
 		}
 		startedAt := model.ChannelStatusProbeDisplayBucketStart(timestamp, displayUnit)
 		if startedAt < minimumBucket || startedAt > currentBucket {
@@ -460,8 +461,8 @@ func mergeChannelStatusProbeExecutionRecentWindow(
 		bucket.StartedAt = startedAt
 		bucket.Add(execution.Result, execution.ModelName, execution.FirstTokenMs, execution.TPS, execution.ResponseTimeMs)
 		bucketsByStart[startedAt] = bucket
-		if previousTimestamp, exists := latestTimestamps[startedAt]; !exists || timestamp > previousTimestamp ||
-			(timestamp == previousTimestamp && execution.Id > bucket.LatestExecutionId) {
+		if previousTimestamp, exists := latestTimestamps[startedAt]; !exists || latestTimestamp > previousTimestamp ||
+			(latestTimestamp == previousTimestamp && execution.Id > bucket.LatestExecutionId) {
 			bucket.LatestExecutionId = execution.Id
 			bucket.LatestFinishedAt = execution.FinishedAt
 			bucket.LatestResult = execution.Result
@@ -470,7 +471,7 @@ func mergeChannelStatusProbeExecutionRecentWindow(
 			bucket.LatestTPS = execution.TPS
 			bucket.LatestResponseTimeMs = execution.ResponseTimeMs
 			bucketsByStart[startedAt] = bucket
-			latestTimestamps[startedAt] = timestamp
+			latestTimestamps[startedAt] = latestTimestamp
 		}
 	}
 	summary := channelStatusProbeWindowSummary{Buckets: make([]channelStatusProbeBucketResponse, 0, displayValue)}

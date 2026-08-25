@@ -72,6 +72,19 @@ func TestSaveChannelGroupMonitorConfigRejectsStaleRevisionAndPreservesOrder(t *t
 	}, groups)
 }
 
+func TestGetChannelGroupMonitorExecutionWindowSinceIncludesStartedAt(t *testing.T) {
+	db := setupChannelGroupMonitorTestDB(t)
+	require.NoError(t, db.Create(&ChannelGroupMonitorExecution{
+		RunId: "timeout-run", GroupName: "default", Result: ChannelGroupMonitorResultTimeout,
+		StartedAt: 1_000, FinishedAt: 1_060, CreatedAt: 1_060,
+	}).Error)
+
+	executions, err := GetChannelGroupMonitorExecutionWindowSince(960)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.EqualValues(t, 1_000, executions[0].StartedAt)
+}
+
 func TestSaveChannelGroupMonitorExecutionKeepsLatestNonSkippedResult(t *testing.T) {
 	setupChannelGroupMonitorTestDB(t)
 	firstToken := 184.0

@@ -314,10 +314,17 @@ func mergeChannelGroupMonitorRecentWindow(
 	bucketsByGroup := make(map[string]map[int64]channelGroupMonitorBucketResponse)
 	latestByGroup := make(map[string]map[int64]model.ChannelGroupMonitorExecution)
 	for _, execution := range executions {
-		if execution.FinishedAt < minimumBucket || execution.FinishedAt > now {
+		if execution.FinishedAt <= 0 || execution.FinishedAt > now {
 			continue
 		}
-		startedAt := model.ChannelStatusProbeDisplayBucketStart(execution.FinishedAt, displayUnit)
+		bucketTimestamp := execution.FinishedAt
+		if execution.Result == model.ChannelGroupMonitorResultTimeout && execution.StartedAt > 0 {
+			bucketTimestamp = execution.StartedAt
+		}
+		if bucketTimestamp < minimumBucket || bucketTimestamp > now {
+			continue
+		}
+		startedAt := model.ChannelStatusProbeDisplayBucketStart(bucketTimestamp, displayUnit)
 		if startedAt < minimumBucket || startedAt > currentBucket {
 			continue
 		}
