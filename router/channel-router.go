@@ -18,7 +18,10 @@ type permissionRoute struct {
 
 func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 	channelRoute := apiRouter.Group("/channel")
-	channelRoute.Use(middleware.AdminAuth())
+	channelRoute.Use(
+		middleware.AdminAuth(),
+		controller.ChannelMonitorPageSnapshotSyncMiddleware(),
+	)
 
 	channelRoute.POST("/:id/key",
 		middleware.RootAuth(),

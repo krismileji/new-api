@@ -46,16 +46,7 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		includeMetrics = parsed
 	}
-	refresh := false
-	if rawRefresh, configured := c.GetQuery("refresh"); configured {
-		parsed, err := strconv.ParseBool(rawRefresh)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "refresh 参数必须是布尔值"})
-			return
-		}
-		refresh = parsed
-	}
-	if !refresh && serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSchedule, GetChannelMonitorSmartScheduleRoutes) {
+	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSchedule, GetChannelMonitorSmartScheduleRoutes) {
 		return
 	}
 	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()

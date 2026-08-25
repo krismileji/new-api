@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,18 +22,158 @@ const (
 	channelMonitorPageSnapshotBypassKey       = "channel_monitor_page_snapshot_bypass"
 	channelMonitorPageSnapshotInvalidFilter   = "_invalid_request"
 
-	channelMonitorPageSnapshotOverview      = "overview"
-	channelMonitorPageSnapshotCost          = "cost"
-	channelMonitorPageSnapshotPerformance   = "performance"
-	channelMonitorPageSnapshotSuccess       = "success"
-	channelMonitorPageSnapshotSuccessDetail = "success-detail"
-	channelMonitorPageSnapshotSchedule      = "schedule"
+	channelMonitorPageSnapshotOverview          = "overview"
+	channelMonitorPageSnapshotCost              = "cost"
+	channelMonitorPageSnapshotPerformance       = "performance"
+	channelMonitorPageSnapshotSuccess           = "success"
+	channelMonitorPageSnapshotSuccessDetail     = "success-detail"
+	channelMonitorPageSnapshotSchedule          = "schedule"
+	channelMonitorPageSnapshotResponseBodyLimit = 4096
 )
 
 type channelMonitorPageSnapshotRequest struct {
 	request *http.Request
 	params  gin.Params
 	keys    map[string]any
+}
+
+type channelMonitorPageSnapshotSyncSpec struct {
+	page     string
+	rawQuery string
+	handler  gin.HandlerFunc
+}
+
+type channelMonitorPageSnapshotResponseWriter struct {
+	gin.ResponseWriter
+	body []byte
+}
+
+func (writer *channelMonitorPageSnapshotResponseWriter) Write(body []byte) (int, error) {
+	writer.capture(body)
+	return writer.ResponseWriter.Write(body)
+}
+
+func (writer *channelMonitorPageSnapshotResponseWriter) WriteString(body string) (int, error) {
+	writer.capture([]byte(body))
+	return writer.ResponseWriter.WriteString(body)
+}
+
+func (writer *channelMonitorPageSnapshotResponseWriter) capture(body []byte) {
+	remaining := channelMonitorPageSnapshotResponseBodyLimit - len(writer.body)
+	if remaining <= 0 {
+		return
+	}
+	if len(body) > remaining {
+		body = body[:remaining]
+	}
+	writer.body = append(writer.body, body...)
+}
+
+// ChannelMonitorPageSnapshotSyncMiddleware rebuilds the current operator's
+// standard monitor snapshots after a successful channel-monitor mutation.
+func ChannelMonitorPageSnapshotSyncMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		originalWriter := c.Writer
+		captureWriter := &channelMonitorPageSnapshotResponseWriter{
+			ResponseWriter: originalWriter,
+		}
+		c.Writer = captureWriter
+		c.Next()
+		c.Writer = originalWriter
+		if !shouldSyncChannelMonitorPageSnapshots(c, captureWriter.body) {
+			return
+		}
+		syncChannelMonitorPageSnapshots(c)
+	}
+}
+
+func shouldSyncChannelMonitorPageSnapshots(c *gin.Context, responseBody []byte) bool {
+	if c == nil || c.Request == nil || c.Writer == nil ||
+		c.Writer.Status() < http.StatusOK || c.Writer.Status() >= http.StatusMultipleChoices {
+		return false
+	}
+	if len(responseBody) > 0 {
+		var response struct {
+			Success *bool `json:"success"`
+		}
+		if common.Unmarshal(responseBody, &response) == nil && response.Success != nil && !*response.Success {
+			return false
+		}
+	}
+	if c.Request.Method != http.MethodGet {
+		return true
+	}
+	path := c.Request.URL.Path
+	for _, suffix := range []string{
+		"/test",
+		"/update_balance",
+		"/fetch_models",
+	} {
+		if strings.HasSuffix(path, suffix) || strings.Contains(path, suffix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func syncChannelMonitorPageSnapshots(c *gin.Context) {
+	if c == nil || c.Request == nil || !common.RedisEnabled {
+		return
+	}
+	specs := []channelMonitorPageSnapshotSyncSpec{
+		{
+			page:    channelMonitorPageSnapshotOverview,
+			handler: GetChannelMonitorOverview,
+		},
+		{
+			page:     channelMonitorPageSnapshotCost,
+			rawQuery: "days=2&page=1&summary_only=true",
+			handler:  GetChannelMonitorCostOverview,
+		},
+		{
+			page:    channelMonitorPageSnapshotPerformance,
+			handler: GetChannelMonitorPerformance,
+		},
+		{
+			page:    channelMonitorPageSnapshotSuccess,
+			handler: GetChannelMonitorTodaySuccess,
+		},
+		{
+			page:     channelMonitorPageSnapshotSchedule,
+			rawQuery: "metrics=false",
+			handler:  GetChannelMonitorSmartScheduleRoutes,
+		},
+		{
+			page:     channelMonitorPageSnapshotSchedule,
+			rawQuery: "metrics=true",
+			handler:  GetChannelMonitorSmartScheduleRoutes,
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var waitGroup sync.WaitGroup
+	for _, spec := range specs {
+		spec := spec
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			request := copyChannelMonitorPageSnapshotRequest(c)
+			request.request.Method = http.MethodGet
+			request.request.URL.RawQuery = spec.rawQuery
+			target := channelMonitorPageSnapshotRequestContext(
+				request,
+				httptest.NewRecorder(),
+			)
+			query := channelMonitorPageSnapshotQuery(target, spec.page)
+			builder := func(buildContext context.Context) (service.ChannelMonitorPageSnapshot, error) {
+				return buildChannelMonitorPageSnapshot(buildContext, spec.page, request, spec.handler)
+			}
+			if _, err := service.RefreshChannelMonitorPageSnapshot(ctx, query, builder); err != nil {
+				common.SysError(fmt.Sprintf("同步渠道监控页面快照失败: page=%s err=%v", spec.page, err))
+			}
+		}()
+	}
+	waitGroup.Wait()
 }
 
 func serveChannelMonitorPageSnapshot(
@@ -260,6 +402,20 @@ func copyChannelMonitorPageSnapshotRequest(c *gin.Context) channelMonitorPageSna
 	}
 }
 
+func channelMonitorPageSnapshotRequestContext(
+	request channelMonitorPageSnapshotRequest,
+	recorder *httptest.ResponseRecorder,
+) *gin.Context {
+	target, _ := gin.CreateTestContext(recorder)
+	target.Request = request.request.Clone(context.Background())
+	target.Params = append(gin.Params(nil), request.params...)
+	target.Keys = make(map[string]any, len(request.keys))
+	for key, value := range request.keys {
+		target.Keys[key] = value
+	}
+	return target
+}
+
 func buildChannelMonitorPageSnapshot(
 	ctx context.Context,
 	page string,
@@ -267,13 +423,8 @@ func buildChannelMonitorPageSnapshot(
 	handler gin.HandlerFunc,
 ) (service.ChannelMonitorPageSnapshot, error) {
 	recorder := httptest.NewRecorder()
-	target, _ := gin.CreateTestContext(recorder)
+	target := channelMonitorPageSnapshotRequestContext(request, recorder)
 	target.Request = request.request.Clone(ctx)
-	target.Params = append(gin.Params(nil), request.params...)
-	target.Keys = make(map[string]any, len(request.keys))
-	for key, value := range request.keys {
-		target.Keys[key] = value
-	}
 	handler(target)
 	response := recorder.Result()
 	defer response.Body.Close()

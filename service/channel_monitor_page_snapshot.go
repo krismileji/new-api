@@ -129,7 +129,7 @@ func RefreshChannelMonitorPageSnapshot(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return defaultChannelMonitorPageSnapshotStore.refreshSnapshot(ctx, query, builder)
+	return defaultChannelMonitorPageSnapshotStore.refreshSnapshotForce(ctx, query, builder)
 }
 
 // RequestChannelMonitorPageSnapshotRefresh submits at most one local refresh
@@ -265,6 +265,23 @@ func (store *channelMonitorPageSnapshotStore) refreshSnapshot(
 	query ChannelMonitorPageSnapshotQuery,
 	builder ChannelMonitorPageSnapshotBuilder,
 ) (ChannelMonitorPageSnapshot, error) {
+	return store.refreshSnapshotWithMode(ctx, query, builder, false)
+}
+
+func (store *channelMonitorPageSnapshotStore) refreshSnapshotForce(
+	ctx context.Context,
+	query ChannelMonitorPageSnapshotQuery,
+	builder ChannelMonitorPageSnapshotBuilder,
+) (ChannelMonitorPageSnapshot, error) {
+	return store.refreshSnapshotWithMode(ctx, query, builder, true)
+}
+
+func (store *channelMonitorPageSnapshotStore) refreshSnapshotWithMode(
+	ctx context.Context,
+	query ChannelMonitorPageSnapshotQuery,
+	builder ChannelMonitorPageSnapshotBuilder,
+	force bool,
+) (ChannelMonitorPageSnapshot, error) {
 	if builder == nil {
 		return ChannelMonitorPageSnapshot{}, ErrChannelMonitorPageSnapshotNotCacheable
 	}
@@ -272,10 +289,16 @@ func (store *channelMonitorPageSnapshotStore) refreshSnapshot(
 	if err != nil {
 		return ChannelMonitorPageSnapshot{}, err
 	}
-	resultChannel := store.refresh.DoChan(key, func() (any, error) {
-		if snapshot, state, loadErr := store.load(ctx, query, time.Now()); loadErr == nil &&
-			state == ChannelMonitorPageSnapshotFresh {
-			return snapshot, nil
+	singleflightKey := key
+	if force {
+		singleflightKey += ":force"
+	}
+	resultChannel := store.refresh.DoChan(singleflightKey, func() (any, error) {
+		if !force {
+			if snapshot, state, loadErr := store.load(ctx, query, time.Now()); loadErr == nil &&
+				state == ChannelMonitorPageSnapshotFresh {
+				return snapshot, nil
+			}
 		}
 		token, acquired, acquireErr := store.acquireLease(ctx, key)
 		if acquireErr != nil {
@@ -284,7 +307,7 @@ func (store *channelMonitorPageSnapshotStore) refreshSnapshot(
 		if !acquired {
 			return store.waitForSnapshot(ctx, query, time.Now(), builder)
 		}
-		return store.rebuildWithLease(ctx, query, key, token, builder)
+		return store.rebuildWithLeaseWithMode(ctx, query, key, token, builder, force)
 	})
 	select {
 	case result := <-resultChannel:
@@ -304,6 +327,17 @@ func (store *channelMonitorPageSnapshotStore) rebuildWithLease(
 	key string,
 	token int64,
 	builder ChannelMonitorPageSnapshotBuilder,
+) (ChannelMonitorPageSnapshot, error) {
+	return store.rebuildWithLeaseWithMode(ctx, query, key, token, builder, false)
+}
+
+func (store *channelMonitorPageSnapshotStore) rebuildWithLeaseWithMode(
+	ctx context.Context,
+	query ChannelMonitorPageSnapshotQuery,
+	key string,
+	token int64,
+	builder ChannelMonitorPageSnapshotBuilder,
+	force bool,
 ) (ChannelMonitorPageSnapshot, error) {
 	defer store.releaseLease(key, token)
 	snapshot, err := builder(ctx)
@@ -337,7 +371,7 @@ func (store *channelMonitorPageSnapshotStore) rebuildWithLease(
 	if snapshot.ContentType == "" {
 		snapshot.ContentType = "application/json; charset=utf-8"
 	}
-	published, err := store.publish(ctx, key, token, snapshot)
+	published, err := store.publishWithMode(ctx, key, token, snapshot, force)
 	if err != nil {
 		return snapshot, err
 	}
@@ -357,6 +391,16 @@ func (store *channelMonitorPageSnapshotStore) publish(
 	token int64,
 	snapshot ChannelMonitorPageSnapshot,
 ) (bool, error) {
+	return store.publishWithMode(ctx, key, token, snapshot, false)
+}
+
+func (store *channelMonitorPageSnapshotStore) publishWithMode(
+	ctx context.Context,
+	key string,
+	token int64,
+	snapshot ChannelMonitorPageSnapshot,
+	force bool,
+) (bool, error) {
 	client := store.writeClient()
 	if client == nil {
 		return false, ErrChannelMonitorPageSnapshotUnavailable
@@ -364,6 +408,10 @@ func (store *channelMonitorPageSnapshotStore) publish(
 	payload, err := common.Marshal(snapshot)
 	if err != nil {
 		return false, err
+	}
+	forceArg := "0"
+	if force {
+		forceArg = "1"
 	}
 	result, err := redis.NewScript(`
 local function less(a, b)
@@ -387,9 +435,9 @@ local old_data_cutoff = redis.call("HGET", KEYS[2], "data_cutoff_at") or "0"
 local same_revision = not less(ARGV[3], old_revision) and not less(old_revision, ARGV[3])
 local same_watermark = not less(ARGV[4], old_watermark) and not less(old_watermark, ARGV[4])
 local same_data_cutoff = not less(ARGV[6], old_data_cutoff) and not less(old_data_cutoff, ARGV[6])
-if less(ARGV[3], old_revision) or less(ARGV[4], old_watermark) or
+if ARGV[8] ~= "1" and (less(ARGV[3], old_revision) or less(ARGV[4], old_watermark) or
    less(ARGV[5], old_generated) or less(ARGV[6], old_data_cutoff) or
-   (same_revision and same_watermark and same_data_cutoff and not less(old_generated, ARGV[5])) then
+   (same_revision and same_watermark and same_data_cutoff and not less(old_generated, ARGV[5]))) then
   return 0
 end
 redis.call("SET", KEYS[1], ARGV[2], "PX", ARGV[7])
@@ -411,6 +459,7 @@ return 1
 		strconv.FormatInt(snapshot.GeneratedAtUnixMilli, 10),
 		strconv.FormatInt(snapshot.DataCutoffAt, 10),
 		strconv.FormatInt(channelMonitorPageSnapshotRetention.Milliseconds(), 10),
+		forceArg,
 	).Int64()
 	if err != nil {
 		return false, err

@@ -86,6 +86,33 @@ func TestChannelMonitorPageSnapshotFreshHitAndPermissionIsolation(t *testing.T) 
 	_ = client
 }
 
+func TestChannelMonitorPageSnapshotForceRefreshRebuildsFreshSnapshot(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	ctx := context.Background()
+	query := channelMonitorPageSnapshotTestQuery("user=force-refresh")
+	var builds atomic.Int32
+	builder := func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		if builds.Add(1) == 1 {
+			return channelMonitorPageSnapshotTestValue("old"), nil
+		}
+		return channelMonitorPageSnapshotTestValue("new"), nil
+	}
+
+	first, err := store.refreshSnapshot(ctx, query, builder)
+	require.NoError(t, err)
+	require.Contains(t, string(first.Payload), "old")
+
+	refreshed, err := store.refreshSnapshotForce(ctx, query, builder)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), builds.Load())
+	assert.Contains(t, string(refreshed.Payload), "new")
+
+	loaded, state, err := store.load(ctx, query, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, ChannelMonitorPageSnapshotFresh, state)
+	assert.Contains(t, string(loaded.Payload), "new")
+}
+
 func TestChannelMonitorPageSnapshotReturnsStaleWhileOneBackgroundRefreshRuns(t *testing.T) {
 	_, client, store := newChannelMonitorPageSnapshotTestStore(t)
 	ctx := context.Background()

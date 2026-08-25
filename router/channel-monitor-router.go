@@ -9,7 +9,11 @@ import (
 
 func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	monitorRoute := apiRouter.Group("/channel_monitor")
-	monitorRoute.Use(middleware.RootAuth(), middleware.SkipAdminAuditFallback())
+	monitorRoute.Use(
+		middleware.RootAuth(),
+		middleware.SkipAdminAuditFallback(),
+		controller.ChannelMonitorPageSnapshotSyncMiddleware(),
+	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
 		monitorRoute.GET("/", controller.GetChannelMonitorOverview)

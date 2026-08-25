@@ -212,32 +212,6 @@ test('loads and updates one group-model scheduling route', async () => {
   })
 })
 
-test('bypasses the page snapshot for an action-triggered schedule refresh', async () => {
-  const originalAdapter = api.defaults.adapter
-  let requestConfig: AxiosRequestConfig | undefined
-  api.defaults.adapter = async (config) => {
-    requestConfig = config
-    return {
-      data: { success: true, message: '', data: {} },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config,
-    }
-  }
-
-  try {
-    await getChannelMonitorSmartScheduleRoutes(true, true)
-  } finally {
-    api.defaults.adapter = originalAdapter
-  }
-
-  assert.deepEqual(requestConfig?.params, {
-    metrics: true,
-    refresh: true,
-  })
-})
-
 test('sets one channel group-model route traffic pause duration', async () => {
   const originalAdapter = api.defaults.adapter
   let requestConfig: AxiosRequestConfig | undefined
