@@ -341,6 +341,57 @@ describe('模型检测历史 Sheet', () => {
 
   test('展开轮次结果时展示每个目标的结论与关键判定', async () => {
     const run = createRun({ run_id: 'run-results' })
+    const execution: ChannelModelDetectionRunDetail['executions'][number] = {
+      run_id: run.run_id,
+      target_key: 'target-sol',
+      status: 'completed',
+      error_code: '',
+      request_model: 'gpt-4o-mini',
+      claimed_model: 'gpt-5.6-sol',
+      outcome_code: 'juice_pass_fingerprint_strong',
+      title_cn: 'Juice 检测通过',
+      subtitle_cn: '指纹与申报型号一致',
+      juice_verdict_state: 'pass',
+      fingerprint_verdict_state: 'strong',
+      fingerprint_model: 'gpt-5.6-sol',
+      fingerprint_claim_mismatch: false,
+      preset: run.preset,
+      preset_source: run.preset_source,
+      trigger: run.trigger,
+      progress: {
+        planned: 3,
+        logical_completed: 3,
+        successful: 3,
+        errors: 0,
+        cancelled: 0,
+        http_attempts: 3,
+        retries: 0,
+      },
+      cost: createCost({
+        settled_request_count: 1,
+        unresolved_request_count: 0,
+        unresolved_cost_unknown_count: 0,
+      }),
+      started_at: run.started_at,
+      finished_at: run.finished_at,
+      updated_at: run.updated_at,
+      official_session_id: '',
+      official: true,
+      config_hash: '',
+      schema_version: 1,
+      scoring_version: '',
+      baseline_id: '',
+      baseline_sha256: '',
+      build_hash: '',
+      usage_available: true,
+      input_tokens: 120,
+      output_tokens: 24,
+      total_tokens: 144,
+      report_sha256: '',
+      final_error_code: '',
+      error_message: '',
+      report: { overall_verdict: '通过' },
+    }
     await renderHistory({
       channel: createChannel(),
       initialQuery: createQuery(),
@@ -348,56 +399,14 @@ describe('模型检测历史 Sheet', () => {
       onLoadRunDetail: async () => ({
         run,
         executions: [
+          execution,
           {
-            run_id: run.run_id,
-            target_key: 'target-sol',
-            status: 'completed',
-            error_code: '',
-            request_model: 'gpt-4o-mini',
-            claimed_model: 'gpt-5.6-sol',
-            outcome_code: 'juice_pass_fingerprint_strong',
-            title_cn: 'Juice 检测通过',
-            subtitle_cn: '指纹与申报型号一致',
-            juice_verdict_state: 'pass',
-            fingerprint_verdict_state: 'strong',
-            fingerprint_model: 'gpt-5.6-sol',
-            fingerprint_claim_mismatch: false,
-            preset: run.preset,
-            preset_source: run.preset_source,
-            trigger: run.trigger,
-            progress: {
-              planned: 3,
-              logical_completed: 3,
-              successful: 3,
-              errors: 0,
-              cancelled: 0,
-              http_attempts: 3,
-              retries: 0,
-            },
-            cost: createCost({
-              settled_request_count: 1,
-              unresolved_request_count: 0,
-              unresolved_cost_unknown_count: 0,
-            }),
-            started_at: run.started_at,
-            finished_at: run.finished_at,
-            updated_at: run.updated_at,
-            official_session_id: '',
-            official: true,
-            config_hash: '',
-            schema_version: 1,
-            scoring_version: '',
-            baseline_id: '',
-            baseline_sha256: '',
-            build_hash: '',
-            usage_available: true,
-            input_tokens: 120,
-            output_tokens: 24,
-            total_tokens: 144,
-            report_sha256: '',
-            final_error_code: '',
-            error_message: '',
-            report: { overall_verdict: '通过' },
+            ...execution,
+            target_key: 'target-terra',
+            claimed_model: 'gpt-5.6-terra',
+            fingerprint_verdict_state: 'unclear',
+            fingerprint_model: '',
+            report: { overall_verdict: '需关注' },
           },
         ],
       }),
@@ -412,11 +421,25 @@ describe('模型检测历史 Sheet', () => {
       '[data-slot="model-detection-history-results"]'
     )
     assert.ok(results)
-    assert.match(results.textContent ?? '', /Juice 检测通过/)
-    assert.match(results.textContent ?? '', /最终结果：通过/)
-    assert.match(results.textContent ?? '', /Juice 通过/)
-    assert.match(results.textContent ?? '', /指纹 明确/)
-    assert.match(results.textContent ?? '', /识别 gpt-5\.6-sol/)
+    const triggers = [
+      ...results.querySelectorAll<HTMLButtonElement>(
+        '[data-slot="tabs-trigger"]'
+      ),
+    ]
+    assert.equal(triggers.length, 2)
+    assert.match(triggers[0].textContent ?? '', /Sol/)
+    assert.match(triggers[1].textContent ?? '', /Terra/)
+    assert.match(results.textContent ?? '', /最终判定通过/)
+    assert.match(results.textContent ?? '', /Juice 证据通过/)
+    assert.match(results.textContent ?? '', /行为指纹明确/)
+    assert.match(results.textContent ?? '', /检测器识别gpt-5\.6-sol/)
+
+    await act(async () => {
+      triggers[1].click()
+      await Promise.resolve()
+    })
+    assert.match(results.textContent ?? '', /最终判定需关注/)
+    assert.match(results.textContent ?? '', /行为指纹不明确/)
   })
 
   test('缺少 Usage 的请求保持待核实且不会把空值格式化为零', async () => {

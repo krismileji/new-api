@@ -52,9 +52,11 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
+  channelModelDetectionClaimedModelLabel,
   channelModelDetectionPresetLabel,
   channelModelDetectionPresetSourceLabel,
   channelModelDetectionResultLabel,
@@ -242,6 +244,87 @@ function executionOverallVerdict(
   return execution.title_cn?.trim() || resultLabel
 }
 
+function ExecutionResultCard(props: {
+  execution: ChannelModelDetectionRunDetail['executions'][number]
+}) {
+  const execution = props.execution
+  const tone = channelModelDetectionResultTone({
+    claimedModel: execution.claimed_model,
+    status: execution.status,
+    outcomeCode: execution.outcome_code,
+    errorCode: execution.error_code || execution.final_error_code,
+    fingerprintModel: execution.fingerprint_model,
+    fingerprintClaimMismatch: execution.fingerprint_claim_mismatch,
+  })
+  const errorMessage =
+    execution.error_message || execution.error_code || execution.final_error_code
+  const fingerprintModel = execution.fingerprint_model?.trim()
+  const resultLabel = channelModelDetectionResultLabel({
+    status: execution.status,
+    outcomeCode: execution.outcome_code,
+    errorCode: execution.error_code || execution.final_error_code,
+    title: execution.title_cn,
+  })
+  const overallVerdict = executionOverallVerdict(execution, resultLabel)
+
+  return (
+    <div
+      className='bg-muted/25 min-w-0 rounded-md border px-2.5 py-2.5'
+      data-slot='model-detection-history-result-card'
+      data-target-key={execution.target_key}
+    >
+      <div className='flex min-w-0 items-start justify-between gap-2'>
+        <div className='min-w-0'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
+            <span className='truncate text-xs font-medium'>
+              申报模型：{execution.claimed_model}
+            </span>
+            <Badge variant={resultBadgeVariant(tone)}>{resultLabel}</Badge>
+          </div>
+          <div className='text-muted-foreground mt-1 truncate text-[11px]'>
+            请求模型：{execution.request_model}
+          </div>
+        </div>
+        <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>
+          {execution.progress.logical_completed} / {execution.progress.planned}
+        </span>
+      </div>
+      <dl className='mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-2'>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>最终判定</dt>
+          <dd className='truncate font-medium text-foreground' title={overallVerdict}>
+            {overallVerdict}
+          </dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>Juice 证据</dt>
+          <dd>{verdictLabel(execution.juice_verdict_state, 'juice')}</dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground'>行为指纹</dt>
+          <dd>{verdictLabel(execution.fingerprint_verdict_state, 'fingerprint')}</dd>
+        </div>
+        {fingerprintModel ? (
+          <div className='min-w-0'>
+            <dt className='text-muted-foreground'>检测器识别</dt>
+            <dd className='truncate' title={fingerprintModel}>
+              {fingerprintModel}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+      {execution.subtitle_cn || errorMessage ? (
+        <div
+          className={`${errorMessage ? 'text-destructive' : 'text-muted-foreground'} mt-2 truncate text-[11px]`}
+          title={errorMessage || execution.subtitle_cn}
+        >
+          {errorMessage || execution.subtitle_cn}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function RunResultList(props: {
   detail: ChannelModelDetectionRunDetail
 }) {
@@ -253,81 +336,64 @@ function RunResultList(props: {
     )
   }
 
+  const executions = props.detail.executions
+  if (executions.length === 1) {
+    return (
+      <div
+        className='flex min-w-0 flex-col gap-1.5'
+        data-slot='model-detection-history-results'
+      >
+        <ExecutionResultCard execution={executions[0]} />
+      </div>
+    )
+  }
+
   return (
-    <div
-      className='flex min-w-0 flex-col gap-1.5'
+    <Tabs
+      defaultValue={executions[0].target_key}
+      className='min-w-0 gap-1.5'
       data-slot='model-detection-history-results'
     >
-      {props.detail.executions.map((execution) => {
-        const tone = channelModelDetectionResultTone({
-          claimedModel: execution.claimed_model,
-          status: execution.status,
-          outcomeCode: execution.outcome_code,
-          errorCode: execution.error_code || execution.final_error_code,
-          fingerprintModel: execution.fingerprint_model,
-          fingerprintClaimMismatch: execution.fingerprint_claim_mismatch,
-        })
-        const errorMessage =
-          execution.error_message || execution.error_code || execution.final_error_code
-        const fingerprintModel = execution.fingerprint_model?.trim()
-        const resultLabel = channelModelDetectionResultLabel({
-          status: execution.status,
-          outcomeCode: execution.outcome_code,
-          errorCode: execution.error_code || execution.final_error_code,
-          title: execution.title_cn,
-        })
-        const overallVerdict = executionOverallVerdict(execution, resultLabel)
-
-        return (
-          <div
-            key={execution.target_key}
-            className='bg-muted/25 min-w-0 rounded-md border px-2.5 py-2'
-          >
-            <div className='flex min-w-0 items-start justify-between gap-2'>
-              <div className='min-w-0'>
-                <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
-                  <span className='truncate text-xs font-medium'>
-                    {execution.claimed_model}
-                  </span>
-                  <Badge variant={resultBadgeVariant(tone)}>
-                    {resultLabel}
-                  </Badge>
-                </div>
-                <div className='text-muted-foreground mt-1 truncate text-[11px]'>
-                  请求模型 {execution.request_model}
-                </div>
-              </div>
-              <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>
-                {execution.progress.logical_completed} / {execution.progress.planned}
+      <div className='text-muted-foreground flex items-center justify-between gap-2 px-0.5 text-[11px]'>
+        <span>本轮模型结果</span>
+        <span>{executions.length} 个模型</span>
+      </div>
+      <TabsList className='no-scrollbar flex h-auto w-full flex-nowrap justify-start overflow-x-auto rounded-md border bg-muted/30 p-1'>
+        {executions.map((execution) => {
+          const resultLabel = channelModelDetectionResultLabel({
+            status: execution.status,
+            outcomeCode: execution.outcome_code,
+            errorCode: execution.error_code || execution.final_error_code,
+            title: execution.title_cn,
+          })
+          return (
+            <TabsTrigger
+              key={execution.target_key}
+              value={execution.target_key}
+              className='min-w-28 max-w-48 flex-none px-2.5 py-1.5 text-[11px]'
+              aria-label={`切换到 ${execution.claimed_model} 检测结果`}
+              title={`${execution.claimed_model}：${resultLabel}`}
+            >
+              <span className='truncate'>
+                {channelModelDetectionClaimedModelLabel(execution.claimed_model)}
               </span>
-            </div>
-            <div className='text-muted-foreground mt-1.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px]'>
-              <span className='font-medium text-foreground'>最终结果：{overallVerdict}</span>
-              <span aria-hidden='true'>·</span>
-              <span>Juice {verdictLabel(execution.juice_verdict_state, 'juice')}</span>
-              <span aria-hidden='true'>·</span>
-              <span>
-                指纹 {verdictLabel(execution.fingerprint_verdict_state, 'fingerprint')}
+              <span className='text-muted-foreground truncate'>
+                {resultLabel}
               </span>
-              {fingerprintModel ? (
-                <>
-                  <span aria-hidden='true'>·</span>
-                  <span className='truncate'>识别 {fingerprintModel}</span>
-                </>
-              ) : null}
-            </div>
-            {execution.subtitle_cn || errorMessage ? (
-              <div
-                className={`${errorMessage ? 'text-destructive' : 'text-muted-foreground'} mt-1 truncate text-[11px]`}
-                title={errorMessage || execution.subtitle_cn}
-              >
-                {errorMessage || execution.subtitle_cn}
-              </div>
-            ) : null}
-          </div>
-        )
-      })}
-    </div>
+            </TabsTrigger>
+          )
+        })}
+      </TabsList>
+      {executions.map((execution) => (
+        <TabsContent
+          key={execution.target_key}
+          value={execution.target_key}
+          className='min-w-0'
+        >
+          <ExecutionResultCard execution={execution} />
+        </TabsContent>
+      ))}
+    </Tabs>
   )
 }
 
