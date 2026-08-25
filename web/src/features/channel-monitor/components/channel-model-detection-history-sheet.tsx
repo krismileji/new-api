@@ -230,6 +230,18 @@ function verdictLabel(value: string | undefined, kind: 'juice' | 'fingerprint') 
   return '未返回'
 }
 
+function executionOverallVerdict(
+  execution: ChannelModelDetectionRunDetail['executions'][number],
+  resultLabel: string
+) {
+  const report = execution.report
+  if (typeof report === 'object' && report !== null && !Array.isArray(report)) {
+    const verdict = (report as Record<string, unknown>).overall_verdict
+    if (typeof verdict === 'string' && verdict.trim()) return verdict.trim()
+  }
+  return execution.title_cn?.trim() || resultLabel
+}
+
 function RunResultList(props: {
   detail: ChannelModelDetectionRunDetail
 }) {
@@ -258,6 +270,13 @@ function RunResultList(props: {
         const errorMessage =
           execution.error_message || execution.error_code || execution.final_error_code
         const fingerprintModel = execution.fingerprint_model?.trim()
+        const resultLabel = channelModelDetectionResultLabel({
+          status: execution.status,
+          outcomeCode: execution.outcome_code,
+          errorCode: execution.error_code || execution.final_error_code,
+          title: execution.title_cn,
+        })
+        const overallVerdict = executionOverallVerdict(execution, resultLabel)
 
         return (
           <div
@@ -271,12 +290,7 @@ function RunResultList(props: {
                     {execution.claimed_model}
                   </span>
                   <Badge variant={resultBadgeVariant(tone)}>
-                    {channelModelDetectionResultLabel({
-                      status: execution.status,
-                      outcomeCode: execution.outcome_code,
-                      errorCode: execution.error_code || execution.final_error_code,
-                      title: execution.title_cn,
-                    })}
+                    {resultLabel}
                   </Badge>
                 </div>
                 <div className='text-muted-foreground mt-1 truncate text-[11px]'>
@@ -288,6 +302,8 @@ function RunResultList(props: {
               </span>
             </div>
             <div className='text-muted-foreground mt-1.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px]'>
+              <span className='font-medium text-foreground'>最终结果：{overallVerdict}</span>
+              <span aria-hidden='true'>·</span>
               <span>Juice {verdictLabel(execution.juice_verdict_state, 'juice')}</span>
               <span aria-hidden='true'>·</span>
               <span>

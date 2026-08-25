@@ -397,7 +397,7 @@ describe('模型检测历史 Sheet', () => {
             report_sha256: '',
             final_error_code: '',
             error_message: '',
-            report: null,
+            report: { overall_verdict: '通过' },
           },
         ],
       }),
@@ -413,6 +413,7 @@ describe('模型检测历史 Sheet', () => {
     )
     assert.ok(results)
     assert.match(results.textContent ?? '', /Juice 检测通过/)
+    assert.match(results.textContent ?? '', /最终结果：通过/)
     assert.match(results.textContent ?? '', /Juice 通过/)
     assert.match(results.textContent ?? '', /指纹 明确/)
     assert.match(results.textContent ?? '', /识别 gpt-5\.6-sol/)
