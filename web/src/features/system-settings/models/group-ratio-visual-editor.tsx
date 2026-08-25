@@ -127,16 +127,21 @@ function parseRatioMap(value: string): Record<string, number> {
   })
 }
 
-function parseGroupOrder(value: string): string[] {
-  return safeJsonParse<string[]>(value, {
+function parseGroupOrder(value: string | null | undefined): string[] {
+  const parsed = safeJsonParse<string[]>(value, {
     fallback: [],
     silent: true,
   })
+  return Array.isArray(parsed) ? parsed : []
 }
 
-function orderGroupNames(names: string[], groupOrder: string[]): string[] {
+function orderGroupNames(
+  names: string[],
+  groupOrder: readonly string[] | null | undefined
+): string[] {
   const available = new Set(names)
-  const ordered = groupOrder.filter((name) => available.has(name))
+  const safeGroupOrder = Array.isArray(groupOrder) ? groupOrder : []
+  const ordered = safeGroupOrder.filter((name) => available.has(name))
   const seen = new Set(ordered)
   for (const name of [...names].sort((left, right) =>
     left.localeCompare(right)
