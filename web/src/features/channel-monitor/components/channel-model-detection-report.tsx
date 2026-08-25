@@ -48,6 +48,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
 import {
@@ -1649,9 +1650,41 @@ export function ChannelModelDetectionReport(
       className='min-w-0 overflow-x-hidden'
       data-slot='model-detection-report'
     >
-      {props.executions.map((execution) => (
-        <ExecutionReport key={execution.target_key} execution={execution} />
-      ))}
+      {props.executions.length === 1 ? (
+        <ExecutionReport
+          key={props.executions[0].target_key}
+          execution={props.executions[0]}
+        />
+      ) : (
+        <Tabs
+          defaultValue={props.executions[0].target_key}
+          className='min-w-0 gap-0'
+          orientation='horizontal'
+        >
+          <TabsList className='no-scrollbar flex h-auto w-full flex-nowrap justify-start overflow-x-auto rounded-none border-b bg-transparent p-1'>
+            {props.executions.map((execution) => (
+              <TabsTrigger
+                key={execution.target_key}
+                value={execution.target_key}
+                className='min-w-32 max-w-64 flex-none px-3 py-2 text-xs'
+                aria-label={`切换到 ${execution.request_model} 检测结果`}
+                title={execution.request_model}
+              >
+                <span className='truncate'>{execution.request_model}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {props.executions.map((execution) => (
+            <TabsContent
+              key={execution.target_key}
+              value={execution.target_key}
+              className='min-w-0'
+            >
+              <ExecutionReport execution={execution} />
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   )
 }

@@ -179,6 +179,23 @@ function executionNode(targetKey: string) {
   return node
 }
 
+function reportTabTriggers() {
+  return [
+    ...document.querySelectorAll<HTMLButtonElement>(
+      '[data-slot="tabs-trigger"]'
+    ),
+  ]
+}
+
+async function selectReportTab(index: number) {
+  const trigger = reportTabTriggers()[index]
+  assert.ok(trigger, `Expected report tab ${index}`)
+  await act(async () => {
+    trigger.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', {
     configurable: true,
@@ -245,7 +262,8 @@ describe('模型检测目标报告', () => {
       )
     )
 
-    for (const fixture of fixtures) {
+    for (const [index, fixture] of fixtures.entries()) {
+      if (index > 0) await selectReportTab(index)
       const node = executionNode(fixture.code)
       assert.equal(node.dataset.outcomeLevel, fixture.level)
       assert.match(node.textContent ?? '', new RegExp(fixture.text))
@@ -701,6 +719,7 @@ describe('模型检测目标报告', () => {
     assert.match(available, /输出 Token8,000/)
     assert.match(available, /总 Token128,000/)
 
+    await selectReportTab(1)
     const unavailable = executionNode('usage-unavailable').textContent ?? ''
     assert.match(unavailable, /Usage 暂不可用/)
     assert.doesNotMatch(unavailable, /输入 Token0/)
@@ -797,5 +816,39 @@ describe('模型检测目标报告', () => {
     assert.match(execution.className, /min-w-0/)
     assert.match(execution.className, /overflow-x-hidden/)
     assert.ok(document.querySelector('.break-all'))
+  })
+
+  test('多个模型报告通过 Tab 切换且默认只展示第一个目标', async () => {
+    await renderReport([
+      createExecution({
+        target_key: 'tab-sol',
+        request_model: 'gpt-5.6-sol-channel',
+        claimed_model: 'gpt-5.6-sol',
+      }),
+      createExecution({
+        target_key: 'tab-terra',
+        request_model: 'gpt-5.6-terra-channel',
+        claimed_model: 'gpt-5.6-terra',
+      }),
+    ])
+
+    const triggers = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[data-slot="tabs-trigger"]'
+      ),
+    ]
+    assert.equal(triggers.length, 2)
+    assert.match(triggers[0].textContent ?? '', /gpt-5\.6-sol-channel/)
+    assert.match(triggers[1].textContent ?? '', /gpt-5\.6-terra-channel/)
+    assert.equal(triggers[0].getAttribute('data-active'), '')
+    assert.equal(triggers[1].getAttribute('data-active'), null)
+
+    await act(async () => {
+      triggers[1].click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    assert.equal(triggers[0].getAttribute('data-active'), null)
+    assert.equal(triggers[1].getAttribute('data-active'), '')
   })
 })
