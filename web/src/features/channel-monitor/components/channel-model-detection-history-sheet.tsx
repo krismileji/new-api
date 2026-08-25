@@ -17,12 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArrowUp01Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import type { ComponentProps } from 'react'
+import { useState, type ComponentProps } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -55,12 +57,16 @@ import { formatTimestampToDate } from '@/lib/format'
 import {
   channelModelDetectionPresetLabel,
   channelModelDetectionPresetSourceLabel,
+  channelModelDetectionResultLabel,
+  channelModelDetectionResultTone,
 } from '../lib/model-detection'
+import { channelModelDetectionRequestErrorMessage } from '../lib/model-detection-settings-api'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
   ChannelModelDetectionHistoryQuery,
   ChannelModelDetectionKnownOutcomeCode,
+  ChannelModelDetectionRunDetail,
   ChannelModelDetectionRunHistoryPage,
   ChannelModelDetectionRunSummary,
   ChannelModelDetectionRunStatus,
@@ -87,6 +93,7 @@ export type ChannelModelDetectionHistorySheetProps = {
   onQueryChange: (query: ChannelModelDetectionHistoryQuery) => void
   onRefresh?: () => void
   onOpenRun?: (run: ChannelModelDetectionRunSummary) => void
+  onLoadRunDetail?: (runId: string) => Promise<ChannelModelDetectionRunDetail>
 }
 
 const TRIGGER_OPTIONS: ReadonlyArray<{
@@ -201,6 +208,113 @@ function statusDotClass(status: ChannelModelDetectionRunStatus) {
   return 'bg-primary'
 }
 
+function resultBadgeVariant(
+  tone: ReturnType<typeof channelModelDetectionResultTone>
+): BadgeVariant {
+  if (tone === 'unhealthy' || tone === 'failed') return 'destructive'
+  if (tone === 'attention') return 'warning'
+  if (tone === 'inactive') return 'outline'
+  return 'secondary'
+}
+
+function verdictLabel(value: string | undefined, kind: 'juice' | 'fingerprint') {
+  const normalized = value?.trim().toLowerCase()
+  if (kind === 'juice') {
+    if (normalized === 'pass') return '通过'
+    if (normalized === 'mismatch') return '不匹配'
+    if (normalized === 'insufficient') return '证据不足'
+    return '未返回'
+  }
+  if (normalized?.includes('strong')) return '明确'
+  if (normalized === 'unclear') return '不明确'
+  return '未返回'
+}
+
+function RunResultList(props: {
+  detail: ChannelModelDetectionRunDetail
+}) {
+  if (props.detail.executions.length === 0) {
+    return (
+      <div className='text-muted-foreground rounded-md border border-dashed px-2.5 py-2 text-xs'>
+        当前轮次还没有目标结果
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className='flex min-w-0 flex-col gap-1.5'
+      data-slot='model-detection-history-results'
+    >
+      {props.detail.executions.map((execution) => {
+        const tone = channelModelDetectionResultTone({
+          claimedModel: execution.claimed_model,
+          status: execution.status,
+          outcomeCode: execution.outcome_code,
+          errorCode: execution.error_code || execution.final_error_code,
+          fingerprintModel: execution.fingerprint_model,
+          fingerprintClaimMismatch: execution.fingerprint_claim_mismatch,
+        })
+        const errorMessage =
+          execution.error_message || execution.error_code || execution.final_error_code
+        const fingerprintModel = execution.fingerprint_model?.trim()
+
+        return (
+          <div
+            key={execution.target_key}
+            className='bg-muted/25 min-w-0 rounded-md border px-2.5 py-2'
+          >
+            <div className='flex min-w-0 items-start justify-between gap-2'>
+              <div className='min-w-0'>
+                <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
+                  <span className='truncate text-xs font-medium'>
+                    {execution.claimed_model}
+                  </span>
+                  <Badge variant={resultBadgeVariant(tone)}>
+                    {channelModelDetectionResultLabel({
+                      status: execution.status,
+                      outcomeCode: execution.outcome_code,
+                      errorCode: execution.error_code || execution.final_error_code,
+                      title: execution.title_cn,
+                    })}
+                  </Badge>
+                </div>
+                <div className='text-muted-foreground mt-1 truncate text-[11px]'>
+                  请求模型 {execution.request_model}
+                </div>
+              </div>
+              <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>
+                {execution.progress.logical_completed} / {execution.progress.planned}
+              </span>
+            </div>
+            <div className='text-muted-foreground mt-1.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px]'>
+              <span>Juice {verdictLabel(execution.juice_verdict_state, 'juice')}</span>
+              <span aria-hidden='true'>·</span>
+              <span>
+                指纹 {verdictLabel(execution.fingerprint_verdict_state, 'fingerprint')}
+              </span>
+              {fingerprintModel ? (
+                <>
+                  <span aria-hidden='true'>·</span>
+                  <span className='truncate'>识别 {fingerprintModel}</span>
+                </>
+              ) : null}
+            </div>
+            {execution.subtitle_cn || errorMessage ? (
+              <div
+                className={`${errorMessage ? 'text-destructive' : 'text-muted-foreground'} mt-1 truncate text-[11px]`}
+                title={errorMessage || execution.subtitle_cn}
+              >
+                {errorMessage || execution.subtitle_cn}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function CostSummary(props: { cost: ChannelModelDetectionCost }) {
   const cost = props.cost
   let settledCost = '尚无已结算渠道成本'
@@ -254,8 +368,13 @@ function CostSummary(props: { cost: ChannelModelDetectionCost }) {
 function RunItem(props: {
   run: ChannelModelDetectionRunSummary
   onOpenRun?: (run: ChannelModelDetectionRunSummary) => void
+  onLoadRunDetail?: (runId: string) => Promise<ChannelModelDetectionRunDetail>
 }) {
   const run = props.run
+  const [resultsOpen, setResultsOpen] = useState(false)
+  const [detail, setDetail] = useState<ChannelModelDetectionRunDetail | null>(null)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
   const status = RUN_STATUS[run.status]
   const progressValue = run.progress.planned
     ? Math.min(
@@ -282,6 +401,48 @@ function RunItem(props: {
   const latestTimestamp =
     run.finished_at || run.updated_at || run.started_at || run.queued_at
 
+  const toggleResults = () => {
+    if (resultsOpen) {
+      setResultsOpen(false)
+      return
+    }
+    if (!props.onLoadRunDetail) {
+      props.onOpenRun?.(run)
+      return
+    }
+    setResultsOpen(true)
+    if (detail || loadingDetail) return
+    setLoadingDetail(true)
+    setDetailError(null)
+    void props
+      .onLoadRunDetail(run.run_id)
+      .then((nextDetail) => setDetail(nextDetail))
+      .catch((error: unknown) => {
+        setDetailError(channelModelDetectionRequestErrorMessage(error))
+      })
+      .finally(() => setLoadingDetail(false))
+  }
+
+  let resultContent = null
+  if (loadingDetail) {
+    resultContent = (
+      <div
+        className='text-muted-foreground rounded-md border border-dashed px-2.5 py-2 text-xs'
+        aria-label='正在加载检测结果'
+      >
+        正在加载检测结果…
+      </div>
+    )
+  } else if (detailError) {
+    resultContent = (
+      <div className='text-destructive rounded-md border border-dashed px-2.5 py-2 text-xs'>
+        结果加载失败：{detailError}
+      </div>
+    )
+  } else if (detail) {
+    resultContent = <RunResultList detail={detail} />
+  }
+
   return (
     <article
       className='min-w-0 rounded-lg border px-3 py-2.5 sm:p-3'
@@ -306,19 +467,38 @@ function RunItem(props: {
             {channelModelDetectionPresetSourceLabel(run.preset_source)}
           </div>
         </div>
-        {props.onOpenRun && (
-          <Button
-            type='button'
-            variant='ghost'
-            size='icon-sm'
-            className='shrink-0'
-            onClick={() => props.onOpenRun?.(run)}
-            aria-label={`查看轮次 ${run.run_id} 详情`}
-            title='查看轮次详情'
-          >
-            <HugeiconsIcon icon={ArrowRight01Icon} />
-          </Button>
-        )}
+        <div className='flex shrink-0 items-center gap-1'>
+          {(props.onLoadRunDetail || props.onOpenRun) && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              className='h-7 gap-1 px-2 text-xs'
+              onClick={toggleResults}
+              aria-expanded={resultsOpen}
+              aria-label={`查看轮次 ${run.run_id} 检测结果`}
+              title='查看检测结果'
+            >
+              <HugeiconsIcon
+                icon={resultsOpen ? ArrowUp01Icon : ArrowDown01Icon}
+              />
+              <span>{resultsOpen ? '收起结果' : '查看结果'}</span>
+            </Button>
+          )}
+          {props.onOpenRun && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon-sm'
+              className='shrink-0'
+              onClick={() => props.onOpenRun?.(run)}
+              aria-label={`查看轮次 ${run.run_id} 详情`}
+              title='查看轮次详情'
+            >
+              <HugeiconsIcon icon={ArrowRight01Icon} />
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className='mt-2 min-w-0'>
@@ -388,6 +568,10 @@ function RunItem(props: {
           {safeError && <span>{safeError}</span>}
         </div>
       )}
+
+      {resultsOpen ? (
+        <div className='mt-2 border-t pt-2'>{resultContent}</div>
+      ) : null}
 
       <div className='mt-2'>
         <CostSummary cost={run.cost} />
@@ -545,7 +729,12 @@ export function ChannelModelDetectionHistorySheet(
     historyContent = (
       <div className='flex min-w-0 flex-col gap-3 p-3 sm:p-4'>
         {props.data?.items.map((run) => (
-          <RunItem key={run.run_id} run={run} onOpenRun={props.onOpenRun} />
+          <RunItem
+            key={run.run_id}
+            run={run}
+            onOpenRun={props.onOpenRun}
+            onLoadRunDetail={props.onLoadRunDetail}
+          />
         ))}
       </div>
     )

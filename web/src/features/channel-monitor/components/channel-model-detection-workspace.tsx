@@ -36,6 +36,7 @@ import { Spinner } from '@/components/ui/spinner'
 
 import {
   cancelChannelModelDetectionRun,
+  getChannelModelDetectionRun,
   getChannelModelDetectionRuns,
   isChannelModelDetectionConfigConflict,
   isChannelModelDetectionInfrastructureConflict,
@@ -457,6 +458,7 @@ export function ChannelModelDetectionWorkspace(
           }}
           onQueryChange={setHistoryQueryInput}
           onRefresh={() => void historyQuery.refetch()}
+          onLoadRunDetail={getChannelModelDetectionRun}
           onOpenRun={(run) => setDetailRunId(run.run_id)}
         />
       ) : null}

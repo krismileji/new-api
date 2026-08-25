@@ -25,6 +25,7 @@ import { formatTimestampToDate } from '@/lib/format'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
+  ChannelModelDetectionRunDetail,
 } from '../../types-model-detection'
 import './test-dom'
 
@@ -58,6 +59,7 @@ type HarnessProps = {
   onQueryChange?: (query: ChannelModelDetectionHistoryQuery) => void
   onRefresh?: () => void
   onOpenRun?: (run: ChannelModelDetectionRunSummary) => void
+  onLoadRunDetail?: (runId: string) => Promise<ChannelModelDetectionRunDetail>
 }
 
 let renderedHistory: RenderedHistory | null = null
@@ -191,6 +193,7 @@ function HistoryHarness(props: HarnessProps) {
       }}
       onRefresh={props.onRefresh}
       onOpenRun={props.onOpenRun}
+      onLoadRunDetail={props.onLoadRunDetail}
     />
   )
 }
@@ -334,6 +337,85 @@ describe('模型检测历史 Sheet', () => {
     assert.match(text, /等待可核验 Usage，不计入已结算成本/)
     assert.match(text, /待核实请求数 1/)
     assert.doesNotMatch(text, /0\.008000000/)
+  })
+
+  test('展开轮次结果时展示每个目标的结论与关键判定', async () => {
+    const run = createRun({ run_id: 'run-results' })
+    await renderHistory({
+      channel: createChannel(),
+      initialQuery: createQuery(),
+      data: createPage([run]),
+      onLoadRunDetail: async () => ({
+        run,
+        executions: [
+          {
+            run_id: run.run_id,
+            target_key: 'target-sol',
+            status: 'completed',
+            error_code: '',
+            request_model: 'gpt-4o-mini',
+            claimed_model: 'gpt-5.6-sol',
+            outcome_code: 'juice_pass_fingerprint_strong',
+            title_cn: 'Juice 检测通过',
+            subtitle_cn: '指纹与申报型号一致',
+            juice_verdict_state: 'pass',
+            fingerprint_verdict_state: 'strong',
+            fingerprint_model: 'gpt-5.6-sol',
+            fingerprint_claim_mismatch: false,
+            preset: run.preset,
+            preset_source: run.preset_source,
+            trigger: run.trigger,
+            progress: {
+              planned: 3,
+              logical_completed: 3,
+              successful: 3,
+              errors: 0,
+              cancelled: 0,
+              http_attempts: 3,
+              retries: 0,
+            },
+            cost: createCost({
+              settled_request_count: 1,
+              unresolved_request_count: 0,
+              unresolved_cost_unknown_count: 0,
+            }),
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            updated_at: run.updated_at,
+            official_session_id: '',
+            official: true,
+            config_hash: '',
+            schema_version: 1,
+            scoring_version: '',
+            baseline_id: '',
+            baseline_sha256: '',
+            build_hash: '',
+            usage_available: true,
+            input_tokens: 120,
+            output_tokens: 24,
+            total_tokens: 144,
+            report_sha256: '',
+            final_error_code: '',
+            error_message: '',
+            report: null,
+          },
+        ],
+      }),
+    })
+
+    await act(async () => {
+      findButton('查看轮次 run-results 检测结果').click()
+      await Promise.resolve()
+    })
+
+    const results = document.querySelector(
+      '[data-slot="model-detection-history-results"]'
+    )
+    assert.ok(results)
+    assert.match(results.textContent ?? '', /Juice 检测通过/)
+    assert.match(results.textContent ?? '', /Juice 通过/)
+    assert.match(results.textContent ?? '', /指纹 明确/)
+    assert.match(results.textContent ?? '', /识别 gpt-5\.6-sol/)
   })
 
   test('缺少 Usage 的请求保持待核实且不会把空值格式化为零', async () => {
