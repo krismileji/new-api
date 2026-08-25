@@ -64,7 +64,7 @@ Object.defineProperty(domWindow.Element.prototype, 'getAnimations', {
   value: () => [],
 })
 
-const { act } = await import('react')
+const { act, useState } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
@@ -255,6 +255,37 @@ const adapter: AxiosAdapter = async (config) => ({
 api.defaults.adapter = adapter
 
 let refreshCount = 0
+export function TestBoard() {
+  const [currentResult, setCurrentResult] = useState(result)
+  return (
+    <ChannelMonitorSmartScheduleBoard
+      active
+      result={currentResult}
+      channels={[channel]}
+      groupPolicies={[policy]}
+      groupRatios={{ vip: 1 }}
+      isLoading={false}
+      isError={false}
+      onOpenSettings={() => {}}
+      onOpenHistory={() => {}}
+      onActionComplete={async () => {
+        refreshCount += 1
+        setCurrentResult((current) => ({
+          ...current,
+          routes: current.routes.map((currentRoute) => ({
+            ...currentRoute,
+            state: {
+              ...currentRoute.state,
+              manual_primary_until: 1_900_000_000,
+              manual_primary_allow_stability_degrade: true,
+            },
+          })),
+        }))
+      }}
+    />
+  )
+}
+
 const container = document.createElement('div')
 document.body.append(container)
 const queryClient = new QueryClient({
@@ -267,20 +298,7 @@ const root = createRoot(container)
 await act(async () => {
   root.render(
     <QueryClientProvider client={queryClient}>
-      <ChannelMonitorSmartScheduleBoard
-        active
-        result={result}
-        channels={[channel]}
-        groupPolicies={[policy]}
-        groupRatios={{ vip: 1 }}
-        isLoading={false}
-        isError={false}
-        onOpenSettings={() => {}}
-        onOpenHistory={() => {}}
-        onActionComplete={async () => {
-          refreshCount += 1
-        }}
-      />
+      <TestBoard />
     </QueryClientProvider>
   )
 })
@@ -300,6 +318,9 @@ for (let attempt = 0; attempt < 20 && refreshCount === 0; attempt += 1) {
   await act(() => Promise.resolve())
 }
 assert.equal(refreshCount, 1)
+assert.ok(
+  container.querySelector<HTMLButtonElement>('[aria-label="取消固定 测试渠道"]')
+)
 
 await act(async () => root.unmount())
 queryClient.clear()

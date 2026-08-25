@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -98,6 +99,64 @@ func TestChannelMonitorSmartScheduleRoutesColdMissBuildsOnlyInBackground(t *test
 	response := decodeChannelMonitorPageSnapshotResponse(t, recorder)
 	assert.True(t, response.Success)
 	assert.False(t, response.Data.Stale)
+}
+
+func TestChannelMonitorSmartScheduleRoutesExplicitRefreshBypassesFreshSnapshot(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:       "false",
+		channelMonitorSmartScheduleGroupPoliciesOption: "[]",
+	})
+	userID := int(channelMonitorPageSnapshotTestUserID.Add(1))
+	targetURL := "/api/channel_monitor/schedule?metrics=false"
+
+	recorder, target := newChannelMonitorPageSnapshotContext(t, targetURL, userID)
+	GetChannelMonitorSmartScheduleRoutes(target)
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	waitForChannelMonitorPageSnapshot(
+		t,
+		channelMonitorPageSnapshotQuery(target, channelMonitorPageSnapshotSchedule),
+	)
+
+	priority := int64(100)
+	channelWeight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 91001, Name: "fresh route", Status: common.ChannelStatusEnabled,
+		Priority: &priority, Weight: &channelWeight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 91001, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: 100,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 91001, GroupName: "vip", ModelName: "model-a",
+		ParticipationSet: true, Revision: 1,
+		ManualPrimaryUntil: common.GetTimestamp() + 3600,
+	}).Error)
+
+	recorder, target = newChannelMonitorPageSnapshotContext(
+		t,
+		targetURL+"&refresh=true",
+		userID,
+	)
+	GetChannelMonitorSmartScheduleRoutes(target)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Routes []struct {
+				ChannelID int `json:"channel_id"`
+				State     struct {
+					ManualPrimaryUntil int64 `json:"manual_primary_until"`
+				} `json:"state"`
+			} `json:"routes"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Routes, 1)
+	assert.Equal(t, 91001, response.Data.Routes[0].ChannelID)
+	assert.Positive(t, response.Data.Routes[0].State.ManualPrimaryUntil)
 }
 
 func TestChannelMonitorPageSnapshotHitsSamePermissionAndIsolatesUsers(t *testing.T) {

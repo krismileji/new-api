@@ -324,13 +324,16 @@ export async function runChannelMonitorSmartSchedule() {
 }
 
 export async function getChannelMonitorSmartScheduleRoutes(
-  metrics: boolean = true
+  metrics: boolean = true,
+  refresh: boolean = false
 ) {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRouteResult>
   >(
     '/api/channel_monitor/schedule',
-    channelMonitorRequestConfig({ params: { metrics } })
+    channelMonitorRequestConfig({
+      params: { metrics, refresh: refresh || undefined },
+    })
   )
   return ensureChannelMonitorSuccess(response.data)
 }

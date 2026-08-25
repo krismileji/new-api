@@ -88,6 +88,7 @@ import {
   fetchChannelMonitorUpstreamRatio,
   getChannelMonitorCostOverview,
   getChannelModelDetectionOverview,
+  getChannelMonitorSmartScheduleRoutes,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateMonitoredChannelStatus,
@@ -471,6 +472,7 @@ export function ChannelMonitor() {
   const manualRefreshPromiseRef = useRef<Promise<void> | null>(null)
   const manualRefreshScopeRef = useRef<string | null>(null)
   const manualRefreshAtRef = useRef(0)
+  const forceSmartScheduleRefreshRef = useRef(false)
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
@@ -496,11 +498,21 @@ export function ChannelMonitor() {
       performanceQueryActive
     )
   )
-  const smartScheduleSummaryQuery = useQuery(
-    getChannelMonitorSmartScheduleQueryOptions(false)
-  )
+  const smartScheduleSummaryQuery = useQuery({
+    ...getChannelMonitorSmartScheduleQueryOptions(false),
+    queryFn: () =>
+      getChannelMonitorSmartScheduleRoutes(
+        false,
+        forceSmartScheduleRefreshRef.current
+      ),
+  })
   const smartScheduleDetailQuery = useQuery({
     ...getChannelMonitorSmartScheduleQueryOptions(true),
+    queryFn: () =>
+      getChannelMonitorSmartScheduleRoutes(
+        true,
+        forceSmartScheduleRefreshRef.current
+      ),
     enabled: view === 'smart-schedule',
   })
   const modelDetectionQuery = useQuery({
@@ -565,22 +577,21 @@ export function ChannelMonitor() {
     manualRefreshPromiseRef.current = refreshPromise
     return refreshPromise
   }
-  const refreshChannelMonitorAfterAction = () => {
+  const refreshChannelMonitorAfterAction = async () => {
     const refreshScope = {
       view,
       taskHistoryOpen,
       smartScheduleHistoryOpen,
     }
-    const pendingRefresh = manualRefreshPromiseRef.current
-    if (pendingRefresh) {
-      return pendingRefresh
-        .catch(() => undefined)
-        .then(() => refetchChannelMonitorQueries(queryClient, refreshScope))
-        .catch(() => undefined)
+    forceSmartScheduleRefreshRef.current = true
+    try {
+      await manualRefreshPromiseRef.current?.catch(() => undefined)
+      await refetchChannelMonitorQueries(queryClient, refreshScope).catch(
+        () => undefined
+      )
+    } finally {
+      forceSmartScheduleRefreshRef.current = false
     }
-    return refetchChannelMonitorQueries(queryClient, refreshScope).catch(
-      () => undefined
-    )
   }
   const ratioFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamRatio,
