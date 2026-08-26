@@ -50,7 +50,7 @@ describe('channel monitor stat card', () => {
       />
     )
 
-    assert.ok(markup.includes('sm:h-32'))
+    assert.ok(markup.includes('sm:h-36'))
     assert.ok(markup.includes('truncate'))
     assert.ok(markup.includes('启用 9 · 停用 3'))
     assert.ok(markup.includes('New API 5 · Sub2API 4 · 自定义 3'))

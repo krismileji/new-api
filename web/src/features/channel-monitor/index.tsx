@@ -1874,7 +1874,7 @@ export function MonitorStatCard(props: MonitorStatCardProps) {
           : undefined
       }
       className={cn(
-        'h-full min-h-0 gap-0 py-0 sm:h-32',
+        'h-full min-h-0 gap-0 py-0 sm:h-36',
         interactive &&
           'cursor-pointer transition-colors hover:ring-2 hover:ring-ring/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
       )}
