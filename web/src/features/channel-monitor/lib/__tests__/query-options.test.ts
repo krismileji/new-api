@@ -38,10 +38,23 @@ import {
   getChannelStatusProbeHistoryLatestExecutionKey,
   isChannelMonitorPerformanceQueryActive,
   refetchChannelMonitorQueries,
+  shouldRefreshChannelMonitorViewOnEnter,
   shouldCoalesceChannelMonitorManualRefresh,
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
+  test('refreshes the selected view whenever entering or switching to it', () => {
+    assert.equal(shouldRefreshChannelMonitorViewOnEnter(null, 'channels'), true)
+    assert.equal(
+      shouldRefreshChannelMonitorViewOnEnter('channels', 'status-probe'),
+      true
+    )
+    assert.equal(
+      shouldRefreshChannelMonitorViewOnEnter('channels', 'channels'),
+      false
+    )
+  })
+
   test('returns a one-second interval for an enabled live page', () => {
     assert.equal(CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS, 1000)
     assert.equal(

@@ -34,6 +34,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   lazy,
   Suspense,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -134,6 +135,7 @@ import {
   getChannelMonitorSmartScheduleQueryOptions,
   isChannelMonitorPerformanceQueryActive,
   refetchChannelMonitorQueries,
+  shouldRefreshChannelMonitorViewOnEnter,
   shouldCoalesceChannelMonitorManualRefresh,
 } from './lib/query-options'
 import { mergeChannelMonitorRealtimeMetadata } from './lib/realtime-metadata'
@@ -471,6 +473,7 @@ export function ChannelMonitor() {
   const manualRefreshPromiseRef = useRef<Promise<void> | null>(null)
   const manualRefreshScopeRef = useRef<string | null>(null)
   const manualRefreshAtRef = useRef(0)
+  const previousViewRef = useRef<MonitorView | null>(null)
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
@@ -533,6 +536,22 @@ export function ChannelMonitor() {
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,
   })
+
+  // Shared queries stay mounted while tabs change, so refetchOnMount alone
+  // cannot refresh a tab when it becomes visible again. Revalidate the
+  // selected scope both when this page opens and when the tab changes.
+  useEffect(() => {
+    if (
+      !shouldRefreshChannelMonitorViewOnEnter(previousViewRef.current, view)
+    ) {
+      return
+    }
+    previousViewRef.current = view
+    void refetchChannelMonitorQueries(queryClient, { view }).catch(
+      () => undefined
+    )
+  }, [queryClient, view])
+
   const refreshChannelMonitor = () => {
     const now = Date.now()
     const refreshScope = getChannelMonitorManualRefreshScopeKey({

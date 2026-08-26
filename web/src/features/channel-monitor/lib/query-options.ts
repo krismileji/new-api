@@ -45,6 +45,13 @@ export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
 }
 
+export function shouldRefreshChannelMonitorViewOnEnter(
+  previousView: ChannelMonitorManualRefreshView | null,
+  currentView: ChannelMonitorManualRefreshView
+) {
+  return previousView === null || previousView !== currentView
+}
+
 export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
   'channel-monitor',
   'smart-schedule',
