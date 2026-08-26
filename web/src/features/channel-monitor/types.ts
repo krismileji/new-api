@@ -1431,14 +1431,6 @@ export type ChannelStatusProbeExecutionPage = {
   items: ChannelStatusProbeExecution[]
 }
 
-export type ChannelStatusProbeSortMode =
-  | 'ratio_asc'
-  | 'ratio_desc'
-  | 'first_token_asc'
-  | 'first_token_desc'
-  | 'tps_desc'
-  | 'tps_asc'
-
 export type ChannelMonitorApiResponse<T> = {
   success: boolean
   message: string

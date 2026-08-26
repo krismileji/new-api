@@ -328,21 +328,11 @@ export type ChannelModelDetectionStatusFilter =
   | 'paused'
   | 'unconfigured'
 
-export type ChannelModelDetectionSortMode =
-  | 'ratio_asc'
-  | 'ratio_desc'
-  | 'latest_desc'
-  | 'latest_asc'
-  | 'issue_first'
-  | 'schedule_first'
-  | 'channel_id_asc'
-
 export type ChannelModelDetectionFilters = {
   status: ChannelModelDetectionStatusFilter
   group: string
   model: string
   search: string
-  sort: ChannelModelDetectionSortMode
   onlyEnabled: boolean
 }
 

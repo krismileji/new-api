@@ -20,8 +20,6 @@ import assert from 'node:assert/strict'
 
 import { describe, test } from 'vitest'
 
-import { CHANNEL_STATUS } from '@/features/channels/constants'
-
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
@@ -34,7 +32,6 @@ import {
   channelModelDetectionResultTone,
   filterChannelModelDetectionChannels,
   isChannelModelDetectionRunActive,
-  sortChannelModelDetectionChannels,
 } from '../model-detection'
 
 function createCost(overrides: Partial<ChannelModelDetectionCost> = {}) {
@@ -59,15 +56,12 @@ function createCost(overrides: Partial<ChannelModelDetectionCost> = {}) {
   } satisfies ChannelModelDetectionCost
 }
 
-function createChannel(
-  id: number,
-  channelStatus: number = CHANNEL_STATUS.ENABLED
-): ChannelModelDetectionChannel {
+function createChannel(id: number): ChannelModelDetectionChannel {
   return {
     id,
     name: id === 1 ? '主渠道' : '备用渠道',
     type: 1,
-    channel_status: channelStatus,
+    channel_status: 1,
     remark: id === 1 ? '华东主线路' : '华北备用',
     groups: id === 1 ? ['default'] : ['vip'],
     cost_ratio: null,
@@ -225,7 +219,6 @@ describe('模型检测展示工具', () => {
       group: 'vip',
       model: 'gpt-5.6-terra',
       search: '备用',
-      sort: 'latest_desc',
       onlyEnabled: false,
     })
 
@@ -238,7 +231,6 @@ describe('模型检测展示工具', () => {
       group: '',
       model: 'gpt-5.6-sol',
       search: '',
-      sort: 'latest_desc',
       onlyEnabled: false,
     })
     assert.deepEqual(noClaimedModelMatch, [])
@@ -268,7 +260,6 @@ describe('模型检测展示工具', () => {
       group: '',
       model: '',
       search: '',
-      sort: 'ratio_asc' as const,
       onlyEnabled: true,
     }
     assert.deepEqual(
@@ -284,54 +275,5 @@ describe('模型检测展示工具', () => {
       }).map((channel) => channel.id),
       [1, 2, 3]
     )
-  })
-
-  test('成本倍率升降序都将未知倍率置底，并按渠道名称和 ID 稳定排序', () => {
-    const channels = [
-      { ...createChannel(5), name: '上海渠道', cost_ratio: null },
-      { ...createChannel(4), name: '北京渠道', cost_ratio: 2 },
-      { ...createChannel(3), name: '上海渠道', cost_ratio: 1 },
-      { ...createChannel(2), name: '北京渠道', cost_ratio: 1 },
-      { ...createChannel(1), name: '北京渠道', cost_ratio: 1 },
-      { ...createChannel(6), name: '未知倍率', cost_ratio: Number.NaN },
-    ] as ChannelModelDetectionChannel[]
-
-    assert.deepEqual(
-      sortChannelModelDetectionChannels(channels, 'ratio_asc').map(
-        (channel) => channel.id
-      ),
-      [1, 2, 3, 4, 5, 6]
-    )
-    assert.deepEqual(
-      sortChannelModelDetectionChannels(channels, 'ratio_desc').map(
-        (channel) => channel.id
-      ),
-      [4, 1, 2, 3, 5, 6]
-    )
-  })
-
-  test('所有排序模式都将启用渠道置于停用渠道之前', () => {
-    const disabled = {
-      ...createChannel(1, CHANNEL_STATUS.MANUAL_DISABLED),
-      cost_ratio: 0.5,
-    }
-    const enabled = { ...createChannel(2), cost_ratio: 1.5 }
-    const channels = [disabled, enabled]
-
-    for (const sort of [
-      'ratio_asc',
-      'ratio_desc',
-      'latest_desc',
-      'latest_asc',
-      'issue_first',
-      'schedule_first',
-      'channel_id_asc',
-    ] as const) {
-      assert.equal(
-        sortChannelModelDetectionChannels(channels, sort)[0]?.id,
-        2,
-        sort
-      )
-    }
   })
 })

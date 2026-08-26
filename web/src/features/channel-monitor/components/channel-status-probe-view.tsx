@@ -86,18 +86,15 @@ import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   getChannelMonitorActiveRefetchInterval,
 } from '../lib/query-options'
+import { orderChannelsByReferenceOrder } from '../lib/sort'
 import {
   isChannelStatusProbeIssue,
-  loadChannelStatusProbeSort,
   matchesChannelStatusProbeGroup,
   matchesChannelStatusProbeSearch,
-  saveChannelStatusProbeSort,
-  sortChannelStatusProbeChannels,
 } from '../lib/status-probe'
 import type {
   ChannelStatusProbeChannel,
   ChannelStatusProbeHealth,
-  ChannelStatusProbeSortMode,
 } from '../types'
 import { ChannelMonitorSnapshotStatus } from './channel-monitor-snapshot-status'
 import { ChannelStatusProbeCard } from './channel-status-probe-card'
@@ -122,18 +119,6 @@ type StatusFilter =
   | 'paused'
   | 'unconfigured'
 
-const SORT_OPTIONS: Array<{
-  value: ChannelStatusProbeSortMode
-  label: string
-}> = [
-  { value: 'ratio_asc', label: '成本倍率：从低到高' },
-  { value: 'ratio_desc', label: '成本倍率：从高到低' },
-  { value: 'first_token_asc', label: '平均首字：从低到高' },
-  { value: 'first_token_desc', label: '平均首字：从高到低' },
-  { value: 'tps_desc', label: '平均 TPS：从高到低' },
-  { value: 'tps_asc', label: '平均 TPS：从低到高' },
-]
-
 const STATUS_FILTER_OPTIONS: Array<[StatusFilter, string]> = [
   ['all', '全部'],
   ['issue', '异常'],
@@ -155,15 +140,18 @@ function matchesStatusFilter(
   return health === filter
 }
 
-export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
+export type ChannelStatusProbeViewProps = {
+  channelOrder: readonly number[]
+}
+
+export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
+  props: ChannelStatusProbeViewProps
+) {
   const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [onlyEnabled, setOnlyEnabled] = useState(true)
   const [groupFilter, setGroupFilter] = useState('')
   const [modelFilter, setModelFilter] = useState('')
-  const [sortMode, setSortMode] = useState<ChannelStatusProbeSortMode>(
-    loadChannelStatusProbeSort
-  )
   const [search, setSearch] = useState('')
   const [configChannelId, setConfigChannelId] = useState<number | null>(null)
   const [historyChannelId, setHistoryChannelId] = useState<number | null>(null)
@@ -233,8 +221,15 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
       }
       return matchesChannelStatusProbeSearch(channel, search)
     })
-    return sortChannelStatusProbeChannels(filtered, sortMode)
-  }, [channels, groupFilter, onlyEnabled, search, sortMode, statusFilter])
+    return orderChannelsByReferenceOrder(filtered, props.channelOrder)
+  }, [
+    channels,
+    groupFilter,
+    onlyEnabled,
+    props.channelOrder,
+    search,
+    statusFilter,
+  ])
   const summary = query.data?.data.summary
   const statusCounts: Record<StatusFilter, number> = {
     all: channels.length,
@@ -498,31 +493,6 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView() {
               <SelectGroup>
                 {modelOptions.map((option) => (
                   <SelectItem key={option.value ?? 'all'} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Select
-            items={SORT_OPTIONS}
-            value={sortMode}
-            onValueChange={(value) => {
-              if (!value) return
-              setSortMode(value)
-              saveChannelStatusProbeSort(value)
-            }}
-          >
-            <SelectTrigger
-              className='w-full sm:w-56'
-              aria-label='状态探测卡片排序方式'
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                {SORT_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
                 ))}

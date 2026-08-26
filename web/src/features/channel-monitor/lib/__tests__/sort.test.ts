@@ -27,7 +27,7 @@ import type {
   ChannelMonitorItem,
   ChannelMonitorSortMode,
 } from '../../types'
-import { sortChannelMonitorItems } from '../sort'
+import { orderChannelsByReferenceOrder, sortChannelMonitorItems } from '../sort'
 
 function createChannel(
   id: number,
@@ -196,5 +196,20 @@ test('keeps enabled channels first without losing custom relative order', () => 
   assert.deepEqual(
     sorted.map((channel) => channel.id),
     [1, 3, 2, 4]
+  )
+})
+
+test('applies the channel view order to a filtered card list', () => {
+  const cards = [
+    { id: 4, name: '接口暂未同步的渠道' },
+    { id: 2, name: '第二张卡片' },
+    { id: 1, name: '第一张卡片' },
+  ]
+
+  const ordered = orderChannelsByReferenceOrder(cards, [3, 1, 2])
+
+  assert.deepEqual(
+    ordered.map((channel) => channel.id),
+    [1, 2, 4]
   )
 })

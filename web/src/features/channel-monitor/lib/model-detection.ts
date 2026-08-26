@@ -16,8 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
-
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionCost,
@@ -70,16 +68,6 @@ export const CHANNEL_MODEL_DETECTION_STATUS_FILTERS: ReadonlyArray<
   ['unconfigured', '未配置'],
 ]
 
-export const CHANNEL_MODEL_DETECTION_SORT_OPTIONS = [
-  { value: 'ratio_asc', label: '成本倍率：从低到高' },
-  { value: 'ratio_desc', label: '成本倍率：从高到低' },
-  { value: 'latest_desc', label: '最近检测：从新到旧' },
-  { value: 'latest_asc', label: '最近检测：从旧到新' },
-  { value: 'issue_first', label: '异常优先' },
-  { value: 'schedule_first', label: '已参加定时优先' },
-  { value: 'channel_id_asc', label: '渠道 ID：从小到大' },
-] as const
-
 const KNOWN_OUTCOME_CODES = new Set<ChannelModelDetectionKnownOutcomeCode>([
   'juice_pass_fingerprint_strong',
   'juice_pass_fingerprint_unclear',
@@ -89,18 +77,6 @@ const KNOWN_OUTCOME_CODES = new Set<ChannelModelDetectionKnownOutcomeCode>([
   'juice_insufficient_fingerprint_unclear',
   'possible_non_gpt',
 ])
-
-const HEALTH_PRIORITY: Record<ChannelModelDetectionHealth, number> = {
-  running: 9,
-  unhealthy: 8,
-  attention: 7,
-  detector_unavailable: 6,
-  stale: 5,
-  healthy: 4,
-  pending: 3,
-  paused: 2,
-  unconfigured: 1,
-}
 
 export function isKnownChannelModelDetectionOutcome(
   outcome: ChannelModelDetectionOutcomeCode
@@ -245,18 +221,6 @@ export function channelModelDetectionClaimedModelLabel(model: string) {
   return model
 }
 
-export function channelModelDetectionLatestAt(
-  channel: ChannelModelDetectionChannel
-) {
-  let latestAt = channel.active_run?.updated_at ?? 0
-  for (const target of channel.targets) {
-    const targetLatestAt =
-      target.latest?.finished_at || target.latest?.updated_at || 0
-    latestAt = Math.max(latestAt, targetLatestAt)
-  }
-  return latestAt
-}
-
 export function formatChannelModelDetectionRelativeTime(
   timestamp: number,
   serverNow: number
@@ -358,57 +322,5 @@ export function filterChannelModelDetectionChannels(
       channel.remark.toLocaleLowerCase().includes(search) ||
       String(channel.id).includes(search)
     )
-  })
-}
-
-export function sortChannelModelDetectionChannels(
-  channels: ChannelModelDetectionChannel[],
-  sort: ChannelModelDetectionFilters['sort']
-) {
-  return [...channels].sort((left, right) => {
-    const channelStatusComparison = compareChannelStatusesEnabledFirst(
-      left.channel_status,
-      right.channel_status
-    )
-    if (channelStatusComparison !== 0) return channelStatusComparison
-
-    if (sort === 'ratio_asc' || sort === 'ratio_desc') {
-      const leftRatio = Number.isFinite(left.cost_ratio)
-        ? left.cost_ratio
-        : null
-      const rightRatio = Number.isFinite(right.cost_ratio)
-        ? right.cost_ratio
-        : null
-      let ratioDifference = 0
-      if (leftRatio == null && rightRatio != null) ratioDifference = 1
-      if (leftRatio != null && rightRatio == null) ratioDifference = -1
-      if (leftRatio != null && rightRatio != null) {
-        ratioDifference =
-          sort === 'ratio_asc' ? leftRatio - rightRatio : rightRatio - leftRatio
-      }
-      if (ratioDifference) return ratioDifference
-      const nameDifference = left.name.localeCompare(right.name, 'zh-CN', {
-        numeric: true,
-        sensitivity: 'base',
-      })
-      return nameDifference || left.id - right.id
-    }
-    if (sort === 'channel_id_asc') return left.id - right.id
-    if (sort === 'schedule_first') {
-      const scheduleDifference =
-        Number(Boolean(right.config?.schedule_enabled)) -
-        Number(Boolean(left.config?.schedule_enabled))
-      return scheduleDifference || left.id - right.id
-    }
-    if (sort === 'issue_first') {
-      const statusDifference =
-        HEALTH_PRIORITY[right.health_status] -
-        HEALTH_PRIORITY[left.health_status]
-      return statusDifference || left.id - right.id
-    }
-    const latestDifference =
-      channelModelDetectionLatestAt(left) - channelModelDetectionLatestAt(right)
-    if (sort === 'latest_asc') return latestDifference || left.id - right.id
-    return -latestDifference || left.id - right.id
   })
 }

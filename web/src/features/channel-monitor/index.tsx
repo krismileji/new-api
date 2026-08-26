@@ -921,16 +921,28 @@ export function ChannelMonitor() {
     () => new Map(groupSuccessMetrics.map((metric) => [metric.group, metric])),
     [groupSuccessMetrics]
   )
-  const filteredChannels = useMemo(
+  const orderedChannels = useMemo(
     () =>
       sortChannelMonitorItems(
-        matchingChannels,
+        channels,
         channelSortMode,
         channelOrder,
         performanceByChannel
       ),
-    [channelOrder, channelSortMode, matchingChannels, performanceByChannel]
+    [channelOrder, channelSortMode, channels, performanceByChannel]
   )
+  const channelDisplayOrder = useMemo(
+    () => orderedChannels.map((channel) => channel.id),
+    [orderedChannels]
+  )
+  const filteredChannels = useMemo(() => {
+    const matchingChannelIds = new Set(
+      matchingChannels.map((channel) => channel.id)
+    )
+    return orderedChannels.filter((channel) =>
+      matchingChannelIds.has(channel.id)
+    )
+  }, [matchingChannels, orderedChannels])
   const performanceModelOptions = useMemo(
     () =>
       [
@@ -1452,7 +1464,9 @@ export function ChannelMonitor() {
                   </div>
                 }
               >
-                <LazyChannelStatusProbeView />
+                <LazyChannelStatusProbeView
+                  channelOrder={channelDisplayOrder}
+                />
               </Suspense>
             )}
           </TabsContent>
@@ -1468,6 +1482,7 @@ export function ChannelMonitor() {
                 }
               >
                 <LazyChannelModelDetectionView
+                  channelOrder={channelDisplayOrder}
                   overview={modelDetectionQuery.data?.data}
                   loading={modelDetectionQuery.isLoading}
                   refreshing={modelDetectionQuery.isFetching}

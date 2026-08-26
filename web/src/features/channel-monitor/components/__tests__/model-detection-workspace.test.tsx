@@ -284,13 +284,13 @@ async function renderWorkspace(
       <QueryClientProvider client={queryClient}>
         <I18nextProvider i18n={i18n}>
           <ChannelModelDetectionWorkspace
+            channelOrder={overview.channels.map((channel) => channel.id)}
             overview={overview}
             filters={{
               status: 'all',
               group: '',
               model: '',
               search: '',
-              sort: 'ratio_asc',
               onlyEnabled,
             }}
           />

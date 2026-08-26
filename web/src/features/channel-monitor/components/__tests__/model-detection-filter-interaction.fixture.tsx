@@ -155,7 +155,9 @@ const root = createRoot(container)
 
 try {
   await act(async () => {
-    root.render(<ChannelModelDetectionView overview={overview} />)
+    root.render(
+      <ChannelModelDetectionView channelOrder={[2, 1, 3]} overview={overview} />
+    )
   })
 
   const onlyEnabled = container.querySelector<HTMLElement>(
@@ -168,6 +170,16 @@ try {
   assert.equal(container.textContent?.includes('未配置渠道'), false)
   await act(async () => onlyEnabled.click())
   assert.equal(onlyEnabled.getAttribute('aria-checked'), 'false')
+  assert.deepEqual(
+    [
+      ...container.querySelectorAll(
+        '[data-testid="channel-model-detection-card"]'
+      ),
+    ].map(
+      (card) => card.textContent?.match(/(?:VIP 渠道|默认渠道|未配置渠道)/)?.[0]
+    ),
+    ['VIP 渠道', '默认渠道', '未配置渠道']
+  )
   assert.ok(container.textContent?.includes('VIP 渠道'))
   assert.ok(container.textContent?.includes('未配置渠道'))
 

@@ -200,7 +200,7 @@ try {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ChannelStatusProbeView />
+        <ChannelStatusProbeView channelOrder={[2, 1, 4, 3]} />
       </QueryClientProvider>
     )
   })
@@ -218,6 +218,14 @@ try {
   )
   assert.ok(onlyEnabled)
   assert.equal(onlyEnabled.getAttribute('aria-checked'), 'true')
+  assert.deepEqual(
+    [
+      ...container.querySelectorAll(
+        '[data-testid="channel-status-probe-card"]'
+      ),
+    ].map((card) => card.textContent?.match(/(?:VIP 渠道|默认渠道)/)?.[0]),
+    ['VIP 渠道', '默认渠道']
+  )
   assert.equal(container.textContent?.includes('已暂停渠道'), false)
   assert.equal(container.textContent?.includes('未配置渠道'), false)
   await act(async () => onlyEnabled.click())

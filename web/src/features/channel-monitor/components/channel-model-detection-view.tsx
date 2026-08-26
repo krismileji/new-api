@@ -70,13 +70,12 @@ import {
 } from '@/components/ui/tooltip'
 
 import {
-  CHANNEL_MODEL_DETECTION_SORT_OPTIONS,
   CHANNEL_MODEL_DETECTION_STATUS_FILTERS,
   channelModelDetectionPresetLabel,
   filterChannelModelDetectionChannels,
   formatChannelModelDetectionRelativeTime,
-  sortChannelModelDetectionChannels,
 } from '../lib/model-detection'
+import { orderChannelsByReferenceOrder } from '../lib/sort'
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionFilters,
@@ -92,11 +91,11 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
   group: '',
   model: '',
   search: '',
-  sort: 'ratio_asc',
   onlyEnabled: true,
 }
 
 export type ChannelModelDetectionViewProps = {
+  channelOrder: readonly number[]
   overview?: ChannelModelDetectionOverview
   loading?: boolean
   refreshing?: boolean
@@ -255,11 +254,11 @@ export function ChannelModelDetectionView(
 
   const visibleChannels = useMemo(() => {
     if (!overview) return []
-    return sortChannelModelDetectionChannels(
+    return orderChannelsByReferenceOrder(
       filterChannelModelDetectionChannels(overview.channels, filters),
-      filters.sort
+      props.channelOrder
     )
-  }, [filters, overview])
+  }, [filters, overview, props.channelOrder])
 
   if (props.loading && !overview) return <LoadingState />
 
@@ -569,29 +568,6 @@ export function ChannelModelDetectionView(
               <SelectGroup>
                 {modelOptions.map((option) => (
                   <SelectItem key={option.value ?? 'all'} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Select
-            items={CHANNEL_MODEL_DETECTION_SORT_OPTIONS}
-            value={filters.sort}
-            onValueChange={(value) => {
-              if (value) setFilters({ ...filters, sort: value })
-            }}
-          >
-            <SelectTrigger
-              className='w-full min-w-0 sm:w-56'
-              aria-label='模型检测卡片排序方式'
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                {CHANNEL_MODEL_DETECTION_SORT_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>
                 ))}

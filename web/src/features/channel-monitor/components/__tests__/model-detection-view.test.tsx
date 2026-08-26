@@ -30,6 +30,7 @@ import { domWindow } from './test-dom'
 const { renderToStaticMarkup } = await import('react-dom/server')
 const { ChannelModelDetectionView } =
   await import('../channel-model-detection-view')
+const CHANNEL_ORDER = [3, 2, 1]
 
 function createChannel(
   id: number,
@@ -112,6 +113,7 @@ describe('模型检测视图骨架', () => {
   test('总览为每个渠道恰好渲染一张卡片并保持 360px 单列契约', () => {
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <ChannelModelDetectionView
+        channelOrder={CHANNEL_ORDER}
         overview={createOverview()}
         onRefresh={() => {}}
         filters={{
@@ -119,7 +121,6 @@ describe('模型检测视图骨架', () => {
           group: '',
           model: '',
           search: '',
-          sort: 'ratio_asc',
           onlyEnabled: false,
         }}
       />
@@ -146,7 +147,6 @@ describe('模型检测视图骨架', () => {
     for (const label of [
       '选择模型检测分组',
       '选择模型检测请求模型',
-      '模型检测卡片排序方式',
       '搜索模型检测渠道',
     ]) {
       const control = domWindow.document.querySelector(
@@ -158,7 +158,7 @@ describe('模型检测视图骨架', () => {
     }
   })
 
-  test('默认按成本倍率从低到高排列渠道，并提供反向排序选项', () => {
+  test('卡片遵循渠道视图顺序且不再提供独立排序控件', () => {
     const overview = createOverview()
     overview.channels = overview.channels.map((channel) => ({
       ...channel,
@@ -199,13 +199,13 @@ describe('模型检测视图骨架', () => {
 
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <ChannelModelDetectionView
+        channelOrder={[3, 1, 2]}
         overview={overview}
         filters={{
           status: 'all',
           group: '',
           model: '',
           search: '',
-          sort: 'ratio_asc',
           onlyEnabled: false,
         }}
       />
@@ -220,27 +220,12 @@ describe('模型检测视图骨架', () => {
       cards.map(
         (card) => card.textContent?.match(/(?:高|低|未知)倍率渠道/)?.[0]
       ),
-      ['低倍率渠道', '高倍率渠道', '未知倍率渠道']
+      ['未知倍率渠道', '高倍率渠道', '低倍率渠道']
     )
-    const sortTrigger = domWindow.document.querySelector(
-      '[aria-label="模型检测卡片排序方式"]'
+    assert.equal(
+      domWindow.document.querySelector('[aria-label="模型检测卡片排序方式"]'),
+      null
     )
-    assert.match(sortTrigger?.textContent ?? '', /成本倍率：从低到高/)
-
-    const html = renderToStaticMarkup(
-      <ChannelModelDetectionView
-        overview={overview}
-        filters={{
-          status: 'all',
-          group: '',
-          model: '',
-          search: '',
-          sort: 'ratio_desc',
-          onlyEnabled: false,
-        }}
-      />
-    )
-    assert.match(html, /成本倍率：从高到低/)
   })
 
   test('离线服务、加载、错误、空数据和筛选无结果状态彼此独立', () => {
@@ -248,7 +233,10 @@ describe('模型检测视图骨架', () => {
     offline.detector.state = 'offline'
     offline.detector.last_error = '连接被拒绝'
     const offlineHtml = renderToStaticMarkup(
-      <ChannelModelDetectionView overview={offline} />
+      <ChannelModelDetectionView
+        channelOrder={CHANNEL_ORDER}
+        overview={offline}
+      />
     )
     assert.match(offlineHtml, /官方检测器离线/)
     assert.match(offlineHtml, /连接被拒绝/)
@@ -257,37 +245,52 @@ describe('模型检测视图骨架', () => {
     const unchecked = createOverview()
     unchecked.detector.state = 'unknown'
     const uncheckedHtml = renderToStaticMarkup(
-      <ChannelModelDetectionView overview={unchecked} />
+      <ChannelModelDetectionView
+        channelOrder={CHANNEL_ORDER}
+        overview={unchecked}
+      />
     )
     assert.match(uncheckedHtml, /官方检测器尚未检查/)
     assert.doesNotMatch(uncheckedHtml, /检测器不可用/)
 
     assert.match(
-      renderToStaticMarkup(<ChannelModelDetectionView loading />),
+      renderToStaticMarkup(
+        <ChannelModelDetectionView channelOrder={CHANNEL_ORDER} loading />
+      ),
       /正在加载模型检测数据/
     )
     assert.match(
-      renderToStaticMarkup(<ChannelModelDetectionView error='请求超时' />),
+      renderToStaticMarkup(
+        <ChannelModelDetectionView
+          channelOrder={CHANNEL_ORDER}
+          error='请求超时'
+        />
+      ),
       /模型检测数据加载失败/
     )
 
     const empty = createOverview()
     empty.channels = []
     assert.match(
-      renderToStaticMarkup(<ChannelModelDetectionView overview={empty} />),
+      renderToStaticMarkup(
+        <ChannelModelDetectionView
+          channelOrder={CHANNEL_ORDER}
+          overview={empty}
+        />
+      ),
       /暂无渠道/
     )
 
     assert.match(
       renderToStaticMarkup(
         <ChannelModelDetectionView
+          channelOrder={CHANNEL_ORDER}
           overview={createOverview()}
           filters={{
             status: 'healthy',
             group: '',
             model: '',
             search: '不存在',
-            sort: 'latest_desc',
             onlyEnabled: false,
           }}
         />
@@ -299,6 +302,7 @@ describe('模型检测视图骨架', () => {
   test('没有已配置渠道时禁用启用所有和暂停所有按钮', () => {
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <ChannelModelDetectionView
+        channelOrder={CHANNEL_ORDER}
         overview={createOverview()}
         onEnableAll={() => {}}
         onPauseAll={() => {}}

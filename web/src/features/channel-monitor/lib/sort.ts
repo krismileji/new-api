@@ -35,12 +35,12 @@ function compareChannelNames(
   return nameComparison || first.id - second.id
 }
 
-export function orderChannelsByCustomOrder(
-  channels: ChannelMonitorItem[],
-  channelOrder: number[]
+export function orderChannelsByReferenceOrder<T extends { id: number }>(
+  channels: readonly T[],
+  channelOrder: readonly number[]
 ) {
   const channelById = new Map(channels.map((channel) => [channel.id, channel]))
-  const orderedChannels: ChannelMonitorItem[] = []
+  const orderedChannels: T[] = []
   for (const channelId of channelOrder) {
     const channel = channelById.get(channelId)
     if (!channel) continue
@@ -51,6 +51,13 @@ export function orderChannelsByCustomOrder(
     if (channelById.has(channel.id)) orderedChannels.push(channel)
   }
   return orderedChannels
+}
+
+export function orderChannelsByCustomOrder(
+  channels: ChannelMonitorItem[],
+  channelOrder: number[]
+) {
+  return orderChannelsByReferenceOrder(channels, channelOrder)
 }
 
 export function sortChannelMonitorItems(

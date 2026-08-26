@@ -20,28 +20,23 @@ import assert from 'node:assert/strict'
 
 import { describe, test } from 'vitest'
 
-import { CHANNEL_STATUS } from '@/features/channels/constants'
-
 import type { ChannelStatusProbeChannel } from '../../types'
 import {
-  DEFAULT_CHANNEL_STATUS_PROBE_SORT,
   isChannelStatusProbeActive,
   matchesChannelStatusProbeGroup,
   matchesChannelStatusProbeSearch,
-  sortChannelStatusProbeChannels,
 } from '../status-probe'
 
 function createChannel(
   id: number,
   name: string,
-  costRatio: number | null,
-  channelStatus: number = CHANNEL_STATUS.ENABLED
+  costRatio: number | null
 ): ChannelStatusProbeChannel {
   return {
     id,
     name,
     type: 1,
-    channel_status: channelStatus,
+    channel_status: 1,
     remark: '',
     groups: ['default'],
     cost_ratio: costRatio,
@@ -120,92 +115,6 @@ function withProbeData(
     avg_tps: 20,
   }
 }
-
-describe('状态探测排序', () => {
-  test('所有排序模式都将启用渠道置于停用渠道之前', () => {
-    const channels = [
-      createChannel(1, '停用低倍率', 0.5, CHANNEL_STATUS.MANUAL_DISABLED),
-      createChannel(2, '启用高倍率', 1.5, CHANNEL_STATUS.ENABLED),
-    ]
-
-    for (const mode of [
-      'ratio_asc',
-      'ratio_desc',
-      'first_token_asc',
-      'first_token_desc',
-      'tps_asc',
-      'tps_desc',
-    ] as const) {
-      assert.equal(sortChannelStatusProbeChannels(channels, mode)[0]?.id, 2)
-    }
-  })
-
-  test('默认按成本倍率升序并把缺失倍率放在最后', () => {
-    assert.equal(DEFAULT_CHANNEL_STATUS_PROBE_SORT, 'ratio_asc')
-    const channels = [
-      createChannel(1, '未配置', null),
-      createChannel(2, '高倍率', 1.5),
-      createChannel(3, '低倍率', 0.6),
-    ]
-
-    assert.deepEqual(
-      sortChannelStatusProbeChannels(
-        channels,
-        DEFAULT_CHANNEL_STATUS_PROBE_SORT
-      ).map((channel) => channel.id),
-      [3, 2, 1]
-    )
-  })
-
-  test('倍率相同时按中文名称和渠道 ID 稳定排序', () => {
-    const channels = [
-      createChannel(3, '渠道 10', 1),
-      createChannel(2, '渠道 2', 1),
-      createChannel(1, '渠道 2', 1),
-    ]
-
-    assert.deepEqual(
-      sortChannelStatusProbeChannels(channels, 'ratio_asc').map(
-        (channel) => channel.id
-      ),
-      [1, 2, 3]
-    )
-  })
-
-  test('首字和 TPS 排序使用当前配置窗口平均值并支持双向排序', () => {
-    const first = withProbeData(createChannel(1, '渠道 A', 1), 60, 500, 300, 0)
-    const second = withProbeData(createChannel(2, '渠道 B', 1), 60, 500, 300, 0)
-    first.avg_first_token_ms = 300
-    first.avg_tps = 40
-    second.avg_first_token_ms = 100
-    second.avg_tps = 20
-
-    assert.deepEqual(
-      sortChannelStatusProbeChannels([first, second], 'first_token_asc').map(
-        (channel) => channel.id
-      ),
-      [2, 1]
-    )
-    assert.deepEqual(
-      sortChannelStatusProbeChannels([first, second], 'tps_desc').map(
-        (channel) => channel.id
-      ),
-      [1, 2]
-    )
-    assert.deepEqual(
-      sortChannelStatusProbeChannels([first, second], 'first_token_desc').map(
-        (channel) => channel.id
-      ),
-      [1, 2]
-    )
-    assert.deepEqual(
-      sortChannelStatusProbeChannels([first, second], 'tps_asc').map(
-        (channel) => channel.id
-      ),
-      [2, 1]
-    )
-  })
-})
 
 describe('状态探测活动状态', () => {
   test('执行中和手动排队中的渠道需要继续刷新', () => {

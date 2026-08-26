@@ -75,7 +75,7 @@ describe('状态监测筛选布局', () => {
 
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
-        <ChannelStatusProbeView />
+        <ChannelStatusProbeView channelOrder={[]} />
       </QueryClientProvider>
     )
 
@@ -101,7 +101,6 @@ describe('状态监测筛选布局', () => {
     const controlWidths = [
       ['选择状态探测分组', 'sm:w-40'],
       ['选择状态探测模型', 'sm:w-48'],
-      ['状态探测卡片排序方式', 'sm:w-56'],
     ] as const
     for (const [label, widthClass] of controlWidths) {
       const control = domWindow.document.querySelector(
@@ -111,6 +110,10 @@ describe('状态监测筛选布局', () => {
       assert.ok(control.className.includes('w-full'))
       assert.ok(control.className.includes(widthClass))
     }
+    assert.equal(
+      domWindow.document.querySelector('[aria-label="状态探测卡片排序方式"]'),
+      null
+    )
     const modelControl = domWindow.document.querySelector(
       '[aria-label="选择状态探测模型"]'
     ) as HTMLButtonElement | null
