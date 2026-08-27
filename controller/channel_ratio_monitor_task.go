@@ -614,7 +614,8 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 				if err == nil ||
 					attempt == settings.AutoUpdateRetryCount ||
-					errors.Is(err, service.ErrChannelMonitorUpstreamAuthentication) {
+					errors.Is(err, service.ErrChannelMonitorUpstreamAuthentication) ||
+					service.ShouldSkipRetryForError(err) {
 					break
 				}
 				logger.LogWarn(ctx, fmt.Sprintf(

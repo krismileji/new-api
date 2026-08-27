@@ -91,6 +91,10 @@ export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
 export const MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH = 4096
 export const MAX_ERROR_MESSAGE_KEYWORDS = 32
 export const MAX_ERROR_MESSAGE_KEYWORD_LENGTH = 128
+export const MAX_RETRY_SKIP_ERROR_CODES = 32
+export const MAX_RETRY_SKIP_ERROR_CODE_LENGTH = 128
+export const MAX_RETRY_SKIP_ERROR_MESSAGES = 32
+export const MAX_RETRY_SKIP_ERROR_MESSAGE_LENGTH = 256
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
 export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
 export const DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS = 500
@@ -889,6 +893,32 @@ const errorMessageKeywordsSchema = z
     }
   })
 
+function retrySkipLinesSchema(label: string, maxCount: number, maxLength: number) {
+  return z
+    .string()
+    .default('')
+    .superRefine((value, context) => {
+      const lines = value
+        .split(/\r?\n|,/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (lines.length > maxCount) {
+        context.addIssue({
+          code: 'custom',
+          message: `${label}最多支持 ${maxCount} 个`,
+        })
+        return
+      }
+      const oversized = lines.find((line) => line.length > maxLength)
+      if (oversized) {
+        context.addIssue({
+          code: 'custom',
+          message: `${label}长度不能超过 ${maxLength} 个字符`,
+        })
+      }
+    })
+}
+
 export function createChannelMonitorSettingsSchema() {
   return z
     .object({
@@ -1156,6 +1186,16 @@ export function createChannelMonitorSettingsSchema() {
         ),
       errorMessageMapping: errorMessageMappingSchema,
       errorMessageKeywords: errorMessageKeywordsSchema,
+      retrySkipErrorCodes: retrySkipLinesSchema(
+        '不重试错误码',
+        MAX_RETRY_SKIP_ERROR_CODES,
+        MAX_RETRY_SKIP_ERROR_CODE_LENGTH
+      ),
+      retrySkipErrorMessages: retrySkipLinesSchema(
+        '不重试错误信息',
+        MAX_RETRY_SKIP_ERROR_MESSAGES,
+        MAX_RETRY_SKIP_ERROR_MESSAGE_LENGTH
+      ),
       probeResponseEnabled: z.boolean(),
       probeResponseAllowedIPs: probeResponseAllowedIPsSchema,
       probeResponseMatchInput: z

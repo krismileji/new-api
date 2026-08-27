@@ -55,6 +55,8 @@ const (
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorErrorMessageMappingOption                    = service.ErrorMessageMappingOptionKey
 	channelMonitorErrorMessageKeywordsOption                   = service.ErrorMessageKeywordsOptionKey
+	channelMonitorRetrySkipErrorCodesOption                    = service.RetrySkipErrorCodesOptionKey
+	channelMonitorRetrySkipErrorMessagesOption                 = service.RetrySkipErrorMessagesOptionKey
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
 	channelMonitorProbeResponseAllowedIPsOption                = channelprobe.AllowedIPsOptionKey
 	channelMonitorProbeResponseMatchInputOption                = channelprobe.MatchInputOptionKey
@@ -202,6 +204,8 @@ type channelMonitorSettings struct {
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   string                     `json:"error_message_mapping"`
 	ErrorMessageKeywords                  string                     `json:"error_message_keywords"`
+	RetrySkipErrorCodes                   string                     `json:"retry_skip_error_codes"`
+	RetrySkipErrorMessages                string                     `json:"retry_skip_error_messages"`
 	ProbeResponseEnabled                  bool                       `json:"probe_response_enabled"`
 	ProbeResponseAllowedIPs               string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               string                     `json:"probe_response_match_input"`
@@ -261,6 +265,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   *string                     `json:"error_message_mapping"`
 	ErrorMessageKeywords                  *string                     `json:"error_message_keywords"`
+	RetrySkipErrorCodes                   *string                     `json:"retry_skip_error_codes"`
+	RetrySkipErrorMessages                *string                     `json:"retry_skip_error_messages"`
 	ProbeResponseEnabled                  *bool                       `json:"probe_response_enabled"`
 	ProbeResponseAllowedIPs               *string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               *string                     `json:"probe_response_match_input"`
@@ -335,6 +341,8 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorEmailNotificationTypesOption,
 		channelMonitorErrorMessageMappingOption,
 		channelMonitorErrorMessageKeywordsOption,
+		channelMonitorRetrySkipErrorCodesOption,
+		channelMonitorRetrySkipErrorMessagesOption,
 		channelMonitorProbeResponseOption,
 		channelMonitorProbeResponseAllowedIPsOption,
 		channelMonitorProbeResponseMatchInputOption,
@@ -403,6 +411,8 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawEmailNotificationTypes := options[channelMonitorEmailNotificationTypesOption]
 	rawErrorMessageMapping := options[channelMonitorErrorMessageMappingOption]
 	rawErrorMessageKeywords := options[channelMonitorErrorMessageKeywordsOption]
+	rawRetrySkipErrorCodes := options[channelMonitorRetrySkipErrorCodesOption]
+	rawRetrySkipErrorMessages := options[channelMonitorRetrySkipErrorMessagesOption]
 	rawRelayResponseHeaderTimeout := options[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := options[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleGroupPolicies := options[channelMonitorSmartScheduleGroupPoliciesOption]
@@ -600,6 +610,8 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		EmailNotificationTypes:                emailNotificationTypes,
 		ErrorMessageMapping:                   rawErrorMessageMapping,
 		ErrorMessageKeywords:                  rawErrorMessageKeywords,
+		RetrySkipErrorCodes:                   rawRetrySkipErrorCodes,
+		RetrySkipErrorMessages:                rawRetrySkipErrorMessages,
 		ProbeResponseEnabled:                  probeResponseConfig.Enabled,
 		ProbeResponseAllowedIPs:               probeResponseConfig.AllowedIPs,
 		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
@@ -917,6 +929,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.EmailNotificationTypes == nil &&
 		request.ErrorMessageMapping == nil &&
 		request.ErrorMessageKeywords == nil &&
+		request.RetrySkipErrorCodes == nil &&
+		request.RetrySkipErrorMessages == nil &&
 		request.ProbeResponseEnabled == nil &&
 		request.ProbeResponseAllowedIPs == nil &&
 		request.ProbeResponseMatchInput == nil &&
@@ -984,6 +998,24 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.ErrorMessageKeywords = errorMessageKeywords
 		values[channelMonitorErrorMessageKeywordsOption] = errorMessageKeywords
+	}
+	if request.RetrySkipErrorCodes != nil {
+		retrySkipErrorCodes := strings.TrimSpace(*request.RetrySkipErrorCodes)
+		if err := service.ValidateRetrySkipErrorCodes(retrySkipErrorCodes); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.RetrySkipErrorCodes = retrySkipErrorCodes
+		values[channelMonitorRetrySkipErrorCodesOption] = retrySkipErrorCodes
+	}
+	if request.RetrySkipErrorMessages != nil {
+		retrySkipErrorMessages := strings.TrimSpace(*request.RetrySkipErrorMessages)
+		if err := service.ValidateRetrySkipErrorMessages(retrySkipErrorMessages); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.RetrySkipErrorMessages = retrySkipErrorMessages
+		values[channelMonitorRetrySkipErrorMessagesOption] = retrySkipErrorMessages
 	}
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -1601,6 +1633,8 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"email_notification_types":                   settings.EmailNotificationTypes,
 		"error_message_mapping_configured":           strings.TrimSpace(settings.ErrorMessageMapping) != "",
 		"error_message_keywords_configured":          strings.TrimSpace(settings.ErrorMessageKeywords) != "",
+		"retry_skip_error_codes_configured":          strings.TrimSpace(settings.RetrySkipErrorCodes) != "",
+		"retry_skip_error_messages_configured":       strings.TrimSpace(settings.RetrySkipErrorMessages) != "",
 		"probe_response_enabled":                     settings.ProbeResponseEnabled,
 		"probe_response_match_input":                 settings.ProbeResponseMatchInput,
 		"probe_response_text":                        settings.ProbeResponseText,

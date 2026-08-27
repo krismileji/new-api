@@ -112,6 +112,8 @@ const settings = {
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   error_message_keywords: '',
   error_message_mapping: '',
+  retry_skip_error_codes: '',
+  retry_skip_error_messages: '',
   probe_response_enabled: false,
   probe_response_match_input: 'hi',
   probe_response_text: 'Hi. What are you working on?',

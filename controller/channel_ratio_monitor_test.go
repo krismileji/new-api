@@ -619,6 +619,47 @@ func TestUpdateChannelMonitorErrorMessageKeywordsValidatesAndPersists(t *testing
 	assert.Equal(t, strings.TrimSpace(keywords), option.Value)
 }
 
+func TestUpdateChannelMonitorRetrySkipSettingsValidatesAndPersists(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	tooManyCodes := make([]string, service.MaxRetrySkipErrorCodes+1)
+	for index := range tooManyCodes {
+		tooManyCodes[index] = fmt.Sprintf("code-%d", index)
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"retry_skip_error_codes": strings.Join(tooManyCodes, "\n"),
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	codes := " insufficient_quota\n429 "
+	messages := " invalid api key, quota exceeded "
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"retry_skip_error_codes":    codes,
+		"retry_skip_error_messages": messages,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, strings.TrimSpace(codes), response.Data.RetrySkipErrorCodes)
+	assert.Equal(t, strings.TrimSpace(messages), response.Data.RetrySkipErrorMessages)
+	assert.Equal(t, strings.TrimSpace(codes), service.GetConfiguredRetrySkipErrorCodes())
+	assert.Equal(t, strings.TrimSpace(messages), service.GetConfiguredRetrySkipErrorMessages())
+
+	for key, want := range map[string]string{
+		channelMonitorRetrySkipErrorCodesOption:    strings.TrimSpace(codes),
+		channelMonitorRetrySkipErrorMessagesOption: strings.TrimSpace(messages),
+	} {
+		var option model.Option
+		require.NoError(t, db.Where("key = ?", key).First(&option).Error)
+		assert.Equal(t, want, option.Value)
+	}
+}
+
 func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmpty(t *testing.T) {
 	for _, raw := range []string{"", "null", "{\"invalid\":true}"} {
 		t.Run(raw, func(t *testing.T) {

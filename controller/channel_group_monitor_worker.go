@@ -478,7 +478,11 @@ func runChannelGroupMonitorGroup(
 			pendingChannel = selected
 			continue
 		}
+		skipConfiguredRetry := service.ShouldSkipRetryForError(probeError)
 		ordinaryRetryable := shouldRetry(probeRoutingContext, probeError, common.RetryTimes-retryParam.GetRetry())
+		if skipConfiguredRetry {
+			ordinaryRetryable = false
+		}
 		attemptDuration := time.Duration(0)
 		if outcome.ProbeResult.attemptDuration != nil {
 			attemptDuration = *outcome.ProbeResult.attemptDuration
@@ -486,7 +490,7 @@ func runChannelGroupMonitorGroup(
 		responseStarted := outcome.ProbeResult.firstResponseMilliseconds != nil
 		retryDecision, retryDelay := fastFailureRetryBudget.decide(
 			group.GroupName, group.ProbeModel, channel.Id, attemptDuration,
-			!responseStarted && isFastFailureSameChannelRetryable(probeRoutingContext, probeError),
+			!skipConfiguredRetry && !responseStarted && isFastFailureSameChannelRetryable(probeRoutingContext, probeError),
 			!responseStarted && ordinaryRetryable,
 		)
 		logContext := outcome.ProbeResult.context
