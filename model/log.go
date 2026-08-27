@@ -157,6 +157,10 @@ func formatUserLogs(logs []*Log, startIdx int) {
 				logs[i].Content = userVisibleMessage
 			} else if statusCode >= 100 && statusCode <= 599 {
 				logs[i].Content = fmt.Sprintf("status_code=%d", statusCode)
+			} else {
+				// Do not expose a raw error when the upstream response has no
+				// usable HTTP status code.
+				logs[i].Content = "请求失败"
 			}
 		}
 		if otherMap != nil {
