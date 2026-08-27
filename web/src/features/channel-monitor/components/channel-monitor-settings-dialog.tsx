@@ -890,9 +890,15 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
               defaultValue={props.initialSection}
               className='min-h-0 flex-1 gap-5'
             >
-              <TabsList className='grid h-auto w-full shrink-0 grid-cols-3'>
+              <TabsList className='grid h-auto w-full shrink-0 grid-cols-4'>
                 <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
-                  倍率、通知与错误
+                  倍率与通知
+                </TabsTrigger>
+                <TabsTrigger
+                  value='error-handling'
+                  className='h-auto px-2 text-wrap'
+                >
+                  错误处理
                 </TabsTrigger>
                 <TabsTrigger value='probe' className='h-auto px-2 text-wrap'>
                   探针响应
@@ -1052,12 +1058,17 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 />
 
                 <ChannelMonitorEmailNotificationFields form={form} />
+              </TabsContent>
 
+              <TabsContent
+                value='error-handling'
+                className='mt-0 flex min-h-0 flex-col gap-5 overflow-y-auto pr-1'
+              >
                 <FormField
                   control={form.control}
                   name='errorMessageMapping'
                   render={({ field }) => (
-                    <FormItem className='space-y-3 border-t pt-4'>
+                    <FormItem className='space-y-3'>
                       <div className='space-y-1'>
                         <FormLabel>错误信息映射</FormLabel>
                         <FormDescription>
@@ -1086,12 +1097,11 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     </FormItem>
                   )}
                 />
-
                 <FormField
                   control={form.control}
                   name='errorMessageKeywords'
                   render={({ field }) => (
-                    <FormItem className='space-y-3'>
+                    <FormItem className='space-y-3 border-t pt-4'>
                       <div className='space-y-1'>
                         <FormLabel>错误屏蔽关键字</FormLabel>
                         <FormDescription>
@@ -1112,7 +1122,6 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     </FormItem>
                   )}
                 />
-
                 <FormField
                   control={form.control}
                   name='retrySkipErrorCodes'
@@ -1121,7 +1130,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                       <div className='space-y-1'>
                         <FormLabel>命中错误码时跳过重试</FormLabel>
                         <FormDescription>
-                          每行填写一个错误码，也支持逗号分隔；命中上游错误码或 HTTP 状态码时，本次渠道监控直接结束，不再重试。最多 32 个。
+                          每行填写一个错误码，也支持逗号分隔；命中上游错误码或
+                          HTTP 状态码时，本次渠道监控直接结束，不再重试。最多 32
+                          个。
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -1136,16 +1147,16 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     </FormItem>
                   )}
                 />
-
                 <FormField
                   control={form.control}
                   name='retrySkipErrorMessages'
                   render={({ field }) => (
-                    <FormItem className='space-y-3'>
+                    <FormItem className='space-y-3 border-t pt-4'>
                       <div className='space-y-1'>
                         <FormLabel>命中执行错误信息时跳过重试</FormLabel>
                         <FormDescription>
-                          每行填写一个错误信息关键字，也支持逗号分隔；按不区分大小写的包含匹配，命中后本次渠道监控不再重试。最多 32 个。
+                          每行填写一个错误信息关键字，也支持逗号分隔；按不区分大小写的包含匹配，命中后本次渠道监控不再重试。最多
+                          32 个。
                         </FormDescription>
                       </div>
                       <FormControl>

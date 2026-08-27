@@ -28,6 +28,7 @@ type SettingsSurfaceResult = {
   conflictFormClosed: boolean
   conflictHistoryQueryInvalidated: boolean
   conflictMonitorQueryInvalidated: boolean
+  errorSettingsUseDedicatedTab: boolean
   generalHasSchedule: boolean
   generalTabCount: number
   generalTitle: string
@@ -82,10 +83,11 @@ test(
 
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
-    assert.match(result.generalTitle, /错误信息映射/)
+    assert.match(result.generalTitle, /错误处理/)
     assert.equal(result.generalHasSchedule, false)
-    assert.equal(result.generalTabCount, 3)
+    assert.equal(result.generalTabCount, 4)
     assert.equal(result.generalUsesContentSizedViewport, true)
+    assert.equal(result.errorSettingsUseDedicatedTab, true)
     assert.equal(result.retentionSettingsLoaded, true)
     assert.equal(result.allNotificationTypesSelected, true)
     assert.equal(result.notificationTypeCanBeUnchecked, true)

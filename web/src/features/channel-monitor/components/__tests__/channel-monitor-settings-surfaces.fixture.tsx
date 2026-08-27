@@ -236,6 +236,7 @@ const generalTitle = generalDialog.textContent ?? ''
 const generalHasSchedule = generalTitle.includes('智能调度')
 const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
+  generalDialog.classList.contains('sm:max-w-2xl') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
@@ -263,7 +264,10 @@ const settingsTabs = [
   ...generalDialog.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
 ]
 const monitorTab = settingsTabs.find(
-  (tab) => tab.textContent?.trim() === '倍率、通知与错误'
+  (tab) => tab.textContent?.trim() === '倍率与通知'
+)
+const errorHandlingTab = settingsTabs.find(
+  (tab) => tab.textContent?.trim() === '错误处理'
 )
 const retentionTab = settingsTabs.find(
   (tab) => tab.textContent?.trim() === '数据保留'
@@ -272,6 +276,7 @@ const probeTab = settingsTabs.find(
   (tab) => tab.textContent?.trim() === '探针响应'
 )
 assert.ok(monitorTab)
+assert.ok(errorHandlingTab)
 assert.ok(retentionTab)
 assert.ok(probeTab)
 const tabPanelFor = (tab: HTMLButtonElement) => {
@@ -283,22 +288,32 @@ const tabPanelFor = (tab: HTMLButtonElement) => {
 const monitorRetentionFieldCount =
   tabPanelFor(monitorTab)?.querySelectorAll('input[name$="RetentionDays"]')
     .length ?? 0
+const monitorPanel = tabPanelFor(monitorTab)
+const monitorExcludesErrorSettings =
+  !monitorPanel?.textContent?.includes('错误信息映射') &&
+  !monitorPanel?.textContent?.includes('错误屏蔽关键字') &&
+  !monitorPanel?.textContent?.includes('命中错误码时跳过重试') &&
+  !monitorPanel?.textContent?.includes('命中执行错误信息时跳过重试')
+await act(async () => errorHandlingTab.click())
+const errorHandlingPanelText = tabPanelFor(errorHandlingTab)?.textContent ?? ''
+const errorSettingsUseDedicatedTab =
+  monitorExcludesErrorSettings &&
+  errorHandlingPanelText.includes('错误信息映射') &&
+  errorHandlingPanelText.includes('错误屏蔽关键字') &&
+  errorHandlingPanelText.includes('命中错误码时跳过重试') &&
+  errorHandlingPanelText.includes('命中执行错误信息时跳过重试')
 const retentionTabWrapsText = retentionTab.classList.contains('text-wrap')
 const retentionTabIsLast = settingsTabs.at(-1) === retentionTab
 await act(async () => {
   monitorTab.focus()
-  monitorTab.dispatchEvent(
-    new domWindow.KeyboardEvent('keydown', {
-      key: 'ArrowRight',
-      bubbles: true,
-    }) as unknown as KeyboardEvent
-  )
-  probeTab.dispatchEvent(
-    new domWindow.KeyboardEvent('keydown', {
-      key: 'ArrowRight',
-      bubbles: true,
-    }) as unknown as KeyboardEvent
-  )
+  for (const tab of settingsTabs.slice(0, -1)) {
+    tab.dispatchEvent(
+      new domWindow.KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+      }) as unknown as KeyboardEvent
+    )
+  }
   retentionTab.dispatchEvent(
     new domWindow.KeyboardEvent('keydown', {
       key: ' ',
@@ -551,6 +566,7 @@ process.stdout.write(
     conflictFormClosed,
     conflictHistoryQueryInvalidated,
     conflictMonitorQueryInvalidated,
+    errorSettingsUseDedicatedTab,
     generalHasSchedule,
     generalTitle,
     generalUsesContentSizedViewport,
