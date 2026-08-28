@@ -137,8 +137,9 @@ return result
 `
 
 type ChannelConcurrencyStatus struct {
-	Active int `json:"active"`
-	Limit  int `json:"limit"`
+	Active     int `json:"active"`
+	Limit      int `json:"limit"`
+	CurrentRPM int `json:"current_rpm"`
 }
 
 type ChannelConcurrencyLease struct {
@@ -285,6 +286,28 @@ func GetChannelConcurrencySnapshot(ctx context.Context) (map[int]ChannelConcurre
 			Active: channelConcurrency.active[channelID],
 			Limit:  config.Limit,
 		}
+	}
+	return snapshot, nil
+}
+
+// GetChannelConcurrencySnapshotWithRPM augments the live concurrency snapshot
+// with the visible consume request count from the last minute.
+func GetChannelConcurrencySnapshotWithRPM(ctx context.Context) (map[int]ChannelConcurrencyStatus, error) {
+	snapshot, err := GetChannelConcurrencySnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, common.GetTimestamp()-60)
+	if err != nil {
+		return nil, err
+	}
+	for channelID, rpm := range currentRPM {
+		status, exists := snapshot[channelID]
+		if !exists {
+			continue
+		}
+		status.CurrentRPM = rpm
+		snapshot[channelID] = status
 	}
 	return snapshot, nil
 }

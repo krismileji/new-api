@@ -26,7 +26,7 @@ type channelConcurrencyLimitUpdateRequest struct {
 }
 
 func GetChannelMonitorConcurrency(c *gin.Context) {
-	snapshot, err := service.GetChannelConcurrencySnapshot(c.Request.Context())
+	snapshot, err := service.GetChannelConcurrencySnapshotWithRPM(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return

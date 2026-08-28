@@ -85,6 +85,7 @@ function createChannel(overrides: Partial<ChannelMonitorItem> = {}) {
     today_cost_unresolved_count: 0,
     concurrency_limit: 0,
     concurrency_active: 0,
+    current_rpm: 0,
     upstream: {
       type: 'new_api',
       base_url: 'https://upstream.example.com',
@@ -470,17 +471,18 @@ describe('channel monitor channel view timestamps', () => {
     )
   })
 
-  test('shows configured limit and current concurrency on separate lines', () => {
+  test('shows configured limit, current concurrency, and current rpm on separate lines', () => {
     const cells = getTableCells(
       renderView(
         createChannel({
           concurrency_limit: 8,
           concurrency_active: 3,
+          current_rpm: 42,
         })
       )
     )
 
-    assert.match(cells[6] ?? '', />8<[\s\S]*当前并发：3/)
+    assert.match(cells[6] ?? '', />8<[\s\S]*当前并发：3[\s\S]*当前 RPM：42/)
   })
 
   test('shows cache utilization on the third line of the success rate cell', () => {

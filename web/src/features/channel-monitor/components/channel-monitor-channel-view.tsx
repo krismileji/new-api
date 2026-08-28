@@ -549,6 +549,9 @@ export function ChannelMonitorChannelView(
                     <span className='text-muted-foreground text-xs'>
                       当前并发：{channel.concurrency_active}
                     </span>
+                    <span className='text-muted-foreground text-xs'>
+                      当前 RPM：{channel.current_rpm ?? 0}
+                    </span>
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>

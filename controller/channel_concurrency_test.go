@@ -77,6 +77,15 @@ func TestGetChannelMonitorConcurrencyReturnsActiveSnapshotForAllChannels(t *test
 		{Id: 109, Name: "limited snapshot", Key: "key-1", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
 		{Id: 110, Name: "unlimited snapshot", Key: "key-2", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
 	}).Error)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create([]model.Log{
+		{ChannelId: 109, CreatedAt: now, Type: model.LogTypeConsume},
+		{ChannelId: 109, CreatedAt: now - 59, Type: model.LogTypeConsume},
+		{ChannelId: 109, CreatedAt: now - 61, Type: model.LogTypeConsume},
+		{ChannelId: 109, CreatedAt: now, Type: model.LogTypeConsume, IsRetryAttempt: true},
+		{ChannelId: 109, CreatedAt: now, Type: model.LogTypeConsume, Other: `{"channel_monitor_channel_test":true}`},
+		{ChannelId: 110, CreatedAt: now, Type: model.LogTypeConsume},
+	}).Error)
 	_, err := service.SaveChannelConcurrencyLimit(t.Context(), 109, 1)
 	require.NoError(t, err)
 	lease, acquired, _, err := service.AcquireChannelConcurrency(t.Context(), 109)
@@ -103,8 +112,8 @@ func TestGetChannelMonitorConcurrencyReturnsActiveSnapshotForAllChannels(t *test
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
 	assert.Len(t, response.Data.Channels, 2)
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1}, response.Data.Channels["109"])
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0}, response.Data.Channels["110"])
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1, CurrentRPM: 2}, response.Data.Channels["109"])
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1}, response.Data.Channels["110"])
 }
 
 func TestAcquireRelayChannelConcurrencyDoesNotRerouteSpecificChannel(t *testing.T) {

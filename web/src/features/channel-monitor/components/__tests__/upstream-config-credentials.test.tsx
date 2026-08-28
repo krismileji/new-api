@@ -99,6 +99,7 @@ const channel: ChannelMonitorItem = {
   today_cost_unresolved_count: 0,
   concurrency_limit: 0,
   concurrency_active: 0,
+  current_rpm: 0,
   upstream: {
     type: 'sub2api',
     base_url: 'https://upstream.example',
