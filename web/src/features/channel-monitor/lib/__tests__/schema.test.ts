@@ -26,6 +26,7 @@ import {
   createChannelConcurrencyLimitSchema,
   createChannelMonitorSettingsSchema,
   createChannelMonitorSmartSchedulePolicySchema,
+  DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
@@ -50,6 +51,7 @@ import {
   DEFAULT_CHANNEL_MONITOR_GROUP_MONITOR_RETENTION_DAYS,
   createUpstreamConfigSchema,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
@@ -413,6 +415,10 @@ describe('channel monitor settings schema', () => {
     assert.equal(settings.autoEnableOnCostRatioRecovery, true)
     assert.equal(settings.autoEnableOnBalanceRecovery, true)
     assert.equal(settings.upstreamRequestTimeoutSeconds, 30)
+    assert.equal(
+      settings.autoUpdateRetryDelaySeconds,
+      DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS
+    )
     assert.equal(settings.autoUpdateConsecutiveFailureLimit, 2)
     assert.equal(settings.costRetentionDays, 120)
     assert.equal(settings.executionDetailRetentionDays, 14)
@@ -453,6 +459,7 @@ describe('channel monitor settings schema', () => {
     const result = createChannelMonitorSettingsSchema().safeParse({
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateRetryDelaySeconds: 0,
       upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
@@ -584,6 +591,28 @@ describe('channel monitor settings schema', () => {
           ...baseSettings,
           autoUpdateConsecutiveFailureLimit,
         }).success,
+        false
+      )
+    }
+
+    for (const autoUpdateRetryDelaySeconds of [
+      DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+      MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+    ]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, autoUpdateRetryDelaySeconds })
+          .autoUpdateRetryDelaySeconds,
+        autoUpdateRetryDelaySeconds
+      )
+    }
+    for (const autoUpdateRetryDelaySeconds of [
+      -1,
+      1.5,
+      MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, autoUpdateRetryDelaySeconds })
+          .success,
         false
       )
     }
@@ -933,6 +962,7 @@ describe('channel monitor settings schema', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateRetryDelaySeconds: 0,
       upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,

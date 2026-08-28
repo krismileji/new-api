@@ -32,6 +32,7 @@ import type {
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
   ChannelMonitorConsecutiveFailureLimitField,
+  ChannelMonitorRetryDelayField,
   ChannelMonitorRetentionFields,
   ChannelMonitorUpstreamRequestTimeoutField,
 } from '../channel-monitor-settings-dialog'
@@ -91,6 +92,17 @@ function UpstreamRequestTimeoutFieldFixture() {
   return (
     <Form {...form}>
       <ChannelMonitorUpstreamRequestTimeoutField form={form} />
+    </Form>
+  )
+}
+
+function RetryDelayFieldFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { autoUpdateRetryDelaySeconds: 7 },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorRetryDelayField form={form} />
     </Form>
   )
 }
@@ -286,6 +298,15 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /type="number"[^>]*min="1"[^>]*max="600"/)
     assert.match(markup, /value="30"/)
     assert.ok(markup.includes('单次倍率或余额更新超过该时间会终止'))
+  })
+
+  test('shows the configured retry delay and allows immediate retries', () => {
+    const markup = renderToStaticMarkup(<RetryDelayFieldFixture />)
+
+    assert.ok(markup.includes('失败重试等待时间'))
+    assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
+    assert.match(markup, /value="7"/)
+    assert.ok(markup.includes('每次重试前等待的时间；设置为 0 时立即重试'))
   })
 
   test('shows persisted retention settings with bounded numeric inputs', () => {

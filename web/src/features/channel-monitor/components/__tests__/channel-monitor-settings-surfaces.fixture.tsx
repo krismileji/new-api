@@ -80,6 +80,7 @@ reactTestGlobals.IS_REACT_ACT_ENVIRONMENT = true
 const settings = {
   auto_update_interval_minutes: 10,
   auto_update_retry_count: 2,
+  auto_update_retry_delay_seconds: 0,
   upstream_request_timeout_seconds: 45,
   auto_update_consecutive_failure_limit: 3,
   auto_disable_on_update_failure: false,

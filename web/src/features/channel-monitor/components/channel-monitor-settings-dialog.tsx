@@ -85,6 +85,7 @@ import {
 import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -98,6 +99,7 @@ import {
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
+  MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
@@ -573,6 +575,46 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
   )
 }
 
+export function ChannelMonitorRetryDelayField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='autoUpdateRetryDelaySeconds'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>失败重试等待时间</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={0}
+                max={MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.autoUpdateRetryDelaySeconds
+                )}
+              />
+              <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            每次重试前等待的时间；设置为 0 时立即重试
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 export function ChannelMonitorUpstreamRequestTimeoutField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
 }) {
@@ -648,6 +690,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
     defaultValues: {
       autoUpdateIntervalMinutes: props.settings.auto_update_interval_minutes,
       autoUpdateRetryCount: props.settings.auto_update_retry_count,
+      autoUpdateRetryDelaySeconds:
+        props.settings.auto_update_retry_delay_seconds ??
+        DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
       upstreamRequestTimeoutSeconds:
         props.settings.upstream_request_timeout_seconds ??
         DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -986,6 +1031,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     </FormItem>
                   )}
                 />
+
+                <ChannelMonitorRetryDelayField form={form} />
 
                 <ChannelMonitorUpstreamRequestTimeoutField form={form} />
 

@@ -43,12 +43,15 @@ export const MAX_CUSTOM_UPSTREAM_ENTRIES = 32
 export const MAX_CUSTOM_UPSTREAM_BODY_BYTES = 49_152
 export const MAX_AUTO_UPDATE_INTERVAL_MINUTES = 525_600
 export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
+export const MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS = 600
+export const DEFAULT_AUTO_UPDATE_RETRY_COUNT = 3
+export const DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS = 0
 export const MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 1
 export const MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 600
 export const DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 30
 export const MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 1
 export const MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 100
-export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 2
+export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 10
 export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
@@ -935,6 +938,15 @@ export function createChannelMonitorSettingsSchema() {
         .int('失败重试次数必须是整数')
         .min(0, '失败重试次数不能小于 0')
         .max(MAX_AUTO_UPDATE_RETRY_COUNT, '失败重试次数不能超过 10 次'),
+      autoUpdateRetryDelaySeconds: z.coerce
+        .number()
+        .int('失败重试等待时间必须是整数')
+        .min(0, '失败重试等待时间不能小于 0 秒')
+        .max(
+          MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+          '失败重试等待时间不能超过 600 秒'
+        )
+        .default(DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS),
       upstreamRequestTimeoutSeconds: z.coerce
         .number()
         .int('上游请求超时时间必须是整数')

@@ -83,6 +83,7 @@ test(
 
     assert.match(result.generalTitle, /渠道监控设置/)
     assert.match(result.generalTitle, /上游请求超时/)
+    assert.match(result.generalTitle, /失败重试等待时间/)
     assert.match(result.generalTitle, /错误处理/)
     assert.equal(result.generalHasSchedule, false)
     assert.equal(result.generalTabCount, 4)

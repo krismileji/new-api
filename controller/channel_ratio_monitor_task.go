@@ -550,6 +550,22 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			retriesUsed := 0
 			for attempt := 0; attempt <= settings.AutoUpdateRetryCount; attempt++ {
 				if attempt > 0 {
+					if settings.AutoUpdateRetryDelaySeconds > 0 {
+						timer := time.NewTimer(time.Duration(settings.AutoUpdateRetryDelaySeconds) * time.Second)
+						select {
+						case <-ctx.Done():
+							if !timer.Stop() {
+								select {
+								case <-timer.C:
+								default:
+								}
+							}
+							recordTaskError(ctx.Err())
+							reportChannelProgress()
+							return
+						case <-timer.C:
+						}
+					}
 					select {
 					case <-ctx.Done():
 						recordTaskError(ctx.Err())

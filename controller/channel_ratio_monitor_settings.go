@@ -23,6 +23,7 @@ import (
 const (
 	channelMonitorAutoUpdateIntervalOption                     = "ChannelMonitorAutoUpdateIntervalMinutes"
 	channelMonitorAutoUpdateRetryCountOption                   = "ChannelMonitorAutoUpdateRetryCount"
+	channelMonitorAutoUpdateRetryDelaySecondsOption            = "ChannelMonitorAutoUpdateRetryDelaySeconds"
 	channelMonitorUpstreamRequestTimeoutOption                 = "ChannelMonitorUpstreamRequestTimeoutSeconds"
 	channelMonitorAutoUpdateConsecutiveFailureLimitOption      = "ChannelMonitorAutoUpdateConsecutiveFailureLimit"
 	channelMonitorAutoDisableOnUpdateFailureOption             = "ChannelMonitorAutoDisableOnUpdateFailure"
@@ -92,6 +93,7 @@ const (
 	channelMonitorSmartScheduleSamplingOrderRatio              = "ratio"
 	maxChannelMonitorAutoUpdateIntervalMinutes                 = 525600
 	maxChannelMonitorAutoUpdateRetryCount                      = 10
+	maxChannelMonitorAutoUpdateRetryDelaySeconds               = 600
 	minChannelMonitorUpstreamRequestTimeoutSeconds             = 1
 	maxChannelMonitorUpstreamRequestTimeoutSeconds             = 600
 	minChannelMonitorAutoUpdateConsecutiveFailureLimit         = 1
@@ -122,9 +124,10 @@ const (
 	minChannelMonitorSmartScheduleRealtimeSampleLimit          = model.ChannelMonitorSmartScheduleMinRealtimeSampleLimit
 	maxChannelMonitorSmartScheduleRealtimeSampleLimit          = model.ChannelMonitorSmartScheduleMaxRealtimeSampleLimit
 	maxChannelMonitorSmartScheduleRateLimitCooldownSeconds     = 300
-	defaultChannelMonitorAutoUpdateRetryCount                  = 2
+	defaultChannelMonitorAutoUpdateRetryCount                  = 3
+	defaultChannelMonitorAutoUpdateRetryDelaySeconds           = 0
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
-	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 2
+	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 10
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
 	defaultChannelMonitorDurationBucketRetentionDays           = 30
@@ -172,6 +175,7 @@ var channelMonitorEmailNotificationTypes = []string{
 type channelMonitorSettings struct {
 	AutoUpdateIntervalMinutes             int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount                  int                        `json:"auto_update_retry_count"`
+	AutoUpdateRetryDelaySeconds           int                        `json:"auto_update_retry_delay_seconds"`
 	UpstreamRequestTimeoutSeconds         int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit     int                        `json:"auto_update_consecutive_failure_limit"`
 	AutoDisableOnUpdateFailure            bool                       `json:"auto_disable_on_update_failure"`
@@ -233,6 +237,7 @@ type channelMonitorSettings struct {
 type channelMonitorSettingsUpdateRequest struct {
 	AutoUpdateIntervalMinutes             *int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount                  *int                        `json:"auto_update_retry_count"`
+	AutoUpdateRetryDelaySeconds           *int                        `json:"auto_update_retry_delay_seconds"`
 	UpstreamRequestTimeoutSeconds         *int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit     *int                        `json:"auto_update_consecutive_failure_limit"`
 	AutoDisableOnUpdateFailure            *bool                       `json:"auto_disable_on_update_failure"`
@@ -309,6 +314,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 	optionKeys := []string{
 		channelMonitorAutoUpdateIntervalOption,
 		channelMonitorAutoUpdateRetryCountOption,
+		channelMonitorAutoUpdateRetryDelaySecondsOption,
 		channelMonitorUpstreamRequestTimeoutOption,
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption,
 		channelMonitorAutoDisableOnUpdateFailureOption,
@@ -379,6 +385,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 func channelMonitorSettingsFromOptions(options map[string]string) channelMonitorSettings {
 	rawInterval := options[channelMonitorAutoUpdateIntervalOption]
 	rawRetryCount := options[channelMonitorAutoUpdateRetryCountOption]
+	rawRetryDelaySeconds := options[channelMonitorAutoUpdateRetryDelaySecondsOption]
 	rawUpstreamRequestTimeout := options[channelMonitorUpstreamRequestTimeoutOption]
 	rawConsecutiveFailureLimit := options[channelMonitorAutoUpdateConsecutiveFailureLimitOption]
 	rawAutoDisableOnUpdateFailure := options[channelMonitorAutoDisableOnUpdateFailureOption]
@@ -429,6 +436,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	retryCount, err := strconv.Atoi(rawRetryCount)
 	if err != nil || retryCount < 0 || retryCount > maxChannelMonitorAutoUpdateRetryCount {
 		retryCount = defaultChannelMonitorAutoUpdateRetryCount
+	}
+	retryDelaySeconds, err := strconv.Atoi(rawRetryDelaySeconds)
+	if err != nil || retryDelaySeconds < 0 || retryDelaySeconds > maxChannelMonitorAutoUpdateRetryDelaySeconds {
+		retryDelaySeconds = defaultChannelMonitorAutoUpdateRetryDelaySeconds
 	}
 	upstreamRequestTimeoutSeconds, err := strconv.Atoi(rawUpstreamRequestTimeout)
 	if err != nil || upstreamRequestTimeoutSeconds < minChannelMonitorUpstreamRequestTimeoutSeconds ||
@@ -578,6 +589,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	settings := channelMonitorSettings{
 		AutoUpdateIntervalMinutes:             interval,
 		AutoUpdateRetryCount:                  retryCount,
+		AutoUpdateRetryDelaySeconds:           retryDelaySeconds,
 		UpstreamRequestTimeoutSeconds:         upstreamRequestTimeoutSeconds,
 		AutoUpdateConsecutiveFailureLimit:     consecutiveFailureLimit,
 		AutoDisableOnUpdateFailure:            autoDisableOnUpdateFailure,
@@ -897,6 +909,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	}
 	if request.AutoUpdateIntervalMinutes == nil &&
 		request.AutoUpdateRetryCount == nil &&
+		request.AutoUpdateRetryDelaySeconds == nil &&
 		request.UpstreamRequestTimeoutSeconds == nil &&
 		request.AutoUpdateConsecutiveFailureLimit == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
@@ -1040,6 +1053,18 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoUpdateRetryCount != nil {
 		settings.AutoUpdateRetryCount = *request.AutoUpdateRetryCount
 		values[channelMonitorAutoUpdateRetryCountOption] = strconv.Itoa(settings.AutoUpdateRetryCount)
+	}
+	if request.AutoUpdateRetryDelaySeconds != nil && (*request.AutoUpdateRetryDelaySeconds < 0 ||
+		*request.AutoUpdateRetryDelaySeconds > maxChannelMonitorAutoUpdateRetryDelaySeconds) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "失败重试等待时间必须在 0 到 600 秒之间",
+		})
+		return
+	}
+	if request.AutoUpdateRetryDelaySeconds != nil {
+		settings.AutoUpdateRetryDelaySeconds = *request.AutoUpdateRetryDelaySeconds
+		values[channelMonitorAutoUpdateRetryDelaySecondsOption] = strconv.Itoa(settings.AutoUpdateRetryDelaySeconds)
 	}
 	if request.UpstreamRequestTimeoutSeconds != nil &&
 		(*request.UpstreamRequestTimeoutSeconds < minChannelMonitorUpstreamRequestTimeoutSeconds ||
@@ -1601,6 +1626,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	auditDetails := map[string]interface{}{
 		"auto_update_interval_minutes":               settings.AutoUpdateIntervalMinutes,
 		"auto_update_retry_count":                    settings.AutoUpdateRetryCount,
+		"auto_update_retry_delay_seconds":            settings.AutoUpdateRetryDelaySeconds,
 		"upstream_request_timeout_seconds":           settings.UpstreamRequestTimeoutSeconds,
 		"auto_update_consecutive_failure_limit":      settings.AutoUpdateConsecutiveFailureLimit,
 		"auto_disable_on_update_failure":             settings.AutoDisableOnUpdateFailure,

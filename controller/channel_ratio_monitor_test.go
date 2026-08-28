@@ -359,6 +359,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 		values             map[string]string
 		wantInterval       int
 		wantRetryCount     int
+		wantRetryDelay     int
 		wantRequestTimeout int
 		wantFailureLimit   int
 		wantAutoDisable    bool
@@ -372,6 +373,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			name:               "missing values are disabled",
 			values:             map[string]string{},
 			wantRetryCount:     defaultChannelMonitorAutoUpdateRetryCount,
+			wantRetryDelay:     defaultChannelMonitorAutoUpdateRetryDelaySeconds,
 			wantRequestTimeout: defaultChannelMonitorUpstreamRequestTimeoutSeconds,
 			wantFailureLimit:   defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
 			wantTaskInterval:   time.Minute,
@@ -381,6 +383,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			values: map[string]string{
 				channelMonitorAutoUpdateIntervalOption:                "30",
 				channelMonitorAutoUpdateRetryCountOption:              "4",
+				channelMonitorAutoUpdateRetryDelaySecondsOption:       "12",
 				channelMonitorUpstreamRequestTimeoutOption:            "45",
 				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "5",
 				channelMonitorAutoDisableOnUpdateFailureOption:        "true",
@@ -391,6 +394,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			},
 			wantInterval:       30,
 			wantRetryCount:     4,
+			wantRetryDelay:     12,
 			wantRequestTimeout: 45,
 			wantFailureLimit:   5,
 			wantAutoDisable:    true,
@@ -405,6 +409,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			values: map[string]string{
 				channelMonitorAutoUpdateIntervalOption:                "525601",
 				channelMonitorAutoUpdateRetryCountOption:              "11",
+				channelMonitorAutoUpdateRetryDelaySecondsOption:       "601",
 				channelMonitorUpstreamRequestTimeoutOption:            "601",
 				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "101",
 				channelMonitorAutoDisableOnUpdateFailureOption:        "invalid",
@@ -414,6 +419,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 				common.RelayResponseHeaderTimeoutOptionKey:            "601",
 			},
 			wantRetryCount:     defaultChannelMonitorAutoUpdateRetryCount,
+			wantRetryDelay:     defaultChannelMonitorAutoUpdateRetryDelaySeconds,
 			wantRequestTimeout: defaultChannelMonitorUpstreamRequestTimeoutSeconds,
 			wantFailureLimit:   defaultChannelMonitorAutoUpdateConsecutiveFailureLimit,
 			wantTaskInterval:   time.Minute,
@@ -426,6 +432,7 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			settings := getChannelMonitorSettings()
 			assert.Equal(t, test.wantInterval, settings.AutoUpdateIntervalMinutes)
 			assert.Equal(t, test.wantRetryCount, settings.AutoUpdateRetryCount)
+			assert.Equal(t, test.wantRetryDelay, settings.AutoUpdateRetryDelaySeconds)
 			assert.Equal(t, test.wantRequestTimeout, settings.UpstreamRequestTimeoutSeconds)
 			assert.Equal(t, test.wantFailureLimit, settings.AutoUpdateConsecutiveFailureLimit)
 			assert.Equal(t, test.wantAutoDisable, settings.AutoDisableOnUpdateFailure)
@@ -1094,6 +1101,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
 		{"auto_update_retry_count": maxChannelMonitorAutoUpdateRetryCount + 1},
+		{"auto_update_retry_delay_seconds": -1},
+		{"auto_update_retry_delay_seconds": maxChannelMonitorAutoUpdateRetryDelaySeconds + 1},
 		{"upstream_request_timeout_seconds": minChannelMonitorUpstreamRequestTimeoutSeconds - 1},
 		{"upstream_request_timeout_seconds": maxChannelMonitorUpstreamRequestTimeoutSeconds + 1},
 		{"auto_update_consecutive_failure_limit": 0},
@@ -1174,6 +1183,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	request := map[string]any{
 		"auto_update_interval_minutes":          15,
 		"auto_update_retry_count":               3,
+		"auto_update_retry_delay_seconds":       12,
 		"upstream_request_timeout_seconds":      45,
 		"auto_update_consecutive_failure_limit": 5,
 		"auto_disable_on_update_failure":        true,
@@ -1251,6 +1261,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotEmpty(t, response.Data.SmartScheduleControlRevision)
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 12, response.Data.AutoUpdateRetryDelaySeconds)
 	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
 	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
@@ -1383,6 +1394,9 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateRetryCountOption).First(&option).Error)
 	assert.Equal(t, "3", option.Value)
 	option = model.Option{}
+	require.NoError(t, db.Where("key = ?", channelMonitorAutoUpdateRetryDelaySecondsOption).First(&option).Error)
+	assert.Equal(t, "12", option.Value)
+	option = model.Option{}
 	require.NoError(t, db.Where("key = ?", channelMonitorUpstreamRequestTimeoutOption).First(&option).Error)
 	assert.Equal(t, "45", option.Value)
 	option = model.Option{}
@@ -1459,6 +1473,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
+	assert.Equal(t, 12, response.Data.AutoUpdateRetryDelaySeconds)
 	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
 	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)
@@ -4453,23 +4468,23 @@ func TestRunChannelRatioMonitorTaskContinuesAfterFailure(t *testing.T) {
 	assert.Equal(t, 2, summary.Total)
 	assert.Equal(t, 1, summary.Updated)
 	assert.Equal(t, 1, summary.Failed)
-	assert.Equal(t, 1, summary.Retried)
+	assert.Equal(t, 3, summary.Retried)
 	assert.Zero(t, summary.RecoveredAfterRetry)
 	require.Len(t, summary.Failures, 1)
 	assert.Equal(t, 1, summary.Failures[0].ChannelId)
 	assert.Equal(t, "failing disabled", summary.Failures[0].ChannelName)
-	assert.Contains(t, summary.Failures[0].Error, "重试 1 次后仍失败")
+	assert.Contains(t, summary.Failures[0].Error, "重试 3 次后仍失败")
 	assert.Contains(t, summary.Failures[0].Error, "502 Bad Gateway")
 	assert.False(t, summary.FailureDetailsTruncated)
 	assert.Equal(t, [][2]int{{1, 2}, {2, 2}}, progress)
-	assert.EqualValues(t, 4, failingRequestCount.Load())
+	assert.EqualValues(t, 8, failingRequestCount.Load())
 
 	failedMonitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Equal(t, model.ChannelRatioFetchStatusFailed, failedMonitor.LastFetchStatus)
 	assert.NotEmpty(t, failedMonitor.LastFetchError)
 	assert.NotZero(t, failedMonitor.LastFetchTime)
-	assert.Equal(t, 2, failedMonitor.ConsecutiveFailures)
+	assert.Equal(t, 4, failedMonitor.ConsecutiveFailures)
 
 	monitor, err := model.GetChannelRatioMonitor(2)
 	require.NoError(t, err)

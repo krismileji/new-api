@@ -66,6 +66,7 @@ const storageSettingsAreRequired: StorageSettingsAreRequired = true
 const formValues = {
   autoUpdateIntervalMinutes: 15,
   autoUpdateRetryCount: 2,
+  autoUpdateRetryDelaySeconds: 6,
   upstreamRequestTimeoutSeconds: 45,
   autoUpdateConsecutiveFailureLimit: 3,
   autoDisableOnUpdateFailure: true,
@@ -385,6 +386,7 @@ describe('channel monitor settings submit payload', () => {
       'auto_update_consecutive_failure_limit',
       'auto_update_interval_minutes',
       'auto_update_retry_count',
+      'auto_update_retry_delay_seconds',
       'channel_test_task_retention_days',
       'cleanup_batch_size',
       'cleanup_budget_seconds',
@@ -426,6 +428,7 @@ describe('channel monitor settings submit payload', () => {
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
+    assert.equal(payload.auto_update_retry_delay_seconds, 6)
     assert.equal(payload.execution_detail_retention_days, 14)
     assert.equal(payload.route_metric_retention_days, 30)
     assert.equal(payload.duration_bucket_retention_days, 30)
