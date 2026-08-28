@@ -1381,6 +1381,46 @@ func TestProtectChannelSmartScheduleRuntimeFailureCanDisable429Cooldown(t *testi
 	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1503, "model-a"))
 }
 
+func TestProtectChannelSmartScheduleRuntimeFailureCanDisableBridgeCooldown(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	service.ClearChannelRateLimitCooldowns()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	failureThreshold := 1
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategyRatio, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 80, 30,
+	)
+	policy.ConsecutiveFailureThreshold = &failureThreshold
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartScheduleGroupPoliciesOption:     channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+		channelMonitorSmartScheduleRateLimitCooldownOption: "0",
+	})
+
+	priority := int64(100)
+	weight := uint(20)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1903, Name: "bridge cooldown disabled", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1903, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1903, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
+	projectAndProtectChannelSmartScheduleRuntimeFailureForTest(1903, "model-a", runtimeError)
+
+	assert.Zero(t, service.ChannelRateLimitCooldownUntil(1903, "model-a"))
+	var state model.ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1903, GroupName: "vip", ModelName: "model-a",
+	}).First(&state).Error)
+	assert.Equal(t, model.ChannelSmartScheduleStabilityDegraded, state.StabilityState)
+}
+
 func TestProtectChannelSmartScheduleRuntimeFailureRejects429FromStaleConfiguration(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	service.ClearChannelRateLimitCooldowns()

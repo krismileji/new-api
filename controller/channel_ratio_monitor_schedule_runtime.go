@@ -692,7 +692,10 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 			}] = struct{}{}
 		}
 	}
-	if protectionApplied {
+	// A zero cooldown setting disables all route-level rate-limit cooldowns,
+	// including the short bridge cooldown used after stability protection.
+	// The stability protection state itself is still persisted above.
+	if protectionApplied && settings.SmartScheduleRateLimitCooldownSeconds > 0 {
 		bridgeSeconds := common.SyncFrequency + 5
 		if common.SyncFrequency <= 0 {
 			bridgeSeconds = 65
