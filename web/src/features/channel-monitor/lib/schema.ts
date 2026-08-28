@@ -53,6 +53,7 @@ export const MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 1
 export const MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 100
 export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 10
 export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
+export const MAX_CHANNEL_RPM_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
 export const MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS = 3_650
 export const DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS = 30
@@ -805,6 +806,18 @@ export function createChannelConcurrencyLimitSchema() {
         .min(0, '并发限制不能小于 0')
         .max(MAX_CHANNEL_CONCURRENCY_LIMIT, '并发限制不能超过 100000')
     ),
+    rpmLimit: z
+      .preprocess(
+        (value) => (value === '' ? undefined : value),
+        z.coerce
+          .number({ error: 'RPM 限制必须是有效数字' })
+          .finite('RPM 限制必须是有效数字')
+          .int('RPM 限制必须是整数')
+          .min(0, 'RPM 限制不能小于 0')
+          .max(MAX_CHANNEL_RPM_LIMIT, 'RPM 限制不能超过 100000')
+      )
+      .optional()
+      .default(0),
   })
 }
 

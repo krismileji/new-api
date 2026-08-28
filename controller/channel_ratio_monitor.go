@@ -116,6 +116,7 @@ type channelMonitorItem struct {
 	TodayCostComplete        bool                          `json:"today_cost_complete"`
 	TodayCostUnresolvedCount int64                         `json:"today_cost_unresolved_count"`
 	ConcurrencyLimit         int                           `json:"concurrency_limit"`
+	RPMLimit                 int                           `json:"rpm_limit"`
 	ConcurrencyActive        int                           `json:"concurrency_active"`
 	CurrentRPM               int                           `json:"current_rpm"`
 	Upstream                 *channelMonitorUpstreamConfig `json:"upstream"`
@@ -518,7 +519,13 @@ func GetChannelMonitorOverview(c *gin.Context) {
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
 	channelOrder := getChannelMonitorChannelOrder(channels)
-	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPM(c.Request.Context())
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel != nil {
+			channelIDs = append(channelIDs, channel.Id)
+		}
+	}
+	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDs(c.Request.Context(), channelIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -566,6 +573,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		}
 		if monitor, exists := monitorByChannel[channel.Id]; exists {
 			item.ConcurrencyLimit = monitor.ConcurrencyLimit
+			item.RPMLimit = monitor.RPMLimit
 			if channelMonitorCostTrackingConfigured(monitor) {
 				item.TodayCostConfigured = true
 				if item.TodayCostUnresolvedCount == 0 {
@@ -602,6 +610,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		}
 		if concurrencyStatus, exists := concurrencyByChannel[channel.Id]; exists {
 			item.ConcurrencyLimit = concurrencyStatus.Limit
+			item.RPMLimit = concurrencyStatus.RPMLimit
 			item.ConcurrencyActive = concurrencyStatus.Active
 			item.CurrentRPM = concurrencyStatus.CurrentRPM
 		}

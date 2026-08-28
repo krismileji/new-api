@@ -42,6 +42,7 @@ func useChannelConcurrencyTestState(t *testing.T, limits map[int]int) {
 	originalLoadedAt := channelConcurrency.loadedAt
 	originalConfigs := channelConcurrency.configs
 	originalActive := channelConcurrency.active
+	originalRPM := channelConcurrency.rpm
 	configs := make(map[int]model.ChannelConcurrencyConfig, len(limits))
 	for channelID, limit := range limits {
 		configs[channelID] = model.ChannelConcurrencyConfig{Limit: limit, Revision: 1}
@@ -52,6 +53,7 @@ func useChannelConcurrencyTestState(t *testing.T, limits map[int]int) {
 	channelConcurrency.loadedAt = time.Now()
 	channelConcurrency.configs = configs
 	channelConcurrency.active = make(map[int]int)
+	channelConcurrency.rpm = make(map[int][]int64)
 	channelConcurrency.Unlock()
 	t.Cleanup(func() {
 		channelConcurrency.Lock()
@@ -61,6 +63,7 @@ func useChannelConcurrencyTestState(t *testing.T, limits map[int]int) {
 		channelConcurrency.loadedAt = originalLoadedAt
 		channelConcurrency.configs = originalConfigs
 		channelConcurrency.active = originalActive
+		channelConcurrency.rpm = originalRPM
 		channelConcurrency.Unlock()
 	})
 }
@@ -129,6 +132,43 @@ func TestAcquireChannelConcurrencyLocalHonorsLimitAndIdempotentRelease(t *testin
 	snapshot, err := GetChannelConcurrencySnapshot(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 2}, snapshot[7])
+}
+
+func TestAcquireChannelConcurrencyLocalHonorsRPMLimit(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	channelConcurrency.Lock()
+	channelConcurrency.configs[18] = model.ChannelConcurrencyConfig{RPMLimit: 1, Revision: 1}
+	channelConcurrency.Unlock()
+
+	first, acquired, status, err := AcquireChannelConcurrency(t.Context(), 18)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1, RPMLimit: 1}, status)
+	defer first.Release()
+
+	second, acquired, status, err := AcquireChannelConcurrency(t.Context(), 18)
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	assert.Nil(t, second)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1, RPMLimit: 1}, status)
+}
+
+func TestAcquireChannelConcurrencyUsesEitherConcurrencyOrRPMLimit(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	channelConcurrency.Lock()
+	channelConcurrency.configs[19] = model.ChannelConcurrencyConfig{Limit: 1, RPMLimit: 10, Revision: 1}
+	channelConcurrency.Unlock()
+
+	first, acquired, _, err := AcquireChannelConcurrency(t.Context(), 19)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer first.Release()
+
+	second, acquired, status, err := AcquireChannelConcurrency(t.Context(), 19)
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	assert.Nil(t, second)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 1, CurrentRPM: 1, RPMLimit: 10}, status)
 }
 
 func TestAcquireChannelConcurrencyRedisCountsUnlimitedChannelWhenRedisUnavailable(t *testing.T) {
@@ -226,6 +266,32 @@ func TestAcquireChannelConcurrencyRedisSharesLimitsAndActiveLeases(t *testing.T)
 	snapshot, err = GetChannelConcurrencySnapshot(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 2}, snapshot[9])
+}
+
+func TestAcquireChannelConcurrencyRedisHonorsRPMLimit(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	client := useChannelConcurrencyRedis(t)
+	require.NoError(t, ensureChannelConcurrencyRedisConfig(t.Context(), client, map[int]model.ChannelConcurrencyConfig{
+		20: {RPMLimit: 2, Revision: 1},
+	}))
+
+	first, acquired, status, err := AcquireChannelConcurrency(t.Context(), 20)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer first.Release()
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1, RPMLimit: 2}, status)
+
+	second, acquired, status, err := AcquireChannelConcurrency(t.Context(), 20)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer second.Release()
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 2, Limit: 0, CurrentRPM: 2, RPMLimit: 2}, status)
+
+	third, acquired, status, err := AcquireChannelConcurrency(t.Context(), 20)
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	assert.Nil(t, third)
+	assert.Equal(t, ChannelConcurrencyStatus{Active: 2, Limit: 0, CurrentRPM: 2, RPMLimit: 2}, status)
 }
 
 func TestAcquireChannelConcurrencyRedisHonorsLimitWhenLocalCacheIsStaleUnlimited(t *testing.T) {

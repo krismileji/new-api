@@ -53,6 +53,7 @@ import {
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
+  MAX_CHANNEL_RPM_LIMIT,
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
   MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
@@ -315,6 +316,21 @@ describe('channel concurrency limit schema', () => {
       MAX_CHANNEL_CONCURRENCY_LIMIT + 1,
     ]) {
       assert.equal(schema.safeParse({ concurrencyLimit }).success, false)
+    }
+  })
+
+  test('accepts and validates an independent rpm limit', () => {
+    assert.equal(schema.parse({ concurrencyLimit: 0, rpmLimit: 0 }).rpmLimit, 0)
+    assert.equal(
+      schema.parse({ concurrencyLimit: 0, rpmLimit: MAX_CHANNEL_RPM_LIMIT })
+        .rpmLimit,
+      MAX_CHANNEL_RPM_LIMIT
+    )
+    for (const rpmLimit of ['', 1.5, -1, MAX_CHANNEL_RPM_LIMIT + 1]) {
+      assert.equal(
+        schema.safeParse({ concurrencyLimit: 0, rpmLimit }).success,
+        false
+      )
     }
   })
 })

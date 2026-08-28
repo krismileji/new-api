@@ -59,7 +59,7 @@ var channelMonitorAuditContentTemplates = map[string]string{
 	"channel.status_update_batch":                            "已将 ${count} 个渠道的状态更新为 ${status}",
 	"channel.status_changed":                                 "已${status_label}渠道 ${channel_label}",
 	"channel.status_changed_batch":                           "已${status_label} ${count} 个渠道",
-	"channel.monitor_concurrency_limit_update":               "已将渠道 ${channel_label} 的并发限制更新为 ${concurrency_limit}（0 表示不限制）",
+	"channel.monitor_concurrency_limit_update":               "已将渠道 ${channel_label} 的并发限制更新为 ${concurrency_limit}、RPM 限制更新为 ${rpm_limit}（0 表示不限制）",
 	"channel.monitor_smart_schedule_config_update":           "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的主渠道固定时间更新为 ${duration_minutes} 分钟",
 	"channel.monitor_smart_schedule_stability_clear":         "已手动解除渠道 ${channel_label} 的稳定性保护，恢复优先级 ${priority}、权重 ${weight}",
 	"channel.monitor_smart_schedule_channel_config_update":   "已更新渠道 ${channel_label} 的智能调度参与设置（影响 ${updated} 条路由）",

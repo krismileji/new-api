@@ -50,6 +50,7 @@ export type ChannelMonitorItem = {
   today_cost_complete: boolean
   today_cost_unresolved_count: number
   concurrency_limit: number
+  rpm_limit?: number
   concurrency_active: number
   current_rpm: number
   upstream: ChannelMonitorUpstreamConfig | null
@@ -59,6 +60,7 @@ export type ChannelMonitorConcurrencyStatus = {
   active: number
   limit: number
   current_rpm: number
+  rpm_limit?: number
 }
 
 export type ChannelMonitorConcurrencyOverview = {

@@ -547,6 +547,12 @@ export function ChannelMonitorChannelView(
                         : '不限'}
                     </span>
                     <span className='text-muted-foreground text-xs'>
+                      RPM 限制：
+                      {channel.rpm_limit && channel.rpm_limit > 0
+                        ? channel.rpm_limit
+                        : '不限'}
+                    </span>
+                    <span className='text-muted-foreground text-xs'>
                       当前并发：{channel.concurrency_active}
                     </span>
                     <span className='text-muted-foreground text-xs'>

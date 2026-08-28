@@ -1974,6 +1974,54 @@ func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t 
 	unlimitedLease.Release()
 }
 
+func TestUpdateChannelMonitorConcurrencyAndRPMLimits(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 17, Name: "rpm channel", Key: "secret", Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/17/concurrency", map[string]any{
+		"rpm_limit": 2,
+	})
+	ctx.Params = gin.Params{{Key: "id", Value: "17"}}
+	UpdateChannelMonitorConcurrencyLimit(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ConcurrencyLimit int `json:"concurrency_limit"`
+			RPMLimit         int `json:"rpm_limit"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Zero(t, response.Data.ConcurrencyLimit)
+	assert.Equal(t, 2, response.Data.RPMLimit)
+
+	monitor, err := model.GetChannelRatioMonitor(17)
+	require.NoError(t, err)
+	assert.Zero(t, monitor.ConcurrencyLimit)
+	assert.Equal(t, 2, monitor.RPMLimit)
+
+	lease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 17)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1, RPMLimit: 2}, status)
+	lease.Release()
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/channel/17/concurrency", map[string]any{
+		"concurrency_limit": 3,
+	})
+	ctx.Params = gin.Params{{Key: "id", Value: "17"}}
+	UpdateChannelMonitorConcurrencyLimit(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	monitor, err = model.GetChannelRatioMonitor(17)
+	require.NoError(t, err)
+	assert.Equal(t, 3, monitor.ConcurrencyLimit)
+	assert.Equal(t, 2, monitor.RPMLimit)
+}
+
 func TestUpdateChannelMonitorChannelOrderPersistsNormalizedOrder(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})

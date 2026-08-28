@@ -46,6 +46,7 @@ import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   createChannelConcurrencyLimitSchema,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
+  MAX_CHANNEL_RPM_LIMIT,
   type ChannelConcurrencyLimitFormValues,
 } from '../lib/schema'
 import type { ChannelMonitorItem } from '../types'
@@ -66,6 +67,7 @@ export function EditChannelConcurrencyLimitDialog(
     ) as Resolver<ChannelConcurrencyLimitFormValues>,
     defaultValues: {
       concurrencyLimit: props.channel.concurrency_limit ?? 0,
+      rpmLimit: props.channel.rpm_limit ?? 0,
     },
   })
 
@@ -73,7 +75,7 @@ export function EditChannelConcurrencyLimitDialog(
     mutationFn: updateChannelMonitorConcurrencyLimit,
     onError: handleChannelMonitorMutationError,
     onSuccess: () => {
-      toast.success('渠道并发限制已保存')
+      toast.success('渠道并发与 RPM 限制已保存')
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       props.onOpenChange(false)
     },
@@ -83,6 +85,7 @@ export function EditChannelConcurrencyLimitDialog(
     mutation.mutate({
       channelId: props.channel.id,
       concurrencyLimit: values.concurrencyLimit,
+      rpmLimit: values.rpmLimit,
     })
   })
 
@@ -108,6 +111,35 @@ export function EditChannelConcurrencyLimitDialog(
                       type='number'
                       min={0}
                       max={MAX_CHANNEL_CONCURRENCY_LIMIT}
+                      step={1}
+                      inputMode='numeric'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    设置为 0
+                    表示不限；达到上限时该渠道会暂停接收新请求，优先尝试其它可用渠道。
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='rpmLimit'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>每分钟最大请求数（RPM）</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={MAX_CHANNEL_RPM_LIMIT}
                       step={1}
                       inputMode='numeric'
                       value={field.value}

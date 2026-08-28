@@ -15,8 +15,8 @@ func TestChannelMonitorAuditContentIsReadable(t *testing.T) {
 	}{
 		{
 			name: "concurrency", action: "channel.monitor_concurrency_limit_update",
-			params: map[string]interface{}{"id": 7, "channel_name": "测试渠道", "channel_label": "测试渠道（ID: 7）", "concurrency_limit": 0},
-			want:   "已将渠道 测试渠道（ID: 7）的并发限制更新为 0（0 表示不限制）",
+			params: map[string]interface{}{"id": 7, "channel_name": "测试渠道", "channel_label": "测试渠道（ID: 7）", "concurrency_limit": 0, "rpm_limit": 0},
+			want:   "已将渠道 测试渠道（ID: 7）的并发限制更新为 0、RPM 限制更新为 0（0 表示不限制）",
 		},
 		{
 			name: "route pause", action: "channel.monitor_smart_schedule_group_pause_update",

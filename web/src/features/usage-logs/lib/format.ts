@@ -478,7 +478,7 @@ const CHANNEL_MONITOR_AUDIT_TEMPLATES: Record<string, string> = {
   'channel.status_changed': '已{{status_label}}渠道 {{channel_label}}',
   'channel.status_changed_batch': '已{{status_label}} {{count}} 个渠道',
   'channel.monitor_concurrency_limit_update':
-    '已将渠道 {{channel_label}} 的并发限制更新为 {{concurrency_limit}}（0 表示不限制）',
+    '已将渠道 {{channel_label}} 的并发限制更新为 {{concurrency_limit}}、RPM 限制更新为 {{rpm_limit}}（0 表示不限制）',
   'channel.monitor_smart_schedule_config_update':
     '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的主渠道固定时间更新为 {{duration_minutes}} 分钟',
   'channel.monitor_smart_schedule_stability_clear':
@@ -541,6 +541,12 @@ export function renderAuditContent(
   const fixedChineseTemplate = CHANNEL_MONITOR_AUDIT_TEMPLATES[op.action]
   if (fixedChineseTemplate) {
     const params = { ...op.params }
+    if (
+      op.action === 'channel.monitor_concurrency_limit_update' &&
+      params.rpm_limit == null
+    ) {
+      params.rpm_limit = 0
+    }
     if (params.channel_label == null) {
       const channelId = params.channel_id ?? params.id
       const channelName = params.channel_name

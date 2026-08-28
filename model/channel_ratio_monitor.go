@@ -69,11 +69,13 @@ type ChannelRatioMonitor struct {
 	SingleChannelAction         string   `json:"single_channel_action" gorm:"type:varchar(32)"`
 	MultipleChannelsAction      string   `json:"multiple_channels_action" gorm:"type:varchar(32)"`
 	ConcurrencyLimit            int      `json:"concurrency_limit"`
+	RPMLimit                    int      `json:"rpm_limit"`
 	ConcurrencyRevision         int64    `json:"-" gorm:"bigint"`
 }
 
 type ChannelConcurrencyConfig struct {
 	Limit    int
+	RPMLimit int
 	Revision int64
 }
 
@@ -137,8 +139,8 @@ func GetChannelRatioMonitor(channelId int) (ChannelRatioMonitor, error) {
 
 func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
 	var monitors []ChannelRatioMonitor
-	err := DB.Select("channel_id", "concurrency_limit", "concurrency_revision").
-		Where("concurrency_limit > ? OR concurrency_revision > ?", 0, 0).
+	err := DB.Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").
+		Where("concurrency_limit > ? OR rpm_limit > ? OR concurrency_revision > ?", 0, 0, 0).
 		Find(&monitors).Error
 	if err != nil {
 		return nil, err
@@ -147,6 +149,7 @@ func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
 	for _, monitor := range monitors {
 		configs[monitor.ChannelId] = ChannelConcurrencyConfig{
 			Limit:    monitor.ConcurrencyLimit,
+			RPMLimit: monitor.RPMLimit,
 			Revision: monitor.ConcurrencyRevision,
 		}
 	}
@@ -154,6 +157,13 @@ func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
 }
 
 func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatioMonitor, err error) {
+	return SaveChannelConcurrencyLimits(channelId, &limit, nil)
+}
+
+func SaveChannelConcurrencyLimits(channelId int, concurrencyLimit *int, rpmLimit *int) (monitor ChannelRatioMonitor, err error) {
+	if concurrencyLimit == nil && rpmLimit == nil {
+		return monitor, errors.New("请至少提供渠道并发或 RPM 限制")
+	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
@@ -170,7 +180,12 @@ func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatio
 		if monitor.ConcurrencyRevision == math.MaxInt64 {
 			return errors.New("渠道并发配置修订号已达上限")
 		}
-		monitor.ConcurrencyLimit = limit
+		if concurrencyLimit != nil {
+			monitor.ConcurrencyLimit = *concurrencyLimit
+		}
+		if rpmLimit != nil {
+			monitor.RPMLimit = *rpmLimit
+		}
 		monitor.ConcurrencyRevision++
 		return tx.Save(&monitor).Error
 	})

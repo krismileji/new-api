@@ -40,6 +40,27 @@ func (routing *relayRetryRouting) exclude(channelID int) {
 	routing.exhausted = false
 }
 
+// restore removes a temporary exclusion made while a channel was saturated.
+// Permanent retry exclusions remain untouched, so waiting for capacity does
+// not bring a channel that already failed upstream back into the round.
+func (routing *relayRetryRouting) restore(channelID int) {
+	if routing == nil || channelID <= 0 {
+		return
+	}
+	if _, exists := routing.excluded[channelID]; !exists {
+		return
+	}
+	delete(routing.excluded, channelID)
+	filtered := routing.excludedOrder[:0]
+	for _, excludedID := range routing.excludedOrder {
+		if excludedID != channelID {
+			filtered = append(filtered, excludedID)
+		}
+	}
+	routing.excludedOrder = filtered
+	routing.exhausted = false
+}
+
 func (routing *relayRetryRouting) retrySameChannel(channel *model.Channel, group string) {
 	if routing == nil || channel == nil || channel.Id <= 0 {
 		return

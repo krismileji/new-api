@@ -476,13 +476,17 @@ describe('channel monitor channel view timestamps', () => {
       renderView(
         createChannel({
           concurrency_limit: 8,
+          rpm_limit: 60,
           concurrency_active: 3,
           current_rpm: 42,
         })
       )
     )
 
-    assert.match(cells[6] ?? '', />8<[\s\S]*当前并发：3[\s\S]*当前 RPM：42/)
+    assert.match(
+      cells[6] ?? '',
+      />8<[\s\S]*RPM 限制：60[\s\S]*当前并发：3[\s\S]*当前 RPM：42/
+    )
   })
 
   test('shows cache utilization on the third line of the success rate cell', () => {

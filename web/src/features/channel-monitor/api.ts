@@ -517,12 +517,14 @@ export async function updateChannelMonitorRatio(request: {
 
 export async function updateChannelMonitorConcurrencyLimit(request: {
   channelId: number
-  concurrencyLimit: number
+  concurrencyLimit?: number
+  rpmLimit?: number
 }) {
   const response = await api.put(
     `/api/channel_monitor/channel/${request.channelId}/concurrency`,
     {
       concurrency_limit: request.concurrencyLimit,
+      rpm_limit: request.rpmLimit,
     },
     channelMonitorRequestConfig()
   )

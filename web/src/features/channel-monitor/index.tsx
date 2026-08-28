@@ -690,6 +690,7 @@ export function ChannelMonitor() {
         concurrency_active: status.active,
         concurrency_limit: status.limit,
         current_rpm: status.current_rpm ?? channel.current_rpm ?? 0,
+        rpm_limit: status.rpm_limit ?? channel.rpm_limit ?? 0,
       }
     })
   }, [concurrencyQuery.data?.data.channels, overviewChannels])
