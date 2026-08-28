@@ -25,8 +25,10 @@ import {
   FormControl,
   FormDescription,
   FormField,
+  FormItem,
   FormLabel,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
 import {
@@ -128,6 +130,10 @@ export function SidebarModulesSection({
         title: t('Profile'),
         description: t('Personal settings and profile management.'),
       },
+      shop: {
+        title: '小铺充值',
+        description: '在钱包下显示小铺充值入口。',
+      },
     },
     admin: {
       channel: {
@@ -201,7 +207,8 @@ export function SidebarModulesSection({
               description: t('Custom sidebar section'),
             }
             const modules = Object.entries(sectionConfig).filter(
-              ([moduleKey]) => moduleKey !== 'enabled'
+              ([moduleKey, moduleValue]) =>
+                moduleKey !== 'enabled' && typeof moduleValue === 'boolean'
             )
 
             return (
@@ -263,6 +270,37 @@ export function SidebarModulesSection({
                       />
                     )
                   })}
+                  {sectionKey === 'personal' && (
+                    <FormField
+                      control={form.control}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      name={'personal.shop_url' as any}
+                      render={({ field }) => (
+                        <FormItem className='md:col-span-2'>
+                          <FormLabel>小铺充值链接</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='url'
+                              placeholder='https://example.com/shop'
+                              {...field}
+                              value={
+                                typeof field.value === 'string'
+                                  ? field.value
+                                  : ''
+                              }
+                              disabled={
+                                !form.watch('personal.enabled') ||
+                                !form.watch('personal.shop')
+                              }
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            小铺充值菜单会在站内以 iframe 方式打开此链接。
+                          </FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </SettingsControlChildren>
               </SettingsControlGroup>
             )

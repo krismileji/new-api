@@ -29,6 +29,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  Store,
   Ticket,
   User,
   Users,
@@ -108,6 +109,11 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: '小铺充值',
+            url: '/wallet/shop',
+            icon: Store,
           },
           {
             title: t('Profile'),

@@ -33,7 +33,7 @@ export type HeaderNavModulesConfig = {
 
 export type SidebarSectionConfig = {
   enabled: boolean
-  [key: string]: boolean
+  [key: string]: boolean | string
 }
 
 export type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
@@ -71,6 +71,8 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     topup: true,
     personal: true,
+    shop: false,
+    shop_url: '',
   },
   admin: {
     enabled: true,
@@ -205,9 +207,17 @@ export function parseSidebarModulesAdmin(
       Object.entries(raw as Record<string, unknown>).forEach(
         ([moduleKey, moduleValue]) => {
           if (moduleKey === 'enabled') return
+
+          const defaultValue = defaultSection[moduleKey]
+          if (typeof defaultValue === 'string') {
+            sectionConfig[moduleKey] =
+              typeof moduleValue === 'string' ? moduleValue : defaultValue
+            return
+          }
+
           sectionConfig[moduleKey] = toBoolean(
             moduleValue,
-            defaultSection[moduleKey] ?? true
+            typeof defaultValue === 'boolean' ? defaultValue : true
           )
         }
       )

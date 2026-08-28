@@ -24,7 +24,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 type SidebarSectionConfig = {
   enabled: boolean
-  [key: string]: boolean
+  [key: string]: boolean | string
 }
 
 type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
@@ -54,6 +54,8 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     enabled: true,
     topup: true,
     personal: true,
+    shop: false,
+    shop_url: '',
   },
   admin: {
     enabled: true,
@@ -106,6 +108,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
   '/wallet': { section: 'personal', module: 'topup' },
+  '/wallet/shop': { section: 'personal', module: 'shop' },
   '/profile': { section: 'personal', module: 'personal' },
   '/channels': { section: 'admin', module: 'channel' },
   '/channel-monitor': { section: 'admin', module: 'channel' },
