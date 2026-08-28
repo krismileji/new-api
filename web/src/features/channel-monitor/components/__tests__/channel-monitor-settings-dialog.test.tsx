@@ -32,6 +32,7 @@ import type {
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
   ChannelMonitorConsecutiveFailureLimitField,
+  ChannelMonitorConcurrencyWaitField,
   ChannelMonitorRetryDelayField,
   ChannelMonitorRetentionFields,
   ChannelMonitorUpstreamRequestTimeoutField,
@@ -92,6 +93,17 @@ function UpstreamRequestTimeoutFieldFixture() {
   return (
     <Form {...form}>
       <ChannelMonitorUpstreamRequestTimeoutField form={form} />
+    </Form>
+  )
+}
+
+function ConcurrencyWaitFieldFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { channelConcurrencyWaitSeconds: 8 },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorConcurrencyWaitField form={form} />
     </Form>
   )
 }
@@ -307,6 +319,15 @@ describe('channel monitor settings dialog', () => {
     assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
     assert.match(markup, /value="7"/)
     assert.ok(markup.includes('每次重试前等待的时间；设置为 0 时立即重试'))
+  })
+
+  test('shows the configured channel capacity wait time', () => {
+    const markup = renderToStaticMarkup(<ConcurrencyWaitFieldFixture />)
+
+    assert.ok(markup.includes('渠道满载等待时间'))
+    assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
+    assert.match(markup, /value="8"/)
+    assert.ok(markup.includes('无可用渠道时最多等待该时间'))
   })
 
   test('shows persisted retention settings with bounded numeric inputs', () => {

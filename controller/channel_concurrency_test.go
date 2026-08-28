@@ -159,6 +159,9 @@ func TestAcquireRelayChannelConcurrencyDoesNotRerouteSpecificChannel(t *testing.
 
 func TestAcquireRelayChannelConcurrencyReturns429WhenAllChannelsAreSaturated(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorChannelConcurrencyWaitSecondsOption: "0",
+	})
 	priority100 := int64(100)
 	priority90 := int64(90)
 	weight := uint(10)
@@ -209,6 +212,28 @@ func TestAcquireRelayChannelConcurrencyReturns429WhenAllChannelsAreSaturated(t *
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
 	assert.Zero(t, retryParam.GetRetry())
+}
+
+func TestChannelMonitorSettingsParsesChannelConcurrencyWaitSeconds(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "default", want: defaultChannelMonitorChannelConcurrencyWaitSeconds},
+		{name: "configured", raw: "17", want: 17},
+		{name: "negative uses default", raw: "-1", want: defaultChannelMonitorChannelConcurrencyWaitSeconds},
+		{name: "above maximum uses default", raw: "601", want: defaultChannelMonitorChannelConcurrencyWaitSeconds},
+		{name: "invalid uses default", raw: "invalid", want: defaultChannelMonitorChannelConcurrencyWaitSeconds},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings := channelMonitorSettingsFromOptions(map[string]string{
+				channelMonitorChannelConcurrencyWaitSecondsOption: test.raw,
+			})
+			assert.Equal(t, test.want, settings.ChannelConcurrencyWaitSeconds)
+		})
+	}
 }
 
 func TestAcquireRelayChannelConcurrencySkipsAlternativeWithoutEnabledKeys(t *testing.T) {

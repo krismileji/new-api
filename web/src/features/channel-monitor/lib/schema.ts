@@ -46,6 +46,9 @@ export const MAX_AUTO_UPDATE_RETRY_COUNT = 10
 export const MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS = 600
 export const DEFAULT_AUTO_UPDATE_RETRY_COUNT = 3
 export const DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS = 0
+export const MIN_CHANNEL_CONCURRENCY_WAIT_SECONDS = 0
+export const MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS = 600
+export const DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS = 1
 export const MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 1
 export const MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 600
 export const DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 30
@@ -960,6 +963,18 @@ export function createChannelMonitorSettingsSchema() {
           '失败重试等待时间不能超过 600 秒'
         )
         .default(DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS),
+      channelConcurrencyWaitSeconds: z.coerce
+        .number()
+        .int('渠道满载等待时间必须是整数')
+        .min(
+          MIN_CHANNEL_CONCURRENCY_WAIT_SECONDS,
+          '渠道满载等待时间不能小于 0 秒'
+        )
+        .max(
+          MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS,
+          '渠道满载等待时间不能超过 600 秒'
+        )
+        .default(DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS),
       upstreamRequestTimeoutSeconds: z.coerce
         .number()
         .int('上游请求超时时间必须是整数')

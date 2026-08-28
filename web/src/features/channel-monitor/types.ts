@@ -664,6 +664,7 @@ export type ChannelMonitorSettings = {
   auto_update_interval_minutes: number
   auto_update_retry_count: number
   auto_update_retry_delay_seconds: number
+  channel_concurrency_wait_seconds?: number
   upstream_request_timeout_seconds?: number
   auto_update_consecutive_failure_limit: number
   auto_disable_on_update_failure: boolean

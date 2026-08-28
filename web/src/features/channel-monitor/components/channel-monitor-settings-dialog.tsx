@@ -86,6 +86,7 @@ import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+  DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS,
   DEFAULT_PROBE_RESPONSE_CACHED_TOKENS,
@@ -100,6 +101,7 @@ import {
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+  MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS as MAX_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
@@ -115,6 +117,7 @@ import {
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS,
+  MIN_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
@@ -655,6 +658,48 @@ export function ChannelMonitorUpstreamRequestTimeoutField(props: {
   )
 }
 
+export function ChannelMonitorConcurrencyWaitField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='channelConcurrencyWaitSeconds'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>渠道满载等待时间</FormLabel>
+          <FormControl>
+            <InputGroup>
+              <InputGroupInput
+                type='number'
+                min={MIN_CHANNEL_CONCURRENCY_WAIT_SECONDS}
+                max={MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS}
+                step={1}
+                inputMode='numeric'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.channelConcurrencyWaitSeconds
+                )}
+              />
+              <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormDescription>
+            当前渠道并发或 RPM
+            达到上限时，自动尝试同组其它渠道；无可用渠道时最多等待该时间。设置为
+            0 时不等待
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 export function ChannelMonitorSettingsDialog(
   props: ChannelMonitorSettingsDialogProps
 ) {
@@ -693,6 +738,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       autoUpdateRetryDelaySeconds:
         props.settings.auto_update_retry_delay_seconds ??
         DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+      channelConcurrencyWaitSeconds:
+        props.settings.channel_concurrency_wait_seconds ??
+        DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
       upstreamRequestTimeoutSeconds:
         props.settings.upstream_request_timeout_seconds ??
         DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -1033,6 +1081,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 />
 
                 <ChannelMonitorRetryDelayField form={form} />
+
+                <ChannelMonitorConcurrencyWaitField form={form} />
 
                 <ChannelMonitorUpstreamRequestTimeoutField form={form} />
 

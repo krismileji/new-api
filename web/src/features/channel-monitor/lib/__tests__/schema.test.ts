@@ -27,6 +27,7 @@ import {
   createChannelMonitorSettingsSchema,
   createChannelMonitorSmartSchedulePolicySchema,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
+  DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   DEFAULT_CHANNEL_MONITOR_COST_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS,
   DEFAULT_CHANNEL_MONITOR_ROUTE_METRIC_RETENTION_DAYS,
@@ -53,6 +54,7 @@ import {
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   MAX_CHANNEL_CONCURRENCY_LIMIT,
+  MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   MAX_CHANNEL_RPM_LIMIT,
   MAX_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
@@ -393,6 +395,8 @@ describe('channel monitor settings schema', () => {
     const settings = createChannelMonitorSettingsSchema().parse({
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateRetryDelaySeconds: 0,
+      channelConcurrencyWaitSeconds: DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
       upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: true,
@@ -476,6 +480,7 @@ describe('channel monitor settings schema', () => {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
       autoUpdateRetryDelaySeconds: 0,
+      channelConcurrencyWaitSeconds: DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
       upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
@@ -521,6 +526,8 @@ describe('channel monitor settings schema', () => {
     const baseSettings = {
       autoUpdateIntervalMinutes: 10,
       autoUpdateRetryCount: 2,
+      autoUpdateRetryDelaySeconds: 0,
+      channelConcurrencyWaitSeconds: DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
       upstreamRequestTimeoutSeconds: 30,
       autoUpdateConsecutiveFailureLimit: 2,
       autoDisableOnUpdateFailure: false,
@@ -650,6 +657,28 @@ describe('channel monitor settings schema', () => {
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, upstreamRequestTimeoutSeconds })
+          .success,
+        false
+      )
+    }
+
+    for (const channelConcurrencyWaitSeconds of [
+      DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
+      MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS,
+    ]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, channelConcurrencyWaitSeconds })
+          .channelConcurrencyWaitSeconds,
+        channelConcurrencyWaitSeconds
+      )
+    }
+    for (const channelConcurrencyWaitSeconds of [
+      -1,
+      1.5,
+      MAX_CHANNEL_CONCURRENCY_WAIT_SECONDS + 1,
+    ]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, channelConcurrencyWaitSeconds })
           .success,
         false
       )

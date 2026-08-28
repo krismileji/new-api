@@ -1103,6 +1103,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"auto_update_retry_count": maxChannelMonitorAutoUpdateRetryCount + 1},
 		{"auto_update_retry_delay_seconds": -1},
 		{"auto_update_retry_delay_seconds": maxChannelMonitorAutoUpdateRetryDelaySeconds + 1},
+		{"channel_concurrency_wait_seconds": minChannelMonitorChannelConcurrencyWaitSeconds - 1},
+		{"channel_concurrency_wait_seconds": maxChannelMonitorChannelConcurrencyWaitSeconds + 1},
 		{"upstream_request_timeout_seconds": minChannelMonitorUpstreamRequestTimeoutSeconds - 1},
 		{"upstream_request_timeout_seconds": maxChannelMonitorUpstreamRequestTimeoutSeconds + 1},
 		{"auto_update_consecutive_failure_limit": 0},
@@ -1184,6 +1186,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		"auto_update_interval_minutes":          15,
 		"auto_update_retry_count":               3,
 		"auto_update_retry_delay_seconds":       12,
+		"channel_concurrency_wait_seconds":      17,
 		"upstream_request_timeout_seconds":      45,
 		"auto_update_consecutive_failure_limit": 5,
 		"auto_disable_on_update_failure":        true,
@@ -1262,6 +1265,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
 	assert.Equal(t, 12, response.Data.AutoUpdateRetryDelaySeconds)
+	assert.Equal(t, 17, response.Data.ChannelConcurrencyWaitSeconds)
 	assert.Equal(t, 45, response.Data.UpstreamRequestTimeoutSeconds)
 	assert.Equal(t, 5, response.Data.AutoUpdateConsecutiveFailureLimit)
 	assert.True(t, response.Data.AutoDisableOnUpdateFailure)

@@ -30,7 +30,6 @@ type channelConcurrencyLimitUpdateRequest struct {
 
 const (
 	channelConcurrencyWaitInterval = 100 * time.Millisecond
-	channelConcurrencyMaxWait      = time.Second
 )
 
 func GetChannelMonitorConcurrency(c *gin.Context) {
@@ -125,7 +124,8 @@ func acquireRelayChannelConcurrency(
 	var lastSetupError *types.NewAPIError
 	var lastSaturatedError *types.NewAPIError
 	var saturatedChannels []int
-	waitDeadline := time.Now().Add(channelConcurrencyMaxWait)
+	waitDuration := time.Duration(getChannelMonitorSettings().ChannelConcurrencyWaitSeconds) * time.Second
+	waitDeadline := time.Now().Add(waitDuration)
 	for {
 		if channel != nil {
 			lease, acquired, status, err := service.AcquireChannelConcurrency(c.Request.Context(), channel.Id)
