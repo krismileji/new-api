@@ -37,6 +37,7 @@ import type {
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
   ChannelMonitorSmartScheduleGroupPauseResult,
+  ChannelMonitorSmartScheduleRateLimitCooldownResult,
   ChannelMonitorSmartScheduleExecutionDetailPage,
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
@@ -397,6 +398,26 @@ export async function updateChannelMonitorSmartScheduleGroupPause(request: {
       group: request.group,
       model: request.model,
       duration_minutes: request.durationMinutes,
+    },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function updateChannelMonitorSmartScheduleRateLimitCooldown(request: {
+  channelId: number
+  group: string
+  model: string
+  durationSeconds: number
+}) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRateLimitCooldownResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/route/rate-limit-cooldown`,
+    {
+      group: request.group,
+      model: request.model,
+      duration_seconds: request.durationSeconds,
     },
     channelMonitorRequestConfig()
   )

@@ -310,6 +310,7 @@ async function renderPool(options?: {
     route: ChannelMonitorSmartScheduleRoute,
     durationMinutes: number
   ) => void
+  onRateLimitCooldownChange?: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -326,12 +327,16 @@ async function renderPool(options?: {
         realtimeDegraded={options?.realtimeDegraded ?? false}
         updateRouteKey={null}
         groupPauseKey={null}
+        rateLimitCooldownKey={null}
         updateDisabled={false}
         onParticipationChange={() => {}}
         onClearProtection={() => {}}
         onSetPrimary={options?.onSetPrimary ?? (() => {})}
         onClearPrimary={options?.onClearPrimary ?? (() => {})}
         onGroupPauseChange={options?.onGroupPauseChange ?? (() => {})}
+        onRateLimitCooldownChange={
+          options?.onRateLimitCooldownChange ?? (() => {})
+        }
       />
     )
   })
@@ -561,5 +566,19 @@ assert.deepEqual(groupPauseActions.at(-1), {
 })
 await act(async () => groupResume.root.unmount())
 groupResume.container.remove()
+
+const rateLimitActions: ChannelMonitorSmartScheduleRoute[] = []
+const rateLimit = await renderPool({
+  onRateLimitCooldownChange: (route) => rateLimitActions.push(route),
+})
+const rateLimitButtons =
+  rateLimit.container.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="暂停 上海主渠道 在 production 分组使用 cache-model 模型的 429"]'
+  )
+assert.equal(rateLimitButtons.length, 2)
+await act(async () => rateLimitButtons[0]?.click())
+assert.equal(rateLimitActions.at(-1), routes[0])
+await act(async () => rateLimit.root.unmount())
+rateLimit.container.remove()
 
 domWindow.close()

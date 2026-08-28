@@ -1106,6 +1106,15 @@ export type ChannelMonitorSmartScheduleGroupPauseResult = {
   changed: boolean
 }
 
+export type ChannelMonitorSmartScheduleRateLimitCooldownResult = {
+  channel_id: number
+  group: string
+  model: string
+  duration_seconds: number
+  cooldown_until: number
+  changed: boolean
+}
+
 export type ChannelMonitorTaskRunResult = {
   created: boolean
   task: ChannelMonitorTask

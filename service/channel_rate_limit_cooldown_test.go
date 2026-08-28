@@ -199,6 +199,59 @@ func TestChannelRateLimitCooldownExpiresAndCannotBeShortened(t *testing.T) {
 	assert.Empty(t, channelRateLimitCooldownChannelIds("model-a", common.GetTimestamp()+61))
 }
 
+func TestUpdateChannelRateLimitCooldownAllowsManualPauseAndRouteClear(t *testing.T) {
+	stopChannelRateLimitCooldownRedisSync()
+	resetChannelRateLimitCooldownLocalState()
+	setChannelRateLimitCooldownControlRevision(t, "revision-manual")
+	originalEnabled := common.RedisEnabled
+	originalClient := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		common.RedisEnabled = originalEnabled
+		common.RDB = originalClient
+		resetChannelRateLimitCooldownLocalState()
+	})
+
+	paused, err := UpdateChannelRateLimitCooldown(
+		context.Background(), 31, "model-manual", 30,
+	)
+	require.NoError(t, err)
+	assert.True(t, paused.Changed)
+	assert.Greater(t, paused.CooldownUntil, common.GetTimestamp())
+	assert.Contains(t, channelRateLimitCooldownChannelIds("model-manual", common.GetTimestamp()), 31)
+
+	cleared, err := UpdateChannelRateLimitCooldown(
+		context.Background(), 31, "model-manual", 0,
+	)
+	require.NoError(t, err)
+	assert.True(t, cleared.Changed)
+	assert.Zero(t, cleared.CooldownUntil)
+	assert.NotContains(t, channelRateLimitCooldownChannelIds("model-manual", common.GetTimestamp()), 31)
+}
+
+func TestChannelRateLimitCooldownMatchesAndClearsWildcardRoutes(t *testing.T) {
+	ClearChannelRateLimitCooldowns()
+	t.Cleanup(ClearChannelRateLimitCooldowns)
+
+	StartChannelRateLimitCooldown(32, "model-wild-*", 30)
+	StartChannelRateLimitCooldown(32, "model-other", 30)
+	assert.Contains(t, channelRateLimitCooldownChannelIds("model-wild-v2", common.GetTimestamp()), 32)
+	clearedExact, err := ClearChannelRateLimitCooldownRoute(
+		context.Background(), 32, "model-other",
+	)
+	require.NoError(t, err)
+	assert.True(t, clearedExact.Changed)
+	assert.Contains(t, channelRateLimitCooldownChannelIds("model-wild-v2", common.GetTimestamp()), 32)
+
+	cleared, err := ClearChannelRateLimitCooldownRoute(
+		context.Background(), 32, "model-wild-*",
+	)
+	require.NoError(t, err)
+	assert.True(t, cleared.Changed)
+	assert.Empty(t, channelRateLimitCooldownChannelIds("model-wild-v2", common.GetTimestamp()))
+}
+
 func TestPruneExpiredChannelRateLimitCooldownsPublishesBoundedSnapshot(t *testing.T) {
 	stopChannelRateLimitCooldownRedisSync()
 	setChannelRateLimitCooldownControlRevision(t, "revision-prune")

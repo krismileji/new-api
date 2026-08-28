@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  Alert02Icon,
   Cancel01Icon,
   PauseIcon,
   PinIcon,
@@ -112,6 +113,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
   realtimeDegraded: boolean
   updateRouteKey: string | null
   groupPauseKey: string | null
+  rateLimitCooldownKey: string | null
   updateDisabled: boolean
   onParticipationChange: (
     route: ChannelMonitorSmartScheduleRoute,
@@ -124,6 +126,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
     route: ChannelMonitorSmartScheduleRoute,
     durationMinutes: number
   ) => void
+  onRateLimitCooldownChange: (route: ChannelMonitorSmartScheduleRoute) => void
 }
 
 type RouteFilter = 'all' | 'traffic' | 'attention' | 'backup' | 'excluded'
@@ -607,12 +610,19 @@ function RouteActions(props: {
   detailsExpanded: boolean
   onSetPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
+  onRateLimitCooldownChange: (route: ChannelMonitorSmartScheduleRoute) => void
+  rateLimitCooldownKey: string | null
   onOpenDetails: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
   const fixed = props.route.state.manual_primary_until > 0
   const trafficPaused = channelMonitorSmartScheduleRouteIsTrafficPaused(
     props.route
   )
+  const rateLimitPaused =
+    (props.route.rate_limit_cooldown_until ?? 0) > Date.now() / 1000
+  const rateLimitPending =
+    props.rateLimitCooldownKey ===
+    channelMonitorSmartScheduleRouteKey(props.route)
   return (
     <div className='flex items-center justify-end gap-1'>
       <Button
@@ -658,6 +668,26 @@ function RouteActions(props: {
           icon={trafficPaused ? PlayIcon : PauseIcon}
           aria-hidden='true'
         />
+      </Button>
+      <Button
+        type='button'
+        variant='ghost'
+        size='icon-xs'
+        className={cn(rateLimitPaused && 'text-warning')}
+        disabled={props.disabled}
+        onClick={() => props.onRateLimitCooldownChange(props.route)}
+        aria-label={
+          rateLimitPaused
+            ? `解除 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429 暂停`
+            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429`
+        }
+        title={rateLimitPaused ? '解除 429 暂停' : '暂停 429'}
+      >
+        {rateLimitPending ? (
+          <Spinner className='size-3.5' />
+        ) : (
+          <HugeiconsIcon icon={Alert02Icon} aria-hidden='true' />
+        )}
       </Button>
       <Button
         type='button'
@@ -1099,6 +1129,10 @@ export function ChannelMonitorSmartSchedulePool(
                           detailsExpanded={detailRouteKey === key}
                           onSetPrimary={props.onSetPrimary}
                           onClearPrimary={props.onClearPrimary}
+                          onRateLimitCooldownChange={
+                            props.onRateLimitCooldownChange
+                          }
+                          rateLimitCooldownKey={props.rateLimitCooldownKey}
                           onOpenDetails={openDetails}
                         />
                       </td>
@@ -1257,6 +1291,10 @@ export function ChannelMonitorSmartSchedulePool(
                         detailsExpanded={detailRouteKey === key}
                         onSetPrimary={props.onSetPrimary}
                         onClearPrimary={props.onClearPrimary}
+                        onRateLimitCooldownChange={
+                          props.onRateLimitCooldownChange
+                        }
+                        rateLimitCooldownKey={props.rateLimitCooldownKey}
                         onOpenDetails={openDetails}
                       />
                     </div>

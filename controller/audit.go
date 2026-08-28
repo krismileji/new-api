@@ -87,10 +87,17 @@ var channelMonitorAuditContentTemplates = map[string]string{
 	"channel.model_detection_config_update":                  "已更新渠道 ${channel_label} 的模型检测配置（定时检测：${schedule_status}，${target_count} 个目标）",
 }
 
+var channelMonitorRateLimitAuditContentTemplates = map[string]string{
+	"channel.monitor_smart_schedule_rate_limit_cooldown_update": "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的 429 暂停时间更新为 ${duration_seconds} 秒",
+}
+
 // auditContentEN 渲染日志兜底文本；渠道监控使用固定中文，其余操作使用英文基线。
 // 未登记的 action 退回 action 本身。
 func auditContentEN(action string, params map[string]interface{}) string {
 	tmpl, ok := channelMonitorAuditContentTemplates[action]
+	if !ok {
+		tmpl, ok = channelMonitorRateLimitAuditContentTemplates[action]
+	}
 	if !ok {
 		tmpl, ok = auditContentTemplates[action]
 	}
@@ -143,7 +150,11 @@ func recordManageAuditFor(c *gin.Context, targetUserId int, action string, param
 	if params == nil {
 		params = map[string]interface{}{}
 	}
-	if _, isChannelMonitorAction := channelMonitorAuditContentTemplates[action]; isChannelMonitorAction {
+	_, isChannelMonitorAction := channelMonitorAuditContentTemplates[action]
+	if !isChannelMonitorAction {
+		_, isChannelMonitorAction = channelMonitorRateLimitAuditContentTemplates[action]
+	}
+	if isChannelMonitorAction {
 		channelId, _ := params["channel_id"].(int)
 		if channelId == 0 {
 			channelId, _ = params["id"].(int)

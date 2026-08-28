@@ -61,6 +61,7 @@ import {
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   runChannelMonitorSmartSchedule,
   updateChannelMonitorSmartScheduleGroupPause,
+  updateChannelMonitorSmartScheduleRateLimitCooldown,
   updateChannelMonitorSmartScheduleRoutePrimary,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
@@ -145,6 +146,9 @@ export function ChannelMonitorSmartScheduleBoard(
   const [primaryDuration, setPrimaryDuration] = useState('60')
   const [allowPrimaryStabilityDegrade, setAllowPrimaryStabilityDegrade] =
     useState(true)
+  const [rateLimitTarget, setRateLimitTarget] =
+    useState<ChannelMonitorSmartScheduleRoute | null>(null)
+  const [rateLimitDuration, setRateLimitDuration] = useState('60')
   const routes = useMemo(
     () =>
       filterChannelMonitorSmartScheduleRoutes(
@@ -389,6 +393,19 @@ export function ChannelMonitorSmartScheduleBoard(
       await props.onActionComplete()
     },
   })
+  const rateLimitCooldownMutation = useMutation({
+    mutationFn: updateChannelMonitorSmartScheduleRateLimitCooldown,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: async (response) => {
+      toast.success(
+        response.data.duration_seconds > 0
+          ? `已暂停“${response.data.group} / ${response.data.model}”路由的 429 ${response.data.duration_seconds} 秒`
+          : `已解除“${response.data.group} / ${response.data.model}”路由的 429 暂停`
+      )
+      setRateLimitTarget(null)
+      await props.onActionComplete()
+    },
+  })
   const runMutation = useMutation({
     mutationFn: runChannelMonitorSmartSchedule,
     onError: handleChannelMonitorMutationError,
@@ -435,6 +452,14 @@ export function ChannelMonitorSmartScheduleBoard(
           channel_id: groupPauseMutation.variables.channelId,
           group: groupPauseMutation.variables.group,
           model: groupPauseMutation.variables.model,
+        })
+      : null
+  const rateLimitCooldownKey =
+    rateLimitCooldownMutation.isPending && rateLimitCooldownMutation.variables
+      ? channelMonitorSmartScheduleRouteKey({
+          channel_id: rateLimitCooldownMutation.variables.channelId,
+          group: rateLimitCooldownMutation.variables.group,
+          model: rateLimitCooldownMutation.variables.model,
         })
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
@@ -854,10 +879,12 @@ export function ChannelMonitorSmartScheduleBoard(
                 realtimeDegraded={props.result?.realtime_degraded === true}
                 updateRouteKey={updateRouteKey}
                 groupPauseKey={groupPauseKey}
+                rateLimitCooldownKey={rateLimitCooldownKey}
                 updateDisabled={
                   updateMutation.isPending ||
                   primaryMutation.isPending ||
-                  groupPauseMutation.isPending
+                  groupPauseMutation.isPending ||
+                  rateLimitCooldownMutation.isPending
                 }
                 onParticipationChange={(route, checked) =>
                   updateMutation.mutate({
@@ -900,6 +927,15 @@ export function ChannelMonitorSmartScheduleBoard(
                     durationMinutes,
                   })
                 }
+                onRateLimitCooldownChange={(route) => {
+                  const remainingSeconds = Math.ceil(
+                    (route.rate_limit_cooldown_until ?? 0) - Date.now() / 1000
+                  )
+                  setRateLimitDuration(
+                    String(Math.min(300, Math.max(1, remainingSeconds || 60)))
+                  )
+                  setRateLimitTarget(route)
+                }}
               />
             ) : (
               <Empty className='min-h-72'>
@@ -922,6 +958,106 @@ export function ChannelMonitorSmartScheduleBoard(
           if (!open) setClearTarget(null)
         }}
       />
+      {rateLimitTarget ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !rateLimitCooldownMutation.isPending) {
+              setRateLimitTarget(null)
+            }
+          }}
+        >
+          <DialogContent className='sm:max-w-md'>
+            <DialogHeader>
+              <DialogTitle>
+                {(rateLimitTarget.rate_limit_cooldown_until ?? 0) >
+                Date.now() / 1000
+                  ? '更新 429 暂停时间'
+                  : '暂停渠道 429'}
+              </DialogTitle>
+              <DialogDescription>
+                {rateLimitTarget.channel_name} 在“{rateLimitTarget.group}
+                ”分组使用“
+                {rateLimitTarget.model}”模型的路由将暂时避开 429
+                冷却。该操作仅影响当前渠道和模型，不受自动 429 冷却设置是否为 0
+                影响；同一模型在其他分组的路由也会同时避开该渠道。
+              </DialogDescription>
+            </DialogHeader>
+            <FieldGroup className='gap-3'>
+              <Field>
+                <FieldLabel htmlFor='channel-monitor-rate-limit-duration'>
+                  暂停时长
+                </FieldLabel>
+                <div className='flex items-center gap-2'>
+                  <Input
+                    id='channel-monitor-rate-limit-duration'
+                    type='number'
+                    min={1}
+                    max={300}
+                    step={1}
+                    value={rateLimitDuration}
+                    onChange={(event) =>
+                      setRateLimitDuration(event.target.value)
+                    }
+                    aria-label='429 暂停时长（秒）'
+                  />
+                  <span className='text-muted-foreground text-sm'>秒</span>
+                </div>
+              </Field>
+            </FieldGroup>
+            <DialogFooter>
+              <Button
+                variant='outline'
+                disabled={rateLimitCooldownMutation.isPending}
+                onClick={() => setRateLimitTarget(null)}
+              >
+                <HugeiconsIcon icon={Cancel01Icon} data-icon='inline-start' />
+                取消
+              </Button>
+              {(rateLimitTarget.rate_limit_cooldown_until ?? 0) >
+              Date.now() / 1000 ? (
+                <Button
+                  variant='outline'
+                  disabled={rateLimitCooldownMutation.isPending}
+                  onClick={() =>
+                    rateLimitCooldownMutation.mutate({
+                      channelId: rateLimitTarget.channel_id,
+                      group: rateLimitTarget.group,
+                      model: rateLimitTarget.model,
+                      durationSeconds: 0,
+                    })
+                  }
+                >
+                  解除 429 暂停
+                </Button>
+              ) : null}
+              <Button
+                disabled={
+                  rateLimitCooldownMutation.isPending ||
+                  !Number.isInteger(Number(rateLimitDuration)) ||
+                  Number(rateLimitDuration) < 1 ||
+                  Number(rateLimitDuration) > 300
+                }
+                onClick={() =>
+                  rateLimitCooldownMutation.mutate({
+                    channelId: rateLimitTarget.channel_id,
+                    group: rateLimitTarget.group,
+                    model: rateLimitTarget.model,
+                    durationSeconds: Number(rateLimitDuration),
+                  })
+                }
+              >
+                {rateLimitCooldownMutation.isPending ? (
+                  <Spinner data-icon='inline-start' />
+                ) : (
+                  <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
+                )}
+                更新暂停时间
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
       {primaryTarget ? (
         <Dialog
           open

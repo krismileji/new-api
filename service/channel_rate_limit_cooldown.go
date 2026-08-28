@@ -20,6 +20,7 @@ const (
 	channelRateLimitCooldownRedisKey              = "channelRateLimitCooldown:v1:routes"
 	channelRateLimitCooldownRedisRevisionKey      = "channelRateLimitCooldown:v1:control-revision"
 	channelRateLimitCooldownRedisEventSequenceKey = "channelRateLimitCooldown:v1:event-sequences"
+	maxManualChannelRateLimitCooldownSeconds      = 300
 )
 
 var ErrChannelRateLimitCooldownRedisUnavailable = errors.New("Redis 429 冷却读取不可用")
@@ -496,6 +497,127 @@ func ClearChannelRateLimitCooldowns() {
 	}
 }
 
+// ChannelRateLimitCooldownUpdateResult describes a manual update for one
+// channel/model route. A zero CooldownUntil means that the route is not
+// currently paused for 429 responses.
+type ChannelRateLimitCooldownUpdateResult struct {
+	CooldownUntil int64
+	Changed       bool
+}
+
+// UpdateChannelRateLimitCooldown applies or clears a manually requested 429
+// cooldown. Manual updates intentionally remain available when the automatic
+// cooldown setting is zero; that setting only disables automatic protection.
+func UpdateChannelRateLimitCooldown(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	durationSeconds int,
+) (ChannelRateLimitCooldownUpdateResult, error) {
+	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	if channelId <= 0 || modelName == "" {
+		return ChannelRateLimitCooldownUpdateResult{}, errors.New("渠道或模型无效")
+	}
+	if durationSeconds < 0 {
+		return ChannelRateLimitCooldownUpdateResult{}, errors.New("429 冷却时间不能为负数")
+	}
+	if durationSeconds > maxManualChannelRateLimitCooldownSeconds {
+		return ChannelRateLimitCooldownUpdateResult{}, errors.New("429 冷却时间不能超过 300 秒")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if durationSeconds == 0 {
+		return ClearChannelRateLimitCooldownRoute(ctx, channelId, modelName)
+	}
+
+	controlRevision, err := model.GetChannelSmartScheduleControlRevision()
+	if err != nil {
+		return ChannelRateLimitCooldownUpdateResult{}, fmt.Errorf("读取 429 冷却配置修订号失败: %w", err)
+	}
+	previousUntil := ChannelRateLimitCooldownUntilMatching(channelId, modelName)
+	accepted, err := startChannelRateLimitCooldownUntilIfControlRevision(
+		ctx,
+		channelId,
+		modelName,
+		common.GetTimestamp()+int64(durationSeconds),
+		controlRevision,
+		0,
+		false,
+	)
+	if err != nil {
+		return ChannelRateLimitCooldownUpdateResult{}, err
+	}
+	if !accepted {
+		return ChannelRateLimitCooldownUpdateResult{
+			CooldownUntil: ChannelRateLimitCooldownUntilMatching(channelId, modelName),
+		}, nil
+	}
+	updatedUntil := ChannelRateLimitCooldownUntilMatching(channelId, modelName)
+	return ChannelRateLimitCooldownUpdateResult{
+		CooldownUntil: updatedUntil,
+		Changed:       updatedUntil != previousUntil,
+	}, nil
+}
+
+// ClearChannelRateLimitCooldownRoute removes the 429 cooldown entries that
+// belong to one channel/model route without changing the global control
+// revision or other channels' cooldowns.
+func ClearChannelRateLimitCooldownRoute(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+) (ChannelRateLimitCooldownUpdateResult, error) {
+	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
+	if channelId <= 0 || modelName == "" {
+		return ChannelRateLimitCooldownUpdateResult{}, errors.New("渠道或模型无效")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	redisMembers := make([]string, 0)
+	if common.RedisEnabled && common.RDB != nil {
+		members, err := common.RDB.ZRange(ctx, channelRateLimitCooldownRedisKey, 0, -1).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return ChannelRateLimitCooldownUpdateResult{}, fmt.Errorf("读取 Redis 429 冷却路由失败: %w", err)
+		}
+		for _, member := range members {
+			key, ok := parseChannelRateLimitCooldownRedisMember(member)
+			if ok && channelRateLimitCooldownRouteMatches(channelId, modelName, key) {
+				redisMembers = append(redisMembers, member)
+			}
+		}
+		if len(redisMembers) > 0 {
+			pipe := common.RDB.TxPipeline()
+			redisMemberValues := make([]any, len(redisMembers))
+			for index, member := range redisMembers {
+				redisMemberValues[index] = member
+			}
+			pipe.ZRem(ctx, channelRateLimitCooldownRedisKey, redisMemberValues...)
+			pipe.HDel(ctx, channelRateLimitCooldownRedisEventSequenceKey, redisMembers...)
+			if _, err := pipe.Exec(ctx); err != nil {
+				return ChannelRateLimitCooldownUpdateResult{}, fmt.Errorf("清理 Redis 429 冷却失败: %w", err)
+			}
+		}
+	}
+
+	changed := len(redisMembers) > 0
+	channelRateLimitCooldowns.Lock()
+	for key := range channelRateLimitCooldowns.untilByRoute {
+		if !channelRateLimitCooldownRouteMatches(channelId, modelName, key) {
+			continue
+		}
+		delete(channelRateLimitCooldowns.untilByRoute, key)
+		changed = true
+	}
+	if changed {
+		publishChannelRateLimitCooldownSnapshotLocked()
+	}
+	channelRateLimitCooldowns.Unlock()
+	return ChannelRateLimitCooldownUpdateResult{Changed: changed}, nil
+}
+
 func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" {
@@ -642,13 +764,46 @@ func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {
 	controlRevision := channelRateLimitCooldownControlRevision()
 	snapshot := loadChannelRateLimitCooldownSnapshot()
 	channelIds := make([]int, 0)
+	seenChannelIds := make(map[int]struct{})
 	for key, entry := range snapshot.untilByRoute {
-		if entry.revision == controlRevision && entry.until > now && key.modelName == modelName {
+		if entry.revision == controlRevision && entry.until > now &&
+			channelRateLimitCooldownModelMatches(modelName, key.modelName) {
+			if _, seen := seenChannelIds[key.channelId]; seen {
+				continue
+			}
+			seenChannelIds[key.channelId] = struct{}{}
 			channelIds = append(channelIds, key.channelId)
 		}
 	}
 	sort.Ints(channelIds)
 	return channelIds
+}
+
+func channelRateLimitCooldownRouteMatches(
+	channelId int,
+	modelName string,
+	key channelRateLimitCooldownKey,
+) bool {
+	if key.channelId != channelId {
+		return false
+	}
+	if strings.HasSuffix(modelName, "*") {
+		return strings.HasPrefix(key.modelName, strings.TrimSuffix(modelName, "*"))
+	}
+	return key.modelName == modelName
+}
+
+func channelRateLimitCooldownModelMatches(requestedModel string, cooldownModel string) bool {
+	if requestedModel == cooldownModel {
+		return true
+	}
+	if strings.HasSuffix(requestedModel, "*") {
+		return strings.HasPrefix(cooldownModel, strings.TrimSuffix(requestedModel, "*"))
+	}
+	if !strings.HasSuffix(cooldownModel, "*") {
+		return false
+	}
+	return strings.HasPrefix(requestedModel, strings.TrimSuffix(cooldownModel, "*"))
 }
 
 func channelRateLimitCooldownControlRevision() string {
