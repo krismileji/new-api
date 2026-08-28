@@ -168,6 +168,11 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	detail := detailView.Detail
+	if err := attachChannelMonitorSuccessAPIKeyOwners(c.Request.Context(), &detail.APIKeyItems); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	metadata := channelMonitorRealtimeMetadata(detailView.WindowStart)
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":                 minutes,
@@ -216,6 +221,6 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		"realtime_degraded":             metadata.RealtimeDegraded || metadata.ProjectionStartedAt > detailView.WindowStart,
 		"success_metrics_available":     true,
 		"scope":                         scope,
-		"detail":                        detailView.Detail,
+		"detail":                        detail,
 	})
 }

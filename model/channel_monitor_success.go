@@ -46,8 +46,11 @@ type ChannelMonitorChannelSuccessMetric struct {
 }
 
 type ChannelMonitorSuccessAPIKeyMetric struct {
-	APIKeyId   int    `json:"api_key_id"`
-	APIKeyName string `json:"api_key_name"`
+	APIKeyId        int    `json:"api_key_id"`
+	APIKeyName      string `json:"api_key_name"`
+	UserId          int    `json:"user_id,omitempty"`
+	Username        string `json:"username,omitempty"`
+	UserDisplayName string `json:"user_display_name,omitempty"`
 	ChannelMonitorSuccessSummary
 }
 

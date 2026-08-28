@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strconv"
@@ -231,6 +232,10 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 
 	overview.Summary = metrics.Summary
 	overview.APIKeyItems = metrics.APIKeyItems
+	if err := attachChannelMonitorSuccessAPIKeyOwners(c.Request.Context(), &overview.APIKeyItems); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	for _, item := range metrics.ChannelItems {
 		channelItem := itemsByChannelId[item.ChannelId]
 		channelItem.ChannelMonitorChannelSuccessMetric = item
@@ -255,6 +260,38 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		})
 	}
 	common.ApiSuccess(c, overview)
+}
+
+func attachChannelMonitorSuccessAPIKeyOwners(ctx context.Context, items *[]model.ChannelMonitorSuccessAPIKeyMetric) error {
+	if items == nil || len(*items) == 0 {
+		return nil
+	}
+	tokenIds := make([]int, 0, len(*items))
+	seenTokenIds := make(map[int]struct{}, len(*items))
+	for _, item := range *items {
+		if item.APIKeyId <= 0 {
+			continue
+		}
+		if _, exists := seenTokenIds[item.APIKeyId]; exists {
+			continue
+		}
+		seenTokenIds[item.APIKeyId] = struct{}{}
+		tokenIds = append(tokenIds, item.APIKeyId)
+	}
+	owners, err := getChannelMonitorAPIKeyOwners(ctx, tokenIds)
+	if err != nil {
+		return err
+	}
+	for index := range *items {
+		owner, exists := owners[(*items)[index].APIKeyId]
+		if !exists {
+			continue
+		}
+		(*items)[index].UserId = owner.UserId
+		(*items)[index].Username = owner.Username
+		(*items)[index].UserDisplayName = owner.UserDisplayName
+	}
+	return nil
 }
 
 func channelMonitorDailySuccessChartItems(startTimestamp int64, days int, metrics []model.ChannelMonitorDailySuccessMetric) []channelMonitorDailySuccessChartItem {

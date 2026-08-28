@@ -449,6 +449,9 @@ export type ChannelMonitorChannelSuccessMetric =
 export type ChannelMonitorSuccessAPIKeyMetric = ChannelMonitorSuccessSummary & {
   api_key_id: number
   api_key_name: string
+  user_id?: number
+  username?: string
+  user_display_name?: string
 }
 
 export type ChannelMonitorTodaySuccessChannelItem =

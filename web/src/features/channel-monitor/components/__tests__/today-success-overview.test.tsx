@@ -479,27 +479,43 @@ describe('channel monitor today success overview', () => {
     assert.match(channelCells[20] ?? '', />-<\/td>/)
   })
 
-  test('keeps API Key details available from the separate tab', () => {
+  test('groups API Key details by user in the separate tab', () => {
     const markup = renderToStaticMarkup(
-      <ChannelMonitorSuccessAPIKeyTable items={createResult().api_key_items} />
+      <ChannelMonitorSuccessAPIKeyTable
+        items={[
+          {
+            ...createResult().api_key_items[0],
+            user_id: 101,
+            username: 'alice',
+            user_display_name: 'Alice',
+          },
+          {
+            ...createResult().api_key_items[1],
+            user_id: 101,
+            username: 'alice',
+            user_display_name: 'Alice',
+          },
+          {
+            ...createResult().api_key_items[2],
+            user_id: 202,
+            username: 'bob',
+            user_display_name: 'Bob',
+          },
+        ]}
+      />
     )
-    const apiKeyTable = getTables(markup)[0] ?? ''
-    const apiKeyCells = getTableCells(apiKeyTable)
 
-    assert.equal(apiKeyCells.length, 12)
-    assert.ok(apiKeyTable.includes('w-full'))
-    assert.ok(apiKeyTable.includes('table-fixed'))
-    assert.ok(apiKeyTable.includes('[&amp;_td]:overflow-hidden'))
-    assert.equal(apiKeyTable.includes('min-w-[640px]'), false)
-    assert.ok(apiKeyCells[0]?.includes('高缓存利用率 Key'))
-    assert.ok(apiKeyCells[2]?.includes('100%'))
-    assert.ok(apiKeyCells[3]?.includes('100%'))
-    assert.ok(apiKeyCells[4]?.includes('高成功率 Key'))
-    assert.ok(apiKeyCells[6]?.includes('100%'))
-    assert.ok(apiKeyCells[7]?.includes('0%'))
-    assert.ok(apiKeyCells[8]?.includes('生产 Key'))
-    assert.ok(apiKeyCells[10]?.includes('75%'))
-    assert.ok(apiKeyCells[11]?.includes('50%'))
+    assert.ok(markup.includes('先按用户分组'))
+    assert.equal(markup.match(/title="Alice"/g)?.length, 1)
+    assert.equal(markup.match(/title="Bob"/g)?.length, 1)
+    assert.ok(markup.includes('@alice'))
+    assert.ok(markup.includes('@bob'))
+    assert.ok(markup.includes('API Key 数'))
+    assert.ok(markup.includes('请求数'))
+    assert.ok(markup.includes('高缓存利用率 Key'))
+    assert.ok(markup.includes('高成功率 Key'))
+    assert.ok(markup.includes('生产 Key'))
+    assert.equal(markup.match(/<details/g)?.length, 2)
   })
 
   test('shows loading placeholders while the daily summary is loading', () => {

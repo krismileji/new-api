@@ -811,10 +811,6 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 }
 
 func getChannelMonitorCostAPIKeyOwners(ctx context.Context, rows []model.ChannelDailyAPIKeyCost) (map[int]channelMonitorCostAPIKeyOwner, error) {
-	owners := make(map[int]channelMonitorCostAPIKeyOwner)
-	if model.DB == nil {
-		return owners, nil
-	}
 	tokenIds := make([]int, 0)
 	seenTokenIds := make(map[int]struct{})
 	for _, row := range rows {
@@ -827,7 +823,18 @@ func getChannelMonitorCostAPIKeyOwners(ctx context.Context, rows []model.Channel
 		seenTokenIds[row.APIKeyId] = struct{}{}
 		tokenIds = append(tokenIds, row.APIKeyId)
 	}
+	return getChannelMonitorAPIKeyOwners(ctx, tokenIds)
+}
+
+func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int]channelMonitorCostAPIKeyOwner, error) {
+	owners := make(map[int]channelMonitorCostAPIKeyOwner)
+	if model.DB == nil {
+		return owners, nil
+	}
 	if len(tokenIds) == 0 {
+		return owners, nil
+	}
+	if hasTable := model.DB.Migrator().HasTable(&model.Token{}); !hasTable {
 		return owners, nil
 	}
 	type tokenOwner struct {

@@ -14,6 +14,15 @@ import (
 
 func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&[]model.User{
+		{Id: 101, Username: "alice", DisplayName: "Alice", AffCode: "alice-aff"},
+		{Id: 202, Username: "bob", DisplayName: "Bob", AffCode: "bob-aff"},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Token{
+		{Id: 11, UserId: 101, Name: "主 Key", Key: "test-token-11"},
+		{Id: 12, UserId: 202, Name: "备用 Key", Key: "test-token-12"},
+	}).Error)
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
 	common.LogConsumeEnabled = true
@@ -134,7 +143,13 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 	}
 	assert.Equal(t, int64(2), byAPIKey[11].ActualSampleCount)
 	assert.Equal(t, "主 Key", byAPIKey[11].APIKeyName)
+	assert.Equal(t, 101, byAPIKey[11].UserId)
+	assert.Equal(t, "alice", byAPIKey[11].Username)
+	assert.Equal(t, "Alice", byAPIKey[11].UserDisplayName)
 	assert.Equal(t, "备用 Key", byAPIKey[12].APIKeyName)
+	assert.Equal(t, 202, byAPIKey[12].UserId)
+	assert.Equal(t, "bob", byAPIKey[12].Username)
+	assert.Equal(t, "Bob", byAPIKey[12].UserDisplayName)
 	byCacheWrite := make(map[int]int64, len(response.Data.CacheWriteItems))
 	for _, item := range response.Data.CacheWriteItems {
 		byCacheWrite[item.ChannelId] = item.RequestCount
@@ -145,6 +160,9 @@ func TestGetChannelMonitorTodaySuccessReturnsChannelBreakdown(t *testing.T) {
 
 func TestGetChannelMonitorTodaySuccessReturnsRangeChartAndSelectedDayDetails(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&model.User{Id: 101, Username: "alice", DisplayName: "Alice", AffCode: "alice-range-aff"}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 31, UserId: 101, Name: "昨日 Key", Key: "test-token-31"}).Error)
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
 	common.LogConsumeEnabled = true
