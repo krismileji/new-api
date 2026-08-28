@@ -26,6 +26,7 @@ const (
 	channelSmartScheduleRouteSnapshotLeaseKey      = channelSmartScheduleRouteSnapshotKeyPrefix + ":lease"
 
 	channelSmartScheduleRouteSnapshotTTL          = 7 * 24 * time.Hour
+	channelSmartScheduleRouteSnapshotPreviousTTL  = 10 * time.Minute
 	channelSmartScheduleRouteSnapshotTemporaryTTL = time.Minute
 	channelSmartScheduleRouteSnapshotLeaseTTL     = time.Minute
 	channelSmartScheduleRouteSnapshotIOTimeout    = 2 * time.Second
@@ -565,6 +566,9 @@ func commitChannelSmartScheduleRouteSnapshot(
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Rename(ctx, temporaryKey, versionKey)
 			pipe.Expire(ctx, versionKey, channelSmartScheduleRouteSnapshotTTL)
+			if pointer > 0 {
+				pipe.Expire(ctx, channelSmartScheduleRouteSnapshotVersionKey(pointer), channelSmartScheduleRouteSnapshotPreviousTTL)
+			}
 			pipe.Set(ctx, channelSmartScheduleRouteSnapshotPointerKey,
 				strconv.FormatInt(snapshot.Revision, 10), channelSmartScheduleRouteSnapshotTTL)
 			pipe.Set(ctx, channelSmartScheduleRouteSnapshotGeneratedKey, snapshot.GeneratedAt, 0)
