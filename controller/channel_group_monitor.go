@@ -104,6 +104,7 @@ type pricingGroupMonitorItemResponse struct {
 	ProbeModel         string                              `json:"probe_model,omitempty"`
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
+	GroupRatio         float64                             `json:"group_ratio"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
 	RecentWindow       []channelGroupMonitorBucketResponse `json:"recent_window"`
 }
@@ -722,6 +723,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			ProbeModel:         item.ProbeModel,
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,
+			GroupRatio:         service.GetUserGroupRatio(userGroup, item.Group),
 			LastFinishedAt:     item.LastFinishedAt,
 			RecentWindow:       item.RecentWindow,
 		})

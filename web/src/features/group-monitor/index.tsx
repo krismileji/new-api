@@ -101,6 +101,11 @@ function formatRate(value: number | null): string {
   return `${value.toFixed(1)}%`
 }
 
+function formatRatio(value: number): string {
+  if (!Number.isFinite(value)) return '--'
+  return `${value.toFixed(value >= 10 ? 1 : 2)}x`
+}
+
 function formatTPS(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '--'
   return value.toFixed(value >= 100 ? 0 : 1)
@@ -308,7 +313,32 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
   }
 
   return (
-    <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
+    <div className='space-y-6'>
+      <section className='relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/40 p-5 shadow-sm sm:p-6'>
+        <div className='pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-primary/10 blur-3xl' />
+        <div className='relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
+          <div>
+            <p className='text-muted-foreground text-xs font-medium uppercase tracking-[0.18em]'>
+              实时服务概览
+            </p>
+            <h2 className='mt-2 text-xl font-semibold tracking-tight'>
+              分组健康度与倍率
+            </h2>
+            <p className='text-muted-foreground mt-1 text-sm'>
+              以近 {props.result.display_value}{' '}
+              {DISPLAY_UNIT_LABEL[props.result.display_unit]}的探测结果为准
+            </p>
+          </div>
+          <div className='flex justify-start lg:justify-end'>
+            <div className='rounded-xl border border-border/60 bg-background/70 px-4 py-2.5'>
+              <div className='text-muted-foreground text-[11px]'>监控状态</div>
+              <div className='mt-1 text-lg font-semibold'>{props.result.enabled ? '运行中' : '已停用'}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
       {props.result.items.map((item) => {
         const presentation = STATUS_PRESENTATION[item.status]
         const updatedAt = formatTimestampToDate(item.last_finished_at)
@@ -316,7 +346,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
         return (
           <article
             key={item.group}
-            className='border-border/70 bg-card relative min-w-0 overflow-hidden rounded-lg border p-4 shadow-xs'
+            className='border-border/70 bg-card group relative min-w-0 overflow-hidden rounded-2xl border p-5 shadow-xs transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md'
           >
             <div
               aria-hidden
@@ -324,7 +354,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
             />
             <div className='flex min-w-0 items-start justify-between gap-3 pl-2'>
               <div className='flex min-w-0 items-center gap-3'>
-                <span className='bg-muted text-muted-foreground flex size-10 shrink-0 items-center justify-center rounded-md text-base font-semibold'>
+                <span className='bg-muted text-muted-foreground flex size-11 shrink-0 items-center justify-center rounded-xl text-base font-semibold ring-1 ring-border/60'>
                   {item.initial || '?'}
                 </span>
                 <h2
@@ -334,10 +364,18 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                   {item.group}
                 </h2>
               </div>
-              <Badge variant={presentation.badge}>{presentation.label}</Badge>
+              <div className='flex shrink-0 items-center gap-2'>
+                <span
+                  className='rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary'
+                  title='分组倍率'
+                >
+                  {formatRatio(item.group_ratio ?? 1)}
+                </span>
+                <Badge variant={presentation.badge}>{presentation.label}</Badge>
+              </div>
             </div>
 
-            <dl className='mt-5 grid grid-cols-2 gap-x-4 gap-y-4 pl-2'>
+            <dl className='mt-6 grid grid-cols-2 gap-x-4 gap-y-4 pl-2'>
               <div className='min-w-0'>
                 <dt className='text-muted-foreground text-xs'>首字响应</dt>
                 <dd className='mt-1 truncate font-mono text-sm font-medium tabular-nums'>
@@ -369,7 +407,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                 </dd>
               </div>
             </dl>
-            <div className='mt-5 pl-2'>
+            <div className='mt-6 border-t border-border/60 pt-4 pl-2'>
               <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px]'>
                 <span>
                   近 {props.result.display_value}{' '}
@@ -408,6 +446,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
           </article>
         )
       })}
+      </div>
     </div>
   )
 }

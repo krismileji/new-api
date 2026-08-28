@@ -106,7 +106,9 @@ export type PricingGroupMonitorItem = Pick<
   | 'success_rate'
   | 'last_finished_at'
   | 'recent_window'
->
+> & {
+  group_ratio?: number
+}
 
 export type ChannelGroupMonitorAdminItem = ChannelGroupMonitorItem & {
   probe_model: string
