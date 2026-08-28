@@ -53,6 +53,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
 import { formatTimestampToDate } from '@/lib/format'
+import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
 import {
@@ -103,6 +104,7 @@ type ChannelMonitorSmartScheduleBoardProps = {
   channels: readonly ChannelMonitorItem[]
   groupPolicies: readonly ChannelMonitorSmartScheduleGroupPolicy[]
   groupRatios: Readonly<Record<string, number>>
+  groupOrder?: readonly string[]
   isLoading: boolean
   isError: boolean
   onOpenSettings: () => void
@@ -160,17 +162,19 @@ export function ChannelMonitorSmartScheduleBoard(
     () => summarizeChannelMonitorSmartScheduleOverview(routes),
     [routes]
   )
-  const groups = useMemo(
-    () =>
-      [...new Set(routes.map((route) => route.group))].sort((first, second) =>
-        compareChannelMonitorSmartScheduleGroupsByRatio(
-          first,
-          second,
-          props.groupRatios
-        )
-      ),
-    [props.groupRatios, routes]
-  )
+  const groups = useMemo(() => {
+    const groupNames = [...new Set(routes.map((route) => route.group))]
+    if (props.groupOrder?.length) {
+      return orderGroupNames(groupNames, props.groupOrder)
+    }
+    return groupNames.sort((first, second) =>
+      compareChannelMonitorSmartScheduleGroupsByRatio(
+        first,
+        second,
+        props.groupRatios
+      )
+    )
+  }, [props.groupOrder, props.groupRatios, routes])
   const poolSummaries = useMemo(
     () => summarizeChannelMonitorSmartSchedulePools(routes, props.groupRatios),
     [props.groupRatios, routes]

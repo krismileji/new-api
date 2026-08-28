@@ -200,7 +200,10 @@ try {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <ChannelStatusProbeView channelOrder={[2, 1, 4, 3]} />
+        <ChannelStatusProbeView
+          channelOrder={[2, 1, 4, 3]}
+          groupOrder={['vip', 'default']}
+        />
       </QueryClientProvider>
     )
   })
@@ -235,7 +238,30 @@ try {
   assert.equal(modelTrigger.disabled, true)
   assert.ok(modelTrigger.textContent?.includes('请先选择分组'))
 
-  await chooseOption(groupTrigger, 'vip')
+  await act(async () => {
+    groupTrigger.focus()
+    groupTrigger.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        code: 'ArrowDown',
+        bubbles: true,
+      })
+    )
+  })
+  const groupOptions = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-slot="select-content"][data-open] [role="option"]'
+    ),
+  ]
+  assert.deepEqual(
+    groupOptions.map((option) => option.textContent?.trim()),
+    ['选择分组', 'vip', 'default']
+  )
+  const vipOption = groupOptions.find(
+    (option) => option.textContent?.trim() === 'vip'
+  )
+  assert.ok(vipOption)
+  await act(async () => vipOption.click())
   assert.ok(groupTrigger.textContent?.includes('vip'))
   assert.equal(modelTrigger.disabled, false)
   assert.equal(container.textContent?.includes('默认渠道'), false)

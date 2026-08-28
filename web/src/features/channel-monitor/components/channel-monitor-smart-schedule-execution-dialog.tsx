@@ -63,6 +63,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { formatTimestampToDate } from '@/lib/format'
+import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
 import {
@@ -267,6 +268,7 @@ function TaskListItem(props: {
 
 type ChannelMonitorSmartScheduleExecutionPanelProps = {
   active: boolean
+  groupOrder?: readonly string[]
 }
 
 export function ChannelMonitorSmartScheduleExecutionPanel(
@@ -345,8 +347,8 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     [detailResult?.channel_names]
   )
   const groups = useMemo(
-    () => detailResult?.groups ?? [],
-    [detailResult?.groups]
+    () => orderGroupNames(detailResult?.groups ?? [], props.groupOrder),
+    [detailResult?.groups, props.groupOrder]
   )
   const models = useMemo(
     () => detailResult?.models ?? [],
@@ -833,6 +835,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
 type ChannelMonitorSmartScheduleExecutionDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  groupOrder?: readonly string[]
 }
 
 export function ChannelMonitorSmartScheduleExecutionDialog(
@@ -851,7 +854,10 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
             按执行批次查看评分输入、计算结果、优先级与权重变化，以及每次调整的原因。
           </DialogDescription>
         </DialogHeader>
-        <ChannelMonitorSmartScheduleExecutionPanel active={props.open} />
+        <ChannelMonitorSmartScheduleExecutionPanel
+          active={props.open}
+          groupOrder={props.groupOrder}
+        />
       </DialogContent>
     </Dialog>
   )

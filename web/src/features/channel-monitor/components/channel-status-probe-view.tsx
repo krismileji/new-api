@@ -75,6 +75,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { orderGroupNames } from '@/lib/group-order'
 
 import {
   getChannelStatusProbeOverview,
@@ -142,6 +143,7 @@ function matchesStatusFilter(
 
 export type ChannelStatusProbeViewProps = {
   channelOrder: readonly number[]
+  groupOrder?: readonly string[]
 }
 
 export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
@@ -181,12 +183,14 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   const groupOptions = useMemo<Array<{ value: string | null; label: string }>>(
     () => [
       { value: null, label: '选择分组' },
-      ...(query.data?.data.groups ?? []).map((groupName) => ({
-        value: groupName,
-        label: groupName,
-      })),
+      ...orderGroupNames(query.data?.data.groups ?? [], props.groupOrder).map(
+        (groupName) => ({
+          value: groupName,
+          label: groupName,
+        })
+      ),
     ],
-    [query.data?.data.groups]
+    [props.groupOrder, query.data?.data.groups]
   )
   const groupModels = groupFilter
     ? (query.data?.data.models_by_group?.[groupFilter] ?? EMPTY_MODEL_NAMES)

@@ -156,7 +156,11 @@ const root = createRoot(container)
 try {
   await act(async () => {
     root.render(
-      <ChannelModelDetectionView channelOrder={[2, 1, 3]} overview={overview} />
+      <ChannelModelDetectionView
+        channelOrder={[2, 1, 3]}
+        groupOrder={['vip', 'default']}
+        overview={overview}
+      />
     )
   })
 
@@ -191,6 +195,31 @@ try {
   )
   assert.ok(groupTrigger)
   assert.ok(modelTrigger)
+
+  await act(async () => {
+    groupTrigger.focus()
+    groupTrigger.dispatchEvent(
+      new domWindow.KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        code: 'ArrowDown',
+        bubbles: true,
+      }) as unknown as KeyboardEvent
+    )
+  })
+  const groupOptions = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-slot="select-content"][data-open] [role="option"]'
+    ),
+  ]
+  assert.deepEqual(
+    groupOptions.map((option) => option.textContent?.trim()),
+    ['全部分组', 'vip', 'default']
+  )
+  const vipOption = groupOptions.find(
+    (option) => option.textContent?.trim() === 'vip'
+  )
+  assert.ok(vipOption)
+  await act(async () => vipOption.click())
 
   await chooseOption(groupTrigger, 'vip')
   assert.ok(groupTrigger.textContent?.includes('vip'))

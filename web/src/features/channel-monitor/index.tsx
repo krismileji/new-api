@@ -82,6 +82,8 @@ import { ChannelTestDialogForChannel } from '@/features/channels/components/dial
 import { LogicalGroupsEntry } from '@/features/channels/components/logical-groups-entry'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { getChannelGroupMonitorSettings } from '@/features/group-monitor/api'
+import { getUserGroups } from '@/lib/api'
+import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
 import {
@@ -265,6 +267,7 @@ type SmartScheduleDisplaySelection = {
 
 const EMPTY_CHANNELS: ChannelMonitorItem[] = []
 const EMPTY_CHANNEL_ORDER: number[] = []
+const EMPTY_GROUP_ORDER: string[] = []
 const EMPTY_GROUP_RATIOS: Record<string, number> = {}
 const EMPTY_GROUP_COEFFICIENTS: Record<string, number> = {}
 const EMPTY_PERFORMANCE_METRICS: ChannelMonitorPerformanceMetric[] = []
@@ -370,6 +373,12 @@ const CHANNEL_MONITOR_SORT_OPTIONS: Array<{
   { value: 'tps_asc', label: 'TPS：从低到高' },
 ]
 export function ChannelMonitor() {
+  const groupOrderQuery = useQuery({
+    queryKey: ['user-groups'],
+    queryFn: getUserGroups,
+    staleTime: 5 * 60 * 1000,
+  })
+  const groupOrder = groupOrderQuery.data?.group_order ?? EMPTY_GROUP_ORDER
   const queryClient = useQueryClient()
   const [view, setView] = useState<MonitorView>('channels')
   const [upstreamFilter, setUpstreamFilter] =
@@ -724,10 +733,11 @@ export function ChannelMonitor() {
   ])
   const smartScheduleDisplayGroups = useMemo(
     () =>
-      [
-        ...new Set(smartScheduleDisplayOptions.map((option) => option.group)),
-      ].map((group) => ({ value: group, label: group })),
-    [smartScheduleDisplayOptions]
+      orderGroupNames(
+        [...new Set(smartScheduleDisplayOptions.map((option) => option.group))],
+        groupOrder
+      ).map((group) => ({ value: group, label: group })),
+    [groupOrder, smartScheduleDisplayOptions]
   )
   const smartScheduleDisplayModelsByGroup = useMemo(() => {
     const modelsByGroup = new Map<string, string[]>()
@@ -842,15 +852,13 @@ export function ChannelMonitor() {
     for (const channel of channels) {
       for (const group of channel.groups) groupNames.add(group)
     }
-    return [...groupNames]
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => ({
-        name,
-        ratio: groupRatios[name] ?? 1,
-        coefficient: groupCoefficients[name] ?? 1,
-        channels: channels.filter((channel) => channel.groups.includes(name)),
-      }))
-  }, [channels, groupCoefficients, groupRatios])
+    return orderGroupNames([...groupNames], groupOrder).map((name) => ({
+      name,
+      ratio: groupRatios[name] ?? 1,
+      coefficient: groupCoefficients[name] ?? 1,
+      channels: channels.filter((channel) => channel.groups.includes(name)),
+    }))
+  }, [channels, groupCoefficients, groupOrder, groupRatios])
 
   const normalizedSearch = search.trim().toLocaleLowerCase()
   const matchingChannels = useMemo(
@@ -1487,6 +1495,7 @@ export function ChannelMonitor() {
               >
                 <LazyChannelStatusProbeView
                   channelOrder={channelDisplayOrder}
+                  groupOrder={groupOrder}
                 />
               </Suspense>
             )}
@@ -1504,6 +1513,7 @@ export function ChannelMonitor() {
               >
                 <LazyChannelModelDetectionView
                   channelOrder={channelDisplayOrder}
+                  groupOrder={groupOrder}
                   overview={modelDetectionQuery.data?.data}
                   loading={modelDetectionQuery.isLoading}
                   refreshing={modelDetectionQuery.isFetching}
@@ -1526,6 +1536,7 @@ export function ChannelMonitor() {
               channels={channels}
               groupPolicies={settings.smart_schedule_group_policies}
               groupRatios={groupRatios}
+              groupOrder={groupOrder}
               isLoading={smartScheduleDetailQuery.isLoading}
               isError={smartScheduleDetailQuery.isError}
               selection={{
@@ -1815,6 +1826,7 @@ export function ChannelMonitor() {
           <LazyChannelMonitorSmartScheduleExecutionDialog
             open
             onOpenChange={setSmartScheduleHistoryOpen}
+            groupOrder={groupOrder}
           />
         </Suspense>
       )}

@@ -68,6 +68,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { orderGroupNames } from '@/lib/group-order'
 
 import {
   CHANNEL_MODEL_DETECTION_STATUS_FILTERS,
@@ -96,6 +97,7 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
 
 export type ChannelModelDetectionViewProps = {
   channelOrder: readonly number[]
+  groupOrder?: readonly string[]
   overview?: ChannelModelDetectionOverview
   loading?: boolean
   refreshing?: boolean
@@ -302,7 +304,10 @@ export function ChannelModelDetectionView(
   const counts = statusCounts(overview.channels, overview.summary)
   const groupOptions = [
     { value: null, label: '全部分组' },
-    ...overview.groups.map((group) => ({ value: group, label: group })),
+    ...orderGroupNames(overview.groups, props.groupOrder).map((group) => ({
+      value: group,
+      label: group,
+    })),
   ]
   const availableModels = filters.group
     ? (overview.models_by_group[filters.group] ?? [])

@@ -34,9 +34,10 @@ import {
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
+import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
-import { type UptimeDayPoint } from '../lib/mock-stats'
+import type { UptimeDayPoint } from '../lib/mock-stats'
 import type { PricingModel } from '../types'
 import { LatencyTrendChart, UptimeTrendChart } from './model-details-charts'
 import { UptimeSparkline } from './model-details-uptime-sparkline'
@@ -97,7 +98,7 @@ function toLatencySeries(groups: PerformanceGroup[]) {
     }
   }
 
-  return Array.from(byTs.entries())
+  return [...byTs.entries()]
     .sort(([a], [b]) => a - b)
     .map(([ts, values]) => ({
       timestamp: new Date(ts * 1000).toISOString(),
@@ -121,7 +122,7 @@ function toUptimeSeries(groups: PerformanceGroup[]): UptimeDayPoint[] {
       byTs.set(point.ts, current)
     }
   }
-  return Array.from(byTs.entries())
+  return [...byTs.entries()]
     .sort(([a], [b]) => a - b)
     .map(([ts, value]) => {
       const uptime =
@@ -161,17 +162,27 @@ function average(
   )
 }
 
-export function ModelDetailsPerformance(props: { model: PricingModel }) {
+export function ModelDetailsPerformance(props: {
+  model: PricingModel
+  groupOrder?: readonly string[]
+}) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
     queryKey: ['perf-metrics', props.model.model_name],
     queryFn: () => getPerfMetrics(props.model.model_name, 24),
     staleTime: 60 * 1000,
   })
-  const groups = useMemo(
-    () => metricsQuery.data?.data.groups ?? [],
-    [metricsQuery.data]
-  )
+  const groups = useMemo(() => {
+    const groups = metricsQuery.data?.data.groups ?? []
+    if (!props.groupOrder?.length) return groups
+    const groupsByName = new Map(groups.map((group) => [group.group, group]))
+    return orderGroupNames(
+      groups.map((group) => group.group),
+      props.groupOrder
+    )
+      .map((groupName) => groupsByName.get(groupName))
+      .filter((group): group is PerformanceGroup => group != null)
+  }, [metricsQuery.data, props.groupOrder])
   const performances = useMemo<PerformanceRow[]>(
     () =>
       groups.map((group) => ({
