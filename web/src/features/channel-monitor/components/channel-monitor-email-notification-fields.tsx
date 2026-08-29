@@ -36,7 +36,6 @@ import {
 import {
   Field,
   FieldContent,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldLegend,
@@ -44,7 +43,6 @@ import {
 } from '@/components/ui/field'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -62,6 +60,7 @@ import {
 import { handleChannelMonitorMutationError } from '../lib/error'
 import type { ChannelMonitorSettingsFormValues } from '../lib/schema'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import { ChannelMonitorFieldInfo } from './channel-monitor-field-info'
 
 type ChannelMonitorEmailNotificationFieldsProps = {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -99,11 +98,12 @@ export function ChannelMonitorEmailNotificationFields(
         name='emailNotificationEnabled'
         render={({ field }) => (
           <FormItem className='flex items-center justify-between gap-4'>
-            <div className='flex flex-col gap-1'>
+            <div className='flex items-center gap-1'>
               <FormLabel>邮件通知</FormLabel>
-              <FormDescription>
-                开启后，仅在选定类型出现时发送渠道监控邮件
-              </FormDescription>
+              <ChannelMonitorFieldInfo
+                label='邮件通知'
+                description='开启后，仅在选定类型出现时发送渠道监控邮件。'
+              />
             </div>
             <FormControl>
               <Switch
@@ -121,7 +121,13 @@ export function ChannelMonitorEmailNotificationFields(
         name='notificationEmail'
         render={({ field }) => (
           <FormItem>
-            <FormLabel>通知邮箱</FormLabel>
+            <div className='flex items-center gap-1'>
+              <FormLabel>通知邮箱</FormLabel>
+              <ChannelMonitorFieldInfo
+                label='通知邮箱'
+                description='关闭通知后仍会保留邮箱地址；邮件发送使用系统 SMTP 设置。'
+              />
+            </div>
             <FormControl>
               <Input
                 type='email'
@@ -138,9 +144,6 @@ export function ChannelMonitorEmailNotificationFields(
                 )}
               />
             </FormControl>
-            <FormDescription>
-              关闭通知后仍会保留邮箱地址；邮件发送使用系统 SMTP 设置
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -158,10 +161,16 @@ export function ChannelMonitorEmailNotificationFields(
                 data-invalid={fieldState.invalid || undefined}
                 className='gap-3 rounded-md border p-3'
               >
-                <FieldLegend variant='label'>接收类型</FieldLegend>
-                <FieldDescription>
-                  只发送已勾选的分类；未勾选的事件仍会保留在执行记录中
-                </FieldDescription>
+                <FieldLegend
+                  variant='label'
+                  className='flex items-center gap-1'
+                >
+                  接收类型
+                  <ChannelMonitorFieldInfo
+                    label='接收类型'
+                    description='只发送已勾选的分类；未勾选的事件仍会保留在执行记录中。'
+                  />
+                </FieldLegend>
 
                 <FieldGroup
                   data-slot='checkbox-group'
@@ -198,12 +207,15 @@ export function ChannelMonitorEmailNotificationFields(
                             }}
                           />
                           <FieldContent>
-                            <FieldLabel htmlFor={checkboxId}>
-                              {option.label}
-                            </FieldLabel>
-                            <FieldDescription>
-                              {option.description}
-                            </FieldDescription>
+                            <div className='flex items-center gap-1'>
+                              <FieldLabel htmlFor={checkboxId}>
+                                {option.label}
+                              </FieldLabel>
+                              <ChannelMonitorFieldInfo
+                                label={option.label}
+                                description={option.description}
+                              />
+                            </div>
                           </FieldContent>
                         </Field>
                       )

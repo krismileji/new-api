@@ -86,7 +86,7 @@ test(
     assert.match(result.generalTitle, /失败重试等待时间/)
     assert.match(result.generalTitle, /错误处理/)
     assert.equal(result.generalHasSchedule, false)
-    assert.equal(result.generalTabCount, 4)
+    assert.equal(result.generalTabCount, 5)
     assert.equal(result.generalUsesContentSizedViewport, true)
     assert.equal(result.errorSettingsUseDedicatedTab, true)
     assert.equal(result.retentionSettingsLoaded, true)

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { InformationCircleIcon, Route01Icon } from '@hugeicons/core-free-icons'
+import { Route01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useForm, type Resolver, type UseFormReturn } from 'react-hook-form'
 import { toast } from 'sonner'
 
@@ -42,7 +43,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -67,11 +67,13 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { LogicalGroupsPanel } from '@/features/channels/components/dialogs/logical-groups-dialog'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { updateChannelMonitorSettings } from '../api'
 import {
@@ -141,6 +143,7 @@ import { channelMonitorSmartScheduleGroupPoliciesToForm } from '../lib/smart-sch
 import type { ChannelMonitorSettings } from '../types'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorEmailNotificationFields } from './channel-monitor-email-notification-fields'
+import { ChannelMonitorFieldInfo } from './channel-monitor-field-info'
 import { ChannelMonitorProbeResponseFields } from './channel-monitor-probe-response-fields'
 import { ChannelMonitorSmartScheduleFields } from './channel-monitor-smart-schedule-fields'
 
@@ -200,34 +203,6 @@ type ChannelMonitorCleanupNumberFieldName =
   | 'cleanupBudgetSeconds'
   | 'cleanupContinuationSeconds'
   | 'cleanupIntervalMinutes'
-
-function ChannelMonitorFieldInfo(props: {
-  label: string
-  description: string
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type='button'
-            className='text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex size-4 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none'
-            aria-label={`${props.label}说明`}
-          />
-        }
-      >
-        <HugeiconsIcon
-          icon={InformationCircleIcon}
-          className='size-3.5'
-          aria-hidden='true'
-        />
-      </TooltipTrigger>
-      <TooltipContent className='max-w-sm leading-relaxed whitespace-normal'>
-        {props.description}
-      </TooltipContent>
-    </Tooltip>
-  )
-}
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -341,14 +316,17 @@ export function ChannelMonitorRetentionFields(props: {
   return (
     <section className='space-y-4' aria-labelledby='channel-monitor-retention'>
       <div className='space-y-1'>
-        <h3 id='channel-monitor-retention' className='text-sm font-medium'>
-          数据保留
-        </h3>
-        <p className='text-muted-foreground text-sm'>
-          按配置周期分批清理到期数据；删除后不可恢复
-        </p>
+        <div className='flex items-center gap-1'>
+          <h3 id='channel-monitor-retention' className='text-sm font-medium'>
+            数据保留
+          </h3>
+          <ChannelMonitorFieldInfo
+            label='数据保留'
+            description='按配置周期分批清理到期数据；删除后不可恢复。'
+          />
+        </div>
       </div>
-      <div className='grid gap-4 sm:grid-cols-2'>
+      <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
         <ChannelMonitorCostRetentionField form={props.form} />
         <ChannelMonitorRetentionDayField
           form={props.form}
@@ -488,14 +466,17 @@ export function ChannelMonitorRetentionFields(props: {
       />
       <div className='space-y-3' aria-labelledby='channel-monitor-cleanup'>
         <div className='space-y-1'>
-          <h4 id='channel-monitor-cleanup' className='text-sm font-medium'>
-            高级清理设置
-          </h4>
-          <p className='text-muted-foreground text-sm'>
-            控制单轮删除压力与未完成清理的续跑速度
-          </p>
+          <div className='flex items-center gap-1'>
+            <h4 id='channel-monitor-cleanup' className='text-sm font-medium'>
+              高级清理设置
+            </h4>
+            <ChannelMonitorFieldInfo
+              label='高级清理设置'
+              description='控制单轮删除压力与未完成清理的续跑速度。'
+            />
+          </div>
         </div>
-        <div className='grid gap-4 sm:grid-cols-3'>
+        <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
           <ChannelMonitorCleanupNumberField
             form={props.form}
             name='cleanupBatchSize'
@@ -547,7 +528,13 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
       name='autoUpdateConsecutiveFailureLimit'
       render={({ field }) => (
         <FormItem>
-          <FormLabel>连续失败停止次数</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>连续失败停止次数</FormLabel>
+            <ChannelMonitorFieldInfo
+              label='连续失败停止次数'
+              description='倍率和余额分别连续失败达到该次数后停止自动更新；手动更新成功后恢复。'
+            />
+          </div>
           <FormControl>
             <InputGroup>
               <InputGroupInput
@@ -568,9 +555,6 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
               <InputGroupAddon align='inline-end'>次</InputGroupAddon>
             </InputGroup>
           </FormControl>
-          <FormDescription>
-            倍率和余额分别连续失败达到该次数后停止自动更新；手动更新成功后恢复
-          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -587,7 +571,13 @@ export function ChannelMonitorRetryDelayField(props: {
       name='autoUpdateRetryDelaySeconds'
       render={({ field }) => (
         <FormItem>
-          <FormLabel>失败重试等待时间</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>失败重试等待时间</FormLabel>
+            <ChannelMonitorFieldInfo
+              label='失败重试等待时间'
+              description='每次重试前等待的时间；设置为 0 时立即重试。'
+            />
+          </div>
           <FormControl>
             <InputGroup>
               <InputGroupInput
@@ -608,9 +598,6 @@ export function ChannelMonitorRetryDelayField(props: {
               <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
             </InputGroup>
           </FormControl>
-          <FormDescription>
-            每次重试前等待的时间；设置为 0 时立即重试
-          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -627,7 +614,13 @@ export function ChannelMonitorUpstreamRequestTimeoutField(props: {
       name='upstreamRequestTimeoutSeconds'
       render={({ field }) => (
         <FormItem>
-          <FormLabel>上游请求超时</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>上游请求超时</FormLabel>
+            <ChannelMonitorFieldInfo
+              label='上游请求超时'
+              description='单次倍率或余额更新超过该时间会终止；自动更新随后按失败重试规则处理。'
+            />
+          </div>
           <FormControl>
             <InputGroup>
               <InputGroupInput
@@ -648,9 +641,6 @@ export function ChannelMonitorUpstreamRequestTimeoutField(props: {
               <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
             </InputGroup>
           </FormControl>
-          <FormDescription>
-            单次倍率或余额更新超过该时间会终止；自动更新随后按失败重试规则处理
-          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -667,7 +657,13 @@ export function ChannelMonitorConcurrencyWaitField(props: {
       name='channelConcurrencyWaitSeconds'
       render={({ field }) => (
         <FormItem>
-          <FormLabel>渠道满载等待时间</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>渠道满载等待时间</FormLabel>
+            <ChannelMonitorFieldInfo
+              label='渠道满载等待时间'
+              description='当前渠道并发或 RPM 达到上限时，自动尝试同组其它渠道；无可用渠道时最多等待该时间。设置为 0 时不等待。'
+            />
+          </div>
           <FormControl>
             <InputGroup>
               <InputGroupInput
@@ -688,11 +684,6 @@ export function ChannelMonitorConcurrencyWaitField(props: {
               <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
             </InputGroup>
           </FormControl>
-          <FormDescription>
-            当前渠道并发或 RPM
-            达到上限时，自动尝试同组其它渠道；无可用渠道时最多等待该时间。设置为
-            0 时不等待
-          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -727,6 +718,25 @@ export function ChannelMonitorSmartScheduleSettingsSheet(
 }
 
 function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
+  const [activeSection, setActiveSection] = useState<string>(
+    props.initialSection
+  )
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canReadLogicalGroups = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.READ
+  )
+  const canEditLogicalGroups = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
+  const canDeleteLogicalGroups = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
   const queryClient = useQueryClient()
   const form = useForm<ChannelMonitorSettingsFormValues>({
     resolver: zodResolver(
@@ -967,7 +977,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
     >
       <DialogContent
         className={channelMonitorDialogContentClassName(
-          'grid-rows-[auto_minmax(0,1fr)] sm:max-w-2xl'
+          'grid-rows-[auto_minmax(0,1fr)] sm:max-w-4xl'
         )}
         showCloseButton={!mutation.isPending}
       >
@@ -982,10 +992,14 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
           <form className='flex min-h-0 flex-col gap-5' onSubmit={handleSubmit}>
             <Tabs
               defaultValue={props.initialSection}
-              className='min-h-0 flex-1 gap-5'
+              onValueChange={setActiveSection}
+              className='min-h-0 flex-1 gap-4'
             >
-              <TabsList className='grid h-auto w-full shrink-0 grid-cols-4'>
-                <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
+              <TabsList className='grid h-auto w-full shrink-0 grid-cols-2 sm:grid-cols-5'>
+                <TabsTrigger
+                  value='monitor'
+                  className='h-auto px-2 text-wrap'
+                >
                   倍率与通知
                 </TabsTrigger>
                 <TabsTrigger
@@ -994,8 +1008,18 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 >
                   错误处理
                 </TabsTrigger>
-                <TabsTrigger value='probe' className='h-auto px-2 text-wrap'>
+                <TabsTrigger
+                  value='probe'
+                  className='h-auto px-2 text-wrap'
+                >
                   探针响应
+                </TabsTrigger>
+                <TabsTrigger
+                  value='logical-groups'
+                  className='h-auto px-2 text-wrap'
+                  disabled={!canReadLogicalGroups}
+                >
+                  同渠道配置
                 </TabsTrigger>
                 <TabsTrigger
                   value='retention'
@@ -1007,324 +1031,386 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
 
               <TabsContent
                 value='monitor'
-                className='mt-0 flex min-h-0 flex-col gap-5 overflow-y-auto pr-1'
+                className='mt-0 min-h-0 overflow-x-hidden overflow-y-auto pr-1'
               >
-                <FormField
-                  control={form.control}
-                  name='autoUpdateIntervalMinutes'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>更新间隔</FormLabel>
-                      <FormControl>
-                        <InputGroup>
-                          <InputGroupInput
-                            type='number'
-                            min={0}
-                            max={MAX_AUTO_UPDATE_INTERVAL_MINUTES}
-                            step={1}
-                            inputMode='numeric'
-                            value={field.value}
-                            onBlur={field.onBlur}
-                            onChange={field.onChange}
-                            name={field.name}
-                            ref={field.ref}
-                            aria-invalid={Boolean(
-                              form.formState.errors.autoUpdateIntervalMinutes
-                            )}
-                          />
-                          <InputGroupAddon align='inline-end'>
-                            分钟
-                          </InputGroupAddon>
-                        </InputGroup>
-                      </FormControl>
-                      <FormDescription>
-                        设置为 0 时关闭自动更新；保存后自动生效
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className='space-y-5'>
+                  <section className='space-y-3'>
+                    <div className='flex items-center gap-2'>
+                      <h3 className='text-sm font-medium'>自动更新</h3>
+                      <ChannelMonitorFieldInfo
+                        label='自动更新'
+                        description='控制渠道倍率、余额和状态的自动更新节奏，以及更新失败时的重试行为。'
+                      />
+                    </div>
+                    <div className='grid gap-4 sm:grid-cols-2'>
+                      <FormField
+                        control={form.control}
+                        name='autoUpdateIntervalMinutes'
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className='flex items-center gap-1'>
+                              <FormLabel>更新间隔</FormLabel>
+                              <ChannelMonitorFieldInfo
+                                label='更新间隔'
+                                description='设置为 0 时关闭自动更新；保存后自动生效。'
+                              />
+                            </div>
+                            <FormControl>
+                              <InputGroup>
+                                <InputGroupInput
+                                  type='number'
+                                  min={0}
+                                  max={MAX_AUTO_UPDATE_INTERVAL_MINUTES}
+                                  step={1}
+                                  inputMode='numeric'
+                                  value={field.value}
+                                  onBlur={field.onBlur}
+                                  onChange={field.onChange}
+                                  name={field.name}
+                                  ref={field.ref}
+                                  aria-invalid={Boolean(
+                                    form.formState.errors
+                                      .autoUpdateIntervalMinutes
+                                  )}
+                                />
+                                <InputGroupAddon align='inline-end'>
+                                  分钟
+                                </InputGroupAddon>
+                              </InputGroup>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                <FormField
-                  control={form.control}
-                  name='autoUpdateRetryCount'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>失败重试次数</FormLabel>
-                      <FormControl>
-                        <InputGroup>
-                          <InputGroupInput
-                            type='number'
-                            min={0}
-                            max={MAX_AUTO_UPDATE_RETRY_COUNT}
-                            step={1}
-                            inputMode='numeric'
-                            value={field.value}
-                            onBlur={field.onBlur}
-                            onChange={field.onChange}
-                            name={field.name}
-                            ref={field.ref}
-                            aria-invalid={Boolean(
-                              form.formState.errors.autoUpdateRetryCount
-                            )}
-                          />
-                          <InputGroupAddon align='inline-end'>
-                            次
-                          </InputGroupAddon>
-                        </InputGroup>
-                      </FormControl>
-                      <FormDescription>
-                        首次失败后最多再尝试的次数；设置为 0 时不重试
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      <FormField
+                        control={form.control}
+                        name='autoUpdateRetryCount'
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className='flex items-center gap-1'>
+                              <FormLabel>失败重试次数</FormLabel>
+                              <ChannelMonitorFieldInfo
+                                label='失败重试次数'
+                                description='首次失败后最多再尝试的次数；设置为 0 时不重试。'
+                              />
+                            </div>
+                            <FormControl>
+                              <InputGroup>
+                                <InputGroupInput
+                                  type='number'
+                                  min={0}
+                                  max={MAX_AUTO_UPDATE_RETRY_COUNT}
+                                  step={1}
+                                  inputMode='numeric'
+                                  value={field.value}
+                                  onBlur={field.onBlur}
+                                  onChange={field.onChange}
+                                  name={field.name}
+                                  ref={field.ref}
+                                  aria-invalid={Boolean(
+                                    form.formState.errors.autoUpdateRetryCount
+                                  )}
+                                />
+                                <InputGroupAddon align='inline-end'>
+                                  次
+                                </InputGroupAddon>
+                              </InputGroup>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                <ChannelMonitorRetryDelayField form={form} />
+                      <ChannelMonitorRetryDelayField form={form} />
+                      <ChannelMonitorConcurrencyWaitField form={form} />
+                      <ChannelMonitorUpstreamRequestTimeoutField form={form} />
+                      <ChannelMonitorConsecutiveFailureLimitField form={form} />
+                    </div>
+                  </section>
 
-                <ChannelMonitorConcurrencyWaitField form={form} />
+                  <section className='space-y-3 border-t pt-5'>
+                    <div className='flex items-center gap-2'>
+                      <h3 className='text-sm font-medium'>渠道状态</h3>
+                      <ChannelMonitorFieldInfo
+                        label='渠道状态'
+                        description='设置自动更新失败、成本倍率恢复和余额恢复时，系统是否自动切换渠道状态。'
+                      />
+                    </div>
+                    <div className='grid gap-3 sm:grid-cols-2'>
+                      <FormField
+                        control={form.control}
+                        name='autoDisableOnUpdateFailure'
+                        render={({ field }) => (
+                          <FormItem className='flex min-h-16 items-center justify-between gap-4 rounded-lg border p-3'>
+                            <div className='flex min-w-0 items-center gap-1'>
+                              <FormLabel>更新失败自动禁用渠道</FormLabel>
+                              <ChannelMonitorFieldInfo
+                                label='更新失败自动禁用渠道'
+                                description='开启后，倍率或余额更新在重试后仍失败时自动禁用对应渠道。'
+                              />
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                aria-label='更新失败自动禁用渠道'
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
 
-                <ChannelMonitorUpstreamRequestTimeoutField form={form} />
+                      <FormField
+                        control={form.control}
+                        name='autoEnableOnCostRatioRecovery'
+                        render={({ field }) => (
+                          <FormItem className='flex min-h-16 items-center justify-between gap-4 rounded-lg border p-3'>
+                            <div className='flex min-w-0 items-center gap-1'>
+                              <FormLabel>成本倍率恢复后自动启用渠道</FormLabel>
+                              <ChannelMonitorFieldInfo
+                                label='成本倍率恢复后自动启用渠道'
+                                description='开启后，因成本倍率过高被系统禁用的渠道，在按分组系数换算后严格低于全部所属分组倍率时自动启用。'
+                              />
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                aria-label='成本倍率恢复后自动启用渠道'
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
 
-                <ChannelMonitorConsecutiveFailureLimitField form={form} />
+                      <FormField
+                        control={form.control}
+                        name='autoEnableOnBalanceRecovery'
+                        render={({ field }) => (
+                          <FormItem className='flex min-h-16 items-center justify-between gap-4 rounded-lg border p-3'>
+                            <div className='flex min-w-0 items-center gap-1'>
+                              <FormLabel>余额恢复后自动启用渠道</FormLabel>
+                              <ChannelMonitorFieldInfo
+                                label='余额恢复后自动启用渠道'
+                                description='开启后，因余额低于阈值被系统禁用的渠道，在余额恢复且按分组系数换算后的成本倍率不高于全部所属分组倍率时自动启用。'
+                              />
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                aria-label='余额恢复后自动启用渠道'
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </section>
 
-                <FormField
-                  control={form.control}
-                  name='autoDisableOnUpdateFailure'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>更新失败自动禁用渠道</FormLabel>
-                        <FormDescription>
-                          开启后，倍率或余额更新在重试后仍失败时自动禁用对应渠道
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='更新失败自动禁用渠道'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name='autoEnableOnCostRatioRecovery'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>成本倍率恢复后自动启用渠道</FormLabel>
-                        <FormDescription>
-                          开启后，因成本倍率过高被系统禁用的渠道，在按分组系数换算后严格低于全部所属分组倍率时自动启用
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='成本倍率恢复后自动启用渠道'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name='autoEnableOnBalanceRecovery'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>余额恢复后自动启用渠道</FormLabel>
-                        <FormDescription>
-                          开启后，因余额低于阈值被系统禁用的渠道，在余额恢复且按分组系数换算后的成本倍率不高于全部所属分组倍率时自动启用
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='余额恢复后自动启用渠道'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <ChannelMonitorEmailNotificationFields form={form} />
+                  <ChannelMonitorEmailNotificationFields form={form} />
+                </div>
               </TabsContent>
 
               <TabsContent
                 value='error-handling'
-                className='mt-0 flex min-h-0 flex-col gap-5 overflow-y-auto pr-1'
+                className='mt-0 min-h-0 overflow-x-hidden overflow-y-auto pr-1'
               >
-                <FormField
-                  control={form.control}
-                  name='errorMessageMapping'
-                  render={({ field }) => (
-                    <FormItem className='space-y-3'>
-                      <div className='space-y-1'>
-                        <FormLabel>错误信息映射</FormLabel>
-                        <FormDescription>
-                          统一应用于所有渠道的用户请求和使用日志；按上游错误码优先、最终
-                          HTTP 状态码其次匹配，用户请求仅在响应尚未开始时替换
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <JsonEditor
-                          value={field.value || ''}
-                          onChange={field.onChange}
-                          disabled={mutation.isPending}
-                          keyPlaceholder='429 或 insufficient_quota'
-                          valuePlaceholder='请求过于频繁，请稍后再试'
-                          keyLabel='错误码 / 状态码'
-                          valueLabel='用户可见信息'
-                          emptyMessage='未配置错误信息映射。'
-                          template={{
-                            '429': '请求过于频繁，请稍后再试',
-                            insufficient_quota: '额度不足，请联系管理员',
-                          }}
-                          valueType='string'
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='errorMessageWhitelist'
-                  render={({ field }) => (
-                    <FormItem className='space-y-3 border-t pt-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>错误码白名单</FormLabel>
-                        <FormDescription>
-                          命中的上游错误码或 HTTP
-                          状态码不会进行错误映射和关键字屏蔽，原样返回给用户；每行填写一个，也支持逗号分隔，最多
-                          32 个。
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Textarea
-                          rows={3}
-                          placeholder='例如：provider_specific_error\n503'
-                          {...field}
-                          disabled={mutation.isPending}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='errorMessageKeywords'
-                  render={({ field }) => (
-                    <FormItem className='space-y-3 border-t pt-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>错误屏蔽关键字</FormLabel>
-                        <FormDescription>
-                          全局应用于所有渠道；每行填写一个关键字，最多 32
-                          个、每个不超过 128
-                          个字符。匹配后只从用户可见错误中删除，管理员日志仍保留完整原始错误。匹配不区分大小写。
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Textarea
-                          rows={4}
-                          placeholder='每行填写一个关键字'
-                          {...field}
-                          disabled={mutation.isPending}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='retrySkipErrorCodes'
-                  render={({ field }) => (
-                    <FormItem className='space-y-3 border-t pt-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>命中错误码时跳过重试</FormLabel>
-                        <FormDescription>
-                          每行填写一个错误码，也支持逗号分隔；命中上游错误码或
-                          HTTP 状态码时，本次渠道监控直接结束，不再重试。最多 32
-                          个。
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Textarea
-                          rows={3}
-                          placeholder='例如：insufficient_quota\n429\n500'
-                          {...field}
-                          disabled={mutation.isPending}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='retrySkipErrorMessages'
-                  render={({ field }) => (
-                    <FormItem className='space-y-3 border-t pt-4'>
-                      <div className='space-y-1'>
-                        <FormLabel>命中执行错误信息时跳过重试</FormLabel>
-                        <FormDescription>
-                          每行填写一个错误信息关键字，也支持逗号分隔；按不区分大小写的包含匹配，命中后本次渠道监控不再重试。最多
-                          32 个。
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Textarea
-                          rows={3}
-                          placeholder='例如：额度不足\ninvalid api key'
-                          {...field}
-                          disabled={mutation.isPending}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className='space-y-4'>
+                  <div className='flex items-center gap-2'>
+                    <h3 className='text-sm font-medium'>错误规则</h3>
+                    <ChannelMonitorFieldInfo
+                      label='错误规则'
+                      description='统一控制上游错误的用户可见文案、屏蔽关键字和渠道监控重试行为。'
+                    />
+                  </div>
+                  <div className='flex flex-col gap-5'>
+                    <FormField
+                      control={form.control}
+                      name='errorMessageMapping'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>错误信息映射</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='错误信息映射'
+                              description='统一应用于所有渠道的用户请求和使用日志；按上游错误码优先、最终 HTTP 状态码其次匹配，用户请求仅在响应尚未开始时替换。'
+                            />
+                          </div>
+                          <FormControl>
+                            <JsonEditor
+                              value={field.value || ''}
+                              onChange={field.onChange}
+                              disabled={mutation.isPending}
+                              keyPlaceholder='429 或 insufficient_quota'
+                              valuePlaceholder='请求过于频繁，请稍后再试'
+                              keyLabel='错误码 / 状态码'
+                              valueLabel='用户可见信息'
+                              emptyMessage='未配置错误信息映射。'
+                              template={{
+                                '429': '请求过于频繁，请稍后再试',
+                                insufficient_quota: '额度不足，请联系管理员',
+                              }}
+                              valueType='string'
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='errorMessageWhitelist'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3 border-t pt-4'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>错误码白名单</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='错误码白名单'
+                              description='命中的上游错误码或 HTTP 状态码不会进行错误映射和关键字屏蔽，原样返回给用户；每行填写一个，也支持逗号分隔，最多 32 个。'
+                            />
+                          </div>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder='例如：provider_specific_error\n503'
+                              {...field}
+                              disabled={mutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='errorMessageKeywords'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3 border-t pt-4'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>错误屏蔽关键字</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='错误屏蔽关键字'
+                              description='全局应用于所有渠道；每行填写一个关键字，最多 32 个、每个不超过 128 个字符。匹配后只从用户可见错误中删除，管理员日志仍保留完整原始错误，匹配不区分大小写。'
+                            />
+                          </div>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder='每行填写一个关键字'
+                              {...field}
+                              disabled={mutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='retrySkipErrorCodes'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3 border-t pt-4'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>命中错误码时跳过重试</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='命中错误码时跳过重试'
+                              description='每行填写一个错误码，也支持逗号分隔；命中上游错误码或 HTTP 状态码时，本次渠道监控直接结束，不再重试，最多 32 个。'
+                            />
+                          </div>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder='例如：insufficient_quota\n429\n500'
+                              {...field}
+                              disabled={mutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='retrySkipErrorMessages'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3 border-t pt-4'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>命中执行错误信息时跳过重试</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='命中执行错误信息时跳过重试'
+                              description='每行填写一个错误信息关键字，也支持逗号分隔；按不区分大小写的包含匹配，命中后本次渠道监控不再重试，最多 32 个。'
+                            />
+                          </div>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder='例如：额度不足\ninvalid api key'
+                              {...field}
+                              disabled={mutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
               </TabsContent>
 
               <TabsContent
                 value='probe'
-                className='mt-0 min-h-0 overflow-y-auto pr-1'
+                className='mt-0 min-h-0 overflow-x-hidden overflow-y-auto pr-1'
               >
                 <ChannelMonitorProbeResponseFields form={form} />
               </TabsContent>
 
               <TabsContent
                 value='retention'
-                className='mt-0 min-h-0 overflow-y-auto pr-1'
+                className='mt-0 min-h-0 overflow-x-hidden overflow-y-auto pr-1'
               >
                 <ChannelMonitorRetentionFields form={form} />
               </TabsContent>
+
+              <TabsContent
+                value='logical-groups'
+                className='mt-0 min-h-0 overflow-x-hidden overflow-y-auto pr-1'
+              >
+                <div className='mb-4 flex items-center gap-1'>
+                  <h3 className='text-base leading-none font-medium'>
+                    同渠道配置
+                  </h3>
+                  <ChannelMonitorFieldInfo
+                    label='同渠道配置'
+                    description='将请求地址一致的物理渠道配置为同一逻辑渠道，组内仅共享调度、状态探测和模型检测。'
+                  />
+                </div>
+                <LogicalGroupsPanel
+                  open={props.open && activeSection === 'logical-groups'}
+                  canRead={canReadLogicalGroups}
+                  canEdit={canEditLogicalGroups}
+                  canDelete={canDeleteLogicalGroups}
+                />
+              </TabsContent>
             </Tabs>
 
-            <DialogFooter className='shrink-0'>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => props.onOpenChange(false)}
-                disabled={mutation.isPending}
-              >
-                取消
-              </Button>
-              <Button type='submit' disabled={mutation.isPending}>
-                {mutation.isPending && <Spinner data-icon='inline-start' />}
-                保存
-              </Button>
-            </DialogFooter>
+            {activeSection !== 'logical-groups' ? (
+              <DialogFooter className='shrink-0'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  onClick={() => props.onOpenChange(false)}
+                  disabled={mutation.isPending}
+                >
+                  取消
+                </Button>
+                <Button type='submit' disabled={mutation.isPending}>
+                  {mutation.isPending && <Spinner data-icon='inline-start' />}
+                  保存
+                </Button>
+              </DialogFooter>
+            ) : null}
           </form>
         </Form>
       </DialogContent>

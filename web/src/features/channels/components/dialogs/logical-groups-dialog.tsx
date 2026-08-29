@@ -39,11 +39,15 @@ import {
 } from '../../logical-groups-api'
 import type { Channel } from '../../types'
 
-type LogicalGroupsDialogProps = {
+export type LogicalGroupsPanelProps = {
   open: boolean
-  onOpenChange: (open: boolean) => void
+  canRead?: boolean
   canEdit?: boolean
   canDelete?: boolean
+}
+
+type LogicalGroupsDialogProps = Omit<LogicalGroupsPanelProps, 'canRead'> & {
+  onOpenChange: (open: boolean) => void
 }
 
 type GroupForm = {
@@ -103,7 +107,8 @@ async function loadAllChannels() {
   return channels
 }
 
-export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
+export function LogicalGroupsPanel(props: LogicalGroupsPanelProps) {
+  const canRead = props.canRead ?? true
   const canDelete = props.canDelete ?? props.canEdit
   const [groups, setGroups] = useState<LogicalChannelGroup[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
@@ -148,12 +153,20 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
   }, [])
 
   useEffect(() => {
-    if (!props.open) return
+    if (!props.open || !canRead) return
     void loadData()
     return () => {
       loadGeneration.current += 1
     }
-  }, [loadData, props.open])
+  }, [canRead, loadData, props.open])
+
+  useEffect(() => {
+    if (props.open) return
+    setForm(null)
+    setDeleteTarget(null)
+    setPrecheck(null)
+    setPrecheckKey('')
+  }, [props.open])
 
   const selectedKey = useMemo(
     () =>
@@ -246,16 +259,6 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
     setForm(null)
     setPrecheck(null)
     setPrecheckKey('')
-  }
-
-  const handleDialogOpenChange = (open: boolean) => {
-    if (!open) {
-      setForm(null)
-      setDeleteTarget(null)
-      setPrecheck(null)
-      setPrecheckKey('')
-    }
-    props.onOpenChange(open)
   }
 
   const toggleMember = (channelId: number, checked: boolean) => {
@@ -454,22 +457,20 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
 
   return (
     <>
-      <Dialog open={props.open} onOpenChange={handleDialogOpenChange}>
-        <DialogContent
-          className='flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-4xl'
-          data-testid='logical-groups-dialog-content'
-        >
-          <DialogHeader>
-            <DialogTitle>同渠道配置</DialogTitle>
-            <DialogDescription>
-              将请求地址一致的物理渠道配置为同一逻辑渠道，组内仅共享调度、状态探测和模型检测。
-            </DialogDescription>
-          </DialogHeader>
-
+      <div
+        className='min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1'
+        data-testid='logical-groups-dialog-body'
+      >
+        {!canRead ? (
           <div
-            className='min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1'
-            data-testid='logical-groups-dialog-body'
+            className='text-muted-foreground flex min-h-64 items-center justify-center text-center text-sm'
+            role='alert'
           >
+            没有渠道查看权限
+          </div>
+        ) : null}
+        {canRead ? (
+          <>
             {loading ? (
               <div className='text-muted-foreground py-12 text-center'>
                 正在加载同渠道配置…
@@ -482,6 +483,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
               >
                 <div className='text-destructive text-sm'>{loadError}</div>
                 <Button
+                  type='button'
                   variant='outline'
                   size='sm'
                   onClick={() => void loadData()}
@@ -498,6 +500,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                       已配置的逻辑渠道
                     </span>
                     <Button
+                      type='button'
                       size='sm'
                       onClick={openCreate}
                       disabled={!props.canEdit}
@@ -529,6 +532,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                             </div>
                             <div className='flex shrink-0 gap-1'>
                               <Button
+                                type='button'
                                 variant='ghost'
                                 size='sm'
                                 onClick={() => openEdit(group)}
@@ -537,6 +541,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                                 编辑
                               </Button>
                               <Button
+                                type='button'
                                 variant='ghost'
                                 size='sm'
                                 className='text-destructive'
@@ -600,6 +605,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                           {form.id ? '编辑同渠道配置' : '新建同渠道配置'}
                         </div>
                         <Button
+                          type='button'
                           variant='ghost'
                           size='sm'
                           onClick={closeForm}
@@ -709,6 +715,7 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                       </div>
                       <DialogFooter className='-mx-4 -mb-4'>
                         <Button
+                          type='button'
                           onClick={() => void handleSave()}
                           disabled={saving || prechecking || !props.canEdit}
                         >
@@ -720,9 +727,9 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
                 </div>
               </div>
             ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
+          </>
+        ) : null}
+      </div>
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -737,5 +744,28 @@ export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
         handleConfirm={() => void handleDelete()}
       />
     </>
+  )
+}
+
+export function LogicalGroupsDialog(props: LogicalGroupsDialogProps) {
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent
+        className='flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-4xl'
+        data-testid='logical-groups-dialog-content'
+      >
+        <DialogHeader>
+          <DialogTitle>同渠道配置</DialogTitle>
+          <DialogDescription>
+            将请求地址一致的物理渠道配置为同一逻辑渠道，组内仅共享调度、状态探测和模型检测。
+          </DialogDescription>
+        </DialogHeader>
+        <LogicalGroupsPanel
+          open={props.open}
+          canEdit={props.canEdit}
+          canDelete={props.canDelete}
+        />
+      </DialogContent>
+    </Dialog>
   )
 }

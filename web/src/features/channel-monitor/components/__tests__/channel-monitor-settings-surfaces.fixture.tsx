@@ -238,7 +238,7 @@ const generalTitle = generalDialog.textContent ?? ''
 const generalHasSchedule = generalTitle.includes('智能调度')
 const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
-  generalDialog.classList.contains('sm:max-w-2xl') &&
+  generalDialog.classList.contains('sm:max-w-4xl') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
@@ -277,10 +277,14 @@ const retentionTab = settingsTabs.find(
 const probeTab = settingsTabs.find(
   (tab) => tab.textContent?.trim() === '探针响应'
 )
+const logicalGroupsTab = settingsTabs.find(
+  (tab) => tab.textContent?.trim() === '同渠道配置'
+)
 assert.ok(monitorTab)
 assert.ok(errorHandlingTab)
 assert.ok(retentionTab)
 assert.ok(probeTab)
+assert.ok(logicalGroupsTab)
 const tabPanelFor = (tab: HTMLButtonElement) => {
   const panelId = tab.getAttribute('aria-controls')
   return panelId

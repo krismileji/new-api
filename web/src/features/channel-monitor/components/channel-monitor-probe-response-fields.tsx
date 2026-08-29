@@ -20,7 +20,6 @@ import type { UseFormReturn } from 'react-hook-form'
 
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -43,6 +42,7 @@ import {
   MAX_PROBE_RESPONSE_TOKEN_COUNT,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
+import { ChannelMonitorFieldInfo } from './channel-monitor-field-info'
 
 type ProbeResponseNumberFieldName =
   | 'probeResponseMinDelayMs'
@@ -58,6 +58,8 @@ function ProbeResponseNumberField(props: {
   max: number
   name: ProbeResponseNumberFieldName
   suffix: string
+  description: string
+  disabled?: boolean
 }) {
   return (
     <FormField
@@ -65,7 +67,13 @@ function ProbeResponseNumberField(props: {
       name={props.name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{props.label}</FormLabel>
+          <div className='flex items-center gap-1'>
+            <FormLabel>{props.label}</FormLabel>
+            <ChannelMonitorFieldInfo
+              label={props.label}
+              description={props.description}
+            />
+          </div>
           <FormControl>
             <InputGroup>
               <InputGroupInput
@@ -74,6 +82,7 @@ function ProbeResponseNumberField(props: {
                 max={props.max}
                 step={1}
                 inputMode='numeric'
+                disabled={props.disabled}
                 value={field.value}
                 onBlur={field.onBlur}
                 onChange={field.onChange}
@@ -104,12 +113,15 @@ export function ChannelMonitorProbeResponseFields(props: {
         control={props.form.control}
         name='probeResponseEnabled'
         render={({ field }) => (
-          <FormItem className='flex items-start justify-between gap-4'>
+          <FormItem className='flex items-start justify-between gap-4 rounded-lg border p-3'>
             <div className='flex min-w-0 flex-col gap-1'>
-              <FormLabel>启用本地探针响应</FormLabel>
-              <FormDescription>
-                命中后由本机直接完成请求，不选择渠道，也不产生消费或渠道成本记录
-              </FormDescription>
+              <div className='flex items-center gap-1'>
+                <FormLabel>启用本地探针响应</FormLabel>
+                <ChannelMonitorFieldInfo
+                  label='启用本地探针响应'
+                  description='命中后由本机直接完成请求，不选择渠道，也不产生消费或渠道成本记录。'
+                />
+              </div>
               <FormMessage />
             </div>
             <FormControl>
@@ -124,8 +136,9 @@ export function ChannelMonitorProbeResponseFields(props: {
       />
 
       <fieldset
-        className='flex flex-col gap-5 disabled:opacity-60'
-        disabled={!enabled}
+        className='flex flex-col gap-5 data-[disabled=true]:opacity-60'
+        aria-disabled={!enabled}
+        data-disabled={!enabled || undefined}
         aria-label='探针响应配置'
       >
         <FormField
@@ -133,17 +146,21 @@ export function ChannelMonitorProbeResponseFields(props: {
           name='probeResponseMatchInput'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>匹配输入</FormLabel>
+              <div className='flex items-center gap-1'>
+                <FormLabel>匹配输入</FormLabel>
+                <ChannelMonitorFieldInfo
+                  label='匹配输入'
+                  description='去除首尾空白后进行不区分大小写的完整匹配。'
+                />
+              </div>
               <FormControl>
                 <Input
                   maxLength={MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH}
                   autoComplete='off'
+                  disabled={!enabled}
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                去除首尾空白后进行不区分大小写的完整匹配
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -154,7 +171,13 @@ export function ChannelMonitorProbeResponseFields(props: {
           name='probeResponseAllowedIPs'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>生效 IP（可选）</FormLabel>
+              <div className='flex items-center gap-1'>
+                <FormLabel>生效 IP（可选）</FormLabel>
+                <ChannelMonitorFieldInfo
+                  label='生效 IP（可选）'
+                  description='每行一个 IPv4 或 IPv6，也可用逗号分隔；留空时对所有来源生效。'
+                />
+              </div>
               <FormControl>
                 <Textarea
                   className='min-h-20 resize-y font-mono'
@@ -163,12 +186,10 @@ export function ChannelMonitorProbeResponseFields(props: {
                   autoCapitalize='none'
                   autoComplete='off'
                   spellCheck={false}
+                  disabled={!enabled}
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                每行一个 IPv4 或 IPv6，也可用逗号分隔；留空时对所有来源生效
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -179,11 +200,18 @@ export function ChannelMonitorProbeResponseFields(props: {
           name='probeResponseText'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>响应文本</FormLabel>
+              <div className='flex items-center gap-1'>
+                <FormLabel>响应文本</FormLabel>
+                <ChannelMonitorFieldInfo
+                  label='响应文本'
+                  description='本地探针命中后返回的文本内容。'
+                />
+              </div>
               <FormControl>
                 <Textarea
                   className='min-h-24 resize-y'
                   maxLength={MAX_PROBE_RESPONSE_TEXT_LENGTH}
+                  disabled={!enabled}
                   {...field}
                 />
               </FormControl>
@@ -199,6 +227,8 @@ export function ChannelMonitorProbeResponseFields(props: {
             label='最小延迟'
             max={MAX_PROBE_RESPONSE_DELAY_MS}
             suffix='毫秒'
+            description='返回探针响应前随机等待的最小时长。'
+            disabled={!enabled}
           />
           <ProbeResponseNumberField
             form={props.form}
@@ -206,15 +236,18 @@ export function ChannelMonitorProbeResponseFields(props: {
             label='最大延迟'
             max={MAX_PROBE_RESPONSE_DELAY_MS}
             suffix='毫秒'
+            description='返回探针响应前随机等待的最大时长。'
+            disabled={!enabled}
           />
         </div>
 
         <div className='flex flex-col gap-3'>
-          <div className='space-y-1'>
+          <div className='flex items-center gap-1'>
             <p className='text-sm font-medium'>Usage</p>
-            <p className='text-muted-foreground text-sm'>
-              总 Token 自动按输入 Token 与输出 Token 相加
-            </p>
+            <ChannelMonitorFieldInfo
+              label='Usage'
+              description='总 Token 自动按输入 Token 与输出 Token 相加。缓存写入和缓存命中 Token 按上游用量字段返回。'
+            />
           </div>
           <div className='grid gap-4 sm:grid-cols-2'>
             <ProbeResponseNumberField
@@ -223,6 +256,8 @@ export function ChannelMonitorProbeResponseFields(props: {
               label='输入 Token'
               max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
               suffix='Token'
+              description='本地探针响应计费中使用的输入 Token 数。'
+              disabled={!enabled}
             />
             <ProbeResponseNumberField
               form={props.form}
@@ -230,6 +265,8 @@ export function ChannelMonitorProbeResponseFields(props: {
               label='输出 Token'
               max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
               suffix='Token'
+              description='本地探针响应计费中使用的输出 Token 数。'
+              disabled={!enabled}
             />
             <ProbeResponseNumberField
               form={props.form}
@@ -237,6 +274,8 @@ export function ChannelMonitorProbeResponseFields(props: {
               label='缓存写 Token'
               max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
               suffix='Token'
+              description='本地探针响应计费中使用的缓存写入 Token 数。'
+              disabled={!enabled}
             />
             <ProbeResponseNumberField
               form={props.form}
@@ -244,6 +283,8 @@ export function ChannelMonitorProbeResponseFields(props: {
               label='缓存命中 Token'
               max={MAX_PROBE_RESPONSE_TOKEN_COUNT}
               suffix='Token'
+              description='本地探针响应计费中使用的缓存命中 Token 数。'
+              disabled={!enabled}
             />
           </div>
         </div>

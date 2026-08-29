@@ -10,7 +10,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 
 import type { Channel } from '../../../types'
-import { LogicalGroupsDialog } from '../logical-groups-dialog'
+import {
+  LogicalGroupsDialog,
+  LogicalGroupsPanel,
+} from '../logical-groups-dialog'
 
 const {
   getChannels,
@@ -100,6 +103,16 @@ function resetMocks() {
 }
 
 describe('LogicalGroupsDialog', () => {
+  test('renders the logical groups manager as an embeddable settings panel', async () => {
+    resetMocks()
+    render(<LogicalGroupsPanel open canEdit />)
+
+    expect(await screen.findByText('暂无同渠道配置')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('logical-groups-dialog-content')
+    ).not.toBeInTheDocument()
+  })
+
   test('keeps the newest groups and channels when an earlier open resolves later', async () => {
     resetMocks()
     const oldGroups = deferred<unknown>()

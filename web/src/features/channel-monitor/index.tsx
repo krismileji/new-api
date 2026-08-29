@@ -79,7 +79,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ChannelTestDialogForChannel } from '@/features/channels/components/dialogs/channel-test-dialog'
-import { LogicalGroupsEntry } from '@/features/channels/components/logical-groups-entry'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { getChannelGroupMonitorSettings } from '@/features/group-monitor/api'
 import { getUserGroups } from '@/lib/api'
@@ -1575,7 +1574,6 @@ export function ChannelMonitor() {
           </span>
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <LogicalGroupsEntry />
           <Tooltip>
             <TooltipTrigger
               render={
