@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,20 @@ const (
 	RedisClientRoleMonitorConsumer RedisClientRole = "monitor_consumer"
 )
 
+const (
+	RedisClientPoolIsolationModeUnavailable = "unavailable"
+	RedisClientPoolIsolationModeIsolated    = "isolated"
+	RedisClientPoolIsolationModeShared      = "shared"
+	RedisClientPoolIsolationModeMixed       = "mixed"
+)
+
+const (
+	RedisClientPoolDegradedReasonUnavailable     = "redis_unavailable"
+	RedisClientPoolDegradedReasonPoolCongested   = "pool_congested"
+	RedisClientPoolDegradedReasonPoolTimeout     = "pool_timeout"
+	RedisClientPoolDegradedReasonContextDeadline = "context_deadline"
+)
+
 // RedisClientPoolStats is a point-in-time snapshot of one role's go-redis
 // connection pool. The counters are cumulative since process start (as
 // provided by redis.PoolStats); callers should derive rates when graphing.
@@ -47,10 +62,17 @@ type RedisClientPoolStats struct {
 	PoolSize                  int             `json:"pool_size"`
 	TotalConns                uint32          `json:"total_conns"`
 	IdleConns                 uint32          `json:"idle_conns"`
+	InUse                     uint32          `json:"in_use"`
+	PoolCongested             bool            `json:"pool_congested"`
+	DegradedReason            string          `json:"degraded_reason"`
+	Shared                    bool            `json:"shared"`
+	SharedWith                RedisClientRole `json:"shared_with,omitempty"`
 	StaleConns                uint32          `json:"stale_conns"`
 	Hits                      uint32          `json:"hits"`
 	Misses                    uint32          `json:"misses"`
 	Timeouts                  uint32          `json:"timeouts"`
+	ContextDeadlineCount      uint64          `json:"context_deadline_count"`
+	PoolTimeoutCount          uint64          `json:"pool_timeout_count"`
 	CommandCount              uint64          `json:"command_count"`
 	CommandErrorCount         uint64          `json:"command_error_count"`
 	CommandLatencyTotalMicros uint64          `json:"command_latency_total_micros"`
@@ -74,6 +96,8 @@ var redisClientPoolSizes struct {
 type redisClientCommandMetrics struct {
 	commandCount              atomic.Uint64
 	commandErrorCount         atomic.Uint64
+	contextDeadlineCount      atomic.Uint64
+	poolTimeoutCount          atomic.Uint64
 	commandLatencyTotalMicros atomic.Uint64
 	commandLatencyMaxMicros   atomic.Uint64
 }
@@ -107,7 +131,11 @@ func (hook *redisClientCommandMetricsHook) AfterProcess(ctx context.Context, cmd
 	if hook == nil || hook.metrics == nil {
 		return nil
 	}
-	hook.metrics.record(ctx, cmd.Err() != nil)
+	var cmdErr error
+	if cmd != nil {
+		cmdErr = cmd.Err()
+	}
+	hook.metrics.record(ctx, cmdErr)
 	return nil
 }
 
@@ -122,7 +150,10 @@ func (hook *redisClientCommandMetricsHook) AfterProcessPipeline(ctx context.Cont
 	if len(cmds) == 0 {
 		return nil
 	}
-	start, _ := redisClientCommandStart(ctx)
+	start, ok := redisClientCommandStart(ctx)
+	if !ok {
+		return nil
+	}
 	elapsed := time.Since(start)
 	if elapsed < 0 {
 		elapsed = 0
@@ -132,9 +163,10 @@ func (hook *redisClientCommandMetricsHook) AfterProcessPipeline(ctx context.Cont
 	hook.metrics.commandLatencyTotalMicros.Add(micros)
 	hook.metrics.updateMax(micros)
 	for _, cmd := range cmds {
-		if cmd != nil && cmd.Err() != nil {
-			hook.metrics.commandErrorCount.Add(1)
+		if cmd == nil {
+			continue
 		}
+		hook.metrics.recordError(cmd.Err())
 	}
 	return nil
 }
@@ -147,7 +179,7 @@ func redisClientCommandStart(ctx context.Context) (time.Time, bool) {
 	return start, ok
 }
 
-func (metrics *redisClientCommandMetrics) record(ctx context.Context, failed bool) {
+func (metrics *redisClientCommandMetrics) record(ctx context.Context, err error) {
 	if metrics == nil {
 		return
 	}
@@ -163,8 +195,19 @@ func (metrics *redisClientCommandMetrics) record(ctx context.Context, failed boo
 	metrics.commandCount.Add(1)
 	metrics.commandLatencyTotalMicros.Add(micros)
 	metrics.updateMax(micros)
-	if failed {
-		metrics.commandErrorCount.Add(1)
+	metrics.recordError(err)
+}
+
+func (metrics *redisClientCommandMetrics) recordError(err error) {
+	if metrics == nil || err == nil {
+		return
+	}
+	metrics.commandErrorCount.Add(1)
+	if errors.Is(err, context.DeadlineExceeded) {
+		metrics.contextDeadlineCount.Add(1)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "connection pool timeout") {
+		metrics.poolTimeoutCount.Add(1)
 	}
 }
 
@@ -314,6 +357,53 @@ func RedisMonitorConsumerClient() *redis.Client {
 	return RDB
 }
 
+// RedisClientPoolIsolationEnabled reports whether monitor roles currently use
+// independently allocated clients. Pointer identity is used instead of an
+// environment lookup so tests and runtime client swaps are reflected in the
+// status response as well.
+func RedisClientPoolIsolationEnabled() bool {
+	return RedisClientPoolIsolationMode() == RedisClientPoolIsolationModeIsolated
+}
+
+// RedisClientPoolIsolationMode reports the effective relationship between the
+// user pool and monitor pools. A shared mode is returned when all monitor
+// getters resolve to RDB (the rollback/legacy configuration); mixed covers
+// partial runtime setup so status consumers do not mistake it for isolation.
+func RedisClientPoolIsolationMode() string {
+	if RDB == nil {
+		return RedisClientPoolIsolationModeUnavailable
+	}
+	monitorClients := []*redis.Client{
+		RedisMonitorWriteClient(),
+		RedisMonitorReadClient(),
+		RedisMonitorConsumerClient(),
+	}
+	allShared := true
+	seen := map[*redis.Client]struct{}{RDB: {}}
+	for _, client := range monitorClients {
+		if client == nil {
+			return RedisClientPoolIsolationModeMixed
+		}
+		if client != RDB {
+			allShared = false
+		}
+		if _, exists := seen[client]; exists {
+			if client != RDB {
+				return RedisClientPoolIsolationModeMixed
+			}
+			continue
+		}
+		seen[client] = struct{}{}
+	}
+	if allShared {
+		return RedisClientPoolIsolationModeShared
+	}
+	if len(seen) == 4 {
+		return RedisClientPoolIsolationModeIsolated
+	}
+	return RedisClientPoolIsolationModeMixed
+}
+
 // CloseRedisClients closes all role clients. RDB is included for symmetry and
 // to make shutdown deterministic; callers may safely invoke it more than once.
 func CloseRedisClients() error {
@@ -355,43 +445,93 @@ func GetRedisClientPoolStats() map[RedisClientRole]RedisClientPoolStats {
 	if monitorConsumerMetrics == nil && RedisMonitorConsumerClient() == RDB {
 		monitorConsumerMetrics = redisClientCommandMetricsState.user
 	}
-	result := make(map[RedisClientRole]RedisClientPoolStats, 4)
+	clients := map[RedisClientRole]*redis.Client{
+		RedisClientRoleUser:            RDB,
+		RedisClientRoleMonitorWrite:    RedisMonitorWriteClient(),
+		RedisClientRoleMonitorRead:     RedisMonitorReadClient(),
+		RedisClientRoleMonitorConsumer: RedisMonitorConsumerClient(),
+	}
+	result := make(map[RedisClientRole]RedisClientPoolStats, len(clients))
 	result[RedisClientRoleUser] = redisClientPoolStats(
-		RedisClientRoleUser, RDB, redisClientPoolSizes.user, redisClientCommandMetricsState.user,
+		RedisClientRoleUser, clients[RedisClientRoleUser], redisClientPoolSizes.user, redisClientCommandMetricsState.user,
 	)
 	result[RedisClientRoleMonitorWrite] = redisClientPoolStats(
-		RedisClientRoleMonitorWrite, RedisMonitorWriteClient(), redisClientPoolSizes.monitorWrite, monitorWriteMetrics,
+		RedisClientRoleMonitorWrite, clients[RedisClientRoleMonitorWrite], redisClientPoolSizes.monitorWrite, monitorWriteMetrics,
 	)
 	result[RedisClientRoleMonitorRead] = redisClientPoolStats(
-		RedisClientRoleMonitorRead, RedisMonitorReadClient(), redisClientPoolSizes.monitorRead, monitorReadMetrics,
+		RedisClientRoleMonitorRead, clients[RedisClientRoleMonitorRead], redisClientPoolSizes.monitorRead, monitorReadMetrics,
 	)
 	result[RedisClientRoleMonitorConsumer] = redisClientPoolStats(
-		RedisClientRoleMonitorConsumer, RedisMonitorConsumerClient(), redisClientPoolSizes.monitorConsumer, monitorConsumerMetrics,
+		RedisClientRoleMonitorConsumer, clients[RedisClientRoleMonitorConsumer], redisClientPoolSizes.monitorConsumer, monitorConsumerMetrics,
 	)
+	for role, stats := range result {
+		if role == RedisClientRoleUser || clients[role] == nil {
+			continue
+		}
+		for _, sharedRole := range []RedisClientRole{
+			RedisClientRoleUser,
+			RedisClientRoleMonitorWrite,
+			RedisClientRoleMonitorRead,
+			RedisClientRoleMonitorConsumer,
+		} {
+			if sharedRole == role || clients[sharedRole] == nil || clients[sharedRole] != clients[role] {
+				continue
+			}
+			stats.Shared = true
+			stats.SharedWith = sharedRole
+			break
+		}
+		result[role] = stats
+	}
 	return result
 }
 
 func redisClientPoolStats(role RedisClientRole, client *redis.Client, poolSize int, metrics *redisClientCommandMetrics) RedisClientPoolStats {
 	stats := RedisClientPoolStats{Role: role, PoolSize: poolSize, Unavailable: client == nil}
 	if client == nil {
+		stats.DegradedReason = RedisClientPoolDegradedReasonUnavailable
 		return stats
 	}
 	pool := client.PoolStats()
 	if pool == nil {
 		stats.Unavailable = true
+		stats.DegradedReason = RedisClientPoolDegradedReasonUnavailable
 		return stats
+	}
+	if stats.PoolSize <= 0 {
+		if options := client.Options(); options != nil {
+			stats.PoolSize = options.PoolSize
+		}
 	}
 	stats.TotalConns = pool.TotalConns
 	stats.IdleConns = pool.IdleConns
+	if pool.TotalConns >= pool.IdleConns {
+		stats.InUse = pool.TotalConns - pool.IdleConns
+	}
+	if stats.PoolSize > 0 {
+		stats.PoolCongested = stats.InUse >= uint32(stats.PoolSize)
+	}
 	stats.StaleConns = pool.StaleConns
 	stats.Hits = pool.Hits
 	stats.Misses = pool.Misses
 	stats.Timeouts = pool.Timeouts
+	stats.PoolTimeoutCount = uint64(pool.Timeouts)
 	if metrics != nil {
+		stats.ContextDeadlineCount = metrics.contextDeadlineCount.Load()
+		if poolTimeoutCount := metrics.poolTimeoutCount.Load(); poolTimeoutCount > stats.PoolTimeoutCount {
+			stats.PoolTimeoutCount = poolTimeoutCount
+		}
 		stats.CommandCount = metrics.commandCount.Load()
 		stats.CommandErrorCount = metrics.commandErrorCount.Load()
 		stats.CommandLatencyTotalMicros = metrics.commandLatencyTotalMicros.Load()
 		stats.CommandLatencyMaxMicros = metrics.commandLatencyMaxMicros.Load()
+	}
+	if stats.PoolCongested {
+		stats.DegradedReason = RedisClientPoolDegradedReasonPoolCongested
+	} else if stats.PoolTimeoutCount > 0 {
+		stats.DegradedReason = RedisClientPoolDegradedReasonPoolTimeout
+	} else if stats.ContextDeadlineCount > 0 {
+		stats.DegradedReason = RedisClientPoolDegradedReasonContextDeadline
 	}
 	return stats
 }

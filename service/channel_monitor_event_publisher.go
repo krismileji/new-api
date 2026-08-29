@@ -13,7 +13,10 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-const channelMonitorEventPublishTimeout = 2 * time.Second
+const (
+	channelMonitorEventPublishTimeout        = 2 * time.Second
+	channelMonitorEventOutboxFallbackTimeout = 750 * time.Millisecond
+)
 
 var (
 	ErrChannelMonitorEventRedisUnavailable = errors.New("渠道监控实时链路不可用")
@@ -25,6 +28,7 @@ type ChannelMonitorEventPublishStatus string
 const (
 	ChannelMonitorEventPublishStatusPublished   ChannelMonitorEventPublishStatus = "published"
 	ChannelMonitorEventPublishStatusQueued      ChannelMonitorEventPublishStatus = "queued"
+	ChannelMonitorEventPublishStatusPersisted   ChannelMonitorEventPublishStatus = "persisted"
 	ChannelMonitorEventPublishStatusDropped     ChannelMonitorEventPublishStatus = "dropped"
 	ChannelMonitorEventPublishStatusInvalid     ChannelMonitorEventPublishStatus = "invalid"
 	ChannelMonitorEventPublishStatusUnavailable ChannelMonitorEventPublishStatus = "unavailable"
@@ -36,6 +40,8 @@ const (
 // the next successful publish.
 type ChannelMonitorEventPublishStats struct {
 	PublishedEvents   int64 `json:"published_events"`
+	QueuedEvents      int64 `json:"queued_events"`
+	DroppedEvents     int64 `json:"dropped_events"`
 	InvalidEvents     int64 `json:"invalid_events"`
 	FailedEvents      int64 `json:"failed_events"`
 	TimeoutEvents     int64 `json:"timeout_events"`
@@ -50,6 +56,8 @@ type channelMonitorRedisStreamAppender interface {
 
 type channelMonitorEventPublisherStats struct {
 	publishedEvents   atomic.Int64
+	queuedEvents      atomic.Int64
+	droppedEvents     atomic.Int64
 	invalidEvents     atomic.Int64
 	failedEvents      atomic.Int64
 	timeoutEvents     atomic.Int64
@@ -60,9 +68,48 @@ type channelMonitorEventPublisherStats struct {
 
 var channelMonitorEventPublisherStatsState channelMonitorEventPublisherStats
 
+// recordChannelMonitorEventEnqueueStatus keeps asynchronous enqueue outcomes
+// observable even when a producer only returns the status to its caller. It
+// deliberately does not mark queued events as published: the writer records a
+// publish only after Redis acknowledges XADD.
+func recordChannelMonitorEventEnqueueStatus(status ChannelMonitorEventPublishStatus, err error) {
+	switch status {
+	case ChannelMonitorEventPublishStatusQueued:
+		channelMonitorEventPublisherStatsState.queuedEvents.Add(1)
+	case ChannelMonitorEventPublishStatusPersisted:
+		channelMonitorEventPublisherStatsState.queuedEvents.Add(1)
+	case ChannelMonitorEventPublishStatusDropped,
+		ChannelMonitorEventPublishStatusUnavailable,
+		ChannelMonitorEventPublishStatusTimeout:
+		channelMonitorEventPublisherStatsState.droppedEvents.Add(1)
+	}
+}
+
+// ObserveChannelMonitorEventPublishStatus is used by request handlers that
+// emit an event asynchronously. It keeps the request path non-blocking while
+// ensuring queue overflow, shutdown and Redis failures are visible in logs.
+// The counters are updated by EnqueueChannelMonitorEvent; this helper only
+// provides request-scoped logging for the returned status.
+func ObserveChannelMonitorEventPublishStatus(
+	ctx context.Context,
+	status ChannelMonitorEventPublishStatus,
+	err error,
+) {
+	if status != ChannelMonitorEventPublishStatusDropped &&
+		status != ChannelMonitorEventPublishStatusUnavailable &&
+		status != ChannelMonitorEventPublishStatusTimeout {
+		return
+	}
+	if err == nil {
+		err = ErrChannelMonitorEventRedisUnavailable
+	}
+	logger.LogWarn(ctx, fmt.Sprintf("渠道监控事件未可靠入队（%s）: %v", status, err))
+}
+
 // PublishChannelMonitorEvent validates and publishes one event to the
 // versioned Redis Stream.
 func PublishChannelMonitorEvent(ctx context.Context, event model.ChannelMonitorEvent) (ChannelMonitorEventPublishStatus, error) {
+	event = event.Clone()
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
@@ -70,13 +117,44 @@ func PublishChannelMonitorEvent(ctx context.Context, event model.ChannelMonitorE
 	}
 	client := common.RedisMonitorWriteClient()
 	if !common.RedisEnabled || client == nil {
-		return markChannelMonitorEventPublishFailure(
+		status, publishErr := markChannelMonitorEventPublishFailure(
 			ctx,
 			ChannelMonitorEventPublishStatusUnavailable,
 			ErrChannelMonitorEventRedisUnavailable,
 		)
+		return persistChannelMonitorEventAfterFailure(ctx, event, payload, status, publishErr)
 	}
-	return publishChannelMonitorEventWithPayload(ctx, client, event, payload)
+	status, publishErr := publishChannelMonitorEventWithPayload(ctx, client, event, payload)
+	if status == ChannelMonitorEventPublishStatusPublished && publishErr == nil {
+		return status, nil
+	}
+	return persistChannelMonitorEventAfterFailure(ctx, event, payload, status, publishErr)
+}
+
+func persistChannelMonitorEventAfterFailure(
+	ctx context.Context,
+	event model.ChannelMonitorEvent,
+	payload []byte,
+	status ChannelMonitorEventPublishStatus,
+	publishErr error,
+) (ChannelMonitorEventPublishStatus, error) {
+	if model.DB == nil {
+		return status, publishErr
+	}
+	fallbackCtx, cancel := context.WithTimeout(context.Background(), channelMonitorEventOutboxFallbackTimeout)
+	stored, storeErr := storeChannelMonitorEventOutbox(fallbackCtx, event, payload)
+	cancel()
+	if stored {
+		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusPersisted, nil)
+		return ChannelMonitorEventPublishStatusPersisted, nil
+	}
+	if storeErr != nil {
+		if publishErr != nil {
+			return status, fmt.Errorf("%w; outbox fallback failed: %v", publishErr, storeErr)
+		}
+		return status, storeErr
+	}
+	return status, publishErr
 }
 
 func publishChannelMonitorEvent(
@@ -147,6 +225,8 @@ func markChannelMonitorEventPublishFailure(
 func GetChannelMonitorEventPublishStats() ChannelMonitorEventPublishStats {
 	return ChannelMonitorEventPublishStats{
 		PublishedEvents:   channelMonitorEventPublisherStatsState.publishedEvents.Load(),
+		QueuedEvents:      channelMonitorEventPublisherStatsState.queuedEvents.Load(),
+		DroppedEvents:     channelMonitorEventPublisherStatsState.droppedEvents.Load(),
 		InvalidEvents:     channelMonitorEventPublisherStatsState.invalidEvents.Load(),
 		FailedEvents:      channelMonitorEventPublisherStatsState.failedEvents.Load(),
 		TimeoutEvents:     channelMonitorEventPublisherStatsState.timeoutEvents.Load(),
@@ -158,6 +238,8 @@ func GetChannelMonitorEventPublishStats() ChannelMonitorEventPublishStats {
 
 func resetChannelMonitorEventPublishStatsForTest() {
 	channelMonitorEventPublisherStatsState.publishedEvents.Store(0)
+	channelMonitorEventPublisherStatsState.queuedEvents.Store(0)
+	channelMonitorEventPublisherStatsState.droppedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.invalidEvents.Store(0)
 	channelMonitorEventPublisherStatsState.failedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.timeoutEvents.Store(0)

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -110,6 +112,163 @@ func TestChannelMonitorPageSnapshotForceRefreshRebuildsFreshSnapshot(t *testing.
 	loaded, state, err := store.load(ctx, query, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, ChannelMonitorPageSnapshotFresh, state)
+	assert.Contains(t, string(loaded.Payload), "new")
+}
+
+func TestChannelMonitorPageSnapshotForceRefreshRejectsRollback(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	ctx := context.Background()
+	query := channelMonitorPageSnapshotTestQuery("user=force-monotonic")
+	var builds atomic.Int32
+	first, err := store.refreshSnapshot(ctx, query, func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		snapshot := channelMonitorPageSnapshotTestValue("current")
+		snapshot.Revision = 8
+		snapshot.EventWatermark = 12
+		snapshot.DataCutoffAt = 100
+		return snapshot, nil
+	})
+	require.NoError(t, err)
+
+	refreshed, err := store.refreshSnapshotForce(ctx, query, func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		builds.Add(1)
+		snapshot := channelMonitorPageSnapshotTestValue("rollback")
+		snapshot.Revision = first.Revision - 1
+		snapshot.EventWatermark = first.EventWatermark - 1
+		snapshot.DataCutoffAt = first.DataCutoffAt - 1
+		return snapshot, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), builds.Load())
+	assert.Equal(t, first.Revision, refreshed.Revision)
+	assert.Equal(t, first.EventWatermark, refreshed.EventWatermark)
+	assert.Equal(t, first.DataCutoffAt, refreshed.DataCutoffAt)
+	assert.Contains(t, string(refreshed.Payload), "current")
+}
+
+func TestChannelMonitorPageSnapshotLocalCacheEnforcesByteBudget(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	base := time.Now()
+	payload := []byte(strings.Repeat("x", channelMonitorPageSnapshotMaxLocalBytes/8))
+
+	for index := 0; index < 9; index++ {
+		timestamp := base.Add(time.Duration(index) * time.Millisecond)
+		snapshot := ChannelMonitorPageSnapshot{
+			GeneratedAt:          timestamp.Unix(),
+			GeneratedAtUnixMilli: timestamp.UnixMilli(),
+			StatusCode:           200,
+			Payload:              payload,
+		}
+		store.rememberLocal("byte-budget-"+strconv.Itoa(index), snapshot)
+	}
+
+	store.localMu.RLock()
+	assert.LessOrEqual(t, store.localBytes, int64(channelMonitorPageSnapshotMaxLocalBytes))
+	assert.Len(t, store.local, 8)
+	assert.NotContains(t, store.local, "byte-budget-0")
+	assert.Contains(t, store.local, "byte-budget-8")
+	store.localMu.RUnlock()
+
+	store.rememberLocal("byte-budget-8", ChannelMonitorPageSnapshot{
+		GeneratedAt:          base.Add(9 * time.Millisecond).Unix(),
+		GeneratedAtUnixMilli: base.Add(9 * time.Millisecond).UnixMilli(),
+		StatusCode:           200,
+		Payload:              []byte("updated"),
+	})
+	store.localMu.RLock()
+	assert.Equal(t, int64(7*len(payload)+len("updated")), store.localBytes)
+	store.localMu.RUnlock()
+}
+
+func TestChannelMonitorPageSnapshotBuildSemaphoreLimitsFanout(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	var active, maxActive, builds atomic.Int32
+	release := make(chan struct{})
+	updateMax := func(value int32) {
+		for {
+			current := maxActive.Load()
+			if value <= current || maxActive.CompareAndSwap(current, value) {
+				return
+			}
+		}
+	}
+	builder := func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		builds.Add(1)
+		current := active.Add(1)
+		updateMax(current)
+		<-release
+		active.Add(-1)
+		return channelMonitorPageSnapshotTestValue("bounded"), nil
+	}
+
+	var waitGroup sync.WaitGroup
+	for index := 0; index < channelMonitorPageSnapshotMaxConcurrentBuilds+2; index++ {
+		index := index
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			query := channelMonitorPageSnapshotTestQuery("fanout-" + strconv.Itoa(index))
+			_, _ = store.refreshSnapshot(context.Background(), query, builder)
+		}()
+	}
+	require.Eventually(t, func() bool {
+		return builds.Load() == channelMonitorPageSnapshotMaxConcurrentBuilds
+	}, time.Second, 5*time.Millisecond)
+	assert.Equal(t, int32(channelMonitorPageSnapshotMaxConcurrentBuilds), maxActive.Load())
+	close(release)
+	waitGroup.Wait()
+	assert.Equal(t, int32(channelMonitorPageSnapshotMaxConcurrentBuilds+2), builds.Load())
+}
+
+func TestChannelMonitorPageSnapshotStaleRefreshFallsBackToLocalOnRedisError(t *testing.T) {
+	server, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	query := channelMonitorPageSnapshotTestQuery("redis-error-refresh")
+	_, err := store.refreshSnapshot(context.Background(), query, func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		return channelMonitorPageSnapshotTestValue("old"), nil
+	})
+	require.NoError(t, err)
+	server.Close()
+
+	var builds atomic.Int32
+	assert.True(t, store.requestRefresh(query, func(context.Context) (ChannelMonitorPageSnapshot, error) {
+		builds.Add(1)
+		return channelMonitorPageSnapshotTestValue("new"), nil
+	}))
+	require.Eventually(t, func() bool {
+		loaded, _, loadErr := store.load(context.Background(), query, time.Now())
+		return builds.Load() == 1 && loadErr == nil && strings.Contains(string(loaded.Payload), "new")
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestChannelMonitorPageSnapshotLocalFallbackAllowsEqualGenerationWithoutRollback(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	query := channelMonitorPageSnapshotTestQuery("local-equal-generation")
+	key, err := ChannelMonitorPageSnapshotKey(query)
+	require.NoError(t, err)
+	identityHash, err := channelMonitorPageSnapshotIdentityHash(query)
+	require.NoError(t, err)
+
+	generation := time.Now().UnixMilli()
+	initial := channelMonitorPageSnapshotTestValue("old")
+	initial.SchemaVersion = channelMonitorPageSnapshotSchemaVersion
+	initial.IdentityHash = identityHash
+	initial.Revision = 3
+	initial.GeneratedAtUnixMilli = generation
+	initial.GeneratedAt = generation / 1000
+	store.rememberLocal(key, initial)
+
+	replacement := initial
+	replacement.Payload = channelMonitorPageSnapshotTestValue("new").Payload
+	store.rememberLocalAllowEqualGeneration(key, replacement)
+	loaded, _, err := store.loadLocal(query, time.Now(), ErrChannelMonitorPageSnapshotMissing)
+	require.NoError(t, err)
+	assert.Contains(t, string(loaded.Payload), "new")
+
+	rollback := replacement
+	rollback.Payload = channelMonitorPageSnapshotTestValue("rollback").Payload
+	rollback.Revision--
+	store.rememberLocalAllowEqualGeneration(key, rollback)
+	loaded, _, err = store.loadLocal(query, time.Now(), ErrChannelMonitorPageSnapshotMissing)
+	require.NoError(t, err)
 	assert.Contains(t, string(loaded.Payload), "new")
 }
 
@@ -352,6 +511,44 @@ func TestChannelMonitorPageSnapshotPublishIsMonotonic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tiedTimestamp.Revision, current.Revision)
 	assert.Contains(t, string(current.Payload), "same-millisecond-newer")
+}
+
+func TestChannelMonitorPageSnapshotForcePublishReplacesSameMetadata(t *testing.T) {
+	_, _, store := newChannelMonitorPageSnapshotTestStore(t)
+	ctx := context.Background()
+	query := channelMonitorPageSnapshotTestQuery("user=force-same-metadata")
+	key, err := ChannelMonitorPageSnapshotKey(query)
+	require.NoError(t, err)
+	token, acquired, err := store.acquireLease(ctx, key)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer store.releaseLease(key, token)
+
+	first := channelMonitorPageSnapshotTestValue("first")
+	identityHash, err := channelMonitorPageSnapshotIdentityHash(query)
+	require.NoError(t, err)
+	first.SchemaVersion = channelMonitorPageSnapshotSchemaVersion
+	first.IdentityHash = identityHash
+	first.Revision = 7
+	first.GeneratedAtUnixMilli = time.Now().UnixMilli()
+	first.GeneratedAt = first.GeneratedAtUnixMilli / 1000
+	published, err := store.publish(ctx, key, token, first)
+	require.NoError(t, err)
+	require.True(t, published)
+
+	second := first
+	second.Payload = channelMonitorPageSnapshotTestValue("forced").Payload
+	published, err = store.publish(ctx, key, token, second)
+	require.NoError(t, err)
+	assert.False(t, published)
+
+	published, err = store.publishWithMode(ctx, key, token, second, true)
+	require.NoError(t, err)
+	assert.True(t, published)
+
+	current, _, err := store.load(ctx, query, time.Now())
+	require.NoError(t, err)
+	assert.Contains(t, string(current.Payload), "forced")
 }
 
 func TestChannelMonitorPageSnapshotFencingRejectsExpiredBuilder(t *testing.T) {

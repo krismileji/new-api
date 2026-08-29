@@ -187,7 +187,7 @@ func SaveLogicalChannelSmartScheduleModelSample(
 			value := *result.DurationMs
 			sample.FailureDurationMs = &value
 		}
-		if result.Success && result.FirstTokenMs != nil && *result.FirstTokenMs > 0 &&
+		if result.Success && result.FirstTokenMs != nil && *result.FirstTokenMs >= 0 &&
 			!math.IsNaN(*result.FirstTokenMs) && !math.IsInf(*result.FirstTokenMs, 0) {
 			value := *result.FirstTokenMs
 			sample.FirstTokenMs = &value

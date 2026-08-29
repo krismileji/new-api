@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -27,6 +28,15 @@ const channelMonitorGroupRatioEpsilon = 1e-9
 var ErrChannelMonitorSettingsChanged = errors.New("渠道监控设置已被其他请求修改，请刷新后重试")
 
 var channelMonitorOptionMu sync.Mutex
+var channelMonitorOptionGeneration atomic.Uint64
+
+// ChannelMonitorOptionsGeneration advances whenever a channel-monitor option
+// is refreshed into the process option map.  Consumers can use it to cache a
+// parsed settings snapshot without serving stale values after a normal
+// settings update or periodic cross-node option sync.
+func ChannelMonitorOptionsGeneration() uint64 {
+	return channelMonitorOptionGeneration.Load()
+}
 
 type ChannelMonitorGroupRatioRevisionGuard map[string]map[int]int64
 type ChannelMonitorGroupRatioMembershipGuard map[string]map[int]string

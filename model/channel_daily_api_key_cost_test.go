@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -214,6 +215,62 @@ func TestAddChannelDailyCostBatchAtomicallyAddsTotalsAndAPIKeyDetails(t *testing
 	assert.Equal(t, total.UnresolvedCount, details[0].UnresolvedCount+details[1].UnresolvedCount)
 }
 
+func TestAddChannelDailyCostBatchRejectsEventIDAndRequiresOutbox(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-event-id-boundary.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}, &ChannelDailyCostOutbox{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	when := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	fingerprint, display := ChannelDailyCostAPIKeyIdentityForToken(17, "sk-direct-replay")
+	delta := ChannelDailyCostDelta{
+		EventId:        "direct-replay-event",
+		ChannelId:      17,
+		OccurredAt:     when,
+		CostNanoCNY:    100,
+		SettledDelta:   1,
+		APIKeyId:       17,
+		APIKeyName:     "生产 Key",
+		KeyFingerprint: fingerprint,
+		KeyDisplay:     display,
+	}
+
+	err = AddChannelDailyCostBatch(context.Background(), []ChannelDailyCostDelta{delta})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrChannelDailyCostEventIDRequiresOutbox)
+
+	var channelCount, apiKeyCount int64
+	require.NoError(t, db.Model(&ChannelDailyCost{}).Count(&channelCount).Error)
+	require.NoError(t, db.Model(&ChannelDailyAPIKeyCost{}).Count(&apiKeyCount).Error)
+	assert.Zero(t, channelCount)
+	assert.Zero(t, apiKeyCount)
+
+	// The outbox-owned apply path continues to accept the same event id and
+	// records it exactly once at the durable idempotency boundary.
+	require.NoError(t, StoreChannelDailyCostOutboxEvents(context.Background(), []ChannelDailyCostDelta{delta}))
+	claimNow := time.Now().Unix() + 1
+	claimed, err := ClaimChannelDailyCostOutboxEvents(context.Background(), "event-id-worker", claimNow, claimNow, time.Minute, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, ApplyClaimedChannelDailyCostOutboxEvents(context.Background(), "event-id-worker", []int64{claimed[0].Id}, claimNow+1))
+
+	var channelRow ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", delta.ChannelId).First(&channelRow).Error)
+	assert.Equal(t, delta.CostNanoCNY, channelRow.CostNanoCNY)
+	assert.Equal(t, delta.SettledDelta, channelRow.SettledCount)
+	var keyRow ChannelDailyAPIKeyCost
+	require.NoError(t, db.Where("channel_id = ? AND key_fingerprint = ?", delta.ChannelId, delta.KeyFingerprint).First(&keyRow).Error)
+	assert.Equal(t, delta.CostNanoCNY, keyRow.CostNanoCNY)
+	assert.Equal(t, delta.SettledDelta, keyRow.SettledCount)
+}
+
 func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDays(t *testing.T) {
 	originalDB := DB
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-totals.db")), &gorm.Config{})
@@ -244,6 +301,66 @@ func TestGetChannelDailyAPIKeyCostTotalsForChannelAggregatesAcrossDays(t *testin
 	assert.Equal(t, int64(350), totals[0].CostNanoCNY)
 	assert.Equal(t, int64(3), totals[0].SettledCount)
 	assert.Equal(t, int64(1), totals[0].UnresolvedCount)
+}
+
+func TestGetChannelDailyAPIKeyCostTotalsForChannelBoundedReturnsMostExpensiveGroups(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-totals-bounded.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	when := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	rows := make([]ChannelDailyAPIKeyCost, 0, 3)
+	for index, cost := range []int64{100, 300, 200} {
+		fingerprint, display := ChannelDailyCostAPIKeyIdentityForToken(index+1, "sk-bounded-"+strconv.Itoa(index))
+		rows = append(rows, ChannelDailyAPIKeyCost{
+			ChannelId: 1, DayStart: ChannelDailyCostDayStart(when), APIKeyId: index + 1,
+			APIKeyName: "key-" + strconv.Itoa(index), KeyFingerprint: fingerprint, KeyDisplay: display,
+			CostNanoCNY: cost, SettledCount: 1, CreatedAt: when, UpdatedAt: when,
+		})
+	}
+	require.NoError(t, db.Create(&rows).Error)
+
+	bounded, truncated, err := GetChannelDailyAPIKeyCostTotalsForChannelBounded(
+		context.Background(), ChannelDailyCostDayStart(when), ChannelDailyCostDayStart(when)+channelDailyCostDaySeconds, 1, 2,
+	)
+	require.NoError(t, err)
+	require.True(t, truncated)
+	require.Len(t, bounded, 2)
+	assert.Equal(t, int64(300), bounded[0].CostNanoCNY)
+	assert.Equal(t, int64(200), bounded[1].CostNanoCNY)
+
+	all, err := GetChannelDailyAPIKeyCostTotalsForChannel(
+		context.Background(), ChannelDailyCostDayStart(when), ChannelDailyCostDayStart(when)+channelDailyCostDaySeconds, 1,
+	)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	assert.Equal(t, int64(600), all[0].CostNanoCNY+all[1].CostNanoCNY+all[2].CostNanoCNY)
+}
+
+func TestGetChannelDailyAPIKeyCostTotalsForChannelBoundedRejectsLimitOverflow(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-api-key-limit-overflow.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyAPIKeyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+	_, _, err = GetChannelDailyAPIKeyCostTotalsForChannelBounded(
+		context.Background(), 1, 2, 1, math.MaxInt,
+	)
+	require.Error(t, err)
 }
 
 func TestAddChannelDailyAPIKeyCostRejectsOverflow(t *testing.T) {

@@ -129,3 +129,47 @@ func TestChannelTaskCostEventRejectsIdentityReuseAndUnsafeDecrease(t *testing.T)
 	require.NoError(t, db.First(&total).Error)
 	assert.Equal(t, int64(40), total.CostNanoCNY)
 }
+
+func TestChannelTaskCostEventRejectsStaleUpdatedAt(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "task-cost-event-monotonic.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}, &ChannelTaskCostEvent{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	when := time.Date(2026, 8, 15, 4, 0, 0, 0, time.UTC).Unix()
+	input := ChannelTaskCostEventInput{
+		CostEventId:  "task:monotonic",
+		ChannelId:    9,
+		OccurredAt:   when,
+		InitialQuota: 100,
+		CostNanoCNY:  80,
+	}
+	_, err = RegisterChannelTaskCostEvent(context.Background(), input)
+	require.NoError(t, err)
+
+	newer := when + 2_000
+	cost, err := SetChannelTaskCostEventCost(context.Background(), input.CostEventId, 40, newer)
+	require.NoError(t, err)
+	assert.Equal(t, int64(40), cost)
+	// A same-value retry still advances the durable version, so an older
+	// callback cannot subsequently overwrite it.
+	latest := when + 3_000
+	cost, err = SetChannelTaskCostEventCost(context.Background(), input.CostEventId, 40, latest)
+	require.NoError(t, err)
+	assert.Equal(t, int64(40), cost)
+	_, err = SetChannelTaskCostEventCost(context.Background(), input.CostEventId, 20, when+1_000)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stale")
+
+	var event ChannelTaskCostEvent
+	require.NoError(t, db.First(&event).Error)
+	assert.Equal(t, int64(40), event.CostNanoCNY)
+	assert.Equal(t, latest, event.UpdatedAt)
+}

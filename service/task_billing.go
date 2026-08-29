@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -14,6 +16,111 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+// Unsaved tasks are kept for a short-lived compatibility path used by legacy
+// callers and tests. Persisted polling tasks use model.ApplyTaskBilling, but
+// these in-process guards also prevent duplicate callbacks when an unsaved
+// task is represented by several stale copies in the same process.
+type ephemeralTaskBillingKey struct {
+	taskID    string
+	userID    int
+	channelID int
+}
+
+type ephemeralTaskBillingState struct {
+	refunded     bool
+	settled      bool
+	settledQuota int
+}
+
+type ephemeralTaskBillingEntry struct {
+	mu       sync.Mutex
+	state    ephemeralTaskBillingState
+	lastSeen time.Time
+	refs     int
+}
+
+const (
+	ephemeralTaskBillingStateTTL = time.Hour
+	ephemeralTaskBillingStateCap = 4096
+	// Cleanup scans the bounded map, so do not walk every entry for every
+	// callback. The first pass handles capacity pressure, while later stale
+	// entries are reclaimed at a modest cadence.
+	ephemeralTaskBillingCleanupInterval = time.Minute
+)
+
+var ephemeralTaskBilling = struct {
+	sync.Mutex
+	states      map[ephemeralTaskBillingKey]*ephemeralTaskBillingEntry
+	lastCleanup time.Time
+}{states: make(map[ephemeralTaskBillingKey]*ephemeralTaskBillingEntry)}
+
+func lockEphemeralTaskBillingEntry(key ephemeralTaskBillingKey) (*ephemeralTaskBillingEntry, func()) {
+	now := time.Now()
+	ephemeralTaskBilling.Lock()
+	if ephemeralTaskBilling.states == nil {
+		ephemeralTaskBilling.states = make(map[ephemeralTaskBillingKey]*ephemeralTaskBillingEntry)
+	}
+	entry := ephemeralTaskBilling.states[key]
+	if entry == nil {
+		entry = &ephemeralTaskBillingEntry{}
+		ephemeralTaskBilling.states[key] = entry
+	}
+	entry.refs++
+	entry.lastSeen = now
+	maybeCleanupEphemeralTaskBillingStatesLocked(now)
+	ephemeralTaskBilling.Unlock()
+
+	// Serialize callbacks for one unsaved task without blocking unrelated
+	// tasks on database or Redis calls performed while the entry is held.
+	entry.mu.Lock()
+	return entry, func() {
+		entry.mu.Unlock()
+		ephemeralTaskBilling.Lock()
+		entry.refs--
+		now := time.Now()
+		entry.lastSeen = now
+		maybeCleanupEphemeralTaskBillingStatesLocked(now)
+		ephemeralTaskBilling.Unlock()
+	}
+}
+
+func maybeCleanupEphemeralTaskBillingStatesLocked(now time.Time) {
+	if !ephemeralTaskBilling.lastCleanup.IsZero() &&
+		now.Sub(ephemeralTaskBilling.lastCleanup) < ephemeralTaskBillingCleanupInterval {
+		return
+	}
+	cleanupEphemeralTaskBillingStatesLocked(now)
+	ephemeralTaskBilling.lastCleanup = now
+}
+
+func cleanupEphemeralTaskBillingStatesLocked(now time.Time) {
+	cutoff := now.Add(-ephemeralTaskBillingStateTTL)
+	for key, entry := range ephemeralTaskBilling.states {
+		if entry.refs == 0 && entry.lastSeen.Before(cutoff) {
+			delete(ephemeralTaskBilling.states, key)
+		}
+	}
+	for len(ephemeralTaskBilling.states) > ephemeralTaskBillingStateCap {
+		var oldestKey ephemeralTaskBillingKey
+		var oldest time.Time
+		found := false
+		for key, entry := range ephemeralTaskBilling.states {
+			if entry.refs > 0 {
+				continue
+			}
+			if !found || entry.lastSeen.Before(oldest) {
+				oldestKey = key
+				oldest = entry.lastSeen
+				found = true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(ephemeralTaskBilling.states, oldestKey)
+	}
+}
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
@@ -187,7 +294,46 @@ func taskModelName(task *model.Task) string {
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
+	if task == nil {
+		return false
+	}
+	if task.ID > 0 {
+		return refundPersistedTaskQuota(ctx, task, reason)
+	}
+	if strings.TrimSpace(task.TaskID) != "" {
+		return refundUnsavedTaskQuota(ctx, task, reason)
+	}
+	return refundTaskQuotaLegacy(ctx, task, reason)
+}
+
+func refundUnsavedTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
+	key := ephemeralTaskBillingKey{taskID: task.TaskID, userID: task.UserId, channelID: task.ChannelId}
+	entry, unlock := lockEphemeralTaskBillingEntry(key)
+	defer unlock()
+	state := entry.state
+	if state.refunded {
+		task.Quota = 0
+		return true
+	}
+	if state.settled {
+		// A failure callback arriving after an unsaved settlement must refund
+		// only the latest settled amount, not the stale pre-consume quota.
+		task.Quota = state.settledQuota
+	}
+	ok := refundTaskQuotaLegacy(ctx, task, reason)
+	if ok {
+		state.refunded = true
+		entry.state = state
+	}
+	return ok
+}
+
+func refundTaskQuotaLegacy(ctx context.Context, task *model.Task, reason string) bool {
 	quota := task.Quota
+	if quota < 0 {
+		logger.LogWarn(ctx, fmt.Sprintf("任务 quota 非法，拒绝退款 task %s: %d", task.TaskID, quota))
+		return false
+	}
 	if quota == 0 {
 		correctTaskChannelCostToValue(ctx, task, 0)
 		return true
@@ -237,8 +383,65 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
+	_ = recalculateTaskQuota(ctx, task, actualQuota, reason, clamps...)
+}
+
+func recalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
+	if task == nil {
+		return false
+	}
+	if task.ID > 0 {
+		return recalculatePersistedTaskQuota(ctx, task, actualQuota, reason, clamps...)
+	}
+	if strings.TrimSpace(task.TaskID) != "" {
+		return recalculateUnsavedTaskQuota(ctx, task, actualQuota, reason, clamps...)
+	}
+	return recalculateTaskQuotaLegacy(ctx, task, actualQuota, reason, clamps...)
+}
+
+func recalculateUnsavedTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
 	if actualQuota <= 0 {
-		return
+		return true
+	}
+	key := ephemeralTaskBillingKey{taskID: task.TaskID, userID: task.UserId, channelID: task.ChannelId}
+	entry, unlock := lockEphemeralTaskBillingEntry(key)
+	defer unlock()
+	state := entry.state
+	if state.refunded {
+		return true
+	}
+	if state.settled && state.settledQuota == actualQuota {
+		task.Quota = actualQuota
+		return true
+	}
+	if state.settled {
+		// Independent stale copies must settle from the last durable value,
+		// not from their original pre-consume quota.
+		task.Quota = state.settledQuota
+	}
+	ok := recalculateTaskQuotaLegacy(ctx, task, actualQuota, reason, clamps...)
+	if ok {
+		state.settled = true
+		state.settledQuota = actualQuota
+		entry.state = state
+	}
+	return ok
+}
+
+func recalculateTaskQuotaLegacy(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
+	if task == nil {
+		return false
+	}
+	if actualQuota <= 0 {
+		return true
+	}
+	if actualQuota > common.MaxQuota {
+		logger.LogWarn(ctx, fmt.Sprintf("任务 actual quota 超出范围，拒绝结算 task %s: %d", task.TaskID, actualQuota))
+		return false
+	}
+	if task.Quota < 0 || task.Quota > common.MaxQuota {
+		logger.LogWarn(ctx, fmt.Sprintf("任务 quota 超出范围，拒绝结算 task %s: %d", task.TaskID, task.Quota))
+		return false
 	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
@@ -247,7 +450,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
 		correctTaskChannelCostForQuota(ctx, task, actualQuota)
-		return
+		return true
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
@@ -261,7 +464,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	// 调整资金来源
 	if err := taskAdjustFunding(task, quotaDelta); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return false
 	}
 
 	// 调整令牌额度
@@ -305,6 +508,103 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		NodeName:  task.PrivateData.NodeName,
 	})
 	correctTaskChannelCostForQuota(ctx, task, actualQuota)
+	return true
+}
+
+// refundPersistedTaskQuota applies the complete refund under a task-row lock.
+// The task quota itself is the durable idempotency marker, so duplicate
+// polling callbacks become no-ops while an unfinished cost-event correction
+// can still be retried transactionally.
+func refundPersistedTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
+	result, err := model.ApplyTaskBilling(ctx, task, model.TaskBillingOperationRefund, 0)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("任务退款事务失败 task %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	task.Quota = result.ActualQuota
+	if result.CostChanged {
+		if task.PrivateData.BillingContext != nil {
+			task.PrivateData.BillingContext.ChannelCostNanoCNY = result.CostNanoCNY
+			task.PrivateData.BillingContext.ChannelCostResolved = true
+		}
+		publishTaskChannelCostCorrection(task, result.CostNanoCNY)
+	}
+	if !result.Applied {
+		return true
+	}
+	other := taskBillingOther(task)
+	other["task_id"] = task.TaskID
+	other["reason"] = reason
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:    task.UserId,
+		LogType:   model.LogTypeRefund,
+		Content:   "",
+		ChannelId: task.ChannelId,
+		ModelName: taskModelName(task),
+		Quota:     result.PreviousQuota,
+		TokenId:   task.PrivateData.TokenId,
+		Group:     task.Group,
+		Other:     other,
+	})
+	return true
+}
+
+func recalculatePersistedTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
+	if actualQuota <= 0 {
+		return true
+	}
+	result, err := model.ApplyTaskBilling(ctx, task, model.TaskBillingOperationSettle, actualQuota)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("任务差额结算事务失败 task %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	task.Quota = result.ActualQuota
+	if result.CostChanged {
+		if task.PrivateData.BillingContext != nil {
+			task.PrivateData.BillingContext.ChannelCostNanoCNY = result.CostNanoCNY
+			task.PrivateData.BillingContext.ChannelCostResolved = true
+		}
+		publishTaskChannelCostCorrection(task, result.CostNanoCNY)
+	}
+	if !result.Applied {
+		if result.QuotaDelta == 0 {
+			logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）", task.TaskID, logger.LogQuota(actualQuota), reason))
+		}
+		return true
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
+		task.TaskID,
+		logger.LogQuota(result.QuotaDelta),
+		logger.LogQuota(actualQuota),
+		logger.LogQuota(result.PreviousQuota),
+		reason,
+	))
+	logType := model.LogTypeRefund
+	logQuota := -result.QuotaDelta
+	if result.QuotaDelta > 0 {
+		logType = model.LogTypeConsume
+		logQuota = result.QuotaDelta
+	}
+	other := taskBillingOther(task)
+	other["task_id"] = task.TaskID
+	other["pre_consumed_quota"] = result.PreviousQuota
+	other["actual_quota"] = actualQuota
+	for _, clamp := range clamps {
+		attachQuotaSaturationToOther(other, clamp)
+	}
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:    task.UserId,
+		LogType:   logType,
+		Content:   reason,
+		ChannelId: task.ChannelId,
+		ModelName: taskModelName(task),
+		Quota:     logQuota,
+		TokenId:   task.PrivateData.TokenId,
+		Group:     task.Group,
+		Other:     other,
+		NodeName:  task.PrivateData.NodeName,
+	})
+	return true
 }
 
 func correctTaskChannelCostToValue(ctx context.Context, task *model.Task, costNanoCNY int64) {
@@ -365,15 +665,23 @@ func publishTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
 	if other, err := common.Marshal(map[string]string{"cost_event_id": costEventId}); err == nil {
 		event.OtherJson = string(other)
 	}
-	_, _ = EnqueueChannelMonitorEvent(event)
+	status, err := EnqueueChannelMonitorEvent(event)
+	ObserveChannelMonitorEventPublishStatus(context.Background(), status, err)
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
+	_ = recalculateTaskQuotaByTokens(ctx, task, totalTokens)
+}
+
+func recalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
+	if task == nil {
+		return false
+	}
 	if totalTokens <= 0 {
-		return
+		return true
 	}
 
 	modelName := taskModelName(task)
@@ -382,7 +690,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return
+		return true
 	}
 
 	// 获取用户和组的倍率信息
@@ -394,7 +702,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return
+		return true
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -417,5 +725,5 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	return recalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
 }

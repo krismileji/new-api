@@ -34,6 +34,55 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+// taskPollingSnapshot captures the fields that a terminal transition mutates.
+// If billing fails after the status CAS, restoring this snapshot keeps the
+// task visible to the next polling pass so the idempotent billing operation can
+// be retried instead of leaving a terminal task permanently unsettled.
+type taskPollingSnapshot struct {
+	status     model.TaskStatus
+	progress   string
+	startTime  int64
+	finishTime int64
+	failReason string
+	resultURL  string
+	data       []byte
+}
+
+func captureTaskPollingSnapshot(task *model.Task) taskPollingSnapshot {
+	if task == nil {
+		return taskPollingSnapshot{}
+	}
+	return taskPollingSnapshot{
+		status:     task.Status,
+		progress:   task.Progress,
+		startTime:  task.StartTime,
+		finishTime: task.FinishTime,
+		failReason: task.FailReason,
+		resultURL:  task.PrivateData.ResultURL,
+		data:       append([]byte(nil), task.Data...),
+	}
+}
+
+func rollbackTaskAfterBillingFailure(ctx context.Context, task *model.Task, snapshot taskPollingSnapshot) {
+	if task == nil || snapshot.status == "" || task.Status == snapshot.status {
+		return
+	}
+	currentStatus := task.Status
+	task.Status = snapshot.status
+	task.Progress = snapshot.progress
+	task.StartTime = snapshot.startTime
+	task.FinishTime = snapshot.finishTime
+	task.FailReason = snapshot.failReason
+	task.PrivateData.ResultURL = snapshot.resultURL
+	task.Data = append([]byte(nil), snapshot.data...)
+	won, err := task.UpdateWithStatus(currentStatus)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("billing failed and task %s status rollback failed: %v", task.TaskID, err))
+	} else if !won {
+		logger.LogWarn(ctx, fmt.Sprintf("billing failed but task %s status rollback lost", task.TaskID))
+	}
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -60,6 +109,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
 
 		oldStatus := task.Status
+		previousSnapshot := captureTaskPollingSnapshot(task)
 		task.Status = model.TaskStatusFailure
 		task.Progress = "100%"
 		task.FinishTime = now
@@ -83,7 +133,9 @@ func sweepTimedOutTasks(ctx context.Context) {
 		}
 		timedOutCount++
 		if !isLegacy && task.Quota != 0 {
-			RefundTaskQuota(ctx, task, reason)
+			if !RefundTaskQuota(ctx, task, reason) {
+				rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+			}
 		}
 	}
 
@@ -287,10 +339,23 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 			continue
 		}
 		if !taskNeedsUpdate(task, responseItem) {
+			// A previous terminal transition may have committed while its refund
+			// transaction failed. The task remains FAILURE with a non-zero quota so
+			// the next poll can retry the idempotent refund even though no fields
+			// changed in the upstream response. Never refund an in-progress task
+			// based solely on a stale failure reason.
+			upstreamFailure := responseItem.Status == model.TaskStatusFailure ||
+				strings.TrimSpace(responseItem.FailReason) != ""
+			if upstreamFailure && task.Status == model.TaskStatusFailure && task.Quota > 0 {
+				if !RefundTaskQuota(ctx, task, responseItem.FailReason) {
+					logger.LogWarn(ctx, fmt.Sprintf("Task %s failure refund retry pending", task.TaskID))
+				}
+			}
 			continue
 		}
 
 		prevStatus := task.Status
+		previousSnapshot := captureTaskPollingSnapshot(task)
 		task.Status = lo.If(model.TaskStatus(responseItem.Status) != "", model.TaskStatus(responseItem.Status)).Else(task.Status)
 		task.FailReason = lo.If(responseItem.FailReason != "", responseItem.FailReason).Else(task.FailReason)
 		task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
@@ -314,7 +379,9 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s CAS lost or no-op update, skip billing", task.TaskID))
 		} else if isFailure && prevStatus != model.TaskStatusFailure && task.Quota != 0 {
-			RefundTaskQuota(ctx, task, task.FailReason)
+			if !RefundTaskQuota(ctx, task, task.FailReason) {
+				rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+			}
 		}
 	}
 	return nil
@@ -494,6 +561,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
 	snap := task.Snapshot()
+	previousSnapshot := captureTaskPollingSnapshot(task)
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -611,10 +679,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	if shouldSettle {
-		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		if !settleTaskBillingOnComplete(ctx, adaptor, task, taskResult) {
+			rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+		}
 	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		if !RefundTaskQuota(ctx, task, task.FailReason) {
+			rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+		}
 	}
 
 	return nil
@@ -659,21 +731,23 @@ func truncateBase64(s string) string {
 //
 //  2. taskResult.TotalTokens > 0 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
-func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
+func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	if task == nil || adaptor == nil || taskResult == nil {
+		return false
+	}
 	// 0. 按次计费的任务不做差额结算
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
-		return
+		return true
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
-		return
+		return recalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 	}
 	// 2. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
-		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
-		return
+		return recalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 	}
 	// 3. 无调整，保持预扣额度
+	return true
 }

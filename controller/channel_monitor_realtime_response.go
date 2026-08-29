@@ -17,6 +17,10 @@ type channelMonitorRealtimeResponseMetadata struct {
 	QueueDepth                 int                                                    `json:"queue_depth"`
 	RedisStatus                string                                                 `json:"redis_status"`
 	RedisAvailable             bool                                                   `json:"redis_available"`
+	RedisPoolIsolation         bool                                                   `json:"redis_pool_isolation"`
+	RedisPoolIsolationMode     string                                                 `json:"redis_pool_isolation_mode"`
+	RedisPoolShared            bool                                                   `json:"redis_pool_shared"`
+	RedisPoolDegradedRoles     []service.ChannelMonitorRedisPoolDegradedRole          `json:"redis_pool_degraded_roles"`
 	RedisConsumerRunning       bool                                                   `json:"redis_consumer_running"`
 	PendingCount               int64                                                  `json:"pending_count"`
 	WriterQueueDepth           int                                                    `json:"writer_queue_depth"`
@@ -69,6 +73,10 @@ func channelMonitorRealtimeMetadata(windowStart int64) channelMonitorRealtimeRes
 		QueueDepth:                 int(redisStatus.PendingCount),
 		RedisStatus:                redisStatus.RedisStatus,
 		RedisAvailable:             redisStatus.RedisAvailable,
+		RedisPoolIsolation:         redisStatus.RedisPoolIsolation,
+		RedisPoolIsolationMode:     redisStatus.RedisPoolIsolationMode,
+		RedisPoolShared:            redisStatus.RedisPoolShared,
+		RedisPoolDegradedRoles:     redisStatus.RedisPoolDegradedRoles,
 		RedisConsumerRunning:       redisStatus.RedisConsumerRunning,
 		PendingCount:               redisStatus.PendingCount,
 		WriterQueueDepth:           redisStatus.WriterQueueDepth,
@@ -120,6 +128,10 @@ func channelMonitorRealtimePageMetadata(
 		QueueDepth:                 int(redisStatus.PendingCount),
 		RedisStatus:                redisStatus.RedisStatus,
 		RedisAvailable:             redisStatus.RedisAvailable,
+		RedisPoolIsolation:         redisStatus.RedisPoolIsolation,
+		RedisPoolIsolationMode:     redisStatus.RedisPoolIsolationMode,
+		RedisPoolShared:            redisStatus.RedisPoolShared,
+		RedisPoolDegradedRoles:     redisStatus.RedisPoolDegradedRoles,
 		RedisConsumerRunning:       redisStatus.RedisConsumerRunning,
 		PendingCount:               redisStatus.PendingCount,
 		WriterQueueDepth:           redisStatus.WriterQueueDepth,

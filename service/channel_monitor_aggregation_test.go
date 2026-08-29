@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,6 +175,67 @@ func TestRepairChannelMonitorDirtyMinutesKeepsMarkerAfterFailure(t *testing.T) {
 	var metric model.ChannelMonitorMinuteRouteMetric
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", minuteStart, 7).First(&metric).Error)
 	assert.Equal(t, int64(1), metric.ActualSuccessCount)
+}
+
+func TestRepairChannelMonitorDirtyMinutesRenewsLeaseDuringSlowRebuild(t *testing.T) {
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalMainDatabaseType := common.MainDatabaseType()
+	originalLogDatabaseType := common.LogDatabaseType()
+	originalLease := channelMonitorDirtyRepairLeaseDuration
+	originalRenewInterval := channelMonitorDirtyRepairRenewInterval
+
+	mainDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-renew-main.db")), &gorm.Config{})
+	require.NoError(t, err)
+	logDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-monitor-renew-log.db")), &gorm.Config{})
+	require.NoError(t, err)
+	mainSQLDB, err := mainDB.DB()
+	require.NoError(t, err)
+	logSQLDB, err := logDB.DB()
+	require.NoError(t, err)
+	model.DB = mainDB
+	model.LOG_DB = logDB
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	channelMonitorDirtyRepairLeaseDuration = 2 * time.Second
+	channelMonitorDirtyRepairRenewInterval = 100 * time.Millisecond
+	require.NoError(t, mainDB.AutoMigrate(
+		&model.ChannelMonitorMinuteRouteMetric{},
+		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorAggregationState{},
+		&model.ChannelMonitorDirtyMinute{},
+	))
+	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+	t.Cleanup(func() {
+		channelMonitorDirtyRepairLeaseDuration = originalLease
+		channelMonitorDirtyRepairRenewInterval = originalRenewInterval
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+		require.NoError(t, mainSQLDB.Close())
+		require.NoError(t, logSQLDB.Close())
+	})
+
+	const minuteStart = int64(120)
+	require.NoError(t, logDB.Create(&model.Log{
+		ChannelId: 7, ModelName: "slow", CreatedAt: minuteStart + 1, Type: model.LogTypeConsume,
+	}).Error)
+	require.NoError(t, model.MarkChannelMonitorDirtyMinute(
+		context.Background(), minuteStart, model.ChannelMonitorDirtyReasonLateLog,
+	))
+	callbackName := "test:slow-dirty-minute-log-query"
+	var slowed atomic.Bool
+	require.NoError(t, logDB.Callback().Row().Before("gorm:row").Register(callbackName, func(tx *gorm.DB) {
+		if slowed.CompareAndSwap(false, true) {
+			time.Sleep(3 * time.Second)
+		}
+	}))
+	t.Cleanup(func() { _ = logDB.Callback().Row().Remove(callbackName) })
+
+	key := channelMonitorAggregationDatabaseKey{db: mainDB, logDB: logDB}
+	require.NoError(t, repairChannelMonitorDirtyMinutes(context.Background(), key, minuteStart+60))
+	var dirtyCount int64
+	require.NoError(t, mainDB.Model(&model.ChannelMonitorDirtyMinute{}).Count(&dirtyCount).Error)
+	assert.Zero(t, dirtyCount)
 }
 
 func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay(t *testing.T) {

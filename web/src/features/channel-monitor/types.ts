@@ -241,6 +241,7 @@ export type ChannelMonitorRealtimeMetadata = {
   queue_depth: number
   redis_status?: 'available' | 'unavailable'
   redis_available?: boolean
+  redis_pool_isolation?: boolean
   redis_consumer_running?: boolean
   pending_count?: number
   redis_pool_stats?: Record<string, ChannelMonitorRedisPoolStats>
@@ -283,10 +284,15 @@ export type ChannelMonitorRedisPoolStats = {
   pool_size?: number
   total_conns?: number
   idle_conns?: number
+  in_use?: number
+  pool_congested?: boolean
+  degraded_reason?: string
   stale_conns?: number
   hits?: number
   misses?: number
   timeouts?: number
+  context_deadline_count?: number
+  pool_timeout_count?: number
   command_count?: number
   command_error_count?: number
   command_latency_total_micros?: number
@@ -307,6 +313,9 @@ export type ChannelMonitorRealtimeDegradedReason =
   | 'cost_outbox_backlog'
   | 'cost_publish_failure'
   | 'cost_dead_letter'
+  | 'redis_pool_congested'
+  | 'redis_pool_timeout'
+  | 'redis_context_deadline'
 
 export type ChannelMonitorOverview = ChannelMonitorRealtimeMetadata & {
   generated_at: number
@@ -399,6 +408,7 @@ export type ChannelMonitorCostOverview = ChannelMonitorRealtimeMetadata & {
   item_page_count: number
   channels: ChannelMonitorCostChannel[]
   api_keys: ChannelMonitorCostAPIKey[]
+  api_keys_truncated: boolean
 }
 
 export type ChannelMonitorPerformanceRangeMinutes = number

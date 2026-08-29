@@ -525,7 +525,24 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			channelIDs = append(channelIDs, channel.Id)
 		}
 	}
-	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDs(c.Request.Context(), channelIDs)
+	// Include zero-value entries for channels without a monitor row. This lets
+	// the request-scoped snapshot clear a previously cached limit when an admin
+	// removes/disables that row; omitting the key would otherwise preserve the
+	// stale in-process configuration.
+	concurrencyConfigs := make(map[int]model.ChannelConcurrencyConfig, len(channelIDs))
+	for _, channelID := range channelIDs {
+		concurrencyConfigs[channelID] = model.ChannelConcurrencyConfig{}
+	}
+	for _, monitor := range monitors {
+		concurrencyConfigs[monitor.ChannelId] = model.ChannelConcurrencyConfig{
+			Limit:    monitor.ConcurrencyLimit,
+			RPMLimit: monitor.RPMLimit,
+			Revision: monitor.ConcurrencyRevision,
+		}
+	}
+	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		c.Request.Context(), channelIDs, concurrencyConfigs,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return

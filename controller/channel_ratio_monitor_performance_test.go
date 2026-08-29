@@ -26,6 +26,10 @@ type channelMonitorPerformanceAPIResponse struct {
 		RuntimeMarkerFailures   int64                                                  `json:"runtime_marker_failure_count"`
 		ScheduleMarkerFailures  int64                                                  `json:"schedule_marker_failure_count"`
 		QuarantineCount         int64                                                  `json:"quarantine_count"`
+		RedisPoolIsolation      bool                                                   `json:"redis_pool_isolation"`
+		RedisPoolIsolationMode  string                                                 `json:"redis_pool_isolation_mode"`
+		RedisPoolShared         bool                                                   `json:"redis_pool_shared"`
+		RedisPoolDegradedRoles  []service.ChannelMonitorRedisPoolDegradedRole          `json:"redis_pool_degraded_roles"`
 		RedisPoolStats          map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
 		DegradedReasons         []string                                               `json:"degraded_reasons"`
 		RealtimeDegraded        bool                                                   `json:"realtime_degraded"`
@@ -100,6 +104,10 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	assert.Equal(t, int64(4), response.Data.RuntimeMarkerFailures)
 	assert.Equal(t, int64(5), response.Data.ScheduleMarkerFailures)
 	assert.Equal(t, int64(6), response.Data.QuarantineCount)
+	assert.Equal(t, common.RedisClientPoolIsolationEnabled(), response.Data.RedisPoolIsolation)
+	assert.Equal(t, common.RedisClientPoolIsolationMode(), response.Data.RedisPoolIsolationMode)
+	assert.Equal(t, response.Data.RedisPoolIsolationMode == common.RedisClientPoolIsolationModeShared, response.Data.RedisPoolShared)
+	assert.NotNil(t, response.Data.RedisPoolDegradedRoles)
 	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleUser)
 	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleMonitorWrite)
 	require.Contains(t, response.Data.RedisPoolStats, common.RedisClientRoleMonitorRead)

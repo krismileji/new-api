@@ -17,6 +17,12 @@ import (
 
 var ErrChannelDailyCostLedgerOverflow = errors.New("channel daily cost ledger exceeds int64")
 
+// ErrChannelDailyCostEventIDRequiresOutbox marks direct ledger writes that
+// carry an event id. Event ids are the durable idempotency boundary owned by
+// the cost outbox; accepting one here would make a replay indistinguishable
+// from a new charge and could double-count the ledger.
+var ErrChannelDailyCostEventIDRequiresOutbox = errors.New("带 EventId 的渠道日成本批次必须通过 outbox 写入")
+
 // ChannelDailyAPIKeyCost stores the daily settled cost attributed to one
 // inbound API Key and its selected upstream credential. Only API Key metadata,
 // a fingerprint, and a masked display value are persisted.
@@ -140,6 +146,11 @@ func AddChannelDailyCostWithAPIKeyAndToken(ctx context.Context, channelId int, o
 func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelta) error {
 	if len(deltas) == 0 {
 		return nil
+	}
+	for _, delta := range deltas {
+		if strings.TrimSpace(delta.EventId) != "" {
+			return ErrChannelDailyCostEventIDRequiresOutbox
+		}
 	}
 	if DB == nil {
 		return errors.New("channel daily cost database is unavailable")
@@ -378,47 +389,88 @@ func GetChannelDailyAPIKeyCostsForChannel(ctx context.Context, startTimestamp in
 // with checked arithmetic so no database-specific SUM behavior can wrap a
 // monetary or count total.
 func GetChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyAPIKeyCost, error) {
+	return getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
+}
+
+// GetChannelDailyAPIKeyCostTotalsForChannelBounded returns at most limit
+// channel/key groups. Groups are ordered by descending cost so a bounded
+// monitor response keeps the most material identities first. The boolean
+// result reports whether additional groups exist after the requested page.
+// A non-positive limit preserves the unbounded behavior of the legacy query.
+//
+// The channel monitor uses this bounded variant for user-facing overviews;
+// omitted groups are represented by its existing unattributed residual so
+// channel totals remain conserved.
+func GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, limit int) ([]ChannelDailyAPIKeyCost, bool, error) {
+	if limit <= 0 {
+		costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
+		return costs, false, err
+	}
+	// The sentinel row below uses limit+1. Reject the largest int value so a
+	// caller cannot wrap that expression negative and trigger an invalid slice
+	// bound (or accidentally turn a bounded request into an unbounded scan).
+	if limit == math.MaxInt {
+		return nil, false, errors.New("渠道 API Key 成本汇总 limit 超出支持范围")
+	}
+	// Fetch one sentinel row so callers can distinguish an exact-limit result
+	// from a truncated result without a second COUNT query over the aggregate.
+	costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, limit+1, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	// The legacy helper sorts by channel/key for compatibility. Reorder before
+	// trimming so the sentinel query cannot discard a more expensive group
+	// that happened to sort later in that legacy order.
+	sort.SliceStable(costs, func(i, j int) bool {
+		if costs[i].CostNanoCNY != costs[j].CostNanoCNY {
+			return costs[i].CostNanoCNY > costs[j].CostNanoCNY
+		}
+		if costs[i].ChannelId != costs[j].ChannelId {
+			return costs[i].ChannelId < costs[j].ChannelId
+		}
+		if costs[i].APIKeyId != costs[j].APIKeyId {
+			return costs[i].APIKeyId < costs[j].APIKeyId
+		}
+		return costs[i].KeyFingerprint < costs[j].KeyFingerprint
+	})
+	truncated := len(costs) > limit
+	if truncated {
+		costs = costs[:limit]
+	}
+	return costs, truncated, nil
+}
+
+func getChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, limit int, offset int) ([]ChannelDailyAPIKeyCost, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyAPIKeyCost{}, nil
 	}
-	rows, err := getChannelDailyAPIKeyCosts(ctx, startTimestamp, endTimestamp, channelId)
-	if err != nil {
-		return nil, err
+	query := DB.WithContext(ctx).Model(&ChannelDailyAPIKeyCost{}).
+		Select("MIN(id) AS id, channel_id, api_key_id, MAX(api_key_name) AS api_key_name, MAX(key_fingerprint) AS key_fingerprint, MAX(key_display) AS key_display, SUM(cost_nano_cny) AS cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
+		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
+		Group("channel_id").Group("api_key_id").Group("CASE WHEN api_key_id = 0 THEN key_fingerprint ELSE '' END").
+		Order("SUM(cost_nano_cny) DESC, channel_id ASC, api_key_id ASC, CASE WHEN api_key_id = 0 THEN key_fingerprint ELSE '' END ASC")
+	if channelId > 0 {
+		query = query.Where("channel_id = ?", channelId)
 	}
-	type aggregateKey struct {
-		ChannelId      int
-		APIKeyId       int
-		APIKeyName     string
-		KeyFingerprint string
-		KeyDisplay     string
+	if limit > 0 {
+		query = query.Limit(limit)
 	}
-	totals := make(map[aggregateKey]*ChannelDailyAPIKeyCost)
-	for _, row := range rows {
-		key := aggregateKey{
-			ChannelId: row.ChannelId, APIKeyId: row.APIKeyId, APIKeyName: row.APIKeyName,
-			KeyFingerprint: row.KeyFingerprint, KeyDisplay: row.KeyDisplay,
-		}
-		total := totals[key]
-		if total == nil {
-			copy := row
-			totals[key] = &copy
-			continue
-		}
-		if row.CostNanoCNY < 0 || total.CostNanoCNY > math.MaxInt64-row.CostNanoCNY ||
-			row.SettledCount < 0 || total.SettledCount > math.MaxInt64-row.SettledCount ||
-			row.UnresolvedCount < 0 || total.UnresolvedCount > math.MaxInt64-row.UnresolvedCount {
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+	var costs []ChannelDailyAPIKeyCost
+	if err := query.Scan(&costs).Error; err != nil {
+		return nil, fmt.Errorf("渠道 API Key 成本汇总超过 int64 范围或查询失败: %w", err)
+	}
+	for _, cost := range costs {
+		if cost.CostNanoCNY < 0 || cost.SettledCount < 0 || cost.UnresolvedCount < 0 {
 			return nil, errors.New("渠道 API Key 成本汇总超过 int64 范围")
 		}
-		total.CostNanoCNY += row.CostNanoCNY
-		total.SettledCount += row.SettledCount
-		total.UnresolvedCount += row.UnresolvedCount
-		if row.Id < total.Id {
-			total.Id = row.Id
-		}
 	}
-	costs := make([]ChannelDailyAPIKeyCost, 0, len(totals))
-	for _, total := range totals {
-		costs = append(costs, *total)
+	var err error
+	costs, err = resolveChannelDailyAPIKeyCostNames(ctx, costs)
+	if err != nil {
+		return nil, err
 	}
 	sort.Slice(costs, func(i, j int) bool {
 		if costs[i].ChannelId != costs[j].ChannelId {

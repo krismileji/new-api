@@ -3,16 +3,20 @@ package service
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type retryingChannelMonitorEventAppender struct {
@@ -292,4 +296,47 @@ func TestChannelMonitorEventWriterStopContextCancelsRetryDelay(t *testing.T) {
 	assert.Equal(t, int64(1), appender.calls.Load())
 	assert.Zero(t, writer.retryEvents.Load())
 	assert.Equal(t, int64(1), writer.droppedEvents.Load())
+}
+
+func TestChannelMonitorEventWriterStopRacesWithOutboxStart(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "writer-outbox-race.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.ChannelMonitorEventOutbox{}))
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		sqlDB, sqlErr := db.DB()
+		if sqlErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	for i := 0; i < 32; i++ {
+		writer := newChannelMonitorEventWriter(nil, channelMonitorEventWriterConfig{
+			QueueCapacity: 1,
+			MaxAttempts:   1,
+		})
+		startDone := make(chan struct{})
+		go func() {
+			writer.startOutbox()
+			close(startDone)
+		}()
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		stopErr := writer.Stop(stopCtx)
+		cancel()
+		require.NoError(t, stopErr)
+		<-startDone
+
+		writer.outboxMu.Lock()
+		outboxDone := writer.outboxDone
+		writer.outboxMu.Unlock()
+		if outboxDone != nil {
+			select {
+			case <-outboxDone:
+			default:
+				t.Fatalf("outbox replay goroutine still running after Stop (iteration %d)", i)
+			}
+		}
+	}
 }

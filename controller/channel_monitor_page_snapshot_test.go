@@ -738,9 +738,11 @@ func TestChannelMonitorPageSnapshotServesLocalStaleCopyWhenRedisIsDisabled(t *te
 	require.True(t, serveChannelMonitorPageSnapshot(second, channelMonitorPageSnapshotPerformance, handler))
 	secondResponse := decodeChannelMonitorPageSnapshotResponse(t, secondRecorder)
 	assert.Equal(t, http.StatusOK, secondRecorder.Code)
-	assert.Equal(t, int32(1), builds.Load())
 	assert.Equal(t, firstResponse.Data.Label, secondResponse.Data.Label)
 	assert.True(t, secondResponse.Data.Stale)
+	require.Eventually(t, func() bool {
+		return builds.Load() == 2
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestChannelMonitorSuccessDetailUsesPageSnapshotProtection(t *testing.T) {

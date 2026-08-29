@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,52 @@ const (
 	channelMonitorAggregationBackfillDefaultYieldMillis   = 50
 	channelMonitorAggregationBackfillMaxYieldMillis       = 5000
 )
+
+// Kept as a variable so deterministic tests can force a renewal without
+// waiting for the production interval.
+var channelMonitorDirtyRepairLeaseDuration = channelMonitorDirtyRepairLease
+var channelMonitorDirtyRepairRenewInterval = channelMonitorDirtyRepairLease / 3
+
+func isChannelMonitorAggregationSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked")
+}
+
+func waitChannelMonitorAggregationRetry(ctx context.Context, attempt int) error {
+	delay := 10 * time.Millisecond * time.Duration(1<<attempt)
+	if delay > 250*time.Millisecond {
+		delay = 250 * time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func withChannelMonitorAggregationSQLiteRetry(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 6; attempt++ {
+		err = fn()
+		if err == nil || !isChannelMonitorAggregationSQLiteBusy(err) {
+			return err
+		}
+		if attempt+1 < 6 {
+			if waitErr := waitChannelMonitorAggregationRetry(ctx, attempt); waitErr != nil {
+				return waitErr
+			}
+		}
+	}
+	return err
+}
 
 type channelMonitorAggregationDatabaseKey struct {
 	db    *gorm.DB
@@ -176,26 +223,94 @@ func repairChannelMonitorDirtyMinutes(
 	key channelMonitorAggregationDatabaseKey,
 	targetEnd int64,
 ) error {
+	if err := model.RetryChannelMonitorDirtyMinutePending(ctx, channelMonitorDirtyRepairBatchSize); err != nil {
+		return fmt.Errorf("重试渠道监控脏分钟标记失败: %w", err)
+	}
 	claimer := fmt.Sprintf("%s:%s", common.NodeName, common.GetRandomString(8))
 	claims, err := model.ClaimChannelMonitorDirtyMinutes(
 		ctx,
 		channelMonitorDirtyRepairBatchSize,
 		claimer,
-		common.GetTimestamp()+int64(channelMonitorDirtyRepairLease/time.Second),
+		common.GetTimestamp()+int64(channelMonitorDirtyRepairLeaseDuration/time.Second),
 	)
 	if err != nil {
 		return fmt.Errorf("领取渠道监控脏分钟失败: %w", err)
 	}
+	if len(claims) == 0 {
+		return nil
+	}
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var leaseMu sync.Mutex
+	activeClaims := append([]model.ChannelMonitorDirtyMinute(nil), claims...)
+	var leaseErrMu sync.Mutex
+	var leaseErr error
+	getLeaseErr := func() error {
+		leaseErrMu.Lock()
+		defer leaseErrMu.Unlock()
+		return leaseErr
+	}
+	renewDone := make(chan struct{})
+	go func() {
+		defer close(renewDone)
+		interval := channelMonitorDirtyRepairRenewInterval
+		if interval <= 0 {
+			interval = time.Second
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-workCtx.Done():
+				return
+			case <-ticker.C:
+				leaseMu.Lock()
+				snapshot := append([]model.ChannelMonitorDirtyMinute(nil), activeClaims...)
+				leaseMu.Unlock()
+				if len(snapshot) == 0 {
+					return
+				}
+				lockUntil := common.GetTimestamp() + int64(channelMonitorDirtyRepairLeaseDuration/time.Second)
+				if err := model.RenewChannelMonitorDirtyMinutes(workCtx, claimer, snapshot, lockUntil); err != nil {
+					// A rebuild may hold the SQLite writer lock while replacing metric
+					// rows. Treat transient renewal failures as retryable; only a
+					// confirmed fencing loss should cancel the in-flight rebuild.
+					if errors.Is(err, model.ErrChannelMonitorDirtyMinuteLeaseLost) || workCtx.Err() != nil {
+						if workCtx.Err() == nil {
+							leaseErrMu.Lock()
+							leaseErr = err
+							leaseErrMu.Unlock()
+							cancel()
+						}
+						return
+					}
+					continue
+				}
+			}
+		}
+	}()
+	removeActiveClaim := func(claim model.ChannelMonitorDirtyMinute) {
+		leaseMu.Lock()
+		defer leaseMu.Unlock()
+		for index := range activeClaims {
+			if activeClaims[index].Id == claim.Id && activeClaims[index].ClaimedAt == claim.ClaimedAt {
+				activeClaims = append(activeClaims[:index], activeClaims[index+1:]...)
+				return
+			}
+		}
+	}
 	for index, claim := range claims {
 		if claim.MinuteStart >= targetEnd {
+			cancel()
+			<-renewDone
 			if err := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:]); err != nil {
 				return fmt.Errorf("释放未完成的渠道监控脏分钟失败: %w", err)
 			}
-			return nil
+			return getLeaseErr()
 		}
 		minuteEnd := claim.MinuteStart + int64(channelMonitorAggregationInterval/time.Second)
 		if err := rebuildChannelMonitorAggregationRange(
-			ctx,
+			workCtx,
 			key,
 			claim.MinuteStart,
 			minuteEnd,
@@ -203,13 +318,29 @@ func repairChannelMonitorDirtyMinutes(
 			false,
 			false,
 		); err != nil {
+			cancel()
+			<-renewDone
 			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
-			return errors.Join(err, releaseErr)
+			return errors.Join(err, releaseErr, getLeaseErr())
 		}
 		if err := model.CompleteChannelMonitorDirtyMinutes(ctx, claimer, []model.ChannelMonitorDirtyMinute{claim}); err != nil {
+			cancel()
+			<-renewDone
 			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
-			return errors.Join(fmt.Errorf("完成渠道监控脏分钟失败: %w", err), releaseErr)
+			return errors.Join(fmt.Errorf("完成渠道监控脏分钟失败: %w", err), releaseErr, getLeaseErr())
 		}
+		removeActiveClaim(claim)
+		if getLeaseErr() != nil {
+			cancel()
+			<-renewDone
+			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index+1:])
+			return errors.Join(getLeaseErr(), releaseErr)
+		}
+	}
+	cancel()
+	<-renewDone
+	if err := getLeaseErr(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -226,11 +357,14 @@ func rebuildChannelMonitorAggregationRange(
 	startedAt := time.Now()
 	var result model.ChannelMonitorMinuteAggregationResult
 	var err error
-	if extendCoverage && !publishWatermark {
-		result, err = model.BackfillChannelMonitorMinuteRangeWithState(ctx, start, targetEnd)
-	} else {
-		result, err = model.AggregateChannelMonitorMinuteRangeWithState(ctx, start, targetEnd, publishWatermark)
-	}
+	err = withChannelMonitorAggregationSQLiteRetry(ctx, func() error {
+		if extendCoverage && !publishWatermark {
+			result, err = model.BackfillChannelMonitorMinuteRangeWithState(ctx, start, targetEnd)
+		} else {
+			result, err = model.AggregateChannelMonitorMinuteRangeWithState(ctx, start, targetEnd, publishWatermark)
+		}
+		return err
+	})
 	elapsed := time.Since(startedAt)
 	if err != nil {
 		return fmt.Errorf(

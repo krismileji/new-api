@@ -150,7 +150,7 @@ func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now in
 		var ids []int64
 		if err := lockForUpdate(tx.Model(&ChannelDailyCostOutbox{})).
 			Select("id").
-			Where("processed_at = ? AND next_attempt_at <= ? AND lease_until < ?", 0, readyBefore, now).
+			Where("processed_at = ? AND next_attempt_at <= ? AND lease_until <= ?", 0, readyBefore, now).
 			Order("id ASC").
 			Limit(limit).
 			Find(&ids).Error; err != nil {
@@ -160,7 +160,7 @@ func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now in
 			return nil
 		}
 		updated := tx.Model(&ChannelDailyCostOutbox{}).
-			Where("id IN ? AND processed_at = ? AND next_attempt_at <= ? AND lease_until < ?", ids, 0, readyBefore, now).
+			Where("id IN ? AND processed_at = ? AND next_attempt_at <= ? AND lease_until <= ?", ids, 0, readyBefore, now).
 			Where("attempt_count >= 0 AND attempt_count < ?", int64(math.MaxInt64)).
 			Updates(map[string]interface{}{
 				"lease_owner":   owner,

@@ -84,6 +84,55 @@ func TestGetChannelMonitorPerformanceMetricsUsesUsageLogTimingRules(t *testing.T
 	assert.Nil(t, metrics[2].AverageTPS)
 }
 
+func TestGetChannelMonitorPerformanceMetricsLatestValuesAcrossRouteDimensions(t *testing.T) {
+	db := setupChannelMonitorMinuteAggregationTestDB(t)
+	oldFirstToken, latestFirstToken := 100.0, 300.0
+	oldTPS, latestTPS := 10.0, 30.0
+	outOfWindowFirstToken, outOfWindowTPS := 900.0, 90.0
+	modelKey := channelMonitorMinuteDimensionKey("model-a")
+	require.NoError(t, db.Create(&[]ChannelMonitorMinuteRouteMetric{
+		{
+			MinuteStart: 60, ChannelId: 1, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("group-a"),
+			ModelName: "model-a", GroupName: "group-a", SampleCount: 1, FirstTokenSampleCount: 1,
+			FirstTokenTotalMs: oldFirstToken, LatestFirstTokenMs: &oldFirstToken, LatestFirstTokenAt: 70,
+			TPSSampleCount: 1, TPSTotal: oldTPS, LatestTPS: &oldTPS, LatestTPSAt: 70, LastUsedTime: 70,
+		},
+		{
+			MinuteStart: 120, ChannelId: 1, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("group-b"),
+			ModelName: "model-a", GroupName: "group-b", SampleCount: 1, FirstTokenSampleCount: 1,
+			FirstTokenTotalMs: latestFirstToken, LatestFirstTokenMs: &latestFirstToken, LatestFirstTokenAt: 130,
+			TPSSampleCount: 1, TPSTotal: latestTPS, LatestTPS: &latestTPS, LatestTPSAt: 130, LastUsedTime: 130,
+		},
+		// A second route dimension may publish the same timestamp. The SQL
+		// reduction must still return one channel/model value.
+		{
+			MinuteStart: 120, ChannelId: 1, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("group-c"),
+			ModelName: "model-a", GroupName: "group-c", SampleCount: 1, FirstTokenSampleCount: 1,
+			FirstTokenTotalMs: latestFirstToken, LatestFirstTokenMs: &latestFirstToken, LatestFirstTokenAt: 130,
+			TPSSampleCount: 1, TPSTotal: latestTPS, LatestTPS: &latestTPS, LatestTPSAt: 130, LastUsedTime: 130,
+		},
+		{
+			MinuteStart: 120, ChannelId: 1, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("group-null"),
+			ModelName: "model-a", GroupName: "group-null", SampleCount: 1, LatestFirstTokenAt: 140, LatestTPSAt: 140,
+			LastUsedTime: 140,
+		},
+		{
+			MinuteStart: 180, ChannelId: 1, ModelKey: modelKey, GroupKey: channelMonitorMinuteDimensionKey("group-d"),
+			ModelName: "model-a", GroupName: "group-d", SampleCount: 1, FirstTokenSampleCount: 1,
+			FirstTokenTotalMs: outOfWindowFirstToken, LatestFirstTokenMs: &outOfWindowFirstToken, LatestFirstTokenAt: 190,
+			TPSSampleCount: 1, TPSTotal: outOfWindowTPS, LatestTPS: &outOfWindowTPS, LatestTPSAt: 190, LastUsedTime: 190,
+		},
+	}).Error)
+
+	metrics, err := getChannelMonitorMinutePerformanceMetrics(context.Background(), 60, 180)
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	require.NotNil(t, metrics[0].LatestFirstTokenMs)
+	assert.InDelta(t, latestFirstToken, *metrics[0].LatestFirstTokenMs, 1e-9)
+	require.NotNil(t, metrics[0].LatestTPS)
+	assert.InDelta(t, latestTPS, *metrics[0].LatestTPS, 1e-9)
+}
+
 func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()

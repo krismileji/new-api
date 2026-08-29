@@ -22,6 +22,11 @@ const (
 	channelMonitorCostDatePageSize = 7
 	channelMonitorCostDaySeconds   = int64(24 * 60 * 60)
 	channelMonitorCostOffset       = int64(8 * 60 * 60)
+	// API key detail is a high-cardinality view. Keep one bounded response
+	// while preserving all channel totals through the residual "unattributed"
+	// row below. Reserve one slot for that residual so the serialized response
+	// itself remains bounded by this limit.
+	channelMonitorCostAPIKeyMaxRows = 1000
 )
 
 type channelMonitorCostDay struct {
@@ -76,6 +81,7 @@ type channelMonitorCostAPIKeyOwner struct {
 	UserId          int
 	Username        string
 	UserDisplayName string
+	APIKeyName      string
 }
 
 type channelMonitorCostCoverage struct {
@@ -153,6 +159,7 @@ type channelMonitorCostOverview struct {
 	ItemPageCount                  int                                                    `json:"item_page_count"`
 	Channels                       []channelMonitorCostChannel                            `json:"channels"`
 	APIKeys                        []channelMonitorCostAPIKey                             `json:"api_keys"`
+	APIKeysTruncated               bool                                                   `json:"api_keys_truncated"`
 }
 
 func GetChannelMonitorCostOverview(c *gin.Context) {
@@ -234,46 +241,23 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	todayStart := channelMonitorCostDayStart(now)
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
 	endTimestamp := todayStart + channelMonitorCostDaySeconds
-	rows, err := model.GetChannelDailyCostsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	totals, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
-
-	totalsByDay := make(map[int64]*model.ChannelDailyCostDayTotal, days)
-	includedChannels := make(map[int]struct{})
-	unresolvedChannels := make(map[int]struct{})
-	for _, row := range rows {
-		total := totalsByDay[row.DayStart]
-		if total == nil {
-			total = &model.ChannelDailyCostDayTotal{DayStart: row.DayStart}
-			totalsByDay[row.DayStart] = total
-		}
-		for _, value := range []struct {
-			target *int64
-			delta  int64
-		}{
-			{&total.CostNanoCNY, row.CostNanoCNY},
-			{&total.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
-			{&total.GroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
-			{&total.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
-			{&total.SettledCount, row.SettledCount},
-			{&total.UnresolvedCount, row.UnresolvedCount},
-		} {
-			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
-				return channelMonitorCostOverview{}, err
-			}
-		}
+	channelTotals, err := model.GetChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId)
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
+	includedChannels := make(map[int]struct{}, len(channelTotals))
+	unresolvedChannels := make(map[int]struct{}, len(channelTotals))
+	for _, row := range channelTotals {
 		if row.SettledCount > 0 {
 			includedChannels[row.ChannelId] = struct{}{}
 		}
 		if row.UnresolvedCount > 0 {
 			unresolvedChannels[row.ChannelId] = struct{}{}
 		}
-	}
-
-	totals := make([]model.ChannelDailyCostDayTotal, 0, len(totalsByDay))
-	for _, total := range totalsByDay {
-		totals = append(totals, *total)
 	}
 	items := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, totals)
 	var totalCostNanoCNY int64
@@ -353,17 +337,34 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 }
 
 func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days int, now int64, channelId int, page int, pageSize int, detailDayStart int64) (channelMonitorCostOverview, error) {
+	// Normalize pagination before any arithmetic.  The HTTP handler validates
+	// days, but this helper is also exercised directly by internal callers and
+	// tests; using (page-1)*pageSize or days+pageSize-1 before clamping lets a
+	// hostile integer overflow produce a negative slice/SQL offset.
+	if days < 1 {
+		days = 1
+	}
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 {
 		pageSize = channelMonitorCostDatePageSize
 	}
+	itemTotal := days
+	itemPageCount := 1
+	if itemTotal > 0 {
+		// Equivalent to ceil(itemTotal/pageSize), written without addition so
+		// itemTotal+pageSize-1 cannot overflow.
+		itemPageCount = (itemTotal-1)/pageSize + 1
+	}
+	if page > itemPageCount {
+		page = itemPageCount
+	}
 	todayStart := channelMonitorCostDayStart(now)
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
 	endTimestamp := todayStart + channelMonitorCostDaySeconds
 
-	rows, err := model.GetChannelDailyCostsForChannel(ctx, startTimestamp, endTimestamp, channelId)
+	allChannelTotals, err := model.GetChannelDailyCostChannelTotalsWithDetail(ctx, startTimestamp, endTimestamp, channelId, detailDayStart)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -373,7 +374,8 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		detailStartTimestamp = detailDayStart
 		detailEndTimestamp = detailDayStart + channelMonitorCostDaySeconds
 	}
-	apiKeyRows, err := model.GetChannelDailyAPIKeyCostTotalsForChannel(ctx, detailStartTimestamp, detailEndTimestamp, channelId)
+	apiKeyLimit := channelMonitorCostAPIKeyMaxRows - 1
+	apiKeyRows, apiKeysTruncated, err := model.GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx, detailStartTimestamp, detailEndTimestamp, channelId, apiKeyLimit)
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -420,12 +422,12 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		UnresolvedCount           int64
 	}
 	channelCosts := make(map[int]*channelCostSummary)
-	includedChannels := make(map[int]struct{})
-	unresolvedChannels := make(map[int]struct{})
+	includedChannels := make(map[int]struct{}, len(allChannelTotals))
+	unresolvedChannels := make(map[int]struct{}, len(allChannelTotals))
 	missingCostConfigChannels := make(map[int]struct{})
 	var settledCount int64
 	var unresolvedCount int64
-	for _, row := range rows {
+	for _, row := range allChannelTotals {
 		if err := channelMonitorAddNonNegativeInt64(&settledCount, row.SettledCount); err != nil {
 			return channelMonitorCostOverview{}, err
 		}
@@ -442,30 +444,32 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			missingCostConfigChannels[row.ChannelId] = struct{}{}
 		}
 	}
-	for _, row := range rows {
-		if detailDayStart > 0 && row.DayStart != detailDayStart {
-			continue
+	for _, row := range allChannelTotals {
+		costSummary := channelCostSummary{
+			CostNanoCNY:               row.CostNanoCNY,
+			ProbeCostNanoCNY:          row.ProbeCostNanoCNY,
+			GroupProbeCostNanoCNY:     row.GroupProbeCostNanoCNY,
+			ModelDetectionCostNanoCNY: row.ModelDetectionCostNanoCNY,
+			SettledCount:              row.SettledCount,
+			UnresolvedCount:           row.UnresolvedCount,
 		}
-		summary := channelCosts[row.ChannelId]
-		if summary == nil {
-			summary = &channelCostSummary{}
-			channelCosts[row.ChannelId] = summary
-		}
-		for _, value := range []struct {
-			target *int64
-			delta  int64
-		}{
-			{&summary.CostNanoCNY, row.CostNanoCNY},
-			{&summary.ProbeCostNanoCNY, row.ProbeCostNanoCNY},
-			{&summary.GroupProbeCostNanoCNY, row.GroupProbeCostNanoCNY},
-			{&summary.ModelDetectionCostNanoCNY, row.ModelDetectionCostNanoCNY},
-			{&summary.SettledCount, row.SettledCount},
-			{&summary.UnresolvedCount, row.UnresolvedCount},
-		} {
-			if err := channelMonitorAddNonNegativeInt64(value.target, value.delta); err != nil {
-				return channelMonitorCostOverview{}, err
+		if detailDayStart > 0 {
+			costSummary = channelCostSummary{
+				CostNanoCNY:               row.DetailCostNanoCNY,
+				ProbeCostNanoCNY:          row.DetailProbeCostNanoCNY,
+				GroupProbeCostNanoCNY:     row.DetailGroupProbeCostNanoCNY,
+				ModelDetectionCostNanoCNY: row.DetailModelDetectionCostNanoCNY,
+				SettledCount:              row.DetailSettledCount,
+				UnresolvedCount:           row.DetailUnresolvedCount,
 			}
 		}
+		// Do not expose channels with no facts on the selected detail day. The
+		// full-range totals above still drive coverage and integrity counters.
+		if detailDayStart > 0 && costSummary.CostNanoCNY == 0 && costSummary.SettledCount == 0 && costSummary.UnresolvedCount == 0 {
+			continue
+		}
+		copy := costSummary
+		channelCosts[row.ChannelId] = &copy
 	}
 
 	chartRows, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
@@ -724,6 +728,9 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			return channelsByCost[i].ChannelId < channelsByCost[j].ChannelId
 		})
 		owner := apiKeyOwners[summary.APIKeyId]
+		if owner.APIKeyName != "" {
+			apiKeyName = owner.APIKeyName
+		}
 		costAPIKeys = append(costAPIKeys, channelMonitorCostAPIKey{
 			Id:              summary.Id,
 			APIKeyId:        summary.APIKeyId,
@@ -748,26 +755,25 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		return costAPIKeys[i].APIKeyName < costAPIKeys[j].APIKeyName
 	})
 
-	itemTotal := days
-	itemPageCount := (itemTotal + pageSize - 1) / pageSize
-	if itemPageCount == 0 {
-		itemPageCount = 1
-	}
-	if page > itemPageCount {
-		page = itemPageCount
-	}
 	pageOffset := (page - 1) * pageSize
 	pageItemCount := itemTotal - pageOffset
 	if pageItemCount > pageSize {
 		pageItemCount = pageSize
 	}
-	pageEndTimestamp := endTimestamp - int64(pageOffset)*channelMonitorCostDaySeconds
-	pageStartTimestamp := pageEndTimestamp - int64(pageItemCount)*channelMonitorCostDaySeconds
-	pageRows, err := model.GetChannelDailyCostDayTotalsPage(ctx, pageStartTimestamp, pageEndTimestamp, channelId, pageItemCount)
-	if err != nil {
-		return channelMonitorCostOverview{}, err
+	// chartItems already contains the complete bounded calendar window used by
+	// the overview. Slice the requested date page from that in-memory result
+	// instead of issuing a second overlapping SQL aggregation for rows/page.
+	// This keeps page navigation deterministic while ensuring a detail request
+	// reads the daily ledger only once for its chart and rows payloads.
+	pageStartIndex := itemTotal - pageOffset - pageItemCount
+	if pageStartIndex < 0 {
+		pageStartIndex = 0
 	}
-	items := channelMonitorCostDaysFromTotals(pageStartTimestamp, pageEndTimestamp, pageRows)
+	pageEndIndex := pageStartIndex + pageItemCount
+	if pageEndIndex > len(chartItems) {
+		pageEndIndex = len(chartItems)
+	}
+	items := append([]channelMonitorCostDay(nil), chartItems[pageStartIndex:pageEndIndex]...)
 
 	overview := channelMonitorCostOverview{
 		Days:                       days,
@@ -783,14 +789,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 			SettledCount:                  settledCount,
 			UnresolvedCount:               unresolvedCount,
 		},
-		Items:         items,
-		ChartItems:    chartItems,
-		ItemTotal:     itemTotal,
-		ItemPage:      page,
-		ItemPageSize:  pageSize,
-		ItemPageCount: itemPageCount,
-		Channels:      costChannels,
-		APIKeys:       costAPIKeys,
+		Items:            items,
+		ChartItems:       chartItems,
+		ItemTotal:        itemTotal,
+		ItemPage:         page,
+		ItemPageSize:     pageSize,
+		ItemPageCount:    itemPageCount,
+		Channels:         costChannels,
+		APIKeys:          costAPIKeys,
+		APIKeysTruncated: apiKeysTruncated,
 	}
 	if detailDayStart > 0 {
 		overview.DetailDate = channelMonitorCostDate(detailDayStart)
@@ -834,16 +841,22 @@ func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int
 	if len(tokenIds) == 0 {
 		return owners, nil
 	}
-	if hasTable := model.DB.Migrator().HasTable(&model.Token{}); !hasTable {
-		return owners, nil
-	}
 	type tokenOwner struct {
-		Id     int
-		UserId int
+		Id         int
+		UserId     int
+		APIKeyName string `gorm:"column:name"`
 	}
 	var tokens []tokenOwner
 	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.Token{}).
-		Select("id, user_id").Where("id IN ?", tokenIds).Find(&tokens).Error; err != nil {
+		Select("id, user_id, name").Where("id IN ?", tokenIds).Find(&tokens).Error; err != nil {
+		// Token rows are optional for historical cost data and some installations
+		// run the monitor before the token table migration has completed. Avoid a
+		// metadata probe on every request; treat only the dialect-specific
+		// missing-table errors as an empty owner lookup and preserve all other
+		// database failures for the caller.
+		if channelMonitorTokenTableMissingError(err) {
+			return owners, nil
+		}
 		return nil, err
 	}
 	userIds := make([]int, 0, len(tokens))
@@ -852,7 +865,7 @@ func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int
 		if token.UserId <= 0 {
 			continue
 		}
-		owners[token.Id] = channelMonitorCostAPIKeyOwner{UserId: token.UserId}
+		owners[token.Id] = channelMonitorCostAPIKeyOwner{UserId: token.UserId, APIKeyName: strings.TrimSpace(token.APIKeyName)}
 		if _, seen := seenUserIds[token.UserId]; seen {
 			continue
 		}
@@ -888,6 +901,27 @@ func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int
 		owners[tokenId] = owner
 	}
 	return owners, nil
+}
+
+func channelMonitorTokenTableMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "token") {
+		return false
+	}
+	for _, marker := range []string{
+		"no such table",
+		"doesn't exist",
+		"does not exist",
+		"undefined table",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func channelMonitorCostDaysFromTotals(startTimestamp int64, endTimestamp int64, rows []model.ChannelDailyCostDayTotal) []channelMonitorCostDay {

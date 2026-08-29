@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -32,19 +33,64 @@ type taskPollingFetchAdaptor struct {
 
 type sunoFailurePollingAdaptor struct {
 	failReason string
+	finishTime int64
+}
+
+type successfulBillingPollingAdaptor struct {
+	status      model.TaskStatus
+	failReason  string
+	actualQuota int
+}
+
+func (a *successfulBillingPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (a *successfulBillingPollingAdaptor) FetchTask(_ string, _ string, body map[string]any, _ string) (*http.Response, error) {
+	taskID, _ := body["task_id"].(string)
+	status := a.status
+	if status == "" {
+		status = model.TaskStatusSuccess
+	}
+	responseBody, err := common.Marshal(taskdto.TaskResponse[model.Task]{
+		Code: taskdto.TaskSuccessCode,
+		Data: model.Task{
+			TaskID:     taskID,
+			Status:     status,
+			Progress:   "100%",
+			FailReason: a.failReason,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}, nil
+}
+
+func (a *successfulBillingPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
+
+func (a *successfulBillingPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return a.actualQuota
 }
 
 func (a *sunoFailurePollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
 func (a *sunoFailurePollingAdaptor) FetchTask(_ string, _ string, body map[string]any, _ string) (*http.Response, error) {
 	taskIDs, _ := body["ids"].([]string)
+	finishTime := a.finishTime
+	if finishTime == 0 {
+		finishTime = time.Now().Unix()
+	}
 	items := make([]taskdto.SunoDataResponse, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		items = append(items, taskdto.SunoDataResponse{
 			TaskID:     taskID,
 			Status:     string(model.TaskStatusFailure),
 			FailReason: a.failReason,
-			FinishTime: time.Now().Unix(),
+			FinishTime: finishTime,
 		})
 	}
 
@@ -423,6 +469,180 @@ func TestUpdateSunoTasksStalePollsRefundExactlyOnce(t *testing.T) {
 	assert.Zero(t, reloaded.Quota)
 	assert.Equal(t, initialUserQuota+taskQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota+taskQuota, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestUpdateVideoTaskRetriesBillingAfterTerminalCAS(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 404, 404, 404
+	const initialUserQuota, initialTokenQuota, preConsumed, actualQuota = 10_000, 8_000, 5_000, 3_000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-video-billing-retry", initialTokenQuota)
+	seedTaskPollingChannel(t, channelID, true)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "video_billing_retry"
+	task.Platform = constant.TaskPlatform("kling")
+	task.Action = constant.TaskActionGenerate
+	task.Status = model.TaskStatusInProgress
+	task.Progress = "50%"
+	task.PrivateData.UpstreamTaskID = "upstream_video_billing_retry"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, model.DB.Exec(fmt.Sprintf(`
+		CREATE TRIGGER fail_video_billing_user_update
+		BEFORE UPDATE ON users
+		WHEN OLD.id = %d
+		BEGIN
+			SELECT RAISE(ABORT, 'forced video billing failure');
+		END;
+	`, userID)).Error)
+	t.Cleanup(func() {
+		model.DB.Exec("DROP TRIGGER IF EXISTS fail_video_billing_user_update")
+	})
+
+	adaptor := &successfulBillingPollingAdaptor{actualQuota: actualQuota}
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel, channelID).Error)
+	taskMap := map[string]*model.Task{task.GetUpstreamTaskID(): task}
+
+	// The terminal status update commits, but billing fails. The task must be
+	// rolled back to IN_PROGRESS so it remains eligible for the next poll.
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, task.GetUpstreamTaskID(), taskMap))
+	var afterFailure model.Task
+	require.NoError(t, model.DB.First(&afterFailure, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, afterFailure.Status)
+	assert.Equal(t, preConsumed, afterFailure.Quota)
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+
+	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_video_billing_user_update").Error)
+
+	// The same upstream terminal response now wins the CAS again and settles
+	// exactly once.
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, task.GetUpstreamTaskID(), taskMap))
+	var afterRetry model.Task
+	require.NoError(t, model.DB.First(&afterRetry, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, afterRetry.Status)
+	assert.Equal(t, actualQuota, afterRetry.Quota)
+	assert.Equal(t, initialUserQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageAccounting(t, userID)
+	assert.Equal(t, actualQuota, usedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestUpdateSunoTasksRetriesRefundForUnchangedFailure(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 405, 405, 405
+	const initialUserQuota, initialTokenQuota, taskQuota = 10_000, 6_000, 2_500
+	const publicTaskID, upstreamTaskID = "suno_refund_retry", "suno_upstream_refund_retry"
+	const finishTime int64 = 1_800_000_000
+
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-suno-refund-retry", initialTokenQuota)
+	baseURL := "https://suno.invalid"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id:      channelID,
+		Type:    constant.ChannelTypeSunoAPI,
+		Name:    "suno_refund_retry",
+		Key:     "sk-suno-channel",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+	}).Error)
+	seedChargedAccounting(t, userID, channelID, tokenID, taskQuota, 1)
+	task := makeTask(userID, channelID, taskQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = publicTaskID
+	task.Platform = constant.TaskPlatformSuno
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FailReason = "upstream failed"
+	task.SubmitTime = 0
+	task.Data = nil
+	task.FinishTime = finishTime
+	task.PrivateData.UpstreamTaskID = upstreamTaskID
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &sunoFailurePollingAdaptor{failReason: task.FailReason, finishTime: finishTime}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	require.NoError(t, updateSunoTasks(context.Background(), channelID, []string{upstreamTaskID}, map[string]*model.Task{
+		upstreamTaskID: task,
+	}))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Zero(t, reloaded.Quota)
+	assert.Equal(t, initialUserQuota+taskQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota+taskQuota, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestUpdateVideoTaskRetriesRefundAfterTerminalCAS(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 405, 405, 405
+	const initialUserQuota, initialTokenQuota, taskQuota = 10_000, 8_000, 3_000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-video-refund-retry", initialTokenQuota)
+	seedTaskPollingChannel(t, channelID, true)
+	seedChargedAccounting(t, userID, channelID, tokenID, taskQuota, 1)
+
+	task := makeTask(userID, channelID, taskQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "video_refund_retry"
+	task.Platform = constant.TaskPlatform("kling")
+	task.Action = constant.TaskActionGenerate
+	task.Status = model.TaskStatusInProgress
+	task.Progress = "50%"
+	task.PrivateData.UpstreamTaskID = "upstream_video_refund_retry"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, model.DB.Exec(fmt.Sprintf(`
+		CREATE TRIGGER fail_video_refund_user_update
+		BEFORE UPDATE ON users
+		WHEN OLD.id = %d
+		BEGIN
+			SELECT RAISE(ABORT, 'forced video refund failure');
+		END;
+	`, userID)).Error)
+	t.Cleanup(func() {
+		model.DB.Exec("DROP TRIGGER IF EXISTS fail_video_refund_user_update")
+	})
+
+	adaptor := &successfulBillingPollingAdaptor{
+		status:     model.TaskStatusFailure,
+		failReason: "upstream failure",
+	}
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel, channelID).Error)
+	taskMap := map[string]*model.Task{task.GetUpstreamTaskID(): task}
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, task.GetUpstreamTaskID(), taskMap))
+	var afterFailure model.Task
+	require.NoError(t, model.DB.First(&afterFailure, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, afterFailure.Status)
+	assert.Equal(t, taskQuota, afterFailure.Quota)
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+
+	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS fail_video_refund_user_update").Error)
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, task.GetUpstreamTaskID(), taskMap))
+	var afterRetry model.Task
+	require.NoError(t, model.DB.First(&afterRetry, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, afterRetry.Status)
+	assert.Zero(t, afterRetry.Quota)
+	assert.Equal(t, initialUserQuota+taskQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota+taskQuota, getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageAccounting(t, userID)
+	assert.Zero(t, usedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Zero(t, getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(1), countLogs(t))
 }
 

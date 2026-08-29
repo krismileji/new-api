@@ -178,6 +178,88 @@ func TestCreateLogReturnsMarkerFailureAfterPersistingSourceLog(t *testing.T) {
 	var markerCount int64
 	require.NoError(t, db.Model(&ChannelMonitorDirtyMinute{}).Count(&markerCount).Error)
 	assert.Zero(t, markerCount)
+	var pendingCount int64
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinutePending{}).Count(&pendingCount).Error)
+	assert.Equal(t, int64(1), pendingCount)
+}
+
+func TestRenewDirtyMinuteLeaseAndRejectStaleComplete(t *testing.T) {
+	db := setupChannelMonitorDirtyMinuteTestDB(t)
+	ctx := context.Background()
+	require.NoError(t, MarkChannelMonitorDirtyMinute(ctx, 121, "late_log"))
+
+	now := common.GetTimestamp()
+	claims, err := ClaimChannelMonitorDirtyMinutes(ctx, 1, "worker-a", now+60)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	originalUntil := claims[0].ClaimedUntil
+	require.NoError(t, RenewChannelMonitorDirtyMinutes(ctx, "worker-a", claims, now+180))
+	var renewed ChannelMonitorDirtyMinute
+	require.NoError(t, db.First(&renewed, claims[0].Id).Error)
+	assert.Greater(t, renewed.ClaimedUntil, originalUntil)
+
+	// Once the lease expires, a different worker may reclaim it. The stale
+	// worker's complete must not delete the replacement claim.
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinute{}).
+		Where("id = ?", claims[0].Id).
+		Update("claimed_until", now-1).Error)
+	otherClaims, err := ClaimChannelMonitorDirtyMinutes(ctx, 1, "worker-b", now+180)
+	require.NoError(t, err)
+	require.Len(t, otherClaims, 1)
+	require.NoError(t, CompleteChannelMonitorDirtyMinutes(ctx, "worker-a", claims))
+	var remaining ChannelMonitorDirtyMinute
+	require.NoError(t, db.First(&remaining, claims[0].Id).Error)
+	assert.Equal(t, "worker-b", remaining.ClaimedBy)
+	require.NoError(t, CompleteChannelMonitorDirtyMinutes(ctx, "worker-b", otherClaims))
+	var count int64
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinute{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestDirtyMinutePendingMarkerFailureCanBeRetried(t *testing.T) {
+	db := setupChannelMonitorDirtyMinuteTestDB(t)
+	ctx := context.Background()
+	markerErr := errors.New("forced dirty marker failure")
+	callbackName := "test:fail-dirty-minute-pending"
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == channelMonitorDirtyMinuteTable {
+			tx.AddError(markerErr)
+		}
+	}))
+
+	err := createLog(&Log{ChannelId: 1, Type: LogTypeConsume, CreatedAt: 121})
+	require.Error(t, err)
+	var pendingCount int64
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinutePending{}).Count(&pendingCount).Error)
+	assert.Equal(t, int64(1), pendingCount)
+	require.NoError(t, db.Callback().Create().Remove(callbackName))
+
+	require.NoError(t, RetryChannelMonitorDirtyMinutePending(ctx, 10))
+	var markerCount int64
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinute{}).Count(&markerCount).Error)
+	assert.Equal(t, int64(1), markerCount)
+	require.NoError(t, db.Model(&ChannelMonitorDirtyMinutePending{}).Count(&pendingCount).Error)
+	assert.Zero(t, pendingCount)
+}
+
+func TestDirtyMinuteSQLiteBusyRetryIsBoundedAndClassified(t *testing.T) {
+	attempts := 0
+	require.NoError(t, withChannelMonitorDirtyMinuteRetry(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("database is locked")
+		}
+		return nil
+	}))
+	assert.Equal(t, 3, attempts)
+
+	attempts = 0
+	err := withChannelMonitorDirtyMinuteRetry(context.Background(), func() error {
+		attempts++
+		return errors.New("constraint failed")
+	})
+	require.Error(t, err)
+	assert.Equal(t, 1, attempts)
 }
 
 func TestMarkChannelMonitorDirtyMinutesQualifiesConflictUpdateColumn(t *testing.T) {

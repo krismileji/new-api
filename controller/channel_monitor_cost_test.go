@@ -185,7 +185,6 @@ func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t
 		context.Background(), 41, todayStart+60, 3_000_000_000, 1, 0,
 		202, "今日 Key", todayFingerprint, todayDisplay,
 	))
-
 	detailDate := channelMonitorCostDate(yesterdayStart)
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, "GET", "/api/channel_monitor/cost?days=3&date="+detailDate, nil,
@@ -532,8 +531,8 @@ func TestGetChannelMonitorCostOverviewIncludesAPIKeyOwnersForUserGrouping(t *tes
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Token{}))
 	require.NoError(t, db.Create(&[]model.User{
-		{Id: 801, Username: "alice", DisplayName: "Alice"},
-		{Id: 802, Username: "bob", DisplayName: "Bob"},
+		{Id: 801, Username: "alice", DisplayName: "Alice", AffCode: "channel-monitor-alice"},
+		{Id: 802, Username: "bob", DisplayName: "Bob", AffCode: "channel-monitor-bob"},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Token{
 		{Id: 811, UserId: 801, Name: "Alice 主 Key", Key: "token-alice-primary"},
@@ -572,6 +571,25 @@ func TestGetChannelMonitorCostOverviewIncludesAPIKeyOwnersForUserGrouping(t *tes
 	assert.Equal(t, 801, owners[812].UserId)
 	assert.Equal(t, 802, owners[821].UserId)
 	assert.Equal(t, "bob", owners[821].Username)
+}
+
+func TestGetChannelMonitorAPIKeyOwnersPrefersCurrentTokenName(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, db.Create(&model.Token{Id: 891, UserId: 1, Name: "当前 Key"}).Error)
+
+	owners, err := getChannelMonitorAPIKeyOwners(context.Background(), []int{891})
+	require.NoError(t, err)
+	assert.Equal(t, "当前 Key", owners[891].APIKeyName)
+}
+
+func TestGetChannelMonitorAPIKeyOwnersWithoutTokenTableReturnsEmpty(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.False(t, db.Migrator().HasTable(&model.Token{}))
+
+	owners, err := getChannelMonitorAPIKeyOwners(context.Background(), []int{892})
+	require.NoError(t, err)
+	assert.Empty(t, owners)
 }
 
 func TestGetChannelMonitorCostOverviewKeepsUnattributedChannelsVisible(t *testing.T) {
@@ -683,4 +701,12 @@ func TestGetChannelMonitorCostOverviewUsesServerPaginationForDates(t *testing.T)
 	assert.Equal(t, 4, lastPage.ItemPage)
 	require.Len(t, lastPage.Items, 1)
 	assert.Equal(t, firstPage.Items[0].StartAt-channelMonitorCostDaySeconds*7, lastPage.Items[0].StartAt)
+
+	// A hostile page number must be clamped before offset arithmetic; it
+	// should behave exactly like the final valid page rather than overflowing
+	// (page-1)*pageSize into a negative slice/SQL offset.
+	hugePage, err := getChannelMonitorCostOverviewPage(context.Background(), 10, now, math.MaxInt, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 4, hugePage.ItemPage)
+	assert.Equal(t, lastPage.Items, hugePage.Items)
 }

@@ -260,7 +260,7 @@ func (series ChannelSmartScheduleSampleSeries) AdaptiveHealthMetricsSinceWithMax
 			metric.TPSSampleCount++
 			metric.TPSTotal += *sample.TPS
 		}
-		if sample.FirstTokenMs == nil || *sample.FirstTokenMs <= 0 ||
+		if sample.FirstTokenMs == nil || *sample.FirstTokenMs < 0 ||
 			math.IsNaN(*sample.FirstTokenMs) || math.IsInf(*sample.FirstTokenMs, 0) {
 			continue
 		}
@@ -398,7 +398,7 @@ func channelSmartScheduleCalculateSampleMetrics(
 				}
 			}
 		}
-		if sample.Success && sample.FirstTokenMs != nil && *sample.FirstTokenMs > 0 &&
+		if sample.Success && sample.FirstTokenMs != nil && *sample.FirstTokenMs >= 0 &&
 			!math.IsNaN(*sample.FirstTokenMs) && !math.IsInf(*sample.FirstTokenMs, 0) {
 			metrics.FirstTokenSampleCount++
 			firstTokenTotal += *sample.FirstTokenMs
@@ -575,7 +575,7 @@ func SaveChannelSmartScheduleModelSample(
 			value := *result.DurationMs
 			sample.FailureDurationMs = &value
 		}
-		if result.Success && result.FirstTokenMs != nil && *result.FirstTokenMs > 0 &&
+		if result.Success && result.FirstTokenMs != nil && *result.FirstTokenMs >= 0 &&
 			!math.IsNaN(*result.FirstTokenMs) && !math.IsInf(*result.FirstTokenMs, 0) {
 			value := *result.FirstTokenMs
 			sample.FirstTokenMs = &value

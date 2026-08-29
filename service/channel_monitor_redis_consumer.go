@@ -24,8 +24,12 @@ const (
 	channelMonitorRedisAggregatorLeaseTTL          = 15 * time.Second
 	channelMonitorRedisAggregatorLeaseHeartbeat    = 5 * time.Second
 	channelMonitorRedisConsumerOperationTimeout    = 3 * time.Second
+	channelMonitorRedisConsumerHandlerTimeout      = 3 * time.Second
 	channelMonitorRedisConsumerRetryDelay          = time.Second
 	channelMonitorRedisConsumerMaxDeliveryAttempts = 20
+	channelMonitorRedisConsumerPendingRetryLimit   = 3
+	channelMonitorRedisConsumerWorkerCount         = 1
+	channelMonitorRedisConsumerMaxWorkerCount      = 32
 	channelMonitorRedisDeadLetterMaxLength         = 10_000
 	channelMonitorRedisDedupTTL                    = channelMonitorRedisReplayProtectionTTL
 	channelMonitorRedisStreamSequenceBits          = 20
@@ -137,9 +141,12 @@ type channelMonitorRedisConsumerConfig struct {
 	LeaseTTL            time.Duration
 	LeaseHeartbeat      time.Duration
 	OperationTimeout    time.Duration
+	HandlerTimeout      time.Duration
 	RetryDelay          time.Duration
 	DedupTTL            time.Duration
 	MaxDeliveryAttempts int
+	PendingRetryLimit   int
+	WorkerCount         int
 }
 
 type channelMonitorRedisParsedMessage struct {
@@ -168,10 +175,11 @@ func (retryErr *channelMonitorRedisHandlerRetryError) Unwrap() error { return re
 // ChannelMonitorRedisEventConsumer reliably consumes the versioned raw event
 // Stream. It does not install projections or replace the legacy local queue.
 type ChannelMonitorRedisEventConsumer struct {
-	client       *redis.Client
-	consumerName string
-	handler      ChannelMonitorRedisEventHandler
-	config       channelMonitorRedisConsumerConfig
+	client             *redis.Client
+	consumerName       string
+	handler            ChannelMonitorRedisEventHandler
+	config             channelMonitorRedisConsumerConfig
+	pendingRetryCycles atomic.Int64
 }
 
 type channelMonitorRedisGroupInfo struct {
@@ -241,6 +249,13 @@ func newChannelMonitorRedisEventConsumer(
 }
 
 func defaultChannelMonitorRedisConsumerConfig() channelMonitorRedisConsumerConfig {
+	handlerTimeoutMS := common.GetEnvOrDefault(
+		"CHANNEL_MONITOR_REDIS_HANDLER_TIMEOUT_MS",
+		int(channelMonitorRedisConsumerHandlerTimeout/time.Millisecond),
+	)
+	if handlerTimeoutMS <= 0 {
+		handlerTimeoutMS = int(channelMonitorRedisConsumerHandlerTimeout / time.Millisecond)
+	}
 	return channelMonitorRedisConsumerConfig{
 		BatchSize:           channelMonitorRedisConsumerBatchSize,
 		Block:               channelMonitorRedisConsumerBlock,
@@ -248,9 +263,18 @@ func defaultChannelMonitorRedisConsumerConfig() channelMonitorRedisConsumerConfi
 		LeaseTTL:            channelMonitorRedisAggregatorLeaseTTL,
 		LeaseHeartbeat:      channelMonitorRedisAggregatorLeaseHeartbeat,
 		OperationTimeout:    channelMonitorRedisConsumerOperationTimeout,
+		HandlerTimeout:      time.Duration(handlerTimeoutMS) * time.Millisecond,
 		RetryDelay:          channelMonitorRedisConsumerRetryDelay,
 		DedupTTL:            channelMonitorRedisDedupTTL,
 		MaxDeliveryAttempts: channelMonitorRedisConsumerMaxDeliveryAttempts,
+		PendingRetryLimit: common.GetEnvOrDefault(
+			"CHANNEL_MONITOR_REDIS_PENDING_RETRY_LIMIT",
+			channelMonitorRedisConsumerPendingRetryLimit,
+		),
+		WorkerCount: common.GetEnvOrDefault(
+			"CHANNEL_MONITOR_REDIS_CONSUMER_WORKERS",
+			channelMonitorRedisConsumerWorkerCount,
+		),
 	}
 }
 
@@ -277,11 +301,29 @@ func normalizeChannelMonitorRedisConsumerConfig(config channelMonitorRedisConsum
 	if config.OperationTimeout <= 0 {
 		config.OperationTimeout = defaults.OperationTimeout
 	}
+	if config.HandlerTimeout <= 0 {
+		config.HandlerTimeout = defaults.HandlerTimeout
+	}
+	if config.LeaseTTL > 0 && config.HandlerTimeout >= config.LeaseTTL {
+		config.HandlerTimeout = config.LeaseTTL / 2
+		if config.HandlerTimeout <= 0 {
+			config.HandlerTimeout = config.LeaseTTL
+		}
+	}
 	if config.RetryDelay <= 0 {
 		config.RetryDelay = defaults.RetryDelay
 	}
 	if config.MaxDeliveryAttempts <= 0 {
 		config.MaxDeliveryAttempts = defaults.MaxDeliveryAttempts
+	}
+	if config.PendingRetryLimit <= 0 {
+		config.PendingRetryLimit = defaults.PendingRetryLimit
+	}
+	if config.WorkerCount <= 0 {
+		config.WorkerCount = defaults.WorkerCount
+	}
+	if config.WorkerCount > channelMonitorRedisConsumerMaxWorkerCount {
+		config.WorkerCount = channelMonitorRedisConsumerMaxWorkerCount
 	}
 	minimumDedupTTL := config.ClaimMinIdle + config.LeaseTTL
 	if config.DedupTTL < minimumDedupTTL {
@@ -339,29 +381,41 @@ func (consumer *ChannelMonitorRedisEventConsumer) consumeOnce(ctx context.Contex
 	}
 	defer lease.release()
 
-	messages, err := consumer.claimPending(lease.ctx)
-	if err != nil {
-		return 0, true, err
-	}
-	if len(messages) == 0 {
-		messages, err = consumer.readOwnedPending(lease.ctx)
+	// Pending retries are normally preferred for at-least-once delivery, but a
+	// poison event must not hold the global lease forever while fresh traffic
+	// accumulates. After a bounded number of retry cycles, give new entries a
+	// turn; the pending event remains in the PEL for XAUTOCLAIM/retry.
+	forceNew := consumer.pendingRetryCycles.Load() >= int64(consumer.config.PendingRetryLimit)
+	fromPending := false
+	var messages []redis.XMessage
+	if !forceNew {
+		messages, err = consumer.claimPending(lease.ctx)
 		if err != nil {
 			return 0, true, err
 		}
-	}
-	if len(messages) == 0 {
-		hasPending, pendingErr := consumer.hasPending(lease.ctx)
-		if pendingErr != nil {
-			return 0, true, pendingErr
+		if len(messages) == 0 {
+			messages, err = consumer.readOwnedPending(lease.ctx)
+			if err != nil {
+				return 0, true, err
+			}
 		}
-		if hasPending {
-			timer := time.NewTimer(consumer.config.RetryDelay)
-			defer timer.Stop()
-			select {
-			case <-lease.ctx.Done():
-				return 0, true, lease.ctx.Err()
-			case <-timer.C:
-				return 0, true, nil
+		fromPending = len(messages) > 0
+	}
+	if len(messages) == 0 && !fromPending {
+		if !forceNew {
+			hasPending, pendingErr := consumer.hasPending(lease.ctx)
+			if pendingErr != nil {
+				return 0, true, pendingErr
+			}
+			if hasPending {
+				timer := time.NewTimer(consumer.config.RetryDelay)
+				defer timer.Stop()
+				select {
+				case <-lease.ctx.Done():
+					return 0, true, lease.ctx.Err()
+				case <-timer.C:
+					return 0, true, nil
+				}
 			}
 		}
 		messages, err = consumer.readNew(lease.ctx)
@@ -370,10 +424,27 @@ func (consumer *ChannelMonitorRedisEventConsumer) consumeOnce(ctx context.Contex
 		}
 	}
 	if len(messages) == 0 {
+		// A force-new turn is only a fairness escape hatch. If no fresh entry was
+		// available, reset the counter so the pending entry gets another chance
+		// on the next cycle instead of being starved indefinitely.
+		if forceNew {
+			consumer.pendingRetryCycles.Store(0)
+		}
 		return 0, true, nil
 	}
 	if err := consumer.processMessages(lease, messages); err != nil {
+		var handlerRetry *channelMonitorRedisHandlerRetryError
+		if fromPending && errors.As(err, &handlerRetry) {
+			consumer.pendingRetryCycles.Add(1)
+		} else if !fromPending {
+			consumer.pendingRetryCycles.Store(0)
+		}
 		return 0, true, err
+	}
+	if fromPending {
+		consumer.pendingRetryCycles.Store(0)
+	} else if forceNew {
+		consumer.pendingRetryCycles.Store(0)
 	}
 	return len(messages), true, nil
 }
@@ -711,14 +782,28 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 		channelMonitorRedisEffectOwnerContextKey{},
 		lease.token,
 	)
-	uniqueEvents := make([]model.ChannelMonitorEvent, 0, len(uniqueMessages))
-	for _, parsed := range uniqueMessages {
-		uniqueEvents = append(uniqueEvents, parsed.event)
+	handlerResults := consumer.handleEventPartitions(handlerCtx, uniqueMessages)
+	failedMessages := make([]channelMonitorRedisParsedMessage, 0)
+	successfulDedupKeys := make([]string, 0, len(uniqueMessages))
+	successfulMessageIDs := make([]string, 0, len(parsedMessages))
+	var handlerErr error
+	for _, result := range handlerResults {
+		if result.err != nil {
+			if handlerErr == nil {
+				handlerErr = result.err
+			}
+			failedMessages = append(failedMessages, result.messages...)
+			continue
+		}
+		for _, parsed := range result.messages {
+			successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
+			successfulMessageIDs = append(successfulMessageIDs, messageIDsByEventID[parsed.eventID]...)
+		}
 	}
-	handlerErr := consumer.handler.HandleChannelMonitorEvents(handlerCtx, uniqueEvents)
-	if handlerErr != nil {
-		pendingMessageIDs := make([]string, 0, len(parsedMessages))
-		for _, parsed := range uniqueMessages {
+	unresolved := false
+	if len(failedMessages) > 0 {
+		pendingMessageIDs := make([]string, 0, len(failedMessages))
+		for _, parsed := range failedMessages {
 			pendingMessageIDs = append(pendingMessageIDs, messageIDsByEventID[parsed.eventID]...)
 		}
 		failureCounts, countErr := consumer.incrementFailureCounts(lease, pendingMessageIDs)
@@ -737,66 +822,143 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 				break
 			}
 		}
-		if !readyForIsolation {
-			return &channelMonitorRedisHandlerRetryError{err: handlerErr}
-		}
-
-		successfulDedupKeys := make([]string, 0, len(uniqueMessages))
-		successfulMessageIDs := make([]string, 0, len(pendingMessageIDs))
 		quarantined := make([]channelMonitorRedisQuarantineItem, 0)
-		unresolved := false
-		for _, parsed := range uniqueMessages {
-			messageIDs := messageIDsByEventID[parsed.eventID]
-			attempts := int64(0)
-			for _, messageID := range messageIDs {
-				attempts = max(attempts, failureCounts[messageID])
-			}
-			if attempts < int64(consumer.config.MaxDeliveryAttempts) {
-				unresolved = true
-				continue
-			}
-			if err := consumer.handler.HandleChannelMonitorEvents(
-				handlerCtx, []model.ChannelMonitorEvent{parsed.event},
-			); err != nil {
+		unresolved = !readyForIsolation
+		if readyForIsolation {
+			for _, parsed := range failedMessages {
+				messageIDs := messageIDsByEventID[parsed.eventID]
+				attempts := int64(0)
 				for _, messageID := range messageIDs {
-					quarantined = append(quarantined, channelMonitorRedisQuarantineItem{
-						messageID: messageID, eventID: parsed.eventID, payload: parsed.payload,
-						reason: err.Error(), failureCount: attempts,
-					})
+					attempts = max(attempts, failureCounts[messageID])
 				}
-				continue
+				if attempts < int64(consumer.config.MaxDeliveryAttempts) {
+					unresolved = true
+					continue
+				}
+				if err := consumer.handleEventsWithDeadline(
+					handlerCtx, []model.ChannelMonitorEvent{parsed.event},
+				); err != nil {
+					for _, messageID := range messageIDs {
+						quarantined = append(quarantined, channelMonitorRedisQuarantineItem{
+							messageID: messageID, eventID: parsed.eventID, payload: parsed.payload,
+							reason: err.Error(), failureCount: attempts,
+						})
+					}
+					continue
+				}
+				successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
+				successfulMessageIDs = append(successfulMessageIDs, messageIDs...)
 			}
-			successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
-			successfulMessageIDs = append(successfulMessageIDs, messageIDs...)
-		}
-		if len(quarantined) > 0 {
-			if err := consumer.quarantineMessages(lease, quarantined); err != nil {
-				return consumer.retryPendingMessages(lease.ctx, len(quarantined), err)
+			if len(quarantined) > 0 {
+				if err := consumer.quarantineMessages(lease, quarantined); err != nil {
+					return consumer.retryPendingMessages(lease.ctx, len(quarantined), err)
+				}
 			}
 		}
-		if len(successfulMessageIDs) > 0 {
-			if err := consumer.finalizeMessages(lease, successfulDedupKeys, successfulMessageIDs); err != nil {
-				return consumer.retryPendingMessages(lease.ctx, len(successfulMessageIDs), err)
-			}
-		}
-		if unresolved {
-			return &channelMonitorRedisHandlerRetryError{err: handlerErr}
-		}
-		return consumer.completeMessageProcessing(lease.ctx)
 	}
 	if lease.lost.Load() {
 		return consumer.retryPendingMessages(lease.ctx, len(parsedMessages), ErrChannelMonitorRedisAggregatorLeaseLost)
 	}
-	successfulDedupKeys := make([]string, 0, len(uniqueMessages))
-	successfulMessageIDs := make([]string, 0, len(parsedMessages))
-	for _, parsed := range uniqueMessages {
-		successfulDedupKeys = append(successfulDedupKeys, parsed.dedupKey)
-		successfulMessageIDs = append(successfulMessageIDs, messageIDsByEventID[parsed.eventID]...)
+	if len(successfulMessageIDs) > 0 {
+		if err := consumer.finalizeMessages(lease, successfulDedupKeys, successfulMessageIDs); err != nil {
+			return consumer.retryPendingMessages(lease.ctx, len(successfulMessageIDs), err)
+		}
 	}
-	if err := consumer.finalizeMessages(lease, successfulDedupKeys, successfulMessageIDs); err != nil {
-		return consumer.retryPendingMessages(lease.ctx, len(successfulMessageIDs), err)
+	if unresolved {
+		return &channelMonitorRedisHandlerRetryError{err: handlerErr}
 	}
 	return consumer.completeMessageProcessing(lease.ctx)
+}
+
+type channelMonitorRedisHandlerPartitionResult struct {
+	messages []channelMonitorRedisParsedMessage
+	err      error
+}
+
+// handleEventPartitions runs at most WorkerCount handler calls concurrently.
+// Events sharing a channel are kept in one partition and retain stream order;
+// channels may make progress independently when a deployment opts into more
+// than one worker. The default remains one worker for strict legacy ordering.
+func (consumer *ChannelMonitorRedisEventConsumer) handleEventPartitions(
+	ctx context.Context,
+	messages []channelMonitorRedisParsedMessage,
+) []channelMonitorRedisHandlerPartitionResult {
+	if len(messages) == 0 {
+		return nil
+	}
+	workerCount := consumer.config.WorkerCount
+	if workerCount <= 1 {
+		workerCount = 1
+	}
+	if workerCount > len(messages) {
+		workerCount = len(messages)
+	}
+	partitions := make([][]channelMonitorRedisParsedMessage, workerCount)
+	partitionByKey := make(map[string]int, workerCount)
+	nextPartition := 0
+	for _, message := range messages {
+		key := channelMonitorRedisEventOrderKey(message.event)
+		partition, ok := partitionByKey[key]
+		if !ok {
+			partition = nextPartition % workerCount
+			nextPartition++
+			partitionByKey[key] = partition
+		}
+		partitions[partition] = append(partitions[partition], message)
+	}
+
+	results := make([]channelMonitorRedisHandlerPartitionResult, workerCount)
+	var waitGroup sync.WaitGroup
+	for index, partition := range partitions {
+		if len(partition) == 0 {
+			continue
+		}
+		waitGroup.Add(1)
+		go func(index int, partition []channelMonitorRedisParsedMessage) {
+			defer waitGroup.Done()
+			events := make([]model.ChannelMonitorEvent, 0, len(partition))
+			for _, parsed := range partition {
+				events = append(events, parsed.event)
+			}
+			results[index] = channelMonitorRedisHandlerPartitionResult{
+				messages: partition,
+				err:      consumer.handleEventsWithDeadline(ctx, events),
+			}
+		}(index, partition)
+	}
+	waitGroup.Wait()
+	return results
+}
+
+func channelMonitorRedisEventOrderKey(event model.ChannelMonitorEvent) string {
+	if event.ChannelId <= 0 {
+		return "event:" + event.EventId
+	}
+	return "channel:" + strconv.FormatInt(int64(event.ChannelId), 10)
+}
+
+// handleEventsWithDeadline gives every handler invocation a fresh deadline.
+// In particular, an expired batch attempt must not cause the per-message
+// poison-isolation pass to inherit an already-canceled context.
+func (consumer *ChannelMonitorRedisEventConsumer) handleEventsWithDeadline(
+	ctx context.Context,
+	events []model.ChannelMonitorEvent,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	handlerCtx, cancel := context.WithTimeout(ctx, consumer.config.HandlerTimeout)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- consumer.handler.HandleChannelMonitorEvents(handlerCtx, events)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-handlerCtx.Done():
+		return handlerCtx.Err()
+	}
 }
 
 func (consumer *ChannelMonitorRedisEventConsumer) completeMessageProcessing(ctx context.Context) error {

@@ -1023,6 +1023,37 @@ func TestChannelDailyCostBatcherIsBoundedAndKeepsAggregatingExistingKeys(t *test
 	assert.Equal(t, int64(5), written[0].ProbeCostNanoCNY)
 }
 
+func TestChannelDailyCostLegacyBatcherStripsEventIDBeforeDirectWrite(t *testing.T) {
+	db := setupChannelDailyCostServiceTest(t)
+	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
+		MaxPending:    4,
+		MaxBatchSize:  4,
+		FlushInterval: time.Hour,
+		DBTimeout:     time.Second,
+		MaxAttempts:   1,
+		AutoFlush:     false,
+	}, nil)
+	t.Cleanup(func() {
+		resetChannelDailyCostBatcherForTest(defaultChannelDailyCostBatcherConfig(), nil)
+	})
+
+	when := time.Date(2026, 7, 22, 4, 0, 0, 0, time.UTC).Unix()
+	delta := model.ChannelDailyCostDelta{
+		EventId:      "legacy-mode-event",
+		ChannelId:    29,
+		OccurredAt:   when,
+		CostNanoCNY:  125,
+		SettledDelta: 1,
+	}
+	require.True(t, enqueueChannelDailyCost(delta))
+	require.NoError(t, flushChannelDailyCostEventsForTest())
+
+	var total model.ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ?", delta.ChannelId).First(&total).Error)
+	assert.Equal(t, delta.CostNanoCNY, total.CostNanoCNY)
+	assert.Equal(t, delta.SettledDelta, total.SettledCount)
+}
+
 func TestGetChannelDailyCostPendingCountReadsInMemoryQueue(t *testing.T) {
 	resetChannelDailyCostBatcherForTest(channelDailyCostBatcherConfig{
 		MaxPending:    4,

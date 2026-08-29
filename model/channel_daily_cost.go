@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -313,7 +312,7 @@ func GetChannelDailyCostsForChannel(ctx context.Context, startTimestamp int64, e
 // the requested range. The range should be limited to the requested page by
 // the caller when displaying paginated date details.
 func GetChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostDayTotal, error) {
-	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, 0)
+	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
 }
 
 // GetChannelDailyCostDayTotalsPage applies a database-side limit to an
@@ -321,39 +320,121 @@ func GetChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, end
 // range so days without a recorded row can be filled by the presentation
 // layer without changing the page shape.
 func GetChannelDailyCostDayTotalsPage(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int) ([]ChannelDailyCostDayTotal, error) {
-	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, pageSize)
+	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, pageSize, 0)
 }
 
-func getChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int) ([]ChannelDailyCostDayTotal, error) {
+// GetChannelDailyCostDayTotalsPageWithOffset is useful to callers that page
+// over rows that are guaranteed to exist for every calendar day. The monitor
+// controller uses a bounded calendar window (so missing days can be filled
+// with zeroes) and therefore leaves offset at zero.
+func GetChannelDailyCostDayTotalsPageWithOffset(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int, offset int) ([]ChannelDailyCostDayTotal, error) {
+	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, pageSize, offset)
+}
+
+// ChannelDailyCostChannelTotal is a database-aggregated total for one
+// channel in a bounded range. Keeping this aggregation in SQL avoids loading
+// every daily row when the monitor needs channel-level detail.
+type ChannelDailyCostChannelTotal struct {
+	ChannelId                 int   `gorm:"column:channel_id"`
+	CostNanoCNY               int64 `gorm:"column:cost_nano_cny"`
+	ProbeCostNanoCNY          int64 `gorm:"column:probe_cost_nano_cny"`
+	GroupProbeCostNanoCNY     int64 `gorm:"column:group_probe_cost_nano_cny"`
+	ModelDetectionCostNanoCNY int64 `gorm:"column:model_detection_cost_nano_cny"`
+	SettledCount              int64 `gorm:"column:settled_count"`
+	UnresolvedCount           int64 `gorm:"column:unresolved_count"`
+	// Detail* fields are populated only when a detail day is requested. They
+	// let the controller derive the selected-day channel rows from the same
+	// grouped query that supplies range totals and coverage.
+	DetailCostNanoCNY               int64 `gorm:"column:detail_cost_nano_cny"`
+	DetailProbeCostNanoCNY          int64 `gorm:"column:detail_probe_cost_nano_cny"`
+	DetailGroupProbeCostNanoCNY     int64 `gorm:"column:detail_group_probe_cost_nano_cny"`
+	DetailModelDetectionCostNanoCNY int64 `gorm:"column:detail_model_detection_cost_nano_cny"`
+	DetailSettledCount              int64 `gorm:"column:detail_settled_count"`
+	DetailUnresolvedCount           int64 `gorm:"column:detail_unresolved_count"`
+}
+
+// GetChannelDailyCostChannelTotals aggregates daily rows in the database and
+// returns one row per channel. The optional channelId narrows the range to a
+// single channel while retaining the same SQL shape on all supported
+// dialects.
+func GetChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostChannelTotal, error) {
+	return getChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId, 0)
+}
+
+// GetChannelDailyCostChannelTotalsWithDetail aggregates the complete range
+// and, when detailDayStart is positive, the selected calendar day in one SQL
+// GROUP BY query. Keeping both views together avoids scanning an overlapping
+// range twice for a detail request.
+func GetChannelDailyCostChannelTotalsWithDetail(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
+	return getChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId, detailDayStart)
+}
+
+func getChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
+	if startTimestamp >= endTimestamp {
+		return []ChannelDailyCostChannelTotal{}, nil
+	}
+	selectColumns := "channel_id, SUM(cost_nano_cny) AS cost_nano_cny, SUM(probe_cost_nano_cny) AS probe_cost_nano_cny, SUM(group_probe_cost_nano_cny) AS group_probe_cost_nano_cny, SUM(model_detection_cost_nano_cny) AS model_detection_cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count"
+	// Keep the CASE expressions parameterized. CASE/SUM is supported by
+	// SQLite, MySQL, and PostgreSQL without dialect-specific date functions.
+	args := make([]interface{}, 0, 6)
+	if detailDayStart > 0 {
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN cost_nano_cny ELSE 0 END) AS detail_cost_nano_cny"
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN probe_cost_nano_cny ELSE 0 END) AS detail_probe_cost_nano_cny"
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN group_probe_cost_nano_cny ELSE 0 END) AS detail_group_probe_cost_nano_cny"
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN model_detection_cost_nano_cny ELSE 0 END) AS detail_model_detection_cost_nano_cny"
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN settled_count ELSE 0 END) AS detail_settled_count"
+		selectColumns += ", SUM(CASE WHEN day_start = ? THEN unresolved_count ELSE 0 END) AS detail_unresolved_count"
+		for i := 0; i < 6; i++ {
+			args = append(args, detailDayStart)
+		}
+	}
+	query := DB.WithContext(ctx).Model(&ChannelDailyCost{}).
+		Select(selectColumns, args...).
+		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
+		Group("channel_id").Order("channel_id ASC")
+	if channelId > 0 {
+		query = query.Where("channel_id = ?", channelId)
+	}
+	var totals []ChannelDailyCostChannelTotal
+	if err := query.Scan(&totals).Error; err != nil {
+		return nil, fmt.Errorf("渠道日成本渠道汇总超过 int64 范围或查询失败: %w", err)
+	}
+	for _, total := range totals {
+		if total.CostNanoCNY < 0 || total.ProbeCostNanoCNY < 0 || total.GroupProbeCostNanoCNY < 0 || total.ModelDetectionCostNanoCNY < 0 || total.SettledCount < 0 || total.UnresolvedCount < 0 {
+			return nil, errors.New("渠道日成本汇总包含负数")
+		}
+		if detailDayStart > 0 && (total.DetailCostNanoCNY < 0 || total.DetailProbeCostNanoCNY < 0 || total.DetailGroupProbeCostNanoCNY < 0 || total.DetailModelDetectionCostNanoCNY < 0 || total.DetailSettledCount < 0 || total.DetailUnresolvedCount < 0) {
+			return nil, errors.New("渠道日成本详情汇总包含负数")
+		}
+	}
+	return totals, nil
+}
+
+func getChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int, offset int) ([]ChannelDailyCostDayTotal, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyCostDayTotal{}, nil
 	}
-	rows, err := getChannelDailyCosts(ctx, startTimestamp, endTimestamp, channelId)
-	if err != nil {
-		return nil, err
+	query := DB.WithContext(ctx).Model(&ChannelDailyCost{}).
+		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(probe_cost_nano_cny) AS probe_cost_nano_cny, SUM(group_probe_cost_nano_cny) AS group_probe_cost_nano_cny, SUM(model_detection_cost_nano_cny) AS model_detection_cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
+		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
+		Group("day_start").Order("day_start ASC")
+	if channelId > 0 {
+		query = query.Where("channel_id = ?", channelId)
 	}
-	totalsByDay := make(map[int64]*ChannelDailyCostDayTotal)
-	for _, row := range rows {
-		total := totalsByDay[row.DayStart]
-		if total == nil {
-			total = &ChannelDailyCostDayTotal{DayStart: row.DayStart}
-			totalsByDay[row.DayStart] = total
+	if pageSize > 0 {
+		query = query.Limit(pageSize)
+	}
+	if offset > 0 {
+		query = query.Offset(offset)
+	}
+	var totals []ChannelDailyCostDayTotal
+	if err := query.Scan(&totals).Error; err != nil {
+		return nil, fmt.Errorf("渠道日成本日汇总超过 int64 范围或查询失败: %w", err)
+	}
+	for _, total := range totals {
+		if total.CostNanoCNY < 0 || total.ProbeCostNanoCNY < 0 || total.GroupProbeCostNanoCNY < 0 || total.ModelDetectionCostNanoCNY < 0 || total.SettledCount < 0 || total.UnresolvedCount < 0 {
+			return nil, errors.New("渠道日成本汇总包含负数")
 		}
-		if err := addChannelDailyCostTotal(total, row); err != nil {
-			return nil, err
-		}
-	}
-	dayStarts := make([]int64, 0, len(totalsByDay))
-	for dayStart := range totalsByDay {
-		dayStarts = append(dayStarts, dayStart)
-	}
-	sort.Slice(dayStarts, func(i, j int) bool { return dayStarts[i] < dayStarts[j] })
-	if pageSize > 0 && len(dayStarts) > pageSize {
-		dayStarts = dayStarts[:pageSize]
-	}
-	totals := make([]ChannelDailyCostDayTotal, 0, len(dayStarts))
-	for _, dayStart := range dayStarts {
-		totals = append(totals, *totalsByDay[dayStart])
 	}
 	return totals, nil
 }

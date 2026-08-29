@@ -148,6 +148,45 @@ func TestGetChannelDailyCostDayTotalsAggregatesOnlyRequestedRange(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, pageTotals, 1)
 	assert.Equal(t, dayOne, pageTotals[0].DayStart)
+	offsetTotals, err := GetChannelDailyCostDayTotalsPageWithOffset(context.Background(), dayOne, dayThree, 0, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, offsetTotals, 1)
+	assert.Equal(t, dayTwo, offsetTotals[0].DayStart)
+}
+
+func TestGetChannelDailyCostChannelTotalsWithDetailReusesRangeAggregation(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "daily-cost-channel-totals.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	DB = db
+	require.NoError(t, db.AutoMigrate(&ChannelDailyCost{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		require.NoError(t, sqlDB.Close())
+	})
+
+	dayOne := time.Date(2026, 7, 20, 16, 0, 0, 0, time.UTC).Unix()
+	dayTwo := dayOne + channelDailyCostDaySeconds
+	require.NoError(t, AddChannelDailyCostWithProbe(context.Background(), 1, dayOne, 100, 20, 1, 0))
+	require.NoError(t, AddChannelDailyCostWithModelDetection(context.Background(), db, 1, dayTwo, 70, 30, 1, 0))
+	require.NoError(t, AddChannelDailyCost(context.Background(), 2, dayOne, 50, 1, 1))
+
+	totals, err := GetChannelDailyCostChannelTotalsWithDetail(
+		context.Background(), dayOne, dayTwo+channelDailyCostDaySeconds, 0, dayTwo,
+	)
+	require.NoError(t, err)
+	require.Len(t, totals, 2)
+	assert.Equal(t, 1, totals[0].ChannelId)
+	assert.Equal(t, int64(170), totals[0].CostNanoCNY)
+	assert.Equal(t, int64(70), totals[0].DetailCostNanoCNY)
+	assert.Equal(t, int64(0), totals[0].DetailProbeCostNanoCNY)
+	assert.Equal(t, int64(30), totals[0].DetailModelDetectionCostNanoCNY)
+	assert.Equal(t, int64(1), totals[0].DetailSettledCount)
+	assert.Equal(t, int64(0), totals[0].DetailUnresolvedCount)
+	assert.Equal(t, 2, totals[1].ChannelId)
+	assert.Zero(t, totals[1].DetailCostNanoCNY)
 }
 
 func TestChannelDailyCostRejectsCumulativeOverflowWithoutChangingStoredTotal(t *testing.T) {

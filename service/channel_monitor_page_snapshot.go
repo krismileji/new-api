@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,8 +24,16 @@ const (
 	channelMonitorPageSnapshotLeaseTTL      = 30 * time.Second
 	channelMonitorPageSnapshotPollInterval  = 25 * time.Millisecond
 	channelMonitorPageSnapshotMaxLocalItems = 256
+	// Keep the process-local outage fallback bounded by bytes as well as entry
+	// count. A single valid response may be as large as MaxPayload, so the
+	// count-only limit could otherwise retain roughly 4 GiB per process.
+	channelMonitorPageSnapshotMaxLocalBytes = 128 << 20
 	channelMonitorPageSnapshotMaxPayload    = 16 << 20
 	channelMonitorPageSnapshotMaxFutureSkew = 5 * time.Second
+	// Page builders can fan out to several database and Redis reads. Keep the
+	// process-wide rebuild concurrency bounded even when management refresh
+	// fans out across several identities at once.
+	channelMonitorPageSnapshotMaxConcurrentBuilds = 2
 
 	channelMonitorPageSnapshotPrefix = ChannelMonitorRedisKeyPrefix + ":page_snapshot:"
 )
@@ -37,6 +46,29 @@ var (
 		"渠道监控页面响应不可缓存",
 	)
 )
+
+var channelMonitorPageSnapshotBuildSemaphore = make(
+	chan struct{}, channelMonitorPageSnapshotMaxConcurrentBuilds,
+)
+
+func acquireChannelMonitorPageSnapshotBuild(ctx context.Context) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case channelMonitorPageSnapshotBuildSemaphore <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func releaseChannelMonitorPageSnapshotBuild() {
+	select {
+	case <-channelMonitorPageSnapshotBuildSemaphore:
+	default:
+	}
+}
 
 type ChannelMonitorPageSnapshotState string
 
@@ -82,8 +114,9 @@ type channelMonitorPageSnapshotStore struct {
 	refresh singleflight.Group
 	pending sync.Map
 
-	localMu sync.RWMutex
-	local   map[string]ChannelMonitorPageSnapshot
+	localMu    sync.RWMutex
+	local      map[string]ChannelMonitorPageSnapshot
+	localBytes int64
 }
 
 var defaultChannelMonitorPageSnapshotStore = &channelMonitorPageSnapshotStore{
@@ -139,7 +172,7 @@ func RequestChannelMonitorPageSnapshotRefresh(
 	query ChannelMonitorPageSnapshotQuery,
 	builder ChannelMonitorPageSnapshotBuilder,
 ) bool {
-	if !common.RedisEnabled || builder == nil {
+	if builder == nil {
 		return false
 	}
 	return defaultChannelMonitorPageSnapshotStore.requestRefresh(query, builder)
@@ -163,9 +196,32 @@ func (store *channelMonitorPageSnapshotStore) requestRefresh(
 		defer store.pending.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), channelMonitorPageSnapshotLeaseTTL)
 		defer cancel()
-		_, _ = store.refreshSnapshot(ctx, query, builder)
+		if !common.RedisEnabled || store.writeClient() == nil {
+			_, _ = store.rebuildLocal(ctx, query, builder)
+			return
+		}
+		if _, err := store.refreshSnapshot(ctx, query, builder); err != nil {
+			// A stale local copy remains useful while Redis is fenced, disabled,
+			// or unavailable. Build it locally as a best-effort fallback so a
+			// transient Redis error does not leave the process stuck at 503.
+			if isChannelMonitorPageSnapshotRedisUnavailable(err) {
+				_, _ = store.rebuildLocal(ctx, query, builder)
+			}
+		}
 	}()
 	return true
+}
+
+func isChannelMonitorPageSnapshotRedisUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrChannelMonitorPageSnapshotUnavailable) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func (store *channelMonitorPageSnapshotStore) load(
@@ -276,6 +332,75 @@ func (store *channelMonitorPageSnapshotStore) refreshSnapshotForce(
 	return store.refreshSnapshotWithMode(ctx, query, builder, true)
 }
 
+// rebuildLocal performs the same bounded, sanitized build as a Redis-backed
+// refresh but retains the complete response only in this process. It is used
+// while Redis is disabled or temporarily unavailable so an existing stale
+// response can continue serving and can still be refreshed asynchronously.
+func (store *channelMonitorPageSnapshotStore) rebuildLocal(
+	ctx context.Context,
+	query ChannelMonitorPageSnapshotQuery,
+	builder ChannelMonitorPageSnapshotBuilder,
+) (ChannelMonitorPageSnapshot, error) {
+	if builder == nil {
+		return ChannelMonitorPageSnapshot{}, ErrChannelMonitorPageSnapshotNotCacheable
+	}
+	key, err := ChannelMonitorPageSnapshotKey(query)
+	if err != nil {
+		return ChannelMonitorPageSnapshot{}, err
+	}
+	resultChannel := store.refresh.DoChan(key+":local", func() (any, error) {
+		if !acquireChannelMonitorPageSnapshotBuild(ctx) {
+			return ChannelMonitorPageSnapshot{}, ErrChannelMonitorPageSnapshotRefreshing
+		}
+		snapshot, buildErr := func() (ChannelMonitorPageSnapshot, error) {
+			defer releaseChannelMonitorPageSnapshotBuild()
+			return builder(ctx)
+		}()
+		if buildErr != nil {
+			return snapshot, buildErr
+		}
+		if snapshot.StatusCode < 200 || snapshot.StatusCode >= 300 ||
+			len(snapshot.Payload) == 0 || len(snapshot.Payload) > channelMonitorPageSnapshotMaxPayload {
+			return snapshot, ErrChannelMonitorPageSnapshotNotCacheable
+		}
+		now := time.Now()
+		if (snapshot.GeneratedAt > 0 &&
+			time.Unix(snapshot.GeneratedAt, 0).After(now.Add(channelMonitorPageSnapshotMaxFutureSkew))) ||
+			(snapshot.GeneratedAtUnixMilli > 0 &&
+				time.UnixMilli(snapshot.GeneratedAtUnixMilli).After(now.Add(channelMonitorPageSnapshotMaxFutureSkew))) ||
+			snapshot.DataCutoffAt < 0 ||
+			(snapshot.DataCutoffAt > 0 &&
+				time.Unix(snapshot.DataCutoffAt, 0).After(now.Add(channelMonitorPageSnapshotMaxFutureSkew))) {
+			return snapshot, ErrChannelMonitorPageSnapshotNotCacheable
+		}
+		identityHash, identityErr := channelMonitorPageSnapshotIdentityHash(query)
+		if identityErr != nil {
+			return ChannelMonitorPageSnapshot{}, identityErr
+		}
+		snapshot.SchemaVersion = channelMonitorPageSnapshotSchemaVersion
+		snapshot.IdentityHash = identityHash
+		if snapshot.GeneratedAt <= 0 {
+			snapshot.GeneratedAt = now.Unix()
+		}
+		snapshot.GeneratedAtUnixMilli = now.UnixMilli()
+		if snapshot.ContentType == "" {
+			snapshot.ContentType = "application/json; charset=utf-8"
+		}
+		store.rememberLocalAllowEqualGeneration(key, snapshot)
+		return snapshot, nil
+	})
+	select {
+	case result := <-resultChannel:
+		snapshot, ok := result.Val.(ChannelMonitorPageSnapshot)
+		if !ok {
+			return ChannelMonitorPageSnapshot{}, result.Err
+		}
+		return snapshot, result.Err
+	case <-ctx.Done():
+		return ChannelMonitorPageSnapshot{}, ErrChannelMonitorPageSnapshotRefreshing
+	}
+}
+
 func (store *channelMonitorPageSnapshotStore) refreshSnapshotWithMode(
 	ctx context.Context,
 	query ChannelMonitorPageSnapshotQuery,
@@ -302,7 +427,7 @@ func (store *channelMonitorPageSnapshotStore) refreshSnapshotWithMode(
 		}
 		token, acquired, acquireErr := store.acquireLease(ctx, key)
 		if acquireErr != nil {
-			return ChannelMonitorPageSnapshot{}, acquireErr
+			return ChannelMonitorPageSnapshot{}, fmt.Errorf("%w: %v", ErrChannelMonitorPageSnapshotUnavailable, acquireErr)
 		}
 		if !acquired {
 			return store.waitForSnapshot(ctx, query, time.Now(), builder)
@@ -340,7 +465,13 @@ func (store *channelMonitorPageSnapshotStore) rebuildWithLeaseWithMode(
 	force bool,
 ) (ChannelMonitorPageSnapshot, error) {
 	defer store.releaseLease(key, token)
-	snapshot, err := builder(ctx)
+	if !acquireChannelMonitorPageSnapshotBuild(ctx) {
+		return ChannelMonitorPageSnapshot{}, ErrChannelMonitorPageSnapshotRefreshing
+	}
+	snapshot, err := func() (ChannelMonitorPageSnapshot, error) {
+		defer releaseChannelMonitorPageSnapshotBuild()
+		return builder(ctx)
+	}()
 	if err != nil {
 		return snapshot, err
 	}
@@ -435,9 +566,10 @@ local old_data_cutoff = redis.call("HGET", KEYS[2], "data_cutoff_at") or "0"
 local same_revision = not less(ARGV[3], old_revision) and not less(old_revision, ARGV[3])
 local same_watermark = not less(ARGV[4], old_watermark) and not less(old_watermark, ARGV[4])
 local same_data_cutoff = not less(ARGV[6], old_data_cutoff) and not less(old_data_cutoff, ARGV[6])
-if ARGV[8] ~= "1" and (less(ARGV[3], old_revision) or less(ARGV[4], old_watermark) or
+local force_publish = ARGV[8] == "1"
+if less(ARGV[3], old_revision) or less(ARGV[4], old_watermark) or
    less(ARGV[5], old_generated) or less(ARGV[6], old_data_cutoff) or
-   (same_revision and same_watermark and same_data_cutoff and not less(old_generated, ARGV[5]))) then
+   (same_revision and same_watermark and same_data_cutoff and not less(old_generated, ARGV[5]) and not force_publish) then
   return 0
 end
 redis.call("SET", KEYS[1], ARGV[2], "PX", ARGV[7])
@@ -465,7 +597,7 @@ return 1
 		return false, err
 	}
 	if result == 1 {
-		store.rememberLocal(key, snapshot)
+		store.rememberLocalWithMode(key, snapshot, force)
 		return true, nil
 	}
 	return false, nil
@@ -519,8 +651,37 @@ func (store *channelMonitorPageSnapshotStore) rememberLocal(
 	key string,
 	snapshot ChannelMonitorPageSnapshot,
 ) {
+	store.rememberLocalWithMode(key, snapshot, false)
+}
+
+func (store *channelMonitorPageSnapshotStore) rememberLocalAllowEqualGeneration(
+	key string,
+	snapshot ChannelMonitorPageSnapshot,
+) {
+	store.rememberLocalWithOptions(key, snapshot, false, true)
+}
+
+func (store *channelMonitorPageSnapshotStore) rememberLocalWithMode(
+	key string,
+	snapshot ChannelMonitorPageSnapshot,
+	force bool,
+) {
+	store.rememberLocalWithOptions(key, snapshot, force, false)
+}
+
+func (store *channelMonitorPageSnapshotStore) rememberLocalWithOptions(
+	key string,
+	snapshot ChannelMonitorPageSnapshot,
+	force bool,
+	allowEqualGeneration bool,
+) {
+	if int64(len(snapshot.Payload)) > channelMonitorPageSnapshotMaxLocalBytes {
+		return
+	}
 	snapshot.Payload = append([]byte(nil), snapshot.Payload...)
+	payloadBytes := int64(len(snapshot.Payload))
 	store.localMu.Lock()
+	defer store.localMu.Unlock()
 	if store.local == nil {
 		store.local = make(map[string]ChannelMonitorPageSnapshot)
 	}
@@ -528,10 +689,24 @@ func (store *channelMonitorPageSnapshotStore) rememberLocal(
 	for localKey, localSnapshot := range store.local {
 		if localSnapshot.GeneratedAtUnixMilli <= cutoff {
 			delete(store.local, localKey)
+			store.localBytes -= int64(len(localSnapshot.Payload))
 		}
 	}
-	if _, exists := store.local[key]; !exists &&
-		len(store.local) >= channelMonitorPageSnapshotMaxLocalItems {
+	current, exists := store.local[key]
+	if exists && !((force && channelMonitorPageSnapshotNotOlder(snapshot, current)) ||
+		(allowEqualGeneration && channelMonitorPageSnapshotNotOlder(snapshot, current)) ||
+		channelMonitorPageSnapshotNewer(snapshot, current)) {
+		if store.localBytes < 0 {
+			store.localBytes = 0
+		}
+		return
+	}
+	if exists {
+		delete(store.local, key)
+		store.localBytes -= int64(len(current.Payload))
+	}
+	for len(store.local) >= channelMonitorPageSnapshotMaxLocalItems ||
+		store.localBytes+payloadBytes > channelMonitorPageSnapshotMaxLocalBytes {
 		var oldestKey string
 		var oldestGeneratedAt int64
 		for localKey, localSnapshot := range store.local {
@@ -540,13 +715,18 @@ func (store *channelMonitorPageSnapshotStore) rememberLocal(
 				oldestGeneratedAt = localSnapshot.GeneratedAtUnixMilli
 			}
 		}
+		if oldestKey == "" {
+			break
+		}
+		oldestSnapshot := store.local[oldestKey]
 		delete(store.local, oldestKey)
+		store.localBytes -= int64(len(oldestSnapshot.Payload))
 	}
-	current, exists := store.local[key]
-	if !exists || channelMonitorPageSnapshotNewer(snapshot, current) {
-		store.local[key] = snapshot
+	if store.localBytes < 0 {
+		store.localBytes = 0
 	}
-	store.localMu.Unlock()
+	store.local[key] = snapshot
+	store.localBytes += payloadBytes
 }
 
 func (store *channelMonitorPageSnapshotStore) loadLocal(
@@ -576,10 +756,7 @@ func channelMonitorPageSnapshotNewer(
 	candidate ChannelMonitorPageSnapshot,
 	current ChannelMonitorPageSnapshot,
 ) bool {
-	if candidate.Revision < current.Revision ||
-		candidate.EventWatermark < current.EventWatermark ||
-		candidate.DataCutoffAt < current.DataCutoffAt ||
-		candidate.GeneratedAtUnixMilli < current.GeneratedAtUnixMilli {
+	if !channelMonitorPageSnapshotNotOlder(candidate, current) {
 		return false
 	}
 	if candidate.Revision == current.Revision &&
@@ -588,6 +765,16 @@ func channelMonitorPageSnapshotNewer(
 		return candidate.GeneratedAtUnixMilli > current.GeneratedAtUnixMilli
 	}
 	return true
+}
+
+func channelMonitorPageSnapshotNotOlder(
+	candidate ChannelMonitorPageSnapshot,
+	current ChannelMonitorPageSnapshot,
+) bool {
+	return !(candidate.Revision < current.Revision ||
+		candidate.EventWatermark < current.EventWatermark ||
+		candidate.DataCutoffAt < current.DataCutoffAt ||
+		candidate.GeneratedAtUnixMilli < current.GeneratedAtUnixMilli)
 }
 
 func (store *channelMonitorPageSnapshotStore) waitForSnapshot(

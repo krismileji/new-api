@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -328,6 +331,37 @@ func TestChannelMonitorRedisSharedProjectionRejectsInvalidBatchBeforeWriting(t *
 	assert.Zero(t, client.Exists(context.Background(), ChannelMonitorRedisCostEventStateKey("business:valid")).Val())
 }
 
+func TestChannelMonitorRedisSharedProjectionRejectsCorruptHashAtomically(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	event := newChannelMonitorRedisSharedProjectionTestEvent("corrupt-hash", 1_750_000_000)
+	minuteKey := ChannelMonitorRedisDashboardMinuteKey(event.OccurredAt - event.OccurredAt%60)
+	require.NoError(t, client.HSet(context.Background(), minuteKey,
+		channelMonitorRedisSharedScopeGlobal+":"+channelMonitorRedisSharedMetricEventCount,
+		"not-a-number",
+	).Err())
+
+	err := projection.WriteChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "数值无效")
+	assert.Equal(t, int64(0), client.Exists(context.Background(), ChannelMonitorRedisSharedEventKey(event.EventId)).Val())
+	values, getErr := client.HGetAll(context.Background(), minuteKey).Result()
+	require.NoError(t, getErr)
+	assert.Equal(t, "not-a-number", values[channelMonitorRedisSharedScopeGlobal+":"+channelMonitorRedisSharedMetricEventCount])
+	assert.NotContains(t, values, channelMonitorRedisSharedScopeChannel+":7:"+channelMonitorRedisSharedMetricEventCount)
+}
+
+func TestChannelMonitorRedisSharedProjectionRetryBackoffIsBoundedAndReplayable(t *testing.T) {
+	first := channelMonitorRedisSharedRetryBackoff(1)
+	second := channelMonitorRedisSharedRetryBackoff(2)
+	third := channelMonitorRedisSharedRetryBackoff(3)
+	assert.Greater(t, second, first)
+	assert.Greater(t, third, second)
+	assert.LessOrEqual(t, channelMonitorRedisSharedRetryBackoff(channelMonitorRedisSharedWriteRetries), 251*time.Millisecond)
+	err := &channelMonitorRedisSharedProjectionRetryError{Attempts: channelMonitorRedisSharedWriteRetries}
+	assert.True(t, errors.Is(err, ErrChannelMonitorRedisSharedProjectionReplayable))
+}
+
 func TestChannelMonitorRedisSharedProjectionBuildsCompositeScopesAndWindowMetadata(t *testing.T) {
 	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
 	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
@@ -389,6 +423,126 @@ func TestChannelMonitorRedisSharedProjectionBuildsCompositeScopesAndWindowMetada
 	assert.Equal(t, base+55, view.DataCutoffAt)
 	assert.Equal(t, int64(1_800_000_000), view.ProcessedAt)
 	assert.Equal(t, uint64(12), view.EventWatermark)
+}
+
+func TestChannelMonitorRedisSharedProjectionHonorsReadLimits(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	limits := defaultChannelMonitorRedisSharedProjectionLimits()
+	limits.MaxQueryMinutes = 2
+	limits.MaxHashFields = 1
+	projection.SetLimits(limits)
+
+	occurredAt := int64(1_750_000_000)
+	event := newChannelMonitorRedisSharedProjectionTestEvent("read-limit", occurredAt)
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+
+	_, err := projection.Query(context.Background(), occurredAt-10*60, occurredAt+1)
+	var limitErr *ChannelMonitorRedisSharedProjectionLimitError
+	require.ErrorAs(t, err, &limitErr)
+	assert.ErrorIs(t, err, ErrChannelMonitorRedisSharedProjectionLimitExceeded)
+	assert.Equal(t, "hash_fields", limitErr.Resource)
+
+	projection.SetLimits(func() ChannelMonitorRedisSharedProjectionLimits {
+		value := defaultChannelMonitorRedisSharedProjectionLimits()
+		value.MaxQueryMinutes = 2
+		return value
+	}())
+	view, err := projection.Query(context.Background(), occurredAt-10*60, occurredAt+1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2*60), view.WindowEnd-view.WindowStart)
+}
+
+func TestChannelMonitorRedisSharedProjectionQueryWindowBoundsCannotOverflow(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	projection.now = func() time.Time { return time.Unix(1_750_000_000, 0) }
+	maxWindowSeconds := int64(channelMonitorRedisSharedDefaultMaxQueryMinutes) * 60
+
+	for _, bounds := range [][2]int64{
+		{math.MaxInt64, 1},
+		{1, math.MaxInt64},
+	} {
+		startMinute, endMinute, _, _, _ := projection.queryWindow(bounds[0], bounds[1])
+		assert.Greater(t, endMinute, startMinute)
+		assert.LessOrEqual(t, endMinute-startMinute, maxWindowSeconds)
+		assert.Equal(t, int64(0), startMinute%60)
+		assert.Equal(t, int64(0), endMinute%60)
+	}
+}
+
+func TestChannelMonitorRedisSharedProjectionRejectsDimensionExpansion(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	limits := defaultChannelMonitorRedisSharedProjectionLimits()
+	limits.MaxDimensionEntries = 1
+	projection.SetLimits(limits)
+	occurredAt := int64(1_750_000_000)
+	first := newChannelMonitorRedisSharedProjectionTestEvent("dimension-1", occurredAt)
+	second := first
+	second.EventId = "dimension-2"
+	second.ChannelId++
+	second.EventSequence++
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{first, second}))
+
+	_, err := projection.Query(context.Background(), occurredAt-60, occurredAt+60)
+	var limitErr *ChannelMonitorRedisSharedProjectionLimitError
+	require.ErrorAs(t, err, &limitErr)
+	assert.Equal(t, "dimension_entries", limitErr.Resource)
+}
+
+type channelMonitorRedisSharedProjectionReadCountingHook struct {
+	hgetall atomic.Int64
+}
+
+func (*channelMonitorRedisSharedProjectionReadCountingHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*channelMonitorRedisSharedProjectionReadCountingHook) AfterProcess(context.Context, redis.Cmder) error {
+	return nil
+}
+
+func (hook *channelMonitorRedisSharedProjectionReadCountingHook) BeforeProcessPipeline(ctx context.Context, commands []redis.Cmder) (context.Context, error) {
+	for _, command := range commands {
+		if command.Name() == "hgetall" {
+			hook.hgetall.Add(1)
+		}
+	}
+	return ctx, nil
+}
+
+func (*channelMonitorRedisSharedProjectionReadCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
+func TestChannelMonitorRedisSharedProjectionMetadataReusesRecentQueryWatermark(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	hook := &channelMonitorRedisSharedProjectionReadCountingHook{}
+	client.AddHook(hook)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	occurredAt := int64(1_750_000_000)
+	event := newChannelMonitorRedisSharedProjectionTestEvent("metadata-memo", occurredAt)
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+	startAt, endAt := occurredAt-60, occurredAt+60
+	view, err := projection.Query(context.Background(), startAt, endAt)
+	require.NoError(t, err)
+	hgetallAfterQuery := hook.hgetall.Load()
+	require.Positive(t, hgetallAfterQuery)
+
+	previousEnabled, previousRead := common.RedisEnabled, common.RDBMonitorRead
+	common.RedisEnabled = true
+	common.RDBMonitorRead = client
+	t.Cleanup(func() {
+		common.RedisEnabled = previousEnabled
+		common.RDBMonitorRead = previousRead
+	})
+	dataCutoffAt, processedAt, eventWatermark, err := GetChannelMonitorRedisSharedProjectionMetadata(context.Background(), view.WindowStart, view.WindowEnd)
+	require.NoError(t, err)
+	assert.Equal(t, view.DataCutoffAt, dataCutoffAt)
+	assert.Equal(t, view.ProcessedAt, processedAt)
+	assert.Equal(t, view.EventWatermark, eventWatermark)
+	assert.Equal(t, hgetallAfterQuery, hook.hgetall.Load())
 }
 
 func TestChannelMonitorRedisSharedProjectionSplitsProbeAndDetectionCosts(t *testing.T) {

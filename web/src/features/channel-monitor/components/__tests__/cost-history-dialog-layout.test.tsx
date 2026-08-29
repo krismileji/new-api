@@ -115,6 +115,7 @@ function createOverview(): ChannelMonitorCostOverview {
         unresolved_count: 0,
       },
     ],
+    api_keys_truncated: false,
   }
 }
 

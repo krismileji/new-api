@@ -309,6 +309,9 @@ func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	common.OptionMap[key] = value
+	if isChannelMonitorManagedOption(key) {
+		channelMonitorOptionGeneration.Add(1)
+	}
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
 	if handleConfigUpdate(key, value) {

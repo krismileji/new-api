@@ -30,7 +30,20 @@ const (
 	ChannelMonitorRedisDegradedReasonCostOutboxBacklog    = "cost_outbox_backlog"
 	ChannelMonitorRedisDegradedReasonCostPublishFailure   = "cost_publish_failure"
 	ChannelMonitorRedisDegradedReasonCostDeadLetter       = "cost_dead_letter"
+	ChannelMonitorRedisDegradedReasonPoolCongested        = "redis_pool_congested"
+	ChannelMonitorRedisDegradedReasonPoolTimeout          = "redis_pool_timeout"
+	ChannelMonitorRedisDegradedReasonContextDeadline      = "redis_context_deadline"
 )
+
+// ChannelMonitorRedisPoolDegradedRole identifies which effective Redis pool
+// is unhealthy. DegradedReasons remains a backwards-compatible list of
+// reason codes; this field adds the role association needed by operators.
+type ChannelMonitorRedisPoolDegradedRole struct {
+	Role       common.RedisClientRole `json:"role"`
+	Reason     string                 `json:"reason"`
+	Shared     bool                   `json:"shared"`
+	SharedWith common.RedisClientRole `json:"shared_with,omitempty"`
+}
 
 // ChannelMonitorRedisRealtimeStatus is the shared status contract returned by
 // channel-monitor realtime APIs. PendingCount is the Redis consumer-group
@@ -38,6 +51,10 @@ const (
 type ChannelMonitorRedisRealtimeStatus struct {
 	RedisStatus                string                                                 `json:"redis_status"`
 	RedisAvailable             bool                                                   `json:"redis_available"`
+	RedisPoolIsolation         bool                                                   `json:"redis_pool_isolation"`
+	RedisPoolIsolationMode     string                                                 `json:"redis_pool_isolation_mode"`
+	RedisPoolShared            bool                                                   `json:"redis_pool_shared"`
+	RedisPoolDegradedRoles     []ChannelMonitorRedisPoolDegradedRole                  `json:"redis_pool_degraded_roles"`
 	RedisConsumerRunning       bool                                                   `json:"redis_consumer_running"`
 	PendingCount               int64                                                  `json:"pending_count"`
 	WriterQueueDepth           int                                                    `json:"writer_queue_depth"`
@@ -89,6 +106,8 @@ func getChannelMonitorRedisRealtimeStatus(
 
 	status.RedisStatus = ChannelMonitorRedisStatusAvailable
 	status.RedisAvailable = true
+	status.RedisPoolIsolation = common.RedisClientPoolIsolationEnabled()
+	status.RedisPoolStats = common.GetRedisClientPoolStats()
 	status.DegradedReasons = make([]string, 0)
 	observability, err := client.HGetAll(ctx, ChannelMonitorRedisObservabilityKey).Result()
 	if err != nil {
@@ -149,6 +168,7 @@ func getChannelMonitorRedisRealtimeStatus(
 			status.DegradedReasons = append(status.DegradedReasons, ChannelMonitorRedisDegradedReasonConsumerStopped)
 		}
 		status.DegradedReasons = append(status.DegradedReasons, ChannelMonitorRedisDegradedReasonConsumerGroupMissing)
+		applyChannelMonitorRedisPoolHealth(&status)
 		status.RealtimeDegraded = true
 		applyChannelMonitorEventWriterStats(&status)
 		return status
@@ -195,6 +215,7 @@ func getChannelMonitorRedisRealtimeStatus(
 	if status.StreamTrimFailureActive {
 		status.DegradedReasons = append(status.DegradedReasons, ChannelMonitorRedisDegradedReasonStreamTrimFailure)
 	}
+	applyChannelMonitorRedisPoolHealth(&status)
 	status.RealtimeDegraded = len(status.DegradedReasons) > 0
 	applyChannelMonitorEventWriterStats(&status)
 	return status
@@ -202,14 +223,65 @@ func getChannelMonitorRedisRealtimeStatus(
 
 func channelMonitorRedisUnavailableStatus() ChannelMonitorRedisRealtimeStatus {
 	status := ChannelMonitorRedisRealtimeStatus{
-		RedisStatus:      ChannelMonitorRedisStatusUnavailable,
-		DegradedReasons:  []string{ChannelMonitorRedisDegradedReasonRedisUnavailable},
-		RealtimeDegraded: true,
+		RedisStatus:        ChannelMonitorRedisStatusUnavailable,
+		RedisPoolIsolation: common.RedisClientPoolIsolationEnabled(),
+		DegradedReasons:    []string{ChannelMonitorRedisDegradedReasonRedisUnavailable},
+		RealtimeDegraded:   true,
 	}
-	status.RedisPoolStats = common.GetRedisClientPoolStats()
+	applyChannelMonitorRedisPoolHealth(&status)
 	applyChannelMonitorEventWriterStats(&status)
 	applyChannelDailyCostReliableStatus(&status, nil, context.Background())
 	return status
+}
+
+func applyChannelMonitorRedisPoolHealth(status *ChannelMonitorRedisRealtimeStatus) {
+	if status == nil {
+		return
+	}
+	status.RedisPoolIsolation = common.RedisClientPoolIsolationEnabled()
+	status.RedisPoolIsolationMode = common.RedisClientPoolIsolationMode()
+	status.RedisPoolShared = status.RedisPoolIsolationMode == common.RedisClientPoolIsolationModeShared
+	status.RedisPoolStats = common.GetRedisClientPoolStats()
+	status.RedisPoolDegradedRoles = make([]ChannelMonitorRedisPoolDegradedRole, 0)
+	for _, role := range []common.RedisClientRole{
+		common.RedisClientRoleUser,
+		common.RedisClientRoleMonitorWrite,
+		common.RedisClientRoleMonitorRead,
+		common.RedisClientRoleMonitorConsumer,
+	} {
+		poolStats, ok := status.RedisPoolStats[role]
+		if !ok {
+			continue
+		}
+		if poolStats.DegradedReason != "" {
+			status.RedisPoolDegradedRoles = append(status.RedisPoolDegradedRoles, ChannelMonitorRedisPoolDegradedRole{
+				Role:       role,
+				Reason:     poolStats.DegradedReason,
+				Shared:     poolStats.Shared,
+				SharedWith: poolStats.SharedWith,
+			})
+		}
+		switch poolStats.DegradedReason {
+		case common.RedisClientPoolDegradedReasonPoolCongested:
+			status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(
+				status.DegradedReasons,
+				ChannelMonitorRedisDegradedReasonPoolCongested,
+			)
+		case common.RedisClientPoolDegradedReasonPoolTimeout:
+			status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(
+				status.DegradedReasons,
+				ChannelMonitorRedisDegradedReasonPoolTimeout,
+			)
+		case common.RedisClientPoolDegradedReasonContextDeadline:
+			status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(
+				status.DegradedReasons,
+				ChannelMonitorRedisDegradedReasonContextDeadline,
+			)
+		}
+	}
+	if len(status.DegradedReasons) > 0 {
+		status.RealtimeDegraded = true
+	}
 }
 
 func applyChannelMonitorEventWriterStats(status *ChannelMonitorRedisRealtimeStatus) {

@@ -1,9 +1,15 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+)
 
 func isChannelMonitorManagedOption(key string) bool {
-	return strings.HasPrefix(key, "ChannelMonitor") || key == "GroupRatio"
+	return strings.HasPrefix(key, "ChannelMonitor") ||
+		key == "GroupRatio" ||
+		key == common.RelayResponseHeaderTimeoutOptionKey
 }
 
 func updateOptionMapFromDatabase(key string, value string) error {

@@ -364,3 +364,21 @@ func TestChannelConcurrencyRedisConfigSyncKeepsNewestRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{Active: 0, Limit: 3}, snapshot[13])
 }
+
+func TestChannelConcurrencySnapshotWithProvidedConfigsReusesCallerRows(t *testing.T) {
+	useChannelConcurrencyTestState(t, nil)
+	originalRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+	})
+
+	configs := map[int]model.ChannelConcurrencyConfig{
+		41: {Limit: 3, RPMLimit: 7, Revision: 2},
+	}
+	snapshot, err := GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		t.Context(), []int{41}, configs,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, ChannelConcurrencyStatus{Limit: 3, RPMLimit: 7}, snapshot[41])
+}

@@ -30,10 +30,10 @@ const (
 // for one channel/model/group combination in the primary database.
 type ChannelMonitorMinuteRouteMetric struct {
 	Id          int64  `gorm:"primaryKey"`
-	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:3;index:idx_cm_route_channel_window,priority:2;index:idx_cm_route_group_window,priority:2"`
-	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:1;index:idx_cm_route_channel_window,priority:1;index:idx_cm_route_group_window,priority:3"`
-	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:2;index:idx_cm_route_channel_window,priority:3;index:idx_cm_route_group_window,priority:4"`
-	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:4;index:idx_cm_route_channel_window,priority:4;index:idx_cm_route_group_window,priority:1"`
+	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:3;index:idx_cm_route_channel_window,priority:2;index:idx_cm_route_group_window,priority:2;index:idx_cm_route_model_window,priority:2"`
+	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:1;index:idx_cm_route_channel_window,priority:1;index:idx_cm_route_group_window,priority:3;index:idx_cm_route_model_window,priority:3"`
+	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:2;index:idx_cm_route_channel_window,priority:3;index:idx_cm_route_group_window,priority:4;index:idx_cm_route_model_window,priority:1"`
+	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_route_dimensions;index:idx_cm_route_lookup,priority:4;index:idx_cm_route_channel_window,priority:4;index:idx_cm_route_group_window,priority:1;index:idx_cm_route_model_window,priority:4"`
 	ModelName   string `gorm:"size:255;not null"`
 	GroupName   string `gorm:"size:255;not null"`
 
@@ -77,10 +77,10 @@ type ChannelMonitorMinuteRouteMetric struct {
 // exist here.
 type ChannelMonitorMinuteAPIKeyMetric struct {
 	Id          int64  `gorm:"primaryKey"`
-	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:3;index:idx_cm_api_channel_window,priority:2;index:idx_cm_api_group_window,priority:2"`
-	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:1;index:idx_cm_api_channel_window,priority:1;index:idx_cm_api_group_window,priority:3"`
-	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:2;index:idx_cm_api_channel_window,priority:3;index:idx_cm_api_group_window,priority:4"`
-	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:4;index:idx_cm_api_channel_window,priority:4;index:idx_cm_api_group_window,priority:1"`
+	MinuteStart int64  `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:3;index:idx_cm_api_channel_window,priority:2;index:idx_cm_api_group_window,priority:2;index:idx_cm_api_model_window,priority:2"`
+	ChannelId   int    `gorm:"not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:1;index:idx_cm_api_channel_window,priority:1;index:idx_cm_api_group_window,priority:3;index:idx_cm_api_model_window,priority:3"`
+	ModelKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:2;index:idx_cm_api_channel_window,priority:3;index:idx_cm_api_group_window,priority:4;index:idx_cm_api_model_window,priority:1"`
+	GroupKey    string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:4;index:idx_cm_api_channel_window,priority:4;index:idx_cm_api_group_window,priority:1;index:idx_cm_api_model_window,priority:4"`
 	APIKeyKey   string `gorm:"size:32;not null;uniqueIndex:idx_channel_monitor_minute_api_key_dimensions;index:idx_cm_api_route_lookup,priority:5;index:idx_cm_api_channel_window,priority:5;index:idx_cm_api_group_window,priority:5"`
 	ModelName   string `gorm:"size:255;not null"`
 	GroupName   string `gorm:"size:255;not null"`
@@ -1345,41 +1345,69 @@ func getChannelMonitorMinuteLatestPerformanceValues(
 	applyObservationBoundary bool,
 ) (map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue, error) {
 	metricTable := channelMonitorMinuteRouteMetricTable
+	// Reduce the candidate set in SQL before reading values into Go. The
+	// previous implementation sorted every row in the window and discarded all
+	// but the first row per channel/model pair in Go, which made memory and sort
+	// work proportional to the full retention window. The grouped subquery is
+	// supported by SQLite, MySQL 5.7+, and PostgreSQL (unlike window functions,
+	// which are not available on all supported MySQL versions).
+	latestQuery := DB.WithContext(ctx).
+		Model(&ChannelMonitorMinuteRouteMetric{}).
+		Select(
+			metricTable+".channel_id AS channel_id, "+
+				metricTable+".model_key AS model_key, "+
+				"MAX("+metricTable+"."+timeColumn+") AS latest_at",
+		).
+		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
+		Where(metricTable+"."+timeColumn+" > ?", 0).
+		// Match the old row-reader semantics: a NULL value is skipped and the
+		// latest non-NULL sample is returned instead.
+		Where(metricTable + "." + valueColumn + " IS NOT NULL")
+	if applyObservationBoundary {
+		latestQuery = applyChannelMonitorObservationBoundary(latestQuery, metricTable)
+	}
+	latestQuery = latestQuery.Group(metricTable + ".channel_id, " + metricTable + ".model_key")
+
+	type latestPerformanceRow struct {
+		ChannelId int
+		ModelKey  string
+		Value     sql.NullFloat64
+	}
+	var rows []latestPerformanceRow
 	query := DB.WithContext(ctx).
 		Model(&ChannelMonitorMinuteRouteMetric{}).
 		Select(
-			metricTable+".channel_id, "+metricTable+".model_key, "+
-				metricTable+"."+valueColumn+", "+metricTable+"."+timeColumn,
+			metricTable+".channel_id AS channel_id, "+
+				metricTable+".model_key AS model_key, "+
+				// Multiple dimensions (group/API key) may share the same
+				// timestamp. MAX keeps the result one row per channel/model pair
+				// without relying on dialect-specific DISTINCT ON or window syntax.
+				"MAX("+metricTable+"."+valueColumn+") AS value",
+		).
+		Joins(
+			"JOIN (?) AS latest ON latest.channel_id = "+metricTable+".channel_id"+
+				" AND latest.model_key = "+metricTable+".model_key"+
+				" AND latest.latest_at = "+metricTable+"."+timeColumn,
+			latestQuery,
 		).
 		Where(metricTable+".minute_start >= ? AND "+metricTable+".minute_start < ?", startTimestamp, endTimestamp).
 		Where(metricTable+"."+timeColumn+" > ?", 0)
 	if applyObservationBoundary {
 		query = applyChannelMonitorObservationBoundary(query, metricTable)
 	}
-	rows, err := query.
-		Order(metricTable + ".channel_id ASC, " + metricTable + ".model_key ASC, " + metricTable + "." + timeColumn + " DESC").
-		Rows()
-	if err != nil {
+	if err := query.Group(metricTable + ".channel_id, " + metricTable + ".model_key").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	values := make(map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue)
-	for rows.Next() {
-		var channelId int
-		var modelKey string
-		var value sql.NullFloat64
-		var occurredAt int64
-		if err := rows.Scan(&channelId, &modelKey, &value, &occurredAt); err != nil {
-			return nil, err
-		}
-		key := channelMonitorMinutePerformanceKey{channelId: channelId, modelKey: modelKey}
-		if _, exists := values[key]; exists || !value.Valid {
+	values := make(map[channelMonitorMinutePerformanceKey]channelMonitorMinuteLatestPerformanceValue, len(rows))
+	for _, row := range rows {
+		if !row.Value.Valid {
 			continue
 		}
-		values[key] = channelMonitorMinuteLatestPerformanceValue{value: value.Float64}
+		key := channelMonitorMinutePerformanceKey{channelId: row.ChannelId, modelKey: row.ModelKey}
+		values[key] = channelMonitorMinuteLatestPerformanceValue{value: row.Value.Float64}
 	}
-	return values, rows.Err()
+	return values, nil
 }
 
 func getChannelMonitorMinutePerformanceMetrics(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]ChannelMonitorPerformanceMetric, error) {

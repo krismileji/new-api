@@ -318,16 +318,94 @@ func GetChannelConcurrencySnapshotForChannelIDs(ctx context.Context, channelIDs 
 }
 
 func getChannelConcurrencySnapshot(ctx context.Context, providedChannelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
-	refreshed, err := loadChannelConcurrencyLimits(false)
+	return getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, nil)
+}
+
+// GetChannelConcurrencySnapshotWithRPM augments the live concurrency snapshot
+// with the visible consume request count from the last minute.
+func GetChannelConcurrencySnapshotWithRPM(ctx context.Context) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPM(ctx, nil)
+}
+
+// GetChannelConcurrencySnapshotWithRPMForChannelIDs is the channel-list
+// aware variant used by the monitor overview controller.
+func GetChannelConcurrencySnapshotWithRPMForChannelIDs(ctx context.Context, channelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPM(ctx, channelIDs)
+}
+
+// GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs returns a
+// snapshot using the monitor rows already loaded by the caller.  Aggregate
+// monitor responses fetch those rows for their own payload, so reusing the
+// corresponding concurrency values avoids a second ChannelRatioMonitor query
+// when the local configuration cache is cold or due for refresh.
+func GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+	ctx context.Context,
+	channelIDs []int,
+	configs map[int]model.ChannelConcurrencyConfig,
+) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, channelIDs, configs)
+}
+
+func getChannelConcurrencySnapshotWithRPM(ctx context.Context, providedChannelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, providedChannelIDs, nil)
+}
+
+func getChannelConcurrencySnapshotWithRPMAndConfigs(
+	ctx context.Context,
+	providedChannelIDs []int,
+	providedConfigs map[int]model.ChannelConcurrencyConfig,
+) (map[int]ChannelConcurrencyStatus, error) {
+	snapshot, err := getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, providedConfigs)
 	if err != nil {
 		return nil, err
 	}
-	if common.RedisEnabled {
-		if refreshed {
-			if err = ensureChannelConcurrencyRedisConfig(ctx, common.RDB, getChannelConcurrencyConfigsSnapshot()); err != nil {
+	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, common.GetTimestamp()-60)
+	if err != nil {
+		return nil, err
+	}
+	for channelID, rpm := range currentRPM {
+		status, exists := snapshot[channelID]
+		if !exists {
+			continue
+		}
+		status.CurrentRPM = rpm
+		snapshot[channelID] = status
+	}
+	return snapshot, nil
+}
+
+func getChannelConcurrencySnapshotAndConfigs(
+	ctx context.Context,
+	providedChannelIDs []int,
+	providedConfigs map[int]model.ChannelConcurrencyConfig,
+) (map[int]ChannelConcurrencyStatus, error) {
+	effectiveConfigs := providedConfigs
+	if providedConfigs != nil {
+		effectiveConfigs = copyChannelConcurrencyConfigs(providedConfigs)
+		// The caller's monitor query is authoritative for this request.  Do not
+		// blindly replace the shared cache: a concurrent settings write may
+		// have advanced it after the caller loaded its rows.  Merge only rows
+		// whose revisions are at least as new as the cached value.  Redis
+		// revisions make stale initialization harmless, while local snapshots
+		// use the caller's copy directly below.
+		if changed := mergeProvidedChannelConcurrencyConfigs(effectiveConfigs); common.RedisEnabled && changed {
+			if err := ensureChannelConcurrencyRedisConfig(ctx, common.RDB, effectiveConfigs); err != nil {
 				return nil, err
 			}
 		}
+	} else {
+		refreshed, err := loadChannelConcurrencyLimits(false)
+		if err != nil {
+			return nil, err
+		}
+		effectiveConfigs = getChannelConcurrencyConfigsSnapshot()
+		if common.RedisEnabled && refreshed {
+			if err = ensureChannelConcurrencyRedisConfig(ctx, common.RDB, effectiveConfigs); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if common.RedisEnabled {
 		channelIDs, err := getChannelConcurrencyChannelIDs(providedChannelIDs)
 		if err != nil {
 			return nil, err
@@ -345,7 +423,7 @@ func getChannelConcurrencySnapshot(ctx context.Context, providedChannelIDs []int
 	now := time.Now().UnixMilli()
 	cutoff := now - channelConcurrencyRPMWindow.Milliseconds()
 	for _, channelID := range channelIDs {
-		config := channelConcurrency.configs[channelID]
+		config := effectiveConfigs[channelID]
 		requests := channelConcurrency.rpm[channelID]
 		first := 0
 		for first < len(requests) && requests[first] <= cutoff {
@@ -366,36 +444,37 @@ func getChannelConcurrencySnapshot(ctx context.Context, providedChannelIDs []int
 	return snapshot, nil
 }
 
-// GetChannelConcurrencySnapshotWithRPM augments the live concurrency snapshot
-// with the visible consume request count from the last minute.
-func GetChannelConcurrencySnapshotWithRPM(ctx context.Context) (map[int]ChannelConcurrencyStatus, error) {
-	return getChannelConcurrencySnapshotWithRPM(ctx, nil)
-}
-
-// GetChannelConcurrencySnapshotWithRPMForChannelIDs is the channel-list
-// aware variant used by the monitor overview controller.
-func GetChannelConcurrencySnapshotWithRPMForChannelIDs(ctx context.Context, channelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
-	return getChannelConcurrencySnapshotWithRPM(ctx, channelIDs)
-}
-
-func getChannelConcurrencySnapshotWithRPM(ctx context.Context, providedChannelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
-	snapshot, err := getChannelConcurrencySnapshot(ctx, providedChannelIDs)
-	if err != nil {
-		return nil, err
+func mergeProvidedChannelConcurrencyConfigs(configs map[int]model.ChannelConcurrencyConfig) bool {
+	sourceDB := model.DB
+	now := time.Now()
+	channelConcurrency.Lock()
+	defer channelConcurrency.Unlock()
+	changed := !channelConcurrency.loaded || channelConcurrency.sourceDB != sourceDB
+	merged := copyChannelConcurrencyConfigs(channelConcurrency.configs)
+	if changed {
+		merged = make(map[int]model.ChannelConcurrencyConfig, len(configs))
+		channelConcurrency.active = make(map[int]int)
+		channelConcurrency.rpm = make(map[int][]int64)
 	}
-	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, common.GetTimestamp()-60)
-	if err != nil {
-		return nil, err
-	}
-	for channelID, rpm := range currentRPM {
-		status, exists := snapshot[channelID]
-		if !exists {
+	for channelID, config := range configs {
+		current, exists := merged[channelID]
+		if exists && config.Revision < current.Revision {
 			continue
 		}
-		status.CurrentRPM = rpm
-		snapshot[channelID] = status
+		if !exists || current != config {
+			merged[channelID] = config
+			changed = true
+		}
 	}
-	return snapshot, nil
+	if !changed {
+		return false
+	}
+	channelConcurrency.loaded = true
+	channelConcurrency.sourceDB = sourceDB
+	channelConcurrency.loadedAt = now
+	channelConcurrency.configs = merged
+	channelConcurrency.generation++
+	return true
 }
 
 func getChannelConcurrencyChannelIDs(providedChannelIDs []int) ([]int, error) {

@@ -144,6 +144,20 @@ func TestChannelDailyCostOutboxLeaseCanBeRecoveredAfterExpiry(t *testing.T) {
 	assert.Zero(t, stats.PendingCount)
 }
 
+func TestChannelDailyCostOutboxLeaseCanBeRecoveredAtExpiryBoundary(t *testing.T) {
+	setupChannelDailyCostOutboxTestDB(t)
+	event := ChannelDailyCostDelta{EventId: "lease-boundary", ChannelId: 2, OccurredAt: 100, CostNanoCNY: 10, SettledDelta: 1}
+	require.NoError(t, StoreChannelDailyCostOutboxEvents(context.Background(), []ChannelDailyCostDelta{event}))
+
+	claimed, err := ClaimChannelDailyCostOutboxEvents(context.Background(), "worker-a", 100, 100, 10*time.Second, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	claimed, err = ClaimChannelDailyCostOutboxEvents(context.Background(), "worker-b", 110, 110, 10*time.Second, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	assert.Equal(t, "worker-b", claimed[0].LeaseOwner)
+}
+
 func TestChannelDailyCostOutboxFinalizeResultDoesNotCountLostLease(t *testing.T) {
 	setupChannelDailyCostOutboxTestDB(t)
 	event := ChannelDailyCostDelta{EventId: "finalize-result", ChannelId: 22, OccurredAt: 1_700_000_000, CostNanoCNY: 10, SettledDelta: 1}

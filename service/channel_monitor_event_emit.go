@@ -98,7 +98,8 @@ func EmitChannelMonitorSuccessEvent(
 			event.CostStatus = model.ChannelMonitorEventCostUnresolved
 		}
 	}
-	status, _ := EnqueueChannelMonitorEvent(event)
+	status, err := EnqueueChannelMonitorEvent(event)
+	ObserveChannelMonitorEventPublishStatus(channelMonitorPublishContext(ctx), status, err)
 	return status
 }
 
@@ -167,7 +168,8 @@ func EmitChannelMonitorFailureEvent(
 		}
 		event.AttemptDurationMs = &durationMs
 	}
-	status, _ := EnqueueChannelMonitorEvent(event)
+	status, enqueueErr := EnqueueChannelMonitorEvent(event)
+	ObserveChannelMonitorEventPublishStatus(channelMonitorPublishContext(ctx), status, enqueueErr)
 	return status
 }
 

@@ -291,10 +291,18 @@ func (b *channelDailyCostBatcher) writeSynchronously(delta model.ChannelDailyCos
 }
 
 func (b *channelDailyCostBatcher) writeWithRetry(batch []model.ChannelDailyCostDelta) error {
+	// This batcher is the legacy direct-write path and has no durable
+	// idempotency boundary. Strip event ids before invoking the public model API;
+	// EventId-bearing writes must be handled by the cost outbox instead.
+	sanitized := make([]model.ChannelDailyCostDelta, len(batch))
+	copy(sanitized, batch)
+	for index := range sanitized {
+		sanitized[index].EventId = ""
+	}
 	var err error
 	for attempt := 0; attempt < b.config.MaxAttempts; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), b.config.DBTimeout)
-		err = b.write(ctx, batch)
+		err = b.write(ctx, sanitized)
 		cancel()
 		if err == nil {
 			return nil

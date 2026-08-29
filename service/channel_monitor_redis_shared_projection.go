@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,11 +23,185 @@ const (
 	channelMonitorRedisSharedCostStateTTL     = 48 * time.Hour
 	channelMonitorRedisSharedEventTTL         = 48 * time.Hour
 	channelMonitorRedisSharedOperationTimeout = 5 * time.Second
-	channelMonitorRedisSharedMaxQueryMinutes  = 1441
 	channelMonitorRedisSharedWriteRetries     = 128
+
+	channelMonitorRedisSharedDefaultMaxQueryMinutes       = 1441
+	channelMonitorRedisSharedDefaultMaxHashFields         = 500_000
+	channelMonitorRedisSharedDefaultMaxTotalHashFields    = 5_000_000
+	channelMonitorRedisSharedDefaultMaxResponseBytes      = 256 << 20
+	channelMonitorRedisSharedDefaultMaxDimensionEntries   = 20_000
+	channelMonitorRedisSharedDefaultMaxResponseDimensions = 50_000
+	// Kept as an internal compatibility alias for existing service tests.
+	channelMonitorRedisSharedMaxQueryMinutes = channelMonitorRedisSharedDefaultMaxQueryMinutes
+
+	channelMonitorRedisSharedHardMaxQueryMinutes       = 1441
+	channelMonitorRedisSharedHardMaxHashFields         = 2_000_000
+	channelMonitorRedisSharedHardMaxTotalHashFields    = 20_000_000
+	channelMonitorRedisSharedHardMaxResponseBytes      = 512 << 20
+	channelMonitorRedisSharedHardMaxDimensionEntries   = 100_000
+	channelMonitorRedisSharedHardMaxResponseDimensions = 500_000
 )
 
+// This hook keeps retry behaviour deterministic in tests while allowing the
+// production path to yield between WATCH conflicts.
+var channelMonitorRedisSharedRetrySleepOverride func(time.Duration)
+
+func channelMonitorRedisSharedSleep(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	if channelMonitorRedisSharedRetrySleepOverride != nil {
+		channelMonitorRedisSharedRetrySleepOverride(delay)
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func channelMonitorRedisSharedRetryBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	shift := attempt - 1
+	if shift > 7 {
+		shift = 7
+	}
+	base := time.Millisecond * time.Duration(1<<shift)
+	if base > 250*time.Millisecond {
+		base = 250 * time.Millisecond
+	}
+	// Deterministic pseudo-jitter avoids lock-step retries without introducing
+	// a shared random source into the hot path.
+	jitter := time.Duration((attempt*7919)%1000) * time.Microsecond
+	return base + jitter
+}
+
 var ErrChannelMonitorRedisSharedProjectionUnavailable = errors.New("渠道监控 Redis 共享投影不可用")
+
+// ErrChannelMonitorRedisSharedProjectionReplayable identifies a write that
+// was not committed after bounded optimistic-concurrency retries. Callers may
+// safely replay the same logical batch because event markers are written only
+// after all projection mutations have committed.
+var ErrChannelMonitorRedisSharedProjectionReplayable = errors.New("渠道监控 Redis 共享投影写入未提交，可重放")
+
+type channelMonitorRedisSharedProjectionRetryError struct {
+	Attempts int
+}
+
+func (err *channelMonitorRedisSharedProjectionRetryError) Error() string {
+	return fmt.Sprintf("%s: attempts=%d", ErrChannelMonitorRedisSharedProjectionReplayable, err.Attempts)
+}
+
+func (err *channelMonitorRedisSharedProjectionRetryError) Unwrap() error {
+	return ErrChannelMonitorRedisSharedProjectionReplayable
+}
+
+// ErrChannelMonitorRedisSharedProjectionLimitExceeded identifies a query that
+// was rejected before its response could exceed the configured read budget.
+var ErrChannelMonitorRedisSharedProjectionLimitExceeded = errors.New("渠道监控 Redis 共享投影读取规模超过上限")
+
+// ChannelMonitorRedisSharedProjectionLimitError describes which read budget
+// prevented a projection query from completing.
+type ChannelMonitorRedisSharedProjectionLimitError struct {
+	Resource string
+	Limit    int64
+	Actual   int64
+}
+
+func (err *ChannelMonitorRedisSharedProjectionLimitError) Error() string {
+	return fmt.Sprintf("%s: %s=%d, limit=%d", ErrChannelMonitorRedisSharedProjectionLimitExceeded, err.Resource, err.Actual, err.Limit)
+}
+
+func (err *ChannelMonitorRedisSharedProjectionLimitError) Unwrap() error {
+	return ErrChannelMonitorRedisSharedProjectionLimitExceeded
+}
+
+// ChannelMonitorRedisSharedProjectionLimits bounds the amount of Redis data
+// and response dimensions a single projection query may materialize. Values
+// are normalized to safe hard ceilings by constructors and SetLimits.
+type ChannelMonitorRedisSharedProjectionLimits struct {
+	MaxQueryMinutes       int
+	MaxHashFields         int
+	MaxTotalHashFields    int
+	MaxResponseBytes      int64
+	MaxDimensionEntries   int
+	MaxResponseDimensions int
+}
+
+func defaultChannelMonitorRedisSharedProjectionLimits() ChannelMonitorRedisSharedProjectionLimits {
+	return ChannelMonitorRedisSharedProjectionLimits{
+		MaxQueryMinutes:       channelMonitorRedisSharedDefaultMaxQueryMinutes,
+		MaxHashFields:         channelMonitorRedisSharedDefaultMaxHashFields,
+		MaxTotalHashFields:    channelMonitorRedisSharedDefaultMaxTotalHashFields,
+		MaxResponseBytes:      channelMonitorRedisSharedDefaultMaxResponseBytes,
+		MaxDimensionEntries:   channelMonitorRedisSharedDefaultMaxDimensionEntries,
+		MaxResponseDimensions: channelMonitorRedisSharedDefaultMaxResponseDimensions,
+	}
+}
+
+func channelMonitorRedisSharedProjectionLimitsFromEnv() ChannelMonitorRedisSharedProjectionLimits {
+	limits := defaultChannelMonitorRedisSharedProjectionLimits()
+	limits.MaxQueryMinutes = common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_QUERY_MINUTES", limits.MaxQueryMinutes)
+	limits.MaxHashFields = common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_HASH_FIELDS", limits.MaxHashFields)
+	limits.MaxTotalHashFields = common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_TOTAL_HASH_FIELDS", limits.MaxTotalHashFields)
+	limits.MaxResponseBytes = int64(common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_RESPONSE_BYTES", int(limits.MaxResponseBytes)))
+	limits.MaxDimensionEntries = common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_DIMENSION_ENTRIES", limits.MaxDimensionEntries)
+	limits.MaxResponseDimensions = common.GetEnvOrDefault("CHANNEL_MONITOR_REDIS_SHARED_MAX_RESPONSE_DIMENSIONS", limits.MaxResponseDimensions)
+	return normalizeChannelMonitorRedisSharedProjectionLimits(limits)
+}
+
+func normalizeChannelMonitorRedisSharedProjectionLimits(limits ChannelMonitorRedisSharedProjectionLimits) ChannelMonitorRedisSharedProjectionLimits {
+	defaults := defaultChannelMonitorRedisSharedProjectionLimits()
+	if limits.MaxQueryMinutes <= 0 {
+		limits.MaxQueryMinutes = defaults.MaxQueryMinutes
+	}
+	if limits.MaxQueryMinutes > channelMonitorRedisSharedHardMaxQueryMinutes {
+		limits.MaxQueryMinutes = channelMonitorRedisSharedHardMaxQueryMinutes
+	}
+	if limits.MaxHashFields <= 0 {
+		limits.MaxHashFields = defaults.MaxHashFields
+	}
+	if limits.MaxHashFields > channelMonitorRedisSharedHardMaxHashFields {
+		limits.MaxHashFields = channelMonitorRedisSharedHardMaxHashFields
+	}
+	if limits.MaxTotalHashFields <= 0 {
+		limits.MaxTotalHashFields = defaults.MaxTotalHashFields
+	}
+	if limits.MaxTotalHashFields > channelMonitorRedisSharedHardMaxTotalHashFields {
+		limits.MaxTotalHashFields = channelMonitorRedisSharedHardMaxTotalHashFields
+	}
+	if limits.MaxResponseBytes <= 0 {
+		limits.MaxResponseBytes = defaults.MaxResponseBytes
+	}
+	if limits.MaxResponseBytes > channelMonitorRedisSharedHardMaxResponseBytes {
+		limits.MaxResponseBytes = channelMonitorRedisSharedHardMaxResponseBytes
+	}
+	if limits.MaxDimensionEntries <= 0 {
+		limits.MaxDimensionEntries = defaults.MaxDimensionEntries
+	}
+	if limits.MaxDimensionEntries > channelMonitorRedisSharedHardMaxDimensionEntries {
+		limits.MaxDimensionEntries = channelMonitorRedisSharedHardMaxDimensionEntries
+	}
+	if limits.MaxResponseDimensions <= 0 {
+		limits.MaxResponseDimensions = defaults.MaxResponseDimensions
+	}
+	if limits.MaxResponseDimensions > channelMonitorRedisSharedHardMaxResponseDimensions {
+		limits.MaxResponseDimensions = channelMonitorRedisSharedHardMaxResponseDimensions
+	}
+	if limits.MaxTotalHashFields < limits.MaxHashFields {
+		limits.MaxTotalHashFields = limits.MaxHashFields
+	}
+	if limits.MaxResponseDimensions < limits.MaxDimensionEntries {
+		limits.MaxResponseDimensions = limits.MaxDimensionEntries
+	}
+	return limits
+}
 
 const (
 	channelMonitorRedisSharedScopeGlobal      = "global"
@@ -215,6 +390,72 @@ type ChannelMonitorRedisSharedProjectionView struct {
 type ChannelMonitorRedisSharedProjection struct {
 	client *redis.Client
 	now    func() time.Time
+	limits ChannelMonitorRedisSharedProjectionLimits
+}
+
+const channelMonitorRedisSharedMetadataMemoTTL = 2 * time.Second
+
+type channelMonitorRedisSharedMetadataMemoKey struct {
+	client                 *redis.Client
+	windowStart, windowEnd int64
+}
+
+type channelMonitorRedisSharedMetadataMemoValue struct {
+	dataCutoffAt, processedAt int64
+	eventWatermark            uint64
+	expiresAt                 time.Time
+}
+
+var channelMonitorRedisSharedMetadataMemo = struct {
+	sync.Mutex
+	values map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue
+}{values: make(map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue)}
+
+func channelMonitorRedisSharedRememberMetadata(client *redis.Client, view ChannelMonitorRedisSharedProjectionView) {
+	if client == nil {
+		return
+	}
+	channelMonitorRedisSharedMetadataMemo.Lock()
+	defer channelMonitorRedisSharedMetadataMemo.Unlock()
+	now := time.Now()
+	for key, value := range channelMonitorRedisSharedMetadataMemo.values {
+		if !value.expiresAt.After(now) {
+			delete(channelMonitorRedisSharedMetadataMemo.values, key)
+		}
+	}
+	channelMonitorRedisSharedMetadataMemo.values[channelMonitorRedisSharedMetadataMemoKey{
+		client: client, windowStart: view.WindowStart, windowEnd: view.WindowEnd,
+	}] = channelMonitorRedisSharedMetadataMemoValue{
+		dataCutoffAt: view.DataCutoffAt, processedAt: view.ProcessedAt,
+		eventWatermark: view.EventWatermark, expiresAt: now.Add(channelMonitorRedisSharedMetadataMemoTTL),
+	}
+}
+
+func channelMonitorRedisSharedLookupMetadata(client *redis.Client, windowStart, windowEnd int64) (int64, int64, uint64, bool) {
+	if client == nil {
+		return 0, 0, 0, false
+	}
+	channelMonitorRedisSharedMetadataMemo.Lock()
+	defer channelMonitorRedisSharedMetadataMemo.Unlock()
+	key := channelMonitorRedisSharedMetadataMemoKey{client: client, windowStart: windowStart, windowEnd: windowEnd}
+	value, ok := channelMonitorRedisSharedMetadataMemo.values[key]
+	if !ok {
+		return 0, 0, 0, false
+	}
+	if !value.expiresAt.After(time.Now()) {
+		delete(channelMonitorRedisSharedMetadataMemo.values, key)
+		return 0, 0, 0, false
+	}
+	return value.dataCutoffAt, value.processedAt, value.eventWatermark, true
+}
+
+// SetLimits replaces the read budgets used by subsequent queries. Callers
+// should configure a projection before sharing it between goroutines.
+func (projection *ChannelMonitorRedisSharedProjection) SetLimits(limits ChannelMonitorRedisSharedProjectionLimits) {
+	if projection == nil {
+		return
+	}
+	projection.limits = normalizeChannelMonitorRedisSharedProjectionLimits(limits)
 }
 
 var _ ChannelMonitorRedisEventHandler = (*ChannelMonitorRedisSharedProjection)(nil)
@@ -228,7 +469,7 @@ func NewChannelMonitorRedisSharedProjection() (*ChannelMonitorRedisSharedProject
 }
 
 func NewChannelMonitorRedisSharedProjectionWithClient(client *redis.Client) *ChannelMonitorRedisSharedProjection {
-	return &ChannelMonitorRedisSharedProjection{client: client, now: time.Now}
+	return &ChannelMonitorRedisSharedProjection{client: client, now: time.Now, limits: channelMonitorRedisSharedProjectionLimitsFromEnv()}
 }
 
 // HandleChannelMonitorEvents implements ChannelMonitorRedisEventHandler from
@@ -281,7 +522,7 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 	for _, costID := range costIDs {
 		watchKeys = append(watchKeys, ChannelMonitorRedisCostEventStateKey(costID))
 	}
-	for range channelMonitorRedisSharedWriteRetries {
+	for attempt := 1; attempt <= channelMonitorRedisSharedWriteRetries; attempt++ {
 		err := projection.client.Watch(opCtx, func(tx *redis.Tx) error {
 			applied, err := tx.MGet(opCtx, eventKeys...).Result()
 			if err != nil {
@@ -289,6 +530,18 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 			}
 			states, err := projection.loadCostStates(opCtx, tx, costIDs)
 			if err != nil {
+				return err
+			}
+			// The cost state determines which day/minute hashes may be corrected.
+			// Add those keys to the same optimistic-concurrency boundary before
+			// validating or queuing any writes.
+			writeHashKeys, markerKeys := channelMonitorRedisSharedWriteKeys(events, states)
+			if len(writeHashKeys) > 0 {
+				if err := tx.Watch(opCtx, writeHashKeys...).Err(); err != nil {
+					return err
+				}
+			}
+			if err := channelMonitorRedisSharedValidateWriteKeys(opCtx, tx, writeHashKeys, markerKeys); err != nil {
 				return err
 			}
 			seenEventIDs := make(map[string]struct{}, len(events))
@@ -339,8 +592,146 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 		if !errors.Is(err, redis.TxFailedErr) {
 			return err
 		}
+		if attempt < channelMonitorRedisSharedWriteRetries {
+			if sleepErr := channelMonitorRedisSharedSleep(opCtx, channelMonitorRedisSharedRetryBackoff(attempt)); sleepErr != nil {
+				return sleepErr
+			}
+		}
 	}
-	return errors.New("Redis 共享投影并发更新重试次数耗尽")
+	return &channelMonitorRedisSharedProjectionRetryError{Attempts: channelMonitorRedisSharedWriteRetries}
+}
+
+// channelMonitorRedisSharedWriteKeys returns every hash and marker key that a
+// batch can touch. The keys are watched before the transaction is queued so a
+// concurrent writer cannot invalidate the write-time validation snapshot.
+func channelMonitorRedisSharedWriteKeys(events []model.ChannelMonitorEvent, states map[string]channelMonitorRedisSharedCostState) ([]string, []string) {
+	hashSet := make(map[string]struct{})
+	markerSet := make(map[string]struct{}, len(events))
+	addDashboard := func(minute int64) { hashSet[ChannelMonitorRedisDashboardMinuteKey(minute)] = struct{}{} }
+	addCost := func(state channelMonitorRedisSharedCostState) {
+		hashSet[ChannelMonitorRedisCostDayKey(state.DayStart)] = struct{}{}
+		if state.MinuteStart != 0 {
+			addDashboard(state.MinuteStart)
+		}
+	}
+	for _, event := range events {
+		minute := event.OccurredAt - event.OccurredAt%60
+		addDashboard(minute) // metadata is written for every event
+		markerSet[ChannelMonitorRedisSharedEventKey(event.EventId)] = struct{}{}
+		if costID := channelMonitorRealtimeCostEventId(event); costID != "" {
+			if state, ok := states[costID]; ok {
+				addCost(state)
+			}
+		}
+		if !event.FinalRetrySummary && event.CostStatus != model.ChannelMonitorEventCostNone {
+			addCost(channelMonitorRedisSharedCostStateFromEvent("", event))
+		}
+	}
+	hashKeys := make([]string, 0, len(hashSet))
+	for key := range hashSet {
+		hashKeys = append(hashKeys, key)
+	}
+	markerKeys := make([]string, 0, len(markerSet))
+	for key := range markerSet {
+		markerKeys = append(markerKeys, key)
+	}
+	sort.Strings(hashKeys)
+	sort.Strings(markerKeys)
+	return hashKeys, markerKeys
+}
+
+var channelMonitorRedisSharedIntegerMetrics = map[string]struct{}{
+	channelMonitorRedisSharedMetricEventCount: {}, channelMonitorRedisSharedMetricBusinessRequests: {},
+	channelMonitorRedisSharedMetricActualSuccess: {}, channelMonitorRedisSharedMetricActualFailure: {},
+	channelMonitorRedisSharedMetricFinalSuccess: {}, channelMonitorRedisSharedMetricFinalFailure: {},
+	channelMonitorRedisSharedMetricFirstTokenSamples: {}, channelMonitorRedisSharedMetricAttemptDurationSamples: {},
+	channelMonitorRedisSharedMetricAttemptDurationTotalMs: {}, channelMonitorRedisSharedMetricTPSSamples: {},
+	channelMonitorRedisSharedMetricTPSOutputTokens: {}, channelMonitorRedisSharedMetricTPSGenerationMs: {},
+	channelMonitorRedisSharedMetricCacheSamples: {}, channelMonitorRedisSharedMetricCacheHits: {},
+	channelMonitorRedisSharedMetricCacheReadTokens: {}, channelMonitorRedisSharedMetricCacheWriteRequests: {},
+	channelMonitorRedisSharedMetricCacheWriteTokens: {}, channelMonitorRedisSharedMetricInputTokens: {},
+	channelMonitorRedisSharedMetricSettledCost: {}, channelMonitorRedisSharedMetricSettledRequests: {},
+	channelMonitorRedisSharedMetricUnresolvedCost: {}, channelMonitorRedisSharedMetricUnresolvedRequests: {},
+	channelMonitorRedisSharedMetricProbeSettledCost: {}, channelMonitorRedisSharedMetricGroupProbeSettledCost: {},
+	channelMonitorRedisSharedMetricDetectionSettledCost: {}, channelMonitorRedisSharedMetricLastUsedTime: {},
+	channelMonitorRedisSharedMetricLatestFirstTokenAt: {}, channelMonitorRedisSharedMetricLatestTPSAt: {},
+	channelMonitorRedisSharedMetricFailureActual: {}, channelMonitorRedisSharedMetricFailureFinal: {},
+	channelMonitorRedisSharedMetricFailureLast: {}, channelMonitorRedisSharedMetricDataCutoffAt: {},
+	channelMonitorRedisSharedMetricProcessedAt: {}, channelMonitorRedisSharedMetricEventWatermark: {},
+}
+
+var channelMonitorRedisSharedFloatMetrics = map[string]struct{}{
+	channelMonitorRedisSharedMetricFirstTokenTotalMs: {}, channelMonitorRedisSharedMetricLatestFirstToken: {},
+	channelMonitorRedisSharedMetricLatestTPS: {},
+}
+
+var channelMonitorRedisSharedCostIntegerFields = map[string]struct{}{
+	channelMonitorRedisSharedCostSettled: {}, channelMonitorRedisSharedCostUnresolved: {},
+	channelMonitorRedisSharedCostDayStart: {}, channelMonitorRedisSharedCostMinuteStart: {},
+	channelMonitorRedisSharedCostChannelID: {}, channelMonitorRedisSharedCostAPIKeyID: {},
+	channelMonitorRedisSharedCostEventSequence: {}, channelMonitorRedisSharedCostCreatedAt: {},
+}
+
+func channelMonitorRedisSharedValidateWriteKeys(ctx context.Context, tx *redis.Tx, hashKeys, markerKeys []string) error {
+	for _, key := range markerKeys {
+		typeName, err := tx.Type(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		if typeName != "none" && typeName != "string" {
+			return fmt.Errorf("渠道监控 Redis 事件 marker 类型无效: key=%s type=%s", key, typeName)
+		}
+	}
+	for _, key := range hashKeys {
+		typeName, err := tx.Type(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		if typeName != "none" && typeName != "hash" {
+			return fmt.Errorf("渠道监控 Redis 投影键类型无效: key=%s type=%s", key, typeName)
+		}
+		values, err := tx.HGetAll(ctx, key).Result()
+		if err != nil {
+			return err
+		}
+		for field, raw := range values {
+			metric := field
+			if index := strings.LastIndexByte(field, ':'); index >= 0 {
+				metric = field[index+1:]
+			}
+			if strings.HasPrefix(key, ChannelMonitorRedisCostProjectionPrefix+"event:") {
+				if _, ok := channelMonitorRedisSharedCostIntegerFields[field]; !ok {
+					continue
+				}
+				var parseErr error
+				if field == channelMonitorRedisSharedCostEventSequence {
+					_, parseErr = strconv.ParseUint(raw, 10, 64)
+				} else {
+					_, parseErr = strconv.ParseInt(raw, 10, 64)
+				}
+				if parseErr != nil {
+					return fmt.Errorf("渠道监控 Redis 成本状态数值无效: key=%s field=%s: %w", key, field, parseErr)
+				}
+				continue
+			}
+			if _, ok := channelMonitorRedisSharedFloatMetrics[metric]; ok {
+				value, err := strconv.ParseFloat(raw, 64)
+				if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+					if err == nil {
+						err = errors.New("非有限数值")
+					}
+					return fmt.Errorf("渠道监控 Redis 投影浮点数值无效: key=%s field=%s: %w", key, field, err)
+				}
+				continue
+			}
+			if _, ok := channelMonitorRedisSharedIntegerMetrics[metric]; ok {
+				if _, err := strconv.ParseInt(raw, 10, 64); err != nil {
+					return fmt.Errorf("渠道监控 Redis 投影整数数值无效: key=%s field=%s: %w", key, field, err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (projection *ChannelMonitorRedisSharedProjection) loadCostStates(
@@ -459,7 +850,7 @@ func (projection *ChannelMonitorRedisSharedProjection) setCostState(ctx context.
 		channelMonitorRedisSharedCostAPIKeyName: state.APIKeyName, channelMonitorRedisSharedCostEventSequence: state.EventSequence,
 		channelMonitorRedisSharedCostCreatedAt: state.CreatedAt, channelMonitorRedisSharedCostEventID: state.EventID,
 	})
-	pipe.Expire(ctx, ChannelMonitorRedisCostEventStateKey(costID), channelMonitorRedisSharedCostStateTTL)
+	pipe.ExpireNX(ctx, ChannelMonitorRedisCostEventStateKey(costID), channelMonitorRedisSharedCostStateTTL)
 }
 
 func (projection *ChannelMonitorRedisSharedProjection) deleteCostState(ctx context.Context, pipe redis.Pipeliner, costID string) {
@@ -669,7 +1060,7 @@ func (projection *ChannelMonitorRedisSharedProjection) appendFailure(
 		scope+":"+channelMonitorRedisSharedMetricFailureLastSeq,
 		scope+":"+channelMonitorRedisSharedMetricFailureSample,
 	)
-	pipe.Expire(ctx, key, channelMonitorRedisSharedMinuteTTL)
+	pipe.ExpireNX(ctx, key, channelMonitorRedisSharedMinuteTTL)
 }
 
 func (projection *ChannelMonitorRedisSharedProjection) appendMetadata(
@@ -688,7 +1079,7 @@ func (projection *ChannelMonitorRedisSharedProjection) appendMetadata(
 		scope+channelMonitorRedisSharedMetricProcessedAt,
 		scope+channelMonitorRedisSharedMetricEventWatermark,
 	)
-	pipe.Expire(ctx, key, channelMonitorRedisSharedMinuteTTL)
+	pipe.ExpireNX(ctx, key, channelMonitorRedisSharedMinuteTTL)
 }
 
 type channelMonitorRedisSharedEventDelta struct {
@@ -815,7 +1206,7 @@ func (projection *ChannelMonitorRedisSharedProjection) appendAggregateDelta(ctx 
 	for metric, value := range delta.Floats {
 		pipe.HIncrByFloat(ctx, key, scope+":"+metric, value)
 	}
-	pipe.Expire(ctx, key, ttl)
+	pipe.ExpireNX(ctx, key, ttl)
 }
 
 func channelMonitorRedisSharedScopes(channelID int, modelName, groupName string, apiKeyID int) []string {
@@ -900,6 +1291,30 @@ func (projection *ChannelMonitorRedisSharedProjection) QueryChannelMonitorRedisS
 	return projection.Query(ctx, startAt, endAt)
 }
 
+func (projection *ChannelMonitorRedisSharedProjection) queryWindow(startAt, endAt int64) (startMinute, endMinute, normalizedStartAt, normalizedEndAt int64, limits ChannelMonitorRedisSharedProjectionLimits) {
+	limits = normalizeChannelMonitorRedisSharedProjectionLimits(projection.limits)
+	if endAt <= 0 {
+		endAt = projection.now().Unix() + 1
+	}
+	// Round endAt up to the next minute without allowing the addition of the
+	// minute width to overflow int64. Controller callers use Unix timestamps,
+	// but this exported projection API is also used by maintenance and replay
+	// code where malformed bounds must not turn into a negative slice capacity.
+	if endAt > math.MaxInt64-60 {
+		endAt = math.MaxInt64 - 60
+	}
+	maxWindowSeconds := int64(limits.MaxQueryMinutes) * 60
+	if startAt <= 0 || startAt > endAt {
+		startAt = endAt - maxWindowSeconds
+	}
+	startMinute = startAt - startAt%60
+	endMinute = (endAt - 1) - (endAt-1)%60 + 60
+	if endMinute <= startMinute || endMinute-startMinute > maxWindowSeconds {
+		startMinute = endMinute - maxWindowSeconds
+	}
+	return startMinute, endMinute, startAt, endAt, limits
+}
+
 func (projection *ChannelMonitorRedisSharedProjection) Query(ctx context.Context, startAt, endAt int64) (ChannelMonitorRedisSharedProjectionView, error) {
 	view := ChannelMonitorRedisSharedProjectionView{
 		Channels:   make(map[int]ChannelMonitorRedisSharedAggregate),
@@ -914,67 +1329,196 @@ func (projection *ChannelMonitorRedisSharedProjection) Query(ctx context.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if endAt <= 0 {
-		endAt = projection.now().Unix() + 1
-	}
-	if startAt <= 0 {
-		startAt = endAt - int64(channelMonitorRedisSharedMaxQueryMinutes)*60
-	}
-	startMinute := startAt - startAt%60
-	endMinute := (endAt - 1) - (endAt-1)%60 + 60
-	if endMinute-startMinute > int64(channelMonitorRedisSharedMaxQueryMinutes)*60 {
-		startMinute = endMinute - int64(channelMonitorRedisSharedMaxQueryMinutes)*60
-	}
+	startMinute, endMinute, _, _, limits := projection.queryWindow(startAt, endAt)
 	view.WindowStart, view.WindowEnd = startMinute, endMinute
 	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
 	defer cancel()
-	accumulator := newChannelMonitorRedisSharedQueryAccumulator()
+	accumulator := newChannelMonitorRedisSharedQueryAccumulatorWithLimits(limits)
 
-	pipe := projection.client.Pipeline()
-	minuteCommands := make(map[int64]*redis.StringStringMapCmd)
+	minuteKeys := make([]string, 0, (endMinute-startMinute)/60)
 	for minute := startMinute; minute < endMinute; minute += 60 {
-		minuteCommands[minute] = pipe.HGetAll(opCtx, ChannelMonitorRedisDashboardMinuteKey(minute))
+		minuteKeys = append(minuteKeys, ChannelMonitorRedisDashboardMinuteKey(minute))
+	}
+	dayStart := model.ChannelDailyCostDayStart(startMinute)
+	lastDay := model.ChannelDailyCostDayStart(endMinute - 1)
+	type dayHash struct {
+		day int64
+		key string
+	}
+	dayKeys := make([]dayHash, 0, 2)
+	for day := dayStart; day <= lastDay; day += 24 * 60 * 60 {
+		dayKeys = append(dayKeys, dayHash{day: day, key: ChannelMonitorRedisCostDayKey(day)})
+	}
+	allKeys := append([]string(nil), minuteKeys...)
+	for _, dayHash := range dayKeys {
+		allKeys = append(allKeys, dayHash.key)
+	}
+	pipe := projection.client.Pipeline()
+	fieldCounts := make(map[string]*redis.IntCmd, len(allKeys))
+	for _, key := range allKeys {
+		fieldCounts[key] = pipe.HLen(opCtx, key)
 	}
 	if _, err := pipe.Exec(opCtx); err != nil {
 		return view, err
 	}
-	for _, command := range minuteCommands {
-		values, err := command.Result()
+	var totalFields int64
+	for _, key := range allKeys {
+		count, err := fieldCounts[key].Result()
 		if err != nil {
 			return view, err
+		}
+		if count > int64(limits.MaxHashFields) {
+			return view, &ChannelMonitorRedisSharedProjectionLimitError{
+				Resource: "hash_fields", Limit: int64(limits.MaxHashFields), Actual: count,
+			}
+		}
+		nextTotal, addErr := channelMonitorRedisSharedCheckedAddInt64(totalFields, count)
+		if addErr != nil || nextTotal > int64(limits.MaxTotalHashFields) {
+			return view, &ChannelMonitorRedisSharedProjectionLimitError{
+				Resource: "total_hash_fields", Limit: int64(limits.MaxTotalHashFields), Actual: nextTotal,
+			}
+		}
+		totalFields = nextTotal
+	}
+
+	pipe = projection.client.Pipeline()
+	minuteCommands := make(map[string]*redis.StringStringMapCmd, len(minuteKeys))
+	for _, key := range minuteKeys {
+		minuteCommands[key] = pipe.HGetAll(opCtx, key)
+	}
+	dayCommands := make(map[string]*redis.StringStringMapCmd, len(dayKeys))
+	for _, dayHash := range dayKeys {
+		dayCommands[dayHash.key] = pipe.HGetAll(opCtx, dayHash.key)
+	}
+	if _, err := pipe.Exec(opCtx); err != nil {
+		return view, err
+	}
+	var responseBytes int64
+	for _, key := range minuteKeys {
+		values, err := minuteCommands[key].Result()
+		if err != nil {
+			return view, err
+		}
+		responseBytes, err = channelMonitorRedisSharedCheckedAddInt64(responseBytes, channelMonitorRedisSharedHashResponseBytes(values))
+		if err != nil || responseBytes > limits.MaxResponseBytes {
+			return view, &ChannelMonitorRedisSharedProjectionLimitError{
+				Resource: "response_bytes", Limit: limits.MaxResponseBytes, Actual: responseBytes,
+			}
 		}
 		if err := accumulator.add(values); err != nil {
 			return view, err
 		}
 	}
 	accumulator.apply(&view)
-	dayStart := model.ChannelDailyCostDayStart(startAt)
-	lastDay := model.ChannelDailyCostDayStart(endAt - 1)
-	pipe = projection.client.Pipeline()
-	costCommands := make(map[int64]*redis.StringStringMapCmd)
-	for day := dayStart; day <= lastDay; day += 24 * 60 * 60 {
-		costCommands[day] = pipe.HGetAll(opCtx, ChannelMonitorRedisCostDayKey(day))
-	}
-	if _, err := pipe.Exec(opCtx); err != nil {
-		return view, err
-	}
-	for day, command := range costCommands {
-		values, err := command.Result()
+	for _, dayHash := range dayKeys {
+		values, err := dayCommands[dayHash.key].Result()
 		if err != nil {
 			return view, err
 		}
-		costView := view.DailyCosts[day]
+		responseBytes, err = channelMonitorRedisSharedCheckedAddInt64(responseBytes, channelMonitorRedisSharedHashResponseBytes(values))
+		if err != nil || responseBytes > limits.MaxResponseBytes {
+			return view, &ChannelMonitorRedisSharedProjectionLimitError{
+				Resource: "response_bytes", Limit: limits.MaxResponseBytes, Actual: responseBytes,
+			}
+		}
+		costView := view.DailyCosts[dayHash.day]
 		initializeDailyCostView(&costView)
-		if err := addChannelMonitorRedisDailyCostHashValues(&costView, values); err != nil {
+		if err := addChannelMonitorRedisDailyCostHashValuesWithLimits(&costView, values, limits); err != nil {
 			return view, err
 		}
-		view.DailyCosts[day] = costView
+		view.DailyCosts[dayHash.day] = costView
 	}
 	view.DataCutoffAt = accumulator.dataCutoffAt
 	view.ProcessedAt = accumulator.processedAt
 	view.EventWatermark = accumulator.eventWatermark
 	finalizeChannelMonitorRedisSharedView(&view, accumulator)
+	channelMonitorRedisSharedRememberMetadata(projection.client, view)
 	return view, nil
+}
+
+func channelMonitorRedisSharedHashResponseBytes(values map[string]string) int64 {
+	var total int64
+	for field, value := range values {
+		// Include a small RESP framing allowance for each field/value pair. The
+		// estimate is deliberately conservative and is only used as a final
+		// guard after HLEN has already bounded the amount fetched.
+		pairBytes := int64(len(field) + len(value) + 16)
+		next, err := channelMonitorRedisSharedCheckedAddInt64(total, pairBytes)
+		if err != nil {
+			return math.MaxInt64
+		}
+		total = next
+	}
+	return total
+}
+
+// QueryMetadata reads only the three metadata fields needed by controllers.
+// It intentionally avoids HGETALL so a metadata lookup remains bounded even
+// when the corresponding minute hashes contain many dimensions.
+func (projection *ChannelMonitorRedisSharedProjection) QueryMetadata(ctx context.Context, startAt, endAt int64) (dataCutoffAt, processedAt int64, eventWatermark uint64, windowStart, windowEnd int64, err error) {
+	if projection == nil || projection.client == nil {
+		return 0, 0, 0, 0, 0, ErrChannelMonitorRedisSharedProjectionUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	windowStart, windowEnd, _, _, _ = projection.queryWindow(startAt, endAt)
+	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
+	defer cancel()
+	pipe := projection.client.Pipeline()
+	commands := make([]*redis.SliceCmd, 0, (windowEnd-windowStart)/60)
+	for minute := windowStart; minute < windowEnd; minute += 60 {
+		commands = append(commands, pipe.HMGet(opCtx, ChannelMonitorRedisDashboardMinuteKey(minute),
+			channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricDataCutoffAt,
+			channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricProcessedAt,
+			channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricEventWatermark,
+		))
+	}
+	if _, err := pipe.Exec(opCtx); err != nil {
+		return 0, 0, 0, windowStart, windowEnd, err
+	}
+	for _, command := range commands {
+		values, resultErr := command.Result()
+		if resultErr != nil {
+			return 0, 0, 0, windowStart, windowEnd, resultErr
+		}
+		if len(values) != 3 {
+			continue
+		}
+		if raw := channelMonitorRedisSharedRedisValueString(values[0]); raw != "" {
+			value, parseErr := strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil {
+				return 0, 0, 0, windowStart, windowEnd, parseErr
+			}
+			dataCutoffAt = max(dataCutoffAt, value)
+		}
+		if raw := channelMonitorRedisSharedRedisValueString(values[1]); raw != "" {
+			value, parseErr := strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil {
+				return 0, 0, 0, windowStart, windowEnd, parseErr
+			}
+			processedAt = max(processedAt, value)
+		}
+		if raw := channelMonitorRedisSharedRedisValueString(values[2]); raw != "" {
+			value, parseErr := strconv.ParseUint(raw, 10, 64)
+			if parseErr != nil {
+				return 0, 0, 0, windowStart, windowEnd, parseErr
+			}
+			eventWatermark = max(eventWatermark, value)
+		}
+	}
+	return dataCutoffAt, processedAt, eventWatermark, windowStart, windowEnd, nil
+}
+
+func channelMonitorRedisSharedRedisValueString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		return ""
+	}
 }
 
 type channelMonitorRedisSharedRouteKey struct {
@@ -1004,6 +1548,7 @@ type channelMonitorRedisSharedFailureKey struct {
 }
 
 type channelMonitorRedisSharedQueryAccumulator struct {
+	limits         ChannelMonitorRedisSharedProjectionLimits
 	summary        ChannelMonitorRedisSharedAggregate
 	performance    ChannelMonitorRedisSharedAggregate
 	channels       map[int]ChannelMonitorRedisSharedAggregate
@@ -1020,7 +1565,13 @@ type channelMonitorRedisSharedQueryAccumulator struct {
 }
 
 func newChannelMonitorRedisSharedQueryAccumulator() *channelMonitorRedisSharedQueryAccumulator {
+	return newChannelMonitorRedisSharedQueryAccumulatorWithLimits(defaultChannelMonitorRedisSharedProjectionLimits())
+}
+
+func newChannelMonitorRedisSharedQueryAccumulatorWithLimits(limits ChannelMonitorRedisSharedProjectionLimits) *channelMonitorRedisSharedQueryAccumulator {
+	limits = normalizeChannelMonitorRedisSharedProjectionLimits(limits)
 	return &channelMonitorRedisSharedQueryAccumulator{
+		limits:        limits,
 		channels:      make(map[int]ChannelMonitorRedisSharedAggregate),
 		models:        make(map[string]ChannelMonitorRedisSharedAggregate),
 		groups:        make(map[string]ChannelMonitorRedisSharedAggregate),
@@ -1076,6 +1627,34 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) add(values map[str
 	return nil
 }
 
+func (accumulator *channelMonitorRedisSharedQueryAccumulator) ensureDimensionCapacity(existing bool) error {
+	if existing {
+		return nil
+	}
+	if len(accumulator.channels)+len(accumulator.models)+len(accumulator.groups)+len(accumulator.apiKeys)+
+		len(accumulator.routes)+len(accumulator.groupChannels)+len(accumulator.apiKeyScopes)+len(accumulator.failures) >= accumulator.limits.MaxResponseDimensions {
+		return &ChannelMonitorRedisSharedProjectionLimitError{
+			Resource: "response_dimensions", Limit: int64(accumulator.limits.MaxResponseDimensions),
+			Actual: int64(len(accumulator.channels) + len(accumulator.models) + len(accumulator.groups) + len(accumulator.apiKeys) +
+				len(accumulator.routes) + len(accumulator.groupChannels) + len(accumulator.apiKeyScopes) + len(accumulator.failures) + 1),
+		}
+	}
+	return nil
+}
+
+func channelMonitorRedisSharedMergeAggregateMapWithLimits[K comparable](accumulator *channelMonitorRedisSharedQueryAccumulator, items map[K]ChannelMonitorRedisSharedAggregate, key K, aggregate ChannelMonitorRedisSharedAggregate) error {
+	_, exists := items[key]
+	if !exists && len(items) >= accumulator.limits.MaxDimensionEntries {
+		return &ChannelMonitorRedisSharedProjectionLimitError{
+			Resource: "dimension_entries", Limit: int64(accumulator.limits.MaxDimensionEntries), Actual: int64(len(items) + 1),
+		}
+	}
+	if err := accumulator.ensureDimensionCapacity(exists); err != nil {
+		return err
+	}
+	return mergeChannelMonitorRedisSharedAggregateMap(items, key, aggregate)
+}
+
 func (accumulator *channelMonitorRedisSharedQueryAccumulator) addMetadata(metrics map[string]string) error {
 	for metric, raw := range metrics {
 		switch metric {
@@ -1119,41 +1698,41 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) addAggregate(scope
 		if err != nil {
 			return err
 		}
-		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.channels, id, aggregate)
+		return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.channels, id, aggregate)
 	case channelMonitorRedisSharedScopeModel, channelMonitorRedisSharedScopeGroup:
 		name, err := channelMonitorRedisSharedDimensionDecode(identity)
 		if err != nil {
 			return err
 		}
 		if scope == channelMonitorRedisSharedScopeModel {
-			return mergeChannelMonitorRedisSharedAggregateMap(accumulator.models, name, aggregate)
+			return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.models, name, aggregate)
 		} else {
-			return mergeChannelMonitorRedisSharedAggregateMap(accumulator.groups, name, aggregate)
+			return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.groups, name, aggregate)
 		}
 	case channelMonitorRedisSharedScopeAPIKey:
 		id, err := strconv.Atoi(identity)
 		if err != nil {
 			return err
 		}
-		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeys, id, aggregate)
+		return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.apiKeys, id, aggregate)
 	case channelMonitorRedisSharedScopeRoute:
 		channelID, modelName, err := channelMonitorRedisSharedParseRouteIdentity(identity)
 		if err != nil {
 			return err
 		}
-		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.routes, channelMonitorRedisSharedRouteKey{channelID, modelName}, aggregate)
+		return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.routes, channelMonitorRedisSharedRouteKey{channelID, modelName}, aggregate)
 	case channelMonitorRedisSharedScopeGroupRoute:
 		groupName, channelID, err := channelMonitorRedisSharedParseGroupChannelIdentity(identity)
 		if err != nil {
 			return err
 		}
-		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.groupChannels, channelMonitorRedisSharedGroupChannelKey{groupName, channelID}, aggregate)
+		return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.groupChannels, channelMonitorRedisSharedGroupChannelKey{groupName, channelID}, aggregate)
 	case channelMonitorRedisSharedScopeAPIKeyRoute:
 		apiKeyID, channelID, modelName, groupName, err := channelMonitorRedisSharedParseAPIKeyScopeIdentity(identity)
 		if err != nil {
 			return err
 		}
-		return mergeChannelMonitorRedisSharedAggregateMap(accumulator.apiKeyScopes, channelMonitorRedisSharedAPIKeyScopeKey{apiKeyID, channelID, modelName, groupName}, aggregate)
+		return channelMonitorRedisSharedMergeAggregateMapWithLimits(accumulator, accumulator.apiKeyScopes, channelMonitorRedisSharedAPIKeyScopeKey{apiKeyID, channelID, modelName, groupName}, aggregate)
 	}
 	return nil
 }
@@ -1164,6 +1743,16 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) addFailure(identit
 		return err
 	}
 	key := channelMonitorRedisSharedFailureKey{channelID, modelName, groupName, statusCode, errorType, errorCode}
+	if _, exists := accumulator.failures[key]; !exists {
+		if len(accumulator.failures) >= accumulator.limits.MaxDimensionEntries {
+			return &ChannelMonitorRedisSharedProjectionLimitError{
+				Resource: "dimension_entries", Limit: int64(accumulator.limits.MaxDimensionEntries), Actual: int64(len(accumulator.failures) + 1),
+			}
+		}
+		if err := accumulator.ensureDimensionCapacity(false); err != nil {
+			return err
+		}
+	}
 	category := accumulator.failures[key]
 	category.ChannelID, category.ModelName, category.GroupName = channelID, modelName, groupName
 	category.StatusCode, category.ErrorType, category.ErrorCode = statusCode, errorType, errorCode
@@ -1508,10 +2097,16 @@ func channelMonitorRedisSharedParseFailureIdentity(identity string) (int, string
 }
 
 func addChannelMonitorRedisDailyCostHashValues(view *ChannelMonitorRedisSharedDailyCostView, values map[string]string) error {
+	return addChannelMonitorRedisDailyCostHashValuesWithLimits(view, values, defaultChannelMonitorRedisSharedProjectionLimits())
+}
+
+func addChannelMonitorRedisDailyCostHashValuesWithLimits(view *ChannelMonitorRedisSharedDailyCostView, values map[string]string, limits ChannelMonitorRedisSharedProjectionLimits) error {
 	temporary := ChannelMonitorRedisSharedProjectionView{Channels: make(map[int]ChannelMonitorRedisSharedAggregate), Models: make(map[string]ChannelMonitorRedisSharedAggregate), Groups: make(map[string]ChannelMonitorRedisSharedAggregate), APIKeys: make(map[int]ChannelMonitorRedisSharedAggregate)}
-	if err := addChannelMonitorRedisSharedHashValues(&temporary, values); err != nil {
+	accumulator := newChannelMonitorRedisSharedQueryAccumulatorWithLimits(limits)
+	if err := accumulator.add(values); err != nil {
 		return err
 	}
+	accumulator.apply(&temporary)
 	view.Global = temporary.Summary
 	view.Channels = temporary.Channels
 	view.Models = temporary.Models
