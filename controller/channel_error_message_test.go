@@ -29,6 +29,26 @@ func TestRelayErrorResponseMasksConfiguredGlobalKeywordForUser(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "secret upstream detail")
 }
 
+func TestRelayErrorMessageMappingStillAppliesWhenRawErrorMatchesKeyword(t *testing.T) {
+	originalKeywords := setGlobalErrorMessageKeywords(t, "secret upstream detail")
+	t.Cleanup(func() { setGlobalErrorMessageKeywords(t, originalKeywords) })
+	useGlobalErrorMessageMapping(t, `{"503":"服务暂时不可用"}`)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	apiErr := types.NewOpenAIError(
+		errors.New("secret upstream detail: invalid key"),
+		types.ErrorCodeBadResponse,
+		http.StatusServiceUnavailable,
+	)
+
+	message, ok := relayUserVisibleErrorMessage(c, apiErr)
+
+	require.True(t, ok)
+	assert.Equal(t, "服务暂时不可用", message)
+}
+
 func TestRelayUserVisibleErrorMessageLeavesOriginalErrorForAdminLogs(t *testing.T) {
 	originalKeywords := setGlobalErrorMessageKeywords(t, "secret upstream detail")
 	t.Cleanup(func() { setGlobalErrorMessageKeywords(t, originalKeywords) })
