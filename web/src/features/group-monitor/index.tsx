@@ -42,6 +42,7 @@ import {
   ChannelMonitorStatusWindowDetails,
   type ChannelMonitorStatusWindowPresentation,
 } from '@/features/channel-monitor/components/channel-monitor-status-window'
+import { formatMonitorRatio } from '@/features/channel-monitor/lib/format'
 import { formatChannelMonitorStatusWindowRange } from '@/features/channel-monitor/lib/status-window'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -99,11 +100,6 @@ function formatHoverDuration(value: number | null): string {
 function formatRate(value: number | null): string {
   if (value == null) return '--'
   return `${value.toFixed(1)}%`
-}
-
-function formatRatio(value: number): string {
-  if (!Number.isFinite(value)) return '--'
-  return `${value.toFixed(value >= 10 ? 1 : 2)}x`
 }
 
 function formatTPS(value: number | null): string {
@@ -369,7 +365,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                   className='rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary'
                   title='分组倍率'
                 >
-                  {formatRatio(item.group_ratio ?? 1)}
+                  {formatMonitorRatio(item.group_ratio ?? 1)}x
                 </span>
                 <Badge variant={presentation.badge}>{presentation.label}</Badge>
               </div>

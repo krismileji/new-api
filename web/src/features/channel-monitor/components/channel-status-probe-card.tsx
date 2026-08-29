@@ -37,7 +37,7 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { formatChannelMonitorCost } from '../lib/format'
+import { formatChannelMonitorCost, formatMonitorRatio } from '../lib/format'
 import {
   areChannelStatusProbeCardPropsEqual,
   formatChannelStatusProbeNextRun,
@@ -200,27 +200,18 @@ function statusProbeBucketPresentation(
           bucket.response_time_sample_count
         )
   )
-  const success = hasLatest ? (result === 'success' ? 1 : 0) : bucket.success
-  const upstreamFailure = hasLatest
-    ? result === 'upstream_failure'
-      ? 1
-      : 0
-    : bucket.upstream_failure
-  const rateLimited = hasLatest
-    ? result === 'rate_limited'
-      ? 1
-      : 0
-    : bucket.rate_limited
-  const localFailure = hasLatest
-    ? result === 'local_failure'
-      ? 1
-      : 0
-    : bucket.local_failure
-  const skippedOrCanceled = hasLatest
-    ? result === 'skipped' || result === 'canceled'
-      ? 1
-      : 0
-    : bucket.skipped + bucket.canceled
+  let success = bucket.success
+  let upstreamFailure = bucket.upstream_failure
+  let rateLimited = bucket.rate_limited
+  let localFailure = bucket.local_failure
+  let skippedOrCanceled = bucket.skipped + bucket.canceled
+  if (hasLatest) {
+    success = result === 'success' ? 1 : 0
+    upstreamFailure = result === 'upstream_failure' ? 1 : 0
+    rateLimited = result === 'rate_limited' ? 1 : 0
+    localFailure = result === 'local_failure' ? 1 : 0
+    skippedOrCanceled = result === 'skipped' || result === 'canceled' ? 1 : 0
+  }
   let statusVariant: 'secondary' | 'warning' | 'destructive' | 'outline' =
     'outline'
   if (result === 'success') statusVariant = 'secondary'
@@ -249,31 +240,18 @@ function StatusProbeBucketDetails(props: {
   )
   const hasLatest = Boolean(props.bucket.latest_result)
   const result = props.bucket.latest_result || props.bucket.result
-  const success = hasLatest
-    ? result === 'success'
-      ? 1
-      : 0
-    : props.bucket.success
-  const upstreamFailure = hasLatest
-    ? result === 'upstream_failure'
-      ? 1
-      : 0
-    : props.bucket.upstream_failure
-  const rateLimited = hasLatest
-    ? result === 'rate_limited'
-      ? 1
-      : 0
-    : props.bucket.rate_limited
-  const localFailure = hasLatest
-    ? result === 'local_failure'
-      ? 1
-      : 0
-    : props.bucket.local_failure
-  const skippedOrCanceled = hasLatest
-    ? result === 'skipped' || result === 'canceled'
-      ? 1
-      : 0
-    : props.bucket.skipped + props.bucket.canceled
+  let success = props.bucket.success
+  let upstreamFailure = props.bucket.upstream_failure
+  let rateLimited = props.bucket.rate_limited
+  let localFailure = props.bucket.local_failure
+  let skippedOrCanceled = props.bucket.skipped + props.bucket.canceled
+  if (hasLatest) {
+    success = result === 'success' ? 1 : 0
+    upstreamFailure = result === 'upstream_failure' ? 1 : 0
+    rateLimited = result === 'rate_limited' ? 1 : 0
+    localFailure = result === 'local_failure' ? 1 : 0
+    skippedOrCanceled = result === 'skipped' || result === 'canceled' ? 1 : 0
+  }
   const details =
     props.bucket.latest_result || props.bucket.result
       ? [
@@ -645,9 +623,9 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             <span className='shrink-0'>
               成本倍率{' '}
               <span className='text-foreground font-mono tabular-nums'>
-                {props.channel.cost_ratio == null
-                  ? '-'
-                  : props.channel.cost_ratio.toFixed(4)}
+                {formatMonitorRatio(props.channel.cost_ratio, {
+                  minimumFractionDigits: 4,
+                })}
               </span>
             </span>
             <span aria-hidden='true'>·</span>

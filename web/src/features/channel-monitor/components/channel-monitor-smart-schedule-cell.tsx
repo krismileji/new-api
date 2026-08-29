@@ -41,6 +41,7 @@ import {
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
+import { formatMonitorRatio } from '../lib/format'
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteIsAvailable,
@@ -260,15 +261,15 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     details.push(
       {
         label: '成本倍率',
-        value: route.cost_ratio == null ? '-' : route.cost_ratio.toFixed(6),
+        value: formatMonitorRatio(route.cost_ratio),
       },
       {
         label: '分组倍率',
-        value: route.group_ratio == null ? '-' : route.group_ratio.toFixed(6),
+        value: formatMonitorRatio(route.group_ratio),
       },
       {
         label: '倍率差',
-        value: route.gross_margin == null ? '-' : route.gross_margin.toFixed(6),
+        value: formatMonitorRatio(route.gross_margin),
       }
     )
   }

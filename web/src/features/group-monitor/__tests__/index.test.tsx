@@ -105,6 +105,34 @@ describe('group monitor content', () => {
     assert.match(markup, /data-group-monitor-window-value="60"/)
   })
 
+  test('keeps precise group ratios visible in the monitor card', () => {
+    const markup = renderToStaticMarkup(
+      <GroupMonitorContent
+        result={{
+          enabled: true,
+          server_now: 1_752_777_900,
+          data_cutoff_at: 1_752_777_840,
+          display_value: 60,
+          display_unit: 'minute',
+          items: [
+            {
+              group: 'precision',
+              initial: 'P',
+              status: 'healthy',
+              group_ratio: 0.00123456789,
+              latest_first_token_ms: null,
+              success_rate: null,
+              last_finished_at: 0,
+              recent_window: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    assert.ok(markup.includes('0.00123456789x'))
+  })
+
   test('renders a timed out probe as a yellow warning', () => {
     const markup = renderToStaticMarkup(
       <GroupMonitorBucketDetails

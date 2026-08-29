@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
+import { formatMonitorRatio } from '../lib/format'
 import type {
   ChannelMonitorSmartScheduleEconomicRole,
   ChannelMonitorSmartScheduleScoreComponent,
@@ -74,14 +75,16 @@ function formatPoints(value: number | null | undefined, digits = 2) {
 
 function formatMetricValue(key: ScoreMetricKey, value: number | null) {
   if (value == null || !Number.isFinite(value)) return '-'
-  if (key === 'cost_ratio') return `x${value.toFixed(4)}`
+  if (key === 'cost_ratio') {
+    return `x${formatMonitorRatio(value, { minimumFractionDigits: 4 })}`
+  }
   if (key === 'first_token_ms') return `${value.toFixed(0)} ms`
   return `${value.toFixed(2)} token/s`
 }
 
 function formatEconomicRatio(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return '-'
-  return value.toFixed(6)
+  return formatMonitorRatio(value, { minimumFractionDigits: 6 })
 }
 
 function getEconomicRoleLabel(role: ChannelMonitorSmartScheduleEconomicRole) {

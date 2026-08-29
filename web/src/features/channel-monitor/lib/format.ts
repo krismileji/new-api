@@ -28,10 +28,14 @@ const channelMonitorResolutionRateFormatter = new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 1,
 })
 
-export function formatMonitorRatio(value: number | null | undefined): string {
+export function formatMonitorRatio(
+  value: number | null | undefined,
+  options?: { minimumFractionDigits?: number }
+): string {
   if (value == null || !Number.isFinite(value)) return '-'
   return value.toLocaleString(undefined, {
-    maximumFractionDigits: 6,
+    minimumFractionDigits: options?.minimumFractionDigits ?? 0,
+    maximumFractionDigits: 20,
     useGrouping: false,
   })
 }
