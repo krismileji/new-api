@@ -19,12 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 
 import type { NavGroup, NavItem } from '@/components/layout/types'
+import {
+  getSidebarShopEntries,
+  getSidebarShopEntryTitle,
+} from '@/features/system-settings/maintenance/config'
 import { useStatus } from '@/hooks/use-status'
+import { isHttpUrl } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
 type SidebarSectionConfig = {
   enabled: boolean
-  [key: string]: boolean | string
+  [key: string]: boolean | string | string[]
 }
 
 type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
@@ -260,6 +265,26 @@ function filterNavItems(
     .filter((item) => isNavItemVisible(item, adminConfig, userConfig))
 }
 
+export function expandShopRechargeItems(
+  items: NavItem[],
+  adminConfig: SidebarModulesAdminConfig
+): NavItem[] {
+  const shopEntries = getSidebarShopEntries(adminConfig.personal).filter(
+    (entry) => isHttpUrl(entry.url)
+  )
+
+  return items.flatMap((item) => {
+    if (!('url' in item) || item.url !== '/wallet/shop') return [item]
+
+    return shopEntries.map((entry, index) => ({
+      ...item,
+      title: getSidebarShopEntryTitle(entry, index, shopEntries.length),
+      url: `/wallet/shop?index=${index}`,
+      configUrls: ['/wallet/shop'],
+    }))
+  })
+}
+
 /**
  * Filter sidebar navigation groups by admin × user sidebar_modules config.
  *
@@ -305,7 +330,11 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
       navGroups
         .map((group) => ({
           ...group,
-          items: filterNavItems(group.items, adminConfig, userConfig),
+          items: filterNavItems(
+            expandShopRechargeItems(group.items, adminConfig),
+            adminConfig,
+            userConfig
+          ),
         }))
         .filter((group) => group.items.length > 0), // Only show navigation groups with visible items
     [navGroups, adminConfig, userConfig]

@@ -17,9 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
+import { z } from 'zod'
 
 import { ShopRecharge } from '@/features/shop-recharge'
 
 export const Route = createFileRoute('/_authenticated/wallet/shop')({
-  component: ShopRecharge,
+  component: RouteComponent,
+  validateSearch: z.object({
+    index: z.coerce.number().int().min(0).optional(),
+  }),
 })
+
+function RouteComponent() {
+  const { index } = Route.useSearch()
+  return <ShopRecharge shopIndex={index} />
+}

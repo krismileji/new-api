@@ -33,10 +33,15 @@ export type HeaderNavModulesConfig = {
 
 export type SidebarSectionConfig = {
   enabled: boolean
-  [key: string]: boolean | string
+  [key: string]: boolean | string | string[]
 }
 
 export type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
+
+export type SidebarShopEntry = {
+  url: string
+  name: string
+}
 
 export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   home: true,
@@ -135,6 +140,67 @@ const cloneSidebarDefault = (): SidebarModulesAdminConfig =>
     {}
   )
 
+export function getSidebarShopUrls(personal: unknown): string[] {
+  return getSidebarShopEntries(personal)
+    .map((entry) => entry.url)
+    .filter(Boolean)
+}
+
+export function getSidebarShopEntries(personal: unknown): SidebarShopEntry[] {
+  const personalConfig =
+    personal && typeof personal === 'object'
+      ? (personal as {
+          shop_url?: unknown
+          shop_urls?: unknown
+          shop_names?: unknown
+        })
+      : undefined
+
+  const normalize = (value: unknown, trim = true): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => (trim ? item.trim() : item))
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+      return [trim ? value.trim() : value]
+    }
+    return []
+  }
+
+  const legacyValue = personalConfig?.shop_url
+  const shopUrlsValue = personalConfig?.shop_urls
+  const legacyUrls = normalize(legacyValue, false)
+  const shopUrls = normalize(shopUrlsValue, false)
+
+  // Prefer an array value when both formats are present. This lets a newer
+  // multi-link configuration supersede a stale legacy single-link value.
+  let configuredUrls: string[]
+  if (Array.isArray(shopUrlsValue) && shopUrls.length > 0) {
+    configuredUrls = shopUrls
+  } else if (Array.isArray(legacyValue)) {
+    configuredUrls = legacyUrls
+  } else if (Array.isArray(shopUrlsValue)) {
+    configuredUrls = shopUrls
+  } else {
+    configuredUrls = legacyUrls.length > 0 ? legacyUrls : shopUrls
+  }
+
+  const names = normalize(personalConfig?.shop_names)
+  return configuredUrls.map((url, index) => ({
+    url: url.trim(),
+    name: names[index] ?? '',
+  }))
+}
+
+export function getSidebarShopEntryTitle(
+  entry: SidebarShopEntry,
+  index: number,
+  total: number
+): string {
+  return entry.name || (total === 1 ? '小铺充值' : `小铺充值 ${index + 1}`)
+}
+
 export function parseHeaderNavModules(
   value: string | null | undefined
 ): HeaderNavModulesConfig {
@@ -209,7 +275,48 @@ export function parseSidebarModulesAdmin(
           if (moduleKey === 'enabled') return
 
           const defaultValue = defaultSection[moduleKey]
+          if (moduleKey === 'shop_urls') {
+            if (Array.isArray(moduleValue)) {
+              sectionConfig[moduleKey] = moduleValue.filter(
+                (item): item is string => typeof item === 'string'
+              )
+            } else if (typeof moduleValue === 'string') {
+              sectionConfig[moduleKey] = [moduleValue]
+            } else {
+              sectionConfig[moduleKey] = []
+            }
+            return
+          }
+
+          if (moduleKey === 'shop_names') {
+            if (Array.isArray(moduleValue)) {
+              sectionConfig[moduleKey] = moduleValue.filter(
+                (item): item is string => typeof item === 'string'
+              )
+            } else if (typeof moduleValue === 'string') {
+              sectionConfig[moduleKey] = [moduleValue]
+            } else {
+              sectionConfig[moduleKey] = []
+            }
+            return
+          }
+
+          if (Array.isArray(defaultValue)) {
+            sectionConfig[moduleKey] = Array.isArray(moduleValue)
+              ? moduleValue.filter(
+                  (item): item is string => typeof item === 'string'
+                )
+              : [...defaultValue]
+            return
+          }
+
           if (typeof defaultValue === 'string') {
+            if (moduleKey === 'shop_url' && Array.isArray(moduleValue)) {
+              sectionConfig[moduleKey] = moduleValue.filter(
+                (item): item is string => typeof item === 'string'
+              )
+              return
+            }
             sectionConfig[moduleKey] =
               typeof moduleValue === 'string' ? moduleValue : defaultValue
             return

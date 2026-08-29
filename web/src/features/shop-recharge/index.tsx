@@ -23,22 +23,24 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useStatus } from '@/hooks/use-status'
 import { isHttpUrl } from '@/lib/content-format'
 
+import {
+  getSidebarShopEntries,
+  getSidebarShopEntryTitle,
+} from '../system-settings/maintenance/config'
+
 const SHOP_IFRAME_SANDBOX =
   'allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts allow-same-origin allow-top-navigation-by-user-activation'
 
-function resolveShopRechargeUrl(raw: unknown): string {
-  if (typeof raw !== 'string' || raw.trim() === '') return ''
+function resolveShopRechargeEntries(raw: unknown) {
+  if (typeof raw !== 'string' || raw.trim() === '') return []
 
   try {
-    const parsed = JSON.parse(raw) as {
-      personal?: { shop_url?: unknown }
-    }
-    const shopUrl = parsed.personal?.shop_url
-    return typeof shopUrl === 'string' && isHttpUrl(shopUrl.trim())
-      ? shopUrl.trim()
-      : ''
+    const parsed = JSON.parse(raw) as { personal?: Record<string, unknown> }
+    return getSidebarShopEntries(parsed.personal).filter((entry) =>
+      isHttpUrl(entry.url)
+    )
   } catch {
-    return ''
+    return []
   }
 }
 
@@ -54,9 +56,25 @@ function getShopIframeSandbox(url: string): string | undefined {
   return SHOP_IFRAME_SANDBOX
 }
 
-export function ShopRecharge() {
+type ShopRechargeProps = {
+  shopIndex?: number
+}
+
+export function ShopRecharge({ shopIndex }: ShopRechargeProps) {
   const { status, loading } = useStatus()
-  const shopUrl = resolveShopRechargeUrl(status?.SidebarModulesAdmin)
+  const shopEntries = resolveShopRechargeEntries(status?.SidebarModulesAdmin)
+  const requestedIndex =
+    typeof shopIndex === 'number' &&
+    Number.isInteger(shopIndex) &&
+    shopIndex >= 0
+      ? shopIndex
+      : 0
+  const selectedIndex = requestedIndex < shopEntries.length ? requestedIndex : 0
+  const selectedEntry = shopEntries[selectedIndex] ?? shopEntries[0]
+  const shopUrl = selectedEntry?.url ?? ''
+  const shopTitle = selectedEntry
+    ? getSidebarShopEntryTitle(selectedEntry, selectedIndex, shopEntries.length)
+    : '小铺充值'
   let content: ReactNode
 
   if (loading && !status) {
@@ -70,7 +88,7 @@ export function ShopRecharge() {
       <iframe
         src={shopUrl}
         className='h-full min-h-0 w-full border-0'
-        title='小铺充值'
+        title={shopTitle}
         sandbox={getShopIframeSandbox(shopUrl)}
       />
     )
@@ -89,7 +107,7 @@ export function ShopRecharge() {
 
   return (
     <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>小铺充值</SectionPageLayout.Title>
+      <SectionPageLayout.Title>{shopTitle}</SectionPageLayout.Title>
       <SectionPageLayout.Content>{content}</SectionPageLayout.Content>
     </SectionPageLayout>
   )
