@@ -58,6 +58,7 @@ const (
 	channelMonitorNotificationEmailOption                      = "ChannelMonitorNotificationEmail"
 	channelMonitorEmailNotificationTypesOption                 = "ChannelMonitorEmailNotificationTypes"
 	channelMonitorErrorMessageMappingOption                    = service.ErrorMessageMappingOptionKey
+	channelMonitorErrorMessageWhitelistOption                  = service.ErrorMessageWhitelistOptionKey
 	channelMonitorErrorMessageKeywordsOption                   = service.ErrorMessageKeywordsOptionKey
 	channelMonitorRetrySkipErrorCodesOption                    = service.RetrySkipErrorCodesOptionKey
 	channelMonitorRetrySkipErrorMessagesOption                 = service.RetrySkipErrorMessagesOptionKey
@@ -214,6 +215,7 @@ type channelMonitorSettings struct {
 	NotificationEmail                     string                     `json:"notification_email"`
 	EmailNotificationTypes                []string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   string                     `json:"error_message_mapping"`
+	ErrorMessageWhitelist                 string                     `json:"error_message_whitelist"`
 	ErrorMessageKeywords                  string                     `json:"error_message_keywords"`
 	RetrySkipErrorCodes                   string                     `json:"retry_skip_error_codes"`
 	RetrySkipErrorMessages                string                     `json:"retry_skip_error_messages"`
@@ -277,6 +279,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	NotificationEmail                     *string                     `json:"notification_email"`
 	EmailNotificationTypes                *[]string                   `json:"email_notification_types"`
 	ErrorMessageMapping                   *string                     `json:"error_message_mapping"`
+	ErrorMessageWhitelist                 *string                     `json:"error_message_whitelist"`
 	ErrorMessageKeywords                  *string                     `json:"error_message_keywords"`
 	RetrySkipErrorCodes                   *string                     `json:"retry_skip_error_codes"`
 	RetrySkipErrorMessages                *string                     `json:"retry_skip_error_messages"`
@@ -390,6 +393,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorNotificationEmailOption,
 		channelMonitorEmailNotificationTypesOption,
 		channelMonitorErrorMessageMappingOption,
+		channelMonitorErrorMessageWhitelistOption,
 		channelMonitorErrorMessageKeywordsOption,
 		channelMonitorRetrySkipErrorCodesOption,
 		channelMonitorRetrySkipErrorMessagesOption,
@@ -478,6 +482,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawNotificationEmail := options[channelMonitorNotificationEmailOption]
 	rawEmailNotificationTypes := options[channelMonitorEmailNotificationTypesOption]
 	rawErrorMessageMapping := options[channelMonitorErrorMessageMappingOption]
+	rawErrorMessageWhitelist := options[channelMonitorErrorMessageWhitelistOption]
 	rawErrorMessageKeywords := options[channelMonitorErrorMessageKeywordsOption]
 	rawRetrySkipErrorCodes := options[channelMonitorRetrySkipErrorCodesOption]
 	rawRetrySkipErrorMessages := options[channelMonitorRetrySkipErrorMessagesOption]
@@ -687,6 +692,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		NotificationEmail:                     notificationEmail,
 		EmailNotificationTypes:                emailNotificationTypes,
 		ErrorMessageMapping:                   rawErrorMessageMapping,
+		ErrorMessageWhitelist:                 rawErrorMessageWhitelist,
 		ErrorMessageKeywords:                  rawErrorMessageKeywords,
 		RetrySkipErrorCodes:                   rawRetrySkipErrorCodes,
 		RetrySkipErrorMessages:                rawRetrySkipErrorMessages,
@@ -1008,6 +1014,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.NotificationEmail == nil &&
 		request.EmailNotificationTypes == nil &&
 		request.ErrorMessageMapping == nil &&
+		request.ErrorMessageWhitelist == nil &&
 		request.ErrorMessageKeywords == nil &&
 		request.RetrySkipErrorCodes == nil &&
 		request.RetrySkipErrorMessages == nil &&
@@ -1069,6 +1076,15 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.ErrorMessageMapping = errorMessageMapping
 		values[channelMonitorErrorMessageMappingOption] = errorMessageMapping
+	}
+	if request.ErrorMessageWhitelist != nil {
+		errorMessageWhitelist := strings.TrimSpace(*request.ErrorMessageWhitelist)
+		if err := service.ValidateErrorMessageWhitelist(errorMessageWhitelist); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.ErrorMessageWhitelist = errorMessageWhitelist
+		values[channelMonitorErrorMessageWhitelistOption] = errorMessageWhitelist
 	}
 	if request.ErrorMessageKeywords != nil {
 		errorMessageKeywords := strings.TrimSpace(*request.ErrorMessageKeywords)
@@ -1738,6 +1754,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"notification_email_configured":              settings.NotificationEmail != "",
 		"email_notification_types":                   settings.EmailNotificationTypes,
 		"error_message_mapping_configured":           strings.TrimSpace(settings.ErrorMessageMapping) != "",
+		"error_message_whitelist_configured":         strings.TrimSpace(settings.ErrorMessageWhitelist) != "",
 		"error_message_keywords_configured":          strings.TrimSpace(settings.ErrorMessageKeywords) != "",
 		"retry_skip_error_codes_configured":          strings.TrimSpace(settings.RetrySkipErrorCodes) != "",
 		"retry_skip_error_messages_configured":       strings.TrimSpace(settings.RetrySkipErrorMessages) != "",

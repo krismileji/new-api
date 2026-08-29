@@ -98,6 +98,8 @@ export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
 export const MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH = 4096
 export const MAX_ERROR_MESSAGE_KEYWORDS = 32
 export const MAX_ERROR_MESSAGE_KEYWORD_LENGTH = 128
+export const MAX_ERROR_MESSAGE_WHITELIST_CODES = 32
+export const MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH = 128
 export const MAX_RETRY_SKIP_ERROR_CODES = 32
 export const MAX_RETRY_SKIP_ERROR_CODE_LENGTH = 128
 export const MAX_RETRY_SKIP_ERROR_MESSAGES = 32
@@ -912,7 +914,17 @@ const errorMessageKeywordsSchema = z
     }
   })
 
-function retrySkipLinesSchema(label: string, maxCount: number, maxLength: number) {
+const errorMessageWhitelistSchema = retrySkipLinesSchema(
+  '错误码白名单',
+  MAX_ERROR_MESSAGE_WHITELIST_CODES,
+  MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH
+)
+
+function retrySkipLinesSchema(
+  label: string,
+  maxCount: number,
+  maxLength: number
+) {
   return z
     .string()
     .default('')
@@ -1225,6 +1237,7 @@ export function createChannelMonitorSettingsSchema() {
           '请输入有效的通知邮箱'
         ),
       errorMessageMapping: errorMessageMappingSchema,
+      errorMessageWhitelist: errorMessageWhitelistSchema,
       errorMessageKeywords: errorMessageKeywordsSchema,
       retrySkipErrorCodes: retrySkipLinesSchema(
         '不重试错误码',

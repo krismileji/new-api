@@ -113,6 +113,7 @@ const settings = {
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   error_message_keywords: '',
   error_message_mapping: '',
+  error_message_whitelist: '',
   retry_skip_error_codes: '',
   retry_skip_error_messages: '',
   probe_response_enabled: false,
@@ -292,6 +293,7 @@ const monitorRetentionFieldCount =
 const monitorPanel = tabPanelFor(monitorTab)
 const monitorExcludesErrorSettings =
   !monitorPanel?.textContent?.includes('错误信息映射') &&
+  !monitorPanel?.textContent?.includes('错误码白名单') &&
   !monitorPanel?.textContent?.includes('错误屏蔽关键字') &&
   !monitorPanel?.textContent?.includes('命中错误码时跳过重试') &&
   !monitorPanel?.textContent?.includes('命中执行错误信息时跳过重试')
@@ -300,6 +302,7 @@ const errorHandlingPanelText = tabPanelFor(errorHandlingTab)?.textContent ?? ''
 const errorSettingsUseDedicatedTab =
   monitorExcludesErrorSettings &&
   errorHandlingPanelText.includes('错误信息映射') &&
+  errorHandlingPanelText.includes('错误码白名单') &&
   errorHandlingPanelText.includes('错误屏蔽关键字') &&
   errorHandlingPanelText.includes('命中错误码时跳过重试') &&
   errorHandlingPanelText.includes('命中执行错误信息时跳过重试')

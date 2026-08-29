@@ -10,9 +10,12 @@ import (
 
 const (
 	ErrorMessageMappingOptionKey        = "ChannelMonitorErrorMessageMapping"
+	ErrorMessageWhitelistOptionKey      = "ChannelMonitorErrorMessageWhitelist"
 	maxErrorMessageMappingEntries       = 100
 	maxErrorMessageMappingKeyLength     = 128
 	maxErrorMessageMappingMessageLength = 4096
+	MaxErrorMessageWhitelistCodes       = 32
+	MaxErrorMessageWhitelistCodeLength  = 128
 )
 
 // GetConfiguredErrorMessageMapping returns the global channel-monitor mapping.
@@ -22,12 +25,51 @@ func GetConfiguredErrorMessageMapping() string {
 	return common.OptionMap[ErrorMessageMappingOptionKey]
 }
 
+// GetConfiguredErrorMessageWhitelist returns the error codes that bypass all
+// user-visible error-message processing.
+func GetConfiguredErrorMessageWhitelist() string {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	return common.OptionMap[ErrorMessageWhitelistOptionKey]
+}
+
 // ValidateErrorMessageMapping validates the optional error message map.
 // Keys may be upstream error codes or HTTP status codes; values are the
 // messages exposed to the requesting user.
 func ValidateErrorMessageMapping(raw string) error {
 	_, err := parseErrorMessageMapping(raw)
 	return err
+}
+
+// ValidateErrorMessageWhitelist validates the optional error-code whitelist.
+func ValidateErrorMessageWhitelist(raw string) error {
+	_, err := parseErrorMessageWhitelist(raw)
+	return err
+}
+
+// ShouldBypassErrorMessageHandling reports whether an error code or final HTTP
+// status code is configured to bypass user-visible error processing.
+func ShouldBypassErrorMessageHandling(errorCode string, statusCode int) bool {
+	codes, err := parseErrorMessageWhitelist(GetConfiguredErrorMessageWhitelist())
+	if err != nil {
+		return false
+	}
+
+	candidates := []string{strings.ToLower(strings.TrimSpace(errorCode))}
+	if statusCode >= 100 && statusCode <= 599 {
+		candidates = append(candidates, strconv.Itoa(statusCode))
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		for _, configured := range codes {
+			if strings.EqualFold(candidate, configured) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ResolveUserErrorMessage returns the configured message for an upstream error
@@ -89,4 +131,13 @@ func parseErrorMessageMapping(raw string) (map[string]string, error) {
 		normalized[normalizedKey] = message
 	}
 	return normalized, nil
+}
+
+func parseErrorMessageWhitelist(raw string) ([]string, error) {
+	return parseRetrySkipLines(
+		raw,
+		"错误码白名单",
+		MaxErrorMessageWhitelistCodes,
+		MaxErrorMessageWhitelistCodeLength,
+	)
 }

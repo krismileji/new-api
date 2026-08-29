@@ -41,6 +41,29 @@ func useGlobalErrorMessageMapping(t *testing.T, mapping string) {
 	})
 }
 
+func useGlobalErrorMessageWhitelist(t *testing.T, whitelist string) {
+	t.Helper()
+	common.OptionMapRWMutex.Lock()
+	wasNil := common.OptionMap == nil
+	if wasNil {
+		common.OptionMap = make(map[string]string)
+	}
+	original, existed := common.OptionMap[service.ErrorMessageWhitelistOptionKey]
+	common.OptionMap[service.ErrorMessageWhitelistOptionKey] = whitelist
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		if wasNil {
+			common.OptionMap = nil
+		} else if existed {
+			common.OptionMap[service.ErrorMessageWhitelistOptionKey] = original
+		} else {
+			delete(common.OptionMap, service.ErrorMessageWhitelistOptionKey)
+		}
+	})
+}
+
 func TestWriteRelayErrorResponseDoesNotAppendAfterResponseStarted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -80,6 +103,23 @@ func TestWriteRelayErrorResponseUsesGlobalMessageMappingBeforeResponseStarts(t *
 	assert.Equal(t, http.StatusBadGateway, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "上游暂时不可用")
 	assert.NotContains(t, recorder.Body.String(), "upstream failed")
+}
+
+func TestWriteRelayErrorResponseBypassesConfiguredErrorHandlingForWhitelistedCode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	useGlobalErrorMessageMapping(t, `{"bad_response":"上游暂时不可用"}`)
+	useGlobalErrorMessageWhitelist(t, "bad_response")
+	originalKeywords := setGlobalErrorMessageKeywords(t, "secret upstream detail")
+	t.Cleanup(func() { setGlobalErrorMessageKeywords(t, originalKeywords) })
+	apiErr := types.NewOpenAIError(errors.New("secret upstream detail: invalid key"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+
+	writeRelayErrorResponse(c, nil, types.RelayFormatOpenAI, apiErr)
+
+	assert.Equal(t, http.StatusBadGateway, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "secret upstream detail: invalid key")
+	assert.NotContains(t, recorder.Body.String(), "上游暂时不可用")
 }
 
 func TestWriteRelayErrorResponseReplacesPendingEventStreamHeaders(t *testing.T) {

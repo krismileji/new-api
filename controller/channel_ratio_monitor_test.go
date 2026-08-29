@@ -597,6 +597,38 @@ func TestUpdateChannelMonitorErrorMessageMappingValidatesAndPersists(t *testing.
 	assert.Equal(t, mapping, option.Value)
 }
 
+func TestUpdateChannelMonitorErrorMessageWhitelistValidatesAndPersists(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+
+	tooMany := make([]string, service.MaxErrorMessageWhitelistCodes+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("code-%d", index)
+	}
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_whitelist": strings.Join(tooMany, "\n"),
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	whitelist := " provider_specific_error\n503 "
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+		"error_message_whitelist": whitelist,
+	})
+	UpdateChannelMonitorSettings(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response channelMonitorSettingsAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, strings.TrimSpace(whitelist), response.Data.ErrorMessageWhitelist)
+	assert.Equal(t, strings.TrimSpace(whitelist), service.GetConfiguredErrorMessageWhitelist())
+
+	var option model.Option
+	require.NoError(t, db.Where("key = ?", channelMonitorErrorMessageWhitelistOption).First(&option).Error)
+	assert.Equal(t, strings.TrimSpace(whitelist), option.Value)
+}
+
 func TestUpdateChannelMonitorErrorMessageKeywordsValidatesAndPersists(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})

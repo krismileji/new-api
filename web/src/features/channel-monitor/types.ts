@@ -707,6 +707,7 @@ export type ChannelMonitorSettings = {
   notification_email: string
   email_notification_types: ChannelMonitorEmailNotificationType[]
   error_message_mapping: string
+  error_message_whitelist: string
   error_message_keywords: string
   retry_skip_error_codes: string
   retry_skip_error_messages: string

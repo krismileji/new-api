@@ -411,6 +411,7 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
+      errorMessageWhitelist: 'provider_specific_error\n503',
       errorMessageKeywords: '',
       probeResponseEnabled: true,
       probeResponseAllowedIPs: ' 203.0.113.10,\n2001:db8::10 ',
@@ -455,6 +456,7 @@ describe('channel monitor settings schema', () => {
       settings.errorMessageMapping,
       '{"429":"请求过于频繁，请稍后再试"}'
     )
+    assert.equal(settings.errorMessageWhitelist, 'provider_specific_error\n503')
     assert.equal(settings.probeResponseEnabled, true)
     assert.equal(
       settings.probeResponseAllowedIPs,
@@ -542,6 +544,7 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       errorMessageMapping: '',
+      errorMessageWhitelist: '',
       errorMessageKeywords: '',
       probeResponseEnabled: false,
       probeResponseAllowedIPs: '',
@@ -580,6 +583,12 @@ describe('channel monitor settings schema', () => {
       { probeResponseOutputTokens: MAX_PROBE_RESPONSE_TOKEN_COUNT + 1 },
       { errorMessageMapping: '{"429":429}' },
       { errorMessageMapping: '[]' },
+      {
+        errorMessageWhitelist: Array.from({ length: 33 }, () => 'code').join(
+          '\n'
+        ),
+      },
+      { errorMessageWhitelist: 'x'.repeat(129) },
       {
         errorMessageKeywords: Array.from({ length: 33 }, () => 'keyword').join(
           '\n'

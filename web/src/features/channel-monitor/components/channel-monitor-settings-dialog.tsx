@@ -789,6 +789,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       notificationEmail: props.settings.notification_email,
       emailNotificationTypes: props.settings.email_notification_types,
       errorMessageMapping: props.settings.error_message_mapping ?? '',
+      errorMessageWhitelist: props.settings.error_message_whitelist ?? '',
       errorMessageKeywords: props.settings.error_message_keywords ?? '',
       retrySkipErrorCodes: props.settings.retry_skip_error_codes ?? '',
       retrySkipErrorMessages: props.settings.retry_skip_error_messages ?? '',
@@ -1188,6 +1189,31 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             insufficient_quota: '额度不足，请联系管理员',
                           }}
                           valueType='string'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='errorMessageWhitelist'
+                  render={({ field }) => (
+                    <FormItem className='space-y-3 border-t pt-4'>
+                      <div className='space-y-1'>
+                        <FormLabel>错误码白名单</FormLabel>
+                        <FormDescription>
+                          命中的上游错误码或 HTTP
+                          状态码不会进行错误映射和关键字屏蔽，原样返回给用户；每行填写一个，也支持逗号分隔，最多
+                          32 个。
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Textarea
+                          rows={3}
+                          placeholder='例如：provider_specific_error\n503'
+                          {...field}
+                          disabled={mutation.isPending}
                         />
                       </FormControl>
                       <FormMessage />
