@@ -21,7 +21,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import {
   Popover,
   PopoverContent,
@@ -362,19 +361,21 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
         ) : null}
         <PopoverTrigger
           render={
-            <Button
+            <button
               type='button'
-              variant='ghost'
-              size='icon-xs'
-              className='text-muted-foreground size-5'
+              className='text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 inline-flex size-5 shrink-0 cursor-help items-center justify-center rounded-sm transition-colors focus-visible:ring-2 focus-visible:outline-none'
               title={`查看当前调度状态详情：${statusSummary}`}
               aria-label={`查看当前调度状态详情：${statusSummary}`}
               onClick={(event) => event.stopPropagation()}
-            />
+            >
+              <HugeiconsIcon
+                icon={InformationCircleIcon}
+                className='size-3.5'
+                aria-hidden='true'
+              />
+            </button>
           }
-        >
-          <HugeiconsIcon icon={InformationCircleIcon} aria-hidden='true' />
-        </PopoverTrigger>
+        />
       </div>
       <PopoverContent side='right' align='start' className='w-80'>
         <PopoverHeader>

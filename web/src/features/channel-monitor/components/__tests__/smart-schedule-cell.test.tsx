@@ -114,6 +114,10 @@ describe('channel monitor smart schedule cell status', () => {
     assert.match(markup, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
     assert.match(markup, /当前得分[\s\S]*75\.0[\s\S]*最近得分[\s\S]*80\.0/)
     assert.ok(markup.includes('常规调度'))
+    assert.match(
+      markup,
+      /<button(?=[^>]*aria-label="查看当前调度状态详情：常规调度")(?=[^>]*class="[^"]*size-5[^"]*")(?=[^>]*class="[^"]*rounded-sm[^"]*")(?=[^>]*class="[^"]*cursor-help[^"]*")[^>]*>/
+    )
   })
 
   test('shows score placeholders without falling back to another route', () => {

@@ -300,7 +300,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('连续失败停止次数'))
     assert.match(markup, /type="number"[^>]*min="1"[^>]*max="100"/)
     assert.match(markup, /value="3"/)
-    assert.ok(markup.includes('倍率和余额分别连续失败'))
+    assert.ok(markup.includes('aria-label="查看“连续失败停止次数”说明"'))
   })
 
   test('shows the configured upstream request timeout for ratio and balance updates', () => {
@@ -309,7 +309,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('上游请求超时'))
     assert.match(markup, /type="number"[^>]*min="1"[^>]*max="600"/)
     assert.match(markup, /value="30"/)
-    assert.ok(markup.includes('单次倍率或余额更新超过该时间会终止'))
+    assert.ok(markup.includes('aria-label="查看“上游请求超时”说明"'))
   })
 
   test('shows the configured retry delay and allows immediate retries', () => {
@@ -318,7 +318,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('失败重试等待时间'))
     assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
     assert.match(markup, /value="7"/)
-    assert.ok(markup.includes('每次重试前等待的时间；设置为 0 时立即重试'))
+    assert.ok(markup.includes('aria-label="查看“失败重试等待时间”说明"'))
   })
 
   test('shows the configured channel capacity wait time', () => {
@@ -327,14 +327,18 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('渠道满载等待时间'))
     assert.match(markup, /type="number"[^>]*min="0"[^>]*max="600"/)
     assert.match(markup, /value="8"/)
-    assert.ok(markup.includes('无可用渠道时最多等待该时间'))
+    assert.ok(markup.includes('aria-label="查看“渠道满载等待时间”说明"'))
   })
 
   test('shows persisted retention settings with bounded numeric inputs', () => {
     const markup = renderToStaticMarkup(<CostRetentionFieldFixture />)
 
     assert.ok(markup.includes('日成本保留天数'))
-    assert.ok(markup.includes('aria-label="日成本保留天数说明"'))
+    assert.ok(markup.includes('aria-label="查看“日成本保留天数”说明"'))
+    const retentionHelpButton = markup.match(
+      /<button(?=[^>]*aria-label="查看“日成本保留天数”说明")(?=[^>]*class="[^"]*size-5[^"]*")(?=[^>]*class="[^"]*rounded-sm[^"]*")(?=[^>]*class="[^"]*cursor-help[^"]*")[^>]*>/
+    )?.[0]
+    assert.ok(retentionHelpButton)
     assert.ok(markup.includes('路由分钟指标保留天数'))
     assert.ok(markup.includes('API Key 分钟指标保留天数'))
     assert.ok(markup.includes('调度执行明细保留天数'))
@@ -370,8 +374,7 @@ describe('channel monitor settings dialog', () => {
     )
     assert.ok(markup.includes('分组监控记录保留天数'))
     assert.ok(markup.includes('模型检测任务保留天数'))
-    assert.ok(markup.includes('按配置周期分批清理到期数据'))
-    assert.ok(markup.includes('删除后不可恢复'))
+    assert.ok(markup.includes('aria-label="查看“数据保留”说明"'))
     assert.ok(markup.includes('启用自动清理'))
     assert.ok(markup.includes('aria-label="启用自动清理"'))
     assert.ok(markup.includes('data-checked'))
@@ -404,7 +407,7 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('生效 IP（可选）'))
     assert.ok(markup.includes('203.0.113.10'))
     assert.ok(markup.includes('2001:db8::10'))
-    assert.ok(markup.includes('留空时对所有来源生效'))
+    assert.ok(markup.includes('aria-label="查看“生效 IP（可选）”说明"'))
     assert.ok(markup.includes('响应文本'))
     assert.ok(markup.includes('最小延迟'))
     assert.ok(markup.includes('最大延迟'))
