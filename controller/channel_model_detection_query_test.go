@@ -40,14 +40,42 @@ func TestChannelModelDetectionOverviewAPIUsesSuccessEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":true`)
 	assert.Contains(t, recorder.Body.String(), `"channels"`)
-	assert.Contains(t, recorder.Body.String(), `"snapshot_version":1`)
-	assert.Contains(t, recorder.Body.String(), `"snapshot_revision":`)
-	assert.Contains(t, recorder.Body.String(), `"event_watermark":`)
-	assert.Contains(t, recorder.Body.String(), `"generated_at":`)
-	assert.Contains(t, recorder.Body.String(), `"data_cutoff_at":`)
-	assert.Contains(t, recorder.Body.String(), `"snapshot_age_seconds":`)
-	assert.Contains(t, recorder.Body.String(), `"stale":false`)
+	assert.NotContains(t, recorder.Body.String(), `"snapshot_version":`)
+	assert.NotContains(t, recorder.Body.String(), `"snapshot_revision":`)
+	assert.NotContains(t, recorder.Body.String(), `"event_watermark":`)
+	assert.NotContains(t, recorder.Body.String(), `"generated_at":`)
+	assert.NotContains(t, recorder.Body.String(), `"data_cutoff_at":`)
+	assert.NotContains(t, recorder.Body.String(), `"snapshot_age_seconds":`)
 	assert.NotContains(t, recorder.Body.String(), "overview-secret")
+}
+
+func TestChannelModelDetectionOverviewAPIReadsCurrentData(t *testing.T) {
+	setupChannelModelDetectionQueryControllerTest(t)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: 404, Name: "before-update", Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	readChannelName := func() string {
+		ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/model_detection", nil)
+		GetChannelModelDetectionOverview(ctx)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var response struct {
+			Data struct {
+				Channels []struct {
+					ID   int    `json:"id"`
+					Name string `json:"name"`
+				} `json:"channels"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		require.Len(t, response.Data.Channels, 1)
+		assert.Equal(t, 404, response.Data.Channels[0].ID)
+		return response.Data.Channels[0].Name
+	}
+
+	assert.Equal(t, "before-update", readChannelName())
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 404).Update("name", "after-update").Error)
+	assert.Equal(t, "after-update", readChannelName())
 }
 
 func TestChannelModelDetectionHistoryAPIRejectsPaginationAndEnums(t *testing.T) {

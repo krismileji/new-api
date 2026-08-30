@@ -86,7 +86,6 @@ func GetChannelModelDetectorRelayHandler() (*ChannelModelDetectorRelayHandler, e
 
 func registerChannelModelDetectionRuntimeTask() {
 	service.RegisterSystemTaskHandler(channelModelDetectionTaskHandler{})
-	service.WarmChannelModelDetectionOverviewSnapshot()
 }
 
 type channelModelDetectionTaskHandler struct{}

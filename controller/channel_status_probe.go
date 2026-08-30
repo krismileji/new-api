@@ -105,12 +105,6 @@ type channelStatusProbeChannelResponse struct {
 
 type channelStatusProbeOverviewResponse struct {
 	ServerNow          int64                               `json:"server_now"`
-	SnapshotVersion    int                                 `json:"snapshot_version"`
-	SnapshotRevision   uint64                              `json:"snapshot_revision"`
-	EventWatermark     uint64                              `json:"event_watermark"`
-	GeneratedAt        int64                               `json:"generated_at"`
-	SnapshotAgeSeconds int64                               `json:"snapshot_age_seconds"`
-	Stale              bool                                `json:"stale"`
 	ScanIntervalSecond int                                 `json:"scan_interval_seconds"`
 	Summary            map[string]int                      `json:"summary"`
 	Groups             []string                            `json:"groups"`
@@ -492,12 +486,8 @@ func mergeChannelStatusProbeExecutionRecentWindow(
 
 func GetChannelStatusProbeOverview(c *gin.Context) {
 	selectedModel := strings.TrimSpace(c.Query("model"))
-	response, err := getChannelStatusProbeOverviewCached(selectedModel)
+	response, err := queryChannelStatusProbeOverview(c.Request.Context(), selectedModel)
 	if err != nil {
-		if errors.Is(err, errChannelStatusProbeOverviewSnapshotUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": err.Error()})
-			return
-		}
 		common.ApiError(c, err)
 		return
 	}
@@ -505,6 +495,7 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 }
 
 func buildChannelStatusProbeOverview(
+	ctx context.Context,
 	selectedModel string,
 	now int64,
 ) (channelStatusProbeOverviewResponse, error) {
@@ -538,7 +529,7 @@ func buildChannelStatusProbeOverview(
 		return channelStatusProbeOverviewResponse{}, err
 	}
 	todayStart := model.ChannelDailyCostDayStart(now)
-	todayCosts, err := model.GetChannelDailyCosts(context.Background(), todayStart, todayStart+channelMonitorCostDaySeconds)
+	todayCosts, err := model.GetChannelDailyCosts(ctx, todayStart, todayStart+channelMonitorCostDaySeconds)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
@@ -861,7 +852,7 @@ func UpdateChannelStatusProbeConfig(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	invalidateChannelStatusProbeOverviewCache()
+	notifyChannelStatusProbeOverviewChanged()
 	wakeChannelStatusProbeWorker()
 	response, err := channelStatusProbeConfigToResponse(saved)
 	if err != nil {
@@ -908,7 +899,7 @@ func RunChannelStatusProbeNow(c *gin.Context) {
 		}
 		return
 	}
-	invalidateChannelStatusProbeOverviewCache()
+	notifyChannelStatusProbeOverviewChanged()
 	wakeChannelStatusProbeWorker()
 	c.JSON(http.StatusAccepted, gin.H{
 		"success": true, "message": "", "data": gin.H{"manual_request_id": requestId},

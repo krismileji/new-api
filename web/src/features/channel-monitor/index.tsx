@@ -131,10 +131,10 @@ import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorConcurrencyQueryOptions,
+  getChannelMonitorActiveRefetchInterval,
   getChannelMonitorManualRefreshScopeKey,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
-  getChannelMonitorSnapshotRefetchInterval,
   getChannelMonitorSmartScheduleQueryOptions,
   isChannelMonitorPerformanceQueryActive,
   refetchChannelMonitorQueries,
@@ -536,13 +536,12 @@ export function ChannelMonitor() {
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
     refetchInterval: (modelDetectionOverviewQuery) =>
-      getChannelMonitorSnapshotRefetchInterval(
+      getChannelMonitorActiveRefetchInterval(
         modelDetectionOverviewQuery.state.data?.data.channels.some(
           (channel) =>
             channel.active_run != null &&
             isChannelModelDetectionRunActive(channel.active_run.status)
-        ) ?? false,
-        modelDetectionOverviewQuery.state.data?.data.stale ?? false
+        ) ?? false
       ),
   })
   const groupMonitorSettingsQuery = useQuery({

@@ -36,20 +36,13 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
   refetchOnReconnect: false,
 } as const
 
-// Only the status-probe and model-detection views use the live page policy.
-// Keep this interval here so the two views cannot drift apart.
+// Keep the active-task interval shared so the status-probe and model-detection
+// views cannot drift apart.
 export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
 export const CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS = 750
 
 export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
-}
-
-export function getChannelMonitorSnapshotRefetchInterval(
-  active: boolean,
-  stale: boolean
-) {
-  return getChannelMonitorActiveRefetchInterval(active || stale)
 }
 
 export function shouldRefreshChannelMonitorViewOnEnter(

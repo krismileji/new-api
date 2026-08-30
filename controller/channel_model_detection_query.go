@@ -14,12 +14,8 @@ import (
 )
 
 func GetChannelModelDetectionOverview(c *gin.Context) {
-	response, err := service.GetCachedChannelModelDetectionOverview(c.Request.Context(), common.GetTimestamp())
+	response, err := service.GetCurrentChannelModelDetectionOverview(c.Request.Context())
 	if err != nil {
-		if errors.Is(err, service.ErrChannelModelDetectionOverviewSnapshotUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": err.Error()})
-			return
-		}
 		common.ApiError(c, err)
 		return
 	}

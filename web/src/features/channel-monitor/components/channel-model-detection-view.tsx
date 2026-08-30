@@ -86,7 +86,6 @@ import type {
   ChannelModelDetectionStatusFilter,
 } from '../types-model-detection'
 import { ChannelModelDetectionCard } from './channel-model-detection-card'
-import { ChannelMonitorSnapshotStatus } from './channel-monitor-snapshot-status'
 
 const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
   status: 'all',
@@ -396,14 +395,6 @@ export function ChannelModelDetectionView(
       data-slot='model-detection-view'
       data-has-active-run={hasActiveRun || undefined}
     >
-      <ChannelMonitorSnapshotStatus
-        generatedAt={overview.generated_at}
-        dataCutoffAt={overview.data_cutoff_at}
-        eventWatermark={overview.event_watermark}
-        snapshotAgeSeconds={overview.snapshot_age_seconds}
-        stale={overview.stale}
-        className='justify-end'
-      />
       <DetectorStatus {...props} overview={overview} />
 
       <div className='flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>

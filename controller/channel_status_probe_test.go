@@ -323,9 +323,7 @@ func setupChannelStatusProbeControllerTest(t *testing.T) *model.Channel {
 	t.Helper()
 	drainChannelStatusProbeWorkerWake()
 	db := setupChannelMonitorControllerTestDB(t)
-	StartChannelStatusProbeOverviewRefreshRuntime()
-	invalidateChannelStatusProbeOverviewCache()
-	t.Cleanup(invalidateChannelStatusProbeOverviewCache)
+	notifyChannelStatusProbeOverviewChanged()
 	require.NoError(t, db.AutoMigrate(
 		&model.ChannelStatusProbeConfig{},
 		&model.ChannelStatusProbeState{},
@@ -356,7 +354,7 @@ func getChannelStatusProbeOverviewResponse(
 	return response.Data
 }
 
-func TestChannelStatusProbeOverviewCachesEachModelFilterAndInvalidates(t *testing.T) {
+func TestChannelStatusProbeOverviewQueriesCurrentDataForEachModelFilter(t *testing.T) {
 	channel := setupChannelStatusProbeControllerTest(t)
 	modelsJSON, err := common.Marshal([]string{"model-a"})
 	require.NoError(t, err)
@@ -368,7 +366,7 @@ func TestChannelStatusProbeOverviewCachesEachModelFilterAndInvalidates(t *testin
 
 	var queryCount atomic.Int64
 	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(
-		"test:channel_status_probe_overview_cache",
+		"test:channel_status_probe_overview_query",
 		func(*gorm.DB) { queryCount.Add(1) },
 	))
 
@@ -376,39 +374,17 @@ func TestChannelStatusProbeOverviewCachesEachModelFilterAndInvalidates(t *testin
 	unfilteredQueryCount := queryCount.Load()
 	require.Positive(t, unfilteredQueryCount)
 	getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-	assert.Equal(t, unfilteredQueryCount, queryCount.Load())
+	secondUnfilteredQueryCount := queryCount.Load()
+	assert.Greater(t, secondUnfilteredQueryCount, unfilteredQueryCount)
 
 	getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status?model=model-a")
 	filteredQueryCount := queryCount.Load()
-	assert.Greater(t, filteredQueryCount, unfilteredQueryCount)
+	assert.Greater(t, filteredQueryCount, secondUnfilteredQueryCount)
 	getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status?model=model-a")
-	assert.Equal(t, filteredQueryCount, queryCount.Load())
-
-	invalidateChannelStatusProbeOverviewCache()
-	invalidated := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-	assert.True(t, invalidated.Stale)
-	require.Eventually(t, func() bool {
-		return queryCount.Load() > filteredQueryCount
-	}, time.Second, 5*time.Millisecond)
+	assert.Greater(t, queryCount.Load(), filteredQueryCount)
 }
 
-func TestChannelStatusProbeOverviewCacheCanBeDisabled(t *testing.T) {
-	t.Setenv("CHANNEL_STATUS_PROBE_OVERVIEW_CACHE_TTL_MS", "0")
-	setupChannelStatusProbeControllerTest(t)
-
-	var queryCount atomic.Int64
-	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(
-		"test:channel_status_probe_overview_cache_disabled",
-		func(*gorm.DB) { queryCount.Add(1) },
-	))
-	getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-	firstQueryCount := queryCount.Load()
-	require.Positive(t, firstQueryCount)
-	getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-	assert.Greater(t, queryCount.Load(), firstQueryCount)
-}
-
-func TestUpdateChannelStatusInvalidatesStatusProbeOverview(t *testing.T) {
+func TestUpdateChannelStatusIsVisibleInNextStatusProbeOverview(t *testing.T) {
 	channel := setupChannelStatusProbeControllerTest(t)
 	initial := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.Len(t, initial.Channels, 1)
@@ -422,41 +398,13 @@ func TestUpdateChannelStatusInvalidatesStatusProbeOverview(t *testing.T) {
 	UpdateChannelStatus(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 
-	stale := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-	assert.True(t, stale.Stale)
-	assert.Equal(t, common.ChannelStatusEnabled, stale.Channels[0].ChannelStatus)
-
-	var refreshed channelStatusProbeOverviewResponse
-	require.Eventually(t, func() bool {
-		refreshed = getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-		return !refreshed.Stale && len(refreshed.Channels) == 1 &&
-			refreshed.Channels[0].ChannelStatus == common.ChannelStatusManuallyDisabled
-	}, time.Second, 5*time.Millisecond)
-	assert.Equal(t, channel.Id, refreshed.Channels[0].Id)
+	updated := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
+	require.Len(t, updated.Channels, 1)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, updated.Channels[0].ChannelStatus)
+	assert.Equal(t, channel.Id, updated.Channels[0].Id)
 }
 
-func TestChannelStatusProbeOverviewCacheTTLConfiguration(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    string
-		expected time.Duration
-	}{
-		{name: "default", value: "", expected: 3 * time.Second},
-		{name: "milliseconds", value: "1250", expected: 1250 * time.Millisecond},
-		{name: "disabled", value: "0", expected: 0},
-		{name: "negative disables", value: "-1", expected: 0},
-		{name: "maximum", value: "30000", expected: 30 * time.Second},
-		{name: "above maximum is clamped", value: "30001", expected: 30 * time.Second},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("CHANNEL_STATUS_PROBE_OVERVIEW_CACHE_TTL_MS", test.value)
-			assert.Equal(t, test.expected, channelStatusProbeOverviewCacheTTL())
-		})
-	}
-}
-
-func TestChannelStatusProbeOverviewInvalidatesAfterConfigAndManualRun(t *testing.T) {
+func TestChannelStatusProbeOverviewReadsCurrentConfigAndManualRun(t *testing.T) {
 	channel := setupChannelStatusProbeControllerTest(t)
 	initial := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.Len(t, initial.Channels, 1)
@@ -475,11 +423,7 @@ func TestChannelStatusProbeOverviewInvalidatesAfterConfigAndManualRun(t *testing
 	require.Equal(t, http.StatusOK, updateRecorder.Code)
 	assert.True(t, takeChannelStatusProbeWorkerWake())
 
-	var configured channelStatusProbeOverviewResponse
-	require.Eventually(t, func() bool {
-		configured = getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-		return !configured.Stale && configured.Channels[0].Config != nil
-	}, time.Second, 5*time.Millisecond)
+	configured := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.NotNil(t, configured.Channels[0].Config)
 	assert.Empty(t, configured.Channels[0].Config.ManualRequestId)
 
@@ -491,18 +435,13 @@ func TestChannelStatusProbeOverviewInvalidatesAfterConfigAndManualRun(t *testing
 	require.Equal(t, http.StatusAccepted, runRecorder.Code)
 	assert.True(t, takeChannelStatusProbeWorkerWake())
 
-	var pending channelStatusProbeOverviewResponse
-	require.Eventually(t, func() bool {
-		pending = getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-		return !pending.Stale && pending.Channels[0].Config != nil &&
-			pending.Channels[0].Config.ManualRequestId != ""
-	}, time.Second, 5*time.Millisecond)
+	pending := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.NotNil(t, pending.Channels[0].Config)
 	assert.NotEmpty(t, pending.Channels[0].Config.ManualRequestId)
 	assert.Equal(t, channel.Id, pending.Channels[0].Id)
 }
 
-func TestChannelStatusProbeOverviewInvalidatesAfterExecutionResult(t *testing.T) {
+func TestChannelStatusProbeOverviewReadsCurrentExecutionResult(t *testing.T) {
 	channel := setupChannelStatusProbeControllerTest(t)
 	modelsJSON, err := common.Marshal([]string{"model-a"})
 	require.NoError(t, err)
@@ -534,11 +473,7 @@ func TestChannelStatusProbeOverviewInvalidatesAfterExecutionResult(t *testing.T)
 	)
 	require.NoError(t, err)
 
-	var updated channelStatusProbeOverviewResponse
-	require.Eventually(t, func() bool {
-		updated = getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
-		return !updated.Stale && updated.Channels[0].Latest != nil
-	}, time.Second, 5*time.Millisecond)
+	updated := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.NotNil(t, updated.Channels[0].Latest)
 	assert.Equal(t, "model-a", updated.Channels[0].Latest.ModelName)
 	require.NotNil(t, updated.Channels[0].Latest.SettledCostNanoCNY)

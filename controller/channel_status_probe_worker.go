@@ -123,7 +123,7 @@ func runChannelStatusProbeScanOnce(ctx context.Context) error {
 		return err
 	}
 	if timedOut > 0 {
-		invalidateChannelStatusProbeOverviewCache()
+		notifyChannelStatusProbeOverviewChanged()
 	}
 	claims, err := model.ClaimDueChannelStatusProbes(now, 0)
 	if err != nil {
@@ -265,7 +265,7 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 		if err := model.CompleteChannelStatusProbeClaim(claim, common.GetTimestamp()); err != nil {
 			common.SysError(fmt.Sprintf("完成渠道状态探测租约失败: channel_id=%d err=%s", claim.Config.ChannelId, err.Error()))
 		} else {
-			invalidateChannelStatusProbeOverviewCache()
+			notifyChannelStatusProbeOverviewChanged()
 		}
 	}()
 
@@ -615,7 +615,7 @@ func persistChannelStatusProbeOutcome(
 	if err != nil || !created {
 		return err
 	}
-	invalidateChannelStatusProbeOverviewCache()
+	notifyChannelStatusProbeOverviewChanged()
 	if !claim.Config.RecordSample {
 		return nil
 	}
@@ -658,7 +658,7 @@ func persistChannelStatusProbeOutcome(
 func updateChannelStatusProbeExecutionSample(executionId int64, status string, message string, now int64) error {
 	err := model.UpdateChannelStatusProbeExecutionSample(executionId, status, message, now)
 	if err == nil {
-		invalidateChannelStatusProbeOverviewCache()
+		notifyChannelStatusProbeOverviewChanged()
 	}
 	return err
 }

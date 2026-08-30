@@ -34,7 +34,6 @@ import {
   getChannelMonitorManualRefreshScopeKey,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
-  getChannelMonitorSnapshotRefetchInterval,
   getChannelMonitorSmartScheduleQueryOptions,
   getChannelStatusProbeHistoryLatestExecutionKey,
   isChannelMonitorPerformanceQueryActive,
@@ -63,14 +62,6 @@ describe('channel monitor query policy', () => {
       CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS
     )
     assert.equal(getChannelMonitorActiveRefetchInterval(false), false)
-  })
-
-  test('continues one-second refreshes while an invalidated snapshot is stale', () => {
-    assert.equal(
-      getChannelMonitorSnapshotRefetchInterval(false, true),
-      CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS
-    )
-    assert.equal(getChannelMonitorSnapshotRefetchInterval(false, false), false)
   })
 
   test('keeps overview and performance data manual-refresh only', () => {

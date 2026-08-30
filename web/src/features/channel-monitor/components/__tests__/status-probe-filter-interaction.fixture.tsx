@@ -86,12 +86,6 @@ const overview: ChannelMonitorApiResponse<ChannelStatusProbeOverview> = {
   message: '',
   data: {
     server_now: 1_700_000_000,
-    snapshot_version: 2,
-    snapshot_revision: 1,
-    event_watermark: 1,
-    generated_at: 1_700_000_000,
-    snapshot_age_seconds: 0,
-    stale: false,
     scan_interval_seconds: 1,
     summary: {
       unconfigured: 1,

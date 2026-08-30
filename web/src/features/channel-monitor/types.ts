@@ -1405,12 +1405,6 @@ export type ChannelStatusProbeChannel = {
 
 export type ChannelStatusProbeOverview = {
   server_now: number
-  snapshot_version: number
-  snapshot_revision: number
-  event_watermark: number
-  generated_at: number
-  snapshot_age_seconds: number
-  stale: boolean
   scan_interval_seconds: number
   summary: Record<ChannelStatusProbeHealth, number>
   groups: string[]

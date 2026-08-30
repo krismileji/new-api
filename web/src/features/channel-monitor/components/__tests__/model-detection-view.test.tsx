@@ -61,13 +61,6 @@ function createOverview(): ChannelModelDetectionOverview {
   ]
   return {
     server_now: 1_754_000_000,
-    snapshot_version: 1,
-    snapshot_revision: 1,
-    event_watermark: 1,
-    generated_at: 1_754_000_000,
-    data_cutoff_at: 1_753_999_999,
-    snapshot_age_seconds: 0,
-    stale: false,
     settings: {
       detector_url_configured: true,
       detector_url_masked: 'http://127.0.0.1:8000',

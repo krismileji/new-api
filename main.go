@@ -265,9 +265,6 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
-	if err := controller.StopChannelStatusProbeOverviewRefreshRuntime(ctx); err != nil {
-		common.SysError(fmt.Sprintf("failed to stop channel status probe overview refreshes: %v", err))
-	}
 	if common.MemoryCacheEnabled {
 		if err := model.StopChannelSmartScheduleRefreshWorker(ctx); err != nil {
 			common.SysError(fmt.Sprintf("failed to stop smart schedule cache refresh worker: %v", err))

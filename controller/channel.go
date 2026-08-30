@@ -1192,7 +1192,7 @@ func UpdateChannelStatus(c *gin.Context) {
 	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
 	if changed {
 		model.InitChannelCache()
-		invalidateChannelStatusProbeOverviewCache()
+		notifyChannelStatusProbeOverviewChanged()
 		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		statusLabel := "禁用"
@@ -1226,7 +1226,7 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	}
 	if changedCount > 0 {
 		model.InitChannelCache()
-		invalidateChannelStatusProbeOverviewCache()
+		notifyChannelStatusProbeOverviewChanged()
 		service.NotifyChannelModelDetectionOverviewChanged()
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		statusLabel := "禁用"
