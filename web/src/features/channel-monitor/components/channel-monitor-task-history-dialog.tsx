@@ -17,12 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  Activity01Icon,
   Alert02Icon,
   ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  CheckmarkCircle02Icon,
+  Clock01Icon,
   CloudDownloadIcon,
+  Coins01Icon,
+  Exchange01Icon,
   HistoryIcon,
+  Link01Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -48,16 +54,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from '@/components/ui/progress'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -104,11 +109,15 @@ function formatTaskDuration(task: ChannelMonitorTask) {
   return `${hours} 小时 ${minutes % 60} 分`
 }
 
+function isTaskPartiallyFailed(task: ChannelMonitorTask) {
+  return (
+    task.status === 'succeeded' &&
+    ((task.result?.failed ?? 0) > 0 || task.result?.email_status === 'failed')
+  )
+}
+
 function ChannelTaskStatusBadge(props: { task: ChannelMonitorTask }) {
-  const partiallyFailed =
-    props.task.status === 'succeeded' &&
-    ((props.task.result?.failed ?? 0) > 0 ||
-      props.task.result?.email_status === 'failed')
+  const partiallyFailed = isTaskPartiallyFailed(props.task)
   const label = partiallyFailed ? '部分失败' : STATUS_LABELS[props.task.status]
   let variant: 'destructive' | 'outline' | 'secondary' | 'warning' = 'outline'
   if (props.task.status === 'failed') variant = 'destructive'
@@ -128,6 +137,302 @@ function FailureDot(props: { label: string }) {
       title={props.label}
       className='bg-destructive size-2 shrink-0 rounded-full'
     />
+  )
+}
+
+function getRatioTaskImpact(task: ChannelMonitorTask) {
+  const result = task.result
+  return {
+    total: result?.total ?? task.state?.total ?? 0,
+    changed: result?.changed ?? 0,
+    balanceUpdated: result?.balance_updated ?? 0,
+    balanceWarnings: result?.balance_warnings ?? 0,
+    failed: result?.failed ?? 0,
+    linkedActions:
+      (result?.groups_updated ?? 0) +
+      (result?.group_memberships_removed ?? 0) +
+      (result?.channels_disabled ?? 0) +
+      (result?.channels_enabled ?? 0),
+  }
+}
+
+function getRatioTaskHeadline(task: ChannelMonitorTask) {
+  if (task.status === 'pending') return '任务已创建，正在等待执行。'
+  if (task.status === 'running') {
+    if (!task.state) return '正在拉取上游倍率与余额。'
+    return `正在处理 ${task.state.processed} / ${task.state.total} 个渠道。`
+  }
+  if (task.status === 'failed') {
+    return task.result
+      ? `已处理 ${task.result.updated} / ${task.result.total} 个渠道，任务未完整完成。`
+      : '任务执行失败，未生成完整的更新结果。'
+  }
+  if (!task.result) return '任务已完成，但没有记录结果摘要。'
+
+  const changed = task.result.changed ?? 0
+  const balanceUpdated = task.result.balance_updated ?? 0
+  const failed = task.result.failed ?? 0
+  const summary =
+    changed > 0
+      ? `检查 ${task.result.total} 个渠道，${changed} 个倍率发生变化`
+      : `检查 ${task.result.total} 个渠道，倍率无需调整`
+  const balanceSummary =
+    balanceUpdated > 0 ? `，刷新 ${balanceUpdated} 个渠道余额` : ''
+  const failureSummary = failed > 0 ? `，${failed} 个渠道失败` : ''
+  return `${summary}${balanceSummary}${failureSummary}。`
+}
+
+function RatioTaskMetric(props: {
+  label: string
+  value: number | string
+  tone?: 'default' | 'success' | 'warning' | 'destructive'
+}) {
+  return (
+    <div className='bg-muted/35 rounded-md px-3 py-2.5'>
+      <dt className='text-muted-foreground text-xs'>{props.label}</dt>
+      <dd
+        className={cn(
+          'mt-1 text-lg font-semibold tabular-nums',
+          props.tone === 'success' && 'text-success',
+          props.tone === 'warning' && 'text-warning',
+          props.tone === 'destructive' && 'text-destructive'
+        )}
+      >
+        {props.value}
+      </dd>
+    </div>
+  )
+}
+
+function ChannelMonitorRatioTaskFailureDetails(props: {
+  task: ChannelMonitorTask
+  id: string
+}) {
+  const failures = props.task.result?.failures ?? []
+  return (
+    <div
+      id={props.id}
+      role='region'
+      aria-label='倍率与余额更新详情'
+      className='flex flex-col gap-2'
+    >
+      {props.task.error && (
+        <Alert variant='destructive'>
+          <HugeiconsIcon icon={Alert02Icon} />
+          <AlertTitle>任务执行失败</AlertTitle>
+          <AlertDescription className='text-left break-all'>
+            {props.task.error}
+          </AlertDescription>
+        </Alert>
+      )}
+      {failures.map((failure) => (
+        <Alert key={failure.channel_id} variant='destructive'>
+          <HugeiconsIcon icon={Alert02Icon} />
+          <AlertTitle>
+            {failure.channel_name
+              ? `${failure.channel_name}（ID ${failure.channel_id}）`
+              : `渠道 ID ${failure.channel_id}`}
+          </AlertTitle>
+          <AlertDescription className='text-left break-all'>
+            {failure.error || '上游倍率获取失败'}
+          </AlertDescription>
+        </Alert>
+      ))}
+      {props.task.result?.failure_details_truncated && (
+        <p className='text-muted-foreground text-xs'>
+          失败渠道较多，仅显示前 {failures.length} 条明细
+        </p>
+      )}
+    </div>
+  )
+}
+
+function ChannelMonitorRatioTaskCard(props: {
+  task: ChannelMonitorTask
+  expanded: boolean
+  isLast: boolean
+  onToggleDetails: () => void
+}) {
+  const result = props.task.result
+  const progressState = props.task.state
+  const impact = getRatioTaskImpact(props.task)
+  const failures = result?.failures ?? []
+  const detailsId = `channel-monitor-ratio-task-details-${props.task.task_id}`
+  const canExpand = failures.length > 0 || Boolean(props.task.error)
+  const detailsExpanded = props.expanded && canExpand
+  const partiallyFailed = isTaskPartiallyFailed(props.task)
+  const linkedActions = [
+    (result?.groups_updated ?? 0) > 0
+      ? `更新分组 ${result?.groups_updated}`
+      : '',
+    (result?.group_memberships_removed ?? 0) > 0
+      ? `移出分组 ${result?.group_memberships_removed}`
+      : '',
+    (result?.channels_disabled ?? 0) > 0
+      ? `禁用渠道 ${result?.channels_disabled}`
+      : '',
+    (result?.channels_enabled ?? 0) > 0
+      ? `恢复渠道 ${result?.channels_enabled}`
+      : '',
+    (result?.groups_skipped ?? 0) > 0
+      ? `跳过分组 ${result?.groups_skipped}`
+      : '',
+  ].filter(Boolean)
+
+  let statusIcon = Clock01Icon
+  let statusIconClassName = 'bg-muted text-muted-foreground'
+  if (props.task.status === 'running') {
+    statusIcon = Activity01Icon
+    statusIconClassName = 'bg-warning/15 text-warning'
+  } else if (props.task.status === 'failed' || partiallyFailed) {
+    statusIcon = Alert02Icon
+    statusIconClassName = 'bg-destructive/10 text-destructive'
+  } else if (props.task.status === 'succeeded') {
+    statusIcon = CheckmarkCircle02Icon
+    statusIconClassName = 'bg-success/10 text-success'
+  }
+
+  return (
+    <li className='relative grid grid-cols-[2rem_minmax(0,1fr)] gap-3'>
+      <div className='relative flex justify-center'>
+        <span
+          className={cn(
+            'relative z-10 flex size-8 items-center justify-center rounded-full',
+            statusIconClassName
+          )}
+          aria-hidden='true'
+        >
+          <HugeiconsIcon icon={statusIcon} className='size-4' />
+        </span>
+        {!props.isLast && (
+          <span
+            className='bg-border absolute top-8 bottom-[-0.75rem] w-px'
+            aria-hidden='true'
+          />
+        )}
+      </div>
+      <article
+        data-ratio-task-record
+        data-task-status={props.task.status}
+        className='bg-card text-card-foreground min-w-0 rounded-xl border p-4 shadow-xs'
+      >
+        <header className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex flex-wrap items-center gap-x-3 gap-y-1'>
+              <time
+                className='font-medium tabular-nums'
+                dateTime={new Date(props.task.created_at * 1000).toISOString()}
+              >
+                {formatTimestampToDate(props.task.created_at)}
+              </time>
+              <span className='text-muted-foreground inline-flex items-center gap-1 text-xs tabular-nums'>
+                <HugeiconsIcon icon={Clock01Icon} className='size-3.5' />
+                耗时 {formatTaskDuration(props.task)}
+              </span>
+            </div>
+            <p className='text-muted-foreground mt-1.5 text-sm leading-6'>
+              {getRatioTaskHeadline(props.task)}
+            </p>
+          </div>
+          <ChannelTaskStatusBadge task={props.task} />
+        </header>
+
+        {isActiveChannelMonitorTask(props.task) && progressState ? (
+          <Progress
+            className='mt-4'
+            value={Math.max(0, Math.min(100, progressState.progress))}
+          >
+            <ProgressLabel>执行进度</ProgressLabel>
+            <ProgressValue>
+              {() =>
+                `${progressState.processed} / ${progressState.total}（${progressState.progress}%）`
+              }
+            </ProgressValue>
+          </Progress>
+        ) : null}
+
+        <dl
+          data-ratio-task-metrics
+          className='mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4'
+        >
+          <RatioTaskMetric label='检查渠道' value={impact.total} />
+          <RatioTaskMetric
+            label='倍率变化'
+            value={result ? impact.changed : '—'}
+            tone={impact.changed > 0 ? 'success' : 'default'}
+          />
+          <RatioTaskMetric
+            label='余额刷新'
+            value={result ? impact.balanceUpdated : '—'}
+            tone={impact.balanceUpdated > 0 ? 'success' : 'default'}
+          />
+          <RatioTaskMetric
+            label='上游失败'
+            value={result ? impact.failed : '—'}
+            tone={impact.failed > 0 ? 'destructive' : 'default'}
+          />
+        </dl>
+
+        <div className='mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end'>
+          <div className='min-w-0'>
+            <span className='text-muted-foreground text-xs font-medium'>
+              联动影响
+            </span>
+            <div className='mt-2 flex min-w-0 flex-wrap items-center gap-2'>
+              {linkedActions.length > 0 ? (
+                linkedActions.map((action) => (
+                  <Badge key={action} variant='outline'>
+                    {action}
+                  </Badge>
+                ))
+              ) : (
+                <span className='text-muted-foreground text-sm'>
+                  未触发分组或渠道状态联动
+                </span>
+              )}
+            </div>
+          </div>
+          <div className='flex flex-wrap items-center gap-2 lg:justify-end'>
+            {impact.balanceWarnings > 0 && (
+              <Badge variant='warning'>余额预警 {impact.balanceWarnings}</Badge>
+            )}
+            {(result?.retried ?? 0) > 0 && (
+              <Badge variant='outline'>
+                重试 {result?.retried}，恢复{' '}
+                {result?.recovered_after_retry ?? 0}
+              </Badge>
+            )}
+            {result?.email_status === 'sent' && (
+              <Badge variant='outline'>邮件已发送</Badge>
+            )}
+            {result?.email_status === 'failed' && (
+              <Badge variant='destructive'>邮件发送失败</Badge>
+            )}
+          </div>
+        </div>
+
+        {canExpand && (
+          <>
+            <Separator className='my-3' />
+            <ChannelMonitorTaskRowDisclosure
+              adjustmentCount={failures.length}
+              truncated={result?.failure_details_truncated === true}
+              expanded={detailsExpanded}
+              controlsId={detailsId}
+              onToggle={props.onToggleDetails}
+            />
+            {detailsExpanded && (
+              <div className='mt-3'>
+                <ChannelMonitorRatioTaskFailureDetails
+                  task={props.task}
+                  id={detailsId}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </article>
+    </li>
   )
 }
 
@@ -406,40 +711,10 @@ export function ChannelMonitorTaskHistoryEntry(props: {
                 id={detailsId}
               />
             ) : (
-              <div
+              <ChannelMonitorRatioTaskFailureDetails
+                task={props.task}
                 id={detailsId}
-                role='region'
-                aria-label='倍率与余额更新详情'
-                className='flex flex-col gap-2'
-              >
-                {props.task.error && (
-                  <Alert variant='destructive'>
-                    <HugeiconsIcon icon={Alert02Icon} />
-                    <AlertTitle>任务执行失败</AlertTitle>
-                    <AlertDescription className='text-left break-all'>
-                      {props.task.error}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {failures.map((failure) => (
-                  <Alert key={failure.channel_id} variant='destructive'>
-                    <HugeiconsIcon icon={Alert02Icon} />
-                    <AlertTitle>
-                      {failure.channel_name
-                        ? `${failure.channel_name}（ID ${failure.channel_id}）`
-                        : `渠道 ID ${failure.channel_id}`}
-                    </AlertTitle>
-                    <AlertDescription className='text-left break-all'>
-                      {failure.error || '上游倍率获取失败'}
-                    </AlertDescription>
-                  </Alert>
-                ))}
-                {props.task.result?.failure_details_truncated && (
-                  <p className='text-muted-foreground text-xs'>
-                    失败渠道较多，仅显示前 {failures.length} 条明细
-                  </p>
-                )}
-              </div>
+              />
             )}
           </TableCell>
         </TableRow>
@@ -494,19 +769,26 @@ export function ChannelMonitorTaskHistoryDialog(
   const rangeEnd = Math.min(page * TASK_PAGE_SIZE, total)
   const latestCompletedTaskTime =
     getLatestCompletedChannelMonitorTaskTime(tasks)
-  const activeCount = tasks.filter(isActiveChannelMonitorTask).length
-  const failedCount = tasks.filter((task) => task.status === 'failed').length
-  const partialFailureCount = tasks.filter(
-    (task) =>
-      task.status === 'succeeded' &&
-      ((task.result?.failed ?? 0) > 0 || task.result?.email_status === 'failed')
-  ).length
-  const succeededCount = tasks.filter(
-    (task) =>
-      task.status === 'succeeded' &&
-      (task.result?.failed ?? 0) === 0 &&
-      task.result?.email_status !== 'failed'
-  ).length
+  const pageOverview = {
+    succeeded: 0,
+    attention: 0,
+    active: 0,
+    changed: 0,
+    balanceUpdated: 0,
+    linkedActions: 0,
+  }
+  for (const task of tasks) {
+    const impact = getRatioTaskImpact(task)
+    pageOverview.changed += impact.changed
+    pageOverview.balanceUpdated += impact.balanceUpdated
+    pageOverview.linkedActions += impact.linkedActions
+    if (isActiveChannelMonitorTask(task)) pageOverview.active++
+    if (task.status === 'failed' || isTaskPartiallyFailed(task)) {
+      pageOverview.attention++
+    } else if (task.status === 'succeeded') {
+      pageOverview.succeeded++
+    }
+  }
 
   useEffect(() => {
     if (latestCompletedTaskTime <= 0) return
@@ -530,7 +812,7 @@ export function ChannelMonitorTaskHistoryDialog(
     content = (
       <div className='flex h-full flex-col gap-3 p-4'>
         {['first', 'second', 'third', 'fourth'].map((key) => (
-          <Skeleton key={key} className='h-14 w-full' />
+          <Skeleton key={key} className='h-40 w-full' />
         ))}
       </div>
     )
@@ -570,32 +852,25 @@ export function ChannelMonitorTaskHistoryDialog(
     )
   } else {
     content = (
-      <Table className='block min-w-0 sm:table sm:min-w-[920px]'>
-        <TableHeader className='hidden sm:table-header-group'>
-          <TableRow>
-            <TableHead>执行时间</TableHead>
-            <TableHead>状态</TableHead>
-            <TableHead>执行结果</TableHead>
-            <TableHead>联动操作</TableHead>
-            <TableHead>耗时</TableHead>
-            <TableHead className='text-right'>详情</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody className='block sm:table-row-group'>
-          {tasks.map((task) => (
-            <ChannelMonitorTaskHistoryEntry
-              key={task.task_id}
-              task={task}
-              expanded={expandedTaskId === task.task_id}
-              onToggleDetails={() =>
-                setExpandedTaskId((current) =>
-                  current === task.task_id ? null : task.task_id
-                )
-              }
-            />
-          ))}
-        </TableBody>
-      </Table>
+      <ol
+        data-ratio-task-timeline
+        aria-label='倍率与余额更新时间线'
+        className='flex flex-col gap-3 p-3 sm:p-4'
+      >
+        {tasks.map((task, index) => (
+          <ChannelMonitorRatioTaskCard
+            key={task.task_id}
+            task={task}
+            expanded={expandedTaskId === task.task_id}
+            isLast={index === tasks.length - 1}
+            onToggleDetails={() =>
+              setExpandedTaskId((current) =>
+                current === task.task_id ? null : task.task_id
+              )
+            }
+          />
+        ))}
+      </ol>
     )
   }
 
@@ -621,9 +896,20 @@ export function ChannelMonitorTaskHistoryDialog(
         </DialogHeader>
         <div className='grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 overflow-hidden'>
           <div className='flex flex-wrap items-center justify-between gap-3'>
-            <span className='text-muted-foreground text-xs tabular-nums'>
-              共 {total} 条更新任务
-            </span>
+            <div className='flex flex-wrap items-center gap-2'>
+              <span className='text-muted-foreground text-xs tabular-nums'>
+                共 {total} 条更新任务
+              </span>
+              <Badge variant='secondary'>成功 {pageOverview.succeeded}</Badge>
+              {pageOverview.attention > 0 && (
+                <Badge variant='destructive'>
+                  需关注 {pageOverview.attention}
+                </Badge>
+              )}
+              {pageOverview.active > 0 && (
+                <Badge variant='warning'>执行中 {pageOverview.active}</Badge>
+              )}
+            </div>
             <Button
               variant='outline'
               size='sm'
@@ -642,43 +928,73 @@ export function ChannelMonitorTaskHistoryDialog(
             </Button>
           </div>
           <div
-            className='bg-border grid grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4'
-            aria-label='当前页执行概览'
+            data-ratio-task-overview
+            className='grid grid-cols-2 gap-2 lg:grid-cols-4'
+            aria-label='本页更新影响'
           >
-            <div className='bg-background p-3'>
-              <span className='text-muted-foreground block text-xs'>
-                当前页
+            <div className='bg-card flex items-center gap-3 rounded-lg border p-3'>
+              <span className='bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-md'>
+                <HugeiconsIcon icon={Exchange01Icon} className='size-5' />
               </span>
-              <strong className='mt-1 block text-lg tabular-nums'>
-                {tasks.length} 条
-              </strong>
+              <div>
+                <span className='text-muted-foreground block text-xs'>
+                  倍率变化
+                </span>
+                <strong className='mt-0.5 block text-xl tabular-nums'>
+                  {pageOverview.changed}
+                </strong>
+              </div>
             </div>
-            <div className='bg-background p-3'>
-              <span className='text-muted-foreground block text-xs'>成功</span>
-              <strong className='mt-1 block text-lg tabular-nums'>
-                {succeededCount} 条
-              </strong>
-            </div>
-            <div className='bg-background p-3'>
-              <span className='text-muted-foreground block text-xs'>
-                需关注
+            <div className='bg-card flex items-center gap-3 rounded-lg border p-3'>
+              <span className='bg-success/10 text-success flex size-9 shrink-0 items-center justify-center rounded-md'>
+                <HugeiconsIcon icon={Coins01Icon} className='size-5' />
               </span>
-              <strong
+              <div>
+                <span className='text-muted-foreground block text-xs'>
+                  余额刷新
+                </span>
+                <strong className='mt-0.5 block text-xl tabular-nums'>
+                  {pageOverview.balanceUpdated}
+                </strong>
+              </div>
+            </div>
+            <div className='bg-card flex items-center gap-3 rounded-lg border p-3'>
+              <span className='bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-md'>
+                <HugeiconsIcon icon={Link01Icon} className='size-5' />
+              </span>
+              <div>
+                <span className='text-muted-foreground block text-xs'>
+                  联动动作
+                </span>
+                <strong className='mt-0.5 block text-xl tabular-nums'>
+                  {pageOverview.linkedActions}
+                </strong>
+              </div>
+            </div>
+            <div className='bg-card flex items-center gap-3 rounded-lg border p-3'>
+              <span
                 className={cn(
-                  'mt-1 block text-lg tabular-nums',
-                  partialFailureCount + failedCount > 0 && 'text-destructive'
+                  'flex size-9 shrink-0 items-center justify-center rounded-md',
+                  pageOverview.attention > 0
+                    ? 'bg-destructive/10 text-destructive'
+                    : 'bg-muted text-muted-foreground'
                 )}
               >
-                {partialFailureCount + failedCount} 条
-              </strong>
-            </div>
-            <div className='bg-background p-3'>
-              <span className='text-muted-foreground block text-xs'>
-                执行中
+                <HugeiconsIcon icon={Alert02Icon} className='size-5' />
               </span>
-              <strong className='mt-1 block text-lg tabular-nums'>
-                {activeCount} 条
-              </strong>
+              <div>
+                <span className='text-muted-foreground block text-xs'>
+                  需关注任务
+                </span>
+                <strong
+                  className={cn(
+                    'mt-0.5 block text-xl tabular-nums',
+                    pageOverview.attention > 0 && 'text-destructive'
+                  )}
+                >
+                  {pageOverview.attention}
+                </strong>
+              </div>
             </div>
           </div>
           <div

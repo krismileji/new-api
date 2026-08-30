@@ -247,25 +247,38 @@ assert.equal(
   ratioRendered.dialog.textContent?.includes('智能调度执行详情'),
   false
 )
-assert.ok(ratioRendered.dialog.textContent?.includes('当前页'))
-assert.ok(ratioRendered.dialog.textContent?.includes('联动操作'))
-const ratioTable = ratioRendered.dialog.querySelector<HTMLElement>(
-  '[data-slot="table"]'
+assert.ok(ratioRendered.dialog.textContent?.includes('倍率变化'))
+assert.ok(ratioRendered.dialog.textContent?.includes('余额刷新'))
+assert.ok(ratioRendered.dialog.textContent?.includes('联动影响'))
+assert.ok(
+  ratioRendered.dialog.textContent?.includes(
+    '检查 4 个渠道，2 个倍率发生变化，刷新 3 个渠道余额。'
+  )
 )
-const ratioTableHeader = ratioRendered.dialog.querySelector<HTMLElement>(
-  '[data-slot="table-header"]'
+const ratioOverview = ratioRendered.dialog.querySelector<HTMLElement>(
+  '[data-ratio-task-overview]'
 )
-const ratioTaskRow = ratioRendered.dialog.querySelector<HTMLElement>(
-  '[data-slot="table-body"] > [data-slot="table-row"]'
+const ratioTimeline = ratioRendered.dialog.querySelector<HTMLElement>(
+  '[data-ratio-task-timeline]'
 )
-assert.ok(ratioTable?.className.includes('min-w-0'))
-assert.ok(ratioTable?.className.includes('sm:min-w-[920px]'))
-assert.ok(ratioTableHeader?.className.includes('hidden'))
-assert.ok(ratioTableHeader?.className.includes('sm:table-header-group'))
-assert.ok(ratioTaskRow?.className.includes('grid'))
-assert.ok(ratioTaskRow?.className.includes('sm:table-row'))
-assert.ok(ratioTaskRow?.textContent?.includes('执行结果'))
-assert.ok(ratioTaskRow?.textContent?.includes('联动操作'))
+const ratioTaskRecord = ratioRendered.dialog.querySelector<HTMLElement>(
+  '[data-ratio-task-record]'
+)
+const ratioTaskMetrics = ratioRendered.dialog.querySelector<HTMLElement>(
+  '[data-ratio-task-metrics]'
+)
+assert.ok(ratioOverview)
+assert.ok(ratioTimeline)
+assert.ok(ratioTaskRecord)
+assert.ok(ratioTaskMetrics)
+assert.ok(ratioOverview.classList.contains('grid-cols-2'))
+assert.ok(ratioOverview.classList.contains('lg:grid-cols-4'))
+assert.equal(ratioRendered.dialog.querySelector('[data-slot="table"]'), null)
+assert.ok(ratioTaskMetrics.classList.contains('grid-cols-2'))
+assert.ok(ratioTaskMetrics.classList.contains('sm:grid-cols-4'))
+assert.ok(ratioTaskMetrics.textContent?.includes('检查渠道'))
+assert.ok(ratioTaskMetrics.textContent?.includes('上游失败'))
+assert.ok(ratioTaskRecord.textContent?.includes('未触发分组或渠道状态联动'))
 const ratioButtons = [...ratioRendered.dialog.querySelectorAll('button')]
 assert.ok(
   ratioButtons.some((button) =>
