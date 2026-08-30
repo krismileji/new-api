@@ -406,14 +406,27 @@ func getChannelConcurrencySnapshotAndConfigs(
 		}
 	}
 	if common.RedisEnabled {
-		channelIDs, err := getChannelConcurrencyChannelIDs(providedChannelIDs)
+		channelIDs, err := getChannelConcurrencyChannelIDs(ctx, providedChannelIDs)
 		if err != nil {
 			return nil, err
 		}
-		return getChannelConcurrencyRedisSnapshot(ctx, common.RDB, channelIDs)
+		snapshot, err := getChannelConcurrencyRedisSnapshot(ctx, common.RDB, channelIDs)
+		if err != nil {
+			return nil, err
+		}
+		if providedConfigs != nil {
+			for _, channelID := range channelIDs {
+				status := snapshot[channelID]
+				config := effectiveConfigs[channelID]
+				status.Limit = config.Limit
+				status.RPMLimit = config.RPMLimit
+				snapshot[channelID] = status
+			}
+		}
+		return snapshot, nil
 	}
 
-	channelIDs, err := getChannelConcurrencyChannelIDs(providedChannelIDs)
+	channelIDs, err := getChannelConcurrencyChannelIDs(ctx, providedChannelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -477,13 +490,22 @@ func mergeProvidedChannelConcurrencyConfigs(configs map[int]model.ChannelConcurr
 	return true
 }
 
-func getChannelConcurrencyChannelIDs(providedChannelIDs []int) ([]int, error) {
+func getChannelConcurrencyChannelIDs(ctx context.Context, providedChannelIDs []int) ([]int, error) {
 	ids := make(map[int]struct{}, len(providedChannelIDs))
 	for _, channelID := range providedChannelIDs {
 		if channelID > 0 {
 			ids[channelID] = struct{}{}
 		}
 	}
+	if providedChannelIDs != nil {
+		channelIDs := make([]int, 0, len(ids))
+		for channelID := range ids {
+			channelIDs = append(channelIDs, channelID)
+		}
+		sort.Ints(channelIDs)
+		return channelIDs, nil
+	}
+
 	channelConcurrency.Lock()
 	for channelID := range channelConcurrency.configs {
 		ids[channelID] = struct{}{}
@@ -493,15 +515,13 @@ func getChannelConcurrencyChannelIDs(providedChannelIDs []int) ([]int, error) {
 	}
 	channelConcurrency.Unlock()
 
-	if model.DB != nil && providedChannelIDs == nil {
-		channels, err := model.GetAllChannelsForMonitor()
+	if model.DB != nil {
+		channelIDs, err := model.GetChannelIDsForMonitor(ctx)
 		if err != nil {
 			return nil, err
 		}
-		for _, channel := range channels {
-			if channel != nil {
-				ids[channel.Id] = struct{}{}
-			}
+		for _, channelID := range channelIDs {
+			ids[channelID] = struct{}{}
 		}
 	}
 

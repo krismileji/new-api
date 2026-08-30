@@ -120,6 +120,15 @@ func GetAllChannelsForMonitor() ([]*Channel, error) {
 	return channels, err
 }
 
+func GetChannelIDsForMonitor(ctx context.Context) ([]int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var channelIDs []int
+	err := DB.WithContext(ctx).Model(&Channel{}).Order("id ASC").Pluck("id", &channelIDs).Error
+	return channelIDs, err
+}
+
 func GetChannelRatioMonitors() ([]ChannelRatioMonitor, error) {
 	var monitors []ChannelRatioMonitor
 	err := DB.Find(&monitors).Error
@@ -156,8 +165,15 @@ func GetChannelRatioMonitor(channelId int) (ChannelRatioMonitor, error) {
 }
 
 func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
+	return GetChannelConcurrencyConfigsWithContext(context.Background())
+}
+
+func GetChannelConcurrencyConfigsWithContext(ctx context.Context) (map[int]ChannelConcurrencyConfig, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var monitors []ChannelRatioMonitor
-	err := DB.Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").
+	err := DB.WithContext(ctx).Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").
 		Where("concurrency_limit > ? OR rpm_limit > ? OR concurrency_revision > ?", 0, 0, 0).
 		Find(&monitors).Error
 	if err != nil {

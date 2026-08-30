@@ -71,7 +71,7 @@ func TestAcquireRelayChannelConcurrencySelectsAnotherChannel(t *testing.T) {
 	assert.Equal(t, 102, ctx.GetInt("channel_id"))
 }
 
-func TestGetChannelMonitorConcurrencyReturnsActiveSnapshotForAllChannels(t *testing.T) {
+func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.Create([]model.Channel{
 		{Id: 109, Name: "limited snapshot", Key: "key-1", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
@@ -114,6 +114,31 @@ func TestGetChannelMonitorConcurrencyReturnsActiveSnapshotForAllChannels(t *test
 	assert.Len(t, response.Data.Channels, 2)
 	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1, CurrentRPM: 2}, response.Data.Channels["109"])
 	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1}, response.Data.Channels["110"])
+
+	var monitor model.ChannelRatioMonitor
+	require.NoError(t, db.Where("channel_id = ?", 109).First(&monitor).Error)
+	monitor.ConcurrencyLimit = 3
+	monitor.ConcurrencyRevision++
+	require.NoError(t, db.Save(&monitor).Error)
+	require.NoError(t, db.Delete(&model.Channel{}, 110).Error)
+
+	refreshedRecorder := httptest.NewRecorder()
+	refreshedContext, _ := gin.CreateTestContext(refreshedRecorder)
+	refreshedContext.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/concurrency", nil)
+	GetChannelMonitorConcurrency(refreshedContext)
+	require.Equal(t, http.StatusOK, refreshedRecorder.Code)
+
+	var refreshedResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Channels map[string]service.ChannelConcurrencyStatus `json:"channels"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(refreshedRecorder.Body.Bytes(), &refreshedResponse))
+	require.True(t, refreshedResponse.Success)
+	assert.Len(t, refreshedResponse.Data.Channels, 1)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 3, CurrentRPM: 2}, refreshedResponse.Data.Channels["109"])
+	assert.NotContains(t, refreshedResponse.Data.Channels, "110")
 }
 
 func TestAcquireRelayChannelConcurrencyDoesNotRerouteSpecificChannel(t *testing.T) {

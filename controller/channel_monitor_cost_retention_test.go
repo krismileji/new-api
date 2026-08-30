@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,6 +306,13 @@ func TestGetChannelMonitorOverviewUsesDatabaseSettingsInsteadOfStaleNodeCache(t 
 		channelMonitorModelDetectionRetentionDaysOption:  "7",
 		channelMonitorCleanupEnabledOption:               "true",
 		channelMonitorProbeResponseOption:                "false",
+		"GroupRatio":                                     `{"vip":9}`,
+		channelMonitorGroupCoefficientsOption:            `{"vip":9}`,
+	})
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":9}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
 	})
 	require.NoError(t, db.Create(&[]model.Option{
 		{Key: channelMonitorExecutionDetailRetentionDaysOption, Value: "30"},
@@ -312,6 +320,8 @@ func TestGetChannelMonitorOverviewUsesDatabaseSettingsInsteadOfStaleNodeCache(t 
 		{Key: channelMonitorModelDetectionRetentionDaysOption, Value: "45"},
 		{Key: channelMonitorCleanupEnabledOption, Value: "false"},
 		{Key: channelMonitorProbeResponseOption, Value: "true"},
+		{Key: "GroupRatio", Value: `{"vip":1.25}`},
+		{Key: channelMonitorGroupCoefficientsOption, Value: `{"vip":0.8}`},
 	}).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
@@ -321,7 +331,9 @@ func TestGetChannelMonitorOverviewUsesDatabaseSettingsInsteadOfStaleNodeCache(t 
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Settings channelMonitorSettings `json:"settings"`
+			Settings          channelMonitorSettings `json:"settings"`
+			GroupRatios       map[string]float64     `json:"group_ratios"`
+			GroupCoefficients map[string]float64     `json:"group_coefficients"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
@@ -331,6 +343,26 @@ func TestGetChannelMonitorOverviewUsesDatabaseSettingsInsteadOfStaleNodeCache(t 
 	assert.Equal(t, 45, response.Data.Settings.ModelDetectionRetentionDays)
 	assert.False(t, response.Data.Settings.CleanupEnabled)
 	assert.True(t, response.Data.Settings.ProbeResponseEnabled)
+	assert.Equal(t, map[string]float64{"vip": 1.25}, response.Data.GroupRatios)
+	assert.Equal(t, map[string]float64{"vip": 0.8}, response.Data.GroupCoefficients)
+
+	require.NoError(t, db.Model(&model.Option{}).Where("key IN ?", []string{"GroupRatio", channelMonitorGroupCoefficientsOption}).
+		Update("value", "null").Error)
+	nullContext, nullRecorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(nullContext)
+	require.Equal(t, http.StatusOK, nullRecorder.Code)
+
+	var nullResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			GroupRatios       map[string]float64 `json:"group_ratios"`
+			GroupCoefficients map[string]float64 `json:"group_coefficients"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(nullRecorder.Body.Bytes(), &nullResponse))
+	require.True(t, nullResponse.Success)
+	assert.Empty(t, nullResponse.Data.GroupRatios)
+	assert.Empty(t, nullResponse.Data.GroupCoefficients)
 }
 
 func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(t *testing.T) {

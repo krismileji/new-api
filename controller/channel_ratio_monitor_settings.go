@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -236,6 +237,8 @@ type channelMonitorSettings struct {
 	SmartScheduleForceResetTaskId         string                     `json:"smart_schedule_force_reset_task_id,omitempty"`
 	SmartScheduleForceResetTaskError      string                     `json:"smart_schedule_force_reset_task_error,omitempty"`
 	ChannelOrder                          []int                      `json:"-"`
+	GroupRatios                           map[string]float64         `json:"-"`
+	GroupCoefficients                     map[string]float64         `json:"-"`
 }
 
 type channelMonitorSettingsUpdateRequest struct {
@@ -373,6 +376,8 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorSmartScheduleRateLimitCooldownOption,
 		channelMonitorSmartScheduleControlRevisionOption,
 		channelMonitorChannelOrderOption,
+		"GroupRatio",
+		channelMonitorGroupCoefficientsOption,
 	}
 	var storedOptions []model.Option
 	if err := model.DB.WithContext(ctx).
@@ -435,6 +440,8 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawSmartScheduleRateLimitCooldown := options[channelMonitorSmartScheduleRateLimitCooldownOption]
 	rawSmartScheduleControlRevision := options[channelMonitorSmartScheduleControlRevisionOption]
 	rawChannelOrder := options[channelMonitorChannelOrderOption]
+	rawGroupRatios := options["GroupRatio"]
+	rawGroupCoefficients := options[channelMonitorGroupCoefficientsOption]
 
 	interval, err := strconv.Atoi(rawInterval)
 	if err != nil || interval < 0 || interval > maxChannelMonitorAutoUpdateIntervalMinutes {
@@ -658,6 +665,17 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if rawChannelOrder != "" && common.UnmarshalJsonStr(rawChannelOrder, &settings.ChannelOrder) != nil {
 		settings.ChannelOrder = nil
 	}
+	settings.GroupRatios = ratio_setting.GetGroupRatioCopy()
+	if rawGroupRatios != "" {
+		var storedGroupRatios map[string]float64
+		if common.UnmarshalJsonStr(rawGroupRatios, &storedGroupRatios) == nil {
+			if storedGroupRatios == nil {
+				storedGroupRatios = map[string]float64{}
+			}
+			settings.GroupRatios = storedGroupRatios
+		}
+	}
+	settings.GroupCoefficients = channelMonitorGroupCoefficientsFromRaw(rawGroupCoefficients)
 	return settings
 }
 
@@ -801,7 +819,10 @@ func getChannelMonitorGroupCoefficients() map[string]float64 {
 	common.OptionMapRWMutex.RLock()
 	rawCoefficients := common.OptionMap[channelMonitorGroupCoefficientsOption]
 	common.OptionMapRWMutex.RUnlock()
+	return channelMonitorGroupCoefficientsFromRaw(rawCoefficients)
+}
 
+func channelMonitorGroupCoefficientsFromRaw(rawCoefficients string) map[string]float64 {
 	coefficients := make(map[string]float64)
 	if rawCoefficients == "" || common.UnmarshalJsonStr(rawCoefficients, &coefficients) != nil {
 		return map[string]float64{}

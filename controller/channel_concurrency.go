@@ -33,7 +33,23 @@ const (
 )
 
 func GetChannelMonitorConcurrency(c *gin.Context) {
-	snapshot, err := service.GetChannelConcurrencySnapshotWithRPM(c.Request.Context())
+	channelIDs, err := model.GetChannelIDsForMonitor(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	storedConfigs, err := model.GetChannelConcurrencyConfigsWithContext(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	configs := make(map[int]model.ChannelConcurrencyConfig, len(channelIDs))
+	for _, channelID := range channelIDs {
+		configs[channelID] = storedConfigs[channelID]
+	}
+	statuses, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		c.Request.Context(), channelIDs, configs,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -42,7 +58,7 @@ func GetChannelMonitorConcurrency(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"channels":     snapshot,
+			"channels":     statuses,
 			"generated_at": common.GetTimestamp(),
 		},
 	})

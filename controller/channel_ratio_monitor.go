@@ -16,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -514,7 +513,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		return
 	}
 
-	groupRatios := ratio_setting.GetGroupRatioCopy()
+	groupRatios := settings.GroupRatios
 	channelOrder := normalizeChannelMonitorChannelOrder(channels, settings.ChannelOrder)
 	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
@@ -679,7 +678,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			"realtime_degraded":             realtimeMetadata.RealtimeDegraded,
 			"channel_order":                 channelOrder,
 			"group_ratios":                  groupRatios,
-			"group_coefficients":            getChannelMonitorGroupCoefficients(),
+			"group_coefficients":            settings.GroupCoefficients,
 			"settings":                      settings,
 		},
 	})

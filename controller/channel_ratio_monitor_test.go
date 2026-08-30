@@ -74,8 +74,10 @@ type channelMonitorUpstreamBalanceAPIResponse struct {
 type channelMonitorOverviewAPIResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
-		Channels     []channelMonitorItem `json:"channels"`
-		ChannelOrder []int                `json:"channel_order"`
+		Channels          []channelMonitorItem `json:"channels"`
+		ChannelOrder      []int                `json:"channel_order"`
+		GroupRatios       map[string]float64   `json:"group_ratios"`
+		GroupCoefficients map[string]float64   `json:"group_coefficients"`
 	} `json:"data"`
 }
 

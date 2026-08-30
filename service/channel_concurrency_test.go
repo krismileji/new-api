@@ -366,7 +366,7 @@ func TestChannelConcurrencyRedisConfigSyncKeepsNewestRevision(t *testing.T) {
 }
 
 func TestChannelConcurrencySnapshotWithProvidedConfigsReusesCallerRows(t *testing.T) {
-	useChannelConcurrencyTestState(t, nil)
+	useChannelConcurrencyTestState(t, map[int]int{42: 9})
 	originalRedisEnabled := common.RedisEnabled
 	common.RedisEnabled = false
 	t.Cleanup(func() {
@@ -380,5 +380,21 @@ func TestChannelConcurrencySnapshotWithProvidedConfigsReusesCallerRows(t *testin
 		t.Context(), []int{41}, configs,
 	)
 	require.NoError(t, err)
+	assert.Len(t, snapshot, 1)
 	assert.Equal(t, ChannelConcurrencyStatus{Limit: 3, RPMLimit: 7}, snapshot[41])
+	assert.NotContains(t, snapshot, 42)
+}
+
+func TestChannelConcurrencyRedisSnapshotUsesCallerConfigForRequestedView(t *testing.T) {
+	useChannelConcurrencyTestState(t, map[int]int{41: 9})
+	client := useChannelConcurrencyRedis(t)
+	require.NoError(t, ensureChannelConcurrencyRedisConfig(t.Context(), client, map[int]model.ChannelConcurrencyConfig{
+		41: {Limit: 9, RPMLimit: 11, Revision: 1},
+	}))
+
+	snapshot, err := GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		t.Context(), []int{41}, map[int]model.ChannelConcurrencyConfig{41: {}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, ChannelConcurrencyStatus{}, snapshot[41])
 }
