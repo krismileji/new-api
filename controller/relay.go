@@ -520,6 +520,12 @@ func recordRelayChannelErrorLog(
 	if c == nil || err == nil || !constant.ErrorLogEnabled || !types.IsRecordErrorLog(err) {
 		return
 	}
+	if isChannelTestContext(c) && !service.WasChannelDailyCostRequestDispatched(c) {
+		return
+	}
+	if isChannelTestContext(c) && (finalRetrySummary || err.GetErrorCode() == types.ErrorCodeChannelResponseTimeExceeded) {
+		return
+	}
 	userId := c.GetInt("id")
 	tokenName := c.GetString("token_name")
 	modelName := c.GetString("original_model")
@@ -553,7 +559,14 @@ func recordRelayChannelErrorLog(
 	}
 	isGroupProbe := c.Request != nil && isChannelGroupMonitorTest(c.Request.Context())
 	if isChannelTestContext(c) && !isGroupProbe {
-		other[model.ChannelMonitorChannelTestLogKey] = true
+		switch {
+		case c.GetBool(model.ChannelMonitorSmartScheduleProbeLogKey):
+			other[model.ChannelMonitorSmartScheduleProbeLogKey] = true
+		case c.GetBool(model.ChannelMonitorStatusProbeLogKey):
+			other[model.ChannelMonitorStatusProbeLogKey] = true
+		default:
+			other[model.ChannelMonitorChannelTestLogKey] = true
+		}
 	}
 	if isGroupProbe {
 		appendChannelGroupMonitorAttemptLogInfoFromContext(c, other, channelGroupMonitorAttemptResultFromContext(c.Request.Context()))

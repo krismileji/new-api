@@ -48,6 +48,51 @@ type testResult struct {
 	usageMetrics              channelTestUsageMetrics
 }
 
+type channelHealthCheckTestContextKey struct{}
+
+func withChannelHealthCheckTestContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, channelHealthCheckTestContextKey{}, true)
+}
+
+func isChannelHealthCheckTest(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(channelHealthCheckTestContextKey{}).(bool)
+	return enabled
+}
+
+func recordChannelTestResultError(
+	result testResult,
+	channel *model.Channel,
+	apiError *types.NewAPIError,
+	isRetryAttempt bool,
+) {
+	if result.context == nil || channel == nil {
+		return
+	}
+	if apiError == nil {
+		apiError = result.newAPIError
+	}
+	if apiError == nil && result.localErr != nil {
+		apiError = types.NewError(result.localErr, types.ErrorCodeGetChannelFailed)
+	}
+	if apiError == nil {
+		return
+	}
+	recordRelayChannelErrorLog(
+		result.context,
+		*newRelayChannelError(result.context, channel),
+		apiError,
+		isRetryAttempt,
+		result.attemptDuration,
+		false,
+	)
+}
+
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if strings.EqualFold(normalized, "auto") {
@@ -199,8 +244,22 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	applyChannelSmartScheduleProbeTestContext(ctx, c)
 	applyChannelGroupMonitorTestContext(ctx, c)
-	if isChannelGroupMonitorTest(ctx) {
+	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
+	isGroupMonitorProbe := isChannelGroupMonitorTest(ctx)
+	isStatusProbe := isChannelStatusProbeTest(ctx)
+	isHealthCheck := isChannelHealthCheckTest(ctx)
+	switch {
+	case isSmartScheduleProbe:
+		c.Set("token_name", "智能调度探测")
+		c.Set(model.ChannelMonitorSmartScheduleProbeLogKey, true)
+	case isGroupMonitorProbe:
 		c.Set("token_name", "分组监控探测")
+		c.Set(model.ChannelMonitorGroupProbeLogKey, true)
+	case isStatusProbe:
+		c.Set("token_name", "状态探测")
+		c.Set(model.ChannelMonitorStatusProbeLogKey, true)
+	default:
+		c.Set("token_name", "模型测试")
 	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
@@ -262,26 +321,18 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	isSmartScheduleProbe := isChannelSmartScheduleProbeTest(ctx)
-	isGroupMonitorProbe := isChannelGroupMonitorTest(ctx)
-	isStatusProbe := isChannelStatusProbeTest(ctx)
-	isAutomatedProbe := isSmartScheduleProbe || isGroupMonitorProbe || isStatusProbe
+	isAutomatedProbe := isSmartScheduleProbe || isGroupMonitorProbe || isStatusProbe || isHealthCheck
 	eventSource := model.ChannelMonitorEventSourceManualTest
 	if isSmartScheduleProbe {
 		eventSource = model.ChannelMonitorEventSourceSmartProbe
-		c.Set(model.ChannelMonitorSmartScheduleProbeLogKey, true)
 	} else if isGroupMonitorProbe {
 		eventSource = model.ChannelMonitorEventSourceGroupProbe
-		c.Set(model.ChannelMonitorGroupProbeLogKey, true)
 	} else if isStatusProbe {
 		eventSource = model.ChannelMonitorEventSourceStatusProbe
 	}
 	defer func() {
 		emitChannelTestMonitorEvent(c, channel.Id, testModel, eventSource, tik, result)
 	}()
-	if isStatusProbe {
-		c.Set(model.ChannelMonitorStatusProbeLogKey, true)
-	}
 	request := buildTestRequest(testModel, endpointType, channel, isStream)
 	if isAutomatedProbe {
 		if responseRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {
@@ -698,7 +749,10 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData,
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
-	if c == nil || c.Request == nil || !isChannelGroupMonitorTest(c.Request.Context()) {
+	if c == nil || c.Request == nil ||
+		(!isChannelSmartScheduleProbeTest(c.Request.Context()) &&
+			!isChannelGroupMonitorTest(c.Request.Context()) &&
+			!isChannelStatusProbeTest(c.Request.Context())) {
 		other[model.ChannelMonitorChannelTestLogKey] = true
 	}
 	if tieredResult != nil {
@@ -1101,9 +1155,12 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
-	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	result := testChannel(withChannelHealthCheckTestContext(ctx), channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
+		if result.localErr != nil || result.newAPIError != nil {
+			recordChannelTestResultError(result, channel, nil, false)
+		}
 		return summary
 	}
 
@@ -1115,12 +1172,15 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
 	}
 
-	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+	if common.AutomaticDisableChannelEnabled && result.localErr == nil && !shouldBanChannel {
 		if milliseconds > disableThreshold {
 			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
 			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
 			shouldBanChannel = true
 		}
+	}
+	if newAPIError == nil && result.localErr != nil {
+		newAPIError = types.NewError(result.localErr, types.ErrorCodeGetChannelFailed)
 	}
 
 	if newAPIError == nil {
@@ -1129,7 +1189,11 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		summary.Failed++
 	}
 
-	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+	shouldProcessChannelError := allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan()
+	if (newAPIError != nil || result.localErr != nil) && !shouldProcessChannelError {
+		recordChannelTestResultError(result, channel, newAPIError, false)
+	}
+	if shouldProcessChannelError {
 		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, false)
 		summary.Disabled++
 	}

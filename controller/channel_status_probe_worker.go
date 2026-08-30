@@ -525,6 +525,10 @@ func executeChannelStatusProbeModelWithEndpoint(
 	probeResult := testChannel(probeCtx, channel, testUserId, modelName, endpointType, true)
 	settledCostNanoCNY := service.ChannelDailyCostAttemptSettledCost(probeResult.context, channel.Id)
 	lease.Release()
+	if probeResult.context != nil && probeResult.context.GetBool(model.ChannelMonitorStatusProbeLogKey) &&
+		(probeResult.localErr != nil || probeResult.newAPIError != nil) {
+		recordChannelTestResultError(probeResult, channel, nil, false)
+	}
 	finished := time.Now()
 	durationMs := float64(finished.Sub(started)) / float64(time.Millisecond)
 	if probeResult.localErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {

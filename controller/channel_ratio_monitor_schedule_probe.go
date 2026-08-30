@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -602,6 +600,9 @@ func runChannelSmartScheduleProbeOnce(
 			string(constant.EndpointTypeOpenAIResponse), true,
 		)
 		lease.Release()
+		if probeResult.localErr != nil || probeResult.newAPIError != nil {
+			recordChannelTestResultError(probeResult, channel, nil, false)
+		}
 		probeDurationMs := float64(time.Since(probeStartedAt)) / float64(time.Millisecond)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
@@ -691,14 +692,6 @@ func runChannelSmartScheduleProbeOnce(
 		} else {
 			result.Failed++
 			route.Model = item.requestModel
-			recordChannelSmartScheduleProbeError(
-				probeResult.context,
-				testUserID,
-				route,
-				probeResult.newAPIError,
-				message,
-				probeDurationMs,
-			)
 			common.SysError(fmt.Sprintf(
 				"智能调度共享探测失败: channel_id=%d name=%s model=%s request_group=%s err=%s",
 				route.ChannelId, route.ChannelName, route.Model, route.Group, message,
@@ -722,54 +715,6 @@ func runChannelSmartScheduleProbeOnce(
 	}
 	reportProgress(result.Total, result.Total)
 	return result, nil
-}
-
-func recordChannelSmartScheduleProbeError(
-	c *gin.Context,
-	userID int,
-	route model.ChannelSmartScheduleRoute,
-	apiError *types.NewAPIError,
-	message string,
-	durationMs float64,
-) {
-	if c == nil {
-		return
-	}
-	other := map[string]interface{}{
-		model.ChannelMonitorSmartScheduleProbeLogKey: true,
-		"request_path":                        "/v1/responses",
-		"channel_id":                          route.ChannelId,
-		"channel_name":                        route.ChannelName,
-		"channel_monitor_attempt_duration_ms": int64(math.Max(0, math.Round(durationMs))),
-	}
-	content := message
-	if apiError != nil {
-		other["error_type"] = apiError.GetErrorType()
-		other["error_code"] = apiError.GetErrorCode()
-		other["status_code"] = apiError.StatusCode
-		content = apiError.MaskSensitiveErrorWithStatusCode()
-	} else {
-		other["error_type"] = "probe_request_error"
-		other["error_code"] = "probe_request_failed"
-	}
-	if strings.TrimSpace(content) == "" {
-		content = "智能调度探测请求失败"
-	}
-	useTimeSeconds := int(math.Ceil(math.Max(0, durationMs) / 1000))
-	model.RecordErrorLog(
-		c,
-		userID,
-		route.ChannelId,
-		route.Model,
-		"智能调度探测",
-		content,
-		0,
-		useTimeSeconds,
-		true,
-		route.Group,
-		other,
-		false,
-	)
 }
 
 func channelSmartScheduleProbeEligibility(route model.ChannelSmartScheduleRoute, requestModel string) (

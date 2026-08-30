@@ -739,6 +739,9 @@ func TestRunChannelSmartScheduleDegradedProbeFailureRenewsCooldownAndRecordsErro
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/responses", r.URL.Path)
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -825,6 +828,9 @@ func TestRunChannelSmartScheduleProbeRateLimitStartsCooldownWithoutStabilitySamp
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
 	service.ClearChannelRateLimitCooldowns()
 	t.Cleanup(service.ClearChannelRateLimitCooldowns)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -110,11 +110,29 @@ func TestProcessChannelErrorPersistsRetryAttempt(t *testing.T) {
 	channelTestErr := types.NewOpenAIError(errors.New("channel test upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
 	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", false, "", false), channelTestErr, false)
 	require.NoError(t, db.Find(&logs).Error)
+	require.Len(t, logs, 1)
+
+	service.BeginChannelDailyCostAttempt(c, 9)
+	service.MarkChannelDailyCostRequestDispatched(c)
+	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", false, "", false), channelTestErr, false)
+	require.NoError(t, db.Find(&logs).Error)
 	require.Len(t, logs, 2)
 	assert.Equal(t, "channel-test-group", logs[1].Group)
 	var channelTestOther map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[1].Other, &channelTestOther))
 	assert.Equal(t, true, channelTestOther[model.ChannelMonitorChannelTestLogKey])
+
+	processChannelErrorWithTiming(
+		c,
+		*types.NewChannelError(9, 1, "test-channel", false, "", false),
+		channelTestErr,
+		false,
+		false,
+		nil,
+		true,
+	)
+	require.NoError(t, db.Find(&logs).Error)
+	assert.Len(t, logs, 2)
 
 	processChannelError(c, *types.NewChannelError(9, 1, "test-channel", false, "", false), types.NewClientGoneError(context.Canceled), false)
 	require.NoError(t, db.Find(&logs).Error)

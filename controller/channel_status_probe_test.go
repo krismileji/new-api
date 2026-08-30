@@ -87,6 +87,9 @@ func TestChannelStatusProbeDispatchesDuringActive429Cooldown(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	withSelfUseModeEnabled(t)
 	service.InitHttpClient()
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
 	service.ClearChannelRateLimitCooldowns()
 	t.Cleanup(service.ClearChannelRateLimitCooldowns)
 
@@ -120,6 +123,13 @@ func TestChannelStatusProbeDispatchesDuringActive429Cooldown(t *testing.T) {
 	assert.True(t, outcome.ProbeResult.requestDispatched)
 	assert.Equal(t, int64(1), requestCount.Load())
 	assert.Positive(t, service.ChannelRateLimitCooldownUntilMatching(channel.Id, "gpt-3.5-turbo"))
+	var errorLog model.Log
+	require.NoError(t, db.Where("type = ?", model.LogTypeError).First(&errorLog).Error)
+	assert.Equal(t, channel.Id, errorLog.ChannelId)
+	assert.Equal(t, "状态探测", errorLog.TokenName)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(errorLog.Other, &other))
+	assert.Equal(t, true, other[model.ChannelMonitorStatusProbeLogKey])
 }
 
 func TestChannelStatusProbeDispatchesForDisabledChannels(t *testing.T) {

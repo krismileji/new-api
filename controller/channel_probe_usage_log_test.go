@@ -158,6 +158,98 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeConsume).Count(&consumeLogCount).Error)
 		assert.Equal(t, int64(0), consumeLogCount)
 	})
+
+	t.Run("automatic health check records success when probe response is enabled", func(t *testing.T) {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[channelprobe.OptionKey] = "true"
+		common.OptionMapRWMutex.Unlock()
+		common.LogConsumeEnabled = true
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Delete(&model.Log{}).Error)
+
+		summary := testChannelForHealthCheck(context.Background(), channel, user.Id, false, 10_000)
+
+		assert.Equal(t, 1, summary.Succeeded)
+		var consumeLog model.Log
+		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
+		assert.Equal(t, "模型测试", consumeLog.TokenName)
+		var other map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
+		assert.Equal(t, true, other[model.ChannelMonitorChannelTestLogKey])
+	})
+
+	t.Run("automatic health check records failure without auto disable", func(t *testing.T) {
+		originalErrorLogEnabled := constant.ErrorLogEnabled
+		constant.ErrorLogEnabled = true
+		t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
+		require.NoError(t, db.Where("type = ?", model.LogTypeError).Delete(&model.Log{}).Error)
+
+		failedUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, err := w.Write([]byte(`{"error":{"message":"temporary health check failure"}}`))
+			assert.NoError(t, err)
+		}))
+		t.Cleanup(failedUpstream.Close)
+		failedChannel := &model.Channel{
+			Id: 45, Type: constant.ChannelTypeOpenAI, Key: "sk-health-check",
+			Name: "health check failure", Status: common.ChannelStatusEnabled,
+			BaseURL: common.GetPointer(failedUpstream.URL), Models: "gpt-3.5-turbo", Group: "default",
+		}
+
+		summary := testChannelForHealthCheck(context.Background(), failedChannel, user.Id, false, 10_000)
+
+		assert.Equal(t, 1, summary.Failed)
+		assert.Zero(t, summary.Disabled)
+		var errorLog model.Log
+		require.NoError(t, db.Where("type = ?", model.LogTypeError).First(&errorLog).Error)
+		assert.Equal(t, failedChannel.Id, errorLog.ChannelId)
+		assert.Equal(t, "模型测试", errorLog.TokenName)
+		var other map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(errorLog.Other, &other))
+		assert.Equal(t, true, other[model.ChannelMonitorChannelTestLogKey])
+	})
+
+	t.Run("automatic health check does not log pre-dispatch failure", func(t *testing.T) {
+		originalErrorLogEnabled := constant.ErrorLogEnabled
+		constant.ErrorLogEnabled = true
+		t.Cleanup(func() { constant.ErrorLogEnabled = originalErrorLogEnabled })
+		service.ClearChannelRateLimitCooldowns()
+		t.Cleanup(service.ClearChannelRateLimitCooldowns)
+		require.NoError(t, db.Where("type = ?", model.LogTypeError).Delete(&model.Log{}).Error)
+		service.StartChannelRateLimitCooldown(channel.Id, "gpt-3.5-turbo", 60)
+
+		summary := testChannelForHealthCheck(context.Background(), channel, user.Id, false, 10_000)
+
+		assert.Equal(t, 1, summary.Tested)
+		assert.Zero(t, summary.Succeeded)
+		assert.Equal(t, 1, summary.Failed)
+		var errorLogCount int64
+		require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&errorLogCount).Error)
+		assert.Zero(t, errorLogCount)
+	})
+
+	t.Run("automatic health check does not duplicate slow successful request", func(t *testing.T) {
+		originalAutomaticDisableEnabled := common.AutomaticDisableChannelEnabled
+		originalErrorLogEnabled := constant.ErrorLogEnabled
+		common.AutomaticDisableChannelEnabled = true
+		constant.ErrorLogEnabled = true
+		t.Cleanup(func() {
+			common.AutomaticDisableChannelEnabled = originalAutomaticDisableEnabled
+			constant.ErrorLogEnabled = originalErrorLogEnabled
+		})
+		service.ClearChannelRateLimitCooldowns()
+		require.NoError(t, db.Where("type IN ?", []int{model.LogTypeConsume, model.LogTypeError}).Delete(&model.Log{}).Error)
+
+		summary := testChannelForHealthCheck(context.Background(), channel, user.Id, false, -1)
+
+		assert.Equal(t, 1, summary.Tested)
+		assert.Zero(t, summary.Succeeded)
+		assert.Equal(t, 1, summary.Failed)
+		var logs []model.Log
+		require.NoError(t, db.Where("type IN ?", []int{model.LogTypeConsume, model.LogTypeError}).Find(&logs).Error)
+		require.Len(t, logs, 1)
+		assert.Equal(t, model.LogTypeConsume, logs[0].Type)
+		assert.Equal(t, "模型测试", logs[0].TokenName)
+	})
 }
 
 func TestChannelTestRecordsDispatchedFailuresAsUnresolvedCost(t *testing.T) {
