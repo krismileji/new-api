@@ -16,7 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  sideDrawerContentClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -32,42 +46,6 @@ export function ChannelMonitorRealtimeStatus(
 ) {
   if (!props.metadata) return null
 
-  const pendingCount =
-    props.metadata.pending_count ?? props.metadata.queue_depth
-  const costQueuePendingCount = props.metadata.cost_queue_pending_count
-  const costStreamPendingCount = props.metadata.cost_stream_pending_count
-  const costStreamUnreadCount = props.metadata.cost_stream_unread_count
-  const costOutboxPendingCount = props.metadata.cost_outbox_pending_count
-  const writerQueueDepth = props.metadata.writer_queue_depth
-  const writerQueueCapacity = props.metadata.writer_queue_capacity
-  const redisAvailable =
-    props.metadata.redis_available ??
-    props.metadata.redis_status !== 'unavailable'
-  const consumerRunning = props.metadata.redis_consumer_running ?? true
-  const cutoffLabel = props.metadata.data_cutoff_at
-    ? formatTimestampToDate(props.metadata.data_cutoff_at)
-    : '暂无已处理事件'
-  const generatedLabel = formatRealtimeTimestamp(props.metadata.generated_at)
-  const processedLabel = props.metadata.processed_at
-    ? formatTimestampToDate(props.metadata.processed_at)
-    : '暂无'
-  const oldestPendingLabel = formatRealtimeTimestamp(
-    props.metadata.oldest_pending_at
-  )
-  const publishedLabel = formatRealtimeTimestamp(
-    props.metadata.last_published_at
-  )
-  const lastProcessedLabel = formatRealtimeTimestamp(
-    props.metadata.last_processed_at
-  )
-  const lastQuarantinedLabel = formatRealtimeTimestamp(
-    props.metadata.last_quarantined_at
-  )
-  const costOutboxOldestPendingLabel = formatRealtimeTimestamp(
-    props.metadata.cost_outbox_oldest_pending_at
-  )
-  const quarantineCount = props.metadata.quarantine_count ?? 0
-
   return (
     <span
       className={cn(
@@ -76,6 +54,69 @@ export function ChannelMonitorRealtimeStatus(
       )}
       data-channel-monitor-realtime-status
     >
+      <span
+        className='flex max-w-full min-w-0 flex-wrap items-center gap-2 lg:hidden'
+        role='group'
+        aria-label='运行状态摘要'
+      >
+        <RealtimePrimaryStatusBadges metadata={props.metadata} />
+        <RealtimeAlertBadges metadata={props.metadata} showIdleQueues={false} />
+        <Sheet>
+          <SheetTrigger
+            render={
+              <Button
+                type='button'
+                variant='outline'
+                size='xs'
+                className='shrink-0'
+              />
+            }
+          >
+            运行详情
+          </SheetTrigger>
+          <SheetContent
+            side='bottom'
+            className={sideDrawerContentClassName(
+              'h-auto max-h-[85dvh] rounded-t-xl'
+            )}
+          >
+            <SheetHeader className={sideDrawerHeaderClassName('pr-12')}>
+              <SheetTitle>实时运行详情</SheetTitle>
+              <SheetDescription>
+                事件处理、队列与成本链路的完整诊断信息
+              </SheetDescription>
+            </SheetHeader>
+            <div
+              className={sideDrawerFormClassName('flex-row flex-wrap gap-2')}
+              role='region'
+              aria-label='实时运行完整诊断'
+            >
+              <RealtimeStatusDetails metadata={props.metadata} />
+            </div>
+          </SheetContent>
+        </Sheet>
+      </span>
+      <span
+        className='hidden max-w-full min-w-0 flex-wrap items-center gap-2 lg:inline-flex'
+        role='group'
+        aria-label='完整运行状态'
+      >
+        <RealtimeStatusDetails metadata={props.metadata} />
+      </span>
+    </span>
+  )
+}
+
+function RealtimePrimaryStatusBadges(props: {
+  metadata: ChannelMonitorRealtimeMetadata
+}) {
+  const redisAvailable =
+    props.metadata.redis_available ??
+    props.metadata.redis_status !== 'unavailable'
+  const consumerRunning = props.metadata.redis_consumer_running ?? true
+
+  return (
+    <>
       <Badge
         variant={redisAvailable ? 'outline' : 'destructive'}
         data-realtime-redis-status={
@@ -90,13 +131,37 @@ export function ChannelMonitorRealtimeStatus(
       >
         事件处理 {consumerRunning ? '运行中' : '已停止'}
       </Badge>
+    </>
+  )
+}
+
+function RealtimeAlertBadges(props: {
+  metadata: ChannelMonitorRealtimeMetadata
+  showIdleQueues: boolean
+}) {
+  const pendingCount =
+    props.metadata.pending_count ?? props.metadata.queue_depth
+  const costQueuePendingCount = props.metadata.cost_queue_pending_count
+  const costStreamPendingCount = props.metadata.cost_stream_pending_count
+  const costStreamUnreadCount = props.metadata.cost_stream_unread_count
+  const costOutboxPendingCount = props.metadata.cost_outbox_pending_count
+  const writerQueueDepth = props.metadata.writer_queue_depth
+  const writerQueueCapacity = props.metadata.writer_queue_capacity
+  const costOutboxOldestPendingLabel = formatRealtimeTimestamp(
+    props.metadata.cost_outbox_oldest_pending_at
+  )
+
+  return (
+    <>
       {props.metadata.realtime_degraded ? (
         <Badge variant='destructive'>实时数据已降级</Badge>
       ) : null}
       {pendingCount > 0 ? (
         <Badge variant='warning'>实时事件待处理 {pendingCount}</Badge>
       ) : null}
-      {writerQueueDepth !== undefined && writerQueueCapacity !== undefined ? (
+      {writerQueueDepth !== undefined &&
+      writerQueueCapacity !== undefined &&
+      (props.showIdleQueues || writerQueueDepth > 0) ? (
         <Badge variant={writerQueueDepth > 0 ? 'warning' : 'outline'}>
           监控写入队列 {writerQueueDepth}/{writerQueueCapacity}
           {props.metadata.writer_queue_age_seconds ? (
@@ -104,7 +169,8 @@ export function ChannelMonitorRealtimeStatus(
           ) : null}
         </Badge>
       ) : null}
-      {costQueuePendingCount !== undefined ? (
+      {costQueuePendingCount !== undefined &&
+      (props.showIdleQueues || costQueuePendingCount > 0) ? (
         <Badge
           variant={costQueuePendingCount > 0 ? 'warning' : 'outline'}
           title='当前节点已聚合、等待写入成本记录的条目数量'
@@ -113,7 +179,10 @@ export function ChannelMonitorRealtimeStatus(
         </Badge>
       ) : null}
       {costStreamPendingCount !== undefined &&
-      costStreamUnreadCount !== undefined ? (
+      costStreamUnreadCount !== undefined &&
+      (props.showIdleQueues ||
+        costStreamPendingCount > 0 ||
+        costStreamUnreadCount > 0) ? (
         <Badge
           variant={
             costStreamPendingCount > 0 || costStreamUnreadCount > 0
@@ -126,7 +195,8 @@ export function ChannelMonitorRealtimeStatus(
           {costStreamPendingCount}
         </Badge>
       ) : null}
-      {costOutboxPendingCount !== undefined ? (
+      {costOutboxPendingCount !== undefined &&
+      (props.showIdleQueues || costOutboxPendingCount > 0) ? (
         <Badge
           variant={costOutboxPendingCount > 0 ? 'warning' : 'outline'}
           title={`已排队等待写入成本账本、尚未完成记账的事件，最早待处理 ${costOutboxOldestPendingLabel}`}
@@ -164,6 +234,41 @@ export function ChannelMonitorRealtimeStatus(
       {props.metadata.stream_trim_failure_active ? (
         <Badge variant='destructive'>实时事件清理故障</Badge>
       ) : null}
+    </>
+  )
+}
+
+function RealtimeStatusDetails(props: {
+  metadata: ChannelMonitorRealtimeMetadata
+}) {
+  const cutoffLabel = props.metadata.data_cutoff_at
+    ? formatTimestampToDate(props.metadata.data_cutoff_at)
+    : '暂无已处理事件'
+  const generatedLabel = formatRealtimeTimestamp(props.metadata.generated_at)
+  const processedLabel = props.metadata.processed_at
+    ? formatTimestampToDate(props.metadata.processed_at)
+    : '暂无'
+  const oldestPendingLabel = formatRealtimeTimestamp(
+    props.metadata.oldest_pending_at
+  )
+  const publishedLabel = formatRealtimeTimestamp(
+    props.metadata.last_published_at
+  )
+  const lastProcessedLabel = formatRealtimeTimestamp(
+    props.metadata.last_processed_at
+  )
+  const lastQuarantinedLabel = formatRealtimeTimestamp(
+    props.metadata.last_quarantined_at
+  )
+  const costOutboxOldestPendingLabel = formatRealtimeTimestamp(
+    props.metadata.cost_outbox_oldest_pending_at
+  )
+  const quarantineCount = props.metadata.quarantine_count ?? 0
+
+  return (
+    <>
+      <RealtimePrimaryStatusBadges metadata={props.metadata} />
+      <RealtimeAlertBadges metadata={props.metadata} showIdleQueues />
       <span
         className='text-muted-foreground max-w-full text-xs font-normal text-wrap'
         title={`处理于 ${processedLabel}`}
@@ -187,7 +292,7 @@ export function ChannelMonitorRealtimeStatus(
         {props.metadata.cost_publish_failed_count ?? 0} 次 · 成本异常事件{' '}
         {props.metadata.cost_dead_letter_count ?? 0} 条
       </span>
-    </span>
+    </>
   )
 }
 

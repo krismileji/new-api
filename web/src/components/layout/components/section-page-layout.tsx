@@ -24,6 +24,8 @@ import {
   type ReactNode,
 } from 'react'
 
+import { cn } from '@/lib/utils'
+
 import { Main } from './main'
 import { PageFooterProvider } from './page-footer'
 
@@ -52,6 +54,7 @@ SectionPageLayoutBreadcrumb.displayName = 'SectionPageLayout.Breadcrumb'
 export type SectionPageLayoutProps = {
   children: ReactNode
   fixedContent?: boolean
+  stackHeaderOnMobile?: boolean
 }
 
 export function SectionPageLayout(props: SectionPageLayoutProps) {
@@ -68,12 +71,13 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
     if (!isValidElement(node)) return
     const child = node as ReactElement<SlotProps>
     if (child.type === SectionPageLayoutTitle) title = child.props.children
-    else if (child.type === SectionPageLayoutActions)
+    else if (child.type === SectionPageLayoutActions) {
       actions = child.props.children
-    else if (child.type === SectionPageLayoutContent)
+    } else if (child.type === SectionPageLayoutContent) {
       content = child.props.children
-    else if (child.type === SectionPageLayoutBreadcrumb)
+    } else if (child.type === SectionPageLayoutBreadcrumb) {
       breadcrumb = child.props.children
+    }
   })
 
   return (
@@ -83,14 +87,35 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
           {breadcrumb != null && (
             <div className='mb-2 sm:mb-3'>{breadcrumb}</div>
           )}
-          <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:gap-x-4'>
-            <div className='min-w-0 flex-1'>
+          <div
+            data-slot='section-page-layout-header-row'
+            className={cn(
+              props.stackHeaderOnMobile
+                ? 'flex flex-col items-stretch justify-between gap-y-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4'
+                : 'flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:gap-x-4'
+            )}
+          >
+            <div
+              data-slot='section-page-layout-title'
+              className={cn(
+                'min-w-0',
+                props.stackHeaderOnMobile
+                  ? 'w-full sm:w-auto sm:flex-1'
+                  : 'flex-1'
+              )}
+            >
               <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
                 {title}
               </h2>
             </div>
             {actions != null && (
-              <div className='flex shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4'>
+              <div
+                data-slot='section-page-layout-actions'
+                className={cn(
+                  'flex shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4',
+                  props.stackHeaderOnMobile && 'w-full sm:w-auto'
+                )}
+              >
                 {actions}
               </div>
             )}
@@ -98,6 +123,7 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
         </div>
 
         <div
+          data-slot='section-page-layout-content'
           className={
             props.fixedContent
               ? 'min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
