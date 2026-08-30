@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { orderGroupNames } from '@/lib/group-order'
 
 import { API_ENDPOINTS } from './constants'
 import type {
@@ -71,12 +72,22 @@ export async function getUserGroups(): Promise<GroupOption[]> {
   }
 
   const groupData = data.data as Record<string, { desc: string; ratio: number }>
+  const regularGroupNames = orderGroupNames(
+    Object.keys(groupData).filter((group) => group !== 'auto'),
+    data.group_order
+  )
+  const groupNames = Object.hasOwn(groupData, 'auto')
+    ? [...regularGroupNames, 'auto']
+    : regularGroupNames
 
   // label is for button display (name only); desc is for dropdown content
-  return Object.entries(groupData).map(([group, info]) => ({
-    label: group,
-    value: group,
-    ratio: info.ratio,
-    desc: info.desc,
-  }))
+  return groupNames.map((group) => {
+    const info = groupData[group]
+    return {
+      label: group,
+      value: group,
+      ratio: info.ratio,
+      desc: info.desc,
+    }
+  })
 }
