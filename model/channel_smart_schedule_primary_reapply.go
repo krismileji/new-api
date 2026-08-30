@@ -169,24 +169,7 @@ func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 			channelById[channel.Id] = channel
 		}
 		var primaryState *ChannelSmartScheduleRouteState
-		autoDisabledPrimaryCleared := false
 		for index := range states {
-			state := &states[index]
-			if state.ManualPrimaryUntil > now &&
-				channelStatusById[state.ChannelId] == common.ChannelStatusAutoDisabled {
-				changed, err := restoreChannelSmartScheduleRoutePrimaryTx(
-					tx,
-					state,
-					abilityByKey[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)],
-				)
-				if err != nil {
-					return nil, err
-				}
-				if changed {
-					changedKeys[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = struct{}{}
-				}
-				autoDisabledPrimaryCleared = true
-			}
 			if states[index].ManualPrimaryUntil <= now {
 				continue
 			}
@@ -196,18 +179,6 @@ func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 			primaryState = &states[index]
 		}
 		if primaryState == nil {
-			if autoDisabledPrimaryCleared {
-				before := channelSmartScheduleAbilityRoutingSnapshot(abilities)
-				changed, err := clearChannelSmartScheduleRoutePoolTemporaryTrafficTx(
-					tx, states, abilities, pool.group, pool.model, now,
-				)
-				if err != nil {
-					return nil, err
-				}
-				if changed {
-					channelSmartScheduleRecordChangedAbilityRouting(changedKeys, before, abilities)
-				}
-			}
 			continue
 		}
 
