@@ -13,8 +13,10 @@ import (
 type channelSmartScheduleRateLimitCooldownRequest struct {
 	Group           string `json:"group"`
 	Model           string `json:"model"`
-	DurationSeconds *int   `json:"duration_seconds"`
+	DurationMinutes *int   `json:"duration_minutes"`
 }
+
+const maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes = 300
 
 func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 	channelId, ok := channelSmartScheduleRouteChannelId(c)
@@ -30,16 +32,16 @@ func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if request.DurationSeconds == nil || *request.DurationSeconds < 0 ||
-		*request.DurationSeconds > maxChannelMonitorSmartScheduleRateLimitCooldownSeconds {
+	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
+		*request.DurationMinutes > maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "429 暂停时间必须在 0 到 300 秒之间",
+			"message": "429 限制暂停时间必须在 0 到 300 分钟之间",
 		})
 		return
 	}
-	result, err := service.UpdateChannelRateLimitCooldown(
-		c.Request.Context(), channelId, modelName, *request.DurationSeconds,
+	result, err := service.UpdateChannelRateLimitBypass(
+		c.Request.Context(), channelId, modelName, *request.DurationMinutes*60,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -52,16 +54,16 @@ func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 			"id":               channelId,
 			"group":            group,
 			"model":            modelName,
-			"duration_seconds": *request.DurationSeconds,
-			"cooldown_until":   result.CooldownUntil,
+			"duration_minutes": *request.DurationMinutes,
+			"bypass_until":     result.BypassUntil,
 		})
 	}
 	common.ApiSuccess(c, gin.H{
 		"channel_id":       channelId,
 		"group":            group,
 		"model":            modelName,
-		"duration_seconds": *request.DurationSeconds,
-		"cooldown_until":   result.CooldownUntil,
+		"duration_minutes": *request.DurationMinutes,
+		"bypass_until":     result.BypassUntil,
 		"changed":          result.Changed,
 	})
 }

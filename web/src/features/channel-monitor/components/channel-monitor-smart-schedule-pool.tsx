@@ -619,7 +619,7 @@ function RouteActions(props: {
     props.route
   )
   const rateLimitPaused =
-    (props.route.rate_limit_cooldown_until ?? 0) > Date.now() / 1000
+    (props.route.rate_limit_bypass_until ?? 0) > Date.now() / 1000
   const rateLimitPending =
     props.rateLimitCooldownKey ===
     channelMonitorSmartScheduleRouteKey(props.route)
@@ -678,10 +678,10 @@ function RouteActions(props: {
         onClick={() => props.onRateLimitCooldownChange(props.route)}
         aria-label={
           rateLimitPaused
-            ? `解除 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429 暂停`
-            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429`
+            ? `恢复 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429 限制`
+            : `暂停 ${props.route.channel_name} 在 ${props.route.group} 分组使用 ${props.route.model} 模型的 429 限制`
         }
-        title={rateLimitPaused ? '解除 429 暂停' : '暂停 429'}
+        title={rateLimitPaused ? '恢复 429 限制' : '暂停 429 限制'}
       >
         {rateLimitPending ? (
           <Spinner className='size-3.5' />

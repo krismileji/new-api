@@ -26,6 +26,25 @@ func TestChannelSmartScheduleRouteResponsesExposeActiveRateLimitCooldown(t *test
 	assert.Greater(t, responses[0].RateLimitCooldownUntil, now)
 }
 
+func TestChannelSmartScheduleRouteResponsesExposeRateLimitBypassBeforeCooldown(t *testing.T) {
+	service.ClearChannelRateLimitCooldowns()
+	service.ClearChannelRateLimitBypasses()
+	t.Cleanup(service.ClearChannelRateLimitCooldowns)
+	t.Cleanup(service.ClearChannelRateLimitBypasses)
+	now := common.GetTimestamp()
+	service.StartChannelRateLimitCooldown(12, "model-a", 60)
+	_, err := service.UpdateChannelRateLimitBypass(context.Background(), 12, "model-a", 120)
+	require.NoError(t, err)
+
+	responses := channelSmartScheduleRouteResponses([]model.ChannelSmartScheduleRoute{
+		{ChannelId: 12, Group: "vip", Model: "model-*"},
+	})
+
+	require.Len(t, responses, 1)
+	assert.Greater(t, responses[0].RateLimitBypassUntil, now)
+	assert.Zero(t, responses[0].RateLimitCooldownUntil)
+}
+
 func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBoundaries(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	historicalScore := 0.42

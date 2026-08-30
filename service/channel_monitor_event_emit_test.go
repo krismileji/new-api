@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -151,4 +154,34 @@ func TestChannelMonitorEventSourcePrefersGroupProbe(t *testing.T) {
 	ctx.Set(model.ChannelMonitorStatusProbeLogKey, true)
 
 	assert.Equal(t, model.ChannelMonitorEventSourceGroupProbe, channelMonitorEventSource(ctx))
+}
+
+func TestEmitChannelMonitorFailureEventExcludesBypassed429FromScheduling(t *testing.T) {
+	useChannelMonitorEventPublishStatsIsolation(t)
+	writer := newChannelMonitorEventWriter(nil, channelMonitorEventWriterConfig{
+		QueueCapacity: 1,
+		MaxAttempts:   1,
+	})
+	setChannelMonitorEventWriterForTest(t, writer)
+	t.Cleanup(writer.cancelRun)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	_, err := UpdateChannelRateLimitBypass(context.Background(), 21, "model-a", 60)
+	require.NoError(t, err)
+	rateLimitErr := relaytypes.NewErrorWithStatusCode(
+		errors.New("upstream rate limited"),
+		relaytypes.ErrorCodeBadResponseStatusCode,
+		http.StatusTooManyRequests,
+	)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	status := EmitChannelMonitorFailureEvent(
+		ctx, 21, "model-a", rateLimitErr, false, true, false, true, true, nil,
+	)
+
+	assert.Equal(t, ChannelMonitorEventPublishStatusQueued, status)
+	require.Len(t, writer.queue, 1)
+	item := <-writer.queue
+	assert.False(t, item.event.SchedulingEligible)
+	assert.False(t, item.event.RuntimeProtectionEligible)
 }

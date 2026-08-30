@@ -205,6 +205,18 @@ describe('channel monitor smart schedule cell status', () => {
     assert.equal(markup.includes('统一探索采样 3%'), false)
   })
 
+  test('shows a paused 429 restriction as the active route override', () => {
+    const markup = renderCell([
+      createRoute({
+        rate_limit_bypass_until: 4_102_444_800,
+        rate_limit_cooldown_until: 4_102_444_800,
+      }),
+    ])
+
+    assert.ok(markup.includes('429 限制已暂停'))
+    assert.equal(markup.includes('429 冷却'), false)
+  })
+
   test('shows nonparticipation before stale pause and protection state', () => {
     const markup = renderCell([
       createRoute({

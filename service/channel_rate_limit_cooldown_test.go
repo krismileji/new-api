@@ -34,6 +34,38 @@ type channelRateLimitCooldownPipelineErrorHook struct {
 	err error
 }
 
+type channelRateLimitBypassReadErrorHook struct {
+	err error
+}
+
+func (hook *channelRateLimitBypassReadErrorHook) BeforeProcess(
+	ctx context.Context,
+	command redis.Cmder,
+) (context.Context, error) {
+	if command.Name() == "zrangebyscore" {
+		return ctx, hook.err
+	}
+	return ctx, nil
+}
+
+func (hook *channelRateLimitBypassReadErrorHook) AfterProcess(context.Context, redis.Cmder) error {
+	return nil
+}
+
+func (hook *channelRateLimitBypassReadErrorHook) BeforeProcessPipeline(
+	ctx context.Context,
+	_ []redis.Cmder,
+) (context.Context, error) {
+	return ctx, nil
+}
+
+func (hook *channelRateLimitBypassReadErrorHook) AfterProcessPipeline(
+	context.Context,
+	[]redis.Cmder,
+) error {
+	return nil
+}
+
 func (hook *channelRateLimitCooldownPipelineErrorHook) BeforeProcess(
 	ctx context.Context,
 	_ redis.Cmder,
@@ -228,6 +260,223 @@ func TestUpdateChannelRateLimitCooldownAllowsManualPauseAndRouteClear(t *testing
 	assert.True(t, cleared.Changed)
 	assert.Zero(t, cleared.CooldownUntil)
 	assert.NotContains(t, channelRateLimitCooldownChannelIds("model-manual", common.GetTimestamp()), 31)
+}
+
+func TestChannelRateLimitBypassClearsAndPreventsCooldown(t *testing.T) {
+	stopChannelRateLimitCooldownRedisSync()
+	resetChannelRateLimitCooldownLocalState()
+	ClearChannelRateLimitBypasses()
+	originalEnabled := common.RedisEnabled
+	originalClient := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		common.RedisEnabled = originalEnabled
+		common.RDB = originalClient
+		resetChannelRateLimitCooldownLocalState()
+		ClearChannelRateLimitBypasses()
+	})
+
+	StartChannelRateLimitCooldown(33, "model-a", 60)
+	require.Positive(t, ChannelRateLimitCooldownUntilMatching(33, "model-a"))
+	bypassed, err := UpdateChannelRateLimitBypass(context.Background(), 33, "model-a", 120)
+	require.NoError(t, err)
+	assert.True(t, bypassed.Changed)
+	assert.Positive(t, bypassed.BypassUntil)
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(33, "model-a"))
+
+	StartChannelRateLimitCooldown(33, "model-a", 60)
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(33, "model-a"))
+}
+
+func TestChannelRateLimitBypassUsesSharedRedisStateBeforeCooldown(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitCooldowns()
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitCooldowns)
+	t.Cleanup(ClearChannelRateLimitBypasses)
+
+	_, err := UpdateChannelRateLimitBypass(context.Background(), 34, "model-a", 120)
+	require.NoError(t, err)
+	channelRateLimitBypasses.Lock()
+	channelRateLimitBypasses.untilByRoute = make(map[channelRateLimitCooldownKey]int64)
+	channelRateLimitBypassGeneration.Add(1)
+	channelRateLimitBypasses.Unlock()
+
+	assert.True(t, ChannelRateLimitBypassActive(context.Background(), 34, "model-a"))
+	StartChannelRateLimitCooldown(34, "model-a", 60)
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(34, "model-a"))
+}
+
+func TestChannelRateLimitBypassUpdateFailurePreservesExistingCooldown(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	StartChannelRateLimitCooldown(35, "model-a", 60)
+	require.Positive(t, ChannelRateLimitCooldownUntilMatching(35, "model-a"))
+	stopChannelRateLimitCooldownRedisSync()
+
+	writeErr := errors.New("redis bypass update failed")
+	hook := &channelRateLimitCooldownEvalErrorHook{
+		script: channelRateLimitBypassRedisUpdateScript,
+		err:    writeErr,
+	}
+	common.RDB.AddHook(hook)
+
+	_, err := UpdateChannelRateLimitBypass(context.Background(), 35, "model-a", 120)
+	assert.ErrorIs(t, err, writeErr)
+	assert.Equal(t, int64(1), hook.calls.Load())
+	assert.Positive(t, ChannelRateLimitCooldownUntilMatching(35, "model-a"))
+	_, err = common.RDB.ZScore(
+		context.Background(),
+		channelRateLimitBypassRedisKey,
+		channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+			channelId: 35,
+			modelName: "model-a",
+		}),
+	).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+}
+
+func TestChannelRateLimitBypassPreservesConsumedCooldownSequence(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	now := common.GetTimestamp()
+	member := channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+		channelId: 39,
+		modelName: "model-a",
+	})
+	require.NoError(t, common.RDB.ZAdd(
+		context.Background(),
+		channelRateLimitCooldownRedisKey,
+		&redis.Z{Score: float64(now + 60), Member: member},
+	).Err())
+	require.NoError(t, common.RDB.HSet(
+		context.Background(),
+		channelRateLimitCooldownRedisEventSequenceKey,
+		member,
+		"115000000000000021",
+	).Err())
+
+	_, err := UpdateChannelRateLimitBypass(context.Background(), 39, "model-a", 120)
+	require.NoError(t, err)
+	_, err = common.RDB.ZScore(
+		context.Background(), channelRateLimitCooldownRedisKey, member,
+	).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+	sequence, err := common.RDB.HGet(
+		context.Background(), channelRateLimitCooldownRedisEventSequenceKey, member,
+	).Result()
+	require.NoError(t, err)
+	assert.Equal(t, "115000000000000021", sequence)
+}
+
+func TestChannelRateLimitBypassImmediatelyOverridesRemoteCooldown(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	StartChannelRateLimitCooldown(36, "model-a", 60)
+	require.Equal(t, []int{36}, applyChannelRateLimitCooldowns(
+		"model-a", model.ChannelSelectionOptions{},
+	).ExcludedChannelIds)
+
+	now := common.GetTimestamp()
+	require.NoError(t, common.RDB.ZAdd(
+		context.Background(),
+		channelRateLimitBypassRedisKey,
+		&redis.Z{
+			Score: float64(now + 120),
+			Member: channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+				channelId: 36,
+				modelName: "model-a",
+			}),
+		},
+	).Err())
+	channelRateLimitBypasses.Lock()
+	channelRateLimitBypasses.untilByRoute = make(map[channelRateLimitCooldownKey]int64)
+	channelRateLimitBypassGeneration.Add(1)
+	channelRateLimitBypasses.Unlock()
+
+	assert.Empty(t, applyChannelRateLimitCooldowns(
+		"model-a", model.ChannelSelectionOptions{},
+	).ExcludedChannelIds)
+	StartChannelRateLimitCooldown(36, "model-a", 300)
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(36, "model-a"))
+	_, err := common.RDB.ZScore(
+		context.Background(),
+		channelRateLimitCooldownRedisKey,
+		channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+			channelId: 36,
+			modelName: "model-a",
+		}),
+	).Result()
+	assert.ErrorIs(t, err, redis.Nil)
+}
+
+func TestChannelRateLimitBypassConsumesGuardedCooldownEventSequence(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	setChannelRateLimitCooldownControlRevision(t, "revision-bypass-sequence")
+	updated, err := UpdateChannelRateLimitCooldownControlRevision(
+		"revision-bypass-sequence", "",
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	now := common.GetTimestamp()
+	member := channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+		channelId: 37,
+		modelName: "model-a",
+	})
+	require.NoError(t, common.RDB.ZAdd(
+		context.Background(),
+		channelRateLimitBypassRedisKey,
+		&redis.Z{Score: float64(now + 120), Member: member},
+	).Err())
+	sequence := int64(115_000_000_000_000_020)
+	accepted, err := StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 37, "model-a", now+300,
+		"revision-bypass-sequence", sequence,
+	)
+	require.NoError(t, err)
+	assert.False(t, accepted)
+	assert.Zero(t, ChannelRateLimitCooldownUntil(37, "model-a"))
+	storedSequence, err := common.RDB.HGet(
+		context.Background(), channelRateLimitCooldownRedisEventSequenceKey, member,
+	).Result()
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("%019d", sequence), storedSequence)
+
+	require.NoError(t, common.RDB.ZRem(
+		context.Background(), channelRateLimitBypassRedisKey, member,
+	).Err())
+	accepted, err = StartChannelRateLimitCooldownUntilIfControlRevision(
+		context.Background(), 37, "model-a", now+300,
+		"revision-bypass-sequence", sequence,
+	)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	assert.Zero(t, ChannelRateLimitCooldownUntil(37, "model-a"))
+}
+
+func TestChannelRateLimitBypassReadFailureFailsSafe(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+	StartChannelRateLimitCooldown(38, "model-a", 60)
+	require.Positive(t, ChannelRateLimitCooldownUntilMatching(38, "model-a"))
+	stopChannelRateLimitCooldownRedisSync()
+
+	readErr := errors.New("redis bypass read failed")
+	common.RDB.AddHook(&channelRateLimitBypassReadErrorHook{err: readErr})
+
+	assert.True(t, ChannelRateLimitBypassActive(context.Background(), 38, "model-a"))
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(38, "model-a"))
+	assert.Empty(t, applyChannelRateLimitCooldowns(
+		"model-a", model.ChannelSelectionOptions{},
+	).ExcludedChannelIds)
 }
 
 func TestChannelRateLimitCooldownMatchesAndClearsWildcardRoutes(t *testing.T) {

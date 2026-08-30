@@ -124,6 +124,7 @@ type PrimaryMutationVariables = {
 }
 
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
+const MAX_RATE_LIMIT_COOLDOWN_MINUTES = 300
 
 function channelMonitorSmartScheduleSampleKey(
   channelId: number,
@@ -148,7 +149,7 @@ export function ChannelMonitorSmartScheduleBoard(
     useState(true)
   const [rateLimitTarget, setRateLimitTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
-  const [rateLimitDuration, setRateLimitDuration] = useState('60')
+  const [rateLimitDuration, setRateLimitDuration] = useState('1')
   const routes = useMemo(
     () =>
       filterChannelMonitorSmartScheduleRoutes(
@@ -398,9 +399,9 @@ export function ChannelMonitorSmartScheduleBoard(
     onError: handleChannelMonitorMutationError,
     onSuccess: async (response) => {
       toast.success(
-        response.data.duration_seconds > 0
-          ? `已暂停“${response.data.group} / ${response.data.model}”路由的 429 ${response.data.duration_seconds} 秒`
-          : `已解除“${response.data.group} / ${response.data.model}”路由的 429 暂停`
+        response.data.duration_minutes > 0
+          ? `已暂停“${response.data.group} / ${response.data.model}”路由的 429 限制 ${response.data.duration_minutes} 分钟`
+          : `已恢复“${response.data.group} / ${response.data.model}”路由的 429 限制`
       )
       setRateLimitTarget(null)
       await props.onActionComplete()
@@ -928,11 +929,17 @@ export function ChannelMonitorSmartScheduleBoard(
                   })
                 }
                 onRateLimitCooldownChange={(route) => {
-                  const remainingSeconds = Math.ceil(
-                    (route.rate_limit_cooldown_until ?? 0) - Date.now() / 1000
+                  const remainingMinutes = Math.ceil(
+                    ((route.rate_limit_bypass_until ?? 0) - Date.now() / 1000) /
+                      60
                   )
                   setRateLimitDuration(
-                    String(Math.min(300, Math.max(1, remainingSeconds || 60)))
+                    String(
+                      Math.min(
+                        MAX_RATE_LIMIT_COOLDOWN_MINUTES,
+                        Math.max(1, remainingMinutes)
+                      )
+                    )
                   )
                   setRateLimitTarget(route)
                 }}
@@ -970,17 +977,18 @@ export function ChannelMonitorSmartScheduleBoard(
           <DialogContent className='sm:max-w-md'>
             <DialogHeader>
               <DialogTitle>
-                {(rateLimitTarget.rate_limit_cooldown_until ?? 0) >
+                {(rateLimitTarget.rate_limit_bypass_until ?? 0) >
                 Date.now() / 1000
-                  ? '更新 429 暂停时间'
-                  : '暂停渠道 429'}
+                  ? '更新 429 限制暂停时间'
+                  : '暂停 429 限制'}
               </DialogTitle>
               <DialogDescription>
                 {rateLimitTarget.channel_name} 在“{rateLimitTarget.group}
                 ”分组使用“
-                {rateLimitTarget.model}”模型的路由将暂时避开 429
-                冷却。该操作仅影响当前渠道和模型，不受自动 429 冷却设置是否为 0
-                影响；同一模型在其他分组的路由也会同时避开该渠道。
+                {rateLimitTarget.model}”模型的路由将在指定时间内忽略 429
+                限制：429 不计入智能调度样本，也不会触发或受到 429
+                冷却影响。该设置优先于自动 429
+                冷却，并同时作用于该渠道同一模型的其他分组路由。
               </DialogDescription>
             </DialogHeader>
             <FieldGroup className='gap-3'>
@@ -993,15 +1001,15 @@ export function ChannelMonitorSmartScheduleBoard(
                     id='channel-monitor-rate-limit-duration'
                     type='number'
                     min={1}
-                    max={300}
+                    max={MAX_RATE_LIMIT_COOLDOWN_MINUTES}
                     step={1}
                     value={rateLimitDuration}
                     onChange={(event) =>
                       setRateLimitDuration(event.target.value)
                     }
-                    aria-label='429 暂停时长（秒）'
+                    aria-label='429 限制暂停时长（分钟）'
                   />
-                  <span className='text-muted-foreground text-sm'>秒</span>
+                  <span className='text-muted-foreground text-sm'>分钟</span>
                 </div>
               </Field>
             </FieldGroup>
@@ -1014,7 +1022,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 <HugeiconsIcon icon={Cancel01Icon} data-icon='inline-start' />
                 取消
               </Button>
-              {(rateLimitTarget.rate_limit_cooldown_until ?? 0) >
+              {(rateLimitTarget.rate_limit_bypass_until ?? 0) >
               Date.now() / 1000 ? (
                 <Button
                   variant='outline'
@@ -1024,11 +1032,11 @@ export function ChannelMonitorSmartScheduleBoard(
                       channelId: rateLimitTarget.channel_id,
                       group: rateLimitTarget.group,
                       model: rateLimitTarget.model,
-                      durationSeconds: 0,
+                      durationMinutes: 0,
                     })
                   }
                 >
-                  解除 429 暂停
+                  恢复 429 限制
                 </Button>
               ) : null}
               <Button
@@ -1036,14 +1044,14 @@ export function ChannelMonitorSmartScheduleBoard(
                   rateLimitCooldownMutation.isPending ||
                   !Number.isInteger(Number(rateLimitDuration)) ||
                   Number(rateLimitDuration) < 1 ||
-                  Number(rateLimitDuration) > 300
+                  Number(rateLimitDuration) > MAX_RATE_LIMIT_COOLDOWN_MINUTES
                 }
                 onClick={() =>
                   rateLimitCooldownMutation.mutate({
                     channelId: rateLimitTarget.channel_id,
                     group: rateLimitTarget.group,
                     model: rateLimitTarget.model,
-                    durationSeconds: Number(rateLimitDuration),
+                    durationMinutes: Number(rateLimitDuration),
                   })
                 }
               >
@@ -1052,7 +1060,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 ) : (
                   <HugeiconsIcon icon={Alert02Icon} data-icon='inline-start' />
                 )}
-                更新暂停时间
+                更新限制暂停时间
               </Button>
             </DialogFooter>
           </DialogContent>

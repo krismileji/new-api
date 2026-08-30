@@ -232,27 +232,51 @@ const policy: ChannelMonitorSmartScheduleGroupPolicy = {
 }
 
 const originalAdapter = api.defaults.adapter
-const adapter: AxiosAdapter = async (config) => ({
-  data: {
-    success: true,
-    message: '',
+let rateLimitRequestData: unknown
+const adapter: AxiosAdapter = async (config) => {
+  if (config.url?.endsWith('/rate-limit-cooldown')) {
+    rateLimitRequestData = JSON.parse(String(config.data))
+    return {
+      data: {
+        success: true,
+        message: '',
+        data: {
+          channel_id: 1,
+          group: 'vip',
+          model: 'model-a',
+          duration_minutes: 1,
+          bypass_until: 1_900_000_000,
+          changed: true,
+        },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  return {
     data: {
-      channel_id: 1,
-      group: 'vip',
-      model: 'model-a',
-      duration_minutes: 60,
-      allow_stability_degrade: true,
-      manual_primary_until: 1_900_000_000,
-      stability_protection_cleared: false,
-      routing_changed: true,
-      task: null,
+      success: true,
+      message: '',
+      data: {
+        channel_id: 1,
+        group: 'vip',
+        model: 'model-a',
+        duration_minutes: 60,
+        allow_stability_degrade: true,
+        manual_primary_until: 1_900_000_000,
+        stability_protection_cleared: false,
+        routing_changed: true,
+        task: null,
+      },
     },
-  },
-  status: 200,
-  statusText: 'OK',
-  headers: {},
-  config,
-})
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  }
+}
 api.defaults.adapter = adapter
 
 let refreshCount = 0
@@ -322,6 +346,33 @@ assert.equal(refreshCount, 1)
 assert.ok(
   container.querySelector<HTMLButtonElement>('[aria-label="取消固定 测试渠道"]')
 )
+
+const rateLimitButton = container.querySelector<HTMLButtonElement>(
+  '[aria-label="暂停 测试渠道 在 vip 分组使用 model-a 模型的 429 限制"]'
+)
+assert.ok(rateLimitButton)
+await act(async () => rateLimitButton.click())
+const rateLimitInput = document.querySelector<HTMLInputElement>(
+  '[aria-label="429 限制暂停时长（分钟）"]'
+)
+assert.ok(rateLimitInput)
+assert.equal(rateLimitInput.value, '1')
+assert.equal(rateLimitInput.max, '300')
+const updateRateLimitButton = [
+  ...document.querySelectorAll<HTMLButtonElement>('button'),
+].find((button) => button.textContent?.trim() === '更新限制暂停时间')
+assert.ok(updateRateLimitButton)
+await act(async () => updateRateLimitButton.click())
+
+for (let attempt = 0; attempt < 20 && refreshCount < 2; attempt += 1) {
+  await act(() => Promise.resolve())
+}
+assert.equal(refreshCount, 2)
+assert.deepEqual(rateLimitRequestData, {
+  group: 'vip',
+  model: 'model-a',
+  duration_minutes: 1,
+})
 
 await act(async () => root.unmount())
 queryClient.clear()

@@ -214,7 +214,10 @@ export function channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(
   route: ChannelMonitorSmartScheduleRoute,
   nowSeconds = Date.now() / 1000
 ) {
-  return (route.rate_limit_cooldown_until ?? 0) > nowSeconds
+  return (
+    (route.rate_limit_bypass_until ?? 0) <= nowSeconds &&
+    (route.rate_limit_cooldown_until ?? 0) > nowSeconds
+  )
 }
 
 export function channelMonitorSmartScheduleRouteIsActive(

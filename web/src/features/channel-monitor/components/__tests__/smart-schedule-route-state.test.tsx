@@ -227,6 +227,25 @@ describe('smart schedule route protection state', () => {
     assert.equal(fallbackMarkup.includes('>稳定性降级</'), false)
   })
 
+  test('shows paused 429 restrictions before an existing cooldown', () => {
+    const route = createProtectedRoute('degraded')
+    route.channel_status = 1
+    route.enabled = true
+    route.rate_limit_cooldown_until = 4_102_444_800
+    route.rate_limit_bypass_until = 4_102_444_800
+
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSmartScheduleRouteStatus
+        route={route}
+        placement={undefined}
+        onClearProtection={() => {}}
+      />
+    )
+
+    assert.ok(markup.includes('429 限制已暂停'))
+    assert.equal(markup.includes('429 冷却'), false)
+  })
+
   test('keeps exploration clearing available while the channel is disabled', () => {
     const route = createProtectedRoute('degraded')
     route.state.stability_state = ''

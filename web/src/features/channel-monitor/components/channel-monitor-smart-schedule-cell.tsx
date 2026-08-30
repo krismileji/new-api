@@ -105,11 +105,13 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     route.channel_status === CHANNEL_STATUS.ENABLED &&
     route.enabled &&
     channelMonitorSmartScheduleRouteIsTrafficPaused(route, now)
+  const rateLimitBypassed = (route.rate_limit_bypass_until ?? 0) > now
   const rateLimitCoolingDown =
     participates &&
     route.channel_status === CHANNEL_STATUS.ENABLED &&
     route.enabled &&
     !trafficPaused &&
+    !rateLimitBypassed &&
     channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route, now)
   const available =
     participates &&
@@ -149,6 +151,14 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       label: '稳定性释放',
       variant: 'warning',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`,
+    })
+  }
+
+  if (rateLimitBypassed) {
+    statuses.push({
+      key: 'rate-limit-bypassed',
+      label: '429 限制已暂停',
+      variant: 'default',
     })
   }
 
@@ -254,6 +264,12 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     details.push({
       label: '429 冷却至',
       value: formatTimestampToDate(route.rate_limit_cooldown_until ?? 0),
+    })
+  }
+  if (rateLimitBypassed) {
+    details.push({
+      label: '429 限制暂停至',
+      value: formatTimestampToDate(route.rate_limit_bypass_until ?? 0),
     })
   }
   if (breakEvenFallback) {

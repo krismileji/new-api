@@ -971,6 +971,7 @@ export type ChannelMonitorSmartScheduleRoute = {
   weight: number
   traffic_paused_until?: number
   rate_limit_cooldown_until?: number
+  rate_limit_bypass_until?: number
   cost_ratio?: number | null
   group_ratio?: number | null
   gross_margin?: number | null
@@ -1120,8 +1121,8 @@ export type ChannelMonitorSmartScheduleRateLimitCooldownResult = {
   channel_id: number
   group: string
   model: string
-  duration_seconds: number
-  cooldown_until: number
+  duration_minutes: number
+  bypass_until: number
   changed: boolean
 }
 

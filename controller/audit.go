@@ -88,7 +88,7 @@ var channelMonitorAuditContentTemplates = map[string]string{
 }
 
 var channelMonitorRateLimitAuditContentTemplates = map[string]string{
-	"channel.monitor_smart_schedule_rate_limit_cooldown_update": "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的 429 暂停时间更新为 ${duration_seconds} 秒",
+	"channel.monitor_smart_schedule_rate_limit_cooldown_update": "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的 429 限制暂停时间更新为 ${duration_minutes} 分钟",
 }
 
 // auditContentEN 渲染日志兜底文本；渠道监控使用固定中文，其余操作使用英文基线。

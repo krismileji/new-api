@@ -24,6 +24,11 @@ func TestChannelMonitorAuditContentIsReadable(t *testing.T) {
 			want:   "已将渠道 测试渠道（ID: 7）在分组 vip、模型 gpt-test 的流量暂停时间更新为 30 分钟",
 		},
 		{
+			name: "429 pause", action: "channel.monitor_smart_schedule_rate_limit_cooldown_update",
+			params: map[string]interface{}{"id": 7, "channel_name": "测试渠道", "channel_label": "测试渠道（ID: 7）", "group": "vip", "model": "gpt-test", "duration_minutes": 30},
+			want:   "已将渠道 测试渠道（ID: 7）在分组 vip、模型 gpt-test 的 429 限制暂停时间更新为 30 分钟",
+		},
+		{
 			name: "status probe", action: "channel.status_probe_config_changed",
 			params: map[string]interface{}{"channel_id": 7, "channel_name": "测试渠道", "channel_label": "测试渠道（ID: 7）", "status": "开启", "model_count": 2, "interval_seconds": 60},
 			want:   "已更新渠道 测试渠道（ID: 7）的状态探测配置（开启，2 个模型，间隔 60 秒）",

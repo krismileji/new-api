@@ -277,8 +277,8 @@ test('updates one route 429 cooldown pause', async () => {
           channel_id: 7,
           group: 'vip',
           model: 'gpt-4o-mini',
-          duration_seconds: 45,
-          cooldown_until: 4_102_444_800,
+          duration_minutes: 45,
+          bypass_until: 4_102_444_800,
           changed: true,
         },
       },
@@ -295,9 +295,9 @@ test('updates one route 429 cooldown pause', async () => {
       channelId: 7,
       group: 'vip',
       model: 'gpt-4o-mini',
-      durationSeconds: 45,
+      durationMinutes: 45,
     })
-    assert.equal(response.data.duration_seconds, 45)
+    assert.equal(response.data.duration_minutes, 45)
   } finally {
     api.defaults.adapter = originalAdapter
   }
@@ -310,7 +310,7 @@ test('updates one route 429 cooldown pause', async () => {
   assert.deepEqual(JSON.parse(String(requestConfig?.data)), {
     group: 'vip',
     model: 'gpt-4o-mini',
-    duration_seconds: 45,
+    duration_minutes: 45,
   })
 })
 

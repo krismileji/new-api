@@ -25,9 +25,50 @@ const (
 
 var ErrChannelRateLimitCooldownRedisUnavailable = errors.New("Redis 429 冷却读取不可用")
 
-const channelRateLimitCooldownRedisExtendScript = `
+const channelRateLimitBypassRedisLua = `
+local function channel_rate_limit_bypass_active(bypass_key, now, requested_member)
+  redis.call('ZREMRANGEBYSCORE', bypass_key, '-inf', now)
+  local separator = string.find(requested_member, '|', 1, true)
+  if not separator then
+    return false
+  end
+  local requested_channel = string.sub(requested_member, 1, separator - 1)
+  local requested_model = string.sub(requested_member, separator + 1)
+  local requested_wildcard = string.sub(requested_model, -1) == '*'
+  local requested_prefix = requested_model
+  if requested_wildcard then
+    requested_prefix = string.sub(requested_model, 1, string.len(requested_model) - 1)
+  end
+  local active = redis.call('ZRANGEBYSCORE', bypass_key, '(' .. now, '+inf')
+  for _, member in ipairs(active) do
+    local member_separator = string.find(member, '|', 1, true)
+    if member_separator and string.sub(member, 1, member_separator - 1) == requested_channel then
+      local member_model = string.sub(member, member_separator + 1)
+      if member_model == requested_model then
+        return true
+      end
+      if requested_wildcard and string.sub(member_model, 1, string.len(requested_prefix)) == requested_prefix then
+        return true
+      end
+      if string.sub(member_model, -1) == '*' then
+        local member_prefix = string.sub(member_model, 1, string.len(member_model) - 1)
+        if string.sub(requested_model, 1, string.len(member_prefix)) == member_prefix then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+`
+
+const channelRateLimitCooldownRedisExtendScript = channelRateLimitBypassRedisLua + `
 local now = tonumber(ARGV[2]) or 0
 local requested_until = tonumber(ARGV[3]) or 0
+if channel_rate_limit_bypass_active(KEYS[2], now, ARGV[1]) then
+  redis.call('ZREM', KEYS[1], ARGV[1])
+  return -2
+end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 local current_until = tonumber(redis.call('ZSCORE', KEYS[1], ARGV[1]) or '0')
 if requested_until > current_until then
@@ -37,7 +78,7 @@ end
 return current_until
 `
 
-const channelRateLimitCooldownRedisGuardedExtendScript = `
+const channelRateLimitCooldownRedisGuardedExtendScript = channelRateLimitBypassRedisLua + `
 local current_revision = redis.call('GET', KEYS[2])
 if current_revision and current_revision ~= ARGV[4] then
   return -1
@@ -56,7 +97,15 @@ if event_sequence ~= '' then
   if current_sequence and event_sequence <= current_sequence then
     return current_until
   end
+  if channel_rate_limit_bypass_active(KEYS[4], now, ARGV[1]) then
+    redis.call('HSET', KEYS[3], ARGV[1], event_sequence)
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    return -2
+  end
   redis.call('HSET', KEYS[3], ARGV[1], event_sequence)
+elseif channel_rate_limit_bypass_active(KEYS[4], now, ARGV[1]) then
+  redis.call('ZREM', KEYS[1], ARGV[1])
+  return -2
 end
 if requested_until > now and requested_until > current_until then
   redis.call('ZADD', KEYS[1], requested_until, ARGV[1])
@@ -65,7 +114,7 @@ end
 return current_until
 `
 
-const channelRateLimitCooldownRedisRecoverExtendScript = `
+const channelRateLimitCooldownRedisRecoverExtendScript = channelRateLimitBypassRedisLua + `
 local current_revision = redis.call('GET', KEYS[2]) or ''
 if current_revision ~= ARGV[5] then
   return -1
@@ -77,6 +126,9 @@ local requested_until = tonumber(ARGV[3]) or 0
 local event_sequence = ARGV[6]
 if event_sequence ~= '' then
   redis.call('HSET', KEYS[3], ARGV[1], event_sequence)
+end
+if channel_rate_limit_bypass_active(KEYS[4], now, ARGV[1]) then
+  return -2
 end
 if requested_until > now then
   redis.call('ZADD', KEYS[1], requested_until, ARGV[1])
@@ -137,51 +189,61 @@ func StartChannelRateLimitCooldown(channelId int, modelName string, durationSeco
 	if channelId <= 0 || modelName == "" || durationSeconds <= 0 {
 		return
 	}
-	until := common.GetTimestamp() + int64(durationSeconds)
+	sharedRedis := common.RedisEnabled && common.RDB != nil
+	if !sharedRedis {
+		channelRateLimitLocalStateUpdate.Lock()
+		defer channelRateLimitLocalStateUpdate.Unlock()
+		if ChannelRateLimitBypassActive(context.Background(), channelId, modelName) {
+			return
+		}
+	}
+	now := common.GetTimestamp()
+	until := now + int64(durationSeconds)
 	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
 	revision := channelRateLimitCooldownControlRevision()
 
-	channelRateLimitCooldowns.Lock()
-	if current := channelRateLimitCooldowns.untilByRoute[key]; current.revision != revision || current.until < until {
-		channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
-			until: until, revision: revision,
-		}
-		publishChannelRateLimitCooldownSnapshotLocked()
-	}
-	channelRateLimitCooldowns.Unlock()
-
 	ensureChannelRateLimitCooldownRedisSync()
-	if !common.RedisEnabled || common.RDB == nil {
+	if !sharedRedis {
+		channelRateLimitCooldowns.Lock()
+		if current := channelRateLimitCooldowns.untilByRoute[key]; current.revision != revision || current.until < until {
+			channelRateLimitCooldowns.untilByRoute[key] = channelRateLimitCooldownEntry{
+				until: until, revision: revision,
+			}
+			publishChannelRateLimitCooldownSnapshotLocked()
+		}
+		channelRateLimitCooldowns.Unlock()
 		return
 	}
 	sharedUntil, err := common.RDB.Eval(
 		context.Background(),
 		channelRateLimitCooldownRedisExtendScript,
-		[]string{channelRateLimitCooldownRedisKey},
+		[]string{channelRateLimitCooldownRedisKey, channelRateLimitBypassRedisKey},
 		channelRateLimitCooldownRedisMember(key),
-		common.GetTimestamp(),
+		now,
 		until,
 	).Int64()
 	if err != nil {
 		common.SysError("同步 429 冷却到 Redis 失败: " + err.Error())
 		return
 	}
+	if sharedUntil == -2 {
+		removeChannelRateLimitCooldownRouteLocal(channelId, modelName)
+		return
+	}
 	if channelRateLimitCooldownControlRevision() != revision {
 		return
 	}
 	channelRateLimitCooldowns.Lock()
-	current := channelRateLimitCooldowns.untilByRoute[key]
-	if current.revision != revision {
-		channelRateLimitCooldowns.Unlock()
-		return
+	if sharedUntil > now {
+		current := channelRateLimitCooldowns.untilByRoute[key]
+		if current.revision != revision || sharedUntil > current.until {
+			current.until = sharedUntil
+		}
+		current.shared = true
+		current.revision = revision
+		channelRateLimitCooldowns.untilByRoute[key] = current
+		publishChannelRateLimitCooldownSnapshotLocked()
 	}
-	if sharedUntil > current.until {
-		current.until = sharedUntil
-	}
-	current.shared = true
-	current.revision = revision
-	channelRateLimitCooldowns.untilByRoute[key] = current
-	publishChannelRateLimitCooldownSnapshotLocked()
 	channelRateLimitCooldowns.Unlock()
 }
 
@@ -254,6 +316,14 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	sharedRedis := common.RedisEnabled && common.RDB != nil
+	if !sharedRedis {
+		channelRateLimitLocalStateUpdate.Lock()
+		defer channelRateLimitLocalStateUpdate.Unlock()
+		if ChannelRateLimitBypassActive(ctx, channelId, modelName) {
+			return false, nil
+		}
+	}
 	now := common.GetTimestamp()
 	if !requireRedis && requestedUntil <= now {
 		return false, nil
@@ -308,6 +378,7 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 				channelRateLimitCooldownRedisKey,
 				channelRateLimitCooldownRedisRevisionKey,
 				channelRateLimitCooldownRedisEventSequenceKey,
+				channelRateLimitBypassRedisKey,
 			},
 			channelRateLimitCooldownRedisMember(key),
 			now,
@@ -320,6 +391,8 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 				return false, fmt.Errorf("同步 429 冷却到 Redis 失败: %w", redisErr)
 			}
 			common.SysError("同步 429 冷却到 Redis 失败: " + redisErr.Error())
+		} else if sharedUntil == -2 {
+			return false, nil
 		} else if sharedUntil < 0 {
 			observedRevision, getErr := common.RDB.Get(
 				ctx, channelRateLimitCooldownRedisRevisionKey,
@@ -345,6 +418,7 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 					channelRateLimitCooldownRedisKey,
 					channelRateLimitCooldownRedisRevisionKey,
 					channelRateLimitCooldownRedisEventSequenceKey,
+					channelRateLimitBypassRedisKey,
 				},
 				channelRateLimitCooldownRedisMember(key),
 				now,
@@ -355,6 +429,9 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 			).Int64()
 			if redisErr != nil {
 				return false, fmt.Errorf("修复 Redis 429 冷却配置修订号失败: %w", redisErr)
+			}
+			if sharedUntil == -2 {
+				return false, nil
 			}
 			if sharedUntil < 0 {
 				return false, nil
@@ -618,6 +695,23 @@ func ClearChannelRateLimitCooldownRoute(
 	return ChannelRateLimitCooldownUpdateResult{Changed: changed}, nil
 }
 
+func removeChannelRateLimitCooldownRouteLocal(channelId int, modelName string) bool {
+	changed := false
+	channelRateLimitCooldowns.Lock()
+	for key := range channelRateLimitCooldowns.untilByRoute {
+		if !channelRateLimitCooldownRouteMatches(channelId, modelName, key) {
+			continue
+		}
+		delete(channelRateLimitCooldowns.untilByRoute, key)
+		changed = true
+	}
+	if changed {
+		publishChannelRateLimitCooldownSnapshotLocked()
+	}
+	channelRateLimitCooldowns.Unlock()
+	return changed
+}
+
 func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" {
@@ -639,6 +733,20 @@ func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int64 {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" {
+		return 0
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		bypassUntil, err := ChannelRateLimitBypassUntilMatchingFromRedis(
+			context.Background(), channelId, modelName,
+		)
+		if err != nil {
+			logChannelRateLimitBypassRedisError(err)
+			return 0
+		}
+		if bypassUntil > 0 {
+			return 0
+		}
+	} else if channelRateLimitBypassUntilMatchingLocal(channelId, modelName) > 0 {
 		return 0
 	}
 	if !strings.HasSuffix(modelName, "*") {
@@ -676,6 +784,11 @@ func ChannelRateLimitCooldownUntilMatchingFromRedis(
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if bypassUntil, err := ChannelRateLimitBypassUntilMatchingFromRedis(ctx, channelId, modelName); err != nil {
+		return 0, fmt.Errorf("读取 Redis 429 限制暂停状态失败: %w", err)
+	} else if bypassUntil > 0 {
+		return 0, nil
 	}
 
 	client := common.RDB
@@ -763,7 +876,6 @@ func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {
 	ensureChannelRateLimitCooldownRedisSync()
 	controlRevision := channelRateLimitCooldownControlRevision()
 	snapshot := loadChannelRateLimitCooldownSnapshot()
-	channelIds := make([]int, 0)
 	seenChannelIds := make(map[int]struct{})
 	for key, entry := range snapshot.untilByRoute {
 		if entry.revision == controlRevision && entry.until > now &&
@@ -772,7 +884,36 @@ func channelRateLimitCooldownChannelIds(modelName string, now int64) []int {
 				continue
 			}
 			seenChannelIds[key.channelId] = struct{}{}
-			channelIds = append(channelIds, key.channelId)
+		}
+	}
+	if len(seenChannelIds) == 0 {
+		return nil
+	}
+
+	bypassedChannelIds := make(map[int]struct{})
+	if common.RedisEnabled && common.RDB != nil {
+		var err error
+		bypassedChannelIds, err = channelRateLimitBypassChannelIdsFromRedis(
+			context.Background(), modelName, seenChannelIds,
+		)
+		if err != nil {
+			logChannelRateLimitBypassRedisError(err)
+			// A shared bypass may be active but unreadable. Do not apply any
+			// cooldown until the authoritative state can be checked.
+			return nil
+		}
+	} else {
+		for channelId := range seenChannelIds {
+			if channelRateLimitBypassUntilMatchingLocal(channelId, modelName) > 0 {
+				bypassedChannelIds[channelId] = struct{}{}
+			}
+		}
+	}
+
+	channelIds := make([]int, 0, len(seenChannelIds))
+	for channelId := range seenChannelIds {
+		if _, bypassed := bypassedChannelIds[channelId]; !bypassed {
+			channelIds = append(channelIds, channelId)
 		}
 	}
 	sort.Ints(channelIds)

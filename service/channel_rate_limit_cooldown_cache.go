@@ -88,8 +88,10 @@ func runChannelRateLimitCooldownRedisSync(ctx context.Context, done chan struct{
 	defer ticker.Stop()
 	for {
 		pruneExpiredChannelRateLimitCooldowns()
+		pruneExpiredChannelRateLimitBypasses()
 		if client := channelRateLimitCooldownRedisSync.client.Load(); client != nil {
 			syncChannelRateLimitCooldownsFromRedis(ctx, client)
+			syncChannelRateLimitBypassesFromRedis(ctx, client)
 		}
 		select {
 		case <-ctx.Done():

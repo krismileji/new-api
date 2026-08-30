@@ -90,6 +90,9 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   onClearProtection: () => void
 }) {
+  if ((props.route.rate_limit_bypass_until ?? 0) > Date.now() / 1000) {
+    return <Badge variant='default'>429 限制已暂停</Badge>
+  }
   const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
     props.route,
     props.placement

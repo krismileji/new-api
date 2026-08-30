@@ -21,6 +21,8 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 	})
 	common.RedisEnabled = false
 	common.RDB = nil
+	service.ClearChannelRateLimitBypasses()
+	t.Cleanup(service.ClearChannelRateLimitBypasses)
 
 	pauseContext, pauseRecorder := newChannelMonitorControllerContext(
 		t,
@@ -29,7 +31,7 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 		map[string]any{
 			"group":            " vip ",
 			"model":            " model-a ",
-			"duration_seconds": 45,
+			"duration_minutes": 2,
 		},
 	)
 	pauseContext.AddParam("id", "2801")
@@ -42,8 +44,8 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 			ChannelId       int    `json:"channel_id"`
 			Group           string `json:"group"`
 			Model           string `json:"model"`
-			DurationSeconds int    `json:"duration_seconds"`
-			CooldownUntil   int64  `json:"cooldown_until"`
+			DurationMinutes int    `json:"duration_minutes"`
+			BypassUntil     int64  `json:"bypass_until"`
 			Changed         bool   `json:"changed"`
 		} `json:"data"`
 	}
@@ -52,9 +54,11 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 	assert.Equal(t, 2801, pauseResponse.Data.ChannelId)
 	assert.Equal(t, "vip", pauseResponse.Data.Group)
 	assert.Equal(t, "model-a", pauseResponse.Data.Model)
-	assert.Equal(t, 45, pauseResponse.Data.DurationSeconds)
-	assert.Greater(t, pauseResponse.Data.CooldownUntil, common.GetTimestamp())
+	assert.Equal(t, 2, pauseResponse.Data.DurationMinutes)
+	assert.Greater(t, pauseResponse.Data.BypassUntil, common.GetTimestamp())
 	assert.True(t, pauseResponse.Data.Changed)
+	assert.Zero(t, service.ChannelRateLimitCooldownUntilMatching(2801, "model-a"))
+	assert.Greater(t, service.ChannelRateLimitBypassUntilMatching(2801, "model-a"), common.GetTimestamp())
 
 	clearContext, clearRecorder := newChannelMonitorControllerContext(
 		t,
@@ -63,23 +67,23 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 		map[string]any{
 			"group":            "vip",
 			"model":            "model-a",
-			"duration_seconds": 0,
+			"duration_minutes": 0,
 		},
 	)
 	clearContext.AddParam("id", "2801")
 	UpdateChannelMonitorSmartScheduleRateLimitCooldown(clearContext)
 	require.Equal(t, http.StatusOK, clearRecorder.Code)
-	assert.Zero(t, service.ChannelRateLimitCooldownUntilMatching(2801, "model-a"))
+	assert.Zero(t, service.ChannelRateLimitBypassUntilMatching(2801, "model-a"))
 }
 
 func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownRejectsInvalidDuration(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
-	for _, durationSeconds := range []int{-1, maxChannelMonitorSmartScheduleRateLimitCooldownSeconds + 1} {
+	for _, durationMinutes := range []int{-1, maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes + 1} {
 		context, recorder := newChannelMonitorControllerContext(
 			t,
 			http.MethodPut,
 			"/api/channel_monitor/channel/2802/schedule/route/rate-limit-cooldown",
-			map[string]any{"group": "vip", "model": "model-a", "duration_seconds": durationSeconds},
+			map[string]any{"group": "vip", "model": "model-a", "duration_minutes": durationMinutes},
 		)
 		context.AddParam("id", "2802")
 		UpdateChannelMonitorSmartScheduleRateLimitCooldown(context)

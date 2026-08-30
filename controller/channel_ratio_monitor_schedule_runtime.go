@@ -420,6 +420,9 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 		now = common.GetTimestamp()
 	}
 	if err.StatusCode == http.StatusTooManyRequests {
+		if service.ChannelRateLimitBypassActive(context.Background(), channelId, requestModelName) {
+			return nil
+		}
 		settings := getChannelMonitorRuntimeSettings()
 		cooldownStarted := false
 		if channelId > 0 && requestModelName != "" && settings.SmartScheduleEnabled &&

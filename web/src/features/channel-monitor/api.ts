@@ -408,7 +408,7 @@ export async function updateChannelMonitorSmartScheduleRateLimitCooldown(request
   channelId: number
   group: string
   model: string
-  durationSeconds: number
+  durationMinutes: number
 }) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRateLimitCooldownResult>
@@ -417,7 +417,7 @@ export async function updateChannelMonitorSmartScheduleRateLimitCooldown(request
     {
       group: request.group,
       model: request.model,
-      duration_seconds: request.durationSeconds,
+      duration_minutes: request.durationMinutes,
     },
     channelMonitorRequestConfig()
   )

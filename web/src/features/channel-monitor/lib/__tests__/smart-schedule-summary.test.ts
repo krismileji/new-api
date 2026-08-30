@@ -466,6 +466,37 @@ describe('smart schedule route placement', () => {
     assert.equal(activePlacement?.actualHighestPriority, 90)
   })
 
+  test('keeps a bypassed route in normal routing while its old 429 cooldown is active', () => {
+    const bypassed = createRoute(1, 'vip', 'model-a', 100, 80)
+    bypassed.rate_limit_cooldown_until = 4_102_444_800
+    bypassed.rate_limit_bypass_until = 4_102_444_800
+    const active = createRoute(2, 'vip', 'model-a', 90, 20)
+
+    const placements = placeChannelMonitorSmartScheduleRoutes([
+      bypassed,
+      active,
+    ])
+    const bypassedPlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(bypassed)
+    )
+    const activePlacement = placements.get(
+      channelMonitorSmartScheduleRouteKey(active)
+    )
+
+    assert.equal(bypassedPlacement?.role, 'primary')
+    assert.equal(bypassedPlacement?.estimatedShare, 1)
+    assert.equal(bypassedPlacement?.isActualTopLayer, true)
+    assert.equal(
+      getChannelMonitorSmartScheduleRouteDisplayStatus(
+        bypassed,
+        bypassedPlacement
+      ),
+      'primary'
+    )
+    assert.equal(activePlacement?.role, 'backup')
+    assert.equal(activePlacement?.estimatedShare, null)
+  })
+
   test('keeps a rate-limited route as the estimated final fallback when it is the only route', () => {
     const rateLimited = createRoute(1, 'vip', 'model-a', 100, 80)
     rateLimited.rate_limit_cooldown_until = 4_102_444_800

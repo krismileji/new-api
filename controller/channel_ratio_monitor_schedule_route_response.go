@@ -20,6 +20,7 @@ type channelSmartScheduleRouteResponse struct {
 	Weight                    uint                                    `json:"weight"`
 	TrafficPausedUntil        int64                                   `json:"traffic_paused_until"`
 	RateLimitCooldownUntil    int64                                   `json:"rate_limit_cooldown_until"`
+	RateLimitBypassUntil      int64                                   `json:"rate_limit_bypass_until"`
 	CostRatio                 *float64                                `json:"cost_ratio,omitempty"`
 	GroupRatio                *float64                                `json:"group_ratio,omitempty"`
 	GrossMargin               *float64                                `json:"gross_margin,omitempty"`
@@ -49,6 +50,7 @@ func channelSmartScheduleRouteResponses(
 			Enabled:     route.Enabled, Priority: route.Priority, Weight: route.Weight,
 			TrafficPausedUntil:     route.TrafficPausedUntil,
 			RateLimitCooldownUntil: service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model),
+			RateLimitBypassUntil:   service.ChannelRateLimitBypassUntilMatching(route.ChannelId, route.Model),
 			CostRatio:              route.CostRatio, GroupRatio: route.GroupRatio,
 			GrossMargin: route.GrossMargin, EconomicRole: route.EconomicRole,
 			State: route.State,

@@ -143,8 +143,10 @@ func EmitChannelMonitorFailureEvent(
 	event.IsFinalAttempt = isFinalAttempt
 	event.FinalRetrySummary = finalRetrySummary
 	event.RequestDispatched = requestDispatched && !finalRetrySummary
-	event.SchedulingEligible = channelMonitorEventSchedulingEligible(ctx, event.Source)
 	statusCode := err.StatusCode
+	rateLimitBypassed := statusCode == http.StatusTooManyRequests &&
+		ChannelRateLimitBypassActive(channelMonitorPublishContext(ctx), channelId, event.ModelName)
+	event.SchedulingEligible = channelMonitorEventSchedulingEligible(ctx, event.Source) && !rateLimitBypassed
 	event.ErrorType = channelMonitorBoundedString(
 		string(err.GetErrorType()), model.ChannelMonitorEventMaxIdentityLength,
 	)
@@ -152,7 +154,7 @@ func EmitChannelMonitorFailureEvent(
 		string(err.GetErrorCode()), model.ChannelMonitorEventMaxIdentityLength,
 	)
 	event.ErrorMessage = channelMonitorBoundedString(err.MaskSensitiveErrorWithStatusCode(), 2048)
-	event.RuntimeProtectionEligible = runtimeProtectionEligible && !finalRetrySummary &&
+	event.RuntimeProtectionEligible = runtimeProtectionEligible && !rateLimitBypassed && !finalRetrySummary &&
 		!relaytypes.IsSkipRetryError(err) &&
 		(relaytypes.IsChannelError(err) || statusCode == http.StatusRequestTimeout ||
 			statusCode == http.StatusTooEarly || statusCode == http.StatusTooManyRequests ||

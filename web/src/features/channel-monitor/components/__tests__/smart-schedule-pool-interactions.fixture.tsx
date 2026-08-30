@@ -573,7 +573,7 @@ const rateLimit = await renderPool({
 })
 const rateLimitButtons =
   rateLimit.container.querySelectorAll<HTMLButtonElement>(
-    '[aria-label="暂停 上海主渠道 在 production 分组使用 cache-model 模型的 429"]'
+    '[aria-label="暂停 上海主渠道 在 production 分组使用 cache-model 模型的 429 限制"]'
   )
 assert.equal(rateLimitButtons.length, 2)
 await act(async () => rateLimitButtons[0]?.click())
