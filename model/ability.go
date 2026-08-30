@@ -282,7 +282,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}
 		return err
 	}
-	if err := admitNewChannelSmartScheduleGroupsTx(tx, channel, currentAbilities); err != nil {
+	if err := admitNewChannelSmartScheduleRoutesTx(tx, channel, currentAbilities); err != nil {
 		if isNewTx {
 			tx.Rollback()
 		}

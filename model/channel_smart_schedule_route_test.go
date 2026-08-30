@@ -153,6 +153,89 @@ func TestUpdateAbilitiesNewGroupParticipatesInSmartSchedule(t *testing.T) {
 	}
 }
 
+func TestUpdateAbilitiesSyncsNewAndRemovedModelsWithEnabledSmartSchedule(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	channel := Channel{
+		Id: 1007, Name: "model sync", Status: common.ChannelStatusEnabled,
+		Group: "default,vip", Models: "model-a",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&[]Ability{
+		{ChannelId: channel.Id, Group: "default", Model: "model-a", Enabled: true},
+		{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{ChannelId: channel.Id, GroupName: "default", ModelName: "model-a", ParticipationSet: true, Revision: 2},
+		{ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Revision: 2},
+	}).Error)
+
+	channel.Models = "model-a,model-b"
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channel.Id).Update("models", channel.Models).Error)
+	require.NoError(t, channel.UpdateAbilities(nil))
+
+	var addedStates []ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where("channel_id = ? AND model_name = ?", channel.Id, "model-b").
+		Order("group_name ASC").Find(&addedStates).Error)
+	require.Len(t, addedStates, 2)
+	for _, state := range addedStates {
+		assert.True(t, state.Participates())
+		assert.Equal(t, int64(1), state.Revision)
+	}
+
+	channel.Models = "model-b"
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channel.Id).Update("models", channel.Models).Error)
+	require.NoError(t, channel.UpdateAbilities(nil))
+
+	var removedAbilityCount int64
+	require.NoError(t, db.Model(&Ability{}).Where(
+		"channel_id = ? AND model = ?", channel.Id, "model-a",
+	).Count(&removedAbilityCount).Error)
+	assert.Zero(t, removedAbilityCount)
+	var removedStateCount int64
+	require.NoError(t, db.Model(&ChannelSmartScheduleRouteState{}).Where(
+		"channel_id = ? AND model_name = ?", channel.Id, "model-a",
+	).Count(&removedStateCount).Error)
+	assert.Zero(t, removedStateCount)
+}
+
+func TestUpdateAbilitiesDoesNotEnableNewModelWhenSmartScheduleIsDisabled(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	channel := Channel{
+		Id: 1008, Name: "disabled model sync", Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "model-a",
+	}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&Ability{
+		ChannelId: channel.Id, Group: "default", Model: "model-a", Enabled: true,
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
+		{
+			ChannelId: channel.Id, GroupName: "default", ModelName: "model-a",
+			ParticipationSet: true, Excluded: true, Revision: 2,
+		},
+		{
+			ChannelId: channel.Id, GroupName: "default", ModelName: "stale-model",
+			ParticipationSet: true, Revision: 2,
+		},
+	}).Error)
+
+	channel.Models = "model-a,model-b"
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channel.Id).Update("models", channel.Models).Error)
+	require.NoError(t, channel.UpdateAbilities(nil))
+
+	var stateCount int64
+	require.NoError(t, db.Model(&ChannelSmartScheduleRouteState{}).Where(
+		"channel_id = ? AND model_name = ?", channel.Id, "model-b",
+	).Count(&stateCount).Error)
+	assert.Zero(t, stateCount)
+	var ability Ability
+	require.NoError(t, db.Where(&Ability{
+		ChannelId: channel.Id, Group: "default", Model: "model-b",
+	}).First(&ability).Error)
+	assert.Nil(t, ability.Priority)
+	assert.Zero(t, ability.Weight)
+}
+
 func TestUpdateAbilitiesDoesNotCreateAbilitiesForDeletedChannel(t *testing.T) {
 	db := setupChannelSmartScheduleRouteTestDB(t)
 	priority := int64(80)

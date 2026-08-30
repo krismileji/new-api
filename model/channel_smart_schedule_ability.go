@@ -129,10 +129,10 @@ func getChannelSmartScheduleRouteRouting(
 	return routingByKey, nil
 }
 
-// admitNewChannelSmartScheduleGroupsTx makes routes from newly associated
-// groups immediately eligible for scheduling without changing existing route
-// participation choices.
-func admitNewChannelSmartScheduleGroupsTx(
+// admitNewChannelSmartScheduleRoutesTx makes routes from newly associated
+// groups immediately eligible for scheduling. Newly associated models inherit
+// channel-level participation only while at least one existing route participates.
+func admitNewChannelSmartScheduleRoutesTx(
 	tx *gorm.DB,
 	channel *Channel,
 	previousAbilities []Ability,
@@ -142,8 +142,12 @@ func admitNewChannelSmartScheduleGroupsTx(
 	}
 
 	previousGroups := make(map[string]struct{}, len(previousAbilities))
+	previousModels := make(map[string]struct{}, len(previousAbilities))
+	previousRoutes := make(map[ChannelSmartScheduleRouteKey]struct{}, len(previousAbilities))
 	for _, ability := range previousAbilities {
 		previousGroups[ability.Group] = struct{}{}
+		previousModels[ability.Model] = struct{}{}
+		previousRoutes[channelSmartScheduleRouteKey(channel.Id, ability.Group, ability.Model)] = struct{}{}
 	}
 
 	var states []ChannelSmartScheduleRouteState
@@ -154,16 +158,22 @@ func admitNewChannelSmartScheduleGroupsTx(
 		return err
 	}
 	existingRoutes := make(map[ChannelSmartScheduleRouteKey]struct{}, len(states))
+	channelParticipates := false
 	for _, state := range states {
-		existingRoutes[channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)] = struct{}{}
+		key := channelSmartScheduleRouteKey(state.ChannelId, state.GroupName, state.ModelName)
+		existingRoutes[key] = struct{}{}
+		_, routeExists := previousRoutes[key]
+		channelParticipates = channelParticipates || routeExists && state.Participates()
 	}
 
 	newStates := make([]ChannelSmartScheduleRouteState, 0)
 	for _, group := range strings.Split(channel.Group, ",") {
-		if _, existed := previousGroups[group]; existed {
-			continue
-		}
+		_, groupExisted := previousGroups[group]
 		for _, modelName := range strings.Split(channel.Models, ",") {
+			_, modelExisted := previousModels[modelName]
+			if groupExisted && (modelExisted || !channelParticipates) {
+				continue
+			}
 			key := channelSmartScheduleRouteKey(channel.Id, group, modelName)
 			if _, exists := existingRoutes[key]; exists {
 				continue
@@ -185,8 +195,8 @@ func admitNewChannelSmartScheduleGroupsTx(
 }
 
 // deleteObsoleteChannelSmartScheduleRouteStates removes state belonging to
-// routes no longer exposed by the channel. A later re-added group starts with
-// fresh scheduling state through admitNewChannelSmartScheduleGroupsTx.
+// routes no longer exposed by the channel. A later re-added group or model
+// starts with fresh scheduling state through admitNewChannelSmartScheduleRoutesTx.
 func deleteObsoleteChannelSmartScheduleRouteStates(
 	tx *gorm.DB,
 	channelId int,
