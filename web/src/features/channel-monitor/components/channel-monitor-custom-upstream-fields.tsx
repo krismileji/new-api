@@ -318,7 +318,7 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
             <FormItem>
               <FormLabel>结果乘数</FormLabel>
               <FormControl>
-                <InputGroup>
+                <InputGroup className='ring-inset'>
                   <InputGroupAddon>×</InputGroupAddon>
                   <InputGroupInput
                     type='number'

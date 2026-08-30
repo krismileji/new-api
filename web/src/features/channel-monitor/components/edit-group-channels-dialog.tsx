@@ -202,7 +202,7 @@ export function EditGroupChannelsDialog(props: EditGroupChannelsDialogProps) {
 
         <div className='flex min-h-0 flex-col gap-3'>
           <div className='flex flex-col gap-2 sm:flex-row'>
-            <InputGroup className='h-9 flex-1'>
+            <InputGroup className='h-9 flex-1 ring-inset'>
               <InputGroupAddon>
                 <HugeiconsIcon icon={Search01Icon} />
               </InputGroupAddon>

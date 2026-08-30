@@ -402,6 +402,9 @@ const search = scheduleRendered.dialog.querySelector<HTMLInputElement>(
   '[aria-label="搜索执行明细"]'
 )
 assert.ok(search)
+assert.ok(
+  search.closest('.group\\/input-group')?.classList.contains('ring-inset')
+)
 const setInputValue = Object.getOwnPropertyDescriptor(
   domWindow.HTMLInputElement.prototype,
   'value'

@@ -75,7 +75,7 @@ function ProbeResponseNumberField(props: {
             />
           </div>
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={0}

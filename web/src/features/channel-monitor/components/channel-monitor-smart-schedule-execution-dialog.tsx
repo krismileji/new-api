@@ -632,7 +632,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
               ) : null}
             </div>
             <div className='flex flex-wrap items-center gap-2 border-b p-3'>
-              <InputGroup className='min-w-48 flex-1 sm:max-w-xs'>
+              <InputGroup className='min-w-48 flex-1 ring-inset sm:max-w-xs'>
                 <InputGroupAddon>
                   <HugeiconsIcon icon={Search01Icon} />
                 </InputGroupAddon>

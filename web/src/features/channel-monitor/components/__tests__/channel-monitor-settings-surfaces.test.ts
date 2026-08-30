@@ -33,6 +33,8 @@ type SettingsSurfaceResult = {
   generalTabCount: number
   generalTitle: string
   generalUsesContentSizedViewport: boolean
+  generalInputGroupsUseInsetRing: boolean
+  generalUsesInsetRing: boolean
   retentionSettingsLoaded: boolean
   notificationTypeCanBeUnchecked: boolean
   retentionFieldsOnlyInRetentionTab: boolean
@@ -45,6 +47,7 @@ type SettingsSurfaceResult = {
   policyDialogExplainsExplicitScope: boolean
   policyDialogHasGroupSettingHelp: boolean
   policyDialogHasCompletePolicyControls: boolean
+  policyInputGroupsUseInsetRing: boolean
   policyDialogHidesLegacyDegradeScore: boolean
   policyDialogHasNoLegacyWeightControls: boolean
   policyDialogUsesInsetRing: boolean
@@ -54,6 +57,7 @@ type SettingsSurfaceResult = {
   newPolicyVisible: boolean
   scheduleHasExplicitPolicyScope: boolean
   scheduleHasNoImplicitPolicyControls: boolean
+  scheduleInputGroupsUseInsetRing: boolean
   scheduleSide: string | null
   scheduleTitle: string
   scheduleUsesChannelDrawerLayout: boolean
@@ -88,6 +92,8 @@ test(
     assert.equal(result.generalHasSchedule, false)
     assert.equal(result.generalTabCount, 5)
     assert.equal(result.generalUsesContentSizedViewport, true)
+    assert.equal(result.generalInputGroupsUseInsetRing, true)
+    assert.equal(result.generalUsesInsetRing, true)
     assert.equal(result.errorSettingsUseDedicatedTab, true)
     assert.equal(result.retentionSettingsLoaded, true)
     assert.equal(result.allNotificationTypesSelected, true)
@@ -103,10 +109,12 @@ test(
     assert.equal(result.scheduleUsesUnifiedTransition, true)
     assert.equal(result.scheduleHasExplicitPolicyScope, true)
     assert.equal(result.scheduleHasNoImplicitPolicyControls, true)
+    assert.equal(result.scheduleInputGroupsUseInsetRing, true)
     assert.equal(result.policyDialogCentered, true)
     assert.equal(result.policyDialogUsesContentSizedViewport, true)
     assert.equal(result.policyDialogBlocksHorizontalOverflow, true)
     assert.equal(result.policyDialogHasCompletePolicyControls, true)
+    assert.equal(result.policyInputGroupsUseInsetRing, true)
     assert.equal(result.policyDialogHidesLegacyDegradeScore, true)
     assert.equal(result.policyDialogHasNoLegacyWeightControls, true)
     assert.equal(result.policyDialogUsesInsetRing, true)

@@ -37,10 +37,14 @@ await testI18n.init({
   resources: { zhCN: { translation: {} } },
 })
 
-function CostConversionFieldsFixture() {
+function CostConversionFieldsFixture({
+  mode = 'none',
+}: {
+  mode?: UpstreamConfigFormValues['costConversionMode']
+} = {}) {
   const form = useForm<UpstreamConfigFormValues>({
     defaultValues: {
-      costConversionMode: 'none',
+      costConversionMode: mode,
       rechargePaidCny: 1,
       rechargeCreditedUsd: 1,
       subscriptionPeriod: 'month',
@@ -69,5 +73,19 @@ describe('channel monitor cost conversion fields', () => {
     assert.ok(markup.includes('倍率换算'))
     assert.ok(markup.includes('上游倍率'))
     assert.ok(markup.includes('aria-label="修改上游原始倍率"'))
+  })
+
+  test('uses inset focus rings for conversion amount inputs', () => {
+    const markup = renderToStaticMarkup(
+      <CostConversionFieldsFixture mode='recharge' />
+    )
+
+    const inputGroups = [
+      ...markup.matchAll(/class="([^"]*group\/input-group[^"]*)"/g),
+    ]
+    assert.ok(inputGroups.length > 0)
+    assert.ok(
+      inputGroups.every(([, className]) => className.includes('ring-inset'))
+    )
   })
 })

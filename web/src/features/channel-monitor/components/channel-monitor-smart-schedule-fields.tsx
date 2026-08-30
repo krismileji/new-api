@@ -79,7 +79,7 @@ function ChannelMonitorSmartScheduleRealtimeStorageField(props: {
             helpKey={props.helpKey}
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={props.min}
@@ -122,7 +122,7 @@ function ChannelMonitorSmartScheduleWindowField(props: {
             helpKey={props.helpKey}
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={MIN_SMART_SCHEDULE_WINDOW_MINUTES}
@@ -161,7 +161,7 @@ function ChannelMonitorRelayResponseHeaderTimeoutField(props: {
             helpKey='responseHeaderTimeout'
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={0}
@@ -201,7 +201,7 @@ function ChannelMonitorRateLimitCooldownField(props: {
             helpKey='rateLimitCooldown'
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={0}

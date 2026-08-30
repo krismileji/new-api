@@ -161,6 +161,13 @@ const groupList = groupRendered.dialog.querySelector<HTMLElement>(
   '[data-slot="group-channel-list"]'
 )
 assert.ok(groupList)
+const groupSearch = groupRendered.dialog.querySelector<HTMLInputElement>(
+  '[aria-label="搜索渠道"]'
+)
+assert.ok(groupSearch)
+assert.ok(
+  groupSearch.closest('.group\\/input-group')?.classList.contains('ring-inset')
+)
 assert.ok(groupList.classList.contains('min-h-0'))
 assert.ok(groupList.classList.contains('flex-1'))
 assert.ok(groupList.classList.contains('overflow-y-auto'))

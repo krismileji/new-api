@@ -225,7 +225,7 @@ function ChannelMonitorRetentionDayField(props: {
               description={props.description}
             />
           </div>
-          <InputGroup>
+          <InputGroup className='ring-inset'>
             <FormControl>
               <InputGroupInput
                 type='number'
@@ -272,7 +272,7 @@ function ChannelMonitorCleanupNumberField(props: {
               description={props.description}
             />
           </div>
-          <InputGroup>
+          <InputGroup className='ring-inset'>
             <FormControl>
               <InputGroupInput
                 type='number'
@@ -536,7 +536,7 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
             />
           </div>
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT}
@@ -579,7 +579,7 @@ export function ChannelMonitorRetryDelayField(props: {
             />
           </div>
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={0}
@@ -622,7 +622,7 @@ export function ChannelMonitorUpstreamRequestTimeoutField(props: {
             />
           </div>
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}
@@ -665,7 +665,7 @@ export function ChannelMonitorConcurrencyWaitField(props: {
             />
           </div>
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={MIN_CHANNEL_CONCURRENCY_WAIT_SECONDS}
@@ -1056,7 +1056,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                               />
                             </div>
                             <FormControl>
-                              <InputGroup>
+                              <InputGroup className='ring-inset'>
                                 <InputGroupInput
                                   type='number'
                                   min={0}
@@ -1096,7 +1096,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                               />
                             </div>
                             <FormControl>
-                              <InputGroup>
+                              <InputGroup className='ring-inset'>
                                 <InputGroupInput
                                   type='number'
                                   min={0}

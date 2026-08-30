@@ -139,7 +139,7 @@ export function SyncGroupRatioDialog(props: SyncGroupRatioDialogProps) {
                 <FormItem>
                   <FormLabel>系数</FormLabel>
                   <FormControl>
-                    <InputGroup>
+                    <InputGroup className='ring-inset'>
                       <InputGroupAddon>×</InputGroupAddon>
                       <InputGroupInput
                         type='number'

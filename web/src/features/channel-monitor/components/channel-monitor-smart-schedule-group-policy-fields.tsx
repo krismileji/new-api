@@ -116,7 +116,7 @@ function GroupPolicyPercentField(props: {
             htmlFor={inputId}
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 id={inputId}
                 type='number'
@@ -237,7 +237,7 @@ function AdaptiveSamplingNumberField(props: {
             htmlFor={inputId}
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 id={inputId}
                 type='number'
@@ -323,7 +323,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             helpKey='probeInterval'
           />
           <FormControl>
-            <InputGroup>
+            <InputGroup className='ring-inset'>
               <InputGroupInput
                 type='number'
                 min={1}
@@ -592,7 +592,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='explorationTraffic'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0.1}
@@ -629,7 +629,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='explorationMaxPromptKTokens'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0}
@@ -953,7 +953,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='stabilityRange'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={MIN_SMART_SCHEDULE_WINDOW_MINUTES}
@@ -1003,7 +1003,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='minSamples'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={1}
@@ -1037,7 +1037,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     helpKey='stabilityReleaseMaxPromptKTokens'
                   />
                   <FormControl>
-                    <InputGroup>
+                    <InputGroup className='ring-inset'>
                       <InputGroupInput
                         type='number'
                         min={0}
@@ -1081,7 +1081,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='fastFailureThreshold'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0.1}
@@ -1111,7 +1111,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='slowFailureThreshold'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0.1}
@@ -1141,7 +1141,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='fastFailureSameChannelRetry'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0}
@@ -1180,7 +1180,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='fastFailureSameChannelRetryDelay'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0}
@@ -1219,7 +1219,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='cooldown'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={1}
@@ -1256,7 +1256,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='burstFailureWindowMinutes'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
@@ -1293,7 +1293,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='burstFailureWindowRequests'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={1}
@@ -1330,7 +1330,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='consecutiveFailureThreshold'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={1}
@@ -1365,7 +1365,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='burstFailureThresholdPercent'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={0.1}
@@ -1402,7 +1402,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       helpKey='recoverySuccessThreshold'
                     />
                     <FormControl>
-                      <InputGroup>
+                      <InputGroup className='ring-inset'>
                         <InputGroupInput
                           type='number'
                           min={1}
@@ -1465,7 +1465,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                           helpKey='jitterTolerance'
                         />
                         <FormControl>
-                          <InputGroup>
+                          <InputGroup className='ring-inset'>
                             <InputGroupInput
                               type='number'
                               min={0}
@@ -1504,7 +1504,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                           helpKey='jitterSlowThreshold'
                         />
                         <FormControl>
-                          <InputGroup>
+                          <InputGroup className='ring-inset'>
                             <InputGroupInput
                               type='number'
                               min={0}
@@ -1579,7 +1579,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     helpKey='primaryTraffic'
                   />
                   <FormControl>
-                    <InputGroup>
+                    <InputGroup className='ring-inset'>
                       <InputGroupInput
                         type='number'
                         min={MIN_SMART_SCHEDULE_PRIMARY_TRAFFIC_PERCENT}
@@ -1618,7 +1618,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   helpKey='primarySwitchThreshold'
                 />
                 <FormControl>
-                  <InputGroup>
+                  <InputGroup className='ring-inset'>
                     <InputGroupInput
                       type='number'
                       min={0}

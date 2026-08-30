@@ -154,7 +154,7 @@ export function ChannelMonitorCostConversionFields(
               <FormItem>
                 <FormLabel>实付金额</FormLabel>
                 <FormControl>
-                  <InputGroup>
+                  <InputGroup className='ring-inset'>
                     <InputGroupAddon>￥</InputGroupAddon>
                     <InputGroupInput
                       type='number'
@@ -184,7 +184,7 @@ export function ChannelMonitorCostConversionFields(
               <FormItem>
                 <FormLabel>到账额度</FormLabel>
                 <FormControl>
-                  <InputGroup>
+                  <InputGroup className='ring-inset'>
                     <InputGroupAddon>$</InputGroupAddon>
                     <InputGroupInput
                       type='number'
@@ -261,7 +261,7 @@ export function ChannelMonitorCostConversionFields(
                 <FormItem>
                   <FormLabel>订阅价格</FormLabel>
                   <FormControl>
-                    <InputGroup>
+                    <InputGroup className='ring-inset'>
                       <InputGroupAddon>￥</InputGroupAddon>
                       <InputGroupInput
                         type='number'
@@ -291,7 +291,7 @@ export function ChannelMonitorCostConversionFields(
                 <FormItem>
                   <FormLabel>每日额度</FormLabel>
                   <FormControl>
-                    <InputGroup>
+                    <InputGroup className='ring-inset'>
                       <InputGroupAddon>$</InputGroupAddon>
                       <InputGroupInput
                         type='number'

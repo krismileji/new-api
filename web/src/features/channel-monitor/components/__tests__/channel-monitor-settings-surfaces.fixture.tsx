@@ -240,6 +240,15 @@ const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
   generalDialog.classList.contains('sm:max-w-4xl') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
+const generalUsesInsetRing = generalDialog.classList.contains('ring-inset')
+const generalInputGroups = [
+  ...generalDialog.querySelectorAll<HTMLElement>('.group\\/input-group'),
+]
+const generalInputGroupsUseInsetRing =
+  generalInputGroups.length > 0 &&
+  generalInputGroups.every((inputGroup) =>
+    inputGroup.classList.contains('ring-inset')
+  )
 const notificationTypeFields = [
   ...generalDialog.querySelectorAll<HTMLElement>('[data-notification-type]'),
 ]
@@ -380,6 +389,14 @@ const scheduleForm = sheet.querySelector(
   '#channel-monitor-smart-schedule-settings-form'
 )
 const scheduleFooter = sheet.querySelector('[data-slot="sheet-footer"]')
+const scheduleInputGroups = [
+  ...sheet.querySelectorAll<HTMLElement>('.group\\/input-group'),
+]
+const scheduleInputGroupsUseInsetRing =
+  scheduleInputGroups.length > 0 &&
+  scheduleInputGroups.every((inputGroup) =>
+    inputGroup.classList.contains('ring-inset')
+  )
 const scheduleUsesChannelDrawerLayout =
   sheet.classList.contains('h-dvh') &&
   sheet.classList.contains('w-full') &&
@@ -421,6 +438,14 @@ await act(async () => addPolicyButton.click())
 
 const policyDialog = document.body.querySelector('[data-slot="dialog-content"]')
 assert.ok(policyDialog)
+const policyInputGroups = [
+  ...policyDialog.querySelectorAll<HTMLElement>('.group\\/input-group'),
+]
+const policyInputGroupsUseInsetRing =
+  policyInputGroups.length > 0 &&
+  policyInputGroups.every((inputGroup) =>
+    inputGroup.classList.contains('ring-inset')
+  )
 const policyDialogCentered =
   policyDialog.className.includes('top-1/2') &&
   policyDialog.className.includes('left-1/2')
@@ -578,6 +603,8 @@ process.stdout.write(
     generalHasSchedule,
     generalTitle,
     generalUsesContentSizedViewport,
+    generalInputGroupsUseInsetRing,
+    generalUsesInsetRing,
     generalTabCount: settingsTabs.length,
     retentionSettingsLoaded,
     notificationTypeCanBeUnchecked,
@@ -594,12 +621,14 @@ process.stdout.write(
     policyDialogExplainsExplicitScope,
     policyDialogHasGroupSettingHelp,
     policyDialogHasCompletePolicyControls,
+    policyInputGroupsUseInsetRing,
     policyDialogHidesLegacyDegradeScore,
     policyDialogHasNoLegacyWeightControls,
     policyDialogUsesInsetRing,
     policyDialogStabilityInputsAligned,
     scheduleHasExplicitPolicyScope,
     scheduleHasNoImplicitPolicyControls,
+    scheduleInputGroupsUseInsetRing,
     scheduleSide,
     scheduleTitle,
     scheduleUsesChannelDrawerLayout,
