@@ -60,6 +60,7 @@ import {
 import {
   InputGroup,
   InputGroupAddon,
+  InputGroupButton,
   InputGroupInput,
 } from '@/components/ui/input-group'
 import {
@@ -931,12 +932,13 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 </div>
               ) : null}
             </div>
-            <div className='bg-background flex flex-wrap items-center gap-2 border-b p-3 sm:px-5'>
-              <div className='text-muted-foreground mr-1 flex items-center gap-1.5 text-xs font-medium'>
-                <HugeiconsIcon icon={Search01Icon} size={15} />
-                <span>筛选明细</span>
-              </div>
-              <InputGroup className='min-w-48 flex-1 ring-inset sm:max-w-xs'>
+            <div
+              className='bg-background flex flex-col gap-2 border-b p-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5 xl:flex-nowrap'
+              role='group'
+              aria-label='筛选明细'
+              data-schedule-execution-filters
+            >
+              <InputGroup className='min-w-0 flex-1 ring-inset sm:min-w-48'>
                 <InputGroupAddon>
                   <HugeiconsIcon icon={Search01Icon} size={16} />
                 </InputGroupAddon>
@@ -949,6 +951,19 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   placeholder='搜索渠道、分组、模型或原因'
                   aria-label='搜索执行明细'
                 />
+                {search || actionFilter !== 'all' ? (
+                  <InputGroupAddon align='inline-end'>
+                    <InputGroupButton
+                      size='icon-xs'
+                      onClick={resetFilters}
+                      aria-label='清除筛选'
+                      title='清除筛选'
+                    >
+                      <HugeiconsIcon icon={Cancel01Icon} aria-hidden='true' />
+                      <span className='sr-only'>清除筛选</span>
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                ) : null}
               </InputGroup>
               <Select
                 items={groupOptions}
@@ -973,7 +988,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 }}
               >
                 <SelectTrigger
-                  className='w-full min-w-0 sm:w-44'
+                  className='w-full min-w-0 sm:w-36 sm:shrink-0'
                   aria-label='按分组筛选'
                   title={groupFilter || undefined}
                 >
@@ -986,7 +1001,12 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 >
                   <SelectGroup>
                     {groups.map((group) => (
-                      <SelectItem key={group} value={group} title={group}>
+                      <SelectItem
+                        key={group}
+                        value={group}
+                        title={group}
+                        className='[&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:truncate'
+                      >
                         {group}
                       </SelectItem>
                     ))}
@@ -1007,7 +1027,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 }}
               >
                 <SelectTrigger
-                  className='w-full min-w-0 sm:w-64'
+                  className='w-full min-w-0 sm:w-56 sm:shrink-0'
                   aria-label='按模型筛选'
                   title={
                     modelFilter === 'all'
@@ -1032,7 +1052,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                         key={model}
                         value={model}
                         title={model}
-                        className='[&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:break-all [&_[data-slot=select-item-text]]:whitespace-normal'
+                        className='[&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:truncate'
                       >
                         {model}
                       </SelectItem>
@@ -1049,7 +1069,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 }}
               >
                 <SelectTrigger
-                  className='w-full sm:w-28'
+                  className='w-full sm:w-28 sm:shrink-0'
                   aria-label='按结果筛选'
                 >
                   <SelectValue placeholder='全部结果' />
@@ -1064,12 +1084,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              {search || actionFilter !== 'all' ? (
-                <Button variant='ghost' size='sm' onClick={resetFilters}>
-                  清除筛选
-                </Button>
-              ) : null}
-              <span className='text-muted-foreground ml-auto text-xs tabular-nums'>
+              <span className='text-muted-foreground self-end text-xs whitespace-nowrap tabular-nums sm:ml-auto sm:self-auto xl:ml-0'>
                 {detailQuery.isFetching
                   ? '正在更新'
                   : `${adjustments.length} / ${detailTotal} 条`}

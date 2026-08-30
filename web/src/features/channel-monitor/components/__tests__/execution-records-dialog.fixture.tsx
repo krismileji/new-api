@@ -444,6 +444,14 @@ assert.ok(
 assert.ok(
   scheduleRendered.dialog.querySelector('[data-task-status="succeeded"]')
 )
+const executionFilters = scheduleRendered.dialog.querySelector<HTMLElement>(
+  '[data-schedule-execution-filters]'
+)
+assert.ok(executionFilters)
+assert.ok(executionFilters.classList.contains('flex-col'))
+assert.ok(executionFilters.classList.contains('sm:flex-wrap'))
+assert.ok(executionFilters.classList.contains('xl:flex-nowrap'))
+assert.equal(executionFilters.classList.contains('flex-wrap'), false)
 const executionFilterTriggers = ['按分组筛选', '按模型筛选', '按结果筛选'].map(
   (label) => {
     const trigger = scheduleRendered.dialog.querySelector<HTMLButtonElement>(
@@ -749,7 +757,8 @@ const preferenceModelTrigger =
   )
 assert.ok(preferenceGroupTrigger?.textContent?.includes('vip'))
 assert.ok(preferenceModelTrigger?.textContent?.includes('gpt-5'))
-assert.ok(preferenceModelTrigger?.classList.contains('sm:w-64'))
+assert.ok(preferenceModelTrigger?.classList.contains('w-full'))
+assert.ok(preferenceModelTrigger?.classList.contains('min-w-0'))
 assert.equal(preferenceModelTrigger?.title, 'gpt-5')
 assert.ok(preferenceModelTrigger)
 await act(async () => preferenceModelTrigger.click())
@@ -811,6 +820,23 @@ assert.equal(
 )
 assert.equal(preferenceModelTrigger.title, longDefaultModelName)
 assert.ok(preferenceModelTrigger.textContent?.includes(longDefaultModelName))
+await act(async () => preferenceModelTrigger.click())
+const defaultModelOption = [
+  ...document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+].find((item) => item.textContent?.trim() === longDefaultModelName)
+assert.ok(defaultModelOption)
+assert.ok(
+  defaultModelOption.classList.contains(
+    '[&_[data-slot=select-item-text]]:truncate'
+  )
+)
+assert.equal(
+  defaultModelOption.classList.contains(
+    '[&_[data-slot=select-item-text]]:whitespace-normal'
+  ),
+  false
+)
+await act(async () => preferenceModelTrigger.click())
 await act(async () => preferenceRendered.root.unmount())
 preferenceRendered.container.remove()
 preferenceQueryClient.clear()
