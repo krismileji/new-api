@@ -100,10 +100,6 @@ export const MAX_ERROR_MESSAGE_KEYWORDS = 32
 export const MAX_ERROR_MESSAGE_KEYWORD_LENGTH = 128
 export const MAX_ERROR_MESSAGE_WHITELIST_CODES = 32
 export const MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH = 128
-export const MAX_RETRY_SKIP_ERROR_CODES = 32
-export const MAX_RETRY_SKIP_ERROR_CODE_LENGTH = 128
-export const MAX_RETRY_SKIP_ERROR_MESSAGES = 32
-export const MAX_RETRY_SKIP_ERROR_MESSAGE_LENGTH = 256
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
 export const DEFAULT_PROBE_RESPONSE_TEXT = 'Hi. What are you working on?'
 export const DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS = 500
@@ -914,13 +910,13 @@ const errorMessageKeywordsSchema = z
     }
   })
 
-const errorMessageWhitelistSchema = retrySkipLinesSchema(
+const errorMessageWhitelistSchema = errorCodeListSchema(
   '错误码白名单',
   MAX_ERROR_MESSAGE_WHITELIST_CODES,
   MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH
 )
 
-function retrySkipLinesSchema(
+function errorCodeListSchema(
   label: string,
   maxCount: number,
   maxLength: number
@@ -1239,16 +1235,6 @@ export function createChannelMonitorSettingsSchema() {
       errorMessageMapping: errorMessageMappingSchema,
       errorMessageWhitelist: errorMessageWhitelistSchema,
       errorMessageKeywords: errorMessageKeywordsSchema,
-      retrySkipErrorCodes: retrySkipLinesSchema(
-        '不重试错误码',
-        MAX_RETRY_SKIP_ERROR_CODES,
-        MAX_RETRY_SKIP_ERROR_CODE_LENGTH
-      ),
-      retrySkipErrorMessages: retrySkipLinesSchema(
-        '不重试错误信息',
-        MAX_RETRY_SKIP_ERROR_MESSAGES,
-        MAX_RETRY_SKIP_ERROR_MESSAGE_LENGTH
-      ),
       probeResponseEnabled: z.boolean(),
       probeResponseAllowedIPs: probeResponseAllowedIPsSchema,
       probeResponseMatchInput: z

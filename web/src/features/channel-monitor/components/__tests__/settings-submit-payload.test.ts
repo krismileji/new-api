@@ -101,8 +101,6 @@ const formValues = {
   errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
   errorMessageWhitelist: 'provider_specific_error\n503',
   errorMessageKeywords: 'secret\nupstream',
-  retrySkipErrorCodes: 'insufficient_quota\n429',
-  retrySkipErrorMessages: 'invalid api key\nquota exceeded',
   probeResponseEnabled: true,
   probeResponseAllowedIPs: '203.0.113.10\n2001:db8::10',
   probeResponseMatchInput: 'health check',
@@ -422,8 +420,6 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_text',
       'ratio_history_retention_days',
       'ratio_monitor_task_retention_days',
-      'retry_skip_error_codes',
-      'retry_skip_error_messages',
       'route_metric_retention_days',
       'smart_schedule_probe_task_retention_days',
       'smart_schedule_task_retention_days',
@@ -468,11 +464,6 @@ describe('channel monitor settings submit payload', () => {
       'provider_specific_error\n503'
     )
     assert.equal(payload.error_message_keywords, 'secret\nupstream')
-    assert.equal(payload.retry_skip_error_codes, 'insufficient_quota\n429')
-    assert.equal(
-      payload.retry_skip_error_messages,
-      'invalid api key\nquota exceeded'
-    )
     assert.equal(
       payload.probe_response_allowed_ips,
       '203.0.113.10\n2001:db8::10'

@@ -801,8 +801,6 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       errorMessageMapping: props.settings.error_message_mapping ?? '',
       errorMessageWhitelist: props.settings.error_message_whitelist ?? '',
       errorMessageKeywords: props.settings.error_message_keywords ?? '',
-      retrySkipErrorCodes: props.settings.retry_skip_error_codes ?? '',
-      retrySkipErrorMessages: props.settings.retry_skip_error_messages ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       probeResponseAllowedIPs: props.settings.probe_response_allowed_ips ?? '',
       probeResponseMatchInput:
@@ -1222,7 +1220,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     <h3 className='text-sm font-medium'>错误规则</h3>
                     <ChannelMonitorFieldInfo
                       label='错误规则'
-                      description='统一控制上游错误的用户可见文案、屏蔽关键字和渠道监控重试行为。'
+                      description='统一控制上游错误的用户可见文案和屏蔽关键字。重试状态码请在系统设置中配置。'
                     />
                   </div>
                   <div className='flex flex-col gap-5'>
@@ -1299,54 +1297,6 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             <Textarea
                               rows={4}
                               placeholder='每行填写一个关键字'
-                              {...field}
-                              disabled={mutation.isPending}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name='retrySkipErrorCodes'
-                      render={({ field }) => (
-                        <FormItem className='space-y-3 border-t pt-4'>
-                          <div className='flex items-center gap-1'>
-                            <FormLabel>命中错误码时跳过重试</FormLabel>
-                            <ChannelMonitorFieldInfo
-                              label='命中错误码时跳过重试'
-                              description='每行填写一个错误码，也支持逗号分隔；命中上游错误码或 HTTP 状态码时，本次渠道监控直接结束，不再重试，最多 32 个。'
-                            />
-                          </div>
-                          <FormControl>
-                            <Textarea
-                              rows={4}
-                              placeholder='例如：insufficient_quota\n429\n500'
-                              {...field}
-                              disabled={mutation.isPending}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name='retrySkipErrorMessages'
-                      render={({ field }) => (
-                        <FormItem className='space-y-3 border-t pt-4'>
-                          <div className='flex items-center gap-1'>
-                            <FormLabel>命中执行错误信息时跳过重试</FormLabel>
-                            <ChannelMonitorFieldInfo
-                              label='命中执行错误信息时跳过重试'
-                              description='每行填写一个错误信息关键字，也支持逗号分隔；按不区分大小写的包含匹配，命中后本次渠道监控不再重试，最多 32 个。'
-                            />
-                          </div>
-                          <FormControl>
-                            <Textarea
-                              rows={4}
-                              placeholder='例如：额度不足\ninvalid api key'
                               {...field}
                               disabled={mutation.isPending}
                             />

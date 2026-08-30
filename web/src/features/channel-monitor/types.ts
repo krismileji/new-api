@@ -709,8 +709,6 @@ export type ChannelMonitorSettings = {
   error_message_mapping: string
   error_message_whitelist: string
   error_message_keywords: string
-  retry_skip_error_codes: string
-  retry_skip_error_messages: string
   probe_response_enabled: boolean
   probe_response_allowed_ips?: string
   probe_response_match_input?: string

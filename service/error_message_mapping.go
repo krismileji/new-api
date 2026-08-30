@@ -134,10 +134,30 @@ func parseErrorMessageMapping(raw string) (map[string]string, error) {
 }
 
 func parseErrorMessageWhitelist(raw string) ([]string, error) {
-	return parseRetrySkipLines(
-		raw,
-		"错误码白名单",
-		MaxErrorMessageWhitelistCodes,
-		MaxErrorMessageWhitelistCodeLength,
-	)
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
+	if raw == "" {
+		return nil, nil
+	}
+	lines := strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == ',' })
+	values := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		value := strings.TrimSpace(line)
+		if value == "" {
+			continue
+		}
+		if len(values) >= MaxErrorMessageWhitelistCodes {
+			return nil, fmt.Errorf("错误码白名单最多支持 %d 个", MaxErrorMessageWhitelistCodes)
+		}
+		if len([]rune(value)) > MaxErrorMessageWhitelistCodeLength {
+			return nil, fmt.Errorf("错误码白名单长度不能超过 %d 个字符", MaxErrorMessageWhitelistCodeLength)
+		}
+		normalized := strings.ToLower(value)
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		values = append(values, value)
+	}
+	return values, nil
 }
