@@ -101,15 +101,18 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	adjustments := []channelSmartScheduleTaskAdjustment{
 		{
 			ChannelId: 71, ChannelName: "高速渠道", Group: "vip", Model: "model-a",
-			Action: channelSmartScheduleAdjustmentUpdated, Reason: "评分最高，调整为主渠道",
+			Action: channelSmartScheduleAdjustmentUpdated, NewPriority: 100, NewWeight: 80,
+			Reason: "评分最高，调整为主渠道",
 		},
 		{
 			ChannelId: 72, ChannelName: "标准渠道", Group: "default", Model: "model-b",
-			Action: channelSmartScheduleAdjustmentUnchanged, Reason: "评分与上一轮一致",
+			Action: channelSmartScheduleAdjustmentUnchanged, NewPriority: 90, NewWeight: 100,
+			Reason: "评分与上一轮一致",
 		},
 		{
 			ChannelId: 73, ChannelName: "备用渠道", Group: "vip", Model: "model-c",
-			Action: channelSmartScheduleAdjustmentFailed, Reason: "写入路由失败",
+			Action: channelSmartScheduleAdjustmentFailed, OldPriority: 100, OldWeight: 20,
+			NewPriority: 120, NewWeight: 100, Reason: "写入路由失败",
 		},
 	}
 	inputs := make([]model.ChannelSmartScheduleExecutionDetailInput, 0, len(adjustments))
@@ -132,13 +135,14 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			Page         int                                  `json:"page"`
-			PageSize     int                                  `json:"page_size"`
-			Total        int                                  `json:"total"`
-			Items        []channelSmartScheduleTaskAdjustment `json:"items"`
-			Groups       []string                             `json:"groups"`
-			Models       []string                             `json:"models"`
-			ChannelNames map[string]string                    `json:"channel_names"`
+			Page          int                                  `json:"page"`
+			PageSize      int                                  `json:"page_size"`
+			Total         int                                  `json:"total"`
+			Items         []channelSmartScheduleTaskAdjustment `json:"items"`
+			Groups        []string                             `json:"groups"`
+			Models        []string                             `json:"models"`
+			ModelsByGroup map[string][]string                  `json:"models_by_group"`
+			ChannelNames  map[string]string                    `json:"channel_names"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
@@ -150,8 +154,28 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	assert.Equal(t, 73, response.Data.Items[0].ChannelId)
 	assert.Equal(t, []string{"default", "vip"}, response.Data.Groups)
 	assert.Equal(t, []string{"model-a", "model-b", "model-c"}, response.Data.Models)
+	assert.Equal(t, map[string][]string{
+		"default": {"model-b"},
+		"vip":     {"model-a", "model-c"},
+	}, response.Data.ModelsByGroup)
 	assert.Equal(t, "备用渠道", response.Data.ChannelNames["73"])
 	assert.NotContains(t, response.Data.ChannelNames, "71")
+
+	routingCtx, routingRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet,
+		"/api/channel_monitor/tasks/schedule-detail-page/details?p=1&page_size=50",
+		nil,
+	)
+	routingCtx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	GetChannelMonitorSmartScheduleExecutionDetails(routingCtx)
+	require.NoError(t, common.Unmarshal(routingRecorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Items, 3)
+	assert.Equal(t, []int{71, 73, 72}, []int{
+		response.Data.Items[0].ChannelId,
+		response.Data.Items[1].ChannelId,
+		response.Data.Items[2].ChannelId,
+	})
 
 	searchCtx, searchRecorder := newChannelMonitorControllerContext(
 		t, http.MethodGet,

@@ -1852,6 +1852,9 @@ export function ChannelMonitor() {
             open
             onOpenChange={setSmartScheduleHistoryOpen}
             groupOrder={groupOrder}
+            modelsByGroup={smartScheduleDisplayModelsByGroup}
+            selection={smartScheduleDisplaySelection}
+            onSelectionChange={saveSmartScheduleDisplaySelection}
           />
         </Suspense>
       )}

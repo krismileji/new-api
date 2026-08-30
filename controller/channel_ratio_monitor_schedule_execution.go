@@ -15,13 +15,14 @@ import (
 const channelMonitorSmartScheduleExecutionDetailPageSize = 50
 
 type channelMonitorSmartScheduleExecutionDetailPage struct {
-	Page         int                                  `json:"page"`
-	PageSize     int                                  `json:"page_size"`
-	Total        int                                  `json:"total"`
-	Items        []channelSmartScheduleTaskAdjustment `json:"items"`
-	Groups       []string                             `json:"groups"`
-	Models       []string                             `json:"models"`
-	ChannelNames map[string]string                    `json:"channel_names"`
+	Page          int                                  `json:"page"`
+	PageSize      int                                  `json:"page_size"`
+	Total         int                                  `json:"total"`
+	Items         []channelSmartScheduleTaskAdjustment `json:"items"`
+	Groups        []string                             `json:"groups"`
+	Models        []string                             `json:"models"`
+	ModelsByGroup map[string][]string                  `json:"models_by_group"`
+	ChannelNames  map[string]string                    `json:"channel_names"`
 }
 
 // GetChannelMonitorSmartScheduleExecutionDetails returns only one task's
@@ -85,6 +86,7 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 
 	groups := make(map[string]struct{})
 	models := make(map[string]struct{})
+	modelSetsByGroup := make(map[string]map[string]struct{})
 	filtered := make([]channelSmartScheduleTaskAdjustment, 0, len(detailsByTask[taskID]))
 	for _, stored := range detailsByTask[taskID] {
 		var adjustment channelSmartScheduleTaskAdjustment
@@ -94,6 +96,10 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		}
 		groups[adjustment.Group] = struct{}{}
 		models[adjustment.Model] = struct{}{}
+		if modelSetsByGroup[adjustment.Group] == nil {
+			modelSetsByGroup[adjustment.Group] = make(map[string]struct{})
+		}
+		modelSetsByGroup[adjustment.Group][adjustment.Model] = struct{}{}
 		if groupFilter != "" && adjustment.Group != groupFilter {
 			continue
 		}
@@ -129,6 +135,17 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		}
 		filtered = append(filtered, adjustment)
 	}
+	sort.SliceStable(filtered, func(i int, j int) bool {
+		leftPriority, leftWeight := channelSmartScheduleAdjustmentRoutingOrder(filtered[i])
+		rightPriority, rightWeight := channelSmartScheduleAdjustmentRoutingOrder(filtered[j])
+		if leftPriority != rightPriority {
+			return leftPriority > rightPriority
+		}
+		if leftWeight != rightWeight {
+			return leftWeight > rightWeight
+		}
+		return filtered[i].ChannelId < filtered[j].ChannelId
+	})
 
 	groupList := make([]string, 0, len(groups))
 	for group := range groups {
@@ -140,6 +157,15 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		modelList = append(modelList, modelName)
 	}
 	sort.Strings(modelList)
+	modelsByGroup := make(map[string][]string, len(modelSetsByGroup))
+	for group, modelSet := range modelSetsByGroup {
+		groupModels := make([]string, 0, len(modelSet))
+		for modelName := range modelSet {
+			groupModels = append(groupModels, modelName)
+		}
+		sort.Strings(groupModels)
+		modelsByGroup[group] = groupModels
+	}
 
 	pageInfo := common.GetPageQuery(c)
 	if c.Query("page_size") == "" || pageInfo.PageSize < 1 {
@@ -159,13 +185,23 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		channelNames[strconv.Itoa(item.ChannelId)] = item.ChannelName
 	}
 	page := channelMonitorSmartScheduleExecutionDetailPage{
-		Page:         pageInfo.GetPage(),
-		PageSize:     pageInfo.GetPageSize(),
-		Total:        len(filtered),
-		Items:        items,
-		Groups:       groupList,
-		Models:       modelList,
-		ChannelNames: channelNames,
+		Page:          pageInfo.GetPage(),
+		PageSize:      pageInfo.GetPageSize(),
+		Total:         len(filtered),
+		Items:         items,
+		Groups:        groupList,
+		Models:        modelList,
+		ModelsByGroup: modelsByGroup,
+		ChannelNames:  channelNames,
 	}
 	common.ApiSuccess(c, page)
+}
+
+func channelSmartScheduleAdjustmentRoutingOrder(
+	adjustment channelSmartScheduleTaskAdjustment,
+) (int64, uint) {
+	if adjustment.Action == channelSmartScheduleAdjustmentFailed {
+		return adjustment.OldPriority, adjustment.OldWeight
+	}
+	return adjustment.NewPriority, adjustment.NewWeight
 }

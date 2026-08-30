@@ -893,10 +893,10 @@ func TestGetChannelRatioMonitorTasksFiltersOrdersAndPaginatesRuns(t *testing.T) 
 	})
 
 	tasks := []SystemTask{
-		{TaskID: "other-task", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusSucceeded},
-		{TaskID: "monitor-oldest", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusSucceeded},
-		{TaskID: "monitor-middle", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusFailed},
-		{TaskID: "monitor-newest", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusSucceeded},
+		{TaskID: "other-task", Type: SystemTaskTypeChannelTest, Status: SystemTaskStatusSucceeded, CreatedAt: 400},
+		{TaskID: "monitor-oldest", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusSucceeded, CreatedAt: 100},
+		{TaskID: "monitor-newest", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusSucceeded, CreatedAt: 300},
+		{TaskID: "monitor-middle", Type: SystemTaskTypeChannelRatioMonitor, Status: SystemTaskStatusFailed, CreatedAt: 200},
 	}
 	require.NoError(t, DB.Create(&tasks).Error)
 

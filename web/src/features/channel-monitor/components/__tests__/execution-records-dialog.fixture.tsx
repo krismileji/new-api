@@ -18,8 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import type { AxiosAdapter } from 'axios'
 import { Window } from 'happy-dom'
 import type { ReactNode } from 'react'
+
+import { api } from '@/lib/api'
 
 import type {
   ChannelMonitorSmartScheduleExecutionDetailPage,
@@ -145,6 +148,16 @@ function createDetailResponse(
   options: Partial<ChannelMonitorSmartScheduleExecutionDetailPage> = {}
 ) {
   const allItems = options.items ?? items
+  const modelsByGroup = Object.fromEntries(
+    [...new Set(items.map((item) => item.group))].map((group) => [
+      group,
+      [
+        ...new Set(
+          items.filter((item) => item.group === group).map((item) => item.model)
+        ),
+      ].sort(),
+    ])
+  )
   return {
     success: true,
     message: '',
@@ -155,6 +168,7 @@ function createDetailResponse(
       items: allItems,
       groups: [...new Set(items.map((item) => item.group))].sort(),
       models: [...new Set(items.map((item) => item.model))].sort(),
+      models_by_group: modelsByGroup,
       channel_names: Object.fromEntries(
         allItems.map((item) => [String(item.channel_id), item.channel_name])
       ),
@@ -268,20 +282,29 @@ ratioQueryClient.clear()
 
 const firstTask = createTask('channel_smart_schedule', 'schedule-1')
 const secondTask = createTask('channel_smart_schedule', 'schedule-2')
-secondTask.created_at += 120
-secondTask.updated_at += 120
+firstTask.created_at += 120
+firstTask.updated_at += 120
 const firstAdjustment = createAdjustment()
 const firstPageTwoAdjustment = createAdjustment({
   channel_id: 9,
   channel_name: '第二页备用渠道',
+  group: 'vip',
+  model: 'gpt-5',
   reason: '明细分页后的第二页记录',
 })
 const secondAdjustment = createAdjustment({
   channel_id: 8,
   channel_name: '低成本备用渠道',
   group: 'vip',
-  model: 'gpt-5-mini',
+  model: 'gpt-5',
   reason: '按优先级递减采样获得少量真实流量',
+})
+const failedAdjustment = createAdjustment({
+  channel_id: 11,
+  channel_name: '筛选后的失败路由',
+  action: 'failed',
+  failure_stage: 'apply',
+  reason: '筛选后仅保留的失败路由',
 })
 const scheduleQueryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },
@@ -306,8 +329,8 @@ scheduleQueryClient.setQueryData(
     'schedule-1',
     1,
     '',
-    'all',
-    'all',
+    'default',
+    'gpt-5',
     'all',
   ],
   createDetailResponse([firstAdjustment, firstPageTwoAdjustment], {
@@ -322,8 +345,8 @@ scheduleQueryClient.setQueryData(
     'schedule-1',
     2,
     '',
-    'all',
-    'all',
+    'vip',
+    'gpt-5',
     'all',
   ],
   createDetailResponse([firstAdjustment, firstPageTwoAdjustment], {
@@ -339,8 +362,8 @@ scheduleQueryClient.setQueryData(
     'schedule-1',
     1,
     '不存在的渠道',
-    'all',
-    'all',
+    'vip',
+    'gpt-5',
     'all',
   ],
   createDetailResponse([firstAdjustment, firstPageTwoAdjustment], {
@@ -352,11 +375,24 @@ scheduleQueryClient.setQueryData(
   [
     'channel-monitor-smart-schedule-executions',
     'details',
+    'schedule-1',
+    1,
+    '',
+    'default',
+    'gpt-5',
+    'failed',
+  ],
+  createDetailResponse([failedAdjustment])
+)
+scheduleQueryClient.setQueryData(
+  [
+    'channel-monitor-smart-schedule-executions',
+    'details',
     'schedule-2',
     1,
     '',
-    'all',
-    'all',
+    'vip',
+    'gpt-5',
     'all',
   ],
   createDetailResponse([secondAdjustment])
@@ -368,14 +404,18 @@ scheduleQueryClient.setQueryData(
     'schedule-2',
     1,
     '低成本备用渠道',
-    'all',
-    'all',
+    'vip',
+    'gpt-5',
     'all',
   ],
   createDetailResponse([secondAdjustment])
 )
 const scheduleRendered = await renderDialog(
-  <ChannelMonitorSmartScheduleExecutionDialog open onOpenChange={() => {}} />,
+  <ChannelMonitorSmartScheduleExecutionDialog
+    open
+    onOpenChange={() => {}}
+    selection={{ group: 'default', model: 'gpt-5' }}
+  />,
   scheduleQueryClient
 )
 assert.ok(scheduleRendered.dialog.textContent?.includes('智能调度执行记录'))
@@ -391,6 +431,104 @@ assert.equal(
 assert.equal(scheduleRendered.dialog.querySelectorAll('[role="tab"]').length, 0)
 assert.ok(scheduleRendered.dialog.textContent?.includes('高速稳定渠道'))
 assert.ok(scheduleRendered.dialog.textContent?.includes('按 2 个分组策略执行'))
+assert.ok(scheduleRendered.dialog.textContent?.includes('执行时间线'))
+assert.ok(scheduleRendered.dialog.textContent?.includes('第 1 批执行'))
+assert.ok(scheduleRendered.dialog.textContent?.includes('综合评分'))
+assert.ok(scheduleRendered.dialog.textContent?.includes('调度理由'))
+assert.ok(
+  scheduleRendered.dialog.textContent?.includes('同优先级内按权重随机选择')
+)
+assert.ok(
+  scheduleRendered.dialog.querySelector('[data-adjustment-action="updated"]')
+)
+assert.ok(
+  scheduleRendered.dialog.querySelector('[data-task-status="succeeded"]')
+)
+const executionFilterTriggers = ['按分组筛选', '按模型筛选', '按结果筛选'].map(
+  (label) => {
+    const trigger = scheduleRendered.dialog.querySelector<HTMLButtonElement>(
+      `[aria-label="${label}"]`
+    )
+    assert.ok(trigger)
+    return trigger
+  }
+)
+for (const trigger of executionFilterTriggers) {
+  await act(async () => trigger.click())
+  const content = document.body.querySelector<HTMLElement>(
+    '[data-slot="select-content"]'
+  )
+  assert.equal(content?.dataset.alignTrigger, 'false')
+  await act(async () => trigger.click())
+}
+const actionFilterTrigger = executionFilterTriggers[2]
+assert.ok(actionFilterTrigger)
+await act(async () => actionFilterTrigger.click())
+const failedFilterOption = [
+  ...document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+].find((item) => item.textContent?.trim() === '失败')
+assert.ok(failedFilterOption)
+await act(async () => failedFilterOption.click())
+await waitForDialogText(scheduleRendered.dialog, '筛选后的失败路由')
+assert.ok(scheduleRendered.dialog.textContent?.includes('清除筛选'))
+await act(async () => actionFilterTrigger.click())
+const allActionFilterOption = [
+  ...document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+].find((item) => item.textContent?.trim() === '全部结果')
+assert.ok(allActionFilterOption)
+await act(async () => allActionFilterOption.click())
+await waitForDialogText(scheduleRendered.dialog, '高速稳定渠道')
+const originalAdapter = api.defaults.adapter
+let resolveGroupFilterRequest: (() => void) | undefined
+api.defaults.adapter = ((config) => {
+  assert.equal(config.url, '/api/channel_monitor/tasks/schedule-1/details')
+  assert.equal(config.params?.group, 'vip')
+  return new Promise((resolve) => {
+    resolveGroupFilterRequest = () =>
+      resolve({
+        config,
+        data: createDetailResponse([secondAdjustment], { total: 51 }),
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      })
+  })
+}) as AxiosAdapter
+const groupFilterTrigger = executionFilterTriggers[0]
+assert.ok(groupFilterTrigger)
+await act(async () => groupFilterTrigger.click())
+const vipGroupFilterOption = [
+  ...document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+].find((item) => item.textContent?.trim() === 'vip')
+assert.ok(vipGroupFilterOption)
+await act(async () => vipGroupFilterOption.click())
+assert.ok(resolveGroupFilterRequest)
+assert.ok(groupFilterTrigger.textContent?.includes('vip'))
+assert.ok(
+  scheduleRendered.dialog.querySelector(
+    '[data-schedule-execution-detail-loading]'
+  )
+)
+assert.equal(
+  scheduleRendered.dialog.textContent?.includes('高速稳定渠道'),
+  false
+)
+assert.ok(scheduleRendered.dialog.textContent?.includes('正在加载执行明细'))
+await act(async () => resolveGroupFilterRequest?.())
+await waitForDialogText(scheduleRendered.dialog, '低成本备用渠道')
+assert.equal(
+  scheduleRendered.dialog.textContent?.includes('高速稳定渠道'),
+  false
+)
+await act(async () => groupFilterTrigger.click())
+assert.equal(
+  [
+    ...document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+  ].some((item) => item.textContent?.trim() === '全部分组'),
+  false
+)
+await act(async () => groupFilterTrigger.click())
+api.defaults.adapter = originalAdapter
 const detailNextButton =
   scheduleRendered.dialog.querySelector<HTMLButtonElement>(
     '[aria-label="下一页明细"]'
@@ -431,6 +569,8 @@ const replacementTask = createTask('channel_smart_schedule', 'schedule-3')
 const replacementAdjustment = createAdjustment({
   channel_id: 10,
   channel_name: '轮询新增渠道',
+  group: 'vip',
+  model: 'gpt-5',
 })
 await act(async () => {
   scheduleQueryClient.setQueryData(
@@ -440,8 +580,8 @@ await act(async () => {
       'schedule-3',
       1,
       '',
-      'all',
-      'all',
+      'vip',
+      'gpt-5',
       'all',
     ],
     createDetailResponse([replacementAdjustment])
@@ -470,4 +610,264 @@ assert.equal(
 await act(async () => scheduleRendered.root.unmount())
 scheduleRendered.container.remove()
 scheduleQueryClient.clear()
+
+domWindow.localStorage.clear()
+const preferenceNewestTask = createTask(
+  'channel_smart_schedule',
+  'preference-newest'
+)
+preferenceNewestTask.created_at += 120
+preferenceNewestTask.updated_at += 120
+const preferenceOldestTask = createTask(
+  'channel_smart_schedule',
+  'preference-oldest'
+)
+const lowerWeightAdjustment = createAdjustment({
+  channel_id: 21,
+  channel_name: '同优先级低权重渠道',
+  group: 'vip',
+  model: 'gpt-5',
+  new_priority: 100,
+  new_weight: 20,
+})
+const higherWeightAdjustment = createAdjustment({
+  channel_id: 22,
+  channel_name: '同优先级高权重渠道',
+  group: 'vip',
+  model: 'gpt-5',
+  new_priority: 100,
+  new_weight: 80,
+})
+const longDefaultModelName = 'gpt-5-mini-long-context-preview-model-2026-08-30'
+const defaultGroupAdjustment = createAdjustment({
+  channel_id: 23,
+  channel_name: '默认分组首个模型渠道',
+  group: 'default',
+  model: longDefaultModelName,
+  new_priority: 90,
+  new_weight: 100,
+})
+const preferenceQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+})
+preferenceQueryClient.setQueryData(
+  ['channel-monitor-smart-schedule-executions', 1],
+  {
+    success: true,
+    message: '',
+    data: {
+      page: 1,
+      page_size: 20,
+      total: 2,
+      items: [preferenceOldestTask, preferenceNewestTask],
+    },
+  }
+)
+preferenceQueryClient.setQueryData(
+  [
+    'channel-monitor-smart-schedule-executions',
+    'details',
+    'preference-newest',
+    1,
+    '',
+    '',
+    '',
+    'all',
+  ],
+  createDetailResponse([
+    lowerWeightAdjustment,
+    higherWeightAdjustment,
+    defaultGroupAdjustment,
+  ])
+)
+preferenceQueryClient.setQueryData(
+  [
+    'channel-monitor-smart-schedule-executions',
+    'details',
+    'preference-newest',
+    1,
+    '',
+    'vip',
+    'gpt-5',
+    'all',
+  ],
+  createDetailResponse([lowerWeightAdjustment, higherWeightAdjustment], {
+    groups: ['default', 'vip'],
+    models: ['gpt-5', longDefaultModelName],
+    models_by_group: {
+      vip: ['gpt-5'],
+      default: [longDefaultModelName],
+    },
+  })
+)
+preferenceQueryClient.setQueryData(
+  [
+    'channel-monitor-smart-schedule-executions',
+    'details',
+    'preference-newest',
+    1,
+    '',
+    'default',
+    longDefaultModelName,
+    'all',
+  ],
+  createDetailResponse([defaultGroupAdjustment], {
+    groups: ['default', 'vip'],
+    models: ['gpt-5', longDefaultModelName],
+    models_by_group: {
+      vip: ['gpt-5'],
+      default: [longDefaultModelName],
+    },
+  })
+)
+const preferenceModelsByGroup = new Map<string, readonly string[]>([
+  ['vip', ['gpt-5']],
+  ['default', [longDefaultModelName]],
+])
+const preferenceRendered = await renderDialog(
+  <ChannelMonitorSmartScheduleExecutionDialog
+    open
+    onOpenChange={() => {}}
+    groupOrder={['vip', 'default']}
+    modelsByGroup={preferenceModelsByGroup}
+  />,
+  preferenceQueryClient
+)
+await waitForDialogText(preferenceRendered.dialog, '同优先级高权重渠道')
+const preferenceTaskButtons =
+  preferenceRendered.dialog.querySelectorAll<HTMLButtonElement>(
+    'button[aria-pressed]'
+  )
+assert.ok(preferenceTaskButtons[0]?.textContent?.includes('preference-n'))
+const preferenceGroupTrigger =
+  preferenceRendered.dialog.querySelector<HTMLButtonElement>(
+    '[aria-label="按分组筛选"]'
+  )
+const preferenceModelTrigger =
+  preferenceRendered.dialog.querySelector<HTMLButtonElement>(
+    '[aria-label="按模型筛选"]'
+  )
+assert.ok(preferenceGroupTrigger?.textContent?.includes('vip'))
+assert.ok(preferenceModelTrigger?.textContent?.includes('gpt-5'))
+assert.ok(preferenceModelTrigger?.classList.contains('sm:w-64'))
+assert.equal(preferenceModelTrigger?.title, 'gpt-5')
+assert.ok(preferenceModelTrigger)
+await act(async () => preferenceModelTrigger.click())
+const vipModelContent = [
+  ...document.body.querySelectorAll<HTMLElement>(
+    '[data-slot="select-content"]'
+  ),
+].find((content) => content.textContent?.includes('全部模型'))
+assert.ok(vipModelContent)
+const vipModelOptions = [
+  ...vipModelContent.querySelectorAll<HTMLElement>('[data-slot="select-item"]'),
+].map((item) => item.textContent?.trim())
+assert.deepEqual(vipModelOptions, ['全部模型', 'gpt-5'])
+assert.equal(vipModelOptions.includes(longDefaultModelName), false)
+assert.ok(vipModelContent.classList.contains('w-max'))
+await act(async () => preferenceModelTrigger.click())
+const orderedAdjustmentRows = [
+  ...preferenceRendered.dialog.querySelectorAll<HTMLElement>(
+    '[data-adjustment-action]'
+  ),
+]
+assert.ok(orderedAdjustmentRows[0]?.textContent?.includes('同优先级高权重渠道'))
+assert.ok(orderedAdjustmentRows[1]?.textContent?.includes('同优先级低权重渠道'))
+assert.ok(preferenceGroupTrigger)
+await act(async () => preferenceGroupTrigger.click())
+let preferenceGroupContent: HTMLElement | undefined
+for (const content of document.body.querySelectorAll<HTMLElement>(
+  '[data-slot="select-content"]'
+)) {
+  if (content.textContent?.includes('default')) {
+    preferenceGroupContent = content
+  }
+}
+assert.ok(preferenceGroupContent)
+const preferenceGroupOptions = [
+  ...preferenceGroupContent.querySelectorAll<HTMLElement>(
+    '[data-slot="select-item"]'
+  ),
+]
+assert.deepEqual(
+  preferenceGroupOptions.map((item) => item.textContent?.trim()),
+  ['vip', 'default']
+)
+assert.equal(
+  preferenceGroupOptions.some(
+    (item) => item.textContent?.trim() === '全部分组'
+  ),
+  false
+)
+const defaultGroupOption = preferenceGroupOptions.find(
+  (item) => item.textContent?.trim() === 'default'
+)
+assert.ok(defaultGroupOption)
+await act(async () => defaultGroupOption.click())
+await waitForDialogText(preferenceRendered.dialog, '默认分组首个模型渠道')
+assert.equal(
+  domWindow.localStorage.getItem('channel-monitor:smart-schedule-display:v1'),
+  JSON.stringify({ group: 'default', model: longDefaultModelName })
+)
+assert.equal(preferenceModelTrigger.title, longDefaultModelName)
+assert.ok(preferenceModelTrigger.textContent?.includes(longDefaultModelName))
+await act(async () => preferenceRendered.root.unmount())
+preferenceRendered.container.remove()
+preferenceQueryClient.clear()
+
+const restoredPreferenceQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+})
+restoredPreferenceQueryClient.setQueryData(
+  ['channel-monitor-smart-schedule-executions', 1],
+  {
+    success: true,
+    message: '',
+    data: {
+      page: 1,
+      page_size: 20,
+      total: 1,
+      items: [preferenceNewestTask],
+    },
+  }
+)
+restoredPreferenceQueryClient.setQueryData(
+  [
+    'channel-monitor-smart-schedule-executions',
+    'details',
+    'preference-newest',
+    1,
+    '',
+    'default',
+    longDefaultModelName,
+    'all',
+  ],
+  createDetailResponse([defaultGroupAdjustment])
+)
+const restoredPreferenceRendered = await renderDialog(
+  <ChannelMonitorSmartScheduleExecutionDialog
+    open
+    onOpenChange={() => {}}
+    groupOrder={['vip', 'default']}
+    modelsByGroup={preferenceModelsByGroup}
+  />,
+  restoredPreferenceQueryClient
+)
+await waitForDialogText(
+  restoredPreferenceRendered.dialog,
+  '默认分组首个模型渠道'
+)
+assert.ok(
+  restoredPreferenceRendered.dialog
+    .querySelector<HTMLButtonElement>('[aria-label="按分组筛选"]')
+    ?.textContent?.includes('default')
+)
+assert.ok(
+  restoredPreferenceRendered.dialog
+    .querySelector<HTMLButtonElement>('[aria-label="按模型筛选"]')
+    ?.textContent?.includes(longDefaultModelName)
+)
+await act(async () => restoredPreferenceRendered.root.unmount())
+restoredPreferenceRendered.container.remove()
+restoredPreferenceQueryClient.clear()
 domWindow.close()

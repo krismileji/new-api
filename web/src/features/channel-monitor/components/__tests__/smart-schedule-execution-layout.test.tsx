@@ -56,8 +56,14 @@ describe('smart schedule execution responsive layout', () => {
     assert.ok(layout)
     assert.ok(details)
     assert.ok(adjustments)
+    assert.ok(layout.classList.contains('bg-background'))
     assert.ok(layout.classList.contains('grid-rows-[13rem_minmax(0,1fr)]'))
     assert.ok(layout.classList.contains('lg:grid-rows-1'))
+    assert.ok(
+      (
+        layout.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
+      )?.classList.contains('bg-muted/[0.04]')
+    )
     assert.ok(details.classList.contains('overflow-y-auto'))
     assert.ok(details.classList.contains('lg:overflow-hidden'))
     assert.ok(adjustments.classList.contains('shrink-0'))

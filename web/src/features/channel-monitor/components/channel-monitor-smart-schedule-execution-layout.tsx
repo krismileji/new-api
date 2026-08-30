@@ -30,14 +30,14 @@ export function ChannelMonitorSmartScheduleExecutionLayout(
 ) {
   return (
     <div
-      className='grid h-full min-h-0 grid-rows-[13rem_minmax(0,1fr)] gap-0 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1'
+      className='bg-background grid h-full min-h-0 grid-rows-[13rem_minmax(0,1fr)] gap-0 lg:grid-cols-[18rem_minmax(0,1fr)] lg:grid-rows-1'
       data-schedule-execution-layout
     >
-      <ScrollArea className='min-h-0 border-b lg:border-r lg:border-b-0'>
+      <ScrollArea className='bg-muted/[0.04] min-h-0 border-b lg:border-r lg:border-b-0'>
         {props.taskList}
       </ScrollArea>
       <div
-        className='min-h-0 overflow-y-auto lg:flex lg:flex-col lg:overflow-hidden'
+        className='bg-background min-h-0 overflow-y-auto lg:flex lg:flex-col lg:overflow-hidden'
         data-schedule-execution-details
       >
         {props.children}

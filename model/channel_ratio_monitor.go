@@ -796,6 +796,6 @@ func GetChannelMonitorTasksByType(taskType string, startIdx int, num int) (tasks
 	if err = query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	err = query.Order("created_at desc, id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	return tasks, total, err
 }

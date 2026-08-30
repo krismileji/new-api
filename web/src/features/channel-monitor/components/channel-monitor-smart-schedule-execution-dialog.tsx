@@ -18,15 +18,25 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Alert02Icon,
+  Activity01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArrowUp01Icon,
+  Cancel01Icon,
+  CheckmarkCircle02Icon,
+  Clock01Icon,
+  InformationCircleIcon,
   HistoryIcon,
   PinIcon,
   Refresh01Icon,
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -75,7 +85,14 @@ import {
   CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
 } from '../lib/query-options'
-import { formatChannelMonitorSmartScheduleFailureStage } from '../lib/smart-schedule-execution'
+import {
+  formatChannelMonitorSmartScheduleFailureStage,
+  loadChannelMonitorSmartScheduleExecutionSelection,
+  orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy,
+  orderChannelMonitorSmartScheduleModels,
+  orderChannelMonitorTasksByExecutionTime,
+  saveChannelMonitorSmartScheduleExecutionSelection,
+} from '../lib/smart-schedule-execution'
 import { isActiveChannelMonitorTask } from '../lib/task-status'
 import type {
   ChannelMonitorTask,
@@ -147,6 +164,26 @@ function taskSummary(task: ChannelMonitorTask) {
   return `调整 ${result.updated} · 保持 ${result.unchanged ?? 0} · 跳过 ${result.skipped ?? 0} · 失败 ${result.failed}`
 }
 
+function adjustmentIcon(action: ChannelMonitorTaskAdjustment['action']) {
+  if (action === 'failed') return Cancel01Icon
+  if (action === 'updated') return ArrowUp01Icon
+  if (action === 'unchanged') return CheckmarkCircle02Icon
+  return Clock01Icon
+}
+
+function taskStatusTone(status: ChannelMonitorTaskStatus) {
+  if (status === 'failed') return 'bg-destructive'
+  if (status === 'running') return 'bg-warning'
+  if (status === 'succeeded') return 'bg-success'
+  return 'bg-muted-foreground/50'
+}
+
+function adjustmentAccent(action: ChannelMonitorTaskAdjustment['action']) {
+  if (action === 'failed') return 'border-l-destructive'
+  if (action === 'updated') return 'border-l-primary'
+  return 'border-l-muted-foreground/40'
+}
+
 export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
   adjustment: ChannelMonitorTaskAdjustment
   channelNameById?: ReadonlyMap<number, string>
@@ -157,61 +194,115 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
   )
   const hasPreviousEffectiveResult =
     (adjustment.previous_effective_time ?? 0) > 0
+  const actionIcon = adjustmentIcon(adjustment.action)
+  const actionAccent = adjustmentAccent(adjustment.action)
   return (
-    <li className='grid min-w-0 gap-3 border-b p-3 last:border-b-0 lg:grid-cols-[minmax(12rem,1fr)_minmax(15rem,auto)_auto]'>
-      <div className='min-w-0'>
-        <div className='truncate font-medium' title={adjustment.channel_name}>
-          {adjustment.channel_name || `渠道 ${adjustment.channel_id}`}
+    <li
+      className={cn(
+        'grid min-w-0 gap-4 border-b border-l-4 bg-background px-4 py-4 transition-colors last:border-b-0 hover:bg-muted/20 sm:px-5',
+        actionAccent
+      )}
+      data-adjustment-action={adjustment.action}
+    >
+      <div className='flex min-w-0 items-start justify-between gap-3'>
+        <div className='flex min-w-0 items-start gap-3'>
+          <span className='bg-muted/60 text-muted-foreground mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg'>
+            <HugeiconsIcon icon={actionIcon} size={18} aria-hidden='true' />
+          </span>
+          <div className='min-w-0'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <div
+                className='truncate font-medium'
+                title={adjustment.channel_name}
+              >
+                {adjustment.channel_name || `渠道 ${adjustment.channel_id}`}
+              </div>
+              <Badge variant={actionVariant(adjustment.action)}>
+                {ACTION_LABELS[adjustment.action]}
+              </Badge>
+              {failureStage ? (
+                <Badge variant='destructive'>失败阶段：{failureStage}</Badge>
+              ) : null}
+            </div>
+            <div className='text-muted-foreground mt-1 flex flex-wrap gap-x-2 text-xs'>
+              <span>{adjustment.group || '未分组'}</span>
+              <span aria-hidden='true'>/</span>
+              <span>{adjustment.model || '未指定模型'}</span>
+              <span aria-hidden='true'>·</span>
+              <span>ID {adjustment.channel_id}</span>
+            </div>
+          </div>
         </div>
-        <div className='text-muted-foreground mt-1 text-xs break-all'>
-          ID {adjustment.channel_id} · {adjustment.group} / {adjustment.model}
+        <span className='text-muted-foreground hidden shrink-0 text-[11px] sm:block'>
+          路由变化
+        </span>
+      </div>
+
+      <div className='grid grid-cols-2 gap-2 sm:grid-cols-3'>
+        <div className='bg-muted/35 rounded-md px-3 py-2'>
+          <span className='text-muted-foreground block text-[11px]'>
+            综合评分
+          </span>
+          <strong className='mt-1 block text-sm tabular-nums'>
+            {adjustment.score == null
+              ? '-'
+              : `${(adjustment.score * 100).toFixed(2)} 分`}
+          </strong>
+        </div>
+        <div className='bg-muted/35 rounded-md px-3 py-2'>
+          <span className='text-muted-foreground block text-[11px]'>
+            优先级
+          </span>
+          <strong className='mt-1 block text-sm tabular-nums'>
+            {adjustment.old_priority}
+            <span className='text-muted-foreground mx-1 font-normal'>→</span>
+            {adjustment.new_priority}
+          </strong>
+        </div>
+        <div className='bg-muted/35 rounded-md px-3 py-2'>
+          <span className='text-muted-foreground block text-[11px]'>权重</span>
+          <strong className='mt-1 block text-sm tabular-nums'>
+            {adjustment.old_weight}
+            <span className='text-muted-foreground mx-1 font-normal'>→</span>
+            {adjustment.new_weight}
+          </strong>
         </div>
       </div>
-      <div className='flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums'>
-        <span>
-          <span className='text-muted-foreground'>评分 </span>
-          {adjustment.score == null
-            ? '-'
-            : `${(adjustment.score * 100).toFixed(2)} 分`}
-        </span>
-        <span>
-          <span className='text-muted-foreground'>优先级 </span>
-          {adjustment.old_priority} → <strong>{adjustment.new_priority}</strong>
-        </span>
-        <span>
-          <span className='text-muted-foreground'>权重 </span>
-          {adjustment.old_weight} → <strong>{adjustment.new_weight}</strong>
-        </span>
+
+      <div className='border-muted-foreground/15 bg-muted/15 rounded-md border px-3 py-2.5 text-xs'>
+        <span className='text-foreground font-medium'>调度理由</span>
+        <p className='text-muted-foreground mt-1 break-words'>
+          {adjustment.reason || '未记录原因'}
+        </p>
       </div>
-      <div className='flex flex-wrap gap-1 lg:justify-self-end'>
-        <Badge variant={actionVariant(adjustment.action)}>
-          {ACTION_LABELS[adjustment.action]}
-        </Badge>
-        {failureStage ? (
-          <Badge variant='destructive'>失败阶段：{failureStage}</Badge>
-        ) : null}
-      </div>
-      <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
-        <span className='text-foreground font-medium'>原因：</span>
-        {adjustment.reason || '未记录原因'}
-      </p>
-      <p className='text-muted-foreground min-w-0 text-xs break-words lg:col-span-3'>
-        <span className='text-foreground font-medium'>上一轮生效结果：</span>
-        {hasPreviousEffectiveResult
-          ? `P${adjustment.previous_effective_priority ?? 0} / W${adjustment.previous_effective_weight ?? 0} · ${formatTimestampToDate(adjustment.previous_effective_time ?? 0)}`
-          : '未记录已生效结果'}
-        {adjustment.action === 'failed' && hasPreviousEffectiveResult
-          ? '；本轮失败未覆盖，上一轮结果继续生效'
-          : ''}
-      </p>
+
+      {hasPreviousEffectiveResult ? (
+        <div className='text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
+          <HugeiconsIcon
+            icon={InformationCircleIcon}
+            size={14}
+            aria-hidden='true'
+          />
+          <span>
+            上一轮生效：P{adjustment.previous_effective_priority ?? 0} / W
+            {adjustment.previous_effective_weight ?? 0}
+          </span>
+          <span>
+            {formatTimestampToDate(adjustment.previous_effective_time ?? 0)}
+          </span>
+          {adjustment.action === 'failed' ? (
+            <span className='text-destructive'>本轮失败未覆盖，继续沿用</span>
+          ) : null}
+        </div>
+      ) : null}
+
       <ChannelMonitorSmartScheduleScoreDetails
         details={adjustment.score_details}
-        className='lg:col-span-3'
         snapshotLabel='本次执行快照'
         channelNameById={props.channelNameById}
       />
       {adjustment.manual_primary || adjustment.manual_primary_until ? (
-        <div className='flex flex-wrap items-center gap-2 text-xs lg:col-span-3'>
+        <div className='flex flex-wrap items-center gap-2 text-xs'>
           <Badge variant='secondary'>
             <HugeiconsIcon icon={PinIcon} data-icon='inline-start' />
             管理员固定
@@ -236,31 +327,58 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
 function TaskListItem(props: {
   task: ChannelMonitorTask
   selected: boolean
+  position: number
   onSelect: () => void
 }) {
+  const statusTone = taskStatusTone(props.task.status)
+  const result = props.task.result
   return (
     <button
       type='button'
       className={cn(
-        'w-full border-b px-3 py-3 text-left transition-colors hover:bg-muted/60',
-        props.selected && 'bg-muted'
+        'relative w-full border-b px-4 py-3.5 text-left transition-colors hover:bg-muted/60',
+        props.selected &&
+          'bg-primary/[0.06] shadow-[inset_3px_0_0_var(--primary)]'
       )}
       aria-pressed={props.selected}
+      data-task-status={props.task.status}
       onClick={props.onSelect}
     >
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-xs tabular-nums'>
-          {formatTimestampToDate(props.task.created_at)}
+      <div className='flex items-start gap-3'>
+        <span className='relative mt-1.5 flex shrink-0 justify-center'>
+          <span className={cn('size-2.5 rounded-full', statusTone)} />
         </span>
-        <Badge variant={statusVariant(props.task.status)}>
-          {STATUS_LABELS[props.task.status]}
-        </Badge>
+        <span className='min-w-0 flex-1'>
+          <span className='flex items-center justify-between gap-2'>
+            <span className='font-medium'>第 {props.position} 批</span>
+            <Badge variant={statusVariant(props.task.status)}>
+              {STATUS_LABELS[props.task.status]}
+            </Badge>
+          </span>
+          <span className='text-muted-foreground mt-1 block text-xs tabular-nums'>
+            {formatTimestampToDate(props.task.created_at)}
+          </span>
+          <span className='mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs tabular-nums'>
+            <span className='text-primary'>{result?.updated ?? 0} 已调整</span>
+            <span className='text-muted-foreground'>
+              {(result?.unchanged ?? 0) + (result?.skipped ?? 0)} 保持
+            </span>
+            <span
+              className={
+                result?.failed ? 'text-destructive' : 'text-muted-foreground'
+              }
+            >
+              {result?.failed ?? 0} 失败
+            </span>
+          </span>
+        </span>
       </div>
-      <div className='text-muted-foreground mt-2 truncate text-xs'>
-        {taskSummary(props.task)}
-      </div>
-      <div className='text-muted-foreground mt-1 text-[11px]'>
-        耗时 {formatDuration(props.task)}
+      <div className='text-muted-foreground mt-2 pl-[1.375rem] text-[11px]'>
+        <span>耗时 {formatDuration(props.task)}</span>
+        <span className='mx-1.5' aria-hidden='true'>
+          ·
+        </span>
+        <span className='font-mono'>{props.task.task_id.slice(0, 12)}</span>
       </div>
     </button>
   )
@@ -269,6 +387,16 @@ function TaskListItem(props: {
 type ChannelMonitorSmartScheduleExecutionPanelProps = {
   active: boolean
   groupOrder?: readonly string[]
+  modelsByGroup?: ReadonlyMap<string, readonly string[]>
+  selection?: ChannelMonitorSmartScheduleExecutionSelection
+  onSelectionChange?: (
+    selection: ChannelMonitorSmartScheduleExecutionSelection
+  ) => void
+}
+
+export type ChannelMonitorSmartScheduleExecutionSelection = {
+  group: string
+  model: string
 }
 
 export function ChannelMonitorSmartScheduleExecutionPanel(
@@ -278,8 +406,11 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   const [page, setPage] = useState(1)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [groupFilter, setGroupFilter] = useState('all')
-  const [modelFilter, setModelFilter] = useState('all')
+  const [selection, setSelection] = useState(
+    () => props.selection ?? loadChannelMonitorSmartScheduleExecutionSelection()
+  )
+  const [groupFilter, setGroupFilter] = useState(() => selection.group)
+  const [modelFilter, setModelFilter] = useState(() => selection.model)
   const [actionFilter, setActionFilter] = useState('all')
   const [detailPage, setDetailPage] = useState(1)
   const query = useQuery({
@@ -291,7 +422,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     refetchOnMount: 'always',
   })
   const tasks = useMemo(
-    () => query.data?.data.items ?? [],
+    () => orderChannelMonitorTasksByExecutionTime(query.data?.data.items ?? []),
     [query.data?.data.items]
   )
   const total = query.data?.data.total ?? 0
@@ -315,8 +446,9 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
           page: detailPage,
           pageSize: DETAIL_PAGE_SIZE,
           search: search.trim(),
-          group: groupFilter === 'all' ? undefined : groupFilter,
-          model: modelFilter === 'all' ? undefined : modelFilter,
+          group: groupFilter || undefined,
+          model:
+            modelFilter === 'all' || !modelFilter ? undefined : modelFilter,
           action: actionFilter === 'all' ? undefined : actionFilter,
         }
       ),
@@ -324,6 +456,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
       props.active &&
       selectedTask != null &&
       !isActiveChannelMonitorTask(selectedTask),
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[2] === selectedTask?.task_id
+        ? keepPreviousData(previousData)
+        : undefined,
     staleTime: Number.POSITIVE_INFINITY,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,
@@ -336,7 +472,13 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     await Promise.all([query.refetch(), detailRefresh])
   }
   const detailResult = detailQuery.data?.data
-  const adjustments = detailResult?.items ?? []
+  const adjustments = useMemo(
+    () =>
+      orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy(
+        detailResult?.items ?? []
+      ),
+    [detailResult?.items]
+  )
   const channelNameById = useMemo(
     () =>
       new Map(
@@ -350,15 +492,24 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     () => orderGroupNames(detailResult?.groups ?? [], props.groupOrder),
     [detailResult?.groups, props.groupOrder]
   )
+  const historicalModelsByGroup = detailResult?.models_by_group
   const models = useMemo(
-    () => detailResult?.models ?? [],
-    [detailResult?.models]
+    () =>
+      orderChannelMonitorSmartScheduleModels(
+        historicalModelsByGroup
+          ? (historicalModelsByGroup[groupFilter] ?? [])
+          : (detailResult?.models ?? []),
+        props.modelsByGroup?.get(groupFilter) ?? []
+      ),
+    [
+      detailResult?.models,
+      groupFilter,
+      historicalModelsByGroup,
+      props.modelsByGroup,
+    ]
   )
   const groupOptions = useMemo(
-    () => [
-      { value: 'all', label: '全部分组' },
-      ...groups.map((group) => ({ value: group, label: group })),
-    ],
+    () => groups.map((group) => ({ value: group, label: group })),
     [groups]
   )
   const modelOptions = useMemo(
@@ -371,6 +522,67 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   const latestCompletedTaskId = tasks.find(
     (task) => !isActiveChannelMonitorTask(task)
   )?.task_id
+  const externalGroup = props.selection?.group
+  const externalModel = props.selection?.model
+
+  useEffect(() => {
+    if (externalGroup === undefined || externalModel === undefined) return
+    setSelection({ group: externalGroup, model: externalModel })
+    setGroupFilter(externalGroup)
+    setModelFilter(externalModel)
+  }, [externalGroup, externalModel])
+
+  useEffect(() => {
+    if (groups.length === 0) return
+    let nextGroup = groups[0]
+    if (selection.group && groups.includes(selection.group)) {
+      nextGroup = selection.group
+    } else if (groups.includes(groupFilter)) {
+      nextGroup = groupFilter
+    }
+    if (nextGroup === groupFilter) return
+    const availableModels = historicalModelsByGroup
+      ? (historicalModelsByGroup[nextGroup] ?? [])
+      : (detailResult?.models ?? [])
+    const nextModels = orderChannelMonitorSmartScheduleModels(
+      availableModels,
+      props.modelsByGroup?.get(nextGroup) ?? []
+    )
+    let nextModel = nextModels[0] ?? ''
+    if (
+      selection.group === nextGroup &&
+      (selection.model === 'all' || nextModels.includes(selection.model))
+    ) {
+      nextModel = selection.model
+    }
+    setGroupFilter(nextGroup)
+    setModelFilter(nextModel)
+    setDetailPage(1)
+  }, [
+    detailResult?.models,
+    groupFilter,
+    groups,
+    historicalModelsByGroup,
+    props.modelsByGroup,
+    selection.group,
+    selection.model,
+  ])
+
+  useEffect(() => {
+    if (models.length === 0) return
+    let nextModel = models[0]
+    if (
+      selection.group === groupFilter &&
+      (selection.model === 'all' || models.includes(selection.model))
+    ) {
+      nextModel = selection.model
+    } else if (modelFilter === 'all' || models.includes(modelFilter)) {
+      nextModel = modelFilter
+    }
+    if (nextModel === modelFilter) return
+    setModelFilter(nextModel)
+    setDetailPage(1)
+  }, [groupFilter, modelFilter, models, selection.group, selection.model])
 
   useEffect(() => {
     if (tasks.length === 0) {
@@ -380,8 +592,6 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     if (!tasks.some((task) => task.task_id === selectedTaskId)) {
       setSelectedTaskId(tasks[0].task_id)
       setSearch('')
-      setGroupFilter('all')
-      setModelFilter('all')
       setActionFilter('all')
       setDetailPage(1)
     }
@@ -396,10 +606,15 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
 
   const resetFilters = () => {
     setSearch('')
-    setGroupFilter('all')
-    setModelFilter('all')
     setActionFilter('all')
     setDetailPage(1)
+  }
+  const saveSelection = (
+    nextSelection: ChannelMonitorSmartScheduleExecutionSelection
+  ) => {
+    setSelection(nextSelection)
+    saveChannelMonitorSmartScheduleExecutionSelection(nextSelection)
+    props.onSelectionChange?.(nextSelection)
   }
   const selectTask = (taskId: string) => {
     if (taskId !== selectedTask?.task_id) resetFilters()
@@ -418,6 +633,14 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   }, [page, query.data, totalPages])
 
   const result = selectedTask?.result
+  const selectedTaskPosition = selectedTask
+    ? (page - 1) * PAGE_SIZE +
+      Math.max(
+        0,
+        tasks.findIndex((task) => task.task_id === selectedTask.task_id)
+      ) +
+      1
+    : 0
   const detailTotal = detailResult?.total ?? 0
   const detailTotalPages = Math.max(
     1,
@@ -429,6 +652,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     setDetailPage(detailTotalPages)
   }, [detailPage, detailResult, detailTotalPages])
 
+  const detailPending = detailQuery.isLoading || detailQuery.isPlaceholderData
   let detailBody
   if (selectedTask && isActiveChannelMonitorTask(selectedTask)) {
     detailBody = (
@@ -439,11 +663,15 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
         </EmptyHeader>
       </Empty>
     )
-  } else if (detailQuery.isLoading) {
+  } else if (detailPending) {
     detailBody = (
-      <div className='space-y-3 p-4'>
+      <div className='space-y-3 p-4' data-schedule-execution-detail-loading>
         <Skeleton className='h-28 w-full' />
         <Skeleton className='h-28 w-full' />
+        <div className='text-muted-foreground flex items-center justify-center gap-2 text-xs'>
+          <Spinner aria-label='执行明细加载中' />
+          <span>正在加载执行明细</span>
+        </div>
       </div>
     )
   } else if (detailQuery.isError) {
@@ -474,7 +702,7 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
     )
   } else if (adjustments.length > 0) {
     detailBody = (
-      <ol className='divide-y'>
+      <ol className='bg-background'>
         {adjustments.map((adjustment) => (
           <ChannelMonitorSmartScheduleAdjustmentRow
             key={`${adjustment.channel_id}-${adjustment.group}-${adjustment.model}`}
@@ -542,13 +770,29 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
       <ChannelMonitorSmartScheduleExecutionLayout
         taskList={
           <>
-            <div className='bg-muted/20 border-b px-3 py-2 text-xs font-medium'>
-              执行批次（共 {total} 条）
+            <div className='bg-muted/20 border-b px-4 py-3'>
+              <div className='flex items-center gap-2 text-sm font-medium'>
+                <span className='bg-primary/10 text-primary flex size-7 items-center justify-center rounded-md'>
+                  <HugeiconsIcon
+                    icon={Activity01Icon}
+                    size={16}
+                    aria-hidden='true'
+                  />
+                </span>
+                <span>执行时间线</span>
+                <span className='text-muted-foreground ml-auto text-xs tabular-nums'>
+                  {total} 批
+                </span>
+              </div>
+              <p className='text-muted-foreground mt-1 pl-9 text-[11px]'>
+                选择一批查看完整调度结果
+              </p>
             </div>
-            {tasks.map((task) => (
+            {tasks.map((task, index) => (
               <TaskListItem
                 key={task.task_id}
                 task={task}
+                position={(page - 1) * PAGE_SIZE + index + 1}
                 selected={task.task_id === selectedTask?.task_id}
                 onSelect={() => selectTask(task.task_id)}
               />
@@ -567,25 +811,49 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 </AlertDescription>
               </Alert>
             ) : null}
-            <div className='border-b p-4'>
-              <div className='flex flex-wrap items-start justify-between gap-3'>
-                <div className='min-w-0'>
-                  <div className='flex flex-wrap items-center gap-2'>
-                    <h3 className='font-medium'>智能调度执行详情</h3>
-                    <Badge variant={statusVariant(selectedTask.status)}>
-                      {STATUS_LABELS[selectedTask.status]}
-                    </Badge>
-                    {result?.force_reset ? (
-                      <Badge variant='outline'>强制重算</Badge>
-                    ) : null}
+            <div className='bg-muted/[0.08] border-b p-4 sm:p-5'>
+              <div className='flex flex-wrap items-start justify-between gap-4'>
+                <div className='flex min-w-0 items-start gap-3'>
+                  <span className='bg-primary/10 text-primary mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl'>
+                    <HugeiconsIcon
+                      icon={Activity01Icon}
+                      size={20}
+                      aria-hidden='true'
+                    />
+                  </span>
+                  <div className='min-w-0'>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <span className='text-muted-foreground text-xs font-medium tracking-wide uppercase'>
+                        第 {selectedTaskPosition} 批执行
+                      </span>
+                      <Badge variant={statusVariant(selectedTask.status)}>
+                        {STATUS_LABELS[selectedTask.status]}
+                      </Badge>
+                      {result?.force_reset ? (
+                        <Badge variant='outline'>强制重算</Badge>
+                      ) : null}
+                    </div>
+                    <h3 className='mt-1 truncate text-base font-semibold'>
+                      智能调度执行详情
+                    </h3>
+                    <p className='text-muted-foreground mt-1 flex flex-wrap gap-x-2 text-xs'>
+                      <span>
+                        {formatTimestampToDate(selectedTask.created_at)}
+                      </span>
+                      <span aria-hidden='true'>·</span>
+                      <span>耗时 {formatDuration(selectedTask)}</span>
+                      <span aria-hidden='true'>·</span>
+                      <span className='font-mono'>{selectedTask.task_id}</span>
+                    </p>
                   </div>
-                  <p className='text-muted-foreground mt-1 text-xs'>
-                    {formatTimestampToDate(selectedTask.created_at)} · 任务 ID{' '}
-                    {selectedTask.task_id} · 耗时 {formatDuration(selectedTask)}
-                  </p>
                 </div>
-                <div className='text-muted-foreground text-xs tabular-nums'>
-                  {taskSummary(selectedTask)}
+                <div className='border-primary/20 bg-primary/[0.06] text-primary rounded-lg border px-3 py-2 text-right text-xs tabular-nums'>
+                  <span className='text-primary/70 block text-[11px]'>
+                    本批执行结论
+                  </span>
+                  <strong className='mt-1 block'>
+                    {taskSummary(selectedTask)}
+                  </strong>
                 </div>
               </div>
               {selectedTask.error ? (
@@ -597,44 +865,80 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   </AlertDescription>
                 </Alert>
               ) : null}
-              <div className='mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4'>
-                <div className='bg-muted/40 rounded-md p-2'>
-                  <span className='text-muted-foreground block'>总路由</span>
-                  <strong>{result?.total ?? 0}</strong>
+              <div className='mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4'>
+                <div className='border-border/70 bg-background rounded-lg border px-3 py-2.5'>
+                  <span className='text-muted-foreground block text-[11px]'>
+                    总路由
+                  </span>
+                  <strong className='mt-1 block text-lg tabular-nums'>
+                    {result?.total ?? 0}
+                  </strong>
                 </div>
-                <div className='bg-muted/40 rounded-md p-2'>
-                  <span className='text-muted-foreground block'>已调整</span>
-                  <strong>{result?.updated ?? 0}</strong>
+                <div className='border-primary/20 bg-primary/[0.04] rounded-lg border px-3 py-2.5'>
+                  <span className='text-muted-foreground block text-[11px]'>
+                    已调整
+                  </span>
+                  <strong className='text-primary mt-1 block text-lg tabular-nums'>
+                    {result?.updated ?? 0}
+                  </strong>
                 </div>
-                <div className='bg-muted/40 rounded-md p-2'>
-                  <span className='text-muted-foreground block'>保持/跳过</span>
-                  <strong>
+                <div className='border-border/70 bg-background rounded-lg border px-3 py-2.5'>
+                  <span className='text-muted-foreground block text-[11px]'>
+                    保持 / 跳过
+                  </span>
+                  <strong className='mt-1 block text-lg tabular-nums'>
                     {(result?.unchanged ?? 0) + (result?.skipped ?? 0)}
                   </strong>
                 </div>
-                <div className='bg-muted/40 rounded-md p-2'>
-                  <span className='text-muted-foreground block'>失败</span>
+                <div
+                  className={cn(
+                    'rounded-lg border px-3 py-2.5',
+                    result?.failed
+                      ? 'border-destructive/30 bg-destructive/[0.05]'
+                      : 'border-border/70 bg-background'
+                  )}
+                >
+                  <span className='text-muted-foreground block text-[11px]'>
+                    失败
+                  </span>
                   <strong
-                    className={result?.failed ? 'text-destructive' : undefined}
+                    className={cn(
+                      'mt-1 block text-lg tabular-nums',
+                      result?.failed && 'text-destructive'
+                    )}
                   >
                     {result?.failed ?? 0}
                   </strong>
                 </div>
               </div>
               {result ? (
-                <p className='text-muted-foreground mt-3 text-xs'>
-                  {(result.group_policy_count ?? result.group_policies?.length)
-                    ? `按 ${result.group_policy_count ?? result.group_policies?.length} 个分组策略执行`
-                    : '未记录分组策略'}{' '}
-                  · 性能窗口 {result.performance_window_minutes ?? 0} 分钟 ·
-                  最长稳定性评分窗口 {result.stability_window_minutes ?? 0} 分钟
-                </p>
+                <div className='text-muted-foreground mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs'>
+                  <span className='text-foreground font-medium'>执行参数</span>
+                  <span>
+                    {(result.group_policy_count ??
+                    result.group_policies?.length)
+                      ? `按 ${result.group_policy_count ?? result.group_policies?.length} 个分组策略执行`
+                      : '未记录分组策略'}
+                  </span>
+                  <span aria-hidden='true'>·</span>
+                  <span>
+                    性能窗口 {result.performance_window_minutes ?? 0} 分钟
+                  </span>
+                  <span aria-hidden='true'>·</span>
+                  <span>
+                    稳定性窗口 {result.stability_window_minutes ?? 0} 分钟
+                  </span>
+                </div>
               ) : null}
             </div>
-            <div className='flex flex-wrap items-center gap-2 border-b p-3'>
+            <div className='bg-background flex flex-wrap items-center gap-2 border-b p-3 sm:px-5'>
+              <div className='text-muted-foreground mr-1 flex items-center gap-1.5 text-xs font-medium'>
+                <HugeiconsIcon icon={Search01Icon} size={15} />
+                <span>筛选明细</span>
+              </div>
               <InputGroup className='min-w-48 flex-1 ring-inset sm:max-w-xs'>
                 <InputGroupAddon>
-                  <HugeiconsIcon icon={Search01Icon} />
+                  <HugeiconsIcon icon={Search01Icon} size={16} />
                 </InputGroupAddon>
                 <InputGroupInput
                   value={search}
@@ -650,18 +954,39 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 items={groupOptions}
                 value={groupFilter}
                 onValueChange={(value) => {
-                  setGroupFilter(value ?? 'all')
+                  if (value === null) return
+                  const availableModels = historicalModelsByGroup
+                    ? (historicalModelsByGroup[value] ?? [])
+                    : (detailResult?.models ?? [])
+                  const nextModels = orderChannelMonitorSmartScheduleModels(
+                    availableModels,
+                    props.modelsByGroup?.get(value) ?? []
+                  )
+                  const nextModel = nextModels[0] ?? ''
+                  setGroupFilter(value)
+                  setModelFilter(nextModel)
+                  saveSelection({
+                    group: value,
+                    model: nextModel,
+                  })
                   setDetailPage(1)
                 }}
               >
-                <SelectTrigger className='w-36' aria-label='按分组筛选'>
-                  <SelectValue placeholder='全部分组' />
+                <SelectTrigger
+                  className='w-full min-w-0 sm:w-44'
+                  aria-label='按分组筛选'
+                  title={groupFilter || undefined}
+                >
+                  <SelectValue placeholder='选择分组' />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  align='start'
+                  alignItemWithTrigger={false}
+                  className='w-max max-w-[min(24rem,calc(100vw-2rem))] min-w-[var(--anchor-width)]'
+                >
                   <SelectGroup>
-                    <SelectItem value='all'>全部分组</SelectItem>
                     {groups.map((group) => (
-                      <SelectItem key={group} value={group}>
+                      <SelectItem key={group} value={group} title={group}>
                         {group}
                       </SelectItem>
                     ))}
@@ -672,18 +997,43 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                 items={modelOptions}
                 value={modelFilter}
                 onValueChange={(value) => {
-                  setModelFilter(value ?? 'all')
+                  if (value === null) return
+                  setModelFilter(value)
+                  saveSelection({
+                    group: groupFilter,
+                    model: value,
+                  })
                   setDetailPage(1)
                 }}
               >
-                <SelectTrigger className='w-36' aria-label='按模型筛选'>
-                  <SelectValue placeholder='全部模型' />
+                <SelectTrigger
+                  className='w-full min-w-0 sm:w-64'
+                  aria-label='按模型筛选'
+                  title={
+                    modelFilter === 'all'
+                      ? '全部模型'
+                      : modelFilter || undefined
+                  }
+                >
+                  <SelectValue
+                    className='min-w-0 truncate'
+                    placeholder='全部模型'
+                  />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  align='start'
+                  alignItemWithTrigger={false}
+                  className='w-max max-w-[min(24rem,calc(100vw-2rem))] min-w-[var(--anchor-width)]'
+                >
                   <SelectGroup>
                     <SelectItem value='all'>全部模型</SelectItem>
                     {models.map((model) => (
-                      <SelectItem key={model} value={model}>
+                      <SelectItem
+                        key={model}
+                        value={model}
+                        title={model}
+                        className='[&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:break-all [&_[data-slot=select-item-text]]:whitespace-normal'
+                      >
                         {model}
                       </SelectItem>
                     ))}
@@ -698,10 +1048,13 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   setDetailPage(1)
                 }}
               >
-                <SelectTrigger className='w-28' aria-label='按结果筛选'>
+                <SelectTrigger
+                  className='w-full sm:w-28'
+                  aria-label='按结果筛选'
+                >
                   <SelectValue placeholder='全部结果' />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent alignItemWithTrigger={false}>
                   <SelectGroup>
                     <SelectItem value='all'>全部结果</SelectItem>
                     <SelectItem value='updated'>已调整</SelectItem>
@@ -711,22 +1064,35 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              {search ||
-              groupFilter !== 'all' ||
-              modelFilter !== 'all' ||
-              actionFilter !== 'all' ? (
+              {search || actionFilter !== 'all' ? (
                 <Button variant='ghost' size='sm' onClick={resetFilters}>
                   清除筛选
                 </Button>
               ) : null}
               <span className='text-muted-foreground ml-auto text-xs tabular-nums'>
-                当前页 {adjustments.length} 条 · 共 {detailTotal} 条
+                {detailQuery.isFetching
+                  ? '正在更新'
+                  : `${adjustments.length} / ${detailTotal} 条`}
+              </span>
+            </div>
+            <div
+              className='bg-muted/20 text-muted-foreground flex items-start gap-2 border-b px-4 py-2.5 text-xs sm:px-5'
+              data-routing-semantics
+            >
+              <HugeiconsIcon
+                icon={InformationCircleIcon}
+                className='mt-0.5 shrink-0'
+                size={14}
+                aria-hidden='true'
+              />
+              <span>
+                优先级高的路由层先参与调度；同优先级内按权重随机选择，权重越高命中概率越高。
               </span>
             </div>
             <ChannelMonitorSmartScheduleExecutionAdjustments>
               {detailBody}
             </ChannelMonitorSmartScheduleExecutionAdjustments>
-            {detailTotal > 0 ? (
+            {detailTotal > 0 && !detailQuery.isPlaceholderData ? (
               <div className='flex shrink-0 items-center justify-between gap-3 border-t px-3 py-2'>
                 <span className='text-muted-foreground text-xs tabular-nums'>
                   明细第 {detailPage} / {detailTotalPages} 页
@@ -836,6 +1202,11 @@ type ChannelMonitorSmartScheduleExecutionDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   groupOrder?: readonly string[]
+  modelsByGroup?: ReadonlyMap<string, readonly string[]>
+  selection?: ChannelMonitorSmartScheduleExecutionSelection
+  onSelectionChange?: (
+    selection: ChannelMonitorSmartScheduleExecutionSelection
+  ) => void
 }
 
 export function ChannelMonitorSmartScheduleExecutionDialog(
@@ -857,6 +1228,9 @@ export function ChannelMonitorSmartScheduleExecutionDialog(
         <ChannelMonitorSmartScheduleExecutionPanel
           active={props.open}
           groupOrder={props.groupOrder}
+          modelsByGroup={props.modelsByGroup}
+          selection={props.selection}
+          onSelectionChange={props.onSelectionChange}
         />
       </DialogContent>
     </Dialog>

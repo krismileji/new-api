@@ -1247,6 +1247,7 @@ export type ChannelMonitorSmartScheduleExecutionDetailPage = {
   items: ChannelMonitorTaskAdjustment[]
   groups: string[]
   models: string[]
+  models_by_group: Record<string, string[]>
   channel_names: Record<string, string>
 }
 
