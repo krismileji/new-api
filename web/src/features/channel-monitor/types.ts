@@ -233,8 +233,6 @@ export type ChannelMonitorApplyGroupResult = ChannelMonitorFetchResult & {
 
 export type ChannelMonitorRealtimeMetadata = {
   generated_at?: number
-  snapshot_age_seconds?: number
-  stale?: boolean
   data_cutoff_at: number
   processed_at: number
   event_watermark: number

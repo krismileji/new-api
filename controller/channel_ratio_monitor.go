@@ -487,9 +487,6 @@ func getChannelMonitorOperator(c *gin.Context) (int, string) {
 }
 
 func GetChannelMonitorOverview(c *gin.Context) {
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotOverview, GetChannelMonitorOverview) {
-		return
-	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {
 		common.ApiError(c, err)
@@ -526,9 +523,8 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		}
 	}
 	// Include zero-value entries for channels without a monitor row. This lets
-	// the request-scoped snapshot clear a previously cached limit when an admin
-	// removes/disables that row; omitting the key would otherwise preserve the
-	// stale in-process configuration.
+	// the caller-provided configuration clear a previously cached limit when an
+	// admin removes or disables that row.
 	concurrencyConfigs := make(map[int]model.ChannelConcurrencyConfig, len(channelIDs))
 	for _, channelID := range channelIDs {
 		concurrencyConfigs[channelID] = model.ChannelConcurrencyConfig{}

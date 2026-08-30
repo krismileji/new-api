@@ -163,9 +163,6 @@ type channelMonitorCostOverview struct {
 }
 
 func GetChannelMonitorCostOverview(c *gin.Context) {
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotCost, GetChannelMonitorCostOverview) {
-		return
-	}
 	days := channelMonitorCostDefaultDays
 	if rawDays := c.Query("days"); rawDays != "" {
 		parsedDays, err := strconv.Atoi(rawDays)

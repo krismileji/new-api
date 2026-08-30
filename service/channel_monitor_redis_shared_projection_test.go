@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -492,7 +493,10 @@ func TestChannelMonitorRedisSharedProjectionRejectsDimensionExpansion(t *testing
 }
 
 type channelMonitorRedisSharedProjectionReadCountingHook struct {
-	hgetall atomic.Int64
+	hgetall      atomic.Int64
+	blockOnce    sync.Once
+	blockStarted chan struct{}
+	blockRelease <-chan struct{}
 }
 
 func (*channelMonitorRedisSharedProjectionReadCountingHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
@@ -509,11 +513,99 @@ func (hook *channelMonitorRedisSharedProjectionReadCountingHook) BeforeProcessPi
 			hook.hgetall.Add(1)
 		}
 	}
+	if hook.blockStarted != nil {
+		hook.blockOnce.Do(func() {
+			close(hook.blockStarted)
+			<-hook.blockRelease
+		})
+	}
 	return ctx, nil
 }
 
 func (*channelMonitorRedisSharedProjectionReadCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
 	return nil
+}
+
+type channelMonitorRedisSharedObservedContext struct {
+	context.Context
+	doneObserved chan struct{}
+	once         sync.Once
+}
+
+func (ctx *channelMonitorRedisSharedObservedContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.doneObserved) })
+	return ctx.Context.Done()
+}
+
+func TestChannelMonitorRedisSharedProjectionCoalescesConcurrentReadsAndReturnsCopies(t *testing.T) {
+	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
+	occurredAt := int64(1_750_000_000)
+	firstToken := 125.0
+	event := newChannelMonitorRedisSharedProjectionTestEvent("coalesced-query", occurredAt)
+	event.FirstTokenMs = &firstToken
+	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	hook := &channelMonitorRedisSharedProjectionReadCountingHook{
+		blockStarted: blocked,
+		blockRelease: release,
+	}
+	client.AddHook(hook)
+	startAt, endAt := occurredAt-60, occurredAt+60
+	type queryResult struct {
+		view ChannelMonitorRedisSharedProjectionView
+		err  error
+	}
+	firstResult := make(chan queryResult, 1)
+	go func() {
+		view, err := projection.Query(context.Background(), startAt, endAt)
+		firstResult <- queryResult{view: view, err: err}
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("first projection query did not reach Redis")
+	}
+
+	secondContext := &channelMonitorRedisSharedObservedContext{
+		Context:      context.Background(),
+		doneObserved: make(chan struct{}),
+	}
+	secondResult := make(chan queryResult, 1)
+	go func() {
+		view, err := projection.Query(secondContext, startAt, endAt)
+		secondResult <- queryResult{view: view, err: err}
+	}()
+	select {
+	case <-secondContext.doneObserved:
+	case <-time.After(time.Second):
+		t.Fatal("second projection query did not join the in-flight read")
+	}
+	close(release)
+
+	first := <-firstResult
+	second := <-secondResult
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	assert.Equal(t, first.view, second.view)
+
+	windowStart, windowEnd, _, _, _ := projection.queryWindow(startAt, endAt)
+	expectedReads := (windowEnd - windowStart) / 60
+	firstDay := model.ChannelDailyCostDayStart(windowStart)
+	lastDay := model.ChannelDailyCostDayStart(windowEnd - 1)
+	for dayStart := firstDay; dayStart <= lastDay; dayStart += 24 * 60 * 60 {
+		expectedReads++
+	}
+	assert.Equal(t, expectedReads, hook.hgetall.Load())
+
+	firstChannel := first.view.Channels[event.ChannelId]
+	firstChannel.EventCount = 99
+	*firstChannel.LatestFirstTokenMs = 999
+	first.view.Channels[event.ChannelId] = firstChannel
+	assert.Equal(t, int64(1), second.view.Channels[event.ChannelId].EventCount)
+	assert.Equal(t, firstToken, *second.view.Channels[event.ChannelId].LatestFirstTokenMs)
 }
 
 func TestChannelMonitorRedisSharedProjectionMetadataReusesRecentQueryWatermark(t *testing.T) {

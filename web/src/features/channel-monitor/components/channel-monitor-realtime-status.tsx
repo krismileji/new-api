@@ -20,7 +20,6 @@ import { Badge } from '@/components/ui/badge'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { shouldWarnChannelMonitorPageSnapshot } from '../lib/realtime-metadata'
 import type { ChannelMonitorRealtimeMetadata } from '../types'
 
 type ChannelMonitorRealtimeStatusProps = {
@@ -93,9 +92,6 @@ export function ChannelMonitorRealtimeStatus(
       </Badge>
       {props.metadata.realtime_degraded ? (
         <Badge variant='destructive'>实时数据已降级</Badge>
-      ) : null}
-      {shouldWarnChannelMonitorPageSnapshot(props.metadata) ? (
-        <Badge variant='warning'>页面快照已过期</Badge>
       ) : null}
       {pendingCount > 0 ? (
         <Badge variant='warning'>实时事件待处理 {pendingCount}</Badge>
@@ -172,10 +168,7 @@ export function ChannelMonitorRealtimeStatus(
         className='text-muted-foreground max-w-full text-xs font-normal text-wrap'
         title={`处理于 ${processedLabel}`}
       >
-        {props.metadata.generated_at ? `快照生成 ${generatedLabel}` : ''}
-        {props.metadata.snapshot_age_seconds !== undefined
-          ? `（年龄 ${props.metadata.snapshot_age_seconds} 秒）`
-          : ''}
+        {props.metadata.generated_at ? `查询时间 ${generatedLabel}` : ''}
         {props.metadata.generated_at ? ' · ' : ''}数据截至 {cutoffLabel} ·
         已处理事件序号 {props.metadata.event_watermark} · 最早待处理{' '}
         {oldestPendingLabel} · 处理延迟{' '}

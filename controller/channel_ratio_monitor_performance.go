@@ -48,9 +48,6 @@ func getChannelMonitorPerformanceRange(c *gin.Context) (minutes int, source stri
 }
 
 func GetChannelMonitorPerformance(c *gin.Context) {
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotPerformance, GetChannelMonitorPerformance) {
-		return
-	}
 	minutes, rangeSource, ok := getChannelMonitorPerformanceRange(c)
 	if !ok {
 		return
@@ -132,9 +129,6 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 }
 
 func GetChannelMonitorSuccessDetail(c *gin.Context) {
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSuccessDetail, GetChannelMonitorSuccessDetail) {
-		return
-	}
 	minutes, ok := getChannelMonitorPerformanceMinutes(c)
 	if !ok {
 		return

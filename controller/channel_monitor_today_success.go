@@ -96,9 +96,6 @@ type channelMonitorTodaySuccessOverview struct {
 }
 
 func GetChannelMonitorTodaySuccess(c *gin.Context) {
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSuccess, GetChannelMonitorTodaySuccess) {
-		return
-	}
 	days := 1
 	if rawDays := c.Query("days"); rawDays != "" {
 		parsedDays, err := strconv.Atoi(rawDays)

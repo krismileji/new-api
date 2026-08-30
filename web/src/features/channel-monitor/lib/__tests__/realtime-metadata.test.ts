@@ -23,12 +23,10 @@ import { describe, test } from 'vitest'
 import { mergeChannelMonitorRealtimeMetadata } from '../realtime-metadata'
 
 describe('channel monitor realtime metadata', () => {
-  test('uses the oldest cutoff and most severe queue state across page snapshots', () => {
+  test('uses the oldest cutoff and most severe queue state across query results', () => {
     const merged = mergeChannelMonitorRealtimeMetadata([
       {
         generated_at: 205,
-        snapshot_age_seconds: 5,
-        stale: false,
         data_cutoff_at: 200,
         processed_at: 210,
         event_watermark: 20,
@@ -49,8 +47,6 @@ describe('channel monitor realtime metadata', () => {
       },
       {
         generated_at: 185,
-        snapshot_age_seconds: 25,
-        stale: true,
         data_cutoff_at: 180,
         processed_at: 190,
         event_watermark: 18,
@@ -73,8 +69,6 @@ describe('channel monitor realtime metadata', () => {
 
     assert.deepEqual(merged, {
       generated_at: 185,
-      snapshot_age_seconds: 25,
-      stale: true,
       data_cutoff_at: 180,
       processed_at: 190,
       event_watermark: 18,
@@ -95,7 +89,7 @@ describe('channel monitor realtime metadata', () => {
     })
   })
 
-  test('ignores missing snapshots and preserves zero metadata', () => {
+  test('ignores missing results and preserves zero metadata', () => {
     assert.deepEqual(
       mergeChannelMonitorRealtimeMetadata([
         undefined,
@@ -124,7 +118,7 @@ describe('channel monitor realtime metadata', () => {
     )
   })
 
-  test('keeps Redis failure state regardless of snapshot order', () => {
+  test('keeps Redis failure state regardless of result order', () => {
     const unavailable = {
       data_cutoff_at: 180,
       processed_at: 190,
@@ -158,11 +152,11 @@ describe('channel monitor realtime metadata', () => {
       realtime_degraded: false,
     }
 
-    for (const snapshots of [
+    for (const results of [
       [unavailable, available],
       [available, unavailable],
     ]) {
-      const merged = mergeChannelMonitorRealtimeMetadata(snapshots)
+      const merged = mergeChannelMonitorRealtimeMetadata(results)
       assert.equal(merged?.redis_status, 'unavailable')
       assert.equal(merged?.redis_available, false)
       assert.equal(merged?.redis_consumer_running, false)

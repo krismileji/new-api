@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/go-redis/redis/v8"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -411,6 +412,8 @@ var channelMonitorRedisSharedMetadataMemo = struct {
 	values map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue
 }{values: make(map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue)}
 
+var channelMonitorRedisSharedProjectionQueries singleflight.Group
+
 func channelMonitorRedisSharedRememberMetadata(client *redis.Client, view ChannelMonitorRedisSharedProjectionView) {
 	if client == nil {
 		return
@@ -447,6 +450,76 @@ func channelMonitorRedisSharedLookupMetadata(client *redis.Client, windowStart, 
 		return 0, 0, 0, false
 	}
 	return value.dataCutoffAt, value.processedAt, value.eventWatermark, true
+}
+
+func cloneChannelMonitorRedisSharedAggregate(
+	aggregate ChannelMonitorRedisSharedAggregate,
+) ChannelMonitorRedisSharedAggregate {
+	cloned := aggregate
+	if aggregate.LatestFirstTokenMs != nil {
+		value := *aggregate.LatestFirstTokenMs
+		cloned.LatestFirstTokenMs = &value
+	}
+	if aggregate.LatestTPS != nil {
+		value := *aggregate.LatestTPS
+		cloned.LatestTPS = &value
+	}
+	return cloned
+}
+
+func cloneChannelMonitorRedisSharedAggregateMap[K comparable](
+	values map[K]ChannelMonitorRedisSharedAggregate,
+) map[K]ChannelMonitorRedisSharedAggregate {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[K]ChannelMonitorRedisSharedAggregate, len(values))
+	for key, aggregate := range values {
+		cloned[key] = cloneChannelMonitorRedisSharedAggregate(aggregate)
+	}
+	return cloned
+}
+
+func cloneChannelMonitorRedisSharedProjectionView(
+	view ChannelMonitorRedisSharedProjectionView,
+) ChannelMonitorRedisSharedProjectionView {
+	cloned := view
+	cloned.Summary = cloneChannelMonitorRedisSharedAggregate(view.Summary)
+	cloned.Performance = cloneChannelMonitorRedisSharedAggregate(view.Performance)
+	cloned.Channels = cloneChannelMonitorRedisSharedAggregateMap(view.Channels)
+	cloned.Models = cloneChannelMonitorRedisSharedAggregateMap(view.Models)
+	cloned.Groups = cloneChannelMonitorRedisSharedAggregateMap(view.Groups)
+	cloned.APIKeys = cloneChannelMonitorRedisSharedAggregateMap(view.APIKeys)
+	cloned.Routes = append([]ChannelMonitorRedisSharedRouteAggregate(nil), view.Routes...)
+	for index := range cloned.Routes {
+		cloned.Routes[index].ChannelMonitorRedisSharedAggregate =
+			cloneChannelMonitorRedisSharedAggregate(view.Routes[index].ChannelMonitorRedisSharedAggregate)
+	}
+	cloned.GroupChannels = append([]ChannelMonitorRedisSharedGroupChannelAggregate(nil), view.GroupChannels...)
+	for index := range cloned.GroupChannels {
+		cloned.GroupChannels[index].ChannelMonitorRedisSharedAggregate =
+			cloneChannelMonitorRedisSharedAggregate(view.GroupChannels[index].ChannelMonitorRedisSharedAggregate)
+	}
+	cloned.APIKeyScopes = append([]ChannelMonitorRedisSharedAPIKeyScopeAggregate(nil), view.APIKeyScopes...)
+	for index := range cloned.APIKeyScopes {
+		cloned.APIKeyScopes[index].ChannelMonitorRedisSharedAggregate =
+			cloneChannelMonitorRedisSharedAggregate(view.APIKeyScopes[index].ChannelMonitorRedisSharedAggregate)
+	}
+	cloned.Failures = append([]ChannelMonitorRedisSharedFailureCategory(nil), view.Failures...)
+	if view.DailyCosts == nil {
+		cloned.DailyCosts = nil
+	} else {
+		cloned.DailyCosts = make(map[int64]ChannelMonitorRedisSharedDailyCostView, len(view.DailyCosts))
+		for dayStart, daily := range view.DailyCosts {
+			daily.Global = cloneChannelMonitorRedisSharedAggregate(daily.Global)
+			daily.Channels = cloneChannelMonitorRedisSharedAggregateMap(daily.Channels)
+			daily.Models = cloneChannelMonitorRedisSharedAggregateMap(daily.Models)
+			daily.Groups = cloneChannelMonitorRedisSharedAggregateMap(daily.Groups)
+			daily.APIKeys = cloneChannelMonitorRedisSharedAggregateMap(daily.APIKeys)
+			cloned.DailyCosts[dayStart] = daily
+		}
+	}
+	return cloned
 }
 
 // SetLimits replaces the read budgets used by subsequent queries. Callers
@@ -1330,6 +1403,52 @@ func (projection *ChannelMonitorRedisSharedProjection) Query(ctx context.Context
 		ctx = context.Background()
 	}
 	startMinute, endMinute, _, _, limits := projection.queryWindow(startAt, endAt)
+	queryKey := fmt.Sprintf(
+		"%p:%d:%d:%d:%d:%d:%d:%d:%d",
+		projection.client,
+		startMinute,
+		endMinute,
+		limits.MaxQueryMinutes,
+		limits.MaxHashFields,
+		limits.MaxTotalHashFields,
+		limits.MaxResponseBytes,
+		limits.MaxDimensionEntries,
+		limits.MaxResponseDimensions,
+	)
+	resultChannel := channelMonitorRedisSharedProjectionQueries.DoChan(queryKey, func() (any, error) {
+		// The shared read has its own strict operation timeout. Detaching it from
+		// the first caller lets other waiters keep using the same in-flight query
+		// when that caller disconnects.
+		return projection.query(context.Background(), startMinute, endMinute, limits)
+	})
+	select {
+	case result := <-resultChannel:
+		if result.Err != nil {
+			return view, result.Err
+		}
+		shared, ok := result.Val.(ChannelMonitorRedisSharedProjectionView)
+		if !ok {
+			return view, errors.New("渠道监控 Redis 共享投影查询结果类型无效")
+		}
+		return cloneChannelMonitorRedisSharedProjectionView(shared), nil
+	case <-ctx.Done():
+		return view, ctx.Err()
+	}
+}
+
+func (projection *ChannelMonitorRedisSharedProjection) query(
+	ctx context.Context,
+	startMinute int64,
+	endMinute int64,
+	limits ChannelMonitorRedisSharedProjectionLimits,
+) (ChannelMonitorRedisSharedProjectionView, error) {
+	view := ChannelMonitorRedisSharedProjectionView{
+		Channels:   make(map[int]ChannelMonitorRedisSharedAggregate),
+		Models:     make(map[string]ChannelMonitorRedisSharedAggregate),
+		Groups:     make(map[string]ChannelMonitorRedisSharedAggregate),
+		APIKeys:    make(map[int]ChannelMonitorRedisSharedAggregate),
+		DailyCosts: make(map[int64]ChannelMonitorRedisSharedDailyCostView),
+	}
 	view.WindowStart, view.WindowEnd = startMinute, endMinute
 	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
 	defer cancel()

@@ -12,7 +12,6 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	monitorRoute.Use(
 		middleware.RootAuth(),
 		middleware.SkipAdminAuditFallback(),
-		controller.ChannelMonitorPageSnapshotSyncMiddleware(),
 	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)

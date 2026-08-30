@@ -46,9 +46,6 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		includeMetrics = parsed
 	}
-	if serveChannelMonitorPageSnapshot(c, channelMonitorPageSnapshotSchedule, GetChannelMonitorSmartScheduleRoutes) {
-		return
-	}
 	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	settings := getChannelMonitorSettings()
 	var err error
