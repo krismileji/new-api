@@ -10,6 +10,7 @@ import (
 func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	monitorRoute := apiRouter.Group("/channel_monitor")
 	monitorRoute.Use(
+		middleware.DisableCache(),
 		middleware.RootAuth(),
 		middleware.SkipAdminAuditFallback(),
 	)

@@ -107,6 +107,19 @@ func TestChannelModelDetectionAPIRootAuthContract(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), commonToken)
 }
 
+func TestChannelMonitorAPIResponsesDisableHTTPCaching(t *testing.T) {
+	rootToken, _ := setupChannelModelDetectionRouterAuthTest(t)
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	registerChannelMonitorRoutes(engine.Group("/api"))
+
+	recorder := performChannelModelDetectionRouterRequest(engine, channelModelDetectionRouteContracts[0], rootToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, "no-store, no-cache, must-revalidate, private, max-age=0", recorder.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-cache", recorder.Header().Get("Pragma"))
+	assert.Equal(t, "0", recorder.Header().Get("Expires"))
+}
+
 func TestChannelModelDetectionRelayEndpointUsesDedicatedRuntimeBearer(t *testing.T) {
 	previousDB := model.DB
 	model.DB = nil
