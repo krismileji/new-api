@@ -44,6 +44,8 @@ const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
 const { toast } = await import('sonner')
 const { api } = await import('@/lib/api')
+const { channelsQueryKeys } =
+  await import('@/features/channels/lib/channel-actions')
 const { ChannelModelDetectionWorkspace } =
   await import('../channel-model-detection-workspace')
 
@@ -263,7 +265,8 @@ function settingsResponse() {
 
 async function renderWorkspace(
   overview = createOverview(),
-  onlyEnabled = true
+  onlyEnabled = true,
+  onActionComplete?: () => void | Promise<void>
 ) {
   const host = document.createElement('div')
   document.body.append(host)
@@ -293,6 +296,7 @@ async function renderWorkspace(
               search: '',
               onlyEnabled,
             }}
+            onActionComplete={onActionComplete}
           />
         </I18nextProvider>
       </QueryClientProvider>
@@ -354,6 +358,44 @@ afterEach(async () => {
 })
 
 describe('模型检测工作区', () => {
+  test('禁用渠道后刷新频道列表、状态监测和当前模型检测视图', async () => {
+    const requests: AxiosRequestConfig[] = []
+    let refreshCount = 0
+    api.defaults.adapter = (async (config) => {
+      requests.push(config)
+      return { ...success({}), config }
+    }) as AxiosAdapter
+    await renderWorkspace(createOverview(), true, () => {
+      refreshCount++
+    })
+
+    const queryClient = renderedWorkspace?.queryClient
+    assert.ok(queryClient)
+    queryClient.setQueryData(channelsQueryKeys.lists(), { items: [] })
+    queryClient.setQueryData(['channel-monitor', 'status-probe'], {})
+
+    await act(async () => findButton('禁用渠道').click())
+    await waitForCondition(
+      () => refreshCount === 1,
+      '渠道状态变更后未刷新模型检测视图'
+    )
+
+    const request = requests.find(
+      (candidate) => candidate.url === '/api/channel/801/status'
+    )
+    assert.ok(request)
+    assert.deepEqual(JSON.parse(String(request.data)), { status: 2 })
+    assert.equal(
+      queryClient.getQueryState(channelsQueryKeys.lists())?.isInvalidated,
+      true
+    )
+    assert.equal(
+      queryClient.getQueryState(['channel-monitor', 'status-probe'])
+        ?.isInvalidated,
+      true
+    )
+  })
+
   test('卡片入口打开统一设置、渠道配置和手动档位弹层', async () => {
     const requests: AxiosRequestConfig[] = []
     api.defaults.adapter = (async (config) => {

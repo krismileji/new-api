@@ -29,6 +29,7 @@ import {
   WifiOff01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import type { QueryClient } from '@tanstack/react-query'
 import { useMemo, useState, type ReactNode } from 'react'
 
 import {
@@ -97,6 +98,7 @@ const DEFAULT_FILTERS: ChannelModelDetectionFilters = {
 
 export type ChannelModelDetectionViewProps = {
   channelOrder: readonly number[]
+  channelQueryClient?: QueryClient
   groupOrder?: readonly string[]
   overview?: ChannelModelDetectionOverview
   loading?: boolean
@@ -116,6 +118,8 @@ export type ChannelModelDetectionViewProps = {
   onOpenManualRun?: (channel: ChannelModelDetectionChannel) => void
   onCancelRun?: (channel: ChannelModelDetectionChannel) => void
   onToggleSchedule?: (channel: ChannelModelDetectionChannel) => void
+  onChannelStatusChanged?: () => void | Promise<void>
+  onActionComplete?: () => void | Promise<void>
   onEnableAll?: () => void
   onPauseAll?: () => void
   settingsSurface?: ReactNode
@@ -362,6 +366,7 @@ export function ChannelModelDetectionView(
           <ChannelModelDetectionCard
             key={channel.id}
             channel={channel}
+            channelQueryClient={props.channelQueryClient}
             detectorState={overview.detector.state}
             scheduledPreset={overview.settings.scheduled_preset}
             scheduleEnabled={overview.settings.schedule_enabled}
@@ -378,6 +383,7 @@ export function ChannelModelDetectionView(
             onOpenManualRun={props.onOpenManualRun ?? noop}
             onCancelRun={props.onCancelRun ?? noop}
             onToggleSchedule={props.onToggleSchedule ?? noop}
+            onChannelStatusChanged={props.onChannelStatusChanged}
           />
         ))}
       </div>

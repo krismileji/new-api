@@ -33,7 +33,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Spinner } from '@/components/ui/spinner'
+import { channelsQueryKeys } from '@/features/channels/lib/channel-actions'
 
+import { isChannelModelDetectionRunActive } from '../lib/model-detection'
 import {
   cancelChannelModelDetectionRun,
   getChannelModelDetectionRun,
@@ -83,6 +85,7 @@ export function ChannelModelDetectionWorkspace(
   props: ChannelModelDetectionWorkspaceProps
 ) {
   const queryClient = useQueryClient()
+  const onActionComplete = props.onActionComplete
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [configChannelId, setConfigChannelId] = useState<number | null>(null)
   const [runChannelId, setRunChannelId] = useState<number | null>(null)
@@ -131,8 +134,20 @@ export function ChannelModelDetectionWorkspace(
   )
 
   const refreshOverview = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
-  }, [queryClient])
+    if (onActionComplete) return onActionComplete()
+    return queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
+  }, [onActionComplete, queryClient])
+  const refreshChannelStatus = useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+        queryClient.invalidateQueries({
+          queryKey: ['channel-monitor', 'status-probe'],
+        }),
+        refreshOverview(),
+      ]).then(() => undefined),
+    [queryClient, refreshOverview]
+  )
   const refreshChannelHistory = useCallback(
     (channelId: number) => {
       void queryClient.invalidateQueries({
@@ -158,7 +173,10 @@ export function ChannelModelDetectionWorkspace(
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
     refetchInterval: () =>
-      getChannelMonitorActiveRefetchInterval(historyChannelId != null),
+      getChannelMonitorActiveRefetchInterval(
+        historyChannel?.active_run != null &&
+          isChannelModelDetectionRunActive(historyChannel.active_run.status)
+      ),
   })
 
   const scheduleMutation = useMutation({
@@ -479,6 +497,7 @@ export function ChannelModelDetectionWorkspace(
   return (
     <ChannelModelDetectionView
       {...props}
+      channelQueryClient={queryClient}
       actionPendingChannelId={actionPendingChannelId}
       actionPendingAll={bulkMutation.isPending}
       bulkActionPending={bulkMutation.isPending ? bulkAction : null}
@@ -496,6 +515,7 @@ export function ChannelModelDetectionWorkspace(
       onOpenManualRun={(channel) => setRunChannelId(channel.id)}
       onCancelRun={(channel) => setCancelChannelId(channel.id)}
       onToggleSchedule={(channel) => scheduleMutation.mutate(channel)}
+      onChannelStatusChanged={refreshChannelStatus}
       settingsSurface={settingsSurface}
       channelSurface={channelSurface}
       historySurface={historySurface}

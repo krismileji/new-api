@@ -408,6 +408,33 @@ func TestChannelStatusProbeOverviewCacheCanBeDisabled(t *testing.T) {
 	assert.Greater(t, queryCount.Load(), firstQueryCount)
 }
 
+func TestUpdateChannelStatusInvalidatesStatusProbeOverview(t *testing.T) {
+	channel := setupChannelStatusProbeControllerTest(t)
+	initial := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
+	require.Len(t, initial.Channels, 1)
+	assert.Equal(t, common.ChannelStatusEnabled, initial.Channels[0].ChannelStatus)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodPost, "/api/channel/8801/status",
+		map[string]any{"status": common.ChannelStatusManuallyDisabled},
+	)
+	ctx.Params = append(ctx.Params, gin.Param{Key: "id", Value: "8801"})
+	UpdateChannelStatus(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	stale := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
+	assert.True(t, stale.Stale)
+	assert.Equal(t, common.ChannelStatusEnabled, stale.Channels[0].ChannelStatus)
+
+	var refreshed channelStatusProbeOverviewResponse
+	require.Eventually(t, func() bool {
+		refreshed = getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
+		return !refreshed.Stale && len(refreshed.Channels) == 1 &&
+			refreshed.Channels[0].ChannelStatus == common.ChannelStatusManuallyDisabled
+	}, time.Second, 5*time.Millisecond)
+	assert.Equal(t, channel.Id, refreshed.Channels[0].Id)
+}
+
 func TestChannelStatusProbeOverviewCacheTTLConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string

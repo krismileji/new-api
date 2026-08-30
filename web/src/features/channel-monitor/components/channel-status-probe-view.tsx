@@ -75,6 +75,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { channelsQueryKeys } from '@/features/channels/lib/channel-actions'
 import { orderGroupNames } from '@/lib/group-order'
 
 import {
@@ -85,10 +86,11 @@ import {
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-  getChannelMonitorActiveRefetchInterval,
+  getChannelMonitorSnapshotRefetchInterval,
 } from '../lib/query-options'
 import { orderChannelsByReferenceOrder } from '../lib/sort'
 import {
+  isChannelStatusProbeActive,
   isChannelStatusProbeIssue,
   matchesChannelStatusProbeGroup,
   matchesChannelStatusProbeSearch,
@@ -144,12 +146,14 @@ function matchesStatusFilter(
 export type ChannelStatusProbeViewProps = {
   channelOrder: readonly number[]
   groupOrder?: readonly string[]
+  onActionComplete?: () => void | Promise<void>
 }
 
 export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   props: ChannelStatusProbeViewProps
 ) {
   const queryClient = useQueryClient()
+  const onActionComplete = props.onActionComplete
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [onlyEnabled, setOnlyEnabled] = useState(true)
   const [groupFilter, setGroupFilter] = useState('')
@@ -165,7 +169,13 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,
-    refetchInterval: () => getChannelMonitorActiveRefetchInterval(true),
+    refetchInterval: (statusProbeQuery) =>
+      getChannelMonitorSnapshotRefetchInterval(
+        statusProbeQuery.state.data?.data.channels.some(
+          isChannelStatusProbeActive
+        ) ?? false,
+        statusProbeQuery.state.data?.data.stale ?? false
+      ),
   })
   const channels = query.data?.data.channels ?? EMPTY_CHANNELS
   const enabledChannels = useMemo(
@@ -258,15 +268,27 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   const openConfig = useCallback((channelId: number) => {
     setConfigChannelId(channelId)
   }, [])
+  const refreshChannelStatus = useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() }),
+        queryClient.invalidateQueries({
+          queryKey: ['channel-monitor', 'status-probe'],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['channel-monitor', 'model-detection'],
+        }),
+        onActionComplete?.() ?? Promise.resolve(),
+      ]).then(() => undefined),
+    [onActionComplete, queryClient]
+  )
   const runMutation = useMutation({
     mutationFn: (channel: ChannelStatusProbeChannel) =>
       runChannelStatusProbe(channel.id),
     onError: handleChannelMonitorMutationError,
     onSuccess: () => {
       toast.success('已加入立即检测队列')
-      queryClient.invalidateQueries({
-        queryKey: ['channel-monitor', 'status-probe'],
-      })
+      void refreshChannelStatus()
     },
   })
   const toggleMutation = useMutation({
@@ -286,9 +308,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
     onError: handleChannelMonitorMutationError,
     onSuccess: (response) => {
       toast.success(response.data.enabled ? '周期探测已恢复' : '周期探测已暂停')
-      queryClient.invalidateQueries({
-        queryKey: ['channel-monitor', 'status-probe'],
-      })
+      void refreshChannelStatus()
     },
   })
   const bulkMutation = useMutation({
@@ -318,9 +338,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
       const failedCount = results.length - updatedCount
       const actionLabel = variables.enabled ? '启用' : '暂停'
       setBulkAction(null)
-      void queryClient.invalidateQueries({
-        queryKey: ['channel-monitor', 'status-probe'],
-      })
+      void refreshChannelStatus()
       if (failedCount === 0) {
         toast.success(`已${actionLabel} ${updatedCount} 个渠道的周期探测`)
       } else if (updatedCount === 0) {
@@ -389,12 +407,14 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
           <ChannelStatusProbeCard
             key={channel.id}
             channel={channel}
+            channelQueryClient={queryClient}
             serverNow={serverNow}
             actionPending={allActionsPending || pendingChannelId === channel.id}
             onOpenHistory={openHistory}
             onOpenConfig={openConfig}
             onRun={runMutation.mutate}
             onToggleEnabled={toggleMutation.mutate}
+            onChannelStatusChanged={refreshChannelStatus}
           />
         ))}
       </div>
@@ -623,6 +643,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
             key={`${configChannel.id}:${configChannel.config?.revision ?? 0}`}
             channel={configChannel}
             open
+            onSaved={refreshChannelStatus}
             onOpenChange={(open) => {
               if (!open) setConfigChannelId(null)
             }}

@@ -279,7 +279,8 @@ export function ChannelStatusProbeHistorySheet(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: () => getChannelMonitorActiveRefetchInterval(props.open),
+    refetchInterval: () =>
+      getChannelMonitorActiveRefetchInterval(props.open && probeActive),
   })
   const total = query.data?.data.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / pageSize))

@@ -73,6 +73,7 @@ type ChannelStatusProbeConfigSheetProps = {
   channel: ChannelStatusProbeChannel
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSaved?: () => void | Promise<void>
 }
 
 const QUICK_INTERVALS = [60, 300, 900, 3600]
@@ -137,6 +138,7 @@ export function ChannelStatusProbeConfigSheet(
       queryClient.invalidateQueries({
         queryKey: ['channel-monitor', 'status-probe'],
       })
+      void props.onSaved?.()
       props.onOpenChange(false)
     },
   })

@@ -16,16 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { QueryClient } from '@tanstack/react-query'
+
 import type { ChannelStatusProbeChannel } from '../types'
 
 export type ChannelStatusProbeCardRenderProps = {
   channel: ChannelStatusProbeChannel
+  channelQueryClient?: QueryClient
   serverNow: number
   actionPending: boolean
   onOpenHistory: (channelId: number) => void
   onOpenConfig: (channelId: number) => void
   onRun: (channel: ChannelStatusProbeChannel) => void
   onToggleEnabled: (channel: ChannelStatusProbeChannel) => void
+  onChannelStatusChanged?: () => void | Promise<void>
 }
 
 export function formatChannelStatusProbeNextRun(
@@ -45,11 +49,13 @@ export function areChannelStatusProbeCardPropsEqual(
 ) {
   if (
     previous.channel !== next.channel ||
+    previous.channelQueryClient !== next.channelQueryClient ||
     previous.actionPending !== next.actionPending ||
     previous.onOpenHistory !== next.onOpenHistory ||
     previous.onOpenConfig !== next.onOpenConfig ||
     previous.onRun !== next.onRun ||
-    previous.onToggleEnabled !== next.onToggleEnabled
+    previous.onToggleEnabled !== next.onToggleEnabled ||
+    previous.onChannelStatusChanged !== next.onChannelStatusChanged
   ) {
     return false
   }

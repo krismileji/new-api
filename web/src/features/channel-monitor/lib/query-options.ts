@@ -45,6 +45,13 @@ export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
 }
 
+export function getChannelMonitorSnapshotRefetchInterval(
+  active: boolean,
+  stale: boolean
+) {
+  return getChannelMonitorActiveRefetchInterval(active || stale)
+}
+
 export function shouldRefreshChannelMonitorViewOnEnter(
   previousView: ChannelMonitorManualRefreshView | null,
   currentView: ChannelMonitorManualRefreshView

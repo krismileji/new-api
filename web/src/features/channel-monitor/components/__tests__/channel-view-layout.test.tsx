@@ -669,6 +669,24 @@ describe('channel monitor channel view timestamps', () => {
     assert.equal(operationCell.includes('aria-label="记录渠道倍率"'), false)
   })
 
+  test('uses the standard channel status action icons and semantic colors', () => {
+    const enabledOperationCell =
+      getTableCells(renderView(createChannel()))[8] ?? ''
+    const disabledOperationCell =
+      getTableCells(renderView(createChannel({ status: 2 })))[8] ?? ''
+
+    assert.match(
+      enabledOperationCell,
+      /aria-label="禁用渠道"[\s\S]*text-destructive hover:text-destructive/
+    )
+    assert.match(enabledOperationCell, /lucide-power-off size-4/)
+    assert.match(
+      disabledOperationCell,
+      /aria-label="启用渠道"[\s\S]*text-success hover:text-success/
+    )
+    assert.match(disabledOperationCell, /lucide-power size-4/)
+  })
+
   test('exposes the system disable reason from the status badge', () => {
     const markup = renderView(
       createChannel({

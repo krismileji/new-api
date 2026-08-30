@@ -27,6 +27,7 @@ import {
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import type { QueryClient } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
 import { memo, type ComponentProps } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -76,6 +77,7 @@ import type {
   ChannelModelDetectionResultBucket,
   ChannelModelDetectionTargetSummary,
 } from '../types-model-detection'
+import { ChannelMonitorDisableChannelAction } from './channel-monitor-disable-channel-action'
 import {
   ChannelMonitorStatusWindow,
   ChannelMonitorStatusWindowDetails,
@@ -122,6 +124,7 @@ const HEALTH_PRESENTATION: Record<
 
 export type ChannelModelDetectionCardProps = {
   channel: ChannelModelDetectionChannel
+  channelQueryClient?: QueryClient
   detectorState: ChannelModelDetectionDetectorState
   scheduledPreset: ChannelModelDetectionPreset
   scheduleEnabled: boolean
@@ -135,6 +138,7 @@ export type ChannelModelDetectionCardProps = {
   onOpenManualRun: (channel: ChannelModelDetectionChannel) => void
   onCancelRun: (channel: ChannelModelDetectionChannel) => void
   onToggleSchedule: (channel: ChannelModelDetectionChannel) => void
+  onChannelStatusChanged?: () => void | Promise<void>
 }
 
 const ACTIVE_RUN_LABEL: Partial<
@@ -711,6 +715,13 @@ export const ChannelModelDetectionCard = memo(
               icon={Settings02Icon}
               disabled={props.actionPending}
               onClick={() => props.onOpenConfig(props.channel)}
+            />
+            <ChannelMonitorDisableChannelAction
+              channelId={props.channel.id}
+              channelStatus={props.channel.channel_status}
+              queryClient={props.channelQueryClient}
+              disabled={props.actionPending}
+              onStatusChanged={props.onChannelStatusChanged}
             />
           </div>
         </CardHeader>

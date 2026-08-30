@@ -20,13 +20,12 @@ import {
   GaugeIcon,
   HistoryIcon,
   Layers01Icon,
-  PowerOffIcon,
-  PowerServiceIcon,
   Refresh01Icon,
   Settings02Icon,
   TestTubeIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { Loader2, Power, PowerOff } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -355,6 +354,12 @@ export function ChannelMonitorChannelView(
               refreshesMetricsTogether &&
               (props.fetchingBalanceChannelId === channel.id ||
                 props.fetchingRatioChannelId === channel.id)
+            let statusActionIcon = <Power className='size-4' />
+            if (props.updatingStatusChannelId === channel.id) {
+              statusActionIcon = <Loader2 className='size-4 animate-spin' />
+            } else if (channelEnabled) {
+              statusActionIcon = <PowerOff className='size-4' />
+            }
             const sortedGroups = [...channel.groups].sort((left, right) => {
               const ratioDifference =
                 (props.groupRatios[left] ?? 1) - (props.groupRatios[right] ?? 1)
@@ -575,26 +580,31 @@ export function ChannelMonitorChannelView(
                 </TableCell>
                 <TableCell className='min-w-[112px]'>
                   <div className='inline-grid grid-cols-3 gap-0.5'>
-                    <ChannelActionButton
-                      label={
-                        channel.status === CHANNEL_STATUS.ENABLED
-                          ? '禁用渠道'
-                          : '启用渠道'
-                      }
-                      icon={
-                        channel.status === CHANNEL_STATUS.ENABLED
-                          ? PowerOffIcon
-                          : PowerServiceIcon
-                      }
-                      onClick={() => props.onToggleStatus(channel)}
-                      disabled={props.updatingStatusChannelId !== null}
-                      loading={props.updatingStatusChannelId === channel.id}
-                      className={
-                        channel.status === CHANNEL_STATUS.ENABLED
-                          ? 'text-destructive hover:text-destructive'
-                          : 'text-success hover:text-success'
-                      }
-                    />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant='ghost'
+                            size='icon-sm'
+                            onClick={() => props.onToggleStatus(channel)}
+                            disabled={props.updatingStatusChannelId !== null}
+                            aria-label={
+                              channelEnabled ? '禁用渠道' : '启用渠道'
+                            }
+                            className={
+                              channelEnabled
+                                ? 'text-destructive hover:text-destructive'
+                                : 'text-success hover:text-success'
+                            }
+                          />
+                        }
+                      >
+                        {statusActionIcon}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {channelEnabled ? '禁用渠道' : '启用渠道'}
+                      </TooltipContent>
+                    </Tooltip>
                     <ChannelActionButton
                       label='测试连接'
                       icon={TestTubeIcon}

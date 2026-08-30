@@ -51,6 +51,7 @@ import type {
   ChannelStatusProbeModelStatus,
   ChannelStatusProbeResult,
 } from '../types'
+import { ChannelMonitorDisableChannelAction } from './channel-monitor-disable-channel-action'
 import {
   ChannelMonitorStatusWindow,
   ChannelMonitorStatusWindowDetails,
@@ -549,6 +550,13 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             </TooltipTrigger>
             <TooltipContent>配置状态探测</TooltipContent>
           </Tooltip>
+          <ChannelMonitorDisableChannelAction
+            channelId={props.channel.id}
+            channelStatus={props.channel.channel_status}
+            queryClient={props.channelQueryClient}
+            disabled={props.actionPending}
+            onStatusChanged={props.onChannelStatusChanged}
+          />
         </div>
       </CardHeader>
 

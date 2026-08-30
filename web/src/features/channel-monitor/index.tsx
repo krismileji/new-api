@@ -32,6 +32,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  useCallback,
   lazy,
   Suspense,
   useEffect,
@@ -124,15 +125,16 @@ import {
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
+import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-  getChannelMonitorActiveRefetchInterval,
   getChannelMonitorConcurrencyQueryOptions,
   getChannelMonitorManualRefreshScopeKey,
   getChannelMonitorOverviewQueryOptions,
   getChannelMonitorPerformanceQueryOptions,
+  getChannelMonitorSnapshotRefetchInterval,
   getChannelMonitorSmartScheduleQueryOptions,
   isChannelMonitorPerformanceQueryActive,
   refetchChannelMonitorQueries,
@@ -177,6 +179,7 @@ import {
   DEFAULT_PROBE_RESPONSE_TEXT,
   DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
 } from './lib/schema'
+import { normalizeChannelMonitorSettings } from './lib/settings-normalization'
 import { getChannelMonitorSmartScheduleModelOptionsByGroup } from './lib/smart-schedule-model-order'
 import {
   groupChannelMonitorSmartScheduleRoutesByChannel,
@@ -492,7 +495,14 @@ export function ChannelMonitor() {
   const concurrencyQuery = useQuery(
     getChannelMonitorConcurrencyQueryOptions(view === 'channels')
   )
-  const settings = overview?.settings ?? DEFAULT_CHANNEL_MONITOR_SETTINGS
+  const settings = useMemo(
+    () =>
+      normalizeChannelMonitorSettings(
+        overview?.settings,
+        DEFAULT_CHANNEL_MONITOR_SETTINGS
+      ),
+    [overview?.settings]
+  )
   const smartSchedulePerformanceRangeActive =
     settings.smart_schedule_enabled &&
     settings.smart_schedule_group_policies.length > 0
@@ -525,7 +535,15 @@ export function ChannelMonitor() {
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
-    refetchInterval: () => getChannelMonitorActiveRefetchInterval(true),
+    refetchInterval: (modelDetectionOverviewQuery) =>
+      getChannelMonitorSnapshotRefetchInterval(
+        modelDetectionOverviewQuery.state.data?.data.channels.some(
+          (channel) =>
+            channel.active_run != null &&
+            isChannelModelDetectionRunActive(channel.active_run.status)
+        ) ?? false,
+        modelDetectionOverviewQuery.state.data?.data.stale ?? false
+      ),
   })
   const groupMonitorSettingsQuery = useQuery({
     queryKey: ['channel-monitor', 'group-monitor', 'settings'],
@@ -596,7 +614,7 @@ export function ChannelMonitor() {
     manualRefreshPromiseRef.current = refreshPromise
     return refreshPromise
   }
-  const refreshChannelMonitorAfterAction = () => {
+  const refreshChannelMonitorAfterAction = useCallback(() => {
     const refreshScope = {
       view,
       taskHistoryOpen,
@@ -612,7 +630,7 @@ export function ChannelMonitor() {
     return refetchChannelMonitorQueries(queryClient, refreshScope).catch(
       () => undefined
     )
-  }
+  }, [queryClient, smartScheduleHistoryOpen, taskHistoryOpen, view])
   const ratioFetchMutation = useMutation({
     mutationFn: fetchChannelMonitorUpstreamRatio,
     onError: handleChannelMonitorMutationError,
@@ -1502,6 +1520,7 @@ export function ChannelMonitor() {
                 <LazyChannelStatusProbeView
                   channelOrder={channelDisplayOrder}
                   groupOrder={groupOrder}
+                  onActionComplete={refreshChannelMonitorAfterAction}
                 />
               </Suspense>
             )}
@@ -1520,6 +1539,7 @@ export function ChannelMonitor() {
                 <LazyChannelModelDetectionView
                   channelOrder={channelDisplayOrder}
                   groupOrder={groupOrder}
+                  onActionComplete={refreshChannelMonitorAfterAction}
                   overview={modelDetectionQuery.data?.data}
                   loading={modelDetectionQuery.isLoading}
                   refreshing={modelDetectionQuery.isFetching}

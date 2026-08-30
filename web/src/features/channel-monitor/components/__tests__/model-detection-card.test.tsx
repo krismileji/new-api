@@ -248,6 +248,7 @@ describe('模型检测渠道卡片', () => {
     assert.match(html, /aria-label="打开 .* 模型检测记录"/)
     assert.match(html, /aria-label="选择档位并立即检测"/)
     assert.match(html, /aria-label="配置模型检测目标"/)
+    assert.match(html, /aria-label="禁用渠道"/)
     assert.match(html, /aria-label="退出统一定时检测"/)
     assert.match(html, /申报 Sol/)
     assert.match(html, /手动 · 中档/)
