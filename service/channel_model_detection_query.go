@@ -453,22 +453,7 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	if err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
-	response.Detector = channelModelDetectionDetectorResponse(ChannelModelDetectionServiceSnapshot(global.DetectorURL))
 	return response, nil
-}
-
-func channelModelDetectionDetectorResponse(status ChannelModelDetectionServiceResponse) ChannelModelDetectionDetectorResponse {
-	estimates := status.Estimates
-	if estimates == nil {
-		estimates = make(map[string]ChannelModelDetectionPresetEstimateResponse)
-	}
-	return ChannelModelDetectionDetectorResponse{
-		State: status.State, DetectorURLConfigured: status.DetectorURLConfigured,
-		DetectorURLMasked: status.DetectorURLMasked, Busy: status.Busy,
-		ActiveSessionOwned: status.ActiveSessionOwned, DeploymentID: status.DeploymentID,
-		LastCheckedAt: status.LastCheckedAt, LastError: status.LastError,
-		CompatibilityMessage: status.CompatibilityMessage, Estimates: estimates,
-	}
 }
 
 func ListChannelModelDetectionRuns(ctx context.Context, tx *gorm.DB, channelID int, input ChannelModelDetectionRunHistoryQuery) (ChannelModelDetectionRunHistoryResponse, error) {

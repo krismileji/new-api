@@ -157,6 +157,37 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	assert.Equal(t, initialQueryCount, queryCount.Load())
 }
 
+func TestChannelModelDetectionOverviewDoesNotUseCachedDetectorHealth(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	cachedDeploymentID := "cached-deployment"
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+	}).Error)
+
+	channelModelDetectionServiceCache.Lock()
+	previous := channelModelDetectionServiceCache.value
+	channelModelDetectionServiceCache.value = ChannelModelDetectionServiceResponse{
+		State: "available", DetectorURLConfigured: true, DetectorURLMasked: "cached-detector",
+		LastCheckedAt: 999, DeploymentID: &cachedDeploymentID,
+	}
+	channelModelDetectionServiceCache.Unlock()
+	t.Cleanup(func() {
+		channelModelDetectionServiceCache.Lock()
+		channelModelDetectionServiceCache.value = previous
+		channelModelDetectionServiceCache.Unlock()
+	})
+
+	overview, err := GetChannelModelDetectionOverview(context.Background(), db, 1_000)
+	require.NoError(t, err)
+	assert.Equal(t, "unknown", overview.Detector.State)
+	assert.True(t, overview.Detector.DetectorURLConfigured)
+	assert.Equal(t, "http://127.0.0.1:18080", overview.Detector.DetectorURLMasked)
+	assert.Zero(t, overview.Detector.LastCheckedAt)
+	assert.Empty(t, overview.Detector.DeploymentID)
+	assert.Empty(t, overview.Detector.Estimates)
+}
+
 func TestChannelModelDetectionOverviewTreatsLegacyNullLogicalFieldsAsPhysical(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
 	olderRun, execution := seedChannelModelDetectionQueryChannel(t, db, 104, "success", 100)

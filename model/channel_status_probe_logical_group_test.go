@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -358,4 +360,89 @@ func TestChannelStatusProbeLogicalMaterializationRejectsCapturedOldRevision(t *t
 	var logicalCount int64
 	require.NoError(t, db.Model(&ChannelStatusProbeLogicalConfig{}).Count(&logicalCount).Error)
 	assert.Zero(t, logicalCount, "a stale captured scope must not materialize shared configuration")
+}
+
+func TestChannelStatusProbeOverviewRelationsReadCurrentDatabaseWithFixedQueries(t *testing.T) {
+	db, group, channelIDs := setupChannelStatusProbeLogicalGroupTest(t)
+	require.NoError(t, db.Create(&[]ChannelStatusProbeConfig{
+		{ChannelId: channelIDs[0], Enabled: true, ModelsJSON: `["model-a"]`, IntervalSeconds: 60, Revision: 1},
+		{ChannelId: channelIDs[1], Enabled: true, ModelsJSON: `["model-b"]`, IntervalSeconds: 120, Revision: 1},
+	}).Error)
+	require.NoError(t, db.Create(&[]ChannelStatusProbeState{
+		{ChannelId: channelIDs[0], ModelName: "model-a", Result: ChannelStatusProbeResultSuccess, FinishedAt: 100},
+		{ChannelId: channelIDs[1], ModelName: "model-b", Result: ChannelStatusProbeResultUpstreamFailure, FinishedAt: 101},
+	}).Error)
+	for channelID := 8200; channelID < 8220; channelID++ {
+		require.NoError(t, db.Create(&Channel{
+			Id: channelID, Name: "physical-probe-channel", Key: "test-key", Status: common.ChannelStatusEnabled, Models: "model-c",
+		}).Error)
+		require.NoError(t, db.Create(&ChannelStatusProbeConfig{
+			ChannelId: channelID, Enabled: true, ModelsJSON: `["model-c"]`, IntervalSeconds: 300, Revision: 1,
+		}).Error)
+		require.NoError(t, db.Create(&ChannelStatusProbeState{
+			ChannelId: channelID, ModelName: "model-c", Result: ChannelStatusProbeResultSuccess, FinishedAt: int64(channelID),
+		}).Error)
+	}
+
+	staleRelations, err := buildLogicalChannelRuntimeSnapshot(db)
+	require.NoError(t, err)
+	channelSyncLock.Lock()
+	previousRelations := logicalChannelRuntimeCache
+	previousDirty := logicalChannelRuntimeDirty
+	logicalChannelRuntimeCache = staleRelations
+	logicalChannelRuntimeDirty = true
+	channelSyncLock.Unlock()
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCache
+		channelSyncLock.Lock()
+		logicalChannelRuntimeCache = previousRelations
+		logicalChannelRuntimeDirty = previousDirty
+		channelSyncLock.Unlock()
+	})
+
+	require.NoError(t, db.Where("logical_group_id = ? AND channel_id = ?", group.Id, channelIDs[1]).
+		Delete(&ChannelLogicalGroupMember{}).Error)
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channelIDs[1]).Update("logical_channel_id", nil).Error)
+	require.NoError(t, db.Model(&ChannelLogicalGroup{}).Where("id = ?", group.Id).
+		Update("revision", group.Revision+1).Error)
+
+	var queryCount atomic.Int64
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_status_probe_overview_relations", func(*gorm.DB) {
+		queryCount.Add(1)
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, db.Callback().Query().Remove("test:count_status_probe_overview_relations"))
+	})
+
+	relations, err := LoadChannelStatusProbeOverviewRelations(context.Background(), db)
+	require.NoError(t, err)
+	configs, err := GetChannelStatusProbeConfigsForOverview(context.Background(), db, relations)
+	require.NoError(t, err)
+	states, err := GetChannelStatusProbeStatesForOverview(context.Background(), db, nil, nil, "", relations)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, queryCount.Load(), int64(7), "overview relationship projection must use fixed batch queries")
+	require.Len(t, configs, 22)
+	require.Len(t, states, 22)
+
+	configByChannel := make(map[int]ChannelStatusProbeConfig, len(configs))
+	for _, config := range configs {
+		configByChannel[config.ChannelId] = config
+	}
+	firstModels, err := configByChannel[channelIDs[0]].Models()
+	require.NoError(t, err)
+	secondModels, err := configByChannel[channelIDs[1]].Models()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"model-a"}, firstModels)
+	assert.Equal(t, []string{"model-b"}, secondModels, "overview must not project the stale cached group onto the removed member")
+	assert.Equal(t, group.Revision+1, configByChannel[channelIDs[0]].LogicalRevision)
+	assert.Zero(t, configByChannel[channelIDs[1]].LogicalRevision)
+
+	stateByChannel := make(map[int]ChannelStatusProbeState, len(states))
+	for _, state := range states {
+		stateByChannel[state.ChannelId] = state
+	}
+	assert.Equal(t, ChannelStatusProbeResultSuccess, stateByChannel[channelIDs[0]].Result)
+	assert.Equal(t, ChannelStatusProbeResultUpstreamFailure, stateByChannel[channelIDs[1]].Result)
 }

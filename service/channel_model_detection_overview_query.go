@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,11 @@ const channelModelDetectionOverviewQueryTimeout = 30 * time.Second
 
 var channelModelDetectionOverviewQuerySingleflight singleflight.Group
 var channelModelDetectionOverviewQueryGeneration atomic.Uint64
+
+var channelStatusProbeOverviewChangeHook struct {
+	sync.RWMutex
+	fn func()
+}
 
 type channelModelDetectionOverviewBuildFunc func(
 	context.Context,
@@ -64,4 +70,24 @@ func getCurrentChannelModelDetectionOverviewWithBuild(
 // from joining a query that started before that write.
 func NotifyChannelModelDetectionOverviewChanged() {
 	channelModelDetectionOverviewQueryGeneration.Add(1)
+	channelStatusProbeOverviewChangeHook.RLock()
+	hook := channelStatusProbeOverviewChangeHook.fn
+	channelStatusProbeOverviewChangeHook.RUnlock()
+	if hook != nil {
+		hook()
+	}
+}
+
+// SetChannelStatusProbeOverviewChangeHook lets the status overview share the
+// channel-data write fence without introducing a controller dependency here.
+func SetChannelStatusProbeOverviewChangeHook(fn func()) func() {
+	channelStatusProbeOverviewChangeHook.Lock()
+	previous := channelStatusProbeOverviewChangeHook.fn
+	channelStatusProbeOverviewChangeHook.fn = fn
+	channelStatusProbeOverviewChangeHook.Unlock()
+	return func() {
+		channelStatusProbeOverviewChangeHook.Lock()
+		channelStatusProbeOverviewChangeHook.fn = previous
+		channelStatusProbeOverviewChangeHook.Unlock()
+	}
 }

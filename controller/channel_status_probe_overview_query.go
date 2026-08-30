@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
@@ -18,6 +19,10 @@ const channelStatusProbeOverviewQueryTimeout = 30 * time.Second
 
 var channelStatusProbeOverviewQuerySingleflight singleflight.Group
 var channelStatusProbeOverviewQueryGeneration atomic.Uint64
+
+func init() {
+	service.SetChannelStatusProbeOverviewChangeHook(notifyChannelStatusProbeOverviewChanged)
+}
 
 type channelStatusProbeOverviewBuildFunc func(
 	context.Context,

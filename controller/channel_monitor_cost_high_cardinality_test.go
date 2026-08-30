@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -19,7 +18,7 @@ func TestGetChannelMonitorCostOverviewBoundsHighCardinalityAPIKeysAndPreservesTo
 	const keyCount = channelMonitorCostAPIKeyMaxRows + 1
 	require.NoError(t, db.Create(&model.Channel{Id: channelID, Name: "高基数测试渠道", Key: "high-cardinality"}).Error)
 
-	now := time.Date(2026, 8, 29, 4, 0, 0, 0, time.UTC).Unix()
+	now := common.GetTimestamp()
 	dayStart := channelMonitorCostDayStart(now)
 	const costPerKey = int64(1_000_000_000)
 	require.NoError(t, model.AddChannelDailyCost(
@@ -36,7 +35,7 @@ func TestGetChannelMonitorCostOverviewBoundsHighCardinalityAPIKeysAndPreservesTo
 	}
 	require.NoError(t, db.Create(&rows).Error)
 
-	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=1&channel_id=99001", nil)
+	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=2&channel_id=99001", nil)
 	GetChannelMonitorCostOverview(ctx)
 	require.Equal(t, 200, recorder.Code)
 	var response struct {

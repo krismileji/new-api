@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,6 +115,12 @@ func TestChannelStatusProbeOverviewQueryDoesNotRetainCompletedResults(t *testing
 	_, err = queryChannelStatusProbeOverviewWithBuild(context.Background(), "model-c", build)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), buildCount.Load())
+}
+
+func TestChannelStatusProbeOverviewGenerationTracksSharedChannelWrites(t *testing.T) {
+	before := channelStatusProbeOverviewQueryGeneration.Load()
+	service.NotifyChannelModelDetectionOverviewChanged()
+	assert.Equal(t, before+1, channelStatusProbeOverviewQueryGeneration.Load())
 }
 
 func TestChannelStatusProbeOverviewBuildUsesQueryContext(t *testing.T) {

@@ -500,7 +500,11 @@ func buildChannelStatusProbeOverview(
 	selectedModel string,
 	now int64,
 ) (channelStatusProbeOverviewResponse, error) {
-	configs, err := model.GetChannelStatusProbeConfigsForOverview(ctx, db)
+	relations, err := model.LoadChannelStatusProbeOverviewRelations(ctx, db)
+	if err != nil {
+		return channelStatusProbeOverviewResponse{}, err
+	}
+	configs, err := model.GetChannelStatusProbeConfigsForOverview(ctx, db, relations)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
@@ -593,7 +597,7 @@ func buildChannelStatusProbeOverview(
 		}
 	}
 	states, err := model.GetChannelStatusProbeStatesForOverview(
-		ctx, db, queryChannelIDs, queryLogicalChannelIDs, selectedModel,
+		ctx, db, queryChannelIDs, queryLogicalChannelIDs, selectedModel, relations,
 	)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
