@@ -289,7 +289,7 @@ try {
   assert.ok(groupTrigger.textContent?.includes('vip'))
   assert.ok(modelTrigger.textContent?.includes('model-b'))
   assert.equal(container.textContent?.includes('默认渠道'), false)
-  assert.ok(container.textContent?.includes('VIP 渠道'))
+  assert.equal(container.textContent?.includes('VIP 渠道'), false)
 
   await act(async () => {
     resolveModelRequest?.()

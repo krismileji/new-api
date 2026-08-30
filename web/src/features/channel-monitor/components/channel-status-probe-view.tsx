@@ -23,12 +23,7 @@ import {
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   lazy,
   memo,
@@ -164,7 +159,6 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   const query = useQuery({
     queryKey: ['channel-monitor', 'status-probe', { model: modelFilter }],
     queryFn: () => getChannelStatusProbeOverview(modelFilter),
-    placeholderData: keepPreviousData,
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: false,
@@ -188,21 +182,24 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
     [channels]
   )
   const serverNow = query.data?.data.server_now ?? Math.floor(Date.now() / 1000)
-  const groupOptions = useMemo<Array<{ value: string | null; label: string }>>(
-    () => [
+  const groupOptions = useMemo<
+    Array<{ value: string | null; label: string }>
+  >(() => {
+    const groups = query.data?.data.groups ?? (groupFilter ? [groupFilter] : [])
+    return [
       { value: null, label: '选择分组' },
-      ...orderGroupNames(query.data?.data.groups ?? [], props.groupOrder).map(
-        (groupName) => ({
-          value: groupName,
-          label: groupName,
-        })
-      ),
-    ],
-    [props.groupOrder, query.data?.data.groups]
-  )
-  const groupModels = groupFilter
-    ? (query.data?.data.models_by_group?.[groupFilter] ?? EMPTY_MODEL_NAMES)
-    : EMPTY_MODEL_NAMES
+      ...orderGroupNames(groups, props.groupOrder).map((groupName) => ({
+        value: groupName,
+        label: groupName,
+      })),
+    ]
+  }, [groupFilter, props.groupOrder, query.data?.data.groups])
+  const groupModels = useMemo(() => {
+    if (!groupFilter) return EMPTY_MODEL_NAMES
+    const models = query.data?.data.models_by_group?.[groupFilter]
+    if (models) return models
+    return modelFilter ? [modelFilter] : EMPTY_MODEL_NAMES
+  }, [groupFilter, modelFilter, query.data?.data.models_by_group])
   const modelOptions = useMemo<
     Array<{ value: string | null; label: string }>
   >(() => {

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"math"
 	"sort"
@@ -122,6 +123,23 @@ func GetAllChannelsForMonitor() ([]*Channel, error) {
 func GetChannelRatioMonitors() ([]ChannelRatioMonitor, error) {
 	var monitors []ChannelRatioMonitor
 	err := DB.Find(&monitors).Error
+	return monitors, err
+}
+
+func GetChannelRatioMonitorsForStatusProbeOverview(ctx context.Context, db *gorm.DB, channelIDs []int) ([]ChannelRatioMonitor, error) {
+	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	if channelIDs != nil && len(channelIDs) == 0 {
+		return []ChannelRatioMonitor{}, nil
+	}
+	query := queryDB.Select("channel_id", "ratio", "remark", "updated_time", "cost_conversion")
+	if channelIDs != nil {
+		query = query.Where("channel_id IN ?", channelIDs)
+	}
+	var monitors []ChannelRatioMonitor
+	err = query.Find(&monitors).Error
 	return monitors, err
 }
 

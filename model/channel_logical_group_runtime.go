@@ -97,6 +97,10 @@ func InvalidateLogicalChannelRuntimeCache() {
 // logical identity and revision. Callers should retain this value in task
 // snapshots so later membership changes cannot rewrite running tasks.
 func ResolveChannelLogicalIdentity(channelID int) (LogicalChannelIdentity, error) {
+	return resolveChannelLogicalIdentity(DB, channelID)
+}
+
+func resolveChannelLogicalIdentity(db *gorm.DB, channelID int) (LogicalChannelIdentity, error) {
 	if channelID <= 0 {
 		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
 	}
@@ -104,7 +108,7 @@ func ResolveChannelLogicalIdentity(channelID int) (LogicalChannelIdentity, error
 		// The process-wide kill switch is deliberately checked before the
 		// runtime cache so disabling the rollout immediately restores the old
 		// physical-channel identity for newly created tasks.
-		return resolvePhysicalChannelIdentity(channelID)
+		return resolvePhysicalChannelIdentity(db, channelID)
 	}
 	if common.MemoryCacheEnabled {
 		channelSyncLock.RLock()
@@ -126,11 +130,15 @@ func ResolveChannelLogicalIdentity(channelID int) (LogicalChannelIdentity, error
 		}
 		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
 	}
-	return resolveLogicalIdentityFromDatabase(channelID)
+	return resolveLogicalIdentityFromDatabase(db, channelID)
 }
 
 // GetLogicalChannelGroupSnapshot returns a defensive copy of one group.
 func GetLogicalChannelGroupSnapshot(logicalID int64) (LogicalChannelGroupSnapshot, error) {
+	return getLogicalChannelGroupSnapshot(DB, logicalID)
+}
+
+func getLogicalChannelGroupSnapshot(db *gorm.DB, logicalID int64) (LogicalChannelGroupSnapshot, error) {
 	if logicalID <= 0 {
 		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeGroupNotFound
 	}
@@ -152,7 +160,7 @@ func GetLogicalChannelGroupSnapshot(logicalID int64) (LogicalChannelGroupSnapsho
 		}
 		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeGroupNotFound
 	}
-	return loadLogicalChannelGroupSnapshotFromDatabase(logicalID)
+	return loadLogicalChannelGroupSnapshotFromDatabase(db, logicalID)
 }
 
 // GetLogicalChannelRuntimeSnapshot returns a defensive copy suitable for a
@@ -341,6 +349,10 @@ func buildPhysicalChannelRuntimeSnapshot(db *gorm.DB) (*LogicalChannelRuntimeSna
 // member and never look up a persisted group id, avoiding numeric id collisions
 // between physical channels and logical groups.
 func GetLogicalChannelSelectionSnapshot(identity LogicalChannelIdentity) (LogicalChannelGroupSnapshot, error) {
+	return getLogicalChannelSelectionSnapshot(DB, identity)
+}
+
+func getLogicalChannelSelectionSnapshot(db *gorm.DB, identity LogicalChannelIdentity) (LogicalChannelGroupSnapshot, error) {
 	if identity.ChannelID <= 0 || identity.LogicalChannelID <= 0 {
 		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeChannelNotFound
 	}
@@ -360,7 +372,7 @@ func GetLogicalChannelSelectionSnapshot(identity LogicalChannelIdentity) (Logica
 			Members:          []LogicalChannelMemberSnapshot{{ChannelID: identity.ChannelID, Weight: ChannelLogicalGroupDefaultMemberWeight}},
 		}, nil
 	}
-	group, err := GetLogicalChannelGroupSnapshot(identity.LogicalChannelID)
+	group, err := getLogicalChannelGroupSnapshot(db, identity.LogicalChannelID)
 	if err != nil {
 		return LogicalChannelGroupSnapshot{}, err
 	}
@@ -384,19 +396,19 @@ func GetLogicalChannelMembers(channelID int) (LogicalChannelIdentity, LogicalCha
 	return identity, group, nil
 }
 
-func resolveLogicalIdentityFromDatabase(channelID int) (LogicalChannelIdentity, error) {
-	if DB == nil {
+func resolveLogicalIdentityFromDatabase(db *gorm.DB, channelID int) (LogicalChannelIdentity, error) {
+	if db == nil {
 		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeUnavailable
 	}
-	if !logicalChannelGroupingSchemaAvailable(DB) {
-		return resolvePhysicalChannelIdentity(channelID)
+	if !logicalChannelGroupingSchemaAvailable(db) {
+		return resolvePhysicalChannelIdentity(db, channelID)
 	}
 	type channelIdentityRow struct {
 		ID               int
 		LogicalChannelID *int64
 	}
 	var channel channelIdentityRow
-	if err := DB.Model(&Channel{}).Select("id", "logical_channel_id").Where("id = ?", channelID).First(&channel).Error; err != nil {
+	if err := db.Model(&Channel{}).Select("id", "logical_channel_id").Where("id = ?", channelID).First(&channel).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
 		}
@@ -406,7 +418,7 @@ func resolveLogicalIdentityFromDatabase(channelID int) (LogicalChannelIdentity, 
 	if channel.LogicalChannelID != nil && *channel.LogicalChannelID > 0 {
 		identity.LogicalChannelID = *channel.LogicalChannelID
 		var group ChannelLogicalGroup
-		if err := DB.Model(&ChannelLogicalGroup{}).Select("id", "status", "revision").Where("id = ?", identity.LogicalChannelID).First(&group).Error; err != nil {
+		if err := db.Model(&ChannelLogicalGroup{}).Select("id", "status", "revision").Where("id = ?", identity.LogicalChannelID).First(&group).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeGroupNotFound
 			}
@@ -420,14 +432,14 @@ func resolveLogicalIdentityFromDatabase(channelID int) (LogicalChannelIdentity, 
 	return identity, nil
 }
 
-func resolvePhysicalChannelIdentity(channelID int) (LogicalChannelIdentity, error) {
-	if DB == nil {
+func resolvePhysicalChannelIdentity(db *gorm.DB, channelID int) (LogicalChannelIdentity, error) {
+	if db == nil {
 		return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeUnavailable
 	}
 	var channel struct {
 		ID int
 	}
-	if err := DB.Model(&Channel{}).Select("id").Where("id = ?", channelID).First(&channel).Error; err != nil {
+	if err := db.Model(&Channel{}).Select("id").Where("id = ?", channelID).First(&channel).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return LogicalChannelIdentity{}, ErrLogicalChannelRuntimeChannelNotFound
 		}
@@ -436,15 +448,15 @@ func resolvePhysicalChannelIdentity(channelID int) (LogicalChannelIdentity, erro
 	return LogicalChannelIdentity{ChannelID: channel.ID, LogicalChannelID: int64(channel.ID)}, nil
 }
 
-func loadLogicalChannelGroupSnapshotFromDatabase(logicalID int64) (LogicalChannelGroupSnapshot, error) {
-	if DB == nil {
+func loadLogicalChannelGroupSnapshotFromDatabase(db *gorm.DB, logicalID int64) (LogicalChannelGroupSnapshot, error) {
+	if db == nil {
 		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeUnavailable
 	}
-	if !logicalChannelGroupingSchemaAvailable(DB) {
+	if !logicalChannelGroupingSchemaAvailable(db) {
 		return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeGroupNotFound
 	}
 	var group ChannelLogicalGroup
-	if err := DB.Model(&ChannelLogicalGroup{}).Select("id", "status", "revision").Where("id = ?", logicalID).First(&group).Error; err != nil {
+	if err := db.Model(&ChannelLogicalGroup{}).Select("id", "status", "revision").Where("id = ?", logicalID).First(&group).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return LogicalChannelGroupSnapshot{}, ErrLogicalChannelRuntimeGroupNotFound
 		}
@@ -457,7 +469,7 @@ func loadLogicalChannelGroupSnapshotFromDatabase(logicalID int64) (LogicalChanne
 		group.Status = ChannelLogicalGroupStatusDisabled
 	}
 	var members []ChannelLogicalGroupMember
-	if err := DB.Model(&ChannelLogicalGroupMember{}).Select("logical_group_id", "channel_id", "weight", "address_fingerprint").Where("logical_group_id = ?", logicalID).Order("channel_id asc").Find(&members).Error; err != nil {
+	if err := db.Model(&ChannelLogicalGroupMember{}).Select("logical_group_id", "channel_id", "weight", "address_fingerprint").Where("logical_group_id = ?", logicalID).Order("channel_id asc").Find(&members).Error; err != nil {
 		return LogicalChannelGroupSnapshot{}, err
 	}
 	memberIDs := make([]int, 0, len(members))
@@ -470,7 +482,7 @@ func loadLogicalChannelGroupSnapshotFromDatabase(logicalID int64) (LogicalChanne
 	}
 	var channels []channelIdentityRow
 	if len(memberIDs) > 0 {
-		if err := DB.Model(&Channel{}).Select("id", "logical_channel_id").Where("id IN ?", memberIDs).Find(&channels).Error; err != nil {
+		if err := db.Model(&Channel{}).Select("id", "logical_channel_id").Where("id IN ?", memberIDs).Find(&channels).Error; err != nil {
 			return LogicalChannelGroupSnapshot{}, err
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"golang.org/x/sync/singleflight"
+	"gorm.io/gorm"
 )
 
 const channelStatusProbeOverviewQueryTimeout = 30 * time.Second
@@ -18,12 +19,27 @@ const channelStatusProbeOverviewQueryTimeout = 30 * time.Second
 var channelStatusProbeOverviewQuerySingleflight singleflight.Group
 var channelStatusProbeOverviewQueryGeneration atomic.Uint64
 
+type channelStatusProbeOverviewBuildFunc func(
+	context.Context,
+	*gorm.DB,
+	string,
+	int64,
+) (channelStatusProbeOverviewResponse, error)
+
 // queryChannelStatusProbeOverview always reads the current database state.
 // Concurrent requests for the same filter and generation share only the
 // in-flight query; completed results are never retained.
 func queryChannelStatusProbeOverview(
 	ctx context.Context,
 	selectedModel string,
+) (channelStatusProbeOverviewResponse, error) {
+	return queryChannelStatusProbeOverviewWithBuild(ctx, selectedModel, buildChannelStatusProbeOverview)
+}
+
+func queryChannelStatusProbeOverviewWithBuild(
+	ctx context.Context,
+	selectedModel string,
+	build channelStatusProbeOverviewBuildFunc,
 ) (channelStatusProbeOverviewResponse, error) {
 	for {
 		db := model.DB
@@ -33,7 +49,7 @@ func queryChannelStatusProbeOverview(
 		resultChannel := channelStatusProbeOverviewQuerySingleflight.DoChan(key, func() (any, error) {
 			queryCtx, cancel := context.WithTimeout(context.Background(), channelStatusProbeOverviewQueryTimeout)
 			defer cancel()
-			return buildChannelStatusProbeOverview(queryCtx, selectedModel, common.GetTimestamp())
+			return build(queryCtx, db, selectedModel, common.GetTimestamp())
 		})
 
 		select {

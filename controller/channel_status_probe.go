@@ -496,48 +496,126 @@ func GetChannelStatusProbeOverview(c *gin.Context) {
 
 func buildChannelStatusProbeOverview(
 	ctx context.Context,
+	db *gorm.DB,
 	selectedModel string,
 	now int64,
 ) (channelStatusProbeOverviewResponse, error) {
-	channels, err := model.GetChannelsForStatusProbeOverview()
+	configs, err := model.GetChannelStatusProbeConfigsForOverview(ctx, db)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
-	configs, err := model.GetChannelStatusProbeConfigs()
+	configByChannel := make(map[int]model.ChannelStatusProbeConfig, len(configs))
+	for _, config := range configs {
+		configByChannel[config.ChannelId] = config
+	}
+
+	var channels []*model.Channel
+	var metadataChannels []*model.Channel
+	if selectedModel == "" {
+		channels, err = model.GetChannelsForStatusProbeOverview(ctx, db, nil)
+		metadataChannels = channels
+	} else {
+		metadataChannels, err = model.GetChannelGroupsForStatusProbeOverview(ctx, db)
+	}
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
-	states, err := model.GetChannelStatusProbeStates()
-	if err != nil {
-		return channelStatusProbeOverviewResponse{}, err
+
+	groupSet := make(map[string]struct{})
+	modelSet := make(map[string]struct{})
+	modelSetByGroup := make(map[string]map[string]struct{})
+	configResponseByChannel := make(map[int]channelStatusProbeConfigResponse, len(configs))
+	var queryChannelIDs []int
+	var queryLogicalChannelIDs []int64
+	if selectedModel != "" {
+		queryChannelIDs = make([]int, 0)
+		queryLogicalChannelIDs = make([]int64, 0)
 	}
+	logicalChannelSet := make(map[int64]struct{})
 	maxDisplaySeconds := int64(model.ChannelStatusProbeDefaultDisplayValue) *
 		model.ChannelStatusProbeDisplayBucketSeconds(model.ChannelStatusProbeDefaultDisplayUnit)
-	for _, config := range configs {
+	for _, channel := range metadataChannels {
+		channelGroups := channel.GetGroups()
+		for _, groupName := range channelGroups {
+			if groupName != "" {
+				groupSet[groupName] = struct{}{}
+			}
+		}
+		config, exists := configByChannel[channel.Id]
+		if !exists {
+			continue
+		}
+		converted, convertErr := channelStatusProbeConfigToResponse(config)
+		if convertErr != nil {
+			return channelStatusProbeOverviewResponse{}, convertErr
+		}
+		configResponseByChannel[channel.Id] = converted
+		matchesSelectedModel := selectedModel == ""
+		for _, modelName := range converted.Models {
+			modelSet[modelName] = struct{}{}
+			if modelName == selectedModel {
+				matchesSelectedModel = true
+			}
+			for _, groupName := range channelGroups {
+				if groupName == "" {
+					continue
+				}
+				groupModels, groupExists := modelSetByGroup[groupName]
+				if !groupExists {
+					groupModels = make(map[string]struct{})
+					modelSetByGroup[groupName] = groupModels
+				}
+				groupModels[modelName] = struct{}{}
+			}
+		}
+		if !matchesSelectedModel {
+			continue
+		}
 		displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 		displaySeconds := int64(displayValue) * model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
 		if displaySeconds > maxDisplaySeconds {
 			maxDisplaySeconds = displaySeconds
 		}
+		if selectedModel != "" {
+			queryChannelIDs = append(queryChannelIDs, channel.Id)
+			if config.LogicalRevision > 0 && config.LogicalChannelId > 0 {
+				if _, exists := logicalChannelSet[config.LogicalChannelId]; !exists {
+					logicalChannelSet[config.LogicalChannelId] = struct{}{}
+					queryLogicalChannelIDs = append(queryLogicalChannelIDs, config.LogicalChannelId)
+				}
+			}
+		}
 	}
-	recentExecutions, err := model.GetChannelStatusProbeExecutionsSince(now - maxDisplaySeconds)
+	if selectedModel != "" {
+		channels, err = model.GetChannelsForStatusProbeOverview(ctx, db, queryChannelIDs)
+		if err != nil {
+			return channelStatusProbeOverviewResponse{}, err
+		}
+	}
+	states, err := model.GetChannelStatusProbeStatesForOverview(
+		ctx, db, queryChannelIDs, queryLogicalChannelIDs, selectedModel,
+	)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
-	monitors, err := model.GetChannelRatioMonitors()
+	recentExecutions, err := model.GetChannelStatusProbeExecutionsSinceForOverview(
+		ctx, db, now-maxDisplaySeconds, queryChannelIDs, selectedModel,
+	)
+	if err != nil {
+		return channelStatusProbeOverviewResponse{}, err
+	}
+	monitors, err := model.GetChannelRatioMonitorsForStatusProbeOverview(ctx, db, queryChannelIDs)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
 	todayStart := model.ChannelDailyCostDayStart(now)
-	todayCosts, err := model.GetChannelDailyCosts(ctx, todayStart, todayStart+channelMonitorCostDaySeconds)
+	todayCosts, err := model.GetChannelDailyCostsForStatusProbeOverview(
+		ctx, db, todayStart, todayStart+channelMonitorCostDaySeconds, queryChannelIDs,
+	)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
 	}
 
-	configByChannel := make(map[int]model.ChannelStatusProbeConfig, len(configs))
-	for _, config := range configs {
-		configByChannel[config.ChannelId] = config
-	}
 	statesByChannel := make(map[int][]model.ChannelStatusProbeState)
 	for _, state := range states {
 		statesByChannel[state.ChannelId] = append(statesByChannel[state.ChannelId], state)
@@ -559,9 +637,6 @@ func buildChannelStatusProbeOverview(
 	for _, cost := range todayCosts {
 		todayProbeCostByChannel[cost.ChannelId] = cost.ProbeCostNanoCNY
 	}
-	groupSet := make(map[string]struct{})
-	modelSet := make(map[string]struct{})
-	modelSetByGroup := make(map[string]map[string]struct{})
 	items := make([]channelStatusProbeChannelResponse, 0, len(channels))
 	summary := map[string]int{
 		channelStatusProbeHealthUnconfigured: 0, channelStatusProbeHealthPaused: 0,
@@ -571,33 +646,13 @@ func buildChannelStatusProbeOverview(
 	}
 	for _, channel := range channels {
 		channelGroups := channel.GetGroups()
-		for _, groupName := range channelGroups {
-			if groupName != "" {
-				groupSet[groupName] = struct{}{}
-			}
-		}
 		var configResponse *channelStatusProbeConfigResponse
 		configuredModels := make(map[string]struct{})
-		if config, exists := configByChannel[channel.Id]; exists {
-			converted, convertErr := channelStatusProbeConfigToResponse(config)
-			if convertErr != nil {
-				return channelStatusProbeOverviewResponse{}, convertErr
-			}
+		if converted, exists := configResponseByChannel[channel.Id]; exists {
+			converted := converted
 			configResponse = &converted
 			for _, modelName := range converted.Models {
-				modelSet[modelName] = struct{}{}
 				configuredModels[modelName] = struct{}{}
-				for _, groupName := range channelGroups {
-					if groupName == "" {
-						continue
-					}
-					groupModels, exists := modelSetByGroup[groupName]
-					if !exists {
-						groupModels = make(map[string]struct{})
-						modelSetByGroup[groupName] = groupModels
-					}
-					groupModels[modelName] = struct{}{}
-				}
 			}
 		}
 		if selectedModel != "" {

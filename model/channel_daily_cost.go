@@ -308,6 +308,30 @@ func GetChannelDailyCostsForChannel(ctx context.Context, startTimestamp int64, e
 	return getChannelDailyCosts(ctx, startTimestamp, endTimestamp, channelId)
 }
 
+func GetChannelDailyCostsForStatusProbeOverview(
+	ctx context.Context,
+	db *gorm.DB,
+	startTimestamp int64,
+	endTimestamp int64,
+	channelIDs []int,
+) ([]ChannelDailyCost, error) {
+	if startTimestamp >= endTimestamp || channelIDs != nil && len(channelIDs) == 0 {
+		return []ChannelDailyCost{}, nil
+	}
+	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	query := queryDB.Select("channel_id", "probe_cost_nano_cny").
+		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp)
+	if channelIDs != nil {
+		query = query.Where("channel_id IN ?", channelIDs)
+	}
+	var costs []ChannelDailyCost
+	err = query.Order("channel_id ASC").Find(&costs).Error
+	return costs, err
+}
+
 // GetChannelDailyCostDayTotals returns one aggregated row per calendar day in
 // the requested range. The range should be limited to the requested page by
 // the caller when displaying paginated date details.

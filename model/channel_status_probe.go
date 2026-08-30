@@ -400,17 +400,21 @@ func lockChannelStatusProbeLogicalScopeTx(tx *gorm.DB, scope channelStatusProbeS
 }
 
 func resolveChannelStatusProbeScope(channelID int) (channelStatusProbeScope, error) {
-	identity, err := ResolveChannelLogicalIdentity(channelID)
+	return resolveChannelStatusProbeScopeWithDB(DB, channelID)
+}
+
+func resolveChannelStatusProbeScopeWithDB(db *gorm.DB, channelID int) (channelStatusProbeScope, error) {
+	identity, err := resolveChannelLogicalIdentity(db, channelID)
 	if err != nil {
 		// Legacy model tests and upgrade checks may exercise the probe tables
 		// before the channels table exists. Preserve the physical behavior only
 		// for that schema state; production relation failures remain visible.
-		if DB != nil && DB.Migrator().HasTable(&Channel{}) {
+		if db != nil && db.Migrator().HasTable(&Channel{}) {
 			return channelStatusProbeScope{}, err
 		}
 		identity = LogicalChannelIdentity{ChannelID: channelID, LogicalChannelID: int64(channelID)}
 	}
-	snapshot, err := GetLogicalChannelSelectionSnapshot(identity)
+	snapshot, err := getLogicalChannelSelectionSnapshot(db, identity)
 	if err != nil {
 		return channelStatusProbeScope{}, err
 	}
@@ -430,17 +434,21 @@ func resolveChannelStatusProbeScope(channelID int) (channelStatusProbeScope, err
 }
 
 func resolvePersistedChannelStatusProbeScope(channelID int, logicalChannelID int64, logicalRevision int64) (channelStatusProbeScope, error) {
-	scope, err := resolveChannelStatusProbeScope(channelID)
+	return resolvePersistedChannelStatusProbeScopeWithDB(DB, channelID, logicalChannelID, logicalRevision)
+}
+
+func resolvePersistedChannelStatusProbeScopeWithDB(db *gorm.DB, channelID int, logicalChannelID int64, logicalRevision int64) (channelStatusProbeScope, error) {
+	scope, err := resolveChannelStatusProbeScopeWithDB(db, channelID)
 	if err != nil || !IsLogicalChannelGroupingEnabled() || logicalChannelID <= 0 || logicalRevision <= 0 ||
 		(scope.Identity.Revision > 0 && scope.Identity.LogicalChannelID == logicalChannelID) {
 		return scope, err
 	}
-	snapshot, snapshotErr := GetLogicalChannelGroupSnapshot(logicalChannelID)
+	snapshot, snapshotErr := getLogicalChannelGroupSnapshot(db, logicalChannelID)
 	if snapshotErr != nil || !IsLogicalChannelGroupActive(snapshot.Status) {
 		return scope, nil
 	}
 	for _, member := range snapshot.Members {
-		candidate, candidateErr := resolveChannelStatusProbeScope(member.ChannelID)
+		candidate, candidateErr := resolveChannelStatusProbeScopeWithDB(db, member.ChannelID)
 		if candidateErr == nil && candidate.Identity.LogicalChannelID == logicalChannelID && candidate.Identity.Revision > 0 {
 			return candidate, nil
 		}
@@ -449,13 +457,21 @@ func resolvePersistedChannelStatusProbeScope(channelID int, logicalChannelID int
 }
 
 func resolveChannelStatusProbeConfigScope(config ChannelStatusProbeConfig) (channelStatusProbeScope, error) {
-	return resolvePersistedChannelStatusProbeScope(config.ChannelId, config.LogicalChannelId, config.LogicalRevision)
+	return resolveChannelStatusProbeConfigScopeWithDB(DB, config)
+}
+
+func resolveChannelStatusProbeConfigScopeWithDB(db *gorm.DB, config ChannelStatusProbeConfig) (channelStatusProbeScope, error) {
+	return resolvePersistedChannelStatusProbeScopeWithDB(db, config.ChannelId, config.LogicalChannelId, config.LogicalRevision)
 }
 
 func channelStatusProbeCanonicalConfigs(configs []ChannelStatusProbeConfig) ([]channelStatusProbeScopedConfig, error) {
+	return channelStatusProbeCanonicalConfigsWithDB(DB, configs)
+}
+
+func channelStatusProbeCanonicalConfigsWithDB(db *gorm.DB, configs []ChannelStatusProbeConfig) ([]channelStatusProbeScopedConfig, error) {
 	selected := make(map[channelStatusProbeScopeKey]channelStatusProbeScopedConfig, len(configs))
 	for _, config := range configs {
-		scope, err := resolveChannelStatusProbeConfigScope(config)
+		scope, err := resolveChannelStatusProbeConfigScopeWithDB(db, config)
 		if err != nil {
 			return nil, err
 		}
@@ -467,17 +483,17 @@ func channelStatusProbeCanonicalConfigs(configs []ChannelStatusProbeConfig) ([]c
 		}
 	}
 	var logicalConfigs []ChannelStatusProbeLogicalConfig
-	if DB.Migrator().HasTable(&ChannelStatusProbeLogicalConfig{}) {
-		if err := DB.Order("logical_channel_id ASC").Find(&logicalConfigs).Error; err != nil {
+	if db.Migrator().HasTable(&ChannelStatusProbeLogicalConfig{}) {
+		if err := db.Order("logical_channel_id ASC").Find(&logicalConfigs).Error; err != nil {
 			return nil, err
 		}
 	}
 	for _, logicalConfig := range logicalConfigs {
-		snapshot, err := GetLogicalChannelGroupSnapshot(logicalConfig.LogicalChannelId)
+		snapshot, err := getLogicalChannelGroupSnapshot(db, logicalConfig.LogicalChannelId)
 		if err != nil || !IsLogicalChannelGroupingEnabled() || !IsLogicalChannelGroupActive(snapshot.Status) || len(snapshot.Members) == 0 {
 			continue
 		}
-		scope, err := resolveChannelStatusProbeScope(snapshot.Members[0].ChannelID)
+		scope, err := resolveChannelStatusProbeScopeWithDB(db, snapshot.Members[0].ChannelID)
 		if err != nil || scope.Identity.Revision <= 0 || scope.Identity.LogicalChannelID != logicalConfig.LogicalChannelId {
 			continue
 		}
@@ -772,11 +788,23 @@ func GetChannelStatusProbeConfig(channelId int) (ChannelStatusProbeConfig, error
 }
 
 func GetChannelStatusProbeConfigs() ([]ChannelStatusProbeConfig, error) {
-	var configs []ChannelStatusProbeConfig
-	if err := DB.Order("channel_id ASC").Find(&configs).Error; err != nil {
+	return getChannelStatusProbeConfigs(DB)
+}
+
+func GetChannelStatusProbeConfigsForOverview(ctx context.Context, db *gorm.DB) ([]ChannelStatusProbeConfig, error) {
+	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
+	if err != nil {
 		return nil, err
 	}
-	canonical, err := channelStatusProbeCanonicalConfigs(configs)
+	return getChannelStatusProbeConfigs(queryDB)
+}
+
+func getChannelStatusProbeConfigs(db *gorm.DB) ([]ChannelStatusProbeConfig, error) {
+	var configs []ChannelStatusProbeConfig
+	if err := db.Order("channel_id ASC").Find(&configs).Error; err != nil {
+		return nil, err
+	}
+	canonical, err := channelStatusProbeCanonicalConfigsWithDB(db, configs)
 	if err != nil {
 		return nil, err
 	}
@@ -793,8 +821,41 @@ func GetChannelStatusProbeConfigs() ([]ChannelStatusProbeConfig, error) {
 }
 
 func GetChannelStatusProbeStates() ([]ChannelStatusProbeState, error) {
+	return getChannelStatusProbeStates(DB, nil, nil, "")
+}
+
+func GetChannelStatusProbeStatesForOverview(
+	ctx context.Context,
+	db *gorm.DB,
+	channelIDs []int,
+	logicalChannelIDs []int64,
+	selectedModel string,
+) ([]ChannelStatusProbeState, error) {
+	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	return getChannelStatusProbeStates(queryDB, channelIDs, logicalChannelIDs, selectedModel)
+}
+
+func getChannelStatusProbeStates(
+	db *gorm.DB,
+	channelIDs []int,
+	logicalChannelIDs []int64,
+	selectedModel string,
+) ([]ChannelStatusProbeState, error) {
+	if channelIDs != nil && len(channelIDs) == 0 {
+		return []ChannelStatusProbeState{}, nil
+	}
 	var states []ChannelStatusProbeState
-	if err := DB.Order("channel_id ASC, model_name ASC").Find(&states).Error; err != nil {
+	stateQuery := db.Order("channel_id ASC, model_name ASC")
+	if channelIDs != nil {
+		stateQuery = stateQuery.Where("channel_id IN ?", channelIDs)
+	}
+	if selectedModel != "" {
+		stateQuery = stateQuery.Where("model_name = ?", selectedModel)
+	}
+	if err := stateQuery.Find(&states).Error; err != nil {
 		return nil, err
 	}
 	type scopedState struct {
@@ -807,7 +868,7 @@ func GetChannelStatusProbeStates() ([]ChannelStatusProbeState, error) {
 	}
 	selected := make(map[stateKey]scopedState, len(states))
 	for _, state := range states {
-		scope, err := resolvePersistedChannelStatusProbeScope(state.ChannelId, state.LogicalChannelId, state.LogicalRevision)
+		scope, err := resolvePersistedChannelStatusProbeScopeWithDB(db, state.ChannelId, state.LogicalChannelId, state.LogicalRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -821,17 +882,30 @@ func GetChannelStatusProbeStates() ([]ChannelStatusProbeState, error) {
 			selected[key] = scopedState{state: state, scope: scope}
 		}
 	}
-	if DB.Migrator().HasTable(&ChannelStatusProbeLogicalState{}) {
+	if db.Migrator().HasTable(&ChannelStatusProbeLogicalState{}) {
 		var logicalStates []ChannelStatusProbeLogicalState
-		if err := DB.Order("logical_channel_id ASC, model_name ASC").Find(&logicalStates).Error; err != nil {
-			return nil, err
+		logicalStateQuery := db.Order("logical_channel_id ASC, model_name ASC")
+		if logicalChannelIDs != nil {
+			if len(logicalChannelIDs) == 0 {
+				logicalStateQuery = nil
+			} else {
+				logicalStateQuery = logicalStateQuery.Where("logical_channel_id IN ?", logicalChannelIDs)
+			}
+		}
+		if logicalStateQuery != nil && selectedModel != "" {
+			logicalStateQuery = logicalStateQuery.Where("model_name = ?", selectedModel)
+		}
+		if logicalStateQuery != nil {
+			if err := logicalStateQuery.Find(&logicalStates).Error; err != nil {
+				return nil, err
+			}
 		}
 		for _, row := range logicalStates {
-			snapshot, err := GetLogicalChannelGroupSnapshot(row.LogicalChannelId)
+			snapshot, err := getLogicalChannelGroupSnapshot(db, row.LogicalChannelId)
 			if err != nil || !IsLogicalChannelGroupingEnabled() || !IsLogicalChannelGroupActive(snapshot.Status) || len(snapshot.Members) == 0 {
 				continue
 			}
-			scope, err := resolveChannelStatusProbeScope(snapshot.Members[0].ChannelID)
+			scope, err := resolveChannelStatusProbeScopeWithDB(db, snapshot.Members[0].ChannelID)
 			if err != nil || scope.Identity.Revision <= 0 || scope.Identity.LogicalChannelID != row.LogicalChannelId ||
 				row.LogicalRevision != scope.Identity.Revision {
 				continue
@@ -847,9 +921,18 @@ func GetChannelStatusProbeStates() ([]ChannelStatusProbeState, error) {
 			selected[key] = scopedState{state: state, scope: scope}
 		}
 	}
+	allowedChannels := make(map[int]struct{}, len(channelIDs))
+	for _, channelID := range channelIDs {
+		allowedChannels[channelID] = struct{}{}
+	}
 	projected := make([]ChannelStatusProbeState, 0, len(states))
 	for _, item := range selected {
 		for _, channelID := range item.scope.MemberIDs {
+			if channelIDs != nil {
+				if _, allowed := allowedChannels[channelID]; !allowed {
+					continue
+				}
+			}
 			state := item.state
 			state.ChannelId = channelID
 			state.LogicalChannelId = item.scope.Identity.LogicalChannelID
@@ -1507,12 +1590,44 @@ func ListPendingChannelStatusProbeExecutions(limit int) ([]ChannelStatusProbeExe
 }
 
 func GetChannelStatusProbeExecutionsSince(startedAt int64) ([]ChannelStatusProbeExecution, error) {
-	if !DB.Migrator().HasTable(&ChannelStatusProbeExecution{}) {
+	return getChannelStatusProbeExecutionsSince(DB, startedAt, nil, "")
+}
+
+func GetChannelStatusProbeExecutionsSinceForOverview(
+	ctx context.Context,
+	db *gorm.DB,
+	startedAt int64,
+	channelIDs []int,
+	selectedModel string,
+) ([]ChannelStatusProbeExecution, error) {
+	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	return getChannelStatusProbeExecutionsSince(queryDB, startedAt, channelIDs, selectedModel)
+}
+
+func getChannelStatusProbeExecutionsSince(
+	db *gorm.DB,
+	startedAt int64,
+	channelIDs []int,
+	selectedModel string,
+) ([]ChannelStatusProbeExecution, error) {
+	if channelIDs != nil && len(channelIDs) == 0 {
+		return []ChannelStatusProbeExecution{}, nil
+	}
+	if !db.Migrator().HasTable(&ChannelStatusProbeExecution{}) {
 		return []ChannelStatusProbeExecution{}, nil
 	}
 	var executions []ChannelStatusProbeExecution
-	err := DB.Where("finished_at >= ?", startedAt).
-		Order("channel_id ASC, model_name ASC, finished_at ASC, id ASC").Find(&executions).Error
+	query := db.Where("finished_at >= ?", startedAt)
+	if channelIDs != nil {
+		query = query.Where("channel_id IN ?", channelIDs)
+	}
+	if selectedModel != "" {
+		query = query.Where("model_name = ?", selectedModel)
+	}
+	err := query.Order("channel_id ASC, model_name ASC, finished_at ASC, id ASC").Find(&executions).Error
 	return executions, err
 }
 
