@@ -185,6 +185,48 @@ func TestWakeChannelStatusProbeWorkerCoalescesPendingSignals(t *testing.T) {
 	assert.False(t, takeChannelStatusProbeWorkerWake())
 }
 
+func TestRunChannelStatusProbeModelsConcurrentlyStartsEveryModelBeforeCompletion(t *testing.T) {
+	modelNames := []string{"model-a", "model-b", "model-c"}
+	started := make(chan string, len(modelNames))
+	release := make(chan struct{})
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- runChannelStatusProbeModelsConcurrently(modelNames, func(modelName string) error {
+			started <- modelName
+			<-release
+			return nil
+		})
+	}()
+
+	startedModels := make([]string, 0, len(modelNames))
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for range modelNames {
+		select {
+		case modelName := <-started:
+			startedModels = append(startedModels, modelName)
+		case <-deadline.C:
+			require.FailNow(t, "expected every status probe model to start concurrently")
+		}
+	}
+	assert.ElementsMatch(t, modelNames, startedModels)
+
+	close(release)
+	released = true
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "concurrent status probe model runner did not finish")
+	}
+}
+
 func TestChannelStatusProbeHealthSeparatesPausedStaleAndPartial(t *testing.T) {
 	now := int64(10_000)
 	config := statusProbeTestConfig([]string{"model-a", "model-b"}, 60)

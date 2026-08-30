@@ -290,22 +290,13 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 	claim.Config.LogicalChannelId = identity.LogicalChannelID
 	claim.Config.LogicalRevision = identity.Revision
 	testUserId, testUserErr := resolveChannelTestUserID(nil)
-	for index, modelName := range claim.Models {
-		if index > 0 && common.RequestInterval > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(common.RequestInterval):
-			}
-		}
+	return runChannelStatusProbeModelsConcurrently(claim.Models, func(modelName string) error {
 		if ctx.Err() != nil {
 			outcome := channelStatusProbeCanceledOutcome("探测租约已失效或服务正在停止")
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				outcome = channelStatusProbeTimeoutOutcome(claim.Config.RunningStartedAt)
 			}
-			if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
-				return err
-			}
-			continue
+			return persistChannelStatusProbeOutcome(channel, claim, modelName, outcome)
 		}
 		current, currentErr := model.IsChannelStatusProbeLeaseCurrent(claim, common.GetTimestamp())
 		if currentErr != nil {
@@ -314,10 +305,7 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 		if !current {
 			cancel()
 			outcome := channelStatusProbeCanceledOutcome("探测配置已变化，本轮剩余模型已取消")
-			if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
-				return err
-			}
-			continue
+			return persistChannelStatusProbeOutcome(channel, claim, modelName, outcome)
 		}
 		outcome, selectErr := executeChannelStatusProbeModelWithMemberFailover(
 			snapshot, memberChannels, modelName, nil,
@@ -345,14 +333,27 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 					Result: model.ChannelStatusProbeResultSkipped, StartedAt: now, FinishedAt: now,
 					ErrorCode: "no_available_member", ErrorMessage: "逻辑渠道组当前没有支持该模型的可用成员",
 				}
-				if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
-					return err
-				}
-				continue
+				return persistChannelStatusProbeOutcome(channel, claim, modelName, outcome)
 			}
 			return selectErr
 		}
-		if err := persistChannelStatusProbeOutcome(channel, claim, modelName, outcome); err != nil {
+		return persistChannelStatusProbeOutcome(channel, claim, modelName, outcome)
+	})
+}
+
+func runChannelStatusProbeModelsConcurrently(modelNames []string, run func(string) error) error {
+	modelErrors := make([]error, len(modelNames))
+	var modelWorkers sync.WaitGroup
+	for index, modelName := range modelNames {
+		modelWorkers.Add(1)
+		go func(index int, modelName string) {
+			defer modelWorkers.Done()
+			modelErrors[index] = run(modelName)
+		}(index, modelName)
+	}
+	modelWorkers.Wait()
+	for _, err := range modelErrors {
+		if err != nil {
 			return err
 		}
 	}
