@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -26,10 +25,8 @@ func setupChannelModelDetectionSettingsControllerTest(t *testing.T) *gorm.DB {
 	))
 	previousDB := model.DB
 	model.DB = db
-	service.ResetChannelModelDetectionServiceCache()
 	t.Cleanup(func() {
 		model.DB = previousDB
-		service.ResetChannelModelDetectionServiceCache()
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()

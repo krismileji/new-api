@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -81,11 +80,6 @@ type ChannelModelDetectionServiceResponse struct {
 	CompatibilityMessage  string                                                 `json:"compatibility_message"`
 	Estimates             map[string]ChannelModelDetectionPresetEstimateResponse `json:"estimates"`
 }
-
-var channelModelDetectionServiceCache = struct {
-	sync.RWMutex
-	value ChannelModelDetectionServiceResponse
-}{}
 
 func GetChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, now time.Time) (ChannelModelDetectionSettingsResponse, error) {
 	db := tx
@@ -301,9 +295,6 @@ func UpdateChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, input
 	if err != nil {
 		return ChannelModelDetectionSettingsResponse{}, err
 	}
-	if activeDetectorChanged {
-		ResetChannelModelDetectionServiceCache()
-	}
 	if db == model.DB {
 		NotifyChannelModelDetectionOverviewChanged()
 	}
@@ -403,40 +394,39 @@ func ResolveChannelModelDetectionRelayBaseURL(ctx context.Context, tx *gorm.DB) 
 }
 
 func GetChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.Time) (ChannelModelDetectionServiceResponse, error) {
-	settings, err := GetChannelModelDetectionSettings(ctx, tx, now)
+	db := tx
+	if db == nil {
+		db = model.DB
+	}
+	if db == nil {
+		return ChannelModelDetectionServiceResponse{}, errors.New("模型检测统一设置数据库不可用")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	var config model.ChannelModelDetectionGlobalConfig
+	err := db.WithContext(ctx).Where("id = ?", model.ChannelModelDetectionConfigID).First(&config).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ChannelModelDetectionServiceResponse{
+			State: "unconfigured", Estimates: map[string]ChannelModelDetectionPresetEstimateResponse{},
+		}, nil
+	}
 	if err != nil {
 		return ChannelModelDetectionServiceResponse{}, err
 	}
-	return ChannelModelDetectionServiceSnapshotFromSettings(settings), nil
-}
-
-func ChannelModelDetectionServiceSnapshot(detectorURL string) ChannelModelDetectionServiceResponse {
-	return ChannelModelDetectionServiceSnapshotFromSettings(ChannelModelDetectionSettingsResponse{
-		DetectorURLConfigured: strings.TrimSpace(detectorURL) != "",
-		DetectorURLMasked:     MaskChannelModelDetectorURL(detectorURL),
-	})
-}
-
-func ChannelModelDetectionServiceSnapshotFromSettings(settings ChannelModelDetectionSettingsResponse) ChannelModelDetectionServiceResponse {
-	channelModelDetectionServiceCache.RLock()
-	response := channelModelDetectionServiceCache.value
-	channelModelDetectionServiceCache.RUnlock()
-	response.DetectorURLConfigured = settings.DetectorURLConfigured
-	response.DetectorURLMasked = settings.DetectorURLMasked
-	if response.Estimates == nil {
-		response.Estimates = map[string]ChannelModelDetectionPresetEstimateResponse{}
+	if strings.TrimSpace(config.DetectorURL) == "" {
+		return ChannelModelDetectionServiceResponse{
+			State: "unconfigured", Estimates: map[string]ChannelModelDetectionPresetEstimateResponse{},
+		}, nil
 	}
-	if !settings.DetectorURLConfigured {
-		response = ChannelModelDetectionServiceResponse{
-			State: "unconfigured", DetectorURLConfigured: false, DetectorURLMasked: "",
-			Estimates: map[string]ChannelModelDetectionPresetEstimateResponse{},
-		}
-		return response
+	response, queryErr := testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now)
+	if response.State != "" {
+		return response, nil
 	}
-	if response.State == "" {
-		response.State = "unknown"
-	}
-	return response
+	return response, queryErr
 }
 
 func TestChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.Time, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
@@ -463,7 +453,7 @@ func TestChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time
 	if strings.TrimSpace(config.DetectorURL) == "" {
 		return ChannelModelDetectionServiceResponse{}, ErrChannelModelDetectionDetectorNotConfigured
 	}
-	response, testErr := testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now, true, options...)
+	response, testErr := testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now, options...)
 	if db == model.DB {
 		NotifyChannelModelDetectionOverviewChanged()
 	}
@@ -488,10 +478,10 @@ func TestChannelModelDetectionServiceURL(ctx context.Context, tx *gorm.DB, rawUR
 	if err != nil {
 		return ChannelModelDetectionServiceResponse{}, err
 	}
-	return testChannelModelDetectionServiceURL(ctx, db, normalizedURL, now, false, options...)
+	return testChannelModelDetectionServiceURL(ctx, db, normalizedURL, now, options...)
 }
 
-func testChannelModelDetectionServiceURL(ctx context.Context, db *gorm.DB, detectorURL string, now time.Time, updateCache bool, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
+func testChannelModelDetectionServiceURL(ctx context.Context, db *gorm.DB, detectorURL string, now time.Time, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
 	client, err := NewChannelModelDetectorClient(detectorURL, options...)
 	if err != nil {
 		return ChannelModelDetectionServiceResponse{}, err
@@ -548,18 +538,7 @@ func testChannelModelDetectionServiceURL(ctx context.Context, db *gorm.DB, detec
 			response.State = "offline"
 		}
 	}
-	if updateCache {
-		channelModelDetectionServiceCache.Lock()
-		channelModelDetectionServiceCache.value = response
-		channelModelDetectionServiceCache.Unlock()
-	}
 	return response, compatibilityErr
-}
-
-func ResetChannelModelDetectionServiceCache() {
-	channelModelDetectionServiceCache.Lock()
-	channelModelDetectionServiceCache.value = ChannelModelDetectionServiceResponse{}
-	channelModelDetectionServiceCache.Unlock()
 }
 
 func MaskChannelModelDetectorURL(raw string) string {

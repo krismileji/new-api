@@ -201,14 +201,10 @@ func channelMonitorAggregationStart(
 		return 0, false, fmt.Errorf("读取渠道监控聚合水位失败: %w", err)
 	}
 	channelMonitorAggregationStateMu.Lock()
-	observedSharedAdvance := channelMonitorAggregationLocalCompletedThrough[key] < completedThrough
-	if observedSharedAdvance {
+	if channelMonitorAggregationLocalCompletedThrough[key] < completedThrough {
 		channelMonitorAggregationLocalCompletedThrough[key] = completedThrough
 	}
 	channelMonitorAggregationStateMu.Unlock()
-	if observedSharedAdvance {
-		model.InvalidateChannelMonitorAggregateCaches()
-	}
 	if completedThrough <= 0 {
 		return start, false, nil
 	}

@@ -42,8 +42,8 @@ type channelMonitorPerformanceAPIResponse struct {
 }
 
 func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
-	setupChannelMonitorControllerTestDB(t)
-	useChannelMonitorOptionMap(t, map[string]string{
+	db := setupChannelMonitorControllerTestDB(t)
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "false",
 	})
 	now := time.Now().Unix()
@@ -171,13 +171,11 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"test-model"}, 2, 80, 30,
 	)
-	common.OptionMapRWMutex.Lock()
-	common.OptionMap = map[string]string{
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartScheduleGroupPoliciesOption:     channelSmartScheduleTestGroupPoliciesJSON(t, policy),
 		channelMonitorSmartSchedulePerformanceWindowOption: "120",
-	}
-	common.OptionMapRWMutex.Unlock()
+	})
 
 	smartRecorder := httptest.NewRecorder()
 	smartContext, _ := gin.CreateTestContext(smartRecorder)
@@ -193,7 +191,8 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 }
 
 func TestGetChannelMonitorPerformanceRejectsInvalidRange(t *testing.T) {
-	useChannelMonitorOptionMap(t, map[string]string{
+	db := setupChannelMonitorControllerTestDB(t)
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "false",
 	})
 	for _, minutes := range []string{"0", "1441", "invalid"} {

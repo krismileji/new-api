@@ -135,10 +135,6 @@ func DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
 	if err := TrimChannelMonitorAggregationCoverage(ctx, routeMetricCutoff); err != nil {
 		return result, err
 	}
-	if result.MinuteRowsDeleted > 0 || result.DurationBucketRowsDeleted > 0 {
-		InvalidateChannelMonitorAggregateCaches()
-	}
-
 	taskCostEventBudget := budget.Slice(3)
 	if DB.Migrator().HasTable(&ChannelTaskCostEvent{}) {
 		for {

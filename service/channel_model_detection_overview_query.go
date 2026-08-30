@@ -14,7 +14,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const channelModelDetectionOverviewQueryTimeout = 30 * time.Second
+const (
+	channelModelDetectionOverviewQueryTimeout    = 30 * time.Second
+	channelModelDetectionOverviewDetectorTimeout = 10 * time.Second
+)
 
 var channelModelDetectionOverviewQuerySingleflight singleflight.Group
 var channelModelDetectionOverviewQueryGeneration atomic.Uint64
@@ -34,7 +37,38 @@ type channelModelDetectionOverviewBuildFunc func(
 // state. Concurrent requests for the same generation share only the in-flight
 // query; completed results are never retained.
 func GetCurrentChannelModelDetectionOverview(ctx context.Context) (ChannelModelDetectionOverviewResponse, error) {
-	return getCurrentChannelModelDetectionOverviewWithBuild(ctx, GetChannelModelDetectionOverview)
+	return getCurrentChannelModelDetectionOverviewWithBuild(ctx, func(
+		queryCtx context.Context,
+		db *gorm.DB,
+		now int64,
+	) (ChannelModelDetectionOverviewResponse, error) {
+		response, err := GetChannelModelDetectionOverview(queryCtx, db, now)
+		if err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+		detectorCtx, cancel := context.WithTimeout(queryCtx, channelModelDetectionOverviewDetectorTimeout)
+		defer cancel()
+		detector, err := GetChannelModelDetectionService(detectorCtx, db, time.Unix(now, 0).UTC())
+		if err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+		response.Detector = channelModelDetectionDetectorResponse(detector)
+		return response, nil
+	})
+}
+
+func channelModelDetectionDetectorResponse(status ChannelModelDetectionServiceResponse) ChannelModelDetectionDetectorResponse {
+	estimates := status.Estimates
+	if estimates == nil {
+		estimates = make(map[string]ChannelModelDetectionPresetEstimateResponse)
+	}
+	return ChannelModelDetectionDetectorResponse{
+		State: status.State, DetectorURLConfigured: status.DetectorURLConfigured,
+		DetectorURLMasked: status.DetectorURLMasked, Busy: status.Busy,
+		ActiveSessionOwned: status.ActiveSessionOwned, DeploymentID: status.DeploymentID,
+		LastCheckedAt: status.LastCheckedAt, LastError: status.LastError,
+		CompatibilityMessage: status.CompatibilityMessage, Estimates: estimates,
+	}
 }
 
 func getCurrentChannelModelDetectionOverviewWithBuild(

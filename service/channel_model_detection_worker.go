@@ -981,9 +981,6 @@ func promotePendingChannelModelDetectorURL(ctx context.Context, db *gorm.DB, now
 	if updated.Error != nil {
 		return updated.Error
 	}
-	if updated.RowsAffected > 0 {
-		ResetChannelModelDetectionServiceCache()
-	}
 	return nil
 }
 

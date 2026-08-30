@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,17 +132,15 @@ func TestGetChannelMonitorPerformanceMetricsLatestValuesAcrossRouteDimensions(t 
 	assert.InDelta(t, latestTPS, *metrics[0].LatestTPS, 1e-9)
 }
 
-func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *testing.T) {
+func TestGetChannelMonitorObservedMetricsReadLatestCompletedWindow(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
-		resetChannelMonitorMetricsCache()
 	})
-	resetChannelMonitorMetricsCache()
 
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache.db")), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-current.db")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -167,19 +164,15 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 	}).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 
-	performance, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	performance, err := GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, performance, 1)
-	success, groups, err := GetChannelMonitorSuccessMetricsCached(context.Background(), 1000, 15)
+	success, groups, err := GetChannelMonitorObservedSuccessMetrics(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, success, 1)
 	require.Len(t, groups, 1)
-
-	performance[0].ModelName = "mutated"
-	require.NotNil(t, performance[0].AverageFirstTokenMs)
-	*performance[0].AverageFirstTokenMs = -1
-	success[0].ModelName = "mutated"
-	groups[0].Group = "mutated"
+	assert.Equal(t, 1, performance[0].SampleCount)
+	assert.Equal(t, int64(1), success[0].ActualSuccessCount)
 	require.NoError(t, db.Create(&Log{
 		ChannelId:        1,
 		ModelName:        "model-a",
@@ -192,37 +185,26 @@ func TestGetChannelMonitorMetricsCachedReusesStableWindowAndReturnsCopies(t *tes
 		Other:            `{"frt":2000}`,
 	}).Error)
 
-	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1001, 15)
-	require.NoError(t, err)
-	require.Len(t, performance, 1)
-	assert.Equal(t, "model-a", performance[0].ModelName)
-	assert.Equal(t, 1, performance[0].SampleCount)
-	require.NotNil(t, performance[0].AverageFirstTokenMs)
-	assert.InDelta(t, 1000, *performance[0].AverageFirstTokenMs, 0.001)
-	success, groups, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1001, 15)
-	require.NoError(t, err)
-	assert.Equal(t, "model-a", success[0].ModelName)
-	assert.Equal(t, int64(1), success[0].ActualSuccessCount)
-	assert.Equal(t, "vip", groups[0].Group)
 	aggregateChannelMonitorMinuteTestRange(t, 0, 1020)
 
-	performance, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1001, 15)
+	performance, err = GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1001, 15)
 	require.NoError(t, err)
 	require.Len(t, performance, 1)
 	assert.Equal(t, 2, performance[0].SampleCount)
-	success, _, err = GetChannelMonitorSuccessMetricsCached(context.Background(), 1001, 15)
+	require.NotNil(t, performance[0].AverageFirstTokenMs)
+	assert.InDelta(t, 1500, *performance[0].AverageFirstTokenMs, 0.001)
+	success, groups, err = GetChannelMonitorObservedSuccessMetrics(context.Background(), 1001, 15)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), success[0].ActualSuccessCount)
+	assert.Equal(t, "vip", groups[0].Group)
 }
 
-func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalidatesInFlightQuery(t *testing.T) {
+func TestGetChannelMonitorObservedPerformanceMetricsReadsWriteCompletedBeforeQuery(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
-	resetChannelMonitorMetricsCache()
 	t.Cleanup(func() {
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
-		resetChannelMonitorMetricsCache()
 	})
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache-generation.db")), &gorm.Config{})
@@ -251,8 +233,8 @@ func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalida
 		}
 	})
 	var blocked atomic.Bool
-	const callbackName = "test:block_stale_channel_monitor_cache_query"
-	require.NoError(t, db.Callback().Row().After("gorm:row").Register(callbackName, func(tx *gorm.DB) {
+	const callbackName = "test:block_channel_monitor_observed_query"
+	require.NoError(t, db.Callback().Row().Before("gorm:row").Register(callbackName, func(tx *gorm.DB) {
 		if tx.Statement == nil || tx.Statement.Table != channelMonitorMinuteRouteMetricTable ||
 			!blocked.CompareAndSwap(false, true) {
 			return
@@ -270,13 +252,13 @@ func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalida
 	}
 	result := make(chan queryResult, 1)
 	go func() {
-		metrics, queryErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+		metrics, queryErr := GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
 		result <- queryResult{metrics: metrics, err: queryErr}
 	}()
 	select {
 	case <-queryLoaded:
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "performance query did not reach cache race point")
+		require.FailNow(t, "performance query did not reach database read point")
 	}
 
 	require.NoError(t, db.Create(&Log{
@@ -295,19 +277,17 @@ func TestGetChannelMonitorPerformanceMetricsCachedRetriesWhenAggregationInvalida
 		require.NotNil(t, loaded.metrics[0].AverageFirstTokenMs)
 		assert.InDelta(t, 1500, *loaded.metrics[0].AverageFirstTokenMs, 0.001)
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "performance query did not retry after cache invalidation")
+		require.FailNow(t, "performance query did not finish after database write")
 	}
 }
 
-func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *testing.T) {
+func TestGetChannelMonitorObservedPerformanceMetricsDoesNotReuseCompletedQuery(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
-		resetChannelMonitorMetricsCache()
 	})
-	resetChannelMonitorMetricsCache()
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-singleflight.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -331,50 +311,30 @@ func TestGetChannelMonitorPerformanceMetricsCachedCoalescesConcurrentQueries(t *
 	}).Error)
 	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
 
-	queryStarted := make(chan struct{})
-	releaseQuery := make(chan struct{})
 	var queryCount atomic.Int32
-	var blockFirstQuery sync.Once
 	require.NoError(t, db.Callback().Row().Before("gorm:row").Register(
-		"channel_monitor_performance_cache_test",
+		"channel_monitor_performance_current_query_test",
 		func(*gorm.DB) {
 			queryCount.Add(1)
-			blockFirstQuery.Do(func() {
-				close(queryStarted)
-				<-releaseQuery
-			})
 		},
 	))
 
-	const callers = 8
-	results := make(chan error, callers)
-	go func() {
-		_, callErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
-		results <- callErr
-	}()
-	<-queryStarted
-	for range callers - 1 {
-		go func() {
-			_, callErr := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
-			results <- callErr
-		}()
-	}
-	close(releaseQuery)
-	for range callers {
-		require.NoError(t, <-results)
-	}
-	assert.Equal(t, int32(3), queryCount.Load())
+	_, err = GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	firstQueryCount := queryCount.Load()
+	assert.Positive(t, firstQueryCount)
+	_, err = GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
+	require.NoError(t, err)
+	assert.Equal(t, firstQueryCount*2, queryCount.Load())
 }
 
-func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testing.T) {
+func TestGetChannelMonitorObservedPerformanceMetricsReadsCurrentLogDatabase(t *testing.T) {
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
-		resetChannelMonitorMetricsCache()
 	})
-	resetChannelMonitorMetricsCache()
 	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
 
 	firstDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "performance-cache-first.db")), &gorm.Config{})
@@ -396,7 +356,7 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 	}).Error)
 	LOG_DB = firstDB
 	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
-	metrics, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	metrics, err := GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
 	assert.Equal(t, "first-db-model", metrics[0].ModelName)
@@ -425,7 +385,7 @@ func TestGetChannelMonitorPerformanceMetricsCachedIsolatesLogDatabases(t *testin
 	}).Error)
 	LOG_DB = secondDB
 	aggregateChannelMonitorMinuteTestRange(t, 0, 960)
-	metrics, err = GetChannelMonitorPerformanceMetricsCached(context.Background(), 1000, 15)
+	metrics, err = GetChannelMonitorObservedPerformanceMetrics(context.Background(), 1000, 15)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
 	assert.Equal(t, "second-db-model", metrics[0].ModelName)

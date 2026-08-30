@@ -20,7 +20,6 @@ import (
 const (
 	channelModelDetectionRuntimeInterval = 15 * time.Second
 	channelModelDetectionPollInterval    = 3 * time.Second
-	channelModelDetectionHealthInterval  = 30 * time.Second
 )
 
 type channelModelDetectionRuntime struct {
@@ -182,17 +181,17 @@ workerLoop:
 		}
 	}
 
-	snapshot := service.ChannelModelDetectionServiceSnapshot("")
-	var global model.ChannelModelDetectionGlobalConfig
-	if model.DB != nil && model.DB.Where("id = ?", model.ChannelModelDetectionConfigID).First(&global).Error == nil {
-		snapshot = service.ChannelModelDetectionServiceSnapshot(global.DetectorURL)
-		if strings.TrimSpace(global.DetectorURL) != "" && time.Now().Unix()-snapshot.LastCheckedAt >= int64(channelModelDetectionHealthInterval.Seconds()) {
-			snapshot, _ = service.TestChannelModelDetectionService(ctx, nil, time.Now().UTC())
+	detectorStatus, detectorErr := service.GetChannelModelDetectionService(ctx, nil, time.Now().UTC())
+	if detectorErr != nil {
+		result.DetectorState = "unknown"
+		if result.DetectorError == "" {
+			result.DetectorError = sanitizeChannelModelDetectionRuntimeError(detectorErr.Error())
 		}
-	}
-	result.DetectorState = snapshot.State
-	if result.DetectorError == "" {
-		result.DetectorError = snapshot.LastError
+	} else {
+		result.DetectorState = detectorStatus.State
+		if result.DetectorError == "" {
+			result.DetectorError = detectorStatus.LastError
+		}
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
 }

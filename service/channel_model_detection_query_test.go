@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -157,26 +159,12 @@ func TestChannelModelDetectionOverviewUsesFixedQueriesAndDoesNotExposeSecrets(t 
 	assert.Equal(t, initialQueryCount, queryCount.Load())
 }
 
-func TestChannelModelDetectionOverviewDoesNotUseCachedDetectorHealth(t *testing.T) {
+func TestChannelModelDetectionOverviewDatabaseProjectionDoesNotInventDetectorHealth(t *testing.T) {
 	db := setupChannelModelDetectionQueryTestDB(t)
-	cachedDeploymentID := "cached-deployment"
 	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
 		DetectorURL: "http://127.0.0.1:18080", ScheduledPreset: model.ChannelModelDetectionPresetMedium,
 		IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
 	}).Error)
-
-	channelModelDetectionServiceCache.Lock()
-	previous := channelModelDetectionServiceCache.value
-	channelModelDetectionServiceCache.value = ChannelModelDetectionServiceResponse{
-		State: "available", DetectorURLConfigured: true, DetectorURLMasked: "cached-detector",
-		LastCheckedAt: 999, DeploymentID: &cachedDeploymentID,
-	}
-	channelModelDetectionServiceCache.Unlock()
-	t.Cleanup(func() {
-		channelModelDetectionServiceCache.Lock()
-		channelModelDetectionServiceCache.value = previous
-		channelModelDetectionServiceCache.Unlock()
-	})
 
 	overview, err := GetChannelModelDetectionOverview(context.Background(), db, 1_000)
 	require.NoError(t, err)
@@ -186,6 +174,51 @@ func TestChannelModelDetectionOverviewDoesNotUseCachedDetectorHealth(t *testing.
 	assert.Zero(t, overview.Detector.LastCheckedAt)
 	assert.Empty(t, overview.Detector.DeploymentID)
 	assert.Empty(t, overview.Detector.Estimates)
+}
+
+func TestGetCurrentChannelModelDetectionOverviewReadsCurrentDetectorState(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	var unavailable atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if unavailable.Load() {
+			http.Error(writer, "detector unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case channelModelDetectorBootstrapPath:
+			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
+			_, _ = writer.Write([]byte(`{"session_token":"overview-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+		case channelModelDetectorEstimatePath:
+			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
+		case channelModelDetectorStatusPath:
+			_, _ = writer.Write([]byte(`{"status":"idle"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	require.NoError(t, db.Create(&model.ChannelModelDetectionGlobalConfig{
+		DetectorURL: server.URL, ScheduledPreset: model.ChannelModelDetectionPresetMedium,
+		IntervalHours: 24, ScheduleTime: "02:30", Timezone: "Asia/Shanghai", Revision: 1,
+	}).Error)
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	overview, err := GetCurrentChannelModelDetectionOverview(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "available", overview.Detector.State)
+	assert.Equal(t, server.URL, overview.Detector.DetectorURLMasked)
+	assert.Positive(t, overview.Detector.LastCheckedAt)
+
+	unavailable.Store(true)
+	overview, err = GetCurrentChannelModelDetectionOverview(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "offline", overview.Detector.State)
+	assert.NotEmpty(t, overview.Detector.LastError)
 }
 
 func TestChannelModelDetectionOverviewTreatsLegacyNullLogicalFieldsAsPhysical(t *testing.T) {

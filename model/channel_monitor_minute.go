@@ -833,7 +833,6 @@ func AggregateChannelMonitorMinuteRangeWithResult(
 	if err != nil {
 		return result, err
 	}
-	InvalidateChannelMonitorAggregateCaches()
 	return result, nil
 }
 
@@ -924,9 +923,6 @@ func UpgradeChannelMonitorCacheUtilizationMetrics(
 	if err != nil {
 		return result, false, err
 	}
-	if upgraded {
-		InvalidateChannelMonitorAggregateCaches()
-	}
 	return result, upgraded, nil
 }
 
@@ -949,7 +945,6 @@ func BackfillChannelMonitorCacheUtilizationRangeWithState(
 	if err := ensureChannelMonitorAggregationState(ctx); err != nil {
 		return result, err
 	}
-	skipped := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		state, err := lockChannelMonitorAggregationState(tx)
 		if err != nil {
@@ -957,11 +952,9 @@ func BackfillChannelMonitorCacheUtilizationRangeWithState(
 		}
 		if state.CacheUtilizationVersion < ChannelMonitorCacheUtilizationVersion ||
 			state.CacheUtilizationCoveredFrom <= 0 {
-			skipped = true
 			return nil
 		}
 		if state.CacheUtilizationCoveredFrom <= startTimestamp {
-			skipped = true
 			return nil
 		}
 		if startTimestamp > state.CacheUtilizationCoveredFrom ||
@@ -1000,9 +993,6 @@ func BackfillChannelMonitorCacheUtilizationRangeWithState(
 	})
 	if err != nil {
 		return result, err
-	}
-	if !skipped {
-		InvalidateChannelMonitorAggregateCaches()
 	}
 	return result, nil
 }
@@ -1107,7 +1097,6 @@ func aggregateChannelMonitorMinuteRangeFromObservation(
 	if skipped {
 		return result, nil
 	}
-	InvalidateChannelMonitorAggregateCaches()
 	return result, nil
 }
 

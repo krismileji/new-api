@@ -35,7 +35,7 @@ func TestChannelSmartScheduleMetricsMatchChannelViewCompletedMinuteWindow(t *tes
 	}).Error)
 
 	ctx := context.Background()
-	channelPerformance, err := GetChannelMonitorPerformanceMetricsCached(ctx, 310, 4)
+	channelPerformance, err := GetChannelMonitorObservedPerformanceMetrics(ctx, 310, 4)
 	require.NoError(t, err)
 	require.Len(t, channelPerformance, 1)
 	routePerformance, err := GetChannelMonitorRoutePerformanceMetrics(ctx, 60, 310)
@@ -50,7 +50,7 @@ func TestChannelSmartScheduleMetricsMatchChannelViewCompletedMinuteWindow(t *tes
 	assert.Equal(t, channelPerformance[0].AverageTPS, routePerformance[0].AverageTPS)
 	assert.Equal(t, channelPerformance[0].LastUsedTime, routePerformance[0].LastUsedTime)
 
-	channelSuccess, _, err := GetChannelMonitorSuccessMetricsCached(ctx, 310, 4)
+	channelSuccess, _, err := GetChannelMonitorObservedSuccessMetrics(ctx, 310, 4)
 	require.NoError(t, err)
 	require.Len(t, channelSuccess, 1)
 	routeStability, err := GetChannelMonitorRouteStabilityMetrics(ctx, 60, 310)

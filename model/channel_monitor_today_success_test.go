@@ -151,16 +151,14 @@ func TestGetChannelMonitorDailySuccessMetricsAggregatesEachBeijingDay(t *testing
 	assert.Zero(t, items[1].CacheWriteChannelCount)
 }
 
-func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t *testing.T) {
+func TestGetChannelMonitorTodaySuccessMetricsReadsLatestAggregates(t *testing.T) {
 	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
-	resetChannelMonitorTodaySuccessCache()
 	t.Cleanup(func() {
 		DB = originalDB
 		LOG_DB = originalLogDB
 		common.SetLogDatabaseType(originalLogDatabaseType)
-		resetChannelMonitorTodaySuccessCache()
 	})
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "today-success-cache.db")), &gorm.Config{})
@@ -187,14 +185,11 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 	_, err = AggregateChannelMonitorMinuteRange(context.Background(), dayStart, dayStart+channelDailyCostDaySeconds)
 	require.NoError(t, err)
 
-	first, err := GetChannelMonitorTodaySuccessMetricsCached(context.Background(), generatedAt)
+	first, err := GetChannelMonitorTodaySuccessMetrics(context.Background(), generatedAt)
 	require.NoError(t, err)
 	require.Len(t, first.ChannelItems, 1)
 	require.Len(t, first.APIKeyItems, 1)
 	require.Len(t, first.CacheWriteItems, 1)
-	first.ChannelItems[0].ActualSampleCount = -1
-	first.APIKeyItems[0].ActualSampleCount = -1
-	first.CacheWriteItems[0].RequestCount = -1
 	require.NoError(t, db.Create(&Log{
 		ChannelId: 1,
 		ModelName: "model-b",
@@ -202,19 +197,9 @@ func TestGetChannelMonitorTodaySuccessMetricsCachedReusesResultAndReturnsCopy(t 
 		Type:      LogTypeConsume,
 	}).Error)
 
-	second, err := GetChannelMonitorTodaySuccessMetricsCached(context.Background(), generatedAt+1)
-	require.NoError(t, err)
-	require.Len(t, second.ChannelItems, 1)
-	require.Len(t, second.APIKeyItems, 1)
-	require.Len(t, second.CacheWriteItems, 1)
-	assert.Equal(t, int64(1), second.Summary.ActualSampleCount)
-	assert.Equal(t, int64(1), second.ChannelItems[0].ActualSampleCount)
-	assert.Equal(t, int64(1), second.APIKeyItems[0].ActualSampleCount)
-	assert.Equal(t, int64(1), second.CacheWriteItems[0].RequestCount)
-
 	_, err = AggregateChannelMonitorMinuteRange(context.Background(), dayStart, dayStart+channelDailyCostDaySeconds)
 	require.NoError(t, err)
-	refreshed, err := GetChannelMonitorTodaySuccessMetricsCached(context.Background(), generatedAt)
+	refreshed, err := GetChannelMonitorTodaySuccessMetrics(context.Background(), generatedAt+2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), refreshed.Summary.ActualSampleCount)
 	require.Len(t, refreshed.ChannelItems, 1)

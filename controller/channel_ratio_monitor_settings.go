@@ -9,7 +9,6 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 const (
@@ -237,6 +235,7 @@ type channelMonitorSettings struct {
 	SmartScheduleForceResetTaskCreated    *bool                      `json:"smart_schedule_force_reset_task_created,omitempty"`
 	SmartScheduleForceResetTaskId         string                     `json:"smart_schedule_force_reset_task_id,omitempty"`
 	SmartScheduleForceResetTaskError      string                     `json:"smart_schedule_force_reset_task_error,omitempty"`
+	ChannelOrder                          []int                      `json:"-"`
 }
 
 type channelMonitorSettingsUpdateRequest struct {
@@ -302,15 +301,6 @@ type channelMonitorOrderUpdateRequest struct {
 	ChannelIds *[]int `json:"channel_ids"`
 }
 
-var channelMonitorSettingsSnapshotCache struct {
-	sync.RWMutex
-	loadMu     sync.Mutex
-	sourceDB   *gorm.DB
-	generation uint64
-	settings   channelMonitorSettings
-	valid      bool
-}
-
 func getChannelMonitorSettings() channelMonitorSettings {
 	common.OptionMapRWMutex.RLock()
 	options := make(map[string]string, len(common.OptionMap))
@@ -321,35 +311,10 @@ func getChannelMonitorSettings() channelMonitorSettings {
 	return channelMonitorSettingsFromOptions(options)
 }
 
-func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSettings, error) {
+func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, error) {
 	if model.DB == nil {
 		return channelMonitorSettings{}, errors.New("渠道监控设置数据库未初始化")
 	}
-	sourceDB := model.DB
-	generation := model.ChannelMonitorOptionsGeneration()
-	channelMonitorSettingsSnapshotCache.RLock()
-	if channelMonitorSettingsSnapshotCache.valid &&
-		channelMonitorSettingsSnapshotCache.sourceDB == sourceDB &&
-		channelMonitorSettingsSnapshotCache.generation == generation {
-		settings := cloneChannelMonitorSettings(channelMonitorSettingsSnapshotCache.settings)
-		channelMonitorSettingsSnapshotCache.RUnlock()
-		return settings, nil
-	}
-	channelMonitorSettingsSnapshotCache.RUnlock()
-
-	// Serialize cold loads so concurrent overview requests share one database
-	// read, while keeping the cache lock out of the query itself.
-	channelMonitorSettingsSnapshotCache.loadMu.Lock()
-	defer channelMonitorSettingsSnapshotCache.loadMu.Unlock()
-	channelMonitorSettingsSnapshotCache.RLock()
-	if channelMonitorSettingsSnapshotCache.valid &&
-		channelMonitorSettingsSnapshotCache.sourceDB == sourceDB &&
-		channelMonitorSettingsSnapshotCache.generation == generation {
-		settings := cloneChannelMonitorSettings(channelMonitorSettingsSnapshotCache.settings)
-		channelMonitorSettingsSnapshotCache.RUnlock()
-		return settings, nil
-	}
-	channelMonitorSettingsSnapshotCache.RUnlock()
 
 	optionKeys := []string{
 		channelMonitorAutoUpdateIntervalOption,
@@ -407,6 +372,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 		channelMonitorSmartScheduleRealtimeSampleLimitOption,
 		channelMonitorSmartScheduleRateLimitCooldownOption,
 		channelMonitorSmartScheduleControlRevisionOption,
+		channelMonitorChannelOrderOption,
 	}
 	var storedOptions []model.Option
 	if err := model.DB.WithContext(ctx).
@@ -419,23 +385,7 @@ func loadChannelMonitorSettingsSnapshot(ctx context.Context) (channelMonitorSett
 	for _, option := range storedOptions {
 		options[option.Key] = option.Value
 	}
-	settings := channelMonitorSettingsFromOptions(options)
-	channelMonitorSettingsSnapshotCache.Lock()
-	channelMonitorSettingsSnapshotCache.sourceDB = sourceDB
-	// Keep the generation observed before the database read. If an option is
-	// updated while the query is in flight, caching the newer generation here
-	// would incorrectly bless a stale snapshot until the next update.
-	channelMonitorSettingsSnapshotCache.generation = generation
-	channelMonitorSettingsSnapshotCache.settings = cloneChannelMonitorSettings(settings)
-	channelMonitorSettingsSnapshotCache.valid = true
-	channelMonitorSettingsSnapshotCache.Unlock()
-	return settings, nil
-}
-
-func cloneChannelMonitorSettings(settings channelMonitorSettings) channelMonitorSettings {
-	settings.EmailNotificationTypes = append([]string(nil), settings.EmailNotificationTypes...)
-	settings.SmartScheduleGroupPolicies = append(smartScheduleGroupPolicies(nil), settings.SmartScheduleGroupPolicies...)
-	return settings
+	return channelMonitorSettingsFromOptions(options), nil
 }
 
 func channelMonitorSettingsFromOptions(options map[string]string) channelMonitorSettings {
@@ -484,6 +434,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawSmartScheduleRealtimeSampleLimit := options[channelMonitorSmartScheduleRealtimeSampleLimitOption]
 	rawSmartScheduleRateLimitCooldown := options[channelMonitorSmartScheduleRateLimitCooldownOption]
 	rawSmartScheduleControlRevision := options[channelMonitorSmartScheduleControlRevisionOption]
+	rawChannelOrder := options[channelMonitorChannelOrderOption]
 
 	interval, err := strconv.Atoi(rawInterval)
 	if err != nil || interval < 0 || interval > maxChannelMonitorAutoUpdateIntervalMinutes {
@@ -703,6 +654,9 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		SmartScheduleRealtimeSampleLimit:      realtimeSettings.SampleLimit,
 		SmartScheduleRateLimitCooldownSeconds: smartScheduleRateLimitCooldown,
 		SmartScheduleControlRevision:          rawSmartScheduleControlRevision,
+	}
+	if rawChannelOrder != "" && common.UnmarshalJsonStr(rawChannelOrder, &settings.ChannelOrder) != nil {
+		settings.ChannelOrder = nil
 	}
 	return settings
 }
@@ -1036,7 +990,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	settings, err := loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	settings, err := loadChannelMonitorSettings(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1047,7 +1001,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		settings, err = loadChannelMonitorSettingsSnapshot(c.Request.Context())
+		settings, err = loadChannelMonitorSettings(c.Request.Context())
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -1640,7 +1594,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if routingChanged {
 		model.InitChannelCache()
 	}
-	settings, err = loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	settings, err = loadChannelMonitorSettings(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return

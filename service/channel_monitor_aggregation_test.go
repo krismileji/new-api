@@ -501,7 +501,7 @@ func TestChannelMonitorAggregationReadyEndAllowsCommitDelay(t *testing.T) {
 	assert.Equal(t, minuteStart.Unix(), channelMonitorAggregationReadyEnd(minuteStart.Add(time.Second)))
 }
 
-func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.T) {
+func TestChannelMonitorAggregationReadsUpdatedMetricsAfterSharedAdvance(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB
 	originalMainDatabaseType := common.MainDatabaseType()
@@ -529,12 +529,10 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 	channelMonitorAggregationStateMu.Lock()
 	channelMonitorAggregationLocalCompletedThrough[key] = 60
 	channelMonitorAggregationStateMu.Unlock()
-	model.InvalidateChannelMonitorAggregateCaches()
 	t.Cleanup(func() {
 		channelMonitorAggregationStateMu.Lock()
 		delete(channelMonitorAggregationLocalCompletedThrough, key)
 		channelMonitorAggregationStateMu.Unlock()
-		model.InvalidateChannelMonitorAggregateCaches()
 		model.DB = originalDB
 		model.LOG_DB = originalLogDB
 		common.SetMainDatabaseType(originalMainDatabaseType)
@@ -561,7 +559,7 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 	}).Error)
 	require.NoError(t, model.AdvanceChannelMonitorAggregationCompletedThrough(context.Background(), 120))
 
-	metrics, err := model.GetChannelMonitorPerformanceMetricsCached(context.Background(), 120, 1)
+	metrics, err := model.GetChannelMonitorObservedPerformanceMetrics(context.Background(), 120, 1)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
 	require.NotNil(t, metrics[0].AverageFirstTokenMs)
@@ -575,7 +573,7 @@ func TestChannelMonitorAggregationInvalidatesCacheAfterSharedAdvance(t *testing.
 
 	_, _, err = channelMonitorAggregationStart(context.Background(), key, 120, 120)
 	require.NoError(t, err)
-	metrics, err = model.GetChannelMonitorPerformanceMetricsCached(context.Background(), 120, 1)
+	metrics, err = model.GetChannelMonitorObservedPerformanceMetrics(context.Background(), 120, 1)
 	require.NoError(t, err)
 	require.Len(t, metrics, 1)
 	require.NotNil(t, metrics[0].AverageFirstTokenMs)

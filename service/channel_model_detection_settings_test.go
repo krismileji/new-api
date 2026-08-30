@@ -220,7 +220,9 @@ func TestUpdateChannelModelDetectionSettingsDefersAddressWhileSessionActive(t *t
 	require.NoError(t, db.First(&stored, model.ChannelModelDetectionConfigID).Error)
 	assert.Equal(t, server.URL, stored.DetectorURL)
 	assert.Equal(t, "http://127.0.0.1:18081", stored.PendingDetectorURL)
-	assert.Equal(t, "available", ChannelModelDetectionServiceSnapshot(server.URL).State)
+	serviceStatus, err := GetChannelModelDetectionService(context.Background(), db, time.Unix(1_700_000_001, 0).UTC())
+	require.NoError(t, err)
+	assert.Equal(t, "available", serviceStatus.State)
 }
 
 func TestTestChannelModelDetectionServiceDoesNotExposeSessionToken(t *testing.T) {
@@ -280,8 +282,6 @@ func TestTestChannelModelDetectionServiceReportsUnsupportedDetectorSchema(t *tes
 }
 
 func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *testing.T) {
-	ResetChannelModelDetectionServiceCache()
-	t.Cleanup(ResetChannelModelDetectionServiceCache)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -312,7 +312,9 @@ func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *test
 	var count int64
 	require.NoError(t, db.Model(&model.ChannelModelDetectionGlobalConfig{}).Count(&count).Error)
 	assert.Zero(t, count)
-	assert.Equal(t, "unknown", ChannelModelDetectionServiceSnapshot("http://127.0.0.1:18080").State)
+	serviceStatus, err := GetChannelModelDetectionService(context.Background(), db, time.Unix(1_700_000_001, 0).UTC())
+	require.NoError(t, err)
+	assert.Equal(t, "unconfigured", serviceStatus.State)
 }
 
 func mustMarshalSettings(t *testing.T, value ChannelModelDetectionSettingsResponse) []byte {

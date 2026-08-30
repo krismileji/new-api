@@ -47,8 +47,11 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		includeMetrics = parsed
 	}
 	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
-	settings := getChannelMonitorSettings()
-	var err error
+	settings, err := loadChannelMonitorSettings(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var routes []model.ChannelSmartScheduleRoute
 	loadMetrics := includeMetrics && settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0
 	if loadMetrics {

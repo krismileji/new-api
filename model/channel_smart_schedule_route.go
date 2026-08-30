@@ -1086,9 +1086,6 @@ func SaveChannelSmartScheduleRoutePrimary(
 		result.State = *targetState
 		return nil
 	})
-	if err == nil && result.ObservationSince > 0 {
-		InvalidateChannelMonitorAggregateCaches()
-	}
 	return result, err
 }
 
@@ -1801,8 +1798,6 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
-	observationBoundaryAdvanced := false
-
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for _, result := range results {
 			if result.LogicalChannelId <= 0 {
@@ -2036,7 +2031,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 					if previousStabilityState != "" && result.Stability.State == "" {
 						state.StabilitySince = 0
 						if logicalRoute != nil {
-							sampleState, advanced, observationErr := advanceLogicalChannelSmartScheduleObservationSinceTx(
+							sampleState, _, observationErr := advanceLogicalChannelSmartScheduleObservationSinceTx(
 								tx, LogicalChannelIdentity{
 									ChannelID: result.ChannelId, LogicalChannelID: result.LogicalChannelId,
 									Revision: result.LogicalRevision,
@@ -2046,16 +2041,14 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 								return observationErr
 							}
 							outcomes[index].ObservationSince = sampleState.ObservationSince
-							observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
 						} else {
-							sampleState, advanced, observationErr := advanceChannelSmartScheduleObservationSinceTx(
+							sampleState, _, observationErr := advanceChannelSmartScheduleObservationSinceTx(
 								tx, result.ChannelId, result.Model, updatedTime,
 							)
 							if observationErr != nil {
 								return observationErr
 							}
 							outcomes[index].ObservationSince = sampleState.ObservationSince
-							observationBoundaryAdvanced = observationBoundaryAdvanced || advanced
 						}
 					}
 				}
@@ -2189,8 +2182,6 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			outcomes[index].Applied = false
 			outcomes[index].RoutingChanged = false
 		}
-	} else if observationBoundaryAdvanced {
-		InvalidateChannelMonitorAggregateCaches()
 	}
 	return outcomes, err
 }
@@ -2304,9 +2295,6 @@ func ClearChannelSmartScheduleRouteStability(channelId int, group string, modelN
 		result.Weight = manualWeight
 		return nil
 	})
-	if err == nil && result.ObservationSince > 0 {
-		InvalidateChannelMonitorAggregateCaches()
-	}
 	return result, err
 }
 

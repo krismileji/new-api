@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetChannelMonitorRedisRealtimeStatusReusesShortLivedSnapshot(t *testing.T) {
+func TestGetChannelMonitorRedisRealtimeStatusReadsCurrentState(t *testing.T) {
 	_, client := setupChannelMonitorRedisRealtimeStatusCacheTest(t)
 	ctx := context.Background()
 	require.NoError(t, client.XGroupCreateMkStream(
@@ -52,16 +52,10 @@ func TestGetChannelMonitorRedisRealtimeStatusReusesShortLivedSnapshot(t *testing
 	require.Len(t, read, 1)
 	require.Len(t, read[0].Messages, 1)
 
-	withinTTL := GetChannelMonitorRedisRealtimeStatus(ctx)
-	require.NotNil(t, withinTTL.DegradedReasons)
-	assert.Empty(t, withinTTL.DegradedReasons)
-	assert.Zero(t, withinTTL.PendingCount, "a page fan-out should reuse the current status snapshot")
-
-	var refreshed ChannelMonitorRedisRealtimeStatus
-	require.Eventually(t, func() bool {
-		refreshed = GetChannelMonitorRedisRealtimeStatus(ctx)
-		return refreshed.PendingCount == 1
-	}, channelMonitorRedisRealtimeStatusCacheTTL+500*time.Millisecond, 10*time.Millisecond)
+	refreshed := GetChannelMonitorRedisRealtimeStatus(ctx)
+	require.NotNil(t, refreshed.DegradedReasons)
+	assert.Contains(t, refreshed.DegradedReasons, ChannelMonitorRedisDegradedReasonEventBacklog)
+	assert.Equal(t, int64(1), refreshed.PendingCount)
 	assert.Equal(t, ChannelMonitorRedisStatusAvailable, refreshed.RedisStatus)
 }
 
@@ -177,17 +171,11 @@ func setupChannelMonitorRedisRealtimeStatusCacheTest(t *testing.T) (*miniredis.M
 	common.RedisEnabled = true
 	common.RDB = client
 	common.RDBMonitorRead = nil
-	resetChannelMonitorRedisRealtimeStatusCache()
 	t.Cleanup(func() {
-		resetChannelMonitorRedisRealtimeStatusCache()
 		common.RedisEnabled = previousEnabled
 		common.RDB = previousClient
 		common.RDBMonitorRead = previousMonitorRead
 		_ = client.Close()
 	})
 	return server, client
-}
-
-func resetChannelMonitorRedisRealtimeStatusCache() {
-	invalidateChannelMonitorRedisRealtimeStatusCache()
 }

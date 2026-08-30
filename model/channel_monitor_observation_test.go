@@ -10,8 +10,6 @@ import (
 
 func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistory(t *testing.T) {
 	db := setupChannelMonitorMinuteAggregationTestDB(t)
-	resetChannelMonitorMetricsCache()
-	t.Cleanup(resetChannelMonitorMetricsCache)
 
 	oldFirstToken := 1000.0
 	oldTPS := 10.0
@@ -57,7 +55,7 @@ func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistor
 		ChannelId: 71, ModelName: "model-a", ObservationSince: 180,
 	}).Error)
 
-	performance, err := GetChannelMonitorPerformanceMetricsCached(context.Background(), 300, 3)
+	performance, err := GetChannelMonitorObservedPerformanceMetrics(context.Background(), 300, 3)
 	require.NoError(t, err)
 	require.Len(t, performance, 1)
 	assert.Equal(t, 2, performance[0].SampleCount)
@@ -67,7 +65,7 @@ func TestChannelMonitorObservationBoundaryResetsCurrentMetricsButPreservesHistor
 	require.NotNil(t, performance[0].LatestFirstTokenMs)
 	assert.InDelta(t, 200, *performance[0].LatestFirstTokenMs, 1e-9)
 
-	success, groups, err := GetChannelMonitorSuccessMetricsCached(context.Background(), 300, 3)
+	success, groups, err := GetChannelMonitorObservedSuccessMetrics(context.Background(), 300, 3)
 	require.NoError(t, err)
 	require.Len(t, success, 1)
 	assert.Equal(t, int64(2), success[0].ActualSuccessCount)

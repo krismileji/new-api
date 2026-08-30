@@ -38,8 +38,7 @@ func getChannelMonitorPerformanceMinutes(c *gin.Context) (int, bool) {
 	return minutes, true
 }
 
-func getChannelMonitorPerformanceRange(c *gin.Context) (minutes int, source string, ok bool) {
-	settings := getChannelMonitorSettings()
+func getChannelMonitorPerformanceRange(c *gin.Context, settings channelMonitorSettings) (minutes int, source string, ok bool) {
 	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
 		return settings.SmartSchedulePerformanceWindowMinutes, channelMonitorPerformanceRangeSmart, true
 	}
@@ -48,7 +47,12 @@ func getChannelMonitorPerformanceRange(c *gin.Context) (minutes int, source stri
 }
 
 func GetChannelMonitorPerformance(c *gin.Context) {
-	minutes, rangeSource, ok := getChannelMonitorPerformanceRange(c)
+	settings, err := loadChannelMonitorSettings(c.Request.Context())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	minutes, rangeSource, ok := getChannelMonitorPerformanceRange(c, settings)
 	if !ok {
 		return
 	}

@@ -497,7 +497,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	settings, err := loadChannelMonitorSettingsSnapshot(c.Request.Context())
+	settings, err := loadChannelMonitorSettings(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -515,7 +515,7 @@ func GetChannelMonitorOverview(c *gin.Context) {
 	}
 
 	groupRatios := ratio_setting.GetGroupRatioCopy()
-	channelOrder := getChannelMonitorChannelOrder(channels)
+	channelOrder := normalizeChannelMonitorChannelOrder(channels, settings.ChannelOrder)
 	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
 		if channel != nil {

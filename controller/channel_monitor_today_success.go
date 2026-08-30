@@ -182,7 +182,7 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	todayMetrics := channelMonitorRealtimeTodaySuccessMetrics(todayView)
 	metrics := todayMetrics
 	if detailDayStart != todayStart {
-		metrics, err = model.GetChannelMonitorSuccessMetricsForDayCached(c.Request.Context(), detailDayStart)
+		metrics, err = model.GetChannelMonitorSuccessMetricsForDay(c.Request.Context(), detailDayStart)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -190,7 +190,7 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	}
 	dailyMetrics := make([]model.ChannelMonitorDailySuccessMetric, 0, days)
 	if days > 1 {
-		dailyMetrics, err = model.GetChannelMonitorDailySuccessMetricsCached(c.Request.Context(), rangeStart, todayStart)
+		dailyMetrics, err = model.GetChannelMonitorDailySuccessMetrics(c.Request.Context(), rangeStart, todayStart)
 		if err != nil {
 			common.ApiError(c, err)
 			return

@@ -104,10 +104,6 @@ func GetChannelMonitorRedisSharedProjectionMetadata(
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	windowStart, windowEnd, _, _, _ := projection.queryWindow(startAt, endAt)
-	if dataCutoffAt, processedAt, eventWatermark, ok := channelMonitorRedisSharedLookupMetadata(projection.client, windowStart, windowEnd); ok {
-		return dataCutoffAt, processedAt, eventWatermark, nil
-	}
 	dataCutoffAt, processedAt, eventWatermark, _, _, err = projection.QueryMetadata(ctx, startAt, endAt)
 	if err != nil {
 		return 0, 0, 0, err

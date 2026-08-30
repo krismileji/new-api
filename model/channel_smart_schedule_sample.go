@@ -655,8 +655,5 @@ func SaveChannelSmartScheduleModelSample(
 		result.ProbeRecovery.Result = recoveryResult
 		return tx.Where(&ChannelSmartScheduleModelSampleState{Id: state.Id}).First(&state).Error
 	})
-	if err == nil && result.ProbeRecovery != nil && result.ProbeRecovery.Result.ObservationSince > 0 {
-		InvalidateChannelMonitorAggregateCaches()
-	}
 	return state, err
 }

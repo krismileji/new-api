@@ -720,7 +720,7 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesSharedStabilityWithoutLogs(t *t
 	probeMode := channelMonitorSmartScheduleSampleProbe
 	policy.SampleMode = &probeMode
 	policy.Scoring.StabilityPercent = 100
-	useChannelMonitorOptionMap(t, map[string]string{
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption: "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
 			t, policy,
@@ -802,7 +802,7 @@ func TestGetChannelMonitorSmartScheduleRoutesReturnsWindowedSharedSamples(t *tes
 	)
 	stabilityWindowMinutes := 1
 	policy.StabilityWindowMinutes = &stabilityWindowMinutes
-	useChannelMonitorOptionMap(t, map[string]string{
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartSchedulePerformanceWindowOption: "5",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
@@ -994,7 +994,7 @@ func TestGetChannelMonitorSmartScheduleRoutesUsesParameterizedModelMetrics(t *te
 	)
 	stabilityWindowMinutes := 60
 	policy.StabilityWindowMinutes = &stabilityWindowMinutes
-	useChannelMonitorOptionMap(t, map[string]string{
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:           "true",
 		channelMonitorSmartSchedulePerformanceWindowOption: "60",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(

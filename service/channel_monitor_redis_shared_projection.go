@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -394,63 +393,7 @@ type ChannelMonitorRedisSharedProjection struct {
 	limits ChannelMonitorRedisSharedProjectionLimits
 }
 
-const channelMonitorRedisSharedMetadataMemoTTL = 2 * time.Second
-
-type channelMonitorRedisSharedMetadataMemoKey struct {
-	client                 *redis.Client
-	windowStart, windowEnd int64
-}
-
-type channelMonitorRedisSharedMetadataMemoValue struct {
-	dataCutoffAt, processedAt int64
-	eventWatermark            uint64
-	expiresAt                 time.Time
-}
-
-var channelMonitorRedisSharedMetadataMemo = struct {
-	sync.Mutex
-	values map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue
-}{values: make(map[channelMonitorRedisSharedMetadataMemoKey]channelMonitorRedisSharedMetadataMemoValue)}
-
 var channelMonitorRedisSharedProjectionQueries singleflight.Group
-
-func channelMonitorRedisSharedRememberMetadata(client *redis.Client, view ChannelMonitorRedisSharedProjectionView) {
-	if client == nil {
-		return
-	}
-	channelMonitorRedisSharedMetadataMemo.Lock()
-	defer channelMonitorRedisSharedMetadataMemo.Unlock()
-	now := time.Now()
-	for key, value := range channelMonitorRedisSharedMetadataMemo.values {
-		if !value.expiresAt.After(now) {
-			delete(channelMonitorRedisSharedMetadataMemo.values, key)
-		}
-	}
-	channelMonitorRedisSharedMetadataMemo.values[channelMonitorRedisSharedMetadataMemoKey{
-		client: client, windowStart: view.WindowStart, windowEnd: view.WindowEnd,
-	}] = channelMonitorRedisSharedMetadataMemoValue{
-		dataCutoffAt: view.DataCutoffAt, processedAt: view.ProcessedAt,
-		eventWatermark: view.EventWatermark, expiresAt: now.Add(channelMonitorRedisSharedMetadataMemoTTL),
-	}
-}
-
-func channelMonitorRedisSharedLookupMetadata(client *redis.Client, windowStart, windowEnd int64) (int64, int64, uint64, bool) {
-	if client == nil {
-		return 0, 0, 0, false
-	}
-	channelMonitorRedisSharedMetadataMemo.Lock()
-	defer channelMonitorRedisSharedMetadataMemo.Unlock()
-	key := channelMonitorRedisSharedMetadataMemoKey{client: client, windowStart: windowStart, windowEnd: windowEnd}
-	value, ok := channelMonitorRedisSharedMetadataMemo.values[key]
-	if !ok {
-		return 0, 0, 0, false
-	}
-	if !value.expiresAt.After(time.Now()) {
-		delete(channelMonitorRedisSharedMetadataMemo.values, key)
-		return 0, 0, 0, false
-	}
-	return value.dataCutoffAt, value.processedAt, value.eventWatermark, true
-}
 
 func cloneChannelMonitorRedisSharedAggregate(
 	aggregate ChannelMonitorRedisSharedAggregate,
@@ -1551,7 +1494,6 @@ func (projection *ChannelMonitorRedisSharedProjection) query(
 	view.ProcessedAt = accumulator.processedAt
 	view.EventWatermark = accumulator.eventWatermark
 	finalizeChannelMonitorRedisSharedView(&view, accumulator)
-	channelMonitorRedisSharedRememberMetadata(projection.client, view)
 	return view, nil
 }
 

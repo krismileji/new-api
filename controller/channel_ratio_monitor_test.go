@@ -117,6 +117,14 @@ func useChannelMonitorOptionMap(t *testing.T, values map[string]string) {
 	})
 }
 
+func usePersistedChannelMonitorOptions(t *testing.T, db *gorm.DB, values map[string]string) {
+	t.Helper()
+	useChannelMonitorOptionMap(t, values)
+	for key, value := range values {
+		require.NoError(t, db.Save(&model.Option{Key: key, Value: value}).Error)
+	}
+}
+
 func TestChannelMonitorSettingsReportsInvalidSmartSchedulePolicy(t *testing.T) {
 	settings := channelMonitorSettingsFromOptions(map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
